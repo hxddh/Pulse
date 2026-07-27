@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.25.0"
+    static let semver = "0.26.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -256,6 +256,8 @@ struct AgentRow: Identifiable, Hashable {
         let junk: Set<String> = [
             "-", "—", "Running", "Active", "none",
             "Agent session", "Chat", "Amp session", "Amp thread",
+            // Placeholders that shipped as row titles in 0.25.
+            "New Session", "New session", "Untitled", "New Chat", "New chat",
         ]
         if junk.contains(t) { return nil }
         if t.hasPrefix("/"), !t.contains(" ") { return nil }
@@ -361,12 +363,19 @@ struct AgentRow: Identifiable, Hashable {
         let raw = cwd.isEmpty ? project : cwd
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        guard trimmed.hasPrefix("/") else { return Self.shortProject(trimmed) }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+        // The home directory is not a project.
+        //
+        // 0.25 rendered it as "~" and grouped sessions under it, then a session
+        // that had no cwd fell back to its harvest-encoded project name and the
+        // *same* directory appeared a second time as "users-<name>". One
+        // location, two groups, and a header claiming three projects where
+        // there were two.
+        if Self.isHomeLike(trimmed, home: home) { return "" }
+
+        guard trimmed.hasPrefix("/") else { return Self.shortProject(trimmed) }
         var path = trimmed
-        if !home.isEmpty, path == home {
-            return "~"
-        }
         if !home.isEmpty, path.hasPrefix(home + "/") {
             path = "~" + path.dropFirst(home.count)
         }
@@ -377,6 +386,24 @@ struct AgentRow: Identifiable, Hashable {
             return (path.hasPrefix("~") ? "~/…/" : "/…/") + parts.suffix(2).joined(separator: "/")
         }
         return path
+    }
+
+    /// Every spelling of "the home directory" this data can produce.
+    ///
+    /// Harvest hands back either a real path or a decoded form of Claude's
+    /// encoded project directory (`-Users-name` → `users-name`), so the same
+    /// place arrives under several names and has to be collapsed before it can
+    /// be grouped or counted.
+    static func isHomeLike(_ raw: String, home: String) -> Bool {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s == "~" || s == "~/" { return true }
+        guard !home.isEmpty else { return false }
+        if s == home || s == home + "/" { return true }
+        let user = (home as NSString).lastPathComponent.lowercased()
+        guard !user.isEmpty else { return false }
+        let low = s.lowercased()
+        // `-Users-name` decoded to `users-name`, and the bare account name.
+        return low == user || low == "users-\(user)" || low == "-users-\(user)"
     }
 
     /// Seconds since this session last did anything (0 when unknown).
@@ -391,8 +418,29 @@ struct AgentRow: Identifiable, Hashable {
     /// Running with a live session is the ordinary case, and the ordinary case
     /// does not need a badge. Only states worth reacting to get one.
     var needsStatusChip: Bool {
-        if waiting || isProcessOnly || isRecentOnly { return true }
+        if waiting || isProcessOnly || isRecentOnly || isStalled { return true }
         return false
+    }
+
+    /// Live, but nothing has moved for a long time.
+    ///
+    /// As real a signal as Waiting and never surfaced: an agent that has been
+    /// "running" for twenty minutes without touching anything is usually stuck
+    /// on something, and the tray showed it exactly like a healthy session.
+    static let stalledSeconds: Double = 20 * 60
+
+    /// Resolved once per scan against the scan's own clock, not `Date()`.
+    ///
+    /// As a computed property this reached for the real clock while the builder
+    /// around it ran on an injected `nowMs` — so with a fixed test clock every
+    /// row read as stalled by years. `focusTier` and `canOpenFolder` were moved
+    /// to scan time in 0.23 for the same reason.
+    var isStalled: Bool = false
+
+    /// Whether this row would be stalled at the given instant.
+    static func stalled(harvestMs: Int64, nowMs: Int64, waiting: Bool, live: Bool) -> Bool {
+        guard !waiting, live, harvestMs > 0 else { return false }
+        return Double(nowMs - harvestMs) / 1000.0 >= stalledSeconds
     }
 
     /// A wait old enough to deserve more than the ordinary Waiting treatment.
@@ -454,4 +502,36 @@ struct PulseSnapshot: Equatable {
     var totalCount: Int = 0
     var probeError: String?
     var updatedAt: Date = .distantPast
+}
+
+/// Which tray groups fold, and what a folded group still says.
+///
+/// Screenshots of 0.25.0 showed four rows, two of them Recent — finished
+/// sessions, nothing to act on, taking half the panel and half the reading.
+/// Folding them is the largest space win available without dropping a fact.
+enum TrayFold {
+    /// Recent is foldable, but only when it is not the whole list.
+    ///
+    /// If Recent is all there is, those rows *are* the content and folding
+    /// them leaves a panel that says nothing. The rule is "hide the part you
+    /// are not here for", which requires there to be another part.
+    static func foldable(section: TraySection, groupCount: Int, rowCount: Int) -> Bool {
+        section == .recent && groupCount > 1 && rowCount >= 2
+    }
+
+    /// Agents in the folded group, in first-seen order, deduplicated.
+    ///
+    /// A folded heading otherwise reads "Recent 3" — a count with no identity,
+    /// which is exactly the question folding creates.
+    static func summary(_ rows: [AgentRow], limit: Int = 3) -> String {
+        var seen = Set<AgentID>()
+        var names: [String] = []
+        for row in rows where !seen.contains(row.agent) {
+            seen.insert(row.agent)
+            names.append(row.agent.displayName)
+        }
+        guard !names.isEmpty else { return "" }
+        if names.count <= limit { return names.joined(separator: " · ") }
+        return names.prefix(limit).joined(separator: " · ") + " +\(names.count - limit)"
+    }
 }

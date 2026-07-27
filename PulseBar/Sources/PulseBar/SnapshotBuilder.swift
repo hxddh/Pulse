@@ -270,6 +270,12 @@ enum SnapshotBuilder {
             let folderPath = row.cwd.isEmpty ? row.project : row.cwd
             let cwdExists = !row.cwd.isEmpty && context.pathExists(row.cwd)
             all[i].canOpenFolder = !folderPath.isEmpty && context.pathExists(folderPath)
+            all[i].isStalled = AgentRow.stalled(
+                harvestMs: row.harvestMs,
+                nowMs: context.nowMs,
+                waiting: row.waiting,
+                live: row.liveProcess || row.subRunning > 0
+            )
             all[i].focusTier = TerminalFocus.focusTier(
                 tty: row.tty,
                 viaWarp: row.viaWarp,
@@ -411,6 +417,11 @@ enum SnapshotBuilder {
                 snap.title = "\(liveRunning)"
                 snap.tooltip = "\(liveRunning) \(t(.runningN, lang)): \(liveNames)"
                 snap.headerTitle = "\(liveRunning) \(t(.runningN, lang))"
+            }
+            // "2 running" above four rows left the other two unaccounted for.
+            // The header counts what the list contains.
+            if recentOnly > 0 {
+                snap.headerTitle += " · \(recentOnly) \(t(.recentN, lang))"
             }
             snap.headerDetail = aggregate()
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"

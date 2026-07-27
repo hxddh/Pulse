@@ -129,9 +129,10 @@ final class RowContextTests: XCTestCase {
         return r
     }
 
-    func testHomeIsWrittenAsTilde() {
+    /// Home itself is not a location worth naming; anything under it is.
+    func testPathsUnderHomeUseTilde() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        XCTAssertEqual(row(cwd: home).displayPath, "~")
+        XCTAssertEqual(row(cwd: home).displayPath, "", "home is not a project")
         XCTAssertEqual(row(cwd: home + "/code").displayPath, "~/code")
     }
 
@@ -161,5 +162,150 @@ final class RowContextTests: XCTestCase {
     func testActivityAgeCountsFromTheHarvestStamp() {
         let tenMinutesAgo = Int64((Date().timeIntervalSince1970 - 600) * 1000)
         XCTAssertEqual(row(harvestMs: tenMinutesAgo).lastActivitySeconds, 600, accuracy: 5)
+    }
+}
+
+/// Each of these is a defect visible in a 0.25.0 screenshot.
+final class ScreenshotRegressionTests: XCTestCase {
+    private let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+    private func row(cwd: String = "", project: String = "", harvestMs: Int64 = 0, live: Bool = false) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.cwd = cwd
+        r.project = project
+        r.harvestMs = harvestMs
+        r.liveProcess = live
+        r.processCount = live ? 1 : 0
+        return r
+    }
+
+    /// The panel grouped two sessions under "~" and a third under
+    /// "users-rustjia" — the same directory, twice, and a header claiming
+    /// three projects where there were two.
+    func testHomeIsNotAProject() {
+        XCTAssertEqual(row(cwd: home).displayPath, "")
+        XCTAssertEqual(row(project: "~").displayPath, "")
+    }
+
+    func testEncodedHomeCollapsesToTheSamePlaceAsHome() {
+        let user = (home as NSString).lastPathComponent
+        XCTAssertTrue(AgentRow.isHomeLike("users-\(user)", home: home))
+        XCTAssertTrue(AgentRow.isHomeLike(user, home: home))
+        XCTAssertEqual(row(project: "users-\(user)").displayPath, "")
+    }
+
+    func testARealProjectIsStillAProject() {
+        XCTAssertEqual(row(cwd: home + "/Documents/Cursor").displayPath, "~/Documents/Cursor")
+        XCTAssertFalse(AgentRow.isHomeLike("/tmp/alpha", home: home))
+    }
+
+    /// "New Session" was shown as a row title.
+    func testPlaceholderTitlesAreNotTitles() {
+        for junk in ["New Session", "Untitled", "New Chat", "Agent session"] {
+            var r = row()
+            r.task = junk
+            XCTAssertNil(r.usefulTask, "\(junk) is a placeholder, not a task")
+        }
+    }
+
+    /// Live for twenty minutes with nothing happening looked like health.
+    ///
+    /// Evaluated against the scan's clock, so these pass an explicit `nowMs`
+    /// rather than depending on when the suite happens to run.
+    private let now: Int64 = 1_700_000_000_000
+
+    private func stalled(agoSeconds: Double, waiting: Bool = false, live: Bool = true) -> Bool {
+        AgentRow.stalled(
+            harvestMs: now - Int64(agoSeconds * 1000),
+            nowMs: now,
+            waiting: waiting,
+            live: live
+        )
+    }
+
+    func testLongSilenceWhileLiveIsStalled() {
+        XCTAssertTrue(stalled(agoSeconds: 25 * 60))
+    }
+
+    func testRecentActivityIsNotStalled() {
+        XCTAssertFalse(stalled(agoSeconds: 60))
+    }
+
+    func testAStalledRowMustBeLive() {
+        XCTAssertFalse(stalled(agoSeconds: 25 * 60, live: false), "a finished session is not stalled")
+    }
+
+    func testAWaitingRowIsNotAlsoStalled() {
+        XCTAssertFalse(stalled(agoSeconds: 25 * 60, waiting: true), "Waiting already says why it is idle")
+    }
+
+    func testUnknownActivityIsNotStalled() {
+        XCTAssertFalse(
+            AgentRow.stalled(harvestMs: 0, nowMs: now, waiting: false, live: true),
+            "no timestamp is not evidence of silence"
+        )
+    }
+
+    /// A stalled row is one the user should react to, so it keeps its badge.
+    func testStalledRowsAreBadged() {
+        var r = row(live: true)
+        r.isStalled = true
+        XCTAssertTrue(r.needsStatusChip)
+    }
+}
+
+/// Folding Recent: the panel's largest space win, and the one that can most
+/// easily hide something the user came for.
+final class TrayFoldTests: XCTestCase {
+    private func row(_ agent: AgentID) -> AgentRow {
+        AgentRow(rowKey: "k-\(agent.rawValue)", agent: agent)
+    }
+
+    func testRecentFoldsWhenItIsNotTheWholeList() {
+        XCTAssertTrue(TrayFold.foldable(section: .recent, groupCount: 2, rowCount: 3))
+    }
+
+    /// Folding the only group leaves a panel that says nothing.
+    func testRecentDoesNotFoldWhenItIsAllThereIs() {
+        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 1, rowCount: 5))
+    }
+
+    /// One row under a heading is already one line; folding it saves nothing
+    /// and costs a click.
+    func testASingleRowIsNotWorthFolding() {
+        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 3, rowCount: 1))
+    }
+
+    /// Needs-you and Running are why the panel is open. They never fold.
+    func testActionableSectionsNeverFold() {
+        for section in [TraySection.needsYou, .running] {
+            XCTAssertFalse(
+                TrayFold.foldable(section: section, groupCount: 3, rowCount: 4),
+                "\(section) must stay open"
+            )
+        }
+    }
+
+    func testFoldedHeadingStillSaysWhoIsInThere() {
+        let s = TrayFold.summary([row(.claude), row(.cursor)])
+        XCTAssertTrue(s.contains("Claude"), s)
+        XCTAssertTrue(s.contains("Cursor"), s)
+    }
+
+    /// Three sessions of one agent is one name, not three.
+    func testRepeatedAgentsAreNamedOnce() {
+        XCTAssertEqual(TrayFold.summary([row(.claude), row(.claude), row(.claude)]), "Claude")
+    }
+
+    /// A folded heading is one line; the summary must not be what breaks that.
+    func testLongRostersCountTheRestInsteadOfListingThem() {
+        let rows = [row(.claude), row(.cursor), row(.amp), row(.aider), row(.goose)]
+        let s = TrayFold.summary(rows)
+        XCTAssertTrue(s.hasSuffix("+2"), s)
+        XCTAssertFalse(s.contains("Goose"), s)
+    }
+
+    func testEmptyGroupHasNoSummary() {
+        XCTAssertEqual(TrayFold.summary([]), "")
     }
 }

@@ -103,6 +103,7 @@ jobs:
           python3 scripts/version_check.py
           python3 scripts/coverage_check.py
           python3 scripts/matrix_check.py
+          python3 scripts/make_agent_icons.py --check
 
       - name: Test
         run: swift test

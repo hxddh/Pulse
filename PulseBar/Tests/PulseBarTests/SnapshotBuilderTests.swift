@@ -516,6 +516,48 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.snapshot.headerDetail.contains("\(r.snapshot.hiddenCount)"), r.snapshot.headerDetail)
     }
 
+    /// The header said "2 running" above four rows.
+    func testHeaderCountsEveryRowItSitsAbove() {
+        let r = build(
+            procs: [hit(.claude)],
+            harvest: [
+                harvest(.claude, task: "live", session: "s1", cwd: "/tmp/a"),
+                harvest(.gemini, task: "done", session: "s2", cwd: "/tmp/b", ageMs: 60_000),
+            ]
+        )
+        let running = r.snapshot.sectionTotals[.running] ?? 0
+        let recent = r.snapshot.sectionTotals[.recent] ?? 0
+        XCTAssertGreaterThan(recent, 0, "fixture needs a non-live row")
+        XCTAssertTrue(
+            r.snapshot.headerTitle.contains("\(running)") && r.snapshot.headerTitle.contains("\(recent)"),
+            "header must account for every row: \(r.snapshot.headerTitle)"
+        )
+    }
+
+    /// Two sessions in the home directory plus one whose project decoded to
+    /// the same place were counted as three projects.
+    func testHomeDoesNotInflateTheProjectCount() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let user = (home as NSString).lastPathComponent
+        let r = build(harvest: [
+            harvest(.claude, task: "a", session: "s1", cwd: home),
+            harvest(.codex, task: "b", session: "s2", cwd: home),
+            harvest(.amp, task: "c", session: "s3", project: "users-\(user)"),
+            harvest(.gemini, task: "d", session: "s4", cwd: "/tmp/real"),
+        ])
+        XCTAssertEqual(r.snapshot.projectCount, 1, "only /tmp/real is a project")
+    }
+
+    /// A long-silent live session is worth a badge; the builder decides that
+    /// against the scan's clock, so it is deterministic.
+    func testLongSilenceIsMarkedStalledAtScanTime() {
+        let r = build(
+            procs: [hit(.claude)],
+            harvest: [harvest(.claude, task: "x", session: "s1", ageMs: 30 * 60 * 1000)]
+        )
+        XCTAssertEqual(r.rows.first?.isStalled, true)
+    }
+
     /// Running with a live session is ordinary and gets no badge.
     func testOrdinaryRunningRowNeedsNoChip() {
         let r = build(

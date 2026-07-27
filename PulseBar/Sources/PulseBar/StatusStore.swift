@@ -671,7 +671,10 @@ final class StatusStore: ObservableObject {
     func lastActivityLabel(_ row: AgentRow) -> String {
         guard row.harvestMs > 0 else { return "" }
         let secs = row.lastActivitySeconds
-        if secs < 5 { return tr(.durNow) }
+        // "54s ago" reads as precision the number does not have — the panel
+        // rescans every few seconds and nobody acts on the difference between
+        // 40 and 54 seconds. Below a minute it is simply recent.
+        if secs < 60 { return tr(.durNow) }
         return String(format: tr(.agoFormat), durationLabel(seconds: secs))
     }
 
@@ -679,10 +682,10 @@ final class StatusStore: ObservableObject {
     ///
     /// Both facts were collected from the start and never shown. The line used
     /// to repeat the agent name that the icon already carries.
-    func rowContextLine(_ row: AgentRow) -> String {
+    func rowContextLine(_ row: AgentRow, omitPath: Bool = false) -> String {
         var bits: [String] = []
         let path = row.displayPath
-        if !path.isEmpty { bits.append(path) }
+        if !path.isEmpty, !omitPath { bits.append(path) }
         let ago = lastActivityLabel(row)
         if !ago.isEmpty { bits.append(ago) }
         // With neither, fall back to naming the agent rather than an empty line.

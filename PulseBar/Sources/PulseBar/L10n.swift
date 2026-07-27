@@ -166,6 +166,8 @@ enum L10n {
         case .agoFormat: return "%@ ago"
         case .whileAway: return "%d wait(s) ended while you were away"
         case .noActivityYet: return "no activity yet"
+        case .noProject: return "No project"
+        case .stalled: return "Stalled"
         }
     }
 
@@ -290,6 +292,8 @@ enum L10n {
         case .agoFormat: return "%@前"
         case .whileAway: return "你离开时有 %d 个等待已结束"
         case .noActivityYet: return "暂无动静"
+        case .noProject: return "无项目"
+        case .stalled: return "停滞"
         }
     }
 
@@ -326,6 +330,7 @@ enum L10n {
         case jumpToOldest, interruptionsToday, playSound
         case waitedLongest, moreDetail
         case acrossProjects, agoFormat, whileAway, noActivityYet
+        case noProject, stalled
     }
 }
 

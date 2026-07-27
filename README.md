@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.25.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.26.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -80,6 +80,11 @@ Pulse 把这件事变成余光可见：
 
 想让名单外的工具点亮 Waiting，走 [`docs/attention-bridge.md`](docs/attention-bridge.md)。
 
+**图标**：22 个来自 [Simple Icons](https://simpleicons.org)（CC0，商标归各自所有者）；
+其余 10 个没有现成品牌图标，由 [`scripts/make_agent_icons.py`](scripts/make_agent_icons.py)
+画成几何标记——**那是 Pulse 自己的图形，不是厂商的商标**。
+`--check` 是门禁：新增 Agent 若没有图标，CI 就红，不会悄悄退回字母标。
+
 ---
 
 ## 配置
@@ -102,19 +107,20 @@ Pulse 把这件事变成余光可见：
 
 ```bash
 cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test    # 156 个单元测试
+cd PulseBar && swift test    # 177 个单元测试
 ```
 
-四个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
+五个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
 
 ```bash
-python3 scripts/version_check.py    # 版本一致性（--fix 自动对齐）
-python3 scripts/coverage_check.py   # 每个 AgentID 都有 harvest 接线
-python3 scripts/matrix_check.py     # README 支持矩阵 == 代码
-python3 scripts/package_check.py    # 打出来的 .app 能找到自己的资源
+python3 scripts/version_check.py            # 版本一致性（--fix 自动对齐）
+python3 scripts/coverage_check.py           # 每个 AgentID 都有 harvest 接线
+python3 scripts/matrix_check.py             # README 支持矩阵 == 代码
+python3 scripts/make_agent_icons.py --check # 每个 AgentID 都有图标，且与生成器一致
+python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
 ```
 
-前三个读源码，第四个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
+前四个读源码，最后一个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
 源码没问题、测试全绿，照样连发三个打不开的 DMG。这类 bug 只有对着 `.app` 才看得见。
 
 但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。
@@ -164,7 +170,7 @@ git push                               # CI 构建、打 tag、发布
 那几条是产品决策（不假装 Waiting、不做配额 HUD、不在托盘里批准），
 不是可以顺手改掉的偏好。
 
-改动请保证 `swift test` 与四个门禁通过；CI 会替你再跑一遍。
+改动请保证 `swift test` 与五个门禁通过；CI 会替你再跑一遍。
 
 ## 许可
 
@@ -181,4 +187,5 @@ git push                               # CI 构建、打 tag、发布
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
 | [`docs/plan-0.23.md`](docs/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
 | [`docs/plan-0.24.md`](docs/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
+| [`docs/plan-0.25.md`](docs/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
 | [`docs/review-0.21.md`](docs/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |
