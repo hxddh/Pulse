@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.23.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.23.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -154,7 +154,7 @@ git push                               # CI 构建、打 tag、发布
 那几条是产品决策（不假装 Waiting、不做配额 HUD、不在托盘里批准），
 不是可以顺手改掉的偏好。
 
-改动请保证 `swift test` 与三个门禁通过；CI 会替你再跑一遍。
+改动请保证 `swift test` 与四个门禁通过；CI 会替你再跑一遍。
 
 ## 许可
 
