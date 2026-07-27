@@ -399,10 +399,11 @@ struct TrayPanel: View {
         // was no way to notice except by looking.
         let cap: CGFloat = store.showAllAgents ? 620 : 420
 
+        let groups = groupedRows
         return VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    ForEach(groupedRows) { group in
+                    ForEach(groups) { group in
                         Section {
                             ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
                                 AgentRowButton(row: row, store: store)
@@ -413,11 +414,17 @@ struct TrayPanel: View {
                                 }
                             }
                         } header: {
-                            SectionHeader(
-                                title: group.title,
-                                count: group.count,
-                                accent: group.accent
-                            )
+                            // A lone heading restates the panel header directly
+                            // above it — "2 running / Cursor · Amp" followed by
+                            // "Running 2". Headings earn their line only when
+                            // there is more than one group to tell apart.
+                            if groups.count > 1 {
+                                SectionHeader(
+                                    title: group.title,
+                                    count: group.count,
+                                    accent: group.accent
+                                )
+                            }
                         }
                     }
                 }
@@ -498,7 +505,15 @@ struct TrayPanel: View {
 @MainActor
 private struct AgentRowButton: View {
     let row: AgentRow
-    let store: StatusStore
+    /// Must be observed, not merely held.
+    ///
+    /// This was `let store: StatusStore`. The row's body reads `store.tr(...)`
+    /// for its title and badge, but a plain `let` does not subscribe: when the
+    /// language changed, `TrayPanel` re-rendered while every row kept the same
+    /// `row` value and the same store *reference*, so SwiftUI saw identical
+    /// inputs and skipped the child entirely. The result was a panel whose
+    /// chrome was English and whose rows were still Chinese.
+    @ObservedObject var store: StatusStore
     @State private var hovering = false
 
     var body: some View {
@@ -536,10 +551,12 @@ private struct AgentRowButton: View {
                                 statusChip
                             }
 
-                            Text(agentLine)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            if !agentLine.isEmpty {
+                                Text(agentLine)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
 
                             // Waiting rows get a third line, because the actual
                             // question is the entire point of the product.
@@ -609,7 +626,10 @@ private struct AgentRowButton: View {
             return store.tr(.needsYou)
         }
         if row.isProcessOnly {
-            return store.tr(.processDetected)
+            // The agent name *is* the information here. Saying "Process
+            // detected" as the title, "process" in the badge, and the agent
+            // name on the line below states one fact three times.
+            return row.agent.displayName
         }
         if let t = row.sessionDetail {
             let label = row.isRecentOnly
@@ -629,9 +649,14 @@ private struct AgentRowButton: View {
     /// facts in two lines of tertiary text and none of them could be scanned.
     /// The rest moved to `hoverDetail`.
     private var agentLine: String {
-        var bits: [String] = [row.agent.displayName]
+        let name = row.agent.displayName
+        // When the hero already is the agent name, repeating it is noise.
+        var bits: [String] = heroTitle == name ? [] : [name]
         let short = AgentRow.shortProject(row.project)
-        if !short.isEmpty, short != heroTitle {
+        // A project that just restates the agent is not a second fact. This
+        // compared against the hero only, so a Cursor session in a folder
+        // called "Cursor" rendered "Cursor · Cursor".
+        if !short.isEmpty, short != heroTitle, short.caseInsensitiveCompare(name) != .orderedSame {
             bits.append(short)
         } else if let hint = row.shortSessionHint, row.usefulTask != nil {
             bits.append(hint)
