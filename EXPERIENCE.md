@@ -2,8 +2,8 @@
 
 版本目标：对齐「一眼知道 Agent 空闲 / 运行 / 等你」；**不**做配额仪表盘。  
 约束延续：tray 有数据才显示；窗口用 hide / show，不用 destroy。  
-版本真源是 `PulseVersion.semver`，`app.zon` / `version.zig` 是跟随者，由
-`scripts/version_check.py` 强制一致（0.21.1 前二者漂到 `0.5.0`）。
+版本真源是 `PulseVersion.semver`，CHANGELOG 与 README 徽标由
+`scripts/version_check.py` 强制跟随。
 
 ---
 
@@ -265,7 +265,5 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 | 探测节奏 / 能耗 | `PulseBar/.../ProbeSchedule.swift` + `PowerMonitor.swift` |
 | 更新检查 | `PulseBar/.../UpdateCheck.swift` |
 | 测试 | `PulseBar/Tests/PulseBarTests/` |
-
-Zig 树（`src/*.zig`）是被替换掉的旧 Vercel Native SDK 壳，仅存作参考，不以之为验收依据。
 
 本文是后续 UI/UE 改动的验收依据；实现时改行为须同步改本节，避免文档漂移。

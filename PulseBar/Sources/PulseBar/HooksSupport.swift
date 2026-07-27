@@ -4,7 +4,6 @@ enum HooksSupport {
     enum Status: Equatable {
         case unknown
         case missing
-        case installed
         case installedClaude
         case installedCodex
         case installedBoth
@@ -14,7 +13,7 @@ enum HooksSupport {
             switch self {
             case .unknown: return L10n.t(.hooksUnknown, lang)
             case .missing: return L10n.t(.hooksMissing, lang)
-            case .installed, .installedBoth: return L10n.t(.hooksInstalledBoth, lang)
+            case .installedBoth: return L10n.t(.hooksInstalledBoth, lang)
             case .installedClaude: return L10n.t(.hooksInstalledClaude, lang)
             case .installedCodex: return L10n.t(.hooksInstalledCodex, lang)
             case .failed(let m): return "\(L10n.t(.hooksFailed, lang)) · \(m)"

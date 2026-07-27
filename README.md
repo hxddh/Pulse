@@ -2,8 +2,7 @@
 
 macOS **菜单栏** 编码 Agent 运行态感知。
 
-**版本：`0.22.0`** — Swift `MenuBarExtra` 壳（`PulseBar/`）。  
-旧 Zig + Native SDK UI 仍在 `src/`，仅作参考。
+**版本：`0.22.0`** — Swift `MenuBarExtra` 壳（`PulseBar/`）。
 
 > 一眼知道 Agent **空闲 / 运行中 / 等待你**。会话标题是主语；Glance 用交通灯色。
 
@@ -86,33 +85,28 @@ export PULSE_NOTARY_PROFILE=pulse-notary   # 可选，触发公证 + stapler
 
 \* Cursor 进程常跳过壳，靠 harvest；none 组 harvest 尽力但不承诺 Waiting。
 
-## 版本
+## 版本与发布
 
 **唯一真源**：`PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`。
-
-跟随者（由 `scripts/version_check.py` 强制一致，改版本后跑一次 `--fix`）：
-
-| 位置 | 用途 |
-| --- | --- |
-| `app.zon` `.version` | 旧 Zig 壳清单 |
-| `src/version.zig` | 旧 Zig 壳常量（含 major/minor/patch） |
-| `CHANGELOG.md` 最新标题 | 发布记录 |
-| README 版本徽标 | 本文件 |
+`scripts/version_check.py` 强制 CHANGELOG 最新标题与 README 徽标跟随（`--fix` 自动对齐）。
 
 **构建指纹**：`package.sh` 把 git short sha 与构建日期写入 `Info.plist`
-（`PulseGitCommit` / `PulseBuildDate`），运行时由 `PulseVersion` 读取：
+（`PulseGitCommit` / `PulseBuildDate`），`PulseVersion` 运行时读取：
 
-- 打包运行 → `Pulse 0.21.1`，关于区第二行 `a1b2c3d · 2026-07-27`（`+` 后缀表示有未提交改动）
-- `swift run` → `Pulse 0.21.1-dev`，构建行显示「开发构建」
-- bundle 与二进制版本不一致 → `0.21.1≠0.21.0` 并在关于区高亮，提示重新打包
+- 打包运行 → `Pulse 0.22.0`，关于区第二行 `a1b2c3d · 2026-07-27`（`+` 表示有未提交改动）
+- `swift run` → `Pulse 0.22.0-dev`，构建行显示「开发构建」
+- bundle 与二进制版本不一致 → `0.22.0≠0.21.1` 并高亮，提示重新打包
 
 界面落点：Tray 底部页脚（点击复制诊断）、偏好设置 → 关于。
 
-打包产物：`zig-out/package/Pulse.app`、`pulse-*-macos-PulseBar.dmg`
-
-## Legacy（Zig）
+### 发布
 
 ```bash
-native test
-./scripts/package-macos.sh   # 旧 Native SDK 壳，勿与 PulseBar 同时开
+./scripts/release.sh 0.23.0        # 预演：改版本、跑门禁、给出 diff
+./scripts/release.sh 0.23.0 --tag  # 确认后：提交 + 打 tag
+git push && git push --tags        # tag 推上去即触发 release workflow
 ```
+
+`release.sh` 会拒绝在工作区不干净、CHANGELOG 缺少该版本条目、或门禁失败时打 tag。
+`.github/workflows/release.yml` 在 macOS 上构建、打包、把 DMG 连同该版本的
+CHANGELOG 段落发到 GitHub Releases —— 应用内的「检查更新」读的就是这里。

@@ -253,7 +253,7 @@ final class StatusStore: ObservableObject {
 
     var hooksInstalled: Bool {
         switch hooksStatus {
-        case .installed, .installedBoth, .installedClaude, .installedCodex: return true
+        case .installedBoth, .installedClaude, .installedCodex: return true
         case .unknown, .missing, .failed: return false
         }
     }

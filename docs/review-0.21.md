@@ -155,15 +155,9 @@
 
 ### 3.2 结构性矛盾
 
-- **legacy Zig 树**。`src/*.zig`（约 3.5k 行）+ `src/tests.zig` + `app.zon` +
+- **legacy Zig 树**。`src/*.zig`（约 4.2k 行）+ `app.zon` + `assets/` +
   `scripts/package-macos.sh` 是被替换掉的 **Vercel Native SDK 壳**。
-  0.22.0 起 PulseBar 有了自己的测试，`src/tests.zig` 不再是「唯一的测试」。
-  **建议删除整棵树**（git 历史里仍在）——一条命令：
-  ```bash
-  git rm -r src/*.zig src/app.native app.zon assets scripts/package-macos.sh
-  python3 scripts/version_check.py   # 跟随者少两个，门禁自动适应
-  ```
-  未在本次执行：批量删除被安全策略拦下，且这是产品归档决定，留给你拍板。
+  → **0.22.0 已删除**（git 历史里仍在）。`version_check.py` 随之少了两个跟随者。
 
 - **`src/*.py` 双份拷贝**。`src/` 是真源，`Resources/` 是 `package.sh` 同步出的副本，
   两份都提交进仓库。→ **已加门禁**：CI 比对两者，不一致即失败。
@@ -198,11 +192,9 @@
 
 代码侧已清空。剩下的都需要人工决定或账号权限：
 
-1. **归档 legacy Zig 树** —— §3.2 给了命令，等你拍板。
-2. **Apple Developer ID + 公证账号** —— `package.sh` 已接好，缺证书。
-3. **打 tag 并发首个 Release** —— 更新检查读的就是 GitHub Releases，
-   在有 Release 之前它会一直报「检查失败 · HTTP 404」。
-4. **`swift build` / `swift test` 需在 macOS 上跑** —— 本次改动在 Linux 容器完成，
+1. **Apple Developer ID + 公证账号** —— `package.sh` 与 release workflow 已接好，缺证书。
+   没有证书时 Release 里的 DMG 仍是 ad-hoc 签名，别人打开需要右键「打开」。
+2. **`swift build` / `swift test` 需在 macOS 上跑** —— 本次改动在 Linux 容器完成，
    Swift 侧靠人工审查 + 结构校验；CI 的 macOS job 是第一道真正的编译验证。
 
 ---

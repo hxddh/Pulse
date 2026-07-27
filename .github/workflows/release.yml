@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.22.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, package, publish
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: v
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "releasing $VERSION"
+
+      - name: Tag must match the compiled version
+        run: |
+          CODE="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' PulseBar/Sources/PulseBar/Models.swift)"
+          if [[ "$CODE" != "${{ steps.v.outputs.version }}" ]]; then
+            echo "::error::tag says ${{ steps.v.outputs.version }} but Models.swift says $CODE"
+            exit 1
+          fi
+
+      - name: Gates
+        run: |
+          python3 scripts/version_check.py
+          python3 scripts/coverage_check.py
+          python3 scripts/matrix_check.py
+
+      - name: Test
+        run: swift test
+        working-directory: PulseBar
+
+      - name: Package
+        env:
+          # Optional: set these repo secrets to ship a Gatekeeper-friendly build.
+          PULSE_SIGN_IDENTITY: ${{ secrets.PULSE_SIGN_IDENTITY }}
+          PULSE_NOTARY_PROFILE: ${{ secrets.PULSE_NOTARY_PROFILE }}
+        run: ./PulseBar/Scripts/package.sh
+
+      - name: Release notes from CHANGELOG
+        run: |
+          python3 scripts/changelog_section.py "${{ steps.v.outputs.version }}" > /tmp/notes.md
+          if [[ -z "${{ secrets.PULSE_SIGN_IDENTITY }}" ]]; then
+            {
+              echo
+              echo "---"
+              echo "_This build is ad-hoc signed. macOS will warn on first open —"
+              echo "right-click the app and choose Open, or run_"
+              echo '`xattr -dr com.apple.quarantine /Applications/Pulse.app`.'
+            } >> /tmp/notes.md
+          fi
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: Pulse ${{ steps.v.outputs.version }}
+          body_path: /tmp/notes.md
+          files: zig-out/package/pulse-${{ steps.v.outputs.version }}-macos-PulseBar.dmg
+          fail_on_unmatched_files: true

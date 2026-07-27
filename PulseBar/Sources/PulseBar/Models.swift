@@ -2,8 +2,8 @@ import Foundation
 
 /// Single source of truth for the product version.
 ///
-/// `semver` is the truth; `scripts/version_check.py` keeps `app.zon` and
-/// `src/version.zig` from drifting away from it. Build metadata (commit, date)
+/// `semver` is the truth; `scripts/version_check.py` keeps the CHANGELOG and
+/// the README badge from drifting away from it. Build metadata (commit, date)
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
@@ -168,15 +168,6 @@ enum GlanceKind: Equatable {
     case running
     case waiting
     case error
-
-    var symbolName: String {
-        switch self {
-        case .idle: return "circle"
-        case .running: return "circle.fill"
-        case .waiting: return "pause.circle.fill"
-        case .error: return "exclamationmark.circle.fill"
-        }
-    }
 
     var accessibilityLabel: String {
         switch self {

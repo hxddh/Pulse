@@ -65,10 +65,6 @@ enum PulseNotify {
         }
     }
 
-    static func post(title: String, body: String) {
-        postIdle(title: title, body: body)
-    }
-
     static func postIdle(title: String, body: String) {
         post(id: "pulse-idle", title: title, body: body, agent: "", session: "", rowKey: "")
     }

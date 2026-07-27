@@ -19,9 +19,9 @@ macOS menu-bar status lamp for coding agents (`idle` / `running` / `needs you`).
 
 ## Architecture (keep)
 
-Probe + Harvest + Attention → `StatusStore.applyScan`. Python SoT lives in `src/`; `package.sh` syncs into app Resources.
+Probe + Harvest + Attention → `StatusStore.applyScan`. Python SoT lives in `src/`; `package.sh` syncs into app Resources (CI enforces the copies match).
 
-Primary UI: Swift `PulseBar/`. Old Zig UI in `src/` is reference only.
+Everything is Swift `PulseBar/`. The old Vercel Native SDK shell (`src/*.zig`, `app.zon`, `assets/`) was deleted in 0.22 — recover from git history if ever needed.
 
 ## Ship
 
@@ -36,6 +36,20 @@ Gates (also in CI): `scripts/version_check.py`, `scripts/coverage_check.py`,
 
 Distribution needs `PULSE_SIGN_IDENTITY` (+ optional `PULSE_NOTARY_PROFILE`);
 without it the build is ad-hoc signed and Gatekeeper blocks it elsewhere.
+
+## Release
+
+```bash
+# 1. write the '## x.y.z' section in CHANGELOG.md first — release.sh refuses without it
+./scripts/release.sh 0.23.0          # dry run: bump + gates + diff
+./scripts/release.sh 0.23.0 --tag    # commit + annotated tag
+git push && git push --tags          # tag push triggers the release workflow
+```
+
+`.github/workflows/release.yml` verifies the tag matches `PulseVersion.semver`,
+runs the gates and tests, packages the DMG and publishes a GitHub Release whose
+body is that version's CHANGELOG section. The in-app update check reads those
+Releases, so a version that never got tagged is invisible to users.
 
 Debug log: `~/Library/Application Support/Pulse/debug.log`
 

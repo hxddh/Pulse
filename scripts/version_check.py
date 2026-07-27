@@ -4,10 +4,10 @@
 `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver` is the truth.
 Everything else that carries a version string must agree with it:
 
-  - app.zon                → .version
-  - src/version.zig        → semver + major/minor/patch
   - CHANGELOG.md           → newest `## x.y.z` heading
   - README.md              → the `**版本：`x.y.z`**` badge
+
+(The legacy Zig shell carried two more copies; that tree was removed in 0.22.)
 
 Run: python3 scripts/version_check.py [--fix]
 Exit 1 on any mismatch (with --fix, rewrites the followers and exits 0).
@@ -20,8 +20,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"
-APP_ZON = ROOT / "app.zon"
-VERSION_ZIG = ROOT / "src" / "version.zig"
 CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
 
@@ -60,30 +58,9 @@ def fix(path: Path, pattern: str, want: str) -> None:
 
 
 FOLLOWERS: list[tuple[Path, str, str]] = [
-    (APP_ZON, r'\.version = "([^"]+)"', "app.zon .version"),
-    (VERSION_ZIG, r'pub const semver: \[\]const u8 = "([^"]+)"', "src/version.zig semver"),
     (CHANGELOG, r"(?m)^## (\d+\.\d+\.\d+)", "CHANGELOG newest heading"),
     (README, r"\*\*版本：`([^`]+)`\*\*", "README version badge"),
 ]
-
-
-def fix_version_zig_parts(want: str) -> None:
-    major, minor, patch = want.split(".")
-    text = VERSION_ZIG.read_text(encoding="utf-8")
-    text = re.sub(r"pub const major: u32 = \d+;", f"pub const major: u32 = {major};", text)
-    text = re.sub(r"pub const minor: u32 = \d+;", f"pub const minor: u32 = {minor};", text)
-    text = re.sub(r"pub const patch: u32 = \d+;", f"pub const patch: u32 = {patch};", text)
-    VERSION_ZIG.write_text(text, encoding="utf-8")
-
-
-def check_version_zig_parts(want: str) -> tuple[bool, str]:
-    text = VERSION_ZIG.read_text(encoding="utf-8")
-    parts = []
-    for name in ("major", "minor", "patch"):
-        m = re.search(rf"pub const {name}: u32 = (\d+);", text)
-        parts.append(m.group(1) if m else "?")
-    found = ".".join(parts)
-    return found == want, found
 
 
 def main(argv: list[str]) -> int:
@@ -100,15 +77,6 @@ def main(argv: list[str]) -> int:
             print(f"fixed   {label}: {found} → {want}")
             continue
         failures.append(f"{label}: {found} (want {want})")
-
-    if VERSION_ZIG.exists():
-        ok, found = check_version_zig_parts(want)
-        if not ok:
-            if do_fix:
-                fix_version_zig_parts(want)
-                print(f"fixed   src/version.zig parts: {found} → {want}")
-            else:
-                failures.append(f"src/version.zig major/minor/patch: {found} (want {want})")
 
     if failures:
         print(f"version truth: {want}")

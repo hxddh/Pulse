@@ -116,8 +116,6 @@ enum L10n {
         case (.hotkeyHint, .zh): return "点击通知即可聚焦等待中的 Agent。"
         case (.agents, .en): return "Agents"
         case (.agents, .zh): return "Agents"
-        case (.waiting, .en): return "Waiting"
-        case (.waiting, .zh): return "等待中"
         case (.running, .en): return "Running"
         case (.running, .zh): return "运行中"
         case (.idleNotify, .en): return "All coding agents idle"
@@ -249,7 +247,7 @@ enum L10n {
         case general, liveUpdates, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, attentionBridgeHint, shortcuts, hotkeyHint, a11yHint
-        case agents, waiting, running, idleNotify, settingsTitle
+        case agents, running, idleNotify, settingsTitle
         case hooksNudge, waitingSignalNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
         case kindPermission, kindInput, kindWaiting
