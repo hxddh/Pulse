@@ -195,10 +195,9 @@
 1. **Apple Developer ID + 公证账号** —— `package.sh` 与 release workflow 已接好，缺证书。
    设成仓库 secret `PULSE_SIGN_IDENTITY`（可选 `PULSE_NOTARY_PROFILE`）即可生效；
    未设置时 Release 说明会自动附上「右键打开 / xattr」提示。
-2. **仓库当前是 private，应用内「检查更新」会拿到 404** —— `UpdateCheck` 用的是
-   未认证请求打 `api.github.com/repos/hxddh/Pulse/releases/latest`，private 仓库
-   对匿名请求返回 404。两条出路：把仓库转 public，或用 `Info.plist` 的
-   `PulseUpdateFeed` 指向一个可匿名访问的 feed。在此之前该功能会显示「检查失败」。
+2. ~~**仓库是 private，应用内「检查更新」会拿到 404**~~ —— **已解决**：
+   仓库已于 2026-07-27 转 public，`releases/latest` 匿名可读，功能自动生效。
+
 3. **`swift build` / `swift test` 需在 macOS 上跑** —— 本次改动在 Linux 容器完成，
    Swift 侧靠人工审查 + 结构校验；CI 的 macOS job 是第一道真正的编译验证。
 

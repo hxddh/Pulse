@@ -138,9 +138,9 @@ git push                               # CI 构建、打 tag、发布
 要产出别人能直接打开的包，设仓库 secret `PULSE_SIGN_IDENTITY`
 （可选 `PULSE_NOTARY_PROFILE` 触发公证）。未设置时 Release 说明会自动附上绕过提示。
 
-> 应用内的「检查更新」发的是**匿名**请求。仓库必须是 public，否则 GitHub 返回 404，
-> 该功能会一直显示「检查失败」。私有仓库可用 `Info.plist` 的 `PulseUpdateFeed`
-> 指向一个可匿名访问的 feed。
+> 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
+> 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
+> 否则 GitHub 会返回 404。
 
 ---
 
