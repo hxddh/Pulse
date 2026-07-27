@@ -725,78 +725,55 @@ final class StatusStore: ObservableObject {
             .appendingPathComponent("Library/Application Support/Pulse/settings.txt")
     }
 
+    /// Snapshot of the settings the store currently holds.
+    var currentSettings: PulseSettings {
+        PulseSettings(
+            autoProbe: autoProbe,
+            notifyOnIdle: notifyOnIdle,
+            notifyOnWaiting: notifyOnWaiting,
+            quietHoursEnabled: quietHoursEnabled,
+            quietStartMinute: quietStartMinute,
+            quietEndMinute: quietEndMinute,
+            launchAtLogin: launchAtLogin,
+            language: language,
+            updateCheckEnabled: updateCheckEnabled,
+            hotkey: hotkey,
+            mutedAgents: mutedAgents
+        )
+    }
+
+    func apply(_ s: PulseSettings) {
+        autoProbe = s.autoProbe
+        notifyOnIdle = s.notifyOnIdle
+        notifyOnWaiting = s.notifyOnWaiting
+        quietHoursEnabled = s.quietHoursEnabled
+        quietStartMinute = s.quietStartMinute
+        quietEndMinute = s.quietEndMinute
+        launchAtLogin = s.launchAtLogin
+        language = s.language
+        updateCheckEnabled = s.updateCheckEnabled
+        hotkey = s.hotkey
+        mutedAgents = s.mutedAgents
+    }
+
     func loadSettings() {
         guard let text = try? String(contentsOf: settingsURL(), encoding: .utf8) else {
             appliedLaunchAtLogin = launchAtLogin
             return
         }
-        // Pre-0.22 wrote whole hours; keep reading them so nobody loses a window.
-        var legacyStartHour: Int?
-        var legacyEndHour: Int?
-
-        for line in text.split(whereSeparator: \.isNewline) {
-            let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { continue }
-            let on = !(parts[1] == "0" || parts[1] == "false")
-            switch parts[0] {
-            case "auto": autoProbe = on
-            case "notify": notifyOnIdle = on
-            case "notifyWaiting": notifyOnWaiting = on
-            case "quiet": quietHoursEnabled = on
-            case "quietStart": legacyStartHour = Int(parts[1])
-            case "quietEnd": legacyEndHour = Int(parts[1])
-            case "quietStartMin": quietStartMinute = Int(parts[1]) ?? quietStartMinute
-            case "quietEndMin": quietEndMinute = Int(parts[1]) ?? quietEndMinute
-            case "login": launchAtLogin = on
-            case "updates": updateCheckEnabled = on
-            case "hotkey": hotkey = HotkeyChoice(rawValue: parts[1]) ?? .commandShiftP
-            case "mute":
-                mutedAgents = Set(
-                    parts[1].split(separator: ",")
-                        .compactMap { AgentID(rawValue: String($0)) }
-                )
-            case "lang":
-                language = AppLanguage(rawValue: parts[1]) ?? .auto
-            default: break
-            }
-        }
-        // Only migrate when the file predates the minute-precision keys.
-        if !text.contains("quietStartMin"), let h = legacyStartHour { quietStartMinute = h * 60 }
-        if !text.contains("quietEndMin"), let e = legacyEndHour { quietEndMinute = e * 60 }
-        quietStartMinute = Self.clampMinute(quietStartMinute)
-        quietEndMinute = Self.clampMinute(quietEndMinute)
-
-        DebugLog.write(
-            "settings auto=\(autoProbe) notifyIdle=\(notifyOnIdle) notifyWait=\(notifyOnWaiting) " +
-            "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) lang=\(language.rawValue) " +
-            "login=\(launchAtLogin) hotkey=\(hotkey.rawValue) muted=\(mutedAgents.count) updates=\(updateCheckEnabled)"
-        )
+        let parsed = PulseSettings.parse(text)
+        apply(parsed)
+        DebugLog.write("settings \(parsed.debugDescription)")
         // Launchd already reflects the persisted value at load; don't re-run it.
         appliedLaunchAtLogin = launchAtLogin
     }
 
-    static func clampMinute(_ m: Int) -> Int { min(24 * 60 - 1, max(0, m)) }
-
     func saveSettings() {
         let dir = settingsURL().deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        quietStartMinute = Self.clampMinute(quietStartMinute)
-        quietEndMinute = Self.clampMinute(quietEndMinute)
-        let muted = mutedAgents.map(\.rawValue).sorted().joined(separator: ",")
-        let body = """
-            auto=\(autoProbe ? 1 : 0)
-            notify=\(notifyOnIdle ? 1 : 0)
-            notifyWaiting=\(notifyOnWaiting ? 1 : 0)
-            quiet=\(quietHoursEnabled ? 1 : 0)
-            quietStartMin=\(quietStartMinute)
-            quietEndMin=\(quietEndMinute)
-            lang=\(language.rawValue)
-            login=\(launchAtLogin ? 1 : 0)
-            updates=\(updateCheckEnabled ? 1 : 0)
-            hotkey=\(hotkey.rawValue)
-            mute=\(muted)
-            """
-        try? body.write(to: settingsURL(), atomically: true, encoding: .utf8)
+        quietStartMinute = PulseSettings.clampMinute(quietStartMinute)
+        quietEndMinute = PulseSettings.clampMinute(quietEndMinute)
+        try? currentSettings.serialized().write(to: settingsURL(), atomically: true, encoding: .utf8)
         applyLaunchAtLoginIfChanged()
         applyHotkey()
         UpdateCheck.shared.startIfEnabled(store: self)
@@ -822,18 +799,8 @@ final class StatusStore: ObservableObject {
         saveSettings()
     }
 
-    /// Quiet window may wrap midnight (e.g. 22:30 → 08:00). Equal start/end = disabled.
     func isInQuietHours(now: Date = Date()) -> Bool {
-        guard quietHoursEnabled else { return false }
-        let start = Self.clampMinute(quietStartMinute)
-        let end = Self.clampMinute(quietEndMinute)
-        if start == end { return false }
-        let comps = Calendar.current.dateComponents([.hour, .minute], from: now)
-        let minute = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
-        if start < end {
-            return minute >= start && minute < end
-        }
-        return minute >= start || minute < end
+        currentSettings.isInQuietHours(now: now)
     }
 }
 

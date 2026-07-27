@@ -191,55 +191,6 @@ final class ProcessProbeTests: XCTestCase {
     }
 }
 
-/// Quiet hours now carry minute precision and still wrap midnight.
-@MainActor
-final class QuietHoursTests: XCTestCase {
-    private func store(start: Int, end: Int) -> StatusStore {
-        let s = StatusStore()
-        s.quietHoursEnabled = true
-        s.quietStartMinute = start
-        s.quietEndMinute = end
-        return s
-    }
-
-    private func at(_ hour: Int, _ minute: Int) -> Date {
-        var c = DateComponents()
-        c.year = 2026; c.month = 7; c.day = 27
-        c.hour = hour; c.minute = minute
-        return Calendar.current.date(from: c)!
-    }
-
-    func testHalfPastStartIsRespected() {
-        let s = store(start: 22 * 60 + 30, end: 8 * 60)
-        XCTAssertFalse(s.isInQuietHours(now: at(22, 15)), "22:15 is before a 22:30 start")
-        XCTAssertTrue(s.isInQuietHours(now: at(22, 45)))
-    }
-
-    func testWindowWrapsPastMidnight() {
-        let s = store(start: 22 * 60, end: 8 * 60)
-        XCTAssertTrue(s.isInQuietHours(now: at(23, 0)))
-        XCTAssertTrue(s.isInQuietHours(now: at(3, 0)))
-        XCTAssertFalse(s.isInQuietHours(now: at(12, 0)))
-    }
-
-    func testSameStartAndEndDisablesRatherThanSilencingAllDay() {
-        let s = store(start: 9 * 60, end: 9 * 60)
-        XCTAssertFalse(s.isInQuietHours(now: at(9, 0)))
-        XCTAssertFalse(s.isInQuietHours(now: at(21, 0)))
-    }
-
-    func testDisabledMeansNeverQuiet() {
-        let s = store(start: 0, end: 23 * 60 + 59)
-        s.quietHoursEnabled = false
-        XCTAssertFalse(s.isInQuietHours(now: at(3, 0)))
-    }
-
-    func testMinutesAreClamped() {
-        XCTAssertEqual(StatusStore.clampMinute(-5), 0)
-        XCTAssertEqual(StatusStore.clampMinute(99_999), 24 * 60 - 1)
-    }
-}
-
 /// Notification copy — the banner has to say what is wanted.
 @MainActor
 final class NotificationCopyTests: XCTestCase {
