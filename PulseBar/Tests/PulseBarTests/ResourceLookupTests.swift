@@ -262,25 +262,35 @@ final class TrayFoldTests: XCTestCase {
     }
 
     func testRecentFoldsWhenItIsNotTheWholeList() {
-        XCTAssertTrue(TrayFold.foldable(section: .recent, groupCount: 2, rowCount: 3))
+        XCTAssertTrue(TrayFold.foldable(section: .recent, groupCount: 2, rowCount: 3, totalRows: 6))
+    }
+
+    /// A 0.27 screenshot: three sessions, two folded, one row on screen.
+    /// Folding costs a click and hides content; it only pays when the screen
+    /// is the scarce thing, and at three rows it is not.
+    func testNothingFoldsWhileThePanelHasRoom() {
+        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 2, rowCount: 2, totalRows: 3))
+        XCTAssertFalse(
+            TrayFold.foldableProject(hasWaiting: false, groupCount: 2, rowCount: 2, totalRows: 3)
+        )
     }
 
     /// Folding the only group leaves a panel that says nothing.
     func testRecentDoesNotFoldWhenItIsAllThereIs() {
-        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 1, rowCount: 5))
+        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 1, rowCount: 5, totalRows: 9))
     }
 
     /// One row under a heading is already one line; folding it saves nothing
     /// and costs a click.
     func testASingleRowIsNotWorthFolding() {
-        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 3, rowCount: 1))
+        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 3, rowCount: 1, totalRows: 9))
     }
 
     /// Needs-you and Running are why the panel is open. They never fold.
     func testActionableSectionsNeverFold() {
         for section in [TraySection.needsYou, .running] {
             XCTAssertFalse(
-                TrayFold.foldable(section: section, groupCount: 3, rowCount: 4),
+                TrayFold.foldable(section: section, groupCount: 3, rowCount: 4, totalRows: 9),
                 "\(section) must stay open"
             )
         }
@@ -307,6 +317,23 @@ final class TrayFoldTests: XCTestCase {
 
     func testEmptyGroupHasNoSummary() {
         XCTAssertEqual(TrayFold.summary([]), "")
+    }
+
+    /// The heading read "No project 2 Pi · Amp" — two names and a 2.
+    func testTheCountGoesWhenTheNamesAlreadyGiveIt() {
+        XCTAssertTrue(TrayFold.summaryNamesEveryRow([row(.pi), row(.amp)]))
+    }
+
+    /// Three sessions of one agent summarise to one name, so the count is
+    /// still the only thing saying how many.
+    func testTheCountStaysWhenNamesCollapse() {
+        XCTAssertFalse(TrayFold.summaryNamesEveryRow([row(.claude), row(.claude), row(.claude)]))
+    }
+
+    /// Past the summary's own limit the names are already truncated.
+    func testTheCountStaysWhenTheSummaryIsTruncated() {
+        let rows = [row(.claude), row(.cursor), row(.amp), row(.aider)]
+        XCTAssertFalse(TrayFold.summaryNamesEveryRow(rows))
     }
 }
 
@@ -381,22 +408,28 @@ final class StallThresholdTests: XCTestCase {
 /// Project grouping was the one mode where nothing ever folded.
 final class ProjectFoldTests: XCTestCase {
     func testAQuietProjectFolds() {
-        XCTAssertTrue(TrayFold.foldableProject(hasWaiting: false, groupCount: 3, rowCount: 2))
+        XCTAssertTrue(
+            TrayFold.foldableProject(hasWaiting: false, groupCount: 3, rowCount: 2, totalRows: 6)
+        )
     }
 
     func testAProjectHoldingAWaitNeverFolds() {
         XCTAssertFalse(
-            TrayFold.foldableProject(hasWaiting: true, groupCount: 3, rowCount: 4),
+            TrayFold.foldableProject(hasWaiting: true, groupCount: 3, rowCount: 4, totalRows: 9),
             "folding away the thing that needs you defeats the product"
         )
     }
 
     /// Same two guards Recent already had.
     func testTheOnlyProjectIsNotFolded() {
-        XCTAssertFalse(TrayFold.foldableProject(hasWaiting: false, groupCount: 1, rowCount: 5))
+        XCTAssertFalse(
+            TrayFold.foldableProject(hasWaiting: false, groupCount: 1, rowCount: 5, totalRows: 9)
+        )
     }
 
     func testASingleRowProjectIsNotFolded() {
-        XCTAssertFalse(TrayFold.foldableProject(hasWaiting: false, groupCount: 4, rowCount: 1))
+        XCTAssertFalse(
+            TrayFold.foldableProject(hasWaiting: false, groupCount: 4, rowCount: 1, totalRows: 9)
+        )
     }
 }

@@ -115,6 +115,19 @@ private enum TrayChrome {
     static let padX: CGFloat = 14
     static let waitAccent = GlanceKind.waiting.lampColor
     static let runAccent = GlanceKind.running.lampColor
+
+    /// The panel's own surface — opaque, and the only one.
+    ///
+    /// 0.27 screenshots showed the same panel turning blue over a blue
+    /// wallpaper and flat grey over a dark desktop, because the content sat
+    /// directly on the popover's vibrancy. Legibility became a function of the
+    /// user's desktop picture: the green header read as green-on-saturated-blue
+    /// in one and was nearly invisible in the other.
+    ///
+    /// Translucency is not worth that. An accent-coloured word has to be
+    /// readable on every machine, and `windowBackgroundColor` already tracks
+    /// light and dark on its own.
+    static let surface = Color(nsColor: .windowBackgroundColor)
 }
 
 private struct StatusChip: View {
@@ -178,6 +191,8 @@ private struct SectionHeader: View {
     /// rows are not there to answer it.
     var summary: String = ""
     var toggle: (() -> Void)?
+    /// False when `summary` already names every row in the group.
+    var showCount = true
 
     var body: some View {
         let line = HStack(spacing: 6) {
@@ -188,10 +203,14 @@ private struct SectionHeader: View {
             }
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-            Text("\(count)")
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .opacity(0.7)
+            // "No project 2 Pi · Amp" — two names and a 2. The count only
+            // earns its place when the names do not already give it.
+            if showCount {
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .opacity(0.7)
+            }
             if !summary.isEmpty {
                 Text(summary)
                     .font(.system(size: 11))
@@ -206,7 +225,14 @@ private struct SectionHeader: View {
         .padding(.top, 12)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thickMaterial)
+        // Same surface as the panel, not a material on top of it.
+        //
+        // `.thickMaterial` here made the heading the *brightest* block in the
+        // panel — brighter than the rows it was separating, and carrying the
+        // least important information on screen. It still has to be opaque,
+        // because it is pinned and rows scroll underneath it; it just must not
+        // be a different value.
+        .background(TrayChrome.surface)
 
         if let toggle {
             Button(action: toggle) { line.contentShape(Rectangle()) }
@@ -286,6 +312,14 @@ struct TrayPanel: View {
             actions
         }
         .frame(width: TrayChrome.width)
+        // The window was drawing about 110pt taller than the panel, leaving a
+        // band of bare window above and below it — visible as a different
+        // surface in both screenshots, and confirmed as window rather than
+        // content because clicking it dismisses the popover. Asking for the
+        // ideal height makes the window size to what the panel actually draws
+        // instead of to a stale or speculative measurement.
+        .fixedSize(horizontal: false, vertical: true)
+        .background(TrayChrome.surface)
         // Tray visibility drives the probe cadence — fast while being read,
         // slow (or parked) when nobody is looking.
         .onAppear { store.trayDidAppear() }
@@ -293,13 +327,14 @@ struct TrayPanel: View {
     }
 
     private var header: some View {
+        // No lamp here.
+        //
+        // The menu-bar mark sits about 40px above this line, same shape, same
+        // colour, driven by the same `glance`. The header's job is to say what
+        // the rows cannot; repeating the thing the user just clicked on is the
+        // opposite. The status word keeps the glance colour, which is the part
+        // that carried information.
         HStack(alignment: .top, spacing: 10) {
-            PulseMarkView(
-                size: 18,
-                tone: store.snapshot.glance.lampColor
-            )
-            .padding(.top, 1)
-
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if store.isRefreshing {
@@ -456,7 +491,8 @@ struct TrayPanel: View {
                     foldable: TrayFold.foldable(
                         section: section,
                         groupCount: present.count,
-                        rowCount: group.count
+                        rowCount: group.count,
+                        totalRows: rows.count
                     )
                 )
             }
@@ -498,7 +534,8 @@ struct TrayPanel: View {
                     foldable: TrayFold.foldableProject(
                         hasWaiting: hasWaiting,
                         groupCount: ranked.count,
-                        rowCount: group.count
+                        rowCount: group.count,
+                        totalRows: rows.count
                     )
                 )
             }
@@ -548,7 +585,8 @@ struct TrayPanel: View {
                                     accent: group.accent,
                                     collapsed: group.foldable ? folded : nil,
                                     summary: folded ? TrayFold.summary(group.rows) : "",
-                                    toggle: group.foldable ? { toggleFold(group.id) } : nil
+                                    toggle: group.foldable ? { toggleFold(group.id) } : nil,
+                                    showCount: !(folded && TrayFold.summaryNamesEveryRow(group.rows))
                                 )
                             }
                         }

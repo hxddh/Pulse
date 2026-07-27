@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.27.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.27.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -107,7 +107,7 @@ Pulse 把这件事变成余光可见：
 
 ```bash
 cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test    # 194 个单元测试
+cd PulseBar && swift test    # 198 个单元测试
 ```
 
 五个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
