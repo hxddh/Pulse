@@ -107,7 +107,7 @@ Pulse 把这件事变成余光可见：
 
 ```bash
 cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test    # 177 个单元测试
+cd PulseBar && swift test    # 194 个单元测试
 ```
 
 五个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
@@ -188,4 +188,5 @@ git push                               # CI 构建、打 tag、发布
 | [`docs/plan-0.23.md`](docs/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
 | [`docs/plan-0.24.md`](docs/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
 | [`docs/plan-0.25.md`](docs/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
+| [`docs/plan-0.27.md`](docs/plan-0.27.md) | 0.27 计划 —— 读完面板之后你能做什么 |
 | [`docs/review-0.21.md`](docs/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |
