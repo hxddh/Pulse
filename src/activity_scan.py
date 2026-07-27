@@ -1495,7 +1495,7 @@ def command_code_activities() -> list[tuple]:
         text = tail_bytes(jl, 120_000) if jl.is_file() else ""
         if not title:
             title = session_title_from_text(text) or "Command Code"
-        # Project key from path: projects/users-rustjia/... → cwd unknown; use folder
+        # Project key from path: projects/users-<name>/... → cwd unknown; use folder
         project = short_project(mp.parent.name)
         cwd = ""
         # settings.json sibling sometimes has cwd

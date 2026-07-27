@@ -138,11 +138,23 @@ git push                               # CI 构建、打 tag、发布
 要产出别人能直接打开的包，设仓库 secret `PULSE_SIGN_IDENTITY`
 （可选 `PULSE_NOTARY_PROFILE` 触发公证）。未设置时 Release 说明会自动附上绕过提示。
 
-> **已知限制**：仓库当前是 private，而应用内的「检查更新」发的是匿名请求，
-> GitHub 对匿名请求返回 404，所以该功能会一直显示「检查失败」。
-> 转 public，或用 `Info.plist` 的 `PulseUpdateFeed` 指向可匿名访问的 feed 即可解决。
+> 应用内的「检查更新」发的是**匿名**请求。仓库必须是 public，否则 GitHub 返回 404，
+> 该功能会一直显示「检查失败」。私有仓库可用 `Info.plist` 的 `PulseUpdateFeed`
+> 指向一个可匿名访问的 feed。
 
 ---
+
+## 贡献
+
+欢迎 issue 和 PR。动手前请先读 [`AGENTS.md`](AGENTS.md) 里的**不变量**——
+那几条是产品决策（不假装 Waiting、不做配额 HUD、不在托盘里批准），
+不是可以顺手改掉的偏好。
+
+改动请保证 `swift test` 与三个门禁通过；CI 会替你再跑一遍。
+
+## 许可
+
+[MIT](LICENSE)。
 
 ## 文档
 

@@ -65,7 +65,7 @@ Closes every open finding in [`docs/review-0.21.md`](docs/review-0.21.md).
 - **Claude settings.json 覆盖**：解析失败时曾把用户全部设置替换成只剩 hooks。改为拒绝写入并保留 `.pulse-backup`
 - **调试日志无限增长**：`debug.log` 每次探测写 ~5 行且永不轮转（约 20 MB/天）。改为 2 MB 轮转保留一代
 - **等待时长未本地化**：中文界面下显示 `2m` / `30s`。改为跟随语言
-- **写死开发机路径**：`/Users/rustjia/*` 从 aider 扫描根移除，改用 `PULSE_AIDER_ROOTS`
+- **写死开发机路径**：某个开发者的 `/Users/<name>/*` 从 aider 扫描根移除，改用 `PULSE_AIDER_ROOTS`
 - **watcher fd 竞态**：`DispatchSource` 的 fd 改为在 cancel handler 内关闭
 - **覆盖门禁**：新增 `AgentID` 未登记到 `coverage_check.py` 时报错，不再静默缩小覆盖面
 

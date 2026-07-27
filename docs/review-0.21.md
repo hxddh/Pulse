@@ -112,7 +112,7 @@
 | --- | --- | --- | --- |
 | B5 | `StatusStore.DebugLog` | 每次探测写约 5 行，永不轮转。按 3s 周期约 **20 MB/天**、不清理 | **已修**：2 MB 轮转保留一代；`ISO8601DateFormatter` 也不再每行新建 |
 | B6 | `Models.waitDurationLabel` | 返回硬编码 `now/30s/2m/3h`，中文界面下 Waiting 行显示英文单位 | **已修**：移入 `StatusStore`，走 L10n |
-| B7 | `activity_scan.py` `aider_activities` | 扫描根写死 `/Users/rustjia/Pulse`、`/Users/rustjia/Documents`、`/Users/rustjia/Desktop` —— 开发机路径进了发布包 | **已修**：删除，改为 `PULSE_AIDER_ROOTS` 环境变量 |
+| B7 | `activity_scan.py` `aider_activities` | 扫描根写死了某个开发者的 `/Users/<name>/Pulse`、`.../Documents`、`.../Desktop` —— 开发机路径进了发布包 | **已修**：删除，改为 `PULSE_AIDER_ROOTS` 环境变量 |
 | B8 | `AttentionWatcher` | `DispatchSource` 的 fd 在 `cancel()` 之后立即 `close()`。取消是异步的，GCD 仍可能持有该 fd —— 经典 fd 竞态 / 复用风险 | **已修**：fd 只在 cancel handler 内关闭 |
 | B9 | `coverage_check.py` | 读了 `MODELS` 却从不使用；`probe_ids` 算出来只打印不校验。新增 `AgentID` 时门禁静默缩小 | **已修**：新增 `AgentID` 未登记到 `EXPECTED` 即失败 |
 
