@@ -90,7 +90,7 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 - 状态词跟 Glance 同色（红 / 绿 / 灰）；不可点、不放开关。
 - Header **不**拼 agent 名、原因、tokens。
 
-### ② Agent 行（等待优先 → 有会话标题 → 进程检测 → 最近；最多 4）
+### ② Agent 行（等待优先 → 有会话标题 → 进程检测 → 最近；最多 5 行，每 Agent 最多 4 个会话）
 
 **主行（主语 = 会话）：**  
 `{会话标题 | 检测到进程 | 项目}` + 右侧状态芯片
@@ -135,29 +135,35 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 ### 分区（自上而下）
 
 1. **上下文（可选，矮）** — 一行状态 + 上次更新；无 Agent 时一句引导。
-2. **设置**
-   - 实时更新（switch）
-   - 全部空闲时通知（switch）
-   - 新的 Waiting 时通知（switch）
-   - 安静时段（仅抑制空闲通知；Waiting 仍可发）
-   - 语言：**弹出菜单或三段**（跟随系统 / English / 中文），禁止按钮循环
-3. **连接**
+2. **通用**
+   - 实时更新（switch）· 登录时启动（switch）· 语言（弹出菜单，禁止按钮循环）
+3. **通知**（0.22 拆为独立分区）
+   - 全部空闲时通知 / 新的 Waiting 时通知（switch）
+   - **权限被拒时**：两个开关置灰 + 一行说明 + 「打开系统设置」按钮。
+     静默失效是不可接受的 —— 开关显示「开」就必须真的会响。
+   - 安静时段（仅抑制空闲通知；Waiting 仍可发），**精确到分钟**
+   - 按 Agent 静音（折叠）：静音只停通知，列表照常显示
+4. **连接**
    - 说明 Waiting 依赖 hooks（2 行内）
-   - 主按钮：安装连接
+   - 主按钮：安装连接；已安装时并列「移除连接」（只删 Pulse 条目）
    - 状态反馈：已安装 / 失败（footer 或行内，不抢主层级）
    - 一句可选 attention 桥提示（Droid/Kimi → `docs/attention-bridge.md`）
-4. **关于** — 三行，够写 bug 报告即可：
+5. **快捷键** — 唤出 Pulse 的组合键可选；被占用时明确说「已被其他应用占用」，
+   不再一律归咎辅助功能权限
+6. **最近的等待**（有记录才出现）— 已结束的等待，最多 12 条
+7. **关于** — 够写 bug 报告即可：
    - `Pulse x.y.z`（`swift run` 显示 `x.y.z-dev`；版本不一致显示 `x.y.z≠bundle`）
    - 构建行：`{git short sha} · {构建日期}`，无指纹时显示「开发构建」；可选中复制
    - 「复制诊断信息」按钮 —— 版本 / 构建 / macOS / 语言 / hooks 状态 / 前 8 行状态
    - 版本不一致时补一句橙色提示，指向 `PulseBar/Scripts/package.sh`
+   - 检查更新（switch）+ 状态行；有新版时给「打开发布页」
 
 ### 视觉（在 Native canvas 约束下尽量靠 HIG）
 - 字阶：分区小标题 muted；正文 regular；避免全页 heading。
 - 间距：分区 20–24、行内 12；少用「大卡片套大卡片」。
 - 设置行：左标签、右控件，像系统 Form。
 - 中文：必须稳定 CJK 字体；失败时回退英文标签并提示，禁止豆腐字当正式体验。
-- 窗口：固定偏窄（约 360–380）、可 hide；标题栏简洁，刷新可保留为 toolbar 小按钮。
+- 窗口：**420–460 宽**、可 hide；标题栏简洁。0.22 起分区变多，360 已放不下设置行。
 
 ### 禁止
 - Simulate / debug 控件出现在正式 Preferences
@@ -181,8 +187,25 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 - [ ] Prefs 打开后，3 秒内能改完语言或通知，无需滚动读小说
 - [ ] 关 Prefs 后进程与 tray 仍在（hide，非 destroy）
 
+### 能耗（0.22 起为硬约束）
+常驻菜单栏工具被系统标记为耗电大户等于定位破产。探测节奏必须跟随状态：
+
+| 状态 | 间隔 |
+| --- | --- |
+| Waiting | 2s |
+| Running | 5s |
+| 仅最近会话 | 15s |
+| 空 | 30s |
+
+- 托盘打开时最快 2s；低电量模式一律 ×2；**息屏 / 锁屏停表**（attention 文件变化仍唤醒）
+- 昂贵的 Python harvest 与便宜的 `ps` probe 解耦，按节奏跳过；
+  进程指纹变化 / 手动刷新 / attention 变化时强制采集
+- 落点：`ProbeSchedule.swift`（纯策略，有测试）+ `PowerMonitor.swift`
+
 ### 通知
 - 触发：空闲（全灭）· 新 Waiting（边沿触发）
+- 内容：标题 `{Agent} · {项目}`，正文 `{原因} · {消息}`。
+  只说「需要你处理」而不说要什么，用户仍得切过去才知道 —— 不算闭环。
 - Prefs：空闲通知 / Waiting 通知分开关
 - 安静时段：只抑制空闲通知；Waiting 边沿仍可发（产品选择）
 
@@ -204,12 +227,12 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 
 ### P1 — 菜单栏闭环
 1. Waiting 行可行动（开项目 / 显式「已处理」清信号）. → **已做**（cwd 可开项目；清除等待）
-2. 通知改为可点击. → **未做**（SDK/osascript 无点击回调）
+2. 通知改为可点击. → **已做**（UNUserNotificationCenter 回调 → 聚焦对应会话）
 3. Launch at Login. → **已做**（LaunchAgent）
 
 ### P2 — 会话级（产品护城河）
-1. Claude + Codex 先做 session 标题 / 项目. → **已做**（标题 + 最多 2 会话/项目 + cwd）
-2. 多开同名可区分. → **部分**（项目折入标题；同 Agent 仍一行）
+1. Claude + Codex 先做 session 标题 / 项目. → **已做**（标题 + 每 Agent 最多 4 会话 + cwd）
+2. 多开同名可区分. → **已做**（同 Agent 多会话独立成行；超出上限显式提示「另有 N 个会话未显示」）
 3. 广覆盖 probe 保留为「有人在」，会话层覆盖「在干什么」. → **已做方向**
 
 ---
@@ -239,7 +262,10 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 | 版本 / 构建指纹 | `PulseBar/.../Models.swift` → `PulseVersion`；`scripts/version_check.py` |
 | 诊断复制 | `PulseBar/.../StatusStore.swift` → `diagnosticsText()` |
 | Harvest / hooks | `src/activity_scan.py`, `src/pulse_hook.py`（打包同步进 app） |
+| 探测节奏 / 能耗 | `PulseBar/.../ProbeSchedule.swift` + `PowerMonitor.swift` |
+| 更新检查 | `PulseBar/.../UpdateCheck.swift` |
+| 测试 | `PulseBar/Tests/PulseBarTests/` |
 
-Zig 树（`src/*.zig`）仅作参考实现，不以之为 Swift 壳验收依据。
+Zig 树（`src/*.zig`）是被替换掉的旧 Vercel Native SDK 壳，仅存作参考，不以之为验收依据。
 
 本文是后续 UI/UE 改动的验收依据；实现时改行为须同步改本节，避免文档漂移。

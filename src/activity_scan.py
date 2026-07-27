@@ -65,10 +65,21 @@ def decode_claude_project_dir(name: str) -> str:
 
 
 def tail_bytes(path: Path, n: int = 400_000) -> str:
+    """Read at most the last `n` bytes.
+
+    This used to be `path.read_bytes()[-n:]` — it pulled entire session files
+    into memory before slicing. Claude `.jsonl` transcripts reach tens of MB and
+    this runs on every probe tick, so seek to the tail instead.
+    """
     try:
-        data = path.read_bytes()
-        if len(data) > n:
-            data = data[-n:]
+        with path.open("rb") as f:
+            try:
+                size = os.fstat(f.fileno()).st_size
+            except OSError:
+                size = 0
+            if size > n:
+                f.seek(-n, os.SEEK_END)
+            data = f.read(n)
         return data.decode("utf-8", errors="replace")
     except OSError:
         return ""

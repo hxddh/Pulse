@@ -39,8 +39,12 @@ echo '{"notification_type":"permission","message":"Approve shell","session_id":"
 Clear a wait (same as tray Dismiss):
 
 ```bash
+# agent-wide: clears every session of that agent
 …/pulse_hook.py droid done
-# with session: write a done line that includes the session column
+
+# one session only — the session id must come in via stdin JSON,
+# the argv form cannot express it
+echo '{"session_id":"abc123"}' | …/pulse_hook.py droid done
 ```
 
 ## Minimal shell append (no Python)

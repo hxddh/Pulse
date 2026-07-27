@@ -65,13 +65,48 @@ enum ActivityHarvest {
         return nowMs - row.harvestMs <= freshWindowMs
     }
 
-    /// `unreliable` → caller must keep lastGoodHarvest (timeout or hard fail).
+    /// Thread-safe sink for a child process pipe.
+    private final class PipeSink {
+        private let lock = NSLock()
+        private var data = Data()
+
+        func append(_ chunk: Data) {
+            lock.lock()
+            data.append(chunk)
+            lock.unlock()
+        }
+
+        var text: String {
+            lock.lock()
+            defer { lock.unlock() }
+            return String(data: data, encoding: .utf8) ?? ""
+        }
+    }
+
+    /// Drain a pipe on its own thread so the child never blocks on a full
+    /// buffer. Reading only after `waitUntilExit` deadlocks once the child
+    /// writes more than the 64 KB pipe capacity — which is exactly what a
+    /// many-agent scan does.
+    private static func drain(_ handle: FileHandle, into sink: PipeSink, done: DispatchSemaphore) {
+        Thread.detachNewThread {
+            while true {
+                let chunk = handle.availableData
+                if chunk.isEmpty { break }
+                sink.append(chunk)
+            }
+            done.signal()
+        }
+    }
+
+    /// `unreliable` → caller must keep lastGoodHarvest (hard fail or empty timeout).
+    ///
+    /// A timeout no longer throws away what already arrived: harvest streams one
+    /// complete line per agent, so partial output is still honest data.
     static func scan() -> (rows: [Row], unreliable: Bool) {
         guard let script = scriptURL() else {
             DebugLog.write("harvest scriptURL=nil")
             return ([], true)
         }
-        DebugLog.write("harvest script=\(script.path)")
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         task.arguments = [script.path]
@@ -79,44 +114,70 @@ enum ActivityHarvest {
         let err = Pipe()
         task.standardOutput = out
         task.standardError = err
+
+        let outSink = PipeSink()
+        let errSink = PipeSink()
+        let outDone = DispatchSemaphore(value: 0)
+        let errDone = DispatchSemaphore(value: 0)
+
         do {
             try task.run()
-            let deadline = Date().addingTimeInterval(harvestTimeoutSec)
-            while task.isRunning, Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            if task.isRunning {
-                task.terminate()
-                _ = out.fileHandleForReading.readDataToEndOfFile()
-                _ = err.fileHandleForReading.readDataToEndOfFile()
-                task.waitUntilExit()
-                DebugLog.write("harvest TIMEOUT \(harvestTimeoutSec)s — keep prior")
-                return ([], true)
-            }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            let errData = err.fileHandleForReading.readDataToEndOfFile()
-            task.waitUntilExit()
-            if task.terminationStatus != 0 {
-                let msg = String(data: errData, encoding: .utf8) ?? ""
-                DebugLog.write("harvest exit=\(task.terminationStatus) err=\(msg.prefix(200)) — keep prior")
-                return ([], true)
-            }
-            guard let text = String(data: data, encoding: .utf8) else {
-                DebugLog.write("harvest utf8 fail — keep prior")
-                return ([], true)
-            }
-            let rows = parse(text)
-            DebugLog.write("harvest parsed=\(rows.count)")
-            return (rows, false)
         } catch {
             DebugLog.write("harvest throw=\(error.localizedDescription) — keep prior")
             return ([], true)
         }
+
+        drain(out.fileHandleForReading, into: outSink, done: outDone)
+        drain(err.fileHandleForReading, into: errSink, done: errDone)
+
+        let deadline = Date().addingTimeInterval(harvestTimeoutSec)
+        var timedOut = false
+        while task.isRunning {
+            if Date() >= deadline {
+                timedOut = true
+                task.terminate()
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        task.waitUntilExit()
+        // Pipes close on child exit; these return promptly now that the child is gone.
+        _ = outDone.wait(timeout: .now() + 1.0)
+        _ = errDone.wait(timeout: .now() + 1.0)
+
+        let rows = parse(outSink.text)
+        let errText = errSink.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !errText.isEmpty {
+            // Per-agent harvest failures arrive here as `# pulse: <agent> …` lines.
+            for line in errText.split(whereSeparator: \.isNewline).prefix(8) {
+                DebugLog.write("harvest stderr \(line.prefix(180))")
+            }
+        }
+
+        if timedOut {
+            DebugLog.write("harvest TIMEOUT \(harvestTimeoutSec)s partial=\(rows.count)")
+            // Partial rows beat a frozen snapshot; only a truly empty run is unreliable.
+            return (rows, rows.isEmpty)
+        }
+        if task.terminationStatus != 0 {
+            DebugLog.write("harvest exit=\(task.terminationStatus) partial=\(rows.count)")
+            return (rows, rows.isEmpty)
+        }
+        DebugLog.write("harvest parsed=\(rows.count)")
+        return (rows, false)
     }
 
-    private static func parse(_ text: String) -> [Row] {
+    static func parse(_ text: String) -> [Row] {
         var out: [Row] = []
-        for line in text.split(whereSeparator: \.isNewline) {
+        // `emit` always terminates a row with a newline, so anything after the
+        // last one is a line we killed mid-write on timeout — never parse it.
+        let complete: Substring
+        if let lastNewline = text.lastIndex(where: \.isNewline) {
+            complete = text[text.startIndex...lastNewline]
+        } else {
+            complete = ""
+        }
+        for line in complete.split(whereSeparator: \.isNewline) {
             let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard cols.count >= 2, let id = mapAgent(cols[0]) else { continue }
             out.append(Row(
@@ -225,7 +286,12 @@ enum AttentionReader {
     }
 
     static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
-        let text = AttentionIO.readText()
+        parse(AttentionIO.readText(), nowMs: nowMs)
+    }
+
+    /// Pure TSV → entries. Split out from `load` so the last-event-wins,
+    /// stop-grace and TTL rules are testable without touching the filesystem.
+    static func parse(_ text: String, nowMs: Int64) -> [Entry] {
         guard !text.isEmpty else { return [] }
 
         var byKey: [String: Entry] = [:]

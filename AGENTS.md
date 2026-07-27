@@ -26,9 +26,16 @@ Primary UI: Swift `PulseBar/`. Old Zig UI in `src/` is reference only.
 ## Ship
 
 ```bash
-./PulseBar/Scripts/package.sh
+./PulseBar/Scripts/package.sh          # runs all three gates first
 open zig-out/package/Pulse.app
+(cd PulseBar && swift test)            # PulseBar unit tests
 ```
+
+Gates (also in CI): `scripts/version_check.py`, `scripts/coverage_check.py`,
+`scripts/matrix_check.py`.
+
+Distribution needs `PULSE_SIGN_IDENTITY` (+ optional `PULSE_NOTARY_PROFILE`);
+without it the build is ad-hoc signed and Gatekeeper blocks it elsewhere.
 
 Debug log: `~/Library/Application Support/Pulse/debug.log`
 
@@ -39,7 +46,9 @@ Debug log: `~/Library/Application Support/Pulse/debug.log`
 - No fake Waiting (hooks / `skill=pending` only)
 - No SessionStore / event bus rewrite
 - Do not expand hook installer to ~22 agents
+- Do not restore a fixed probe interval — cadence follows `ProbeSchedule`
+- Do not let a harvest failure blank the whole scan (per-agent `guard`)
 
-## Current IA (0.21+)
+## Current IA (0.22+)
 
 Glance traffic-light · session title as row hero · process-only rows de-ranked · whole-row click = focus.

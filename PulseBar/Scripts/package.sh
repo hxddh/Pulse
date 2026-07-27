@@ -20,6 +20,7 @@ done
 
 python3 "$ROOT/scripts/version_check.py"
 python3 "$ROOT/scripts/coverage_check.py"
+python3 "$ROOT/scripts/matrix_check.py"
 
 # Build identity stamped into Info.plist — PulseVersion reads it at runtime.
 GIT_COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -98,12 +99,33 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP"
+# Signing. Ad-hoc (`-`) is fine for local use but Gatekeeper blocks the DMG on
+# any other Mac. Set these to produce something actually distributable:
+#   PULSE_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
+#   PULSE_NOTARY_PROFILE=<notarytool keychain profile>   # optional
+SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
+# `--deep` is deprecated by Apple; sign nested code first, then the bundle.
+find "$APP/Contents" -type f -perm +111 -not -path "*/MacOS/PulseBar" -print0 2>/dev/null \
+  | xargs -0 -I{} codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" {} 2>/dev/null || true
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  codesign --force --sign - "$APP"
+  echo "warning:  ad-hoc signed — Gatekeeper will block this on other Macs."
+  echo "          set PULSE_SIGN_IDENTITY to a Developer ID to distribute."
+else
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+fi
 codesign --verify --verbose=2 "$APP"
 
 DMG="$ROOT/zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
 rm -f "$DMG"
 hdiutil create -volname "Pulse ${VERSION}" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
+
+if [[ -n "${PULSE_NOTARY_PROFILE:-}" && "$SIGN_IDENTITY" != "-" ]]; then
+  echo "notarizing ${DMG}..."
+  xcrun notarytool submit "$DMG" --keychain-profile "$PULSE_NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+  echo "notarized: stapled ticket attached"
+fi
 
 echo "version:  ${VERSION} (${GIT_COMMIT} · ${BUILD_DATE})"
 echo "packaged: ${APP}"

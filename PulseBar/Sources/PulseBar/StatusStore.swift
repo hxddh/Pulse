@@ -9,8 +9,9 @@ final class StatusStore: ObservableObject {
     @Published var notifyOnWaiting = true
     /// Quiet hours suppress idle notify only; Waiting edges still fire when notifyOnWaiting.
     @Published var quietHoursEnabled = false
-    @Published var quietStartHour: Int = 22
-    @Published var quietEndHour: Int = 8
+    /// Minutes since midnight — whole hours were too coarse for a 22:30 bedtime.
+    @Published var quietStartMinute: Int = 22 * 60
+    @Published var quietEndMinute: Int = 8 * 60
     @Published var launchAtLogin = false
     @Published var language: AppLanguage = .auto
     @Published var hooksStatus: HooksSupport.Status = .unknown
@@ -18,10 +19,50 @@ final class StatusStore: ObservableObject {
     @Published private(set) var isRefreshing = false
     /// Transient "Copied" confirmation on the diagnostics button.
     @Published private(set) var didCopyDiagnostics = false
+    /// Agents the user muted — no notifications, still shown in the tray.
+    @Published var mutedAgents: Set<AgentID> = []
+    @Published var hotkey: HotkeyChoice = .commandShiftP
+    /// False when the system refused the shortcut (another app owns it).
+    @Published private(set) var hotkeyRegistered = true
+    @Published var updateCheckEnabled = true
+    @Published var updateStatus: UpdateCheck.Status = .idle
+    /// Notification authorization — a denied prompt used to fail silently.
+    @Published private(set) var notifyAuthorized: Bool?
+    /// Waits that have already been resolved, newest first (P1-H).
+    @Published private(set) var waitHistory: [ResolvedWait] = []
+
+    /// A Waiting row that is no longer waiting — "did I miss something?".
+    struct ResolvedWait: Identifiable, Equatable {
+        var id: String { "\(rowKey)|\(Int(resolvedAt.timeIntervalSince1970))" }
+        var rowKey: String
+        var agent: AgentID
+        var title: String
+        var kind: String
+        var project: String
+        var resolvedAt: Date
+        var waitedSeconds: Double
+    }
+
+    /// Sessions kept per agent. Was hardcoded to 2, which made the third
+    /// concurrent Claude invisible with no hint that anything was dropped.
+    static let maxSessionsPerAgent = 4
+    /// Rows shown before the "and N more" fold.
+    static let maxVisibleRows = 5
 
     private var timer: Timer?
     private var cachedAll: [AgentRow] = []
     private var lastGoodHarvest: [ActivityHarvest.Row] = []
+    private let powerMonitor = PowerMonitor()
+    /// Tray panel is on screen — worth probing faster while the user reads it.
+    private var trayOpen = false
+    private var activity: ProbeSchedule.Activity = .empty
+    private var currentInterval: TimeInterval?
+    /// Live-process fingerprint; a change forces a harvest even off-cadence.
+    private var lastProcessSignature = ""
+    private var ticksSinceHarvest = Int.max
+    /// Last value actually pushed to launchd — avoids re-running launchctl
+    /// (two synchronous subprocesses) on every settings write.
+    private var appliedLaunchAtLogin: Bool?
     private var knownWaitingKeys: Set<String> = []
     /// First apply seeds waiting keys without firing edge notifications.
     private var waitingNotifySeeded = false
@@ -103,40 +144,157 @@ final class StatusStore: ObservableObject {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
-        PulseNotify.configure()
-        GlobalHotKey.install()
         loadSettings()
+        applyHotkey()
+        PulseNotify.configure { [weak self] granted in
+            Task { @MainActor in
+                self?.notifyAuthorized = granted
+                DebugLog.write("notify authorization granted=\(granted)")
+            }
+        }
         refresh(reason: "start")
-        rescheduleTimer(waiting: false)
+        rescheduleTimer()
         attentionWatcher.start { [weak self] in
             Task { @MainActor in
                 self?.refresh(reason: "attention")
             }
         }
+        powerMonitor.start { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.rescheduleTimer()
+                // Coming back from sleep/lock: catch up immediately.
+                if !self.powerMonitor.state.parked { self.refresh(reason: "wake") }
+            }
+        }
+        UpdateCheck.shared.startIfEnabled(store: self)
         DebugLog.write("start armed auto=\(autoProbe)")
     }
 
-    private func rescheduleTimer(waiting: Bool) {
+    /// launchctl unload+load are two blocking subprocesses; never run them on
+    /// the main thread, and never run them when nothing changed.
+    private func applyLaunchAtLoginIfChanged() {
+        guard appliedLaunchAtLogin != launchAtLogin else { return }
+        appliedLaunchAtLogin = launchAtLogin
+        let enabled = launchAtLogin
+        DispatchQueue.global(qos: .utility).async {
+            LoginItem.setEnabled(enabled)
+        }
+    }
+
+    /// Tray panel appeared — probe faster while the user is looking at it.
+    func trayDidAppear() {
+        trayOpen = true
+        rescheduleTimer()
+        refresh(reason: "trayOpen")
+    }
+
+    func trayDidDisappear() {
+        trayOpen = false
+        rescheduleTimer()
+    }
+
+    /// Current cadence, for Settings/diagnostics ("probing every 5s").
+    var probeIntervalDescription: String {
+        guard autoProbe else { return tr(.probePaused) }
+        guard let interval = currentInterval else { return tr(.probeParked) }
+        return String(format: tr(.probeEvery), Int(interval.rounded()))
+    }
+
+    private func rescheduleTimer() {
         timer?.invalidate()
-        guard autoProbe else { return }
-        let interval = waiting ? 1.5 : 3.0
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        timer = nil
+        guard autoProbe else {
+            currentInterval = nil
+            return
+        }
+        let interval = ProbeSchedule.interval(
+            activity: activity,
+            power: powerMonitor.state,
+            trayOpen: trayOpen
+        )
+        currentInterval = interval
+        guard let interval else {
+            DebugLog.write("probe parked (display asleep / locked)")
+            return
+        }
+        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.autoProbe else { return }
                 self.refresh(reason: "timer")
             }
         }
-        if let timer { RunLoop.main.add(timer, forMode: .common) }
+        // Let the system coalesce wakeups — meaningful battery win for a
+        // background poller that does not need millisecond precision.
+        t.tolerance = interval * 0.2
+        timer = t
+        RunLoop.main.add(t, forMode: .common)
     }
 
     func installHooks() {
         hooksStatus = .unknown
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let status = HooksSupport.install()
-            DispatchQueue.main.async {
-                AppServices.store.hooksStatus = status
+            Task { @MainActor in
+                self?.hooksStatus = status
             }
         }
+    }
+
+    func uninstallHooks() {
+        hooksStatus = .unknown
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let status = HooksSupport.uninstall()
+            Task { @MainActor in
+                self?.hooksStatus = status
+            }
+        }
+    }
+
+    var hooksInstalled: Bool {
+        switch hooksStatus {
+        case .installed, .installedBoth, .installedClaude, .installedCodex: return true
+        case .unknown, .missing, .failed: return false
+        }
+    }
+
+    /// Notification permission lives in System Settings, not in Pulse.
+    func openSystemNotificationSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")
+        if let url { NSWorkspace.shared.open(url) }
+    }
+
+    func checkForUpdatesNow() {
+        UpdateCheck.shared.check(store: self, force: true)
+    }
+
+    var updateStatusText: String {
+        switch updateStatus {
+        case .idle: return tr(.updateIdle)
+        case .checking: return tr(.updateChecking)
+        case .current: return tr(.updateCurrent)
+        case .available(let version, _): return String(format: tr(.updateAvailable), version)
+        case .failed(let message): return "\(tr(.updateFailed)) · \(message)"
+        }
+    }
+
+    var updateAvailableURL: URL? {
+        if case .available(_, let raw) = updateStatus, !raw.isEmpty {
+            return URL(string: raw)
+        }
+        return nil
+    }
+
+    /// `Permission · waited 4 分 · Pulse` for the resolved-wait list.
+    func historyDetail(_ entry: ResolvedWait) -> String {
+        var bits: [String] = []
+        if !entry.kind.isEmpty { bits.append(localizedWaitKind(entry.kind)) }
+        if entry.waitedSeconds >= 1 {
+            bits.append(String(format: tr(.waitedFor), durationLabel(seconds: entry.waitedSeconds)))
+        }
+        if !entry.project.isEmpty { bits.append(entry.project) }
+        bits.append(relative(entry.resolvedAt))
+        return bits.joined(separator: " · ")
     }
 
     func toggleShowAllAgents() {
@@ -163,23 +321,48 @@ final class StatusStore: ObservableObject {
         }
         DebugLog.write("refresh enqueue #\(ticket) reason=\(reason)")
 
+        // Harvest is a Python fork walking dozens of trees; probe is one `ps`.
+        // Only pay for harvest when something plausibly changed.
+        let forceHarvest = reason != "timer"
+        let priorSignature = lastProcessSignature
+        let ticks = ticksSinceHarvest
+        let everyN = ProbeSchedule.harvestEveryNTicks(activity: activity, trayOpen: trayOpen)
+
         scanQueue.async {
             let t0 = Date()
             let procs = ProcessProbe.scan()
-            let (harvestRows, unreliable) = ActivityHarvest.scan()
+            let signature = ProcessProbe.signature(procs)
+
+            let why: String
+            if forceHarvest {
+                why = "forced"
+            } else if signature != priorSignature {
+                why = "procChanged"
+            } else if ticks >= everyN {
+                why = "cadence"
+            } else {
+                why = "skipped"
+            }
+
+            let outcome: HarvestOutcome
+            if why == "skipped" {
+                outcome = .skipped
+            } else {
+                let (rows, unreliable) = ActivityHarvest.scan()
+                outcome = unreliable ? .failed : .fresh(rows)
+            }
+
             let attention = AttentionReader.load()
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DebugLog.write(
-                "scan done #\(ticket) \(ms)ms procs=\(procs.count) acts=\(harvestRows.count) " +
-                "unreliable=\(unreliable) att=\(attention.count) " +
-                "procIds=\(procs.map(\.id.rawValue).joined(separator: ",")) " +
-                "actIds=\(harvestRows.map(\.id.rawValue).joined(separator: ","))"
+                "scan done #\(ticket) \(ms)ms harvest=\(why) procs=\(procs.count) " +
+                "att=\(attention.count) procIds=\(procs.map(\.id.rawValue).joined(separator: ","))"
             )
             DispatchQueue.main.async {
                 AppServices.store.applyScan(
                     procs: procs,
-                    activities: harvestRows,
-                    harvestUnreliable: unreliable,
+                    harvest: outcome,
+                    processSignature: signature,
                     attention: attention,
                     ticket: ticket,
                     clearRefreshing: showSpinner
@@ -196,10 +379,20 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    /// What the background scan managed to get from `activity_scan.py`.
+    enum HarvestOutcome {
+        /// Ran and produced rows (possibly partial after a timeout).
+        case fresh([ActivityHarvest.Row])
+        /// Deliberately not run this tick — cached rows are still current.
+        case skipped
+        /// Ran and failed; cached rows may be stale.
+        case failed
+    }
+
     fileprivate func applyScan(
         procs: [ProcessProbe.Hit],
-        activities: [ActivityHarvest.Row],
-        harvestUnreliable: Bool,
+        harvest: HarvestOutcome,
+        processSignature: String,
         attention: [AttentionReader.Entry],
         ticket: UInt64,
         clearRefreshing: Bool = false
@@ -212,12 +405,25 @@ final class StatusStore: ObservableObject {
             return
         }
         lastAppliedTicket = ticket
+        lastProcessSignature = processSignature
 
         let previousLampBusy = cachedAll.contains { $0.waiting || $0.liveProcess || $0.subRunning > 0 }
         let previousWaitingKeys = knownWaitingKeys
+        // Captured before `cachedAll` is replaced — wait history needs the old titles.
+        let previousRows = cachedAll
 
         let acts: [ActivityHarvest.Row]
-        if harvestUnreliable {
+        switch harvest {
+        case .fresh(let rows):
+            acts = rows
+            lastGoodHarvest = rows
+            ticksSinceHarvest = 0
+        case .skipped:
+            // Cached rows are at most a couple of ticks old — keep them whole,
+            // pending included, or Waiting would flicker off between harvests.
+            acts = lastGoodHarvest
+            ticksSinceHarvest = ticksSinceHarvest == Int.max ? 1 : ticksSinceHarvest + 1
+        case .failed:
             // Keep last good shape, but never freeze Needs-you on stale pending.
             acts = lastGoodHarvest.map { row in
                 guard row.skill == "pending" else { return row }
@@ -225,18 +431,21 @@ final class StatusStore: ObservableObject {
                 cleared.skill = ""
                 return cleared
             }
+            ticksSinceHarvest = 0
             DebugLog.write("harvest unreliable → reuse \(acts.count) cached rows (pending stripped)")
-        } else {
-            acts = activities
-            lastGoodHarvest = activities
         }
+        let harvestUnreliable: Bool = {
+            if case .failed = harvest { return true }
+            return false
+        }()
 
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         var rowsByKey: [String: AgentRow] = [:]
         var liveHits: [AgentID: ProcessProbe.Hit] = [:]
         var perAgentSessionCount: [AgentID: Int] = [:]
+        var droppedSessionsByAgent: [AgentID: Int] = [:]
 
-        for hit in procs where hit.id.isSurface {
+        for hit in procs {
             // Prefer richer hit if duplicate agent ids appear.
             if let existing = liveHits[hit.id] {
                 if existing.tty.isEmpty, !hit.tty.isEmpty { liveHits[hit.id] = hit }
@@ -260,7 +469,7 @@ final class StatusStore: ObservableObject {
             liveHits.removeValue(forKey: .cursorAgent)
         }
 
-        for act in acts where act.id.isSurface {
+        for act in acts {
             var agentID = act.id
             if agentID == .cursorAgent { agentID = .cursor }
 
@@ -271,7 +480,11 @@ final class StatusStore: ObservableObject {
             }
 
             let count = perAgentSessionCount[agentID, default: 0]
-            if count >= 2 { continue }
+            if count >= Self.maxSessionsPerAgent {
+                // Don't drop it silently — the tray says how many were held back.
+                droppedSessionsByAgent[agentID, default: 0] += 1
+                continue
+            }
 
             let key = ActivityHarvest.sessionKey(
                 id: agentID,
@@ -318,7 +531,7 @@ final class StatusStore: ObservableObject {
         }
 
         // Attach live process to at most one session row per agent (no smear).
-        for (agentID, hit) in liveHits where agentID.isSurface {
+        for (agentID, hit) in liveHits {
             let keys = rowsByKey.keys.filter { rowsByKey[$0]?.agent == agentID }
             if keys.isEmpty {
                 let key = agentID.rawValue
@@ -389,6 +602,24 @@ final class StatusStore: ObservableObject {
         }
 
         var all = Array(rowsByKey.values).filter { $0.processCount > 0 || $0.waiting || $0.subRunning > 0 }
+
+        // Resolve focus once per scan. Doing this per row inside the SwiftUI body
+        // meant enumerating running apps and stat-ing the disk on every redraw.
+        let terminalEnv = TerminalFocus.Environment.current()
+        let fm = FileManager.default
+        for i in all.indices {
+            let row = all[i]
+            let folderPath = row.cwd.isEmpty ? row.project : row.cwd
+            let cwdExists = !row.cwd.isEmpty && fm.fileExists(atPath: row.cwd)
+            all[i].canOpenFolder = !folderPath.isEmpty && fm.fileExists(atPath: folderPath)
+            all[i].focusTier = TerminalFocus.focusTier(
+                tty: row.tty,
+                viaWarp: row.viaWarp,
+                cwdExists: cwdExists,
+                env: terminalEnv
+            )
+        }
+
         // Waiting → titled sessions → live process → recent; agent priority last.
         all.sort { a, b in
             if a.waiting != b.waiting { return a.waiting && !b.waiting }
@@ -399,8 +630,19 @@ final class StatusStore: ObservableObject {
             let rb = AgentID.priority.firstIndex(of: b.agent) ?? 999
             return ra < rb
         }
+        // Attribute held-back sessions to that agent's top row, so the badge
+        // appears once rather than on every sibling session.
+        var creditedAgents: Set<AgentID> = []
+        for i in all.indices {
+            let agent = all[i].agent
+            guard let dropped = droppedSessionsByAgent[agent], dropped > 0 else { continue }
+            if creditedAgents.insert(agent).inserted {
+                all[i].hiddenSessions = dropped
+            }
+        }
+
         cachedAll = all
-        if showAllAgents, all.count <= 4 {
+        if showAllAgents, all.count <= Self.maxVisibleRows {
             showAllAgents = false
         }
 
@@ -485,14 +727,14 @@ final class StatusStore: ObservableObject {
         // Skip the first scan so launch doesn't flood for already-waiting rows.
         if notifyOnWaiting, waitingCount > 0, waitingNotifySeeded {
             let newcomers = knownWaitingKeys.subtracting(previousWaitingKeys)
-            if !newcomers.isEmpty {
-                let waiting = all.first(where: { newcomers.contains($0.rowKey) }) ?? all.first(where: \.waiting)
+            let candidates = all.filter { newcomers.contains($0.rowKey) && !mutedAgents.contains($0.agent) }
+            if let waiting = candidates.first {
                 PulseNotify.postWaiting(
-                    title: "Pulse",
-                    body: snap.tooltip,
-                    agent: waiting?.agent.rawValue ?? "",
-                    session: waiting?.sessionID ?? "",
-                    rowKey: waiting?.rowKey ?? ""
+                    title: notificationTitle(waiting),
+                    body: notificationBody(waiting),
+                    agent: waiting.agent.rawValue,
+                    session: waiting.sessionID,
+                    rowKey: waiting.rowKey
                 )
             }
         }
@@ -500,12 +742,31 @@ final class StatusStore: ObservableObject {
             waitingNotifySeeded = true
         }
 
+        recordResolvedWaits(previous: previousRows, current: all)
+
         snapshot = snap
         if clearRefreshing { isRefreshing = false }
-        rescheduleTimer(waiting: waitingCount > 0)
+
+        let previousActivity = activity
+        if waitingCount > 0 {
+            activity = .waiting
+        } else if liveRunning > 0 {
+            activity = .running
+        } else if recentOnly > 0 {
+            activity = .recent
+        } else {
+            activity = .empty
+        }
+        // Only re-arm when the cadence tier actually moved — a timer rebuilt on
+        // every tick never fires at its own interval.
+        if previousActivity != activity || timer == nil {
+            rescheduleTimer()
+        }
+
         DebugLog.write(
             "apply #\(ticket) rows=\(snap.rows.count)/\(snap.totalCount) glance=\(snap.glance) " +
-            "live=\(liveRunning) recent=\(recentOnly) wait=\(waitingCount) header=\(snap.header)"
+            "live=\(liveRunning) recent=\(recentOnly) wait=\(waitingCount) " +
+            "activity=\(activity) every=\(currentInterval.map { String(Int($0)) } ?? "parked")"
         )
     }
 
@@ -516,14 +777,67 @@ final class StatusStore: ObservableObject {
     }
 
     private func applyRows(into snap: inout PulseSnapshot) {
-        if showAllAgents || cachedAll.count <= 4 {
+        if showAllAgents || cachedAll.count <= Self.maxVisibleRows {
             snap.rows = cachedAll
             snap.hiddenCount = 0
         } else {
-            snap.rows = Array(cachedAll.prefix(4))
-            snap.hiddenCount = cachedAll.count - 4
+            snap.rows = Array(cachedAll.prefix(Self.maxVisibleRows))
+            snap.hiddenCount = cachedAll.count - Self.maxVisibleRows
         }
         snap.totalCount = cachedAll.count
+        // Sessions dropped by the per-agent cap are separate from folded rows.
+        snap.cappedSessions = cachedAll.reduce(0) { $0 + $1.hiddenSessions }
+    }
+
+    /// `Claude · Pulse` — who and where, so the banner is actionable at a glance.
+    func notificationTitle(_ row: AgentRow) -> String {
+        let project = AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
+        return project.isEmpty
+            ? row.agent.displayName
+            : "\(row.agent.displayName) · \(project)"
+    }
+
+    /// `Permission · Approve shell command` — the reason, not just "Needs you".
+    /// The old body was the glance tooltip, which never said what was wanted.
+    func notificationBody(_ row: AgentRow) -> String {
+        var bits: [String] = [
+            row.waitKind.isEmpty ? tr(.needsYou) : localizedWaitKind(row.waitKind)
+        ]
+        let msg = row.waitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !msg.isEmpty {
+            bits.append(msg.count > 120 ? String(msg.prefix(119)) + "…" : msg)
+        } else if let task = row.usefulTask {
+            bits.append(task.count > 120 ? String(task.prefix(119)) + "…" : task)
+        }
+        return bits.joined(separator: " · ")
+    }
+
+    /// Keep a short trail of waits that already cleared, so "I think something
+    /// pinged me while I was away" has an answer.
+    private func recordResolvedWaits(previous: [AgentRow], current: [AgentRow]) {
+        let stillWaiting = Set(current.filter(\.waiting).map(\.rowKey))
+        let now = Date()
+        var added = false
+        for row in previous where row.waiting && !stillWaiting.contains(row.rowKey) {
+            let entry = ResolvedWait(
+                rowKey: row.rowKey,
+                agent: row.agent,
+                title: row.usefulTask ?? AgentRow.shortProject(row.project),
+                kind: row.waitKind,
+                project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
+                resolvedAt: now,
+                waitedSeconds: row.waitAgeSeconds
+            )
+            waitHistory.insert(entry, at: 0)
+            added = true
+        }
+        if added, waitHistory.count > 12 {
+            waitHistory = Array(waitHistory.prefix(12))
+        }
+    }
+
+    func clearWaitHistory() {
+        waitHistory = []
     }
 
     func clearWaiting() {
@@ -547,7 +861,10 @@ final class StatusStore: ObservableObject {
     /// Human wait age in the resolved language (`2 分` / `2m`).
     func waitDurationLabel(_ row: AgentRow) -> String {
         guard row.waitSinceMs > 0 else { return "" }
-        let ago = row.waitAgeSeconds
+        return durationLabel(seconds: row.waitAgeSeconds)
+    }
+
+    func durationLabel(seconds ago: Double) -> String {
         if ago < 5 { return tr(.durNow) }
         if ago < 60 { return String(format: tr(.durSec), Int(ago)) }
         if ago < 3600 { return String(format: tr(.durMin), Int(ago / 60)) }
@@ -612,10 +929,14 @@ final class StatusStore: ObservableObject {
         guard !candidates.isEmpty else { return nil }
 
         if !att.session.isEmpty {
+            // `rowKey` elides long session ids (prefix…suffix), so a full id can
+            // never be a substring of it — that check silently never matched.
+            // Compare session ids directly, both directions for truncated forms.
             if let hit = candidates.first(where: {
-                $0.sessionID == att.session
-                    || $0.rowKey.contains(att.session)
-                    || (!$0.sessionID.isEmpty && att.session.contains($0.sessionID))
+                guard !$0.sessionID.isEmpty else { return false }
+                return $0.sessionID == att.session
+                    || att.session.hasPrefix($0.sessionID)
+                    || $0.sessionID.hasPrefix(att.session)
             }) {
                 return hit.rowKey
             }
@@ -672,7 +993,7 @@ final class StatusStore: ObservableObject {
             return
         }
         if !session.isEmpty, let row = cachedAll.first(where: {
-            $0.sessionID == session || $0.rowKey.contains(session)
+            !$0.sessionID.isEmpty && ($0.sessionID == session || session.hasPrefix($0.sessionID))
         }) {
             if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
             openProject(row)
@@ -723,7 +1044,14 @@ final class StatusStore: ObservableObject {
     }
 
     func loadSettings() {
-        guard let text = try? String(contentsOf: settingsURL(), encoding: .utf8) else { return }
+        guard let text = try? String(contentsOf: settingsURL(), encoding: .utf8) else {
+            appliedLaunchAtLogin = launchAtLogin
+            return
+        }
+        // Pre-0.22 wrote whole hours; keep reading them so nobody loses a window.
+        var legacyStartHour: Int?
+        var legacyEndHour: Int?
+
         for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { continue }
@@ -733,56 +1061,97 @@ final class StatusStore: ObservableObject {
             case "notify": notifyOnIdle = on
             case "notifyWaiting": notifyOnWaiting = on
             case "quiet": quietHoursEnabled = on
-            case "quietStart": quietStartHour = Int(parts[1]) ?? quietStartHour
-            case "quietEnd": quietEndHour = Int(parts[1]) ?? quietEndHour
+            case "quietStart": legacyStartHour = Int(parts[1])
+            case "quietEnd": legacyEndHour = Int(parts[1])
+            case "quietStartMin": quietStartMinute = Int(parts[1]) ?? quietStartMinute
+            case "quietEndMin": quietEndMinute = Int(parts[1]) ?? quietEndMinute
             case "login": launchAtLogin = on
+            case "updates": updateCheckEnabled = on
+            case "hotkey": hotkey = HotkeyChoice(rawValue: parts[1]) ?? .commandShiftP
+            case "mute":
+                mutedAgents = Set(
+                    parts[1].split(separator: ",")
+                        .compactMap { AgentID(rawValue: String($0)) }
+                )
             case "lang":
                 language = AppLanguage(rawValue: parts[1]) ?? .auto
             default: break
             }
         }
-        quietStartHour = min(23, max(0, quietStartHour))
-        quietEndHour = min(23, max(0, quietEndHour))
+        // Only migrate when the file predates the minute-precision keys.
+        if !text.contains("quietStartMin"), let h = legacyStartHour { quietStartMinute = h * 60 }
+        if !text.contains("quietEndMin"), let e = legacyEndHour { quietEndMinute = e * 60 }
+        quietStartMinute = Self.clampMinute(quietStartMinute)
+        quietEndMinute = Self.clampMinute(quietEndMinute)
+
         DebugLog.write(
             "settings auto=\(autoProbe) notifyIdle=\(notifyOnIdle) notifyWait=\(notifyOnWaiting) " +
-            "quiet=\(quietHoursEnabled) \(quietStartHour)-\(quietEndHour) lang=\(language.rawValue) login=\(launchAtLogin)"
+            "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) lang=\(language.rawValue) " +
+            "login=\(launchAtLogin) hotkey=\(hotkey.rawValue) muted=\(mutedAgents.count) updates=\(updateCheckEnabled)"
         )
-        LoginItem.setEnabled(launchAtLogin)
+        // Launchd already reflects the persisted value at load; don't re-run it.
+        appliedLaunchAtLogin = launchAtLogin
     }
+
+    static func clampMinute(_ m: Int) -> Int { min(24 * 60 - 1, max(0, m)) }
 
     func saveSettings() {
         let dir = settingsURL().deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        quietStartMinute = Self.clampMinute(quietStartMinute)
+        quietEndMinute = Self.clampMinute(quietEndMinute)
+        let muted = mutedAgents.map(\.rawValue).sorted().joined(separator: ",")
         let body = """
             auto=\(autoProbe ? 1 : 0)
             notify=\(notifyOnIdle ? 1 : 0)
             notifyWaiting=\(notifyOnWaiting ? 1 : 0)
             quiet=\(quietHoursEnabled ? 1 : 0)
-            quietStart=\(quietStartHour)
-            quietEnd=\(quietEndHour)
+            quietStartMin=\(quietStartMinute)
+            quietEndMin=\(quietEndMinute)
             lang=\(language.rawValue)
             login=\(launchAtLogin ? 1 : 0)
+            updates=\(updateCheckEnabled ? 1 : 0)
+            hotkey=\(hotkey.rawValue)
+            mute=\(muted)
             """
         try? body.write(to: settingsURL(), atomically: true, encoding: .utf8)
-        LoginItem.setEnabled(launchAtLogin)
-        if autoProbe {
-            rescheduleTimer(waiting: snapshot.glance == .waiting)
-        } else {
-            timer?.invalidate()
-            timer = nil
-        }
+        applyLaunchAtLoginIfChanged()
+        applyHotkey()
+        UpdateCheck.shared.startIfEnabled(store: self)
+        rescheduleTimer()
         refresh(reason: "saveSettings")
     }
 
-    /// Quiet window may wrap midnight (e.g. 22→8). Equal start/end = disabled.
+    /// Re-register the global shortcut and report honestly when the system
+    /// refuses (another app already owns the combination).
+    func applyHotkey() {
+        hotkeyRegistered = GlobalHotKey.install(choice: hotkey)
+        if hotkey != .off, !hotkeyRegistered {
+            DebugLog.write("hotkey \(hotkey.rawValue) registration FAILED — likely taken")
+        }
+    }
+
+    func toggleMute(_ agent: AgentID) {
+        if mutedAgents.contains(agent) {
+            mutedAgents.remove(agent)
+        } else {
+            mutedAgents.insert(agent)
+        }
+        saveSettings()
+    }
+
+    /// Quiet window may wrap midnight (e.g. 22:30 → 08:00). Equal start/end = disabled.
     func isInQuietHours(now: Date = Date()) -> Bool {
         guard quietHoursEnabled else { return false }
-        if quietStartHour == quietEndHour { return false }
-        let hour = Calendar.current.component(.hour, from: now)
-        if quietStartHour < quietEndHour {
-            return hour >= quietStartHour && hour < quietEndHour
+        let start = Self.clampMinute(quietStartMinute)
+        let end = Self.clampMinute(quietEndMinute)
+        if start == end { return false }
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: now)
+        let minute = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+        if start < end {
+            return minute >= start && minute < end
         }
-        return hour >= quietStartHour || hour < quietEndHour
+        return minute >= start || minute < end
     }
 }
 

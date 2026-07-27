@@ -3,7 +3,7 @@
     .name = "pulse",
     .display_name = "Pulse",
     .description = "Menu bar runtime awareness for AI coding agents.",
-    .version = "0.21.1",
+    .version = "0.22.0",
     .icons = .{"assets/icon.png"},
     .platforms = .{"macos"},
     .permissions = .{ "view", "command", "filesystem" },

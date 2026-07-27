@@ -6,11 +6,11 @@
 const std = @import("std");
 
 /// Marketing / package version (MAJOR.MINOR.PATCH).
-pub const semver: []const u8 = "0.21.1";
+pub const semver: []const u8 = "0.22.0";
 
 pub const major: u32 = 0;
-pub const minor: u32 = 21;
-pub const patch: u32 = 1;
+pub const minor: u32 = 22;
+pub const patch: u32 = 0;
 
 /// Product line for About / status-bar.
 pub fn aboutLine(buf: []u8) []const u8 {

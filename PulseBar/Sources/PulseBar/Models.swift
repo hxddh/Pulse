@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.21.1"
+    static let semver = "0.22.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -114,18 +114,9 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Coding agents shown in Glance/Tray (IDE shells stay out).
-    var isSurface: Bool {
-        switch self {
-        case .claude, .codex, .cursor, .cursorAgent, .grok, .pi, .amp,
-             .aider, .gemini, .copilot, .opencode, .goose, .openhands,
-             .cline, .roo, .continue_, .amazonQ,
-             .cascade, .windsurf, .augment, .zedAgent, .trae, .warpAgent,
-             .devin, .kiro, .junie, .kilo, .replit,
-             .droid, .commandCode, .antigravity, .kimi:
-            return true
-        }
-    }
+    // `isSurface` used to gate Glance/Tray, but every case returned true — the
+    // whole AgentID list is the surface list. The vacuous filter is gone; if a
+    // non-surface id ever lands here, reintroduce the predicate deliberately.
 
     /// Honest Waiting path exists (hooks and/or harvest `skill=pending`).
     /// Agents with `.none` may still show Running; tray can nudge once.
@@ -226,6 +217,12 @@ struct AgentRow: Identifiable, Hashable {
     var subTotal: Int = 0
     /// True when a live process was matched (not harvest-only).
     var liveProcess: Bool = false
+    /// How this row can be focused — resolved once per scan, never in a view body.
+    var focusTier: FocusTier? = nil
+    /// cwd/project exists on disk — resolved once per scan.
+    var canOpenFolder: Bool = false
+    /// Sessions of this agent that exist but did not fit the per-agent cap.
+    var hiddenSessions: Int = 0
 
     var id: String { rowKey }
 
@@ -285,17 +282,16 @@ struct AgentRow: Identifiable, Hashable {
         !waiting && !liveProcess && subRunning == 0
     }
 
-    /// Live / subagent with no real session title — secondary in list IA.
+    /// Live / subagent with nothing to say about the session — secondary in list IA.
+    /// Uses `sessionDetail` (task, else the current tool) so a live row running
+    /// a known tool no longer degrades to a bare "Process detected".
     var isProcessOnly: Bool {
-        !waiting && (liveProcess || subRunning > 0) && usefulTask == nil
+        !waiting && (liveProcess || subRunning > 0) && sessionDetail == nil
     }
 
     /// Has a first-class session title (sorts above process-only peers).
     var hasSessionTitle: Bool { usefulTask != nil }
 
-    var focusTier: FocusTier? {
-        TerminalFocus.focusTier(row: self)
-    }
 
     /// Compact meta: "↑12k ↓3k · Bash · sub 2↑/5"
     /// Waiting rows omit tokens (status first). Tool alone goes to sessionDetail when no task.
@@ -333,15 +329,7 @@ struct AgentRow: Identifiable, Hashable {
         return "sub \(subTotal)"
     }
 
-    var canOpenFolder: Bool {
-        let path = cwd.isEmpty ? project : cwd
-        guard !path.isEmpty else { return false }
-        return FileManager.default.fileExists(atPath: path)
-    }
-
-    var canFocusTerminal: Bool {
-        TerminalFocus.canFocus(row: self)
-    }
+    var canFocusTerminal: Bool { focusTier != nil }
 
     static func shortProject(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -382,6 +370,8 @@ struct PulseSnapshot: Equatable {
     var header: String = "No coding agents"
     var rows: [AgentRow] = []
     var hiddenCount: Int = 0
+    /// Sessions suppressed by the per-agent cap (never silently dropped).
+    var cappedSessions: Int = 0
     var totalCount: Int = 0
     var probeError: String?
     var updatedAt: Date = .distantPast

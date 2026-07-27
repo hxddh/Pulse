@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gates:
+    name: Gates (version · coverage · python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Version consistency
+        run: python3 scripts/version_check.py
+      - name: Harvest coverage
+        run: python3 scripts/coverage_check.py
+      - name: Support matrix matches code
+        run: python3 scripts/matrix_check.py
+      - name: Python compiles
+        run: python3 -m py_compile src/*.py scripts/*.py
+      - name: Bundled resources are in sync with src/
+        run: |
+          for py in activity_scan.py pulse_hook.py install_hooks.py; do
+            diff -u "src/$py" "PulseBar/Sources/PulseBar/Resources/$py" \
+              || { echo "::error::PulseBar/Sources/PulseBar/Resources/$py is stale — re-run package.sh"; exit 1; }
+          done
+
+  build:
+    name: Build & test (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version
+      - name: Build
+        run: swift build -c debug
+        working-directory: PulseBar
+      - name: Test
+        run: swift test
+        working-directory: PulseBar

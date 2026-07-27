@@ -18,7 +18,7 @@ final class AttentionWatcher: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("attention.tsv")
         if !FileManager.default.fileExists(atPath: file.path) {
-            try? "# Pulse attention log\n".write(to: file, atomically: true, encoding: .utf8)
+            try? AttentionIO.header.write(to: file, atomically: true, encoding: .utf8)
         }
         path = file.path
         arm()

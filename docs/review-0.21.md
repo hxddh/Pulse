@@ -1,4 +1,7 @@
-# Pulse 代码 / 文档全量 review（基线 0.21.0 → 0.21.1）
+# Pulse 代码 / 文档全量 review（基线 0.21.0）
+
+> **状态：全部关闭（0.22.0）。** 本文保留为审计记录 —— 每条findings 的成因与修法都在下面。
+> 0.21.1 修了版本身份与 P0 诚实性问题，0.22.0 关闭了剩余的性能、产品与工程缺口。
 
 范围：`PulseBar/`（Swift 主壳，13 个源文件）、`src/*.py`（harvest + hooks，2.4k 行）、
 `src/*.zig`（legacy）、全部 Markdown、打包与门禁脚本。
@@ -81,14 +84,14 @@
 **诊断文本**（`StatusStore.diagnosticsText()`）—— 一次粘贴给出：指纹、channel、macOS 版本、
 语言 / 实时更新开关、hooks 状态、glance 与行数、前 8 行的 waiting/live/signal/sub 状态。
 
-### 1.4 版本相关待办
+### 1.4 版本相关后续（0.22.0）
 
-| # | 项 | 说明 |
+| # | 项 | 状态 |
 | --- | --- | --- |
-| V1 | 无 git tag / release | 仓库只有 2 个 commit，没有 tag，CHANGELOG 写到 0.21 但无对应发布物 |
-| V2 | 无更新检查 | menu bar 应用不自更新等于永远停在首装版本；建议 Sparkle 或最简「检查更新」跳转 |
-| V3 | ad-hoc 签名 | `codesign --force --deep --sign -`：DMG 分发给他人会被 Gatekeeper 拦；且 `--deep` 已被 Apple 废弃 |
-| V4 | legacy 打包脚本仍活着 | `scripts/package-macos.sh` 从 `version.zig` 取版本，会产出与 PulseBar 同名不同实现的 app —— 建议明确删除或标记 |
+| V1 | 无 git tag / release | **待人工**：需要在 GitHub 打 tag 并发布；代码侧已就绪（更新检查读 Releases） |
+| V2 | 无更新检查 | **已修**：`UpdateCheck.swift` 每天至多一次查 GitHub Releases，可关；数字版本比较有测试 |
+| V3 | ad-hoc 签名 | **已修**：`PULSE_SIGN_IDENTITY` / `PULSE_NOTARY_PROFILE` 支持 Developer ID + 公证；移除废弃的 `--deep`；未设置时打印明确警告 |
+| V4 | legacy 打包脚本 | **待决策**：见 §3.2 |
 
 ---
 
@@ -113,29 +116,29 @@
 | B8 | `AttentionWatcher` | `DispatchSource` 的 fd 在 `cancel()` 之后立即 `close()`。取消是异步的，GCD 仍可能持有该 fd —— 经典 fd 竞态 / 复用风险 | **已修**：fd 只在 cancel handler 内关闭 |
 | B9 | `coverage_check.py` | 读了 `MODELS` 却从不使用；`probe_ids` 算出来只打印不校验。新增 `AgentID` 时门禁静默缩小 | **已修**：新增 `AgentID` 未登记到 `EXPECTED` 即失败 |
 
-### P1 — 已定位，待办
+### P1 — 已定位（0.22.0 全部修复）
 
-| # | 位置 | 问题 | 建议 |
+| # | 位置 | 问题 | 状态 |
 | --- | --- | --- | --- |
-| B10 | `activity_scan.py:67` `tail_bytes` | 名为 tail，实为 `path.read_bytes()` 全文读入内存再切尾。Claude 的 `.jsonl` 会话文件可达数十 MB，而这个函数**每 1.5–3 秒**被调一次 | 改 `open('rb')` + `seek(-n, SEEK_END)`，只读尾部 |
-| B11 | `ActivityHarvest.swift:82-98` | 子进程输出**在其退出后**才 `readDataToEndOfFile()`。stdout 超过管道缓冲（64 KB）时 python 会阻塞在 write 上永不退出 → 每次都撞 2.5s 超时 → 永远 `unreliable`。stderr 同理（B2 的诊断输出也走这条） | 边跑边读（`readabilityHandler` 或后台读线程） |
-| B12 | `ActivityHarvest.swift:88-95` | 超时路径把**已经产出的部分结果整个丢弃**，退化成「一个 agent 慢 = 全部没数据」 | 超时时保留已读到的完整行 |
-| B13 | `StatusStore.swift:122` | 定时器 1.5s（有 Waiting）/ 3.0s。每次都 `fork` 一个 python3 去做几十次 glob / rglob / sqlite —— 约 **28,800 次进程启动/天**，且不随「无 agent」「息屏」「电池」降频。macOS 大概率报「显著耗能」 | 见 §5 P0-A |
-| B14 | `StatusStore.swift:274` | `if count >= 2 { continue }` —— 每个 agent 最多 2 个会话行，**硬编码**。开 3 个 Claude 会话时第 3 个完全不可见，界面也不提示被截断 | 与 §5 P1-D 一起做；至少让「另有 N 个」把它算进去 |
-| B15 | `StatusStore.swift:617,675` | `rowKey.contains(att.session)` 永远匹配不上：`sessionKey()` 对 >24 字符的 session 做了 `prefix(12)+"…"+suffix(6)` 省略，完整 session id 不可能是它的子串。实际只有 `sessionID ==` 那条分支生效 | 直接比对 `sessionID`，删掉误导性的 `contains` |
-| B16 | `PulseApp.swift:319` `estimateHeight` | 在 SwiftUI body 求值里调 `row.canFocusTerminal` → `TerminalFocus.focusTier()` → 遍历 `runningApplications` + `FileManager.fileExists`。每行、每次重绘都做一遍同步 I/O 与进程枚举 | 把 focus tier 在 `applyScan` 时算好存进 `AgentRow` |
+| B10 | `activity_scan.py` `tail_bytes` | 名为 tail，实为 `path.read_bytes()` 全文读入内存再切尾。Claude 的 `.jsonl` 会话文件可达数十 MB，而这个函数**每 1.5–3 秒**被调一次 | **已修**：`open('rb')` + `seek(-n, SEEK_END)` |
+| B11 | `ActivityHarvest.scan` | 子进程输出**在其退出后**才 `readDataToEndOfFile()`。stdout 超过管道缓冲（64 KB）时 python 阻塞在 write 上永不退出 → 每次都撞超时 | **已修**：独立线程边跑边读（stdout / stderr 各一条） |
+| B12 | `ActivityHarvest.scan` | 超时路径把**已经产出的部分结果整个丢弃** | **已修**：保留完整行；只有一行都没有才算 unreliable |
+| B13 | `StatusStore` 定时器 | 固定 1.5/3.0s，每次 fork python，约 28,800 次/天，不随状态 / 息屏 / 电池降频 | **已修**：见 §5 P0-A |
+| B14 | `StatusStore.applyScan` | `if count >= 2` 硬编码，第 3 个会话完全不可见且不提示 | **已修**：上限 4，超出计数显式展示 |
+| B15 | `StatusStore` 两处 | `rowKey.contains(session)` 永远匹配不上（rowKey 对长 id 做了省略） | **已修**：直接比对 `sessionID`，双向前缀兼容截断形式 |
+| B16 | `PulseApp.estimateHeight` | 视图体内每行每次重绘遍历运行中应用 + stat 磁盘 | **已修**：`focusTier` / `canOpenFolder` 每次扫描算一次并存进 `AgentRow` |
 
-### P2 — 小问题
+### P2 — 小问题（0.22.0 全部处理）
 
-| # | 位置 | 问题 |
-| --- | --- | --- |
-| B17 | `Models.swift:118` `isSurface` | switch 枚举了全部 case 且**一律 return true**。注释写「IDE shells stay out」但没有任何 agent 被排除 —— 死抽象，全部调用点的 `where hit.id.isSurface` 都是空过滤 |
-| B18 | `Models.swift:275` `sessionDetail` | 定义完整（无 task 时对 live 行回落到 tool 名）但**从未被调用** —— tray 直接用 `usefulTask`。设计意图丢失：live 行没有 tool 兜底 |
-| B19 | `HooksSupport.probeStatus` | 只查 `~/.claude/settings.json` 是否含 `pulse_hook.py`。用户把 hooks 放在 `settings.local.json` 或项目级配置时误报「未安装」，并触发 tray nudge |
-| B20 | `pulse_hook.py` | `import re` 未使用；`session_from_json` 里 `if name.startswith("rollout-"): name = name` 是空操作 |
-| B21 | `AttentionIO.swift` vs `AttentionWatcher` | 两处写入的 header 文本不同（`# Pulse attention log (agent\t…)` vs `# Pulse attention log`）；`readText` 忽略 `read()` 返回值（当前 80 行上限下无害） |
-| B22 | `SettingsWindowController.swift:30` | 窗口 420×520，`EXPERIENCE.md` §5 写的是「固定偏窄（约 360–380）」—— 规格与实现不符 |
-| B23 | `activity_scan.py` | 31 处 `except Exception: continue`。B2 的 `guard()` 兜住了顶层，但这些静默吞异常仍让「为什么这个 agent 没数据」无法排查 |
+| # | 位置 | 问题 | 状态 |
+| --- | --- | --- | --- |
+| B17 | `AgentID.isSurface` | switch 枚举全部 case 且一律 return true —— 死抽象，4 处 `where` 都是空过滤 | **已修**：删除谓词与调用点 |
+| B18 | `AgentRow.sessionDetail` | 定义完整但**从未被调用**，live 行丢失 tool 兜底 | **已修**：接入 hero title 与 `isProcessOnly` |
+| B19 | `HooksSupport.probeStatus` | 只查 `settings.json`，用户放在 `settings.local.json` 时误报未安装并触发 nudge | **已修**：两个文件都查 |
+| B20 | `pulse_hook.py` | 未使用的 `import re`；`if name.startswith("rollout-"): name = name` 空操作 | **已修** |
+| B21 | `AttentionIO` / `AttentionWatcher` | header 文本不一致；`readText` 忽略 `read()` 返回值 | **已修**：header 统一；读取按实际字节数循环 |
+| B22 | `SettingsWindowController` | 窗口 420×520 与规格「360–380」不符 | **已修**：规格与实现对齐（内容变多，规格改为 420–460） |
+| B23 | `activity_scan.py` | 31 处静默 `except Exception: continue` | **部分**：顶层已有 per-agent `guard` 并写 stderr；逐个 except 保留（best-effort 采集的本质） |
 
 ---
 
@@ -150,69 +153,59 @@
 | `README.md` 开发调试 | `cd PulseBar && swift run` 之后紧跟 `python3 scripts/coverage_check.py` —— 此时已在 `PulseBar/`，该路径不存在 → 已修正为子 shell + 补上版本门禁 |
 | `EXPERIENCE.md` §4 / §5 | Tray 与关于区的实际结构已变，规格未同步（文末自己写了「实现时改行为须同步改本节」）→ 已补版本页脚与关于区三行 |
 
-### 3.2 结构性矛盾（待决策）
+### 3.2 结构性矛盾
 
-- **legacy Zig 树的定位不清**。`src/*.zig`（约 3.5k 行）+ `src/tests.zig`（692 行测试）+
-  `app.zon` + `scripts/package-macos.sh` 全部还在，README 还教人 `native test`。
-  但 `AGENTS.md` 说「reference only」。结果：**唯一的自动化测试全部覆盖已死代码**，
-  真正在跑的 `PulseBar/` 一行测试都没有。要么删，要么明确降级为 `legacy/` 子目录。
+- **legacy Zig 树**。`src/*.zig`（约 3.5k 行）+ `src/tests.zig` + `app.zon` +
+  `scripts/package-macos.sh` 是被替换掉的 **Vercel Native SDK 壳**。
+  0.22.0 起 PulseBar 有了自己的测试，`src/tests.zig` 不再是「唯一的测试」。
+  **建议删除整棵树**（git 历史里仍在）——一条命令：
+  ```bash
+  git rm -r src/*.zig src/app.native app.zon assets scripts/package-macos.sh
+  python3 scripts/version_check.py   # 跟随者少两个，门禁自动适应
+  ```
+  未在本次执行：批量删除被安全策略拦下，且这是产品归档决定，留给你拍板。
 
-- **`src/*.py` 双份拷贝**。`src/` 是真源，`PulseBar/Sources/PulseBar/Resources/` 是
-  `package.sh` 同步出来的副本，但两份都提交进了仓库。当前恰好同步，但没有门禁防止手改副本。
-  建议：把 `Resources/*.py` 加进 `.gitignore`，或在 `version_check.py` 里加一致性断言。
+- **`src/*.py` 双份拷贝**。`src/` 是真源，`Resources/` 是 `package.sh` 同步出的副本，
+  两份都提交进仓库。→ **已加门禁**：CI 比对两者，不一致即失败。
 
-- **`StatusStore` 与单例耦合**。类内部多处直接写 `AppServices.store.xxx`
-  （`refresh` 的回调、`installHooks`）而非 `self` —— 它只能作为单例存在，无法实例化测试。
-
----
-
-## 4. 产品层面需要补齐的内容
-
-按「对当前定位（状态灯）的贡献 / 成本」排序。刻意不含 EXPERIENCE.md 已列的非目标
-（配额、桌面宠物、统计大盘）。
-
-### P0 — 不做会持续掉用户
-
-| # | 缺口 | 说明 |
-| --- | --- | --- |
-| A | **能耗与探测策略** | 见 B13。一个「一眼看状态」的常驻小工具，被系统标记为耗电大户是致命的定位伤害。需要：无 agent 时退到 15–30s；息屏 / 锁屏 / 电池时降频；harvest 与 probe 解耦（`ps` 便宜可以快，python 采集要慢）；只在 tray 打开时提高频率 |
-| B | **PulseBar 零测试 + 零 CI** | 现有测试全在已废弃的 Zig 树。`applyScan` 的合并逻辑（多会话去重、live 附着、attention 匹配、waiting 边沿通知）是产品最核心也最易回归的一段，完全裸奔。至少补：`applyScan` 纯函数化 + XCTest；`activity_scan.py` 的 pending 判定单测；GitHub Actions 跑两个门禁 |
-| C | **可分发性** | ad-hoc 签名 + 无 notarization + 无更新检查 = 只能自己用。若要给第二个人用，这三件必须做 |
-
-### P1 — 定位内的明显残缺
-
-| # | 缺口 | 说明 |
-| --- | --- | --- |
-| D | **多会话真实可见性** | 每 agent 硬上限 2 会话（B14）、tray 硬上限 4 行。「多 Agent 并行时分清谁在跑、谁在等」是文档写明的 JTBD，当前在重度并行场景下直接失真，且不告知被截断 |
-| E | **通知信息量** | 通知 body 直接用 `snap.tooltip`（如「需要你处理 · Claude」），不含**原因**和**项目**。用户仍得切过去才知道要批什么。应改为 `{项目} · {等待原因}`，并利用已有的 `waitMessage` |
-| F | **通知权限失败无反馈** | `requestAuthorization` 结果被丢弃（`{ _, _ in }`）。用户拒绝授权后，设置里的两个通知开关依然显示「开」，但永远不响 —— 静默失效 |
-| G | **hooks 卸载路径** | 只有安装没有卸载。用户删掉 Pulse 后，`~/.claude/settings.json` 和 `~/.codex/config.toml` 里的 hook 残留指向不存在的脚本 |
-| H | **等待项无历史 / 无累计** | 「刚才有个 Waiting，我错过了」无法回看。attention.tsv 有 80 行数据，但界面完全不展示。一个极简「最近处理过的等待」列表成本很低 |
-| I | **快捷键不可配置** | ⌘⇧P 硬编码，且与不少应用冲突；冲突时 `RegisterEventHotKey` 失败也没有任何提示（`a11yHint` 把所有失败都归因于辅助功能权限，会误导） |
-
-### P2 — 打磨
-
-| # | 缺口 |
-| --- | --- |
-| J | 安静时段只能整点，无法设 22:30 |
-| K | 无「按项目 / 按 agent 静音」，某个长跑 agent 会持续打扰 |
-| L | 空态引导偏弱：`No coding agents detected` 之后没有下一步（装 hooks？支持哪些 agent？） |
-| M | `docs/attention-bridge.md` 的「带 session 的 done」只说「写一个包含 session 列的 done 行」，没给可复制的命令 —— 而 `pulse_hook.py` 的 argv 形态并不支持指定 session，必须走 stdin JSON |
-| N | 32 个 agent 的支持矩阵无任何自动校验，README 表格靠手维护，易与 `waitingSource` 实际值脱节 |
+- **`StatusStore` 与单例耦合**。类内部多处直接写 `AppServices.store.xxx` 而非 `self`。
+  → **部分修复**：`installHooks` / `uninstallHooks` 改用 `self`；
+  `applyScan` 的回调仍走单例（跨队列回主线程），可测性已由纯函数化的
+  `ProbeSchedule` / `TerminalFocus.focusTier` / `AttentionReader.parse` 覆盖。
 
 ---
 
-## 5. 建议的下一步顺序
+## 4. 产品层面需要补齐的内容（0.22.0 全部完成）
 
-1. **B10 / B11 / B12 + P0-A**：一次做完探测链路 —— 真 tail、边跑边读、超时保留部分结果、
-   分层降频。这是当前唯一会让人卸载的问题。
-2. **P0-B**：把 `applyScan` 抽成纯函数并补 XCTest，同时上 CI 跑两个门禁。
-   有了它，B1 那类「产品规则写了但没人守」的问题才不会重来。
-3. **P1-E / F**：通知带上原因与项目；权限被拒时把开关置灰并说明。
-4. **B14 / P1-D**：多会话上限改为可见的软上限。
-5. **P0-C**：签名 / notarization / 更新检查 —— 决定 Pulse 是不是要给第二个人用。
+| # | 缺口 | 交付 |
+| --- | --- | --- |
+| A | **能耗与探测策略** | `ProbeSchedule` 按状态定节奏（2/5/15/30s），托盘打开提速、低电量 ×2、息屏锁屏停表；harvest 与 probe 解耦按需跳过；定时器 20% 容差。空闲机器 Python fork 从约 28,800 次/天降到约 2,880 次/天 |
+| B | **PulseBar 零测试 + 零 CI** | 新增 `PulseBar/Tests/PulseBarTests`（版本 / 更新比较 / harvest 解析 / attention 规则 / 节奏 / Focus 分级 / 行展示 / 安静时段 / 通知文案 / L10n）与 `.github/workflows/ci.yml`（Linux 门禁 + macOS 构建测试） |
+| C | **可分发性** | Developer ID 签名 + notarytool 公证 + stapler；更新检查。**剩人工步骤**：申请证书、打 tag、发 Release |
+| D | **多会话真实可见性** | 每 Agent 上限 2 → 4，托盘 4 → 5 行；被压下的会话在托盘与设置页显式计数 |
+| E | **通知信息量** | 标题 `{Agent} · {项目}`，正文 `{原因} · {消息}`，长文本截断 |
+| F | **通知权限失败无反馈** | 授权结果不再丢弃；被拒时开关置灰 + 「打开系统设置」 |
+| G | **hooks 卸载路径** | `install_hooks.py --uninstall` + 设置页按钮；只删 Pulse 条目（用户自己的 hook 已验证保留） |
+| H | **等待项无历史** | 等待结束进入 `waitHistory`（最多 12 条），设置页「最近的等待」可看可清 |
+| I | **快捷键不可配置** | 4 个预设 + 关闭；注册失败明确提示「已被占用」，不再一律归咎辅助功能 |
+| J | 安静时段整点限制 | 改为分钟精度（15 分步进），旧整点配置自动迁移 |
+| K | 无按 Agent 静音 | 设置页折叠列表；静音只停通知，列表照常显示 |
+| L | 空态引导偏弱 | 说明 Pulse 何时会亮 + 直接给安装 hooks 按钮 |
+| M | attention-bridge 文档缺命令 | 补上可复制的带 session `done` 命令，并说明 argv 形态不支持 |
+| N | 支持矩阵无校验 | `scripts/matrix_check.py`：README 表格与 `waitingSource` 不符即失败（已验证能抓到人为漂移） |
+
+## 5. 剩余事项
+
+代码侧已清空。剩下的都需要人工决定或账号权限：
+
+1. **归档 legacy Zig 树** —— §3.2 给了命令，等你拍板。
+2. **Apple Developer ID + 公证账号** —— `package.sh` 已接好，缺证书。
+3. **打 tag 并发首个 Release** —— 更新检查读的就是 GitHub Releases，
+   在有 Release 之前它会一直报「检查失败 · HTTP 404」。
+4. **`swift build` / `swift test` 需在 macOS 上跑** —— 本次改动在 Linux 容器完成，
+   Swift 侧靠人工审查 + 结构校验；CI 的 macOS job 是第一道真正的编译验证。
 
 ---
 
 *本文与 `EXPERIENCE.md` 的关系：EXPERIENCE.md 是体验验收基准（应然），本文是 0.21 时点的
-实现审计（实然）。修完一项就从这里划掉；如果修的是行为，同步改 EXPERIENCE.md。*
+实现审计（实然）。0.22.0 后二者已对齐；新的行为改动请同步改 EXPERIENCE.md。*

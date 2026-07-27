@@ -2,6 +2,53 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.22.0 — Energy, honesty, and everything the audit found
+
+Closes every open finding in [`docs/review-0.21.md`](docs/review-0.21.md).
+
+### Energy (P0-A)
+- **自适应探测节奏**：不再固定 1.5–3s。等待中 2s / 运行中 5s / 最近 15s / 空 30s；
+  托盘打开时提速，低电量模式减半，**息屏或锁屏直接停表**（attention 文件变化仍会唤醒）
+- **harvest 与 probe 解耦**：`ps` 便宜可以常跑，Python 采集按节奏跳过；
+  进程指纹变化 / 手动刷新 / attention 变化时强制采集
+- **定时器容差 20%**：让系统合并唤醒
+- 空闲机器上的 Python fork 次数从约 28,800 次/天降到约 2,880 次/天
+
+### Distribution (P0-C)
+- **Developer ID 签名 + 公证**：`PULSE_SIGN_IDENTITY` / `PULSE_NOTARY_PROFILE`；
+  未设置时明确警告「其他 Mac 会被 Gatekeeper 拦」。移除已废弃的 `--deep`
+- **检查更新**：GitHub Releases，每天至多一次，可关；数字版本比较（`0.9.0` 不会盖过 `0.21.0`）
+
+### Tests & CI (P0-B)
+- **PulseBar 首次有测试**：60+ 用例覆盖版本 / 更新比较 / harvest 解析 /
+  attention 规则 / 探测节奏 / Focus 分级 / 行展示 / 安静时段 / 通知文案 / L10n
+- **GitHub Actions**：Linux 跑门禁（版本、覆盖、支持矩阵、Python 编译、资源同步），
+  macOS 跑 `swift build` + `swift test`
+- **支持矩阵门禁** `scripts/matrix_check.py`：README 表格与 `waitingSource` 不符即失败
+
+### Product gaps
+- **多会话可见性**：每 Agent 上限 2 → 4，托盘上限 4 → 5 行；被压下的会话显式提示「另有 N 个会话未显示」
+- **通知信息量**：标题 `Agent · 项目`，正文 `原因 · 消息`（此前只有「需要你处理 · Claude」）
+- **通知权限失败可见**：被拒时开关置灰并给出「打开系统设置」
+- **移除 hooks**：设置页可一键卸载，只删 Pulse 条目，保留用户自己的 hook
+- **最近的等待**：等待结束后进入历史（最多 12 条），回答「我是不是错过了什么」
+- **快捷键可选**：⌘⇧P / ⌘⇧U / ⌘⌥P / ⌃⌥P / 关闭；被占用时明确提示，不再归咎辅助功能权限
+- **安静时段支持分钟**：22:30 可表达（旧的整点设置自动迁移）
+- **按 Agent 静音**：静音只停通知，列表照常显示
+- **空态引导**：说明 Pulse 何时会亮，并直接给出安装 hooks 按钮
+
+### Fixes
+- **管道死锁**：子进程输出此前在其退出后才读，输出超过 64KB 管道缓冲即死锁到超时。改为独立线程边跑边读
+- **超时丢弃全部结果**：改为保留已完整输出的行，并丢弃被截断的最后一行
+- **`tail_bytes` 全文读入**：名为 tail 实为 `read_bytes()[-n:]`，数十 MB 的会话文件每次全读。改为 seek 到尾部
+- **视图体内做 I/O**：`estimateHeight` 每行每次重绘都遍历运行中应用 + stat 磁盘。Focus 分级改为每次扫描算一次
+- **attention session 匹配失效**：`rowKey.contains(session)` 因 rowKey 省略过长 id 而永不命中
+- **`sessionDetail` 从未接线**：有 tool 无 task 的 live 行不再降级成「检测到进程」
+- **`isSurface` 恒真**：删除空过滤
+- **hooks 状态误报**：现在同时检查 `settings.local.json`
+- **登录项抖动**：`launchctl` 仅在值变化时执行，且不在主线程
+- `pulse_hook.py` 未使用的 import 与空操作分支
+
 ## 0.21.1 — Version identity · honesty fixes
 
 ### Version identity

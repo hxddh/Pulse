@@ -129,7 +129,72 @@ def install_codex() -> str:
     return str(cfg)
 
 
-def main() -> int:
+def uninstall_claude() -> str:
+    """Strip Pulse hook entries, leaving every other setting untouched."""
+    settings = Path.home() / ".claude" / "settings.json"
+    removed = 0
+    for target in (settings, settings.with_name("settings.local.json")):
+        if not target.exists():
+            continue
+        raw = target.read_text(encoding="utf-8")
+        if "pulse_hook.py" not in raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"refusing to rewrite {target}: not valid JSON ({exc}).")
+        if not isinstance(data, dict):
+            continue
+        hooks = data.get("hooks")
+        if not isinstance(hooks, dict):
+            continue
+        for event in list(hooks):
+            entries = hooks.get(event)
+            if not isinstance(entries, list):
+                continue
+            kept = [e for e in entries if "pulse_hook.py" not in json.dumps(e)]
+            removed += len(entries) - len(kept)
+            if kept:
+                hooks[event] = kept
+            else:
+                hooks.pop(event, None)
+        if not hooks:
+            data.pop("hooks", None)
+        target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return f"{settings} ({removed} hook entries removed)"
+
+
+def uninstall_codex() -> str:
+    cfg = Path.home() / ".codex" / "config.toml"
+    if not cfg.exists():
+        return f"{cfg} (absent)"
+    text = cfg.read_text(encoding="utf-8")
+    if "pulse_hook.py" not in text:
+        return f"{cfg} (nothing to remove)"
+    kept: list[str] = []
+    for ln in text.splitlines():
+        if "pulse_hook.py" in ln or ln.strip() == "# Pulse v2 attention hooks":
+            continue
+        # Don't leave a stack of blank lines where our block used to be.
+        if not ln.strip() and kept and not kept[-1].strip():
+            continue
+        kept.append(ln)
+    cfg.write_text("\n".join(kept).rstrip("\n") + "\n", encoding="utf-8")
+    return str(cfg)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(argv if argv is not None else sys.argv[1:])
+    if "--uninstall" in args:
+        paths = []
+        for label, fn in (("claude", uninstall_claude), ("codex", uninstall_codex)):
+            try:
+                paths.append(f"{label}: " + fn())
+            except OSError as e:
+                paths.append(f"{label}: failed ({e})")
+        print("removed hooks:\n" + "\n".join(paths))
+        return 0
+
     ensure_pulse_hook_script()
     paths = []
     try:

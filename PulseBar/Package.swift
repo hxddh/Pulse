@@ -19,5 +19,12 @@ let package = Package(
                 .copy("Resources/Brand"),
             ]
         ),
+        // The merge logic in StatusStore is the most regression-prone part of
+        // the product and had no coverage at all before 0.22.
+        .testTarget(
+            name: "PulseBarTests",
+            dependencies: ["PulseBar"],
+            path: "Tests/PulseBarTests"
+        ),
     ]
 )

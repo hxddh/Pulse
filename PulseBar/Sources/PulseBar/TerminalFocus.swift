@@ -18,9 +18,28 @@ enum TerminalFocus {
         .init(bundleIDs: ["net.kovidgoyal.kitty"], appNames: ["kitty"]),
     ]
 
+    /// Which terminals exist / are running right now.
+    ///
+    /// Resolving this per row inside a SwiftUI body meant enumerating every
+    /// running application and stat-ing the filesystem on each redraw. It is
+    /// captured once per scan instead and stored on the row.
+    struct Environment: Equatable {
+        var warpRunning = false
+        var ttyHostRunning = false
+        var anyTerminalInstalled = false
+
+        static func current() -> Environment {
+            Environment(
+                warpRunning: isRunning(bundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"], names: ["Warp"]),
+                ttyHostRunning: ttyFocusHostRunning(),
+                anyTerminalInstalled: hasInstalledTerminal()
+            )
+        }
+    }
+
     @discardableResult
     static func focus(row: AgentRow) -> Bool {
-        guard let tier = focusTier(row: row) else { return false }
+        guard let tier = row.focusTier else { return false }
 
         switch tier {
         case .tty:
@@ -37,16 +56,22 @@ enum TerminalFocus {
         }
     }
 
-    static func focusTier(row: AgentRow) -> FocusTier? {
-        let tty = normalizeTTY(row.tty)
-        let warpUp = isRunning(bundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"], names: ["Warp"])
+    /// Pure given an `Environment` + a cwd-exists answer, so it can be computed
+    /// once per scan (and unit-tested) instead of once per redraw.
+    static func focusTier(
+        tty rawTTY: String,
+        viaWarp: Bool,
+        cwdExists: Bool,
+        env: Environment
+    ) -> FocusTier? {
+        let tty = normalizeTTY(rawTTY)
+        let canOpenCwd = cwdExists && env.anyTerminalInstalled
         // Prefer Warp when the process is under Warp — TTY tab select only works for Terminal/iTerm.
-        if row.viaWarp, warpUp { return .warp }
-        if !tty.isEmpty, ttyFocusHostRunning() { return .tty }
+        if viaWarp, env.warpRunning { return .warp }
+        if !tty.isEmpty, env.ttyHostRunning { return .tty }
         // TTY known but no Terminal/iTerm: still offer open cwd rather than a dead Focus button.
-        if !tty.isEmpty, openCwdPossible(row) { return .openCwd }
-        if row.viaWarp, warpUp { return .warp }
-        if openCwdPossible(row) { return .openCwd }
+        if !tty.isEmpty, canOpenCwd { return .openCwd }
+        if canOpenCwd { return .openCwd }
         return nil
     }
 
@@ -59,19 +84,10 @@ enum TerminalFocus {
         activate(bundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"], names: ["Warp"])
     }
 
-    private static func openCwdPossible(_ row: AgentRow) -> Bool {
-        let path = row.cwd
-        return !path.isEmpty && FileManager.default.fileExists(atPath: path) && hasInstalledTerminal()
-    }
-
     private static func openCwdIfPossible(_ row: AgentRow) -> Bool {
         let path = row.cwd
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return false }
         return openInTerminalApp(path: path)
-    }
-
-    static func canFocus(row: AgentRow) -> Bool {
-        focusTier(row: row) != nil
     }
 
     private static func normalizeTTY(_ raw: String) -> String {
