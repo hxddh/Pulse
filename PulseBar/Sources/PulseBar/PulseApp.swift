@@ -69,7 +69,7 @@ struct MenuBarLabel: View {
                 .onChange(of: snapshot.glance) { _, g in
                     waitPulse = g == .waiting
                 }
-                .accessibilityLabel(snapshot.glance.accessibilityLabel)
+                .accessibilityLabel(snapshot.accessibilityLabel)
             if snapshot.glance != .idle, !snapshot.title.isEmpty {
                 Text(snapshot.title)
                     .font(.system(size: 11.5, weight: .semibold, design: .rounded))

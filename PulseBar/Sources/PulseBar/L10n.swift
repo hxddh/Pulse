@@ -147,6 +147,10 @@ enum L10n {
         case .probeEvery: return "every %ds"
         case .probeParked: return "paused (display off)"
         case .probePaused: return "live updates off"
+        case .a11yIdle: return "Idle"
+        case .a11yRunning: return "Running"
+        case .a11yWaiting: return "Needs attention"
+        case .a11yError: return "Cannot refresh"
         }
     }
 
@@ -252,6 +256,10 @@ enum L10n {
         case .probeEvery: return "每 %d 秒"
         case .probeParked: return "已暂停（屏幕关闭）"
         case .probePaused: return "实时更新已关闭"
+        case .a11yIdle: return "空闲"
+        case .a11yRunning: return "运行中"
+        case .a11yWaiting: return "需要你处理"
+        case .a11yError: return "无法刷新"
         }
     }
 
@@ -282,5 +290,6 @@ enum L10n {
         case checkForUpdates, checkNow, openRelease
         case updateIdle, updateChecking, updateCurrent, updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
+        case a11yIdle, a11yRunning, a11yWaiting, a11yError
     }
 }

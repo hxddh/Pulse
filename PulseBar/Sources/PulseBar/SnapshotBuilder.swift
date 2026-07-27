@@ -368,6 +368,7 @@ enum SnapshotBuilder {
             snap.headerDetail = ""
             snap.header = t(.noAgents, lang)
         }
+        snap.accessibilityLabel = t(snap.glance.accessibilityKey, lang)
         result.snapshot = snap
 
         // Edges — reported, not acted on. The store owns notification policy.

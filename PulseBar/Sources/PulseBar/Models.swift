@@ -169,12 +169,15 @@ enum GlanceKind: Equatable {
     case waiting
     case error
 
-    var accessibilityLabel: String {
+    /// VoiceOver reads this instead of the icon. It used to be hardcoded
+    /// English, so a Chinese user heard "Needs attention" in an otherwise
+    /// localized interface.
+    var accessibilityKey: L10n.Key {
         switch self {
-        case .idle: return "Idle"
-        case .running: return "Running"
-        case .waiting: return "Needs attention"
-        case .error: return "Error"
+        case .idle: return .a11yIdle
+        case .running: return .a11yRunning
+        case .waiting: return .a11yWaiting
+        case .error: return .a11yError
         }
     }
 }
@@ -354,6 +357,8 @@ struct PulseSnapshot: Equatable {
     var glance: GlanceKind = .idle
     var title: String = ""
     var tooltip: String = "Pulse"
+    /// Glance state spoken by VoiceOver, in the resolved language.
+    var accessibilityLabel: String = ""
     /// Short status word for tray header (Needs you / Running / …).
     var headerTitle: String = ""
     /// Supporting line under headerTitle (names · relative time).
