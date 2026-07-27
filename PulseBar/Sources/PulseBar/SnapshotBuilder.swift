@@ -333,16 +333,32 @@ enum SnapshotBuilder {
 
         let lang = context.lang
 
-        /// The header's second line used to be `relative(updatedAt)`, computed
-        /// microseconds after `updatedAt = Date()` — so it always read "just
-        /// now" and carried nothing. Who is involved is the fact worth the row.
-        func names(_ rows: [AgentRow]) -> String {
-            var seen: [String] = []
-            for r in rows where !seen.contains(r.agent.displayName) {
-                seen.append(r.agent.displayName)
-                if seen.count == 3 { break }
+        // Distinct projects — the header's one legitimate subject.
+        var projectNames: [String] = []
+        for r in all {
+            let p = r.displayPath
+            guard !p.isEmpty, !projectNames.contains(p) else { continue }
+            projectNames.append(p)
+        }
+        snap.projectCount = projectNames.count
+
+        /// What the header may say.
+        ///
+        /// It read `relative(updatedAt)` — computed microseconds after
+        /// `updatedAt = Date()`, so always "just now". 0.24 replaced that with
+        /// the agent names, which the rows already carry: the panel then said
+        /// "2 running / Cursor · Amp" above two rows that each named their own
+        /// agent. A header earns its line only by stating something no single
+        /// row can — how much is hidden, or how far the work is spread.
+        func aggregate() -> String {
+            if snap.hiddenCount > 0 {
+                return String(format: t(.andMore, lang), snap.hiddenCount)
             }
-            return seen.joined(separator: " · ")
+            if projectNames.count > 1 {
+                return String(format: t(.acrossProjects, lang), projectNames.count)
+            }
+            if projectNames.count == 1 { return projectNames[0] }
+            return ""
         }
 
         // Header answers only "N need you / N running"; row detail carries the rest.
@@ -380,7 +396,7 @@ enum SnapshotBuilder {
                 snap.tooltip = "\(t(.needsYou, lang)): \(nameJoin)"
                 snap.headerTitle = "\(waitingCount) \(t(.waitingN, lang))"
             }
-            snap.headerDetail = names(waitingRows)
+            snap.headerDetail = aggregate()
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if liveRunning > 0 {
             snap.glance = .running
@@ -395,7 +411,7 @@ enum SnapshotBuilder {
                 snap.tooltip = "\(liveRunning) \(t(.runningN, lang)): \(liveNames)"
                 snap.headerTitle = "\(liveRunning) \(t(.runningN, lang))"
             }
-            snap.headerDetail = names(liveRows)
+            snap.headerDetail = aggregate()
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if recentOnly > 0 {
             snap.glance = .idle
@@ -404,7 +420,7 @@ enum SnapshotBuilder {
             snap.headerTitle = recentOnly == 1
                 ? t(.recent1, lang)
                 : "\(recentOnly) \(t(.recentN, lang))"
-            snap.headerDetail = names(all.filter { !$0.waiting && !$0.liveProcess && $0.subRunning == 0 })
+            snap.headerDetail = aggregate()
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else {
             snap.glance = .idle
