@@ -309,3 +309,94 @@ final class TrayFoldTests: XCTestCase {
         XCTAssertEqual(TrayFold.summary([]), "")
     }
 }
+
+/// Snooze is the answer a wait never had: not now, not never, later.
+///
+/// The rules that matter are about what snoozing does *not* do — it must not
+/// remove the row, and it must not swallow the reminder permanently.
+final class SnoozeTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
+    private func waitingRow(key: String = "k") -> AgentRow {
+        var r = AgentRow(rowKey: key, agent: .claude)
+        r.waiting = true
+        r.waitSinceMs = now - 60_000
+        r.processCount = 1
+        return r
+    }
+
+    func testASnoozedRowIsStillAWaitingRow() {
+        var r = waitingRow()
+        r.snoozeRemainingSeconds = 300
+        XCTAssertTrue(r.isSnoozed)
+        XCTAssertTrue(r.waiting, "snoozing suppresses the interruption, not the fact")
+        XCTAssertEqual(r.section, .needsYou, "the row keeps its place in the list")
+        XCTAssertTrue(r.needsStatusChip)
+    }
+
+    func testOnlyWaitingRowsCanBeSnoozed() {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.snoozeRemainingSeconds = 300
+        XCTAssertFalse(r.isSnoozed, "a running row has no interruption to defer")
+    }
+
+    func testAnExpiredSnoozeIsNoSnooze() {
+        var r = waitingRow()
+        r.snoozeRemainingSeconds = 0
+        XCTAssertFalse(r.isSnoozed)
+    }
+}
+
+/// The stall threshold used to be compiled in at twenty minutes.
+final class StallThresholdTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
+    private func stalled(agoSeconds: Double, threshold: Double) -> Bool {
+        AgentRow.stalled(
+            harvestMs: now - Int64(agoSeconds * 1000),
+            nowMs: now,
+            waiting: false,
+            live: true,
+            threshold: threshold
+        )
+    }
+
+    func testAShorterThresholdCatchesAShorterSilence() {
+        XCTAssertTrue(stalled(agoSeconds: 6 * 60, threshold: 5 * 60))
+        XCTAssertFalse(stalled(agoSeconds: 6 * 60, threshold: 20 * 60))
+    }
+
+    /// "Never" must read as never stalled, not as always stalled.
+    func testZeroDisablesRatherThanTripping() {
+        XCTAssertFalse(stalled(agoSeconds: 10 * 60 * 60, threshold: 0))
+        XCTAssertFalse(stalled(agoSeconds: 10 * 60 * 60, threshold: -1))
+    }
+
+    func testTheDefaultIsUnchanged() {
+        XCTAssertEqual(AgentRow.stalledSeconds, 20 * 60)
+        XCTAssertTrue(stalled(agoSeconds: 21 * 60, threshold: AgentRow.stalledSeconds))
+    }
+}
+
+/// Project grouping was the one mode where nothing ever folded.
+final class ProjectFoldTests: XCTestCase {
+    func testAQuietProjectFolds() {
+        XCTAssertTrue(TrayFold.foldableProject(hasWaiting: false, groupCount: 3, rowCount: 2))
+    }
+
+    func testAProjectHoldingAWaitNeverFolds() {
+        XCTAssertFalse(
+            TrayFold.foldableProject(hasWaiting: true, groupCount: 3, rowCount: 4),
+            "folding away the thing that needs you defeats the product"
+        )
+    }
+
+    /// Same two guards Recent already had.
+    func testTheOnlyProjectIsNotFolded() {
+        XCTAssertFalse(TrayFold.foldableProject(hasWaiting: false, groupCount: 1, rowCount: 5))
+    }
+
+    func testASingleRowProjectIsNotFolded() {
+        XCTAssertFalse(TrayFold.foldableProject(hasWaiting: false, groupCount: 4, rowCount: 1))
+    }
+}

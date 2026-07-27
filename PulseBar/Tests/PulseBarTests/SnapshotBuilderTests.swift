@@ -23,7 +23,9 @@ final class SnapshotBuilderTests: XCTestCase {
         maxRows: Int = SnapshotBuilder.maxVisibleRows,
         exists: @escaping (String) -> Bool = { _ in false },
         terminal: TerminalFocus.Environment? = nil,
-        lang: ResolvedLanguage = .en
+        lang: ResolvedLanguage = .en,
+        snoozed: [String: Int64] = [:],
+        stalledSeconds: Double = AgentRow.stalledSeconds
     ) -> SnapshotBuilder.Context {
         SnapshotBuilder.Context(
             nowMs: now,
@@ -33,7 +35,9 @@ final class SnapshotBuilderTests: XCTestCase {
             maxSessionsPerAgent: maxSessions,
             maxVisibleRows: maxRows,
             dismissedPendingKeys: dismissed,
-            showAllAgents: showAll
+            showAllAgents: showAll,
+            snoozedUntilMs: snoozed,
+            stalledSeconds: stalledSeconds
         )
     }
 
@@ -463,6 +467,120 @@ final class SnapshotBuilderTests: XCTestCase {
             attention: [attention(.claude, ageMs: 30_000), attention(.codex, ageMs: 600_000)]
         )
         XCTAssertEqual(r.snapshot.longestWaitSeconds, 600, accuracy: 2)
+    }
+
+    // MARK: Snooze
+
+    /// The whole feature is that the menu bar goes quiet. If the lamp stays
+    /// red, "remind me later" reminds you continuously.
+
+    private func snoozedContext(_ keys: [String], minutes: Double = 10) -> SnapshotBuilder.Context {
+        var map: [String: Int64] = [:]
+        for k in keys { map[k] = now + Int64(minutes * 60 * 1000) }
+        return context(snoozed: map)
+    }
+
+    private func waitingRowKey(_ r: SnapshotBuilder.Result) -> String {
+        r.rows.first(where: \.waiting)?.rowKey ?? ""
+    }
+
+    func testSnoozingTheOnlyWaitTakesTheLampDown() {
+        let seed = build(procs: [hit(.claude)], attention: [attention(.claude)])
+        let key = waitingRowKey(seed)
+        XCTAssertFalse(key.isEmpty)
+        XCTAssertEqual(seed.snapshot.glance, .waiting)
+
+        let r = build(
+            procs: [hit(.claude)],
+            attention: [attention(.claude)],
+            context: snoozedContext([key])
+        )
+        XCTAssertNotEqual(r.snapshot.glance, .waiting, "the lamp is the interruption")
+        XCTAssertEqual(r.snapshot.title, "", "no count, no elapsed time, nothing in the corner")
+    }
+
+    /// …and the panel keeps telling the truth.
+    func testASnoozedWaitStaysInTheListAndInTheCount() {
+        let seed = build(procs: [hit(.claude)], attention: [attention(.claude)])
+        let r = build(
+            procs: [hit(.claude)],
+            attention: [attention(.claude)],
+            context: snoozedContext([waitingRowKey(seed)])
+        )
+        XCTAssertEqual(r.snapshot.sectionTotals[.needsYou], 1)
+        XCTAssertEqual(r.rows.filter(\.waiting).count, 1)
+        XCTAssertTrue(r.rows.contains { $0.isSnoozed })
+    }
+
+    /// One snoozed, one not: the lamp still belongs to the one that is awake.
+    func testAnUnsnoozedWaitStillLightsTheLamp() {
+        let seed = build(
+            procs: [hit(.claude), hit(.codex)],
+            attention: [attention(.claude), attention(.codex)]
+        )
+        let claudeKey = seed.rows.first { $0.agent == .claude && $0.waiting }?.rowKey ?? ""
+        XCTAssertFalse(claudeKey.isEmpty)
+        let r = build(
+            procs: [hit(.claude), hit(.codex)],
+            attention: [attention(.claude), attention(.codex)],
+            context: snoozedContext([claudeKey])
+        )
+        XCTAssertEqual(r.snapshot.glance, .waiting)
+        XCTAssertTrue(r.snapshot.title.contains("Codex"), r.snapshot.title)
+        XCTAssertFalse(r.snapshot.title.contains("Claude"), "a snoozed agent is not the headline")
+    }
+
+    /// Elapsed time in the menu bar must come from the waits still shouting.
+    func testTheMenuBarClockIgnoresSnoozedWaits() {
+        let seed = build(
+            procs: [hit(.claude), hit(.codex)],
+            attention: [attention(.claude, ageMs: 3_600_000), attention(.codex, ageMs: 30_000)]
+        )
+        let oldKey = seed.rows.first { $0.agent == .claude && $0.waiting }?.rowKey ?? ""
+        let r = build(
+            procs: [hit(.claude), hit(.codex)],
+            attention: [attention(.claude, ageMs: 3_600_000), attention(.codex, ageMs: 30_000)],
+            context: snoozedContext([oldKey])
+        )
+        XCTAssertFalse(r.snapshot.title.contains("1h"), "that hour belongs to the snoozed row: \(r.snapshot.title)")
+    }
+
+    /// A deadline in the past is not a snooze.
+    func testAnExpiredDeadlineDoesNotSuppressAnything() {
+        let seed = build(procs: [hit(.claude)], attention: [attention(.claude)])
+        var past: [String: Int64] = [:]
+        past[waitingRowKey(seed)] = now - 1
+        let r = build(
+            procs: [hit(.claude)],
+            attention: [attention(.claude)],
+            context: context(snoozed: past)
+        )
+        XCTAssertEqual(r.snapshot.glance, .waiting)
+        XCTAssertFalse(r.rows.contains { $0.isSnoozed })
+    }
+
+    // MARK: Stall threshold
+
+    func testTheStallThresholdComesFromTheContext() {
+        let quiet = harvest(.claude, task: "build", ageMs: 7 * 60 * 1000)
+        let strict = build(
+            procs: [hit(.claude)], harvest: [quiet], context: context(stalledSeconds: 5 * 60)
+        )
+        XCTAssertTrue(strict.rows.contains { $0.isStalled })
+
+        let lenient = build(
+            procs: [hit(.claude)], harvest: [quiet], context: context(stalledSeconds: 60 * 60)
+        )
+        XCTAssertFalse(lenient.rows.contains { $0.isStalled })
+    }
+
+    func testStallCanBeTurnedOffEntirely() {
+        let r = build(
+            procs: [hit(.claude)],
+            harvest: [harvest(.claude, task: "build", ageMs: 10 * 60 * 60 * 1000)],
+            context: context(stalledSeconds: 0)
+        )
+        XCTAssertFalse(r.rows.contains { $0.isStalled })
     }
 
     func testNoWaitsMeansNoLongestWait() {

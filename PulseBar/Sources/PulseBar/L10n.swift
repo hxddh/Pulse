@@ -168,6 +168,13 @@ enum L10n {
         case .noActivityYet: return "no activity yet"
         case .noProject: return "No project"
         case .stalled: return "Stalled"
+        case .snooze: return "Later"
+        case .snoozed: return "snoozed"
+        case .snoozedFor: return "Later · %@ left"
+        case .stallAfter: return "Call it stalled after"
+        case .stallOff: return "Never"
+        case .minutesShort: return "%d min"
+        case .notifFocus: return "Focus"
         }
     }
 
@@ -294,6 +301,13 @@ enum L10n {
         case .noActivityYet: return "暂无动静"
         case .noProject: return "无项目"
         case .stalled: return "停滞"
+        case .snooze: return "稍后"
+        case .snoozed: return "已稍后"
+        case .snoozedFor: return "已稍后 · 剩 %@"
+        case .stallAfter: return "多久算停滞"
+        case .stallOff: return "不判定"
+        case .minutesShort: return "%d 分钟"
+        case .notifFocus: return "去看看"
         }
     }
 
@@ -331,6 +345,7 @@ enum L10n {
         case waitedLongest, moreDetail
         case acrossProjects, agoFormat, whileAway, noActivityYet
         case noProject, stalled
+        case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
     }
 }
 
