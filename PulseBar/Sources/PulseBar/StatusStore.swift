@@ -60,6 +60,10 @@ final class StatusStore: ObservableObject {
     /// Last value actually pushed to launchd — avoids re-running launchctl
     /// (two synchronous subprocesses) on every settings write.
     private var appliedLaunchAtLogin: Bool?
+    /// Rolling scan counters, so the energy claim can be checked, not believed.
+    private var probeStats = ProbeStats()
+    /// When the timer parked, for the parked-duration counter.
+    private var parkedSince: Date?
     private var knownWaitingKeys: Set<String> = []
     /// First apply seeds waiting keys without firing edge notifications.
     private var waitingNotifySeeded = false
@@ -114,6 +118,7 @@ final class StatusStore: ObservableObject {
             "lang: \(language.rawValue) · autoProbe: \(autoProbe)",
             "hooks: \(hooksStatus.label(lang: lang))",
             "glance: \(snapshot.glance) · rows: \(snapshot.rows.count)/\(snapshot.totalCount)",
+            "cadence: \(probeIntervalDescription) · \(probeStats.summary(now: Date()))",
         ]
         if let err = snapshot.probeError { lines.append("probeError: \(err)") }
         for row in cachedAll.prefix(8) {
@@ -212,8 +217,13 @@ final class StatusStore: ObservableObject {
         )
         currentInterval = interval
         guard let interval else {
+            if parkedSince == nil { parkedSince = Date() }
             DebugLog.write("probe parked (display asleep / locked)")
             return
+        }
+        if let since = parkedSince {
+            probeStats.addParked(Date().timeIntervalSince(since))
+            parkedSince = nil
         }
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             // Bind before the Task: the timer block is @Sendable, and referencing
@@ -347,10 +357,13 @@ final class StatusStore: ObservableObject {
             }
 
             let outcome: HarvestOutcome
+            var harvestMs: Int?
             if why == "skipped" {
                 outcome = .skipped
             } else {
+                let h0 = Date()
                 let (rows, unreliable) = ActivityHarvest.scan()
+                harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
                 outcome = unreliable ? .failed : .fresh(rows)
             }
 
@@ -367,6 +380,7 @@ final class StatusStore: ObservableObject {
                     processSignature: signature,
                     attention: attention,
                     ticket: ticket,
+                    harvestMs: harvestMs,
                     clearRefreshing: showSpinner
                 )
             }
@@ -397,6 +411,7 @@ final class StatusStore: ObservableObject {
         processSignature: String,
         attention: [AttentionReader.Entry],
         ticket: UInt64,
+        harvestMs: Int? = nil,
         clearRefreshing: Bool = false
     ) {
         defer { finishScanFlight() }
@@ -438,6 +453,9 @@ final class StatusStore: ObservableObject {
         }()
 
         let now = Date()
+        probeStats.record(
+            ProbeStats.Sample(at: now, harvested: harvestMs != nil, harvestMs: harvestMs)
+        )
         let result = SnapshotBuilder.build(
             SnapshotBuilder.Input(
                 procs: procs,
