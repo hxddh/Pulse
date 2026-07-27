@@ -43,3 +43,10 @@ jobs:
       - name: Test
         run: swift test
         working-directory: PulseBar
+
+      # Package on every push, not just at release. The launch crash in
+      # 0.21–0.23.0 lived entirely in the packaging step: source was fine, tests
+      # were green, and three DMGs shipped that died on open. package.sh runs
+      # scripts/package_check.py against the assembled .app.
+      - name: Package and verify the app bundle
+        run: ./PulseBar/Scripts/package.sh

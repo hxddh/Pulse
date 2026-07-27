@@ -212,14 +212,17 @@ enum ActivityHarvest {
            fm.fileExists(atPath: res.path) {
             return res
         }
-        if let url = Bundle.module.url(forResource: "activity_scan", withExtension: "py") {
+        if let url = PulseResources.url(forResource: "activity_scan", withExtension: "py") {
             return url
         }
         if let exe = Bundle.main.executableURL?.deletingLastPathComponent() {
+            // The SwiftPM bundle is flat — resources sit at its root. These used
+            // to point at Contents/Resources/, which only ever existed because
+            // package.sh wrongly created it (and that is what broke launch).
             let candidates = [
-                exe.appendingPathComponent("PulseBar_PulseBar.bundle/Contents/Resources/activity_scan.py"),
+                exe.appendingPathComponent("PulseBar_PulseBar.bundle/activity_scan.py"),
                 exe.appendingPathComponent("../Resources/activity_scan.py"),
-                exe.appendingPathComponent("../Resources/PulseBar_PulseBar.bundle/Contents/Resources/activity_scan.py"),
+                exe.appendingPathComponent("../Resources/PulseBar_PulseBar.bundle/activity_scan.py"),
             ]
             for c in candidates where fm.fileExists(atPath: c.path) { return c }
         }

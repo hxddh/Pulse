@@ -2,6 +2,56 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.23.1 — 修复启动崩溃
+
+**0.21.0 / 0.22.0 / 0.23.0 的 DMG 装上去打不开，一启动就崩。请升级到本版。**
+从源码 `swift run` 一直是好的，所以三个版本都带着这个问题发了出去。
+
+### 出了什么事
+
+SwiftPM 生成的资源包是**扁平**结构：`Info.plist` 和资源目录都在包的根目录，
+没有 `Contents/`。而 `package.sh` 在包里**又建了一层 `Contents/Resources/`**
+并把资源复制了一份进去。
+
+CFBundle 一看到 `Contents/` 就改用现代包布局：不再读根目录，转而去找
+`Contents/Info.plist` —— 那个文件从来没被写过。于是 `Bundle(url:)` 返回 nil，
+编译器为 `Bundle.module` 生成的访问器走到最后一行 `fatalError()`。
+菜单栏画第一个图标时就会碰到它，所以是**一启动就崩**。
+
+从发布的 v0.23.0 DMG 里解出来的实际结构：
+
+```
+Pulse.app/Contents/Resources/
+├── AgentIcons/ Brand/ *.py          ← 这一份是好的
+└── PulseBar_PulseBar.bundle/        ← 整个包没有 Info.plist
+    ├── AgentIcons/ Brand/ *.py      ← SwiftPM 的扁平布局
+    └── Contents/Resources/          ← 多出来的一层，正是它导致崩溃
+        └── AgentIcons/ Brand/ *.py
+```
+
+### 修了什么
+
+- **`package.sh`**：删掉那段多余的 `Contents/Resources/` 复制；资源包缺失时
+  直接报错退出，不再静默继续打出一个坏包；确认包内有 `Info.plist`，
+  SwiftPM 没写就补一个。
+- **`scripts/package_check.py`（新增第四个门禁）**：对着**构建产物**检查，
+  不是源码。校验资源包在位、`Info.plist` 在位、**没有多余的 `Contents/`**、
+  以及每个运行时会去找的资源都真的能按扁平路径找到。
+  已用发布出去的 v0.23.0 的真实结构验证过：会红。
+- **CI 每次推送都打包**并跑这个门禁。此前只有发布时才打包，
+  而打包这一步从来没人验证过 —— 这正是它能连发三次的原因。
+- **资源找不到不再是致命错误。** `Bundle.module` 一旦解析失败就 `fatalError()`，
+  把一个打包失误变成了没有任何线索的启动崩溃。改用不会 trap 的
+  `PulseResources`：找不到就返回 nil，图标退回代码绘制的兜底样式。
+  少一个图标不值得让整个 app 挂掉。
+- 顺带修了 `ActivityHarvest` 里三条同样写着 `Contents/Resources/` 的兜底路径 ——
+  它们指向的目录只是因为打包脚本错误地创建了才存在。
+
+### 说明
+
+修的是打包与资源查找，0.23.0 的功能一个没动。
+`swift test` 从头到尾都是绿的，这个 bug 测试根本够不着 —— 门禁才是能挡住它的东西。
+
 ## 0.23.0 — 可信
 
 0.22 修好了很多东西，但**没人能验证它修好了**：最容易出错的合并逻辑没有测试，

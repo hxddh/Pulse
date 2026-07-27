@@ -145,7 +145,7 @@ enum HooksSupport {
            fm.fileExists(atPath: res.path) {
             return res
         }
-        if let url = Bundle.module.url(forResource: name.replacingOccurrences(of: ".py", with: ""), withExtension: "py") {
+        if let url = PulseResources.url(forResource: name.replacingOccurrences(of: ".py", with: ""), withExtension: "py") {
             return url
         }
         let bundled = here.appendingPathComponent("Resources/\(name)")
