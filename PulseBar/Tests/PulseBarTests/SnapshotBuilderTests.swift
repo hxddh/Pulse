@@ -295,6 +295,18 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.snapshot.headerTitle, L10n.t(.needsYou, .en))
     }
 
+    /// A fresh wait says "now", which the lamp already conveys. The label
+    /// earns its space by escalating once the number means something.
+    func testSingleWaitGainsItsAgeOnceItIsWorthSaying() {
+        let r = build(procs: [hit(.claude)], attention: [attention(.claude, ageMs: 240_000)])
+        XCTAssertEqual(r.snapshot.title, "Claude · 4m")
+    }
+
+    func testFreshWaitDoesNotSpendMenuBarSpaceOnNow() {
+        let r = build(procs: [hit(.claude)], attention: [attention(.claude, ageMs: 1_000)])
+        XCTAssertEqual(r.snapshot.title, "Claude…")
+    }
+
     func testMultipleWaitingCollapsesToACount() {
         let r = build(harvest: [
             harvest(.claude, task: "x", session: "s1", skill: "pending"),

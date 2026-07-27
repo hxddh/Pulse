@@ -360,11 +360,19 @@ enum SnapshotBuilder {
             let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
             // The menu bar carries the two facts that decide whether to look:
             // how many are blocked, and how long the worst one has waited.
-            let dur = snap.longestWaitSeconds > 0
+            //
+            // A wait younger than five seconds formats as "now", which says
+            // nothing the lamp has not already said — so hold the space until
+            // the number is worth it, and let the label escalate on its own
+            // from "Claude…" to "Claude · 4m".
+            let rawDuration = snap.longestWaitSeconds > 0
                 ? DurationFormat.label(seconds: snap.longestWaitSeconds, lang: lang)
                 : ""
+            let dur = rawDuration == t(.durNow, lang) ? "" : rawDuration
             if waitingCount == 1, let w = waitingRows.first {
-                snap.title = dur.isEmpty ? "\(w.agent.displayName)…" : dur
+                snap.title = dur.isEmpty
+                    ? "\(w.agent.displayName)…"
+                    : "\(w.agent.displayName) · \(dur)"
                 snap.tooltip = "\(t(.needsYou, lang)) · \(w.agent.displayName)"
                 snap.headerTitle = t(.needsYou, lang)
             } else {
