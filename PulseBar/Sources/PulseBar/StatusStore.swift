@@ -32,6 +32,10 @@ final class StatusStore: ObservableObject {
     @Published private(set) var notifyAuthorized: Bool?
     /// Waits that have already been resolved, newest first (P1-H).
     @Published private(set) var waitHistory: [ResolvedWait] = []
+    /// Waits that ended while the tray was closed — "what did I miss?".
+    @Published private(set) var missedWhileAway = 0
+    /// When the tray was last dismissed, for the missed-wait count.
+    private var trayClosedAt: Date?
 
     /// A Waiting row that is no longer waiting — "did I miss something?".
     struct ResolvedWait: Identifiable, Equatable {
@@ -189,13 +193,24 @@ final class StatusStore: ObservableObject {
     /// Tray panel appeared — probe faster while the user is looking at it.
     func trayDidAppear() {
         trayOpen = true
+        // Coming back to the tray, the first question is what was missed. The
+        // panel only ever showed the present moment.
+        if let closed = trayClosedAt {
+            missedWhileAway = waitHistory.filter { $0.resolvedAt > closed }.count
+        }
         rescheduleTimer()
         refresh(reason: "trayOpen")
     }
 
     func trayDidDisappear() {
         trayOpen = false
+        trayClosedAt = Date()
         rescheduleTimer()
+    }
+
+    /// Acknowledge the "while you were away" line.
+    func clearMissedWhileAway() {
+        missedWhileAway = 0
     }
 
     /// Current cadence, for Settings/diagnostics ("probing every 5s").
@@ -650,6 +665,29 @@ final class StatusStore: ObservableObject {
             today.count,
             durationLabel(seconds: mean)
         )
+    }
+
+    /// "12m ago" for a row's last activity, or "no activity yet".
+    func lastActivityLabel(_ row: AgentRow) -> String {
+        guard row.harvestMs > 0 else { return "" }
+        let secs = row.lastActivitySeconds
+        if secs < 5 { return tr(.durNow) }
+        return String(format: tr(.agoFormat), durationLabel(seconds: secs))
+    }
+
+    /// Second line of a row: where it is, and how long since it moved.
+    ///
+    /// Both facts were collected from the start and never shown. The line used
+    /// to repeat the agent name that the icon already carries.
+    func rowContextLine(_ row: AgentRow) -> String {
+        var bits: [String] = []
+        let path = row.displayPath
+        if !path.isEmpty { bits.append(path) }
+        let ago = lastActivityLabel(row)
+        if !ago.isEmpty { bits.append(ago) }
+        // With neither, fall back to naming the agent rather than an empty line.
+        if bits.isEmpty { return row.isProcessOnly ? "" : row.agent.displayName }
+        return bits.joined(separator: " · ")
     }
 
     /// Human wait age in the resolved language (`2 分` / `2m`).

@@ -90,3 +90,76 @@ final class WaitUrgencyTests: XCTestCase {
         XCTAssertFalse(row.isUrgentWait, "no timestamp must not read as an old wait")
     }
 }
+
+
+/// Screenshots of 0.24.0 showed one fact stated three and four times over.
+final class RowRedundancyTests: XCTestCase {
+    private func row(agent: AgentID, task: String = "", project: String = "") -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: agent)
+        r.task = task
+        r.project = project
+        r.processCount = 1
+        r.liveProcess = true
+        return r
+    }
+
+    /// `Cursor · Cursor` — the dedupe compared the project to the hero only.
+    func testProjectThatRestatesTheAgentIsDropped() {
+        let r = row(agent: .cursor, task: "Pulse installation guide", project: "Cursor")
+        XCTAssertEqual(AgentRow.shortProject(r.project), "Cursor")
+        XCTAssertEqual(r.agent.displayName, "Cursor")
+    }
+
+    /// A bare process row said "Process detected", "process", and "Amp".
+    func testProcessOnlyRowHasNoSessionTitleToShow() {
+        let r = row(agent: .amp)
+        XCTAssertTrue(r.isProcessOnly, "no task means the hero falls back to the agent name")
+        XCTAssertNil(r.usefulTask)
+    }
+}
+
+
+/// The two facts a row could never state, both collected from the start.
+final class RowContextTests: XCTestCase {
+    private func row(cwd: String = "", project: String = "", harvestMs: Int64 = 0) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.cwd = cwd
+        r.project = project
+        r.harvestMs = harvestMs
+        return r
+    }
+
+    func testHomeIsWrittenAsTilde() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        XCTAssertEqual(row(cwd: home).displayPath, "~")
+        XCTAssertEqual(row(cwd: home + "/code").displayPath, "~/code")
+    }
+
+    /// The middle of a deep path carries no identity; the tail does.
+    func testDeepPathsKeepTheirTail() {
+        let p = row(cwd: "/a/b/c/d/e/Pulse").displayPath
+        XCTAssertTrue(p.hasSuffix("e/Pulse"), p)
+        XCTAssertTrue(p.contains("…"), p)
+    }
+
+    func testShallowPathsAreLeftAlone() {
+        XCTAssertEqual(row(cwd: "/tmp/alpha").displayPath, "/tmp/alpha")
+    }
+
+    func testNoLocationYieldsNoPathRatherThanAPlaceholder() {
+        XCTAssertEqual(row().displayPath, "")
+    }
+
+    func testProjectIsUsedWhenThereIsNoCwd() {
+        XCTAssertEqual(row(project: "Pulse").displayPath, "Pulse")
+    }
+
+    func testUnknownActivityIsZeroNotEpoch() {
+        XCTAssertEqual(row().lastActivitySeconds, 0)
+    }
+
+    func testActivityAgeCountsFromTheHarvestStamp() {
+        let tenMinutesAgo = Int64((Date().timeIntervalSince1970 - 600) * 1000)
+        XCTAssertEqual(row(harvestMs: tenMinutesAgo).lastActivitySeconds, 600, accuracy: 5)
+    }
+}

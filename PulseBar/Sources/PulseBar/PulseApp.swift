@@ -190,6 +190,7 @@ struct TrayPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            missedNotice
             nudge
             Divider().opacity(0.4)
 
@@ -201,39 +202,12 @@ struct TrayPanel: View {
 
             Divider().opacity(0.4)
             actions
-            versionFooter
         }
         .frame(width: TrayChrome.width)
         // Tray visibility drives the probe cadence — fast while being read,
         // slow (or parked) when nobody is looking.
         .onAppear { store.trayDidAppear() }
         .onDisappear { store.trayDidDisappear() }
-    }
-
-    /// Tertiary build badge — answers "which Pulse am I running?" without
-    /// opening Settings. Muted so it never competes with the status narrative.
-    private var versionFooter: some View {
-        Button {
-            store.copyDiagnostics()
-        } label: {
-            HStack(spacing: 5) {
-                Text(PulseVersion.about)
-                if store.isVersionMismatch {
-                    Text(store.tr(.versionStale))
-                        .foregroundStyle(GlanceKind.error.lampColor)
-                }
-                Spacer(minLength: 0)
-                Text(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics))
-            }
-            .font(.system(size: 10))
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, TrayChrome.padX)
-            .padding(.bottom, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(PulseVersion.fingerprint)
-        .accessibilityLabel(PulseVersion.fingerprint)
     }
 
     private var header: some View {
@@ -280,6 +254,28 @@ struct TrayPanel: View {
 
     private var headerTitleColor: Color {
         store.snapshot.glance.lampColor
+    }
+
+    /// The panel only ever showed the present moment. Coming back to it, the
+    /// first question is what happened while you were gone.
+    @ViewBuilder
+    private var missedNotice: some View {
+        if store.missedWhileAway > 0 {
+            Button { store.clearMissedWhileAway() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 11))
+                    Text(String(format: store.tr(.whileAway), store.missedWhileAway))
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, TrayChrome.padX)
+                .padding(.bottom, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     @ViewBuilder
@@ -367,8 +363,11 @@ struct TrayPanel: View {
             var order: [String] = []
             var byProject: [String: [AgentRow]] = [:]
             for row in rows {
-                let name = AgentRow.shortProject(row.project)
-                let key = name.isEmpty ? row.agent.displayName : name
+                // Key on the real location. Falling back to the agent name made
+                // headings that restated the row beneath them ("Amp 1" over a
+                // row whose only content was Amp).
+                let path = row.displayPath
+                let key = path.isEmpty ? store.tr(.noActivityYet) : path
                 if byProject[key] == nil { order.append(key) }
                 byProject[key, default: []].append(row)
             }
@@ -399,25 +398,30 @@ struct TrayPanel: View {
         // was no way to notice except by looking.
         let cap: CGFloat = store.showAllAgents ? 620 : 420
 
+        let groups = groupedRows
         return VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    ForEach(groupedRows) { group in
+                    ForEach(groups) { group in
                         Section {
-                            ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
+                            // No rules between rows: whitespace already
+                            // separates them, and a line every 56pt turns a
+                            // short list into a table.
+                            ForEach(group.rows) { row in
                                 AgentRowButton(row: row, store: store)
-                                if index < group.rows.count - 1 {
-                                    Divider()
-                                        .padding(.leading, 48)
-                                        .opacity(0.22)
-                                }
                             }
                         } header: {
-                            SectionHeader(
-                                title: group.title,
-                                count: group.count,
-                                accent: group.accent
-                            )
+                            // A lone heading restates the panel header directly
+                            // above it — "2 running / Cursor · Amp" followed by
+                            // "Running 2". Headings earn their line only when
+                            // there is more than one group to tell apart.
+                            if groups.count > 1 {
+                                SectionHeader(
+                                    title: group.title,
+                                    count: group.count,
+                                    accent: group.accent
+                                )
+                            }
                         }
                     }
                 }
@@ -465,32 +469,58 @@ struct TrayPanel: View {
         .buttonStyle(.plain)
     }
 
+    /// One bar, not five stacked rows.
+    ///
+    /// Five full-width menu items plus a version footer cost about 170pt of a
+    /// 600pt panel — more than the two rows of content it was framing. Icons
+    /// with tooltips carry the same actions in ~34pt, and the build badge rides
+    /// along at the end where it was already meant to sit quietly.
     private var actions: some View {
-        VStack(spacing: 0) {
-            TrayAction(title: store.tr(.refresh), systemImage: "arrow.clockwise", shortcut: "r") {
+        HStack(spacing: 2) {
+            TrayIconAction(systemImage: "arrow.clockwise", help: store.tr(.refresh), shortcut: "r") {
                 store.refresh(reason: "manual")
             }
             .disabled(store.isRefreshing)
+
             if store.snapshot.rows.contains(where: \.waiting) {
-                // One step from "something needs me" to the terminal it is
-                // blocked in, without picking the right row by eye first.
-                TrayAction(title: store.tr(.jumpToOldest), systemImage: "arrow.uturn.forward", shortcut: "j") {
-                    store.focusOldestWait()
-                }
-                TrayAction(title: store.tr(.clearWaiting), systemImage: "checkmark.circle") {
+                TrayIconAction(
+                    systemImage: "arrow.uturn.forward",
+                    help: store.tr(.jumpToOldest),
+                    shortcut: "j"
+                ) { store.focusOldestWait() }
+                TrayIconAction(systemImage: "checkmark.circle", help: store.tr(.clearWaiting)) {
                     store.clearWaiting()
                 }
             }
-            TrayAction(title: store.tr(.settings), systemImage: "gearshape", shortcut: ",") {
+
+            TrayIconAction(systemImage: "gearshape", help: store.tr(.settings), shortcut: ",") {
                 store.openSettings()
             }
-            TrayAction(title: store.tr(.quit), systemImage: "power", shortcut: "q") {
+            TrayIconAction(systemImage: "power", help: store.tr(.quit), shortcut: "q") {
                 store.quit()
             }
-        }
-        .padding(.vertical, 5)
-    }
 
+            Spacer(minLength: 6)
+
+            Button { store.copyDiagnostics() } label: {
+                HStack(spacing: 4) {
+                    Text(store.didCopyDiagnostics ? store.tr(.copied) : PulseVersion.about)
+                    if store.isVersionMismatch {
+                        Text(store.tr(.versionStale))
+                            .foregroundStyle(GlanceKind.error.lampColor)
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(PulseVersion.fingerprint)
+            .accessibilityLabel(PulseVersion.fingerprint)
+        }
+        .padding(.horizontal, TrayChrome.padX)
+        .padding(.vertical, 8)
+    }
 }
 
 // MARK: - Agent row
@@ -498,8 +528,17 @@ struct TrayPanel: View {
 @MainActor
 private struct AgentRowButton: View {
     let row: AgentRow
-    let store: StatusStore
+    /// Must be observed, not merely held.
+    ///
+    /// This was `let store: StatusStore`. The row's body reads `store.tr(...)`
+    /// for its title and badge, but a plain `let` does not subscribe: when the
+    /// language changed, `TrayPanel` re-rendered while every row kept the same
+    /// `row` value and the same store *reference*, so SwiftUI saw identical
+    /// inputs and skipped the child entirely. The result was a panel whose
+    /// chrome was English and whose rows were still Chinese.
+    @ObservedObject var store: StatusStore
     @State private var hovering = false
+    @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -536,10 +575,13 @@ private struct AgentRowButton: View {
                                 statusChip
                             }
 
-                            Text(agentLine)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            if !contextLine.isEmpty {
+                                Text(contextLine)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.head)
+                            }
 
                             // Waiting rows get a third line, because the actual
                             // question is the entire point of the product.
@@ -582,22 +624,46 @@ private struct AgentRowButton: View {
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
                     }
+                    Button(store.tr(.moreDetail)) { expanded.toggle() }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11, weight: .medium))
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, 48)
                 .padding(.trailing, TrayChrome.padX)
                 .padding(.bottom, 8)
             }
+            detailBlock
         }
+        .background(hovering ? Color.primary.opacity(0.045) : Color.clear)
         .onHover { hovering = $0 }
-        // The detail that used to crowd every row full-time: tokens, tool,
-        // skill, subagents, session id. Still available, no longer competing.
-        .help(hoverDetail)
+    }
+
+    /// Inline detail, opened on demand.
+    ///
+    /// 0.24 pushed this into a tooltip, which cannot be selected, cannot be
+    /// copied, and vanishes while being read.
+    @ViewBuilder
+    private var detailBlock: some View {
+        if expanded {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(detailLines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.leading, 48)
+            .padding(.trailing, TrayChrome.padX)
+            .padding(.bottom, 8)
+        }
     }
 
     private var showActions: Bool {
-        guard row.waiting || row.canFocusTerminal || row.canOpenFolder else { return false }
-        return row.waiting || hovering
+        row.waiting || hovering || expanded
     }
 
     /// Session title is the row hero; process-only rows de-rank to a status phrase.
@@ -609,7 +675,10 @@ private struct AgentRowButton: View {
             return store.tr(.needsYou)
         }
         if row.isProcessOnly {
-            return store.tr(.processDetected)
+            // The agent name *is* the information here. Saying "Process
+            // detected" as the title, "process" in the badge, and the agent
+            // name on the line below states one fact three times.
+            return row.agent.displayName
         }
         if let t = row.sessionDetail {
             let label = row.isRecentOnly
@@ -622,38 +691,40 @@ private struct AgentRowButton: View {
         return row.agent.displayName
     }
 
-    /// Second line, capped at two facts: who, and where.
+    /// Second line: where this session is, and how long since it moved.
     ///
-    /// It used to join up to five (`Claude · Pulse · ×3 · Warp · hooks`) and a
-    /// `metaLine` under it joined up to five more, so a row carried ten equal
-    /// facts in two lines of tertiary text and none of them could be scanned.
-    /// The rest moved to `hoverDetail`.
-    private var agentLine: String {
-        var bits: [String] = [row.agent.displayName]
-        let short = AgentRow.shortProject(row.project)
-        if !short.isEmpty, short != heroTitle {
-            bits.append(short)
-        } else if let hint = row.shortSessionHint, row.usefulTask != nil {
-            bits.append(hint)
-        }
-        return bits.joined(separator: " · ")
+    /// It used to be `Agent · project`, which restated the icon and — when the
+    /// folder happened to match the agent — printed "Cursor · Cursor". The two
+    /// facts a row could never state were *where* and *how long*; both were
+    /// collected all along.
+    private var contextLine: String {
+        store.rowContextLine(row)
     }
 
-    /// Everything the second line no longer carries.
-    private var hoverDetail: String {
-        var bits: [String] = [row.agent.displayName]
-        let short = AgentRow.shortProject(row.project)
-        if !short.isEmpty { bits.append(short) }
-        if row.processCount > 1 { bits.append("×\(row.processCount)") }
-        if row.viaWarp { bits.append("Warp") }
+    /// Everything the row does not show inline, revealed on demand.
+    private var detailLines: [String] {
+        var out: [String] = []
+        let full = row.cwd.isEmpty ? row.project : row.cwd
+        if !full.isEmpty, full != row.displayPath { out.append(full) }
+        if let task = row.usefulTask, task != heroTitle { out.append(task) }
+        var facts: [String] = [row.agent.displayName]
+        if row.processCount > 1 { facts.append("×\(row.processCount)") }
+        if row.viaWarp { facts.append("Warp") }
         if let sig = row.waitSignal {
-            bits.append(sig == .hooks ? store.tr(.signalHooks) : store.tr(.signalPending))
+            facts.append(sig == .hooks ? store.tr(.signalHooks) : store.tr(.signalPending))
         }
-        if let meta = row.metaLine { bits.append(meta) }
-        return bits.joined(separator: " · ")
+        out.append(facts.joined(separator: " · "))
+        if let meta = row.metaLine { out.append(meta) }
+        if let hint = row.shortSessionHint { out.append(hint) }
+        return out
     }
 
-    /// Encoding 2 of 3: status word, plus how long it has been waiting.
+    /// Only abnormal states get a badge.
+    ///
+    /// Running was announced three times over — panel header, section header,
+    /// and a green pill on every row. Running with a live session is the
+    /// ordinary case, and the ordinary case does not need saying: **no badge
+    /// means running**.
     @ViewBuilder
     private var statusChip: some View {
         if row.waiting {
@@ -667,15 +738,12 @@ private struct AgentRowButton: View {
             )
         } else if row.isProcessOnly {
             StatusChip(kind: .process, label: store.tr(.processWord))
-        } else if row.liveProcess || row.subRunning > 0 {
-            if row.subRunning > 0 {
-                StatusChip(kind: .running, label: "sub \(row.subRunning)↑")
-            } else {
-                StatusChip(kind: .running, label: store.tr(.running))
-            }
-        } else {
+        } else if row.subRunning > 0 {
+            StatusChip(kind: .running, label: "sub \(row.subRunning)↑")
+        } else if row.isRecentOnly {
             StatusChip(kind: .recent, label: store.tr(.recent))
         }
+        // Live with a session and nothing unusual: no badge.
     }
 
     private var accessibilityText: String {
@@ -692,25 +760,29 @@ private struct AgentRowButton: View {
     }
 }
 
-private struct TrayAction: View {
-    let title: String
+/// Compact icon action for the tray's single action bar.
+private struct TrayIconAction: View {
     let systemImage: String
+    let help: String
     var shortcut: Character? = nil
-    var disabled: Bool = false
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12.5))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, TrayChrome.padX)
-                .padding(.vertical, 7)
+            Image(systemName: systemImage)
+                .font(.system(size: 13))
+                .frame(width: 28, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(hovering ? Color.primary.opacity(0.08) : Color.clear)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(disabled)
-        .accessibilityLabel(title)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(help)
         .modifier(OptionalShortcut(shortcut: shortcut))
     }
 }

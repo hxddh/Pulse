@@ -162,6 +162,10 @@ enum L10n {
         case .playSound: return "Play a sound on new waits"
         case .waitedLongest: return "longest"
         case .moreDetail: return "Details"
+        case .acrossProjects: return "across %d projects"
+        case .agoFormat: return "%@ ago"
+        case .whileAway: return "%d wait(s) ended while you were away"
+        case .noActivityYet: return "no activity yet"
         }
     }
 
@@ -282,6 +286,10 @@ enum L10n {
         case .playSound: return "新等待时播放提示音"
         case .waitedLongest: return "最久"
         case .moreDetail: return "详情"
+        case .acrossProjects: return "%d 个项目"
+        case .agoFormat: return "%@前"
+        case .whileAway: return "你离开时有 %d 个等待已结束"
+        case .noActivityYet: return "暂无动静"
         }
     }
 
@@ -317,6 +325,7 @@ enum L10n {
         case groupByAgent, groupByProject, groupingLabel
         case jumpToOldest, interruptionsToday, playSound
         case waitedLongest, moreDetail
+        case acrossProjects, agoFormat, whileAway, noActivityYet
     }
 }
 

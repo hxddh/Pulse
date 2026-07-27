@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.24.0"
+    static let semver = "0.25.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -352,6 +352,49 @@ struct AgentRow: Identifiable, Hashable {
         return max(0, Date().timeIntervalSince1970 - Double(waitSinceMs) / 1000.0)
     }
 
+    /// Where this session lives, written the way a person would write it.
+    ///
+    /// `cwd` has been collected since the beginning and never shown. The tray
+    /// could say who and what, but never *where* — so two Claude sessions in
+    /// different repos were indistinguishable.
+    var displayPath: String {
+        let raw = cwd.isEmpty ? project : cwd
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard trimmed.hasPrefix("/") else { return Self.shortProject(trimmed) }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var path = trimmed
+        if !home.isEmpty, path == home {
+            return "~"
+        }
+        if !home.isEmpty, path.hasPrefix(home + "/") {
+            path = "~" + path.dropFirst(home.count)
+        }
+        // Keep the tail: the last two components carry the identity, the
+        // middle of a deep path does not.
+        let parts = path.split(separator: "/").map(String.init)
+        if parts.count > 3 {
+            return (path.hasPrefix("~") ? "~/…/" : "/…/") + parts.suffix(2).joined(separator: "/")
+        }
+        return path
+    }
+
+    /// Seconds since this session last did anything (0 when unknown).
+    ///
+    /// `harvestMs` is the last-activity stamp. "Running for 20 minutes with
+    /// nothing happening" is a real signal, and the tray never carried it.
+    var lastActivitySeconds: Double {
+        guard harvestMs > 0 else { return 0 }
+        return max(0, Date().timeIntervalSince1970 - Double(harvestMs) / 1000.0)
+    }
+
+    /// Running with a live session is the ordinary case, and the ordinary case
+    /// does not need a badge. Only states worth reacting to get one.
+    var needsStatusChip: Bool {
+        if waiting || isProcessOnly || isRecentOnly { return true }
+        return false
+    }
+
     /// A wait old enough to deserve more than the ordinary Waiting treatment.
     /// This is the *only* place "longer" becomes "louder" — every other visual
     /// encoding stays constant, so the escalation actually reads as one.
@@ -398,6 +441,9 @@ struct PulseSnapshot: Equatable {
     /// Section totals over the *whole* list, so a heading can say "3 running"
     /// even when the window is showing two of them.
     var sectionTotals: [TraySection: Int] = [:]
+    /// Distinct projects across the whole list — an aggregate no single row
+    /// can state, which is the only kind of thing the header should say.
+    var projectCount: Int = 0
     /// Longest outstanding wait, in seconds — the number that decides who to
     /// deal with first, so it reaches the menu bar rather than staying buried
     /// in a row's third line.
