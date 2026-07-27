@@ -1,44 +1,98 @@
 name: Release
 
+# Three ways in, all ending at the same job:
+#
+#   1. push a `v*.*.*` tag                    — the classic path
+#   2. workflow_dispatch                      — only once this file is on the default branch
+#   3. push a commit whose message has [release]
+#
+# (3) exists because tag pushes need tag-write credentials that a CI/agent
+# session may not have, and (2) is unavailable until the workflow reaches the
+# default branch. The marker keeps it explicit — no push ever releases by
+# accident — and the job additionally refuses to publish a version that already
+# has a Release, so re-running is harmless.
 on:
   push:
     tags: ["v*.*.*"]
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.22.0)"
-        required: true
+        description: "Version to release (e.g. 0.22.0). Defaults to PulseVersion.semver."
+        required: false
 
 permissions:
   contents: write
 
 jobs:
+  decide:
+    name: Decide whether to release
+    # Filter before spending a runner: ordinary pushes do not reach this job.
+    if: >-
+      github.event_name != 'push'
+      || startsWith(github.ref, 'refs/tags/')
+      || contains(github.event.head_commit.message, '[release]')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version and preconditions
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          CODE="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' PulseBar/Sources/PulseBar/Models.swift)"
+
+          case "${{ github.event_name }}" in
+            push)
+              if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+                VERSION="${GITHUB_REF_NAME#v}"
+                REASON="tag"
+              else
+                VERSION="$CODE"
+                REASON="marker"
+              fi
+              ;;
+            workflow_dispatch)
+              VERSION="${{ github.event.inputs.version }}"
+              VERSION="${VERSION:-$CODE}"
+              REASON="dispatch"
+              ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # The tag must describe the code it points at.
+          if [[ "$CODE" != "$VERSION" ]]; then
+            echo "::error::asked to release $VERSION but Models.swift says $CODE"
+            exit 1
+          fi
+
+          # Release notes are not optional.
+          python3 scripts/changelog_section.py "$VERSION" > /dev/null
+
+          # Publishing twice would silently overwrite an artefact people already have.
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$VERSION is already released — nothing to do"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "releasing $VERSION (trigger: $REASON)"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
   release:
     name: Build, package, publish
+    needs: decide
+    if: needs.decide.outputs.release == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Resolve version
-        id: v
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "releasing $VERSION"
-
-      - name: Tag must match the compiled version
-        run: |
-          CODE="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' PulseBar/Sources/PulseBar/Models.swift)"
-          if [[ "$CODE" != "${{ steps.v.outputs.version }}" ]]; then
-            echo "::error::tag says ${{ steps.v.outputs.version }} but Models.swift says $CODE"
-            exit 1
-          fi
 
       - name: Gates
         run: |
@@ -59,22 +113,28 @@ jobs:
 
       - name: Release notes from CHANGELOG
         run: |
-          python3 scripts/changelog_section.py "${{ steps.v.outputs.version }}" > /tmp/notes.md
+          python3 scripts/changelog_section.py "${{ needs.decide.outputs.version }}" > /tmp/notes.md
           if [[ -z "${{ secrets.PULSE_SIGN_IDENTITY }}" ]]; then
             {
               echo
               echo "---"
-              echo "_This build is ad-hoc signed. macOS will warn on first open —"
-              echo "right-click the app and choose Open, or run_"
-              echo '`xattr -dr com.apple.quarantine /Applications/Pulse.app`.'
+              echo "**This build is ad-hoc signed.** macOS will refuse it on first open —"
+              echo "right-click the app and choose Open, or run:"
+              echo
+              echo '```'
+              echo 'xattr -dr com.apple.quarantine /Applications/Pulse.app'
+              echo '```'
             } >> /tmp/notes.md
           fi
 
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.v.outputs.version }}
-          name: Pulse ${{ steps.v.outputs.version }}
+          # Creates the tag at this commit when it does not exist yet, using the
+          # workflow's own contents:write token.
+          tag_name: v${{ needs.decide.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Pulse ${{ needs.decide.outputs.version }}
           body_path: /tmp/notes.md
-          files: zig-out/package/pulse-${{ steps.v.outputs.version }}-macos-PulseBar.dmg
+          files: zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
           fail_on_unmatched_files: true

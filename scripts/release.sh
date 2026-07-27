@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Cut a Pulse release.
 #
-#   ./scripts/release.sh 0.23.0          # dry run: bump, run gates, show the diff
-#   ./scripts/release.sh 0.23.0 --tag    # commit + annotated tag (still local)
+#   ./scripts/release.sh 0.23.0            # dry run: bump, run gates, show the diff
+#   ./scripts/release.sh 0.23.0 --commit   # commit carrying the [release] marker
+#   ./scripts/release.sh 0.23.0 --tag      # commit + local annotated tag
 #
-# Then `git push && git push --tags` — pushing the tag triggers
-# .github/workflows/release.yml, which builds the DMG on macOS and publishes
-# the GitHub Release using this version's CHANGELOG section as the body.
+# Then `git push` (or `git push --tags` for --tag). Either lands in
+# .github/workflows/release.yml, which builds the DMG on macOS and publishes the
+# GitHub Release using this version's CHANGELOG section as the body.
+#
+# --commit is the default path: CI creates the tag with its own contents:write
+# token, so publishing does not need tag-write rights on your account.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,7 +20,11 @@ VERSION="${1:-}"
 MODE="${2:-}"
 
 if [[ -z "$VERSION" ]]; then
-  echo "usage: $0 <MAJOR.MINOR.PATCH> [--tag]" >&2
+  echo "usage: $0 <MAJOR.MINOR.PATCH> [--commit|--tag]" >&2
+  exit 2
+fi
+if [[ -n "$MODE" && "$MODE" != "--commit" && "$MODE" != "--tag" ]]; then
+  echo "error: unknown mode '$MODE' (expected --commit or --tag)" >&2
   exit 2
 fi
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -30,14 +38,18 @@ echo "current: $CURRENT"
 echo "release: $VERSION"
 
 if [[ "$MODE" == "--tag" ]]; then
-  # A tag must describe a known tree, so refuse to cut one from a dirty repo.
+  if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+    echo "error: tag v$VERSION already exists" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$MODE" ]]; then
+  # A release must describe a known tree, so refuse to cut one from a dirty repo
+  # beyond the version bump this script is about to make.
   if [[ -n "$(git status --porcelain)" ]]; then
     echo "error: working tree is dirty — commit or stash first" >&2
     git status --short >&2
-    exit 1
-  fi
-  if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-    echo "error: tag v$VERSION already exists" >&2
     exit 1
   fi
 fi
@@ -70,25 +82,35 @@ for py in activity_scan.py pulse_hook.py install_hooks.py; do
     || { echo "error: PulseBar/Sources/PulseBar/Resources/$py is stale — run package.sh" >&2; exit 1; }
 done
 
-if [[ "$MODE" != "--tag" ]]; then
+if [[ -z "$MODE" ]]; then
   echo
   echo "--- dry run: nothing committed ---"
   git --no-pager diff --stat
   echo
-  echo "next: $0 $VERSION --tag"
+  echo "next: $0 $VERSION --commit"
   exit 0
 fi
 
+# `[release]` in the subject is what .github/workflows/release.yml watches for.
 git add -A
 if git diff --cached --quiet; then
-  # The version was already committed (e.g. tagging a green CI commit after
-  # the fact). Nothing to record — just tag what is already there.
-  echo "nothing to commit; tagging the current commit"
+  echo "nothing to commit — the version is already recorded at HEAD"
+  if [[ "$MODE" == "--commit" ]]; then
+    echo "to publish it, push an empty marker commit:"
+    echo "  git commit --allow-empty -m \"Release $VERSION [release]\" && git push"
+    exit 1
+  fi
 else
-  git commit -m "Release $VERSION"
+  git commit -m "Release $VERSION [release]"
 fi
-git tag -a "v$VERSION" -m "Pulse $VERSION"
 
-echo
-echo "tagged v$VERSION (local)"
-echo "next:  git push && git push --tags"
+if [[ "$MODE" == "--tag" ]]; then
+  git tag -a "v$VERSION" -m "Pulse $VERSION"
+  echo
+  echo "committed and tagged v$VERSION (local)"
+  echo "next:  git push && git push --tags"
+else
+  echo
+  echo "committed Release $VERSION [release]"
+  echo "next:  git push   — CI will build, tag and publish"
+fi

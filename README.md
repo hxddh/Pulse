@@ -101,12 +101,24 @@ export PULSE_NOTARY_PROFILE=pulse-notary   # 可选，触发公证 + stapler
 
 ### 发布
 
+先在 CHANGELOG.md 写好 `## x.y.z` 段落 —— 没有它所有路径都会拒绝。
+
 ```bash
-./scripts/release.sh 0.23.0        # 预演：改版本、跑门禁、给出 diff
-./scripts/release.sh 0.23.0 --tag  # 确认后：提交 + 打 tag
-git push && git push --tags        # tag 推上去即触发 release workflow
+./scripts/release.sh 0.23.0            # 预演：改版本、跑门禁、给出 diff
+./scripts/release.sh 0.23.0 --commit   # 提交（附带 [release] 标记）
+git push                               # CI 构建、打 tag、发布
 ```
 
-`release.sh` 会拒绝在工作区不干净、CHANGELOG 缺少该版本条目、或门禁失败时打 tag。
-`.github/workflows/release.yml` 在 macOS 上构建、打包、把 DMG 连同该版本的
-CHANGELOG 段落发到 GitHub Releases —— 应用内的「检查更新」读的就是这里。
+三种触发方式，最终都进同一个 job：
+
+| 触发 | 适用 |
+| --- | --- |
+| 提交标题含 `[release]` | 默认；任意分支可用，不需要 tag 写权限 |
+| 推送 `v*.*.*` tag | 偏好显式 tag 且有相应权限时 |
+| `workflow_dispatch` | 仅当 `release.yml` 已在**默认分支**上 |
+
+**tag 由 CI 用自己的 `contents: write` token 创建** —— 这是刻意设计：发布不应
+依赖某个开发者或 agent 的本地凭据。已存在 Release 的版本会被拒绝重复发布，
+所以重推是安全的。
+
+应用内的「检查更新」读的就是这些 Release。

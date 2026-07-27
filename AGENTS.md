@@ -39,24 +39,32 @@ without it the build is ad-hoc signed and Gatekeeper blocks it elsewhere.
 
 ## Release
 
+Write the `## x.y.z` section in CHANGELOG.md first — every path refuses without it.
+
 ```bash
-# 1. write the '## x.y.z' section in CHANGELOG.md first — release.sh refuses without it
-./scripts/release.sh 0.23.0          # dry run: bump + gates + diff
-./scripts/release.sh 0.23.0 --tag    # commit + annotated tag
-git push && git push --tags          # tag push triggers the release workflow
+# preferred: bump + gates, then let CI publish
+./scripts/release.sh 0.23.0                 # dry run: bump + gates + diff
+./scripts/release.sh 0.23.0 --commit        # commit with the [release] marker
+git push                                    # CI builds, tags and publishes
 ```
 
-Note: `workflow_dispatch` on the release workflow only becomes available once
-`release.yml` is on the **default branch** — until then, a tag push is the only
-trigger. Tag pushes also need credentials with tag-write scope; a session
-restricted to `refs/heads/claude/*` cannot cut the release itself.
+Three triggers, all landing in the same job:
 
-`.github/workflows/release.yml` verifies the tag matches `PulseVersion.semver`,
-runs the gates and tests, packages the DMG and publishes a GitHub Release whose
-body is that version's CHANGELOG section. The in-app update check reads those
-Releases, so a version that never got tagged is invisible to users.
+| Trigger | When to use |
+| --- | --- |
+| `[release]` in the pushed commit subject | default; works from any branch, no tag-write rights needed |
+| push a `v*.*.*` tag | if you prefer explicit tags and have tag-write access |
+| `workflow_dispatch` | only once `release.yml` is on the **default branch** |
 
-Debug log: `~/Library/Application Support/Pulse/debug.log`
+CI verifies the requested version matches `PulseVersion.semver`, runs the gates
+and tests, packages the DMG, and publishes a Release whose body is that
+version's CHANGELOG section. It creates the tag itself with its own
+`contents: write` token — that is deliberate, so publishing never depends on a
+developer's or agent's local credentials. It refuses to publish a version that
+already has a Release, so re-pushing is harmless.
+
+The in-app update check reads these Releases, so a version that never got
+released is invisible to users.
 
 ## Do not break
 
