@@ -95,17 +95,39 @@ Waiting 边沿（首扫只播种不通知）· idle 边沿 · harvest fresh/skip
 
 ## P1 — 应该
 
-### 4. 能耗埋点
+### 4. 能耗埋点 — ✅ 已完成
 
 0.22 CHANGELOG 里「28,800 → 2,880 次/天」是**算出来的，不是测出来的**。
-既然已经写进公开的 Release 说明，就该让它自证：诊断信息增加
-「过去一小时 N 次 probe / M 次 harvest / harvest 平均耗时 / 停表时长」。
-成本极低，同时让 bug 报告有用得多。
+既然已经写进公开的 Release 说明，就该让它自证。
 
-### 5. VoiceOver 中文
+`ProbeStats` 维护一个滚动一小时的窗口，「关于 → 复制诊断信息」多一行：
 
-`GlanceKind.accessibilityLabel` 仍是硬编码英文（`Idle` / `Running` /
-`Needs attention` / `Error`），中文用户的旁白读到的是英文。顺带审一遍其余 a11y 串。
+```
+cadence: every 30s · 1h: 240 probes · 82 harvests (~2900/day) · avg 310ms · parked 12m
+```
+
+- probe 与 harvest 分开计数 —— 只有 harvest 才付 Python 的钱；
+- 只给 harvest 计时（不含 `ps`），失败的 harvest 照样算，因为它确实 fork 了；
+- 投影按实测速率外推到一天，可直接和 Release 说明里的数字对比；
+  窗口不足 5 分钟返回 nil，不拿几个样本乘出一个日均值。
+
+11 个测试，其中投影测试直接断言 2,880/day —— 以后谁把节奏调回去，先在这里红。
+
+顺带修了一个自己引入的 bug：关掉「实时更新」时如果正处于停表状态，那段暂停时间
+会被算进 parked。parked 是「本该探测但屏幕关了」，paused 是「你让我别探测」，
+两者 UI 上本来就分开，计数器现在也分开。
+
+### 5. VoiceOver 中文 — ✅ 已完成
+
+`GlanceKind.accessibilityLabel` 原本是硬编码英文。菜单栏灯是旁白在那里唯一能读到的
+东西（意义全在图标上），却是整个界面里唯一不跟随语言的串。
+
+改成 `accessibilityKey: L10n.Key`，由 `SnapshotBuilder` 用同一个语言解析后挂在
+snapshot 上 —— 视图不再需要知道语言，也就不会和旁边的行读到不同的设置。
+顺带修了 `.error`：原文是 "Error"，而可见 UI 说的是「无法刷新」——
+橙灯表示探测不可用，不是崩溃。
+
+其余 6 处 a11y 调用点已审，`GlanceKind` 是唯一绕过 L10n 的。en/zh 键数 103/103。
 
 ### 6. 合并到 main
 
@@ -155,4 +177,5 @@ Waiting 边沿（首扫只播种不通知）· idle 边沿 · harvest fresh/skip
 - `swift test` 覆盖 `SnapshotBuilder` 全部分支，`StatusStore` 只剩 I/O 与策略 ✅；
 - 设置迁移有测试，老用户升级不丢配置 ✅；
 - 「关于」面板不再对所有人显示永久错误 ✅；
-- CHANGELOG 的能耗数字可由用户自己粘贴的诊断信息佐证。
+- CHANGELOG 的能耗数字可由用户自己粘贴的诊断信息佐证 ✅；
+- 中文用户的旁白读到中文 ✅。
