@@ -2,6 +2,74 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.23.0 — 可信
+
+0.22 修好了很多东西，但**没人能验证它修好了**：最容易出错的合并逻辑没有测试，
+设置读写没有测试，公开的能耗数字是算出来的，「检查更新」对所有人永久报错。
+这个版本不加功能，只把上一版的承诺变成可以核对的事实。
+
+计划与验收见 [`docs/plan-0.23.md`](docs/plan-0.23.md)。
+
+### 可测
+
+- **`SnapshotBuilder`：合并逻辑从 `StatusStore` 里抽出来了。**
+  「进程 + 会话文件 + attention → 托盘行」这段最容易出 bug 的代码，此前和 6 种副作用
+  （取当前时间、枚举运行中的 App、读磁盘、发通知、动定时器、写日志）缠在一起，
+  `applyScan` 一个函数 381 行，无法测试。现在外部世界通过 `Context` 注入，
+  想让外部世界做的事（通知边沿、清除的键、日志行）作为数据返回，
+  `StatusStore` 只留 I/O 与策略。`applyScan` 381 → 115 行，**34 个测试**覆盖
+  排序、去重、封顶、waiting 边沿、stale harvest、Focus 分级。
+- **设置变成值类型。** `PulseSettings` 是纯粹的解析 / 序列化 / 安静时段判定，
+  完全不碰 Application Support，**23 个测试**，其中包含整点→分钟的迁移
+  —— 老用户升级不丢配置这件事现在有测试兜着。
+- 测试总数 **60+ → 120**，全部在 CI 的 macOS 上真实编译运行。
+
+### 可核对
+
+- **能耗数字自证。** 0.22 写的「28,800 → 2,880 次/天」是算出来的。现在
+  「关于 → 复制诊断信息」多一行，报告过去一小时的真实情况：
+
+  ```
+  cadence: every 30s · 1h: 240 probes · 82 harvests (~2900/day) · avg 310ms · parked 12m
+  ```
+
+  probe 与 harvest 分开计数（只有 harvest 付 Python 的钱），只给 harvest 计时，
+  失败的 harvest 照样算（它确实 fork 了），窗口不足 5 分钟不外推日均值。
+  投影可直接和上面那个数字对比 —— 一份关于耗电的 bug 报告现在带得动证据。
+- **「检查更新」不再对所有人报错。** 仓库已转 public，匿名请求 Releases 可用。
+  fork 成私有仓库的情况在 README 里写清了替代做法。
+
+### 可访问
+
+- **VoiceOver 说中文。** 菜单栏那盏灯是旁白在那里唯一能读到的东西（意义全在图标上），
+  却是整个界面里唯一硬编码英文的串。现在跟随语言设置，由 `SnapshotBuilder` 解析后
+  挂在 snapshot 上，视图不会和旁边的行读到不同的语言。en/zh 键数 103/103。
+- 顺带修了错误态文案：旁白原本读 "Error"，而可见 UI 说的是「无法刷新」——
+  橙灯表示探测不可用，不是崩溃。
+
+### 修复
+
+- **停表计数不再吞掉「实时更新已关闭」的时长。** 屏幕休眠时关掉实时更新，
+  那段暂停时间会被算进 parked，重新开启后一次性计入
+  —— 关一周会显示「parked 10080m」。parked 是「本该探测但屏幕关了」，
+  paused 是「你让我别探测」，两者现在分开。
+
+### 文档
+
+- README / `AGENTS.md` / `EXPERIENCE.md` 全部重写，新增
+  [`docs/architecture.md`](docs/architecture.md)（数据从进程到菜单栏的完整路径）。
+  清掉了早已换掉的 Vercel Native SDK 外壳留下的描述 —— 那些内容会误导后续迭代。
+- 加上 [MIT LICENSE](LICENSE)。
+
+### 已知未完成
+
+- `release.yml` 仍不在默认分支，`workflow_dispatch` 因此不可用；
+  三条发布触发路径实际可走两条（tag 推送、`[release]` 标记）。
+- DMG 仍是 ad-hoc 签名，首次打开需右键或 `xattr -dr`。
+  设仓库 secret `PULSE_SIGN_IDENTITY` 即可产出 Gatekeeper 友好的包。
+- `activity_scan.py` 里 32 处静默 `except Exception` 仍未打开调试通道，
+  「为什么某个 Agent 没显示」目前仍不好排查。
+
 ## 0.22.0 — Energy, honesty, and everything the audit found
 
 Closes every open finding in [`docs/review-0.21.md`](docs/review-0.21.md).
