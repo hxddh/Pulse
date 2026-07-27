@@ -36,6 +36,10 @@ enum SnapshotBuilder {
         /// Harvest `pending` rows the user soft-dismissed.
         var dismissedPendingKeys: Set<String>
         var showAllAgents: Bool
+        /// Silence deadlines by row key — a "remind me later" the user set.
+        var snoozedUntilMs: [String: Int64]
+        /// Seconds of silence that make a live row stalled; 0 disables it.
+        var stalledSeconds: Double
 
         init(
             nowMs: Int64,
@@ -45,7 +49,9 @@ enum SnapshotBuilder {
             maxSessionsPerAgent: Int = SnapshotBuilder.maxSessionsPerAgent,
             maxVisibleRows: Int = SnapshotBuilder.maxVisibleRows,
             dismissedPendingKeys: Set<String> = [],
-            showAllAgents: Bool = false
+            showAllAgents: Bool = false,
+            snoozedUntilMs: [String: Int64] = [:],
+            stalledSeconds: Double = AgentRow.stalledSeconds
         ) {
             self.nowMs = nowMs
             self.terminal = terminal
@@ -55,6 +61,8 @@ enum SnapshotBuilder {
             self.maxVisibleRows = maxVisibleRows
             self.dismissedPendingKeys = dismissedPendingKeys
             self.showAllAgents = showAllAgents
+            self.snoozedUntilMs = snoozedUntilMs
+            self.stalledSeconds = stalledSeconds
         }
     }
 
@@ -274,8 +282,15 @@ enum SnapshotBuilder {
                 harvestMs: row.harvestMs,
                 nowMs: context.nowMs,
                 waiting: row.waiting,
-                live: row.liveProcess || row.subRunning > 0
+                live: row.liveProcess || row.subRunning > 0,
+                threshold: context.stalledSeconds
             )
+            // Resolved here for the same reason as `isStalled`: a countdown
+            // read from `Date()` inside a view body drifts away from the scan
+            // that produced the row it is drawn on.
+            if row.waiting, let until = context.snoozedUntilMs[row.rowKey], until > context.nowMs {
+                all[i].snoozeRemainingSeconds = Double(until - context.nowMs) / 1000.0
+            }
             all[i].focusTier = TerminalFocus.focusTier(
                 tty: row.tty,
                 viaWarp: row.viaWarp,
@@ -378,8 +393,13 @@ enum SnapshotBuilder {
             snap.header = t(.cantRefresh, lang)
             snap.probeError = "probe+harvest unavailable"
         } else if waitingCount > 0 {
-            snap.glance = .waiting
-            let waitingRows = all.filter(\.waiting)
+            // Snoozed waits keep their row, their section and their place in
+            // the count — the panel tells the truth. What they lose is the
+            // menu bar: no red lamp, no elapsed time, nothing in the corner of
+            // your eye. That suppression *is* the feature; without it "remind
+            // me later" reminds you continuously.
+            let waitingRows = all.filter { $0.waiting && !$0.isSnoozed }
+            snap.glance = waitingRows.isEmpty ? (liveRunning > 0 ? .running : .idle) : .waiting
             let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
             // The menu bar carries the two facts that decide whether to look:
             // how many are blocked, and how long the worst one has waited.
@@ -388,18 +408,32 @@ enum SnapshotBuilder {
             // nothing the lamp has not already said — so hold the space until
             // the number is worth it, and let the label escalate on its own
             // from "Claude…" to "Claude · 4m".
-            let rawDuration = snap.longestWaitSeconds > 0
-                ? DurationFormat.label(seconds: snap.longestWaitSeconds, lang: lang)
+            // Elapsed time in the menu bar must come from the waits that are
+            // still shouting, not from a snoozed one that happens to be older.
+            let activeStamps = waitingRows.filter { $0.waitSinceMs > 0 }.map(\.waitSinceMs)
+            let activeOldest = activeStamps.min().map { max(0, Double(context.nowMs - $0) / 1000.0) } ?? 0
+            let rawDuration = activeOldest > 0
+                ? DurationFormat.label(seconds: activeOldest, lang: lang)
                 : ""
             let dur = rawDuration == t(.durNow, lang) ? "" : rawDuration
-            if waitingCount == 1, let w = waitingRows.first {
+            if waitingRows.isEmpty {
+                // Every wait is snoozed. The lamp already went quiet above; the
+                // menu bar text goes with it, and the panel keeps the count.
+                snap.title = ""
+                snap.tooltip = "\(t(.needsYou, lang)) · \(t(.snoozed, lang))"
+                snap.headerTitle = "\(waitingCount) \(t(.waitingN, lang))"
+            } else if waitingRows.count == 1, let w = waitingRows.first {
                 snap.title = dur.isEmpty
                     ? "\(w.agent.displayName)…"
                     : "\(w.agent.displayName) · \(dur)"
                 snap.tooltip = "\(t(.needsYou, lang)) · \(w.agent.displayName)"
-                snap.headerTitle = t(.needsYou, lang)
+                snap.headerTitle = waitingCount == 1
+                    ? t(.needsYou, lang)
+                    : "\(waitingCount) \(t(.waitingN, lang))"
             } else {
-                snap.title = dur.isEmpty ? "\(waitingCount)" : "\(waitingCount) · \(dur)"
+                snap.title = dur.isEmpty
+                    ? "\(waitingRows.count)"
+                    : "\(waitingRows.count) · \(dur)"
                 snap.tooltip = "\(t(.needsYou, lang)): \(nameJoin)"
                 snap.headerTitle = "\(waitingCount) \(t(.waitingN, lang))"
             }

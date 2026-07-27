@@ -24,6 +24,10 @@ final class StatusStore: ObservableObject {
     @Published var hotkey: HotkeyChoice = .commandShiftP
     @Published var trayGrouping: TrayGrouping = .status
     @Published var playSoundOnWaiting = false
+    /// Minutes of silence before a live row reads as stalled; 0 turns it off.
+    @Published var stallMinutes = 20
+    /// How long "Later" silences a wait.
+    @Published var snoozeMinutes = 10
     /// False when the system refused the shortcut (another app owns it).
     @Published private(set) var hotkeyRegistered = true
     @Published var updateCheckEnabled = true
@@ -75,6 +79,8 @@ final class StatusStore: ObservableObject {
     private var waitingNotifySeeded = false
     /// Soft-dismissed Cursor harvest pending until skill clears.
     private var dismissedPendingKeys: Set<String> = []
+    /// Row key → when its "remind me later" runs out.
+    private var snoozedUntil: [String: Date] = [:]
     private let attentionWatcher = AttentionWatcher()
     private let scanQueue = DispatchQueue(label: "com.pulse.scan", qos: .userInitiated)
     private var scanTicket: UInt64 = 0
@@ -154,6 +160,7 @@ final class StatusStore: ObservableObject {
         hooksStatus = HooksSupport.probeStatus()
         loadSettings()
         applyHotkey()
+        PulseNotify.registerCategories(lang: lang)
         PulseNotify.configure { [weak self] granted in
             Task { @MainActor in
                 self?.notifyAuthorized = granted
@@ -480,6 +487,18 @@ final class StatusStore: ObservableObject {
         probeStats.record(
             ProbeStats.Sample(at: now, harvested: harvestMs != nil, harvestMs: harvestMs)
         )
+
+        // A snooze that has run out must announce itself again, so forget the
+        // row was ever waiting: the builder's "newly waiting" edge is a set
+        // difference against these keys, and a wait that stayed in the set for
+        // the whole snooze would come back silently.
+        var waitingKeysForEdges = knownWaitingKeys
+        for (key, deadline) in snoozedUntil where deadline <= now {
+            snoozedUntil.removeValue(forKey: key)
+            waitingKeysForEdges.remove(key)
+            DebugLog.write("snooze expired \(key)")
+        }
+
         let result = SnapshotBuilder.build(
             SnapshotBuilder.Input(
                 procs: procs,
@@ -487,13 +506,15 @@ final class StatusStore: ObservableObject {
                 harvestUnreliable: harvestUnreliable,
                 attention: attention
             ),
-            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: knownWaitingKeys),
+            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: waitingKeysForEdges),
             context: SnapshotBuilder.Context(
                 nowMs: Int64(now.timeIntervalSince1970 * 1000),
                 terminal: TerminalFocus.Environment.current(),
                 lang: lang,
                 dismissedPendingKeys: dismissedPendingKeys,
-                showAllAgents: showAllAgents
+                showAllAgents: showAllAgents,
+                snoozedUntilMs: snoozedUntil.mapValues { Int64($0.timeIntervalSince1970 * 1000) },
+                stalledSeconds: Double(stallMinutes) * 60
             )
         )
 
@@ -502,6 +523,9 @@ final class StatusStore: ObservableObject {
         cachedAll = result.rows
         showAllAgents = result.showAllAgents
         knownWaitingKeys = result.waitingKeys
+        // A wait that resolved on its own takes its snooze with it, or the next
+        // wait on the same row would start life already silenced.
+        snoozedUntil = snoozedUntil.filter { result.waitingKeys.contains($0.key) }
 
         var snap = result.snapshot
         snap.updatedAt = now
@@ -744,6 +768,37 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    /// "Remind me later" — the answer that did not exist.
+    ///
+    /// A wait had exactly two available responses: deal with it now, or clear
+    /// it forever. The most common real one was neither, and fell back on the
+    /// user's memory — the thing this app was built to replace.
+    func snooze(_ row: AgentRow) {
+        snoozedUntil[row.rowKey] = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
+        DebugLog.write("snooze \(row.rowKey) for \(snoozeMinutes)m")
+        refresh(reason: "snooze")
+    }
+
+    /// Undo a snooze from the row that shows it — a countdown you cannot stop
+    /// is a worse deal than no countdown.
+    func unsnooze(_ row: AgentRow) {
+        guard snoozedUntil.removeValue(forKey: row.rowKey) != nil else { return }
+        DebugLog.write("unsnooze \(row.rowKey)")
+        refresh(reason: "unsnooze")
+    }
+
+    /// Snooze by row key — the notification banner has a key, not a row.
+    func snooze(rowKey: String) {
+        guard !rowKey.isEmpty else { return }
+        snoozedUntil[rowKey] = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
+        DebugLog.write("snooze(notif) \(rowKey) for \(snoozeMinutes)m")
+        refresh(reason: "snoozeNotification")
+    }
+
+    func snoozeLabel(_ row: AgentRow) -> String {
+        String(format: tr(.snoozedFor), DurationFormat.label(seconds: row.snoozeRemainingSeconds, lang: lang))
+    }
+
     func dismissWaiting(_ row: AgentRow) {
         AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
         if row.skill == "pending" {
@@ -844,7 +899,9 @@ final class StatusStore: ObservableObject {
             hotkey: hotkey,
             mutedAgents: mutedAgents,
             trayGrouping: trayGrouping,
-            playSoundOnWaiting: playSoundOnWaiting
+            playSoundOnWaiting: playSoundOnWaiting,
+            stallMinutes: stallMinutes,
+            snoozeMinutes: snoozeMinutes
         )
     }
 
@@ -862,6 +919,8 @@ final class StatusStore: ObservableObject {
         mutedAgents = s.mutedAgents
         trayGrouping = s.trayGrouping
         playSoundOnWaiting = s.playSoundOnWaiting
+        stallMinutes = s.stallMinutes
+        snoozeMinutes = s.snoozeMinutes
     }
 
     func loadSettings() {
@@ -882,6 +941,9 @@ final class StatusStore: ObservableObject {
         quietStartMinute = PulseSettings.clampMinute(quietStartMinute)
         quietEndMinute = PulseSettings.clampMinute(quietEndMinute)
         try? currentSettings.serialized().write(to: settingsURL(), atomically: true, encoding: .utf8)
+        // Banner button titles are baked into the registered category, so they
+        // go stale on a language switch unless re-registered here.
+        PulseNotify.registerCategories(lang: lang)
         applyLaunchAtLoginIfChanged()
         applyHotkey()
         UpdateCheck.shared.startIfEnabled(store: self)

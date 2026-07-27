@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.26.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.27.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -91,7 +91,7 @@ Pulse 把这件事变成余光可见：
 
 偏好设置分区，全部即时生效：
 
-- **通用** —— 实时更新、登录时启动、语言（跟随系统 / English / 中文）
+- **通用** —— 实时更新、登录时启动、语言（跟随系统 / English / 中文）、分组方式、停滞判定阈值、稍后时长
 - **通知** —— 空闲通知、新 Waiting 通知、安静时段（精确到分钟、可跨午夜）、按 Agent 静音
 - **等待信号** —— 安装 / 移除 hooks，以及当前状态
 - **快捷键** —— 唤出面板的组合键（⌘⇧P / ⌘⇧U / ⌘⌥P / ⌃⌥P / 关闭）
@@ -107,7 +107,7 @@ Pulse 把这件事变成余光可见：
 
 ```bash
 cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test    # 177 个单元测试
+cd PulseBar && swift test    # 194 个单元测试
 ```
 
 五个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
@@ -188,4 +188,5 @@ git push                               # CI 构建、打 tag、发布
 | [`docs/plan-0.23.md`](docs/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
 | [`docs/plan-0.24.md`](docs/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
 | [`docs/plan-0.25.md`](docs/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
+| [`docs/plan-0.27.md`](docs/plan-0.27.md) | 0.27 计划 —— 读完面板之后你能做什么 |
 | [`docs/review-0.21.md`](docs/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |

@@ -20,7 +20,15 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let agent = info["agent"] as? String ?? ""
         let session = info["session"] as? String ?? ""
         let rowKey = info["rowKey"] as? String ?? ""
+        let action = response.actionIdentifier
         DispatchQueue.main.async {
+            // "Later" from the banner is the same snooze as the row's button.
+            // The banner is where you actually are when the interruption lands
+            // — being able to defer without opening anything is the point.
+            if action == PulseNotify.snoozeActionID {
+                AppServices.store.snooze(rowKey: rowKey)
+                return
+            }
             if !agent.isEmpty || !rowKey.isEmpty {
                 AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
             } else {
@@ -35,6 +43,38 @@ enum PulseNotify {
     private static let center = UNUserNotificationCenter.current()
     private static let delegate = PulseNotifyDelegate()
     private static var requested = false
+
+    static let focusActionID = "pulse.focus"
+    static let snoozeActionID = "pulse.snooze"
+    static let waitingCategoryID = "pulse.waiting"
+
+    /// Buttons on the waiting banner.
+    ///
+    /// Until now a banner could only be clicked as a whole, which meant the
+    /// only thing you could do from it was drop what you were doing. Both real
+    /// answers now live where the interruption actually arrives.
+    ///
+    /// Registered in the resolved language and re-registered when it changes —
+    /// a category is keyed by id, so re-adding replaces the old titles.
+    static func registerCategories(lang: ResolvedLanguage) {
+        let focus = UNNotificationAction(
+            identifier: focusActionID,
+            title: L10n.t(.notifFocus, lang),
+            options: [.foreground]
+        )
+        let snooze = UNNotificationAction(
+            identifier: snoozeActionID,
+            title: L10n.t(.snooze, lang),
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: waitingCategoryID,
+            actions: [focus, snooze],
+            intentIdentifiers: [],
+            options: []
+        )
+        center.setNotificationCategories([category])
+    }
 
     /// Reports whether the user actually granted permission. Dropping this
     /// result meant a denied prompt left both notification toggles reading
@@ -105,6 +145,11 @@ enum PulseNotify {
         content.title = title
         content.body = body
         content.sound = .default
+        // Only waiting banners carry actions; "everything went idle" has
+        // nothing to focus and nothing to defer.
+        if !rowKey.isEmpty || !agent.isEmpty {
+            content.categoryIdentifier = waitingCategoryID
+        }
         var info: [String: String] = [:]
         if !agent.isEmpty { info["agent"] = agent }
         if !session.isEmpty { info["session"] = session }

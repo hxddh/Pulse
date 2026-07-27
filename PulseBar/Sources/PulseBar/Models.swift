@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.26.0"
+    static let semver = "0.27.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -217,6 +217,16 @@ struct AgentRow: Identifiable, Hashable {
     var canOpenFolder: Bool = false
     /// Sessions of this agent that exist but did not fit the per-agent cap.
     var hiddenSessions: Int = 0
+    /// Seconds left on a "remind me later", resolved at scan time. 0 = not snoozed.
+    ///
+    /// Snoozing suppresses the *interruption* — lamp, menu-bar text, banner —
+    /// and nothing else. The row stays in the list, in Needs-you, with the
+    /// remaining time on its chip. This mirrors the rule muting already
+    /// follows: a muted agent stops notifying and still appears. A button that
+    /// makes a row disappear is a button nobody dares press.
+    var snoozeRemainingSeconds: Double = 0
+
+    var isSnoozed: Bool { waiting && snoozeRemainingSeconds > 0 }
 
     var id: String { rowKey }
 
@@ -427,6 +437,10 @@ struct AgentRow: Identifiable, Hashable {
     /// As real a signal as Waiting and never surfaced: an agent that has been
     /// "running" for twenty minutes without touching anything is usually stuck
     /// on something, and the tray showed it exactly like a healthy session.
+    /// Default only. The real threshold comes from settings and rides in on
+    /// `SnapshotBuilder.Context` — twenty minutes is right for nobody in
+    /// particular: a long compile is not stalled at twenty, and a short
+    /// question-and-answer session is stuck well before it.
     static let stalledSeconds: Double = 20 * 60
 
     /// Resolved once per scan against the scan's own clock, not `Date()`.
@@ -438,9 +452,18 @@ struct AgentRow: Identifiable, Hashable {
     var isStalled: Bool = false
 
     /// Whether this row would be stalled at the given instant.
-    static func stalled(harvestMs: Int64, nowMs: Int64, waiting: Bool, live: Bool) -> Bool {
-        guard !waiting, live, harvestMs > 0 else { return false }
-        return Double(nowMs - harvestMs) / 1000.0 >= stalledSeconds
+    ///
+    /// `threshold <= 0` means the user turned staleness off, which must read as
+    /// "never stalled" rather than "always stalled".
+    static func stalled(
+        harvestMs: Int64,
+        nowMs: Int64,
+        waiting: Bool,
+        live: Bool,
+        threshold: Double = stalledSeconds
+    ) -> Bool {
+        guard threshold > 0, !waiting, live, harvestMs > 0 else { return false }
+        return Double(nowMs - harvestMs) / 1000.0 >= threshold
     }
 
     /// A wait old enough to deserve more than the ordinary Waiting treatment.
@@ -510,6 +533,17 @@ struct PulseSnapshot: Equatable {
 /// sessions, nothing to act on, taking half the panel and half the reading.
 /// Folding them is the largest space win available without dropping a fact.
 enum TrayFold {
+    /// A project group folds when nothing in it is waiting.
+    ///
+    /// `foldable` only ever answered for the Recent *section*, so grouping by
+    /// project — the mode built for people running several repos at once — was
+    /// the one mode where nothing folded and the panel was a flat list of every
+    /// project. Same two guards as Recent, plus the one that matters here: a
+    /// project holding a wait is never folded away.
+    static func foldableProject(hasWaiting: Bool, groupCount: Int, rowCount: Int) -> Bool {
+        !hasWaiting && groupCount > 1 && rowCount >= 2
+    }
+
     /// Recent is foldable, but only when it is not the whole list.
     ///
     /// If Recent is all there is, those rows *are* the content and folding

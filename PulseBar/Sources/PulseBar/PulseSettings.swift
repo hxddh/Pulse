@@ -42,6 +42,14 @@ struct PulseSettings: Equatable {
     /// Off by default — an unsolicited sound is a bigger interruption than the
     /// one it is reporting.
     var playSoundOnWaiting = false
+    /// Minutes of silence before a live row is called stalled; 0 turns it off.
+    ///
+    /// Was a hardcoded twenty. Twenty fits nobody in particular: a long build
+    /// is not stalled at twenty minutes, and a short back-and-forth is stuck
+    /// well before it.
+    var stallMinutes = 20
+    /// How long "Later" silences a wait, in minutes.
+    var snoozeMinutes = 10
 
     static let minutesPerDay = 24 * 60
 
@@ -84,6 +92,8 @@ struct PulseSettings: Equatable {
             case "lang": s.language = AppLanguage(rawValue: raw) ?? .auto
             case "grouping": s.trayGrouping = TrayGrouping(rawValue: raw) ?? .status
             case "waitSound": s.playSoundOnWaiting = on
+            case "stallMin": if let v = Int(raw) { s.stallMinutes = max(0, min(240, v)) }
+            case "snoozeMin": if let v = Int(raw) { s.snoozeMinutes = max(1, min(240, v)) }
             default: break
             }
         }
@@ -113,6 +123,8 @@ struct PulseSettings: Equatable {
             hotkey=\(hotkey.rawValue)
             grouping=\(trayGrouping.rawValue)
             waitSound=\(playSoundOnWaiting ? 1 : 0)
+            stallMin=\(stallMinutes)
+            snoozeMin=\(snoozeMinutes)
             mute=\(muted)
             """
     }
@@ -138,6 +150,7 @@ struct PulseSettings: Equatable {
             + "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) "
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
             + "hotkey=\(hotkey.rawValue) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
-            + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting)"
+            + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
+            + "stall=\(stallMinutes) snooze=\(snoozeMinutes)"
     }
 }

@@ -118,7 +118,7 @@ private enum TrayChrome {
 }
 
 private struct StatusChip: View {
-    enum Kind { case waiting, running, recent, process }
+    enum Kind { case waiting, running, recent, process, snoozed }
 
     let kind: Kind
     let label: String
@@ -138,6 +138,9 @@ private struct StatusChip: View {
         case .running: return TrayChrome.runAccent
         case .process: return Color.secondary.opacity(0.9)
         case .recent: return Color.secondary.opacity(0.85)
+        // Still the waiting colour, drained. Snoozed is a waiting row that
+        // agreed to be quiet, not a different kind of thing.
+        case .snoozed: return TrayChrome.waitAccent.opacity(0.6)
         }
     }
 
@@ -147,6 +150,7 @@ private struct StatusChip: View {
         case .running: return TrayChrome.runAccent.opacity(0.12)
         case .process: return Color.primary.opacity(0.05)
         case .recent: return Color.primary.opacity(0.04)
+        case .snoozed: return TrayChrome.waitAccent.opacity(0.08)
         }
     }
 }
@@ -223,8 +227,46 @@ struct TrayPanel: View {
     /// bookkeeping.
     @State fileprivate var unfolded: Set<String> = []
 
+    /// Row key the keyboard has selected, if any.
+    @State fileprivate var selectedKey: String?
+    @FocusState fileprivate var listFocused: Bool
+
     fileprivate func toggleFold(_ id: String) {
-        if unfolded.contains(id) { unfolded.remove(id) } else { unfolded.insert(id) }
+        // A panel that repaints itself every couple of seconds cannot afford
+        // hard cuts: a block of rows appearing instantly is indistinguishable
+        // from a reorder, and you re-read the whole list to find out which it
+        // was. Short and flat — this is a menu-bar panel, not a launch screen.
+        withAnimation(.easeOut(duration: 0.16)) {
+            if unfolded.contains(id) { unfolded.remove(id) } else { unfolded.insert(id) }
+        }
+    }
+
+    /// Rows in the order the keyboard walks them: what is actually on screen,
+    /// so a folded group is skipped rather than silently selected.
+    fileprivate func visibleRows(_ groups: [RowGroup]) -> [AgentRow] {
+        groups.flatMap { group -> [AgentRow] in
+            if group.foldable && !unfolded.contains(group.id) { return [] }
+            return group.rows
+        }
+    }
+
+    fileprivate func moveSelection(_ delta: Int, in groups: [RowGroup]) {
+        let rows = visibleRows(groups)
+        guard !rows.isEmpty else { return }
+        let current = rows.firstIndex { $0.rowKey == selectedKey }
+        let next: Int
+        if let current {
+            next = min(max(current + delta, 0), rows.count - 1)
+        } else {
+            next = delta > 0 ? 0 : rows.count - 1
+        }
+        selectedKey = rows[next].rowKey
+    }
+
+    fileprivate func activateSelection(_ groups: [RowGroup]) {
+        guard let key = selectedKey,
+              let row = visibleRows(groups).first(where: { $0.rowKey == key }) else { return }
+        store.primaryAction(row)
     }
 
     var body: some View {
@@ -441,13 +483,23 @@ struct TrayPanel: View {
             }
             return ranked.map { entry in
                 let group = byProject[entry.element] ?? []
+                let hasWaiting = group.contains(where: \.waiting)
                 return RowGroup(
                     id: "p\(entry.element)",
                     title: entry.element,
                     count: group.count,
-                    accent: group.contains(where: \.waiting),
+                    accent: hasWaiting,
                     rows: group,
-                    statesPath: true
+                    statesPath: true,
+                    // Project grouping exists for people running several repos,
+                    // and was the one mode where nothing folded: a flat list of
+                    // every project, however many. A project with a wait in it
+                    // is never folded away.
+                    foldable: TrayFold.foldableProject(
+                        hasWaiting: hasWaiting,
+                        groupCount: ranked.count,
+                        rowCount: group.count
+                    )
                 )
             }
         }
@@ -474,8 +526,11 @@ struct TrayPanel: View {
                                     AgentRowButton(
                                         row: row,
                                         store: store,
-                                        pathInHeading: group.statesPath && showHeading(group, of: groups)
+                                        pathInHeading: group.statesPath && showHeading(group, of: groups),
+                                        selected: selectedKey == row.rowKey
                                     )
+                                    .id(row.rowKey)
+                                    .transition(.opacity)
                                 }
                             }
                         } header: {
@@ -499,6 +554,10 @@ struct TrayPanel: View {
                         }
                     }
                 }
+                // Rows fade rather than pop. A list that rebuilds itself every
+                // two seconds otherwise makes "a session appeared" and "the
+                // order changed" look identical.
+                .animation(.easeOut(duration: 0.16), value: store.snapshot.rows.map(\.rowKey))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     GeometryReader { geo in
@@ -508,6 +567,29 @@ struct TrayPanel: View {
             }
             .frame(height: min(max(measuredHeight, 56), cap))
             .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
+            // The panel is usually summoned by a shortcut, so the hand is
+            // already on the keyboard; finishing with the mouse is the awkward
+            // part. Arrow keys walk the visible rows, Return focuses the
+            // terminal, Escape gives up.
+            .focusable()
+            .focusEffectDisabled()
+            .focused($listFocused)
+            .onAppear { listFocused = true }
+            .onKeyPress(.downArrow) { moveSelection(1, in: groups); return .handled }
+            .onKeyPress(.upArrow) { moveSelection(-1, in: groups); return .handled }
+            .onKeyPress(.return) { activateSelection(groups); return .handled }
+            .onKeyPress(.escape) { selectedKey = nil; return .handled }
+            .onKeyPress(.space) {
+                // Space folds whichever group owns the selection — the fold
+                // control is a heading, and headings are not in the tab order.
+                guard let key = selectedKey,
+                      let group = groups.first(where: { g in
+                          g.foldable && g.rows.contains { $0.rowKey == key }
+                      })
+                else { return .ignored }
+                toggleFold(group.id)
+                return .handled
+            }
 
             if store.snapshot.hiddenCount > 0 {
                 overflowButton(
@@ -619,8 +701,15 @@ private struct AgentRowButton: View {
     /// Declared after `store` because the memberwise initialiser takes
     /// arguments in declaration order, and the call site passes it last.
     var pathInHeading = false
+    /// True when keyboard navigation has this row selected.
+    var selected = false
     @State private var hovering = false
     @State private var expanded = false
+
+    private var highlight: Color {
+        if selected { return Color.primary.opacity(0.10) }
+        return hovering ? Color.primary.opacity(0.055) : .clear
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -633,8 +722,8 @@ private struct AgentRowButton: View {
                     // that changes with age — everything else stays constant so
                     // the escalation actually reads as one.
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(row.waiting ? TrayChrome.waitAccent : Color.clear)
-                        .frame(width: row.waiting ? (row.isUrgentWait ? 6 : 3) : 0)
+                        .fill(accentFill)
+                        .frame(width: accentWidth)
                         .padding(.vertical, 4)
 
                     HStack(alignment: .top, spacing: 10) {
@@ -702,6 +791,13 @@ private struct AgentRowButton: View {
                         Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
+                        // A countdown you cannot stop is a worse deal than no
+                        // countdown, so the same button undoes it.
+                        Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
+                            if row.isSnoozed { store.unsnooze(row) } else { store.snooze(row) }
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11, weight: .medium))
                     }
                     if row.canFocusTerminal {
                         Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
@@ -724,7 +820,18 @@ private struct AgentRowButton: View {
             }
             detailBlock
         }
-        .background(hovering ? Color.primary.opacity(0.045) : Color.clear)
+        // Inset rounded, not a full-bleed rectangle.
+        //
+        // Every native macOS list — Mail, the Finder sidebar, Notification
+        // Centre — insets its hover and selection fill and rounds it. A
+        // full-width square block that runs into both edges is the web
+        // convention, and in a menu-bar panel it is the single easiest thing to
+        // read as "not a Mac app".
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(highlight)
+                .padding(.horizontal, 6)
+        )
         .onHover { hovering = $0 }
     }
 
@@ -749,6 +856,20 @@ private struct AgentRowButton: View {
             .padding(.trailing, TrayChrome.padX)
             .padding(.bottom, 8)
         }
+    }
+
+    /// The gutter is the loudest thing in the row, so a snoozed wait must not
+    /// keep it. Everything else about the row stays put — the point is that it
+    /// is still there, just not shouting.
+    private var accentFill: Color {
+        guard row.waiting else { return .clear }
+        return row.isSnoozed ? TrayChrome.waitAccent.opacity(0.28) : TrayChrome.waitAccent
+    }
+
+    private var accentWidth: CGFloat {
+        guard row.waiting else { return 0 }
+        if row.isSnoozed { return 3 }
+        return row.isUrgentWait ? 6 : 3
     }
 
     private var showActions: Bool {
@@ -816,7 +937,11 @@ private struct AgentRowButton: View {
     /// means running**.
     @ViewBuilder
     private var statusChip: some View {
-        if row.waiting {
+        if row.isSnoozed {
+            // The row keeps its place and says why it is quiet. Hiding it would
+            // make "Later" a button people are afraid to press.
+            StatusChip(kind: .snoozed, label: store.snoozeLabel(row))
+        } else if row.waiting {
             let kind = row.waitKind.isEmpty
                 ? store.tr(.needsYou)
                 : store.localizedWaitKind(row.waitKind)
@@ -979,6 +1104,23 @@ struct SettingsView: View {
                 }
             }
             .onChange(of: store.trayGrouping) { _, _ in store.saveSettings() }
+            // Twenty minutes was compiled in and fits nobody in particular: a
+            // long build is not stalled at twenty, a short exchange is stuck
+            // well before it. "Never" has to be reachable too — on a machine
+            // that runs hour-long jobs the badge is pure noise.
+            Picker(store.tr(.stallAfter), selection: $store.stallMinutes) {
+                Text(store.tr(.stallOff)).tag(0)
+                ForEach([5, 10, 20, 30, 60], id: \.self) { m in
+                    Text(String(format: store.tr(.minutesShort), m)).tag(m)
+                }
+            }
+            .onChange(of: store.stallMinutes) { _, _ in store.saveSettings() }
+            Picker(store.tr(.snooze), selection: $store.snoozeMinutes) {
+                ForEach([5, 10, 30, 60], id: \.self) { m in
+                    Text(String(format: store.tr(.minutesShort), m)).tag(m)
+                }
+            }
+            .onChange(of: store.snoozeMinutes) { _, _ in store.saveSettings() }
         }
     }
 
