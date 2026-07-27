@@ -180,4 +180,5 @@ git push                               # CI 构建、打 tag、发布
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
 | [`docs/plan-0.23.md`](docs/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
+| [`docs/plan-0.24.md`](docs/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
 | [`docs/review-0.21.md`](docs/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |
