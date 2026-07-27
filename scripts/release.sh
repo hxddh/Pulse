@@ -80,7 +80,13 @@ if [[ "$MODE" != "--tag" ]]; then
 fi
 
 git add -A
-git commit -m "Release $VERSION"
+if git diff --cached --quiet; then
+  # The version was already committed (e.g. tagging a green CI commit after
+  # the fact). Nothing to record — just tag what is already there.
+  echo "nothing to commit; tagging the current commit"
+else
+  git commit -m "Release $VERSION"
+fi
 git tag -a "v$VERSION" -m "Pulse $VERSION"
 
 echo
