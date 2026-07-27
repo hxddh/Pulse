@@ -46,6 +46,11 @@ without it the build is ad-hoc signed and Gatekeeper blocks it elsewhere.
 git push && git push --tags          # tag push triggers the release workflow
 ```
 
+Note: `workflow_dispatch` on the release workflow only becomes available once
+`release.yml` is on the **default branch** — until then, a tag push is the only
+trigger. Tag pushes also need credentials with tag-write scope; a session
+restricted to `refs/heads/claude/*` cannot cut the release itself.
+
 `.github/workflows/release.yml` verifies the tag matches `PulseVersion.semver`,
 runs the gates and tests, packages the DMG and publishes a GitHub Release whose
 body is that version's CHANGELOG section. The in-app update check reads those
