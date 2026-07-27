@@ -203,10 +203,20 @@ final class StatusStore: ObservableObject {
         return String(format: tr(.probeEvery), Int(interval.rounded()))
     }
 
+    /// Close an open parked span. Switching live updates off is *not* parking —
+    /// settling here too keeps a week with probing disabled out of the parked
+    /// counter, which would otherwise swallow it whole on the next unpark.
+    private func settleParked() {
+        guard let since = parkedSince else { return }
+        probeStats.addParked(Date().timeIntervalSince(since))
+        parkedSince = nil
+    }
+
     private func rescheduleTimer() {
         timer?.invalidate()
         timer = nil
         guard autoProbe else {
+            settleParked()
             currentInterval = nil
             return
         }
@@ -221,10 +231,7 @@ final class StatusStore: ObservableObject {
             DebugLog.write("probe parked (display asleep / locked)")
             return
         }
-        if let since = parkedSince {
-            probeStats.addParked(Date().timeIntervalSince(since))
-            parkedSince = nil
-        }
+        settleParked()
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             // Bind before the Task: the timer block is @Sendable, and referencing
             // the captured `weak self` var from inside a Task is not allowed.
