@@ -40,6 +40,10 @@ export PULSE_NOTARY_PROFILE=pulse-notary   # 可选，触发公证 + stapler
 
 应用每天最多检查一次 GitHub Releases（设置里可关）。
 
+> 仓库目前是 private，而更新检查是**匿名**请求 —— private 仓库对匿名请求返回 404，
+> 所以该功能会一直显示「检查失败」。转 public，或用 `Info.plist` 的 `PulseUpdateFeed`
+> 指向可匿名访问的 feed，即可生效。
+
 ## 0.21 特色
 
 | 方向 | 行为 |
