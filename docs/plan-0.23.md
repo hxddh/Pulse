@@ -129,10 +129,15 @@ snapshot 上 —— 视图不再需要知道语言，也就不会和旁边的行
 
 其余 6 处 a11y 调用点已审，`GlanceKind` 是唯一绕过 L10n 的。en/zh 键数 103/103。
 
-### 6. 合并到 main
+### 6. 合并到 main — ✅ 已完成
 
-`release.yml` 不在默认分支，所以 `workflow_dispatch` 不可用，三条触发路径只有两条真正
-能走。合并后应把 release 触发的分支范围从 `**` 收窄。
+PR #1 以 **merge commit** 合入（不是 squash：v0.22.0 / v0.23.0 / v0.23.1 / v0.23.2
+四个 tag 指向这个分支上的提交，squash 会把它们留在 main 的历史之外）。
+
+`release.yml` 现在在默认分支上，`workflow_dispatch` 可用，三条触发路径齐了。
+同时把 `[release]` 标记的分支范围从 `**` 收窄到 `main` —— 之前放开是因为那时它是
+唯一能发布的途径，现在再留着就等于允许从没人 review 过的分支发版。
+tag 推送不受影响，仍可从任意分支走。
 
 ---
 

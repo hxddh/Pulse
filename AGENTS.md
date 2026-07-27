@@ -81,9 +81,13 @@ git push                               # CI builds, tags and publishes
 
 | Trigger | When |
 | --- | --- |
-| `[release]` in the pushed commit subject | default; works from any branch |
-| a `v*.*.*` tag push | if you prefer explicit tags and have tag-write rights |
-| `workflow_dispatch` | only once `release.yml` is on the default branch |
+| `[release]` in the pushed commit subject | default; **`main` only** |
+| a `v*.*.*` tag push | if you prefer explicit tags and have tag-write rights; any branch |
+| `workflow_dispatch` | from the Actions tab |
+
+The marker path is deliberately limited to `main`. It accepted any branch while
+`release.yml` lived only on a feature branch — that was then the sole way to
+publish — so a release could be cut from a branch nobody had reviewed.
 
 CI verifies the version matches `PulseVersion.semver`, runs gates and tests,
 packages the DMG, and publishes a Release whose body is that version's CHANGELOG
