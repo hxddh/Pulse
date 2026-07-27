@@ -2,6 +2,237 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.23.2 — 打包自检，并订正 0.23.1 的归因
+
+功能没动。这一版加的是**验证手段**，同时订正 0.23.1 说明里一处讲错的根因。
+
+### 0.23.1 的根因说错了
+
+0.23.1 里我写的是「包内多出的 `Contents/` 让 CFBundle 打不开」。**这是错的。**
+
+真正的原因是查找路径不匹配。SwiftPM 给 **executable target** 生成的访问器只有两个候选：
+
+```swift
+let mainPath  = Bundle.main.bundleURL.appendingPathComponent("PulseBar_PulseBar.bundle").path
+let buildPath = "/Users/runner/work/.../PulseBar_PulseBar.bundle"
+guard let bundle = Bundle(path: mainPath) ?? Bundle(path: buildPath) else { fatalError(...) }
+```
+
+`.app` 根目录，和编译期写死的构建目录 —— **`Contents/Resources/` 从来不在候选里**。
+而 `package.sh` 恰好把资源包放在 `Contents/Resources/`。多出来的 `Contents/` 确实是脏的，
+但访问器压根没走到那一层，它不是崩溃原因。
+
+在 v0.23.0 的二进制里搜字符串可以直接确认：`could not load resource bundle: from `
+命中 1 次（双候选版），`unable to find bundle named`（多候选版）命中 0 次。
+v0.23.1 里前者已经归零 —— 因为所有调用点都换成了 `PulseResources`。
+
+0.23.1 的修复本身是有效的，但它有效是因为 `PulseResources` 的候选表以
+`Bundle.main.resourceURL` 打头，不是因为我当时给出的那个理由。
+
+### 加了什么
+
+- **`PulseBar --selftest`**：打包后用**真实的二进制、在真实的 `.app` 里**跑一遍资源解析，
+  逐项报告能不能找到。入口点移到 `PulseBarMain`，在 AppKit 初始化之前返回，
+  所以无头 CI 上也能跑。这是唯一一种不依赖「我们以为运行时去哪找」的检查。
+- **`package_check.py` 不再把单一位置写死成唯一正确答案**：
+  `Contents/Resources/` 和 `.app` 根都接受，两处都校验扁平结构与 `Info.plist`。
+  之前那版断言包必须在 `Contents/Resources/` —— 而这只有在换掉 `Bundle.module`
+  之后才成立，等于把我自己的假设当成了不变量。
+- **门禁禁止 `Bundle.module`**：它一旦解析失败就 `fatalError()`，
+  把打包失误变成没有线索的启动崩溃。用 `PulseResources`，找不到返回 nil。
+
+### 没做的一件事
+
+原计划还要往 `.app` 根目录再放一份资源包（或做 symlink）以兼容两种查找。
+最后没做：`.app` 顶层除 `Contents/` 外放东西是非标准结构，有 codesign / Gatekeeper 风险，
+而 `--selftest` 已经能直接证明解析可用，禁用 `Bundle.module` 的门禁也堵死了退化路径。
+为一个已被证明不存在的问题引入一个真实的签名风险，不划算。
+
+## 0.23.1 — 修复启动崩溃
+
+**0.21.0 / 0.22.0 / 0.23.0 的 DMG 装上去打不开，一启动就崩。请升级到本版。**
+从源码 `swift run` 一直是好的，所以三个版本都带着这个问题发了出去。
+
+### 出了什么事
+
+SwiftPM 生成的资源包是**扁平**结构：`Info.plist` 和资源目录都在包的根目录，
+没有 `Contents/`。而 `package.sh` 在包里**又建了一层 `Contents/Resources/`**
+并把资源复制了一份进去。
+
+CFBundle 一看到 `Contents/` 就改用现代包布局：不再读根目录，转而去找
+`Contents/Info.plist` —— 那个文件从来没被写过。于是 `Bundle(url:)` 返回 nil，
+编译器为 `Bundle.module` 生成的访问器走到最后一行 `fatalError()`。
+菜单栏画第一个图标时就会碰到它，所以是**一启动就崩**。
+
+从发布的 v0.23.0 DMG 里解出来的实际结构：
+
+```
+Pulse.app/Contents/Resources/
+├── AgentIcons/ Brand/ *.py          ← 这一份是好的
+└── PulseBar_PulseBar.bundle/        ← 整个包没有 Info.plist
+    ├── AgentIcons/ Brand/ *.py      ← SwiftPM 的扁平布局
+    └── Contents/Resources/          ← 多出来的一层，正是它导致崩溃
+        └── AgentIcons/ Brand/ *.py
+```
+
+### 修了什么
+
+- **`package.sh`**：删掉那段多余的 `Contents/Resources/` 复制；资源包缺失时
+  直接报错退出，不再静默继续打出一个坏包；确认包内有 `Info.plist`，
+  SwiftPM 没写就补一个。
+- **`scripts/package_check.py`（新增第四个门禁）**：对着**构建产物**检查，
+  不是源码。校验资源包在位、`Info.plist` 在位、**没有多余的 `Contents/`**、
+  以及每个运行时会去找的资源都真的能按扁平路径找到。
+  已用发布出去的 v0.23.0 的真实结构验证过：会红。
+- **CI 每次推送都打包**并跑这个门禁。此前只有发布时才打包，
+  而打包这一步从来没人验证过 —— 这正是它能连发三次的原因。
+- **资源找不到不再是致命错误。** `Bundle.module` 一旦解析失败就 `fatalError()`，
+  把一个打包失误变成了没有任何线索的启动崩溃。改用不会 trap 的
+  `PulseResources`：找不到就返回 nil，图标退回代码绘制的兜底样式。
+  少一个图标不值得让整个 app 挂掉。
+- 顺带修了 `ActivityHarvest` 里三条同样写着 `Contents/Resources/` 的兜底路径 ——
+  它们指向的目录只是因为打包脚本错误地创建了才存在。
+
+### 说明
+
+修的是打包与资源查找，0.23.0 的功能一个没动。
+`swift test` 从头到尾都是绿的，这个 bug 测试根本够不着 —— 门禁才是能挡住它的东西。
+
+## 0.23.0 — 可信
+
+0.22 修好了很多东西，但**没人能验证它修好了**：最容易出错的合并逻辑没有测试，
+设置读写没有测试，公开的能耗数字是算出来的，「检查更新」对所有人永久报错。
+这个版本不加功能，只把上一版的承诺变成可以核对的事实。
+
+计划与验收见 [`docs/plan-0.23.md`](docs/plan-0.23.md)。
+
+### 可测
+
+- **`SnapshotBuilder`：合并逻辑从 `StatusStore` 里抽出来了。**
+  「进程 + 会话文件 + attention → 托盘行」这段最容易出 bug 的代码，此前和 6 种副作用
+  （取当前时间、枚举运行中的 App、读磁盘、发通知、动定时器、写日志）缠在一起，
+  `applyScan` 一个函数 381 行，无法测试。现在外部世界通过 `Context` 注入，
+  想让外部世界做的事（通知边沿、清除的键、日志行）作为数据返回，
+  `StatusStore` 只留 I/O 与策略。`applyScan` 381 → 115 行，**34 个测试**覆盖
+  排序、去重、封顶、waiting 边沿、stale harvest、Focus 分级。
+- **设置变成值类型。** `PulseSettings` 是纯粹的解析 / 序列化 / 安静时段判定，
+  完全不碰 Application Support，**23 个测试**，其中包含整点→分钟的迁移
+  —— 老用户升级不丢配置这件事现在有测试兜着。
+- 测试总数 **60+ → 120**，全部在 CI 的 macOS 上真实编译运行。
+
+### 可核对
+
+- **能耗数字自证。** 0.22 写的「28,800 → 2,880 次/天」是算出来的。现在
+  「关于 → 复制诊断信息」多一行，报告过去一小时的真实情况：
+
+  ```
+  cadence: every 30s · 1h: 240 probes · 82 harvests (~2900/day) · avg 310ms · parked 12m
+  ```
+
+  probe 与 harvest 分开计数（只有 harvest 付 Python 的钱），只给 harvest 计时，
+  失败的 harvest 照样算（它确实 fork 了），窗口不足 5 分钟不外推日均值。
+  投影可直接和上面那个数字对比 —— 一份关于耗电的 bug 报告现在带得动证据。
+- **「检查更新」不再对所有人报错。** 仓库已转 public，匿名请求 Releases 可用。
+  fork 成私有仓库的情况在 README 里写清了替代做法。
+
+### 可访问
+
+- **VoiceOver 说中文。** 菜单栏那盏灯是旁白在那里唯一能读到的东西（意义全在图标上），
+  却是整个界面里唯一硬编码英文的串。现在跟随语言设置，由 `SnapshotBuilder` 解析后
+  挂在 snapshot 上，视图不会和旁边的行读到不同的语言。en/zh 键数 103/103。
+- 顺带修了错误态文案：旁白原本读 "Error"，而可见 UI 说的是「无法刷新」——
+  橙灯表示探测不可用，不是崩溃。
+
+### 修复
+
+- **停表计数不再吞掉「实时更新已关闭」的时长。** 屏幕休眠时关掉实时更新，
+  那段暂停时间会被算进 parked，重新开启后一次性计入
+  —— 关一周会显示「parked 10080m」。parked 是「本该探测但屏幕关了」，
+  paused 是「你让我别探测」，两者现在分开。
+
+### 文档
+
+- README / `AGENTS.md` / `EXPERIENCE.md` 全部重写，新增
+  [`docs/architecture.md`](docs/architecture.md)（数据从进程到菜单栏的完整路径）。
+  清掉了早已换掉的 Vercel Native SDK 外壳留下的描述 —— 那些内容会误导后续迭代。
+- 加上 [MIT LICENSE](LICENSE)。
+
+### 已知未完成
+
+- `release.yml` 仍不在默认分支，`workflow_dispatch` 因此不可用；
+  三条发布触发路径实际可走两条（tag 推送、`[release]` 标记）。
+- DMG 仍是 ad-hoc 签名，首次打开需右键或 `xattr -dr`。
+  设仓库 secret `PULSE_SIGN_IDENTITY` 即可产出 Gatekeeper 友好的包。
+- `activity_scan.py` 里 32 处静默 `except Exception` 仍未打开调试通道，
+  「为什么某个 Agent 没显示」目前仍不好排查。
+
+## 0.22.0 — Energy, honesty, and everything the audit found
+
+Closes every open finding in [`docs/review-0.21.md`](docs/review-0.21.md).
+
+### Energy (P0-A)
+- **自适应探测节奏**：不再固定 1.5–3s。等待中 2s / 运行中 5s / 最近 15s / 空 30s；
+  托盘打开时提速，低电量模式减半，**息屏或锁屏直接停表**（attention 文件变化仍会唤醒）
+- **harvest 与 probe 解耦**：`ps` 便宜可以常跑，Python 采集按节奏跳过；
+  进程指纹变化 / 手动刷新 / attention 变化时强制采集
+- **定时器容差 20%**：让系统合并唤醒
+- 空闲机器上的 Python fork 次数从约 28,800 次/天降到约 2,880 次/天
+
+### Distribution (P0-C)
+- **Developer ID 签名 + 公证**：`PULSE_SIGN_IDENTITY` / `PULSE_NOTARY_PROFILE`；
+  未设置时明确警告「其他 Mac 会被 Gatekeeper 拦」。移除已废弃的 `--deep`
+- **检查更新**：GitHub Releases，每天至多一次，可关；数字版本比较（`0.9.0` 不会盖过 `0.21.0`）
+
+### Tests & CI (P0-B)
+- **PulseBar 首次有测试**：60+ 用例覆盖版本 / 更新比较 / harvest 解析 /
+  attention 规则 / 探测节奏 / Focus 分级 / 行展示 / 安静时段 / 通知文案 / L10n
+- **GitHub Actions**：Linux 跑门禁（版本、覆盖、支持矩阵、Python 编译、资源同步），
+  macOS 跑 `swift build` + `swift test`
+- **支持矩阵门禁** `scripts/matrix_check.py`：README 表格与 `waitingSource` 不符即失败
+
+### Product gaps
+- **多会话可见性**：每 Agent 上限 2 → 4，托盘上限 4 → 5 行；被压下的会话显式提示「另有 N 个会话未显示」
+- **通知信息量**：标题 `Agent · 项目`，正文 `原因 · 消息`（此前只有「需要你处理 · Claude」）
+- **通知权限失败可见**：被拒时开关置灰并给出「打开系统设置」
+- **移除 hooks**：设置页可一键卸载，只删 Pulse 条目，保留用户自己的 hook
+- **最近的等待**：等待结束后进入历史（最多 12 条），回答「我是不是错过了什么」
+- **快捷键可选**：⌘⇧P / ⌘⇧U / ⌘⌥P / ⌃⌥P / 关闭；被占用时明确提示，不再归咎辅助功能权限
+- **安静时段支持分钟**：22:30 可表达（旧的整点设置自动迁移）
+- **按 Agent 静音**：静音只停通知，列表照常显示
+- **空态引导**：说明 Pulse 何时会亮，并直接给出安装 hooks 按钮
+
+### Fixes
+- **管道死锁**：子进程输出此前在其退出后才读，输出超过 64KB 管道缓冲即死锁到超时。改为独立线程边跑边读
+- **超时丢弃全部结果**：改为保留已完整输出的行，并丢弃被截断的最后一行
+- **`tail_bytes` 全文读入**：名为 tail 实为 `read_bytes()[-n:]`，数十 MB 的会话文件每次全读。改为 seek 到尾部
+- **视图体内做 I/O**：`estimateHeight` 每行每次重绘都遍历运行中应用 + stat 磁盘。Focus 分级改为每次扫描算一次
+- **attention session 匹配失效**：`rowKey.contains(session)` 因 rowKey 省略过长 id 而永不命中
+- **`sessionDetail` 从未接线**：有 tool 无 task 的 live 行不再降级成「检测到进程」
+- **`isSurface` 恒真**：删除空过滤
+- **hooks 状态误报**：现在同时检查 `settings.local.json`
+- **登录项抖动**：`launchctl` 仅在值变化时执行，且不在主线程
+- `pulse_hook.py` 未使用的 import 与空操作分支
+
+## 0.21.1 — Version identity · honesty fixes
+
+### Version identity
+- **单一真源**：`PulseVersion.semver` 为准；`scripts/version_check.py` 校验 `app.zon` / `src/version.zig` / CHANGELOG / README 不漂移（`--fix` 自动对齐）
+- **修正漂移**：`app.zon` 与 `src/version.zig` 此前停在 `0.5.0`，与实际 `0.21.x` 差 16 个版本
+- **构建指纹**：打包时把 git short sha + 构建日期写进 `Info.plist`，运行时可读；`swift run` 诚实显示 `-dev`
+- **Tray 版本页脚**：底部一行极弱化 `Pulse x.y.z`，点击复制诊断信息
+- **关于区重做**：版本 / 构建行 / 复制诊断按钮；bundle 与二进制版本不一致时高亮「版本不一致」
+
+### Fixes
+- **Goose 假 Waiting**：`pending = pending or True` 恒为真 —— 任何 tail 里出现 `"waiting"` 的 Goose 会话都会被点亮成「需要你」。改为显式标记 + 5 分钟新鲜度门槛
+- **harvest 单点故障**：任一 agent 采集抛异常会让整个 `activity_scan.py` 非零退出，Pulse 丢弃全部 32 个 agent 的扫描结果。改为逐 agent 隔离，失败只写 stderr
+- **Codex hook 装错表**：`notify` 曾被追加到文件末尾，落进最后一个 `[table]`（如 `[mcp_servers.x]`），Codex 永远读不到。改为定位到 root table
+- **Claude settings.json 覆盖**：解析失败时曾把用户全部设置替换成只剩 hooks。改为拒绝写入并保留 `.pulse-backup`
+- **调试日志无限增长**：`debug.log` 每次探测写 ~5 行且永不轮转（约 20 MB/天）。改为 2 MB 轮转保留一代
+- **等待时长未本地化**：中文界面下显示 `2m` / `30s`。改为跟随语言
+- **写死开发机路径**：某个开发者的 `/Users/<name>/*` 从 aider 扫描根移除，改用 `PULSE_AIDER_ROOTS`
+- **watcher fd 竞态**：`DispatchSource` 的 fd 改为在 cancel handler 内关闭
+- **覆盖门禁**：新增 `AgentID` 未登记到 `coverage_check.py` 时报错，不再静默缩小覆盖面
+
 ## 0.21.0 — Session-first IA
 
 ### Experience

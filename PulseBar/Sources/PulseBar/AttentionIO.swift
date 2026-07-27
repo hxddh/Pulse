@@ -9,7 +9,9 @@ enum AttentionIO {
             .appendingPathComponent("Library/Application Support/Pulse/attention.tsv")
     }
 
-    private static let header = "# Pulse attention log (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
+    /// Must match `pulse_hook.py` and `AttentionWatcher` byte for byte —
+    /// three different header strings used to end up in the same file.
+    static let header = "# Pulse attention log (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
 
     static func readText() -> String {
         var result = ""
@@ -17,13 +19,25 @@ enum AttentionIO {
             let size = lseek(fd, 0, SEEK_END)
             lseek(fd, 0, SEEK_SET)
             guard size > 0 else { return }
-            var data = Data(count: Int(size))
-            _ = data.withUnsafeMutableBytes { buf in
-                read(fd, buf.baseAddress, Int(size))
-            }
-            result = String(data: data, encoding: .utf8) ?? ""
+            result = String(data: readAll(fd, size: Int(size)), encoding: .utf8) ?? ""
         }
         return result
+    }
+
+    /// `read(2)` may return fewer bytes than asked for; the old single call
+    /// silently truncated whenever it did.
+    private static func readAll(_ fd: Int32, size: Int) -> Data {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 32 * 1024)
+        var remaining = size
+        while remaining > 0 {
+            let want = min(remaining, buffer.count)
+            let got = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, want) }
+            if got <= 0 { break }
+            data.append(contentsOf: buffer[0..<got])
+            remaining -= got
+        }
+        return data
     }
 
     static func clearAll() {

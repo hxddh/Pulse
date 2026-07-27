@@ -4,7 +4,6 @@ enum HooksSupport {
     enum Status: Equatable {
         case unknown
         case missing
-        case installed
         case installedClaude
         case installedCodex
         case installedBoth
@@ -14,7 +13,7 @@ enum HooksSupport {
             switch self {
             case .unknown: return L10n.t(.hooksUnknown, lang)
             case .missing: return L10n.t(.hooksMissing, lang)
-            case .installed, .installedBoth: return L10n.t(.hooksInstalledBoth, lang)
+            case .installedBoth: return L10n.t(.hooksInstalledBoth, lang)
             case .installedClaude: return L10n.t(.hooksInstalledClaude, lang)
             case .installedCodex: return L10n.t(.hooksInstalledCodex, lang)
             case .failed(let m): return "\(L10n.t(.hooksFailed, lang)) · \(m)"
@@ -56,11 +55,18 @@ enum HooksSupport {
     static func probeStatus() -> Status {
         let hook = supportDir().appendingPathComponent("pulse_hook.py")
         guard FileManager.default.fileExists(atPath: hook.path) else { return .missing }
-        let claude = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/settings.json")
-        let codex = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/config.toml")
-        let claudeOK = (try? String(contentsOf: claude, encoding: .utf8))?.contains("pulse_hook.py") == true
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        // Claude Code merges settings.json with settings.local.json; hooks in
+        // either file are live, so checking only the first reported a false
+        // "not installed" and nagged users who had wired it up themselves.
+        let claudeCandidates = [
+            home.appendingPathComponent(".claude/settings.json"),
+            home.appendingPathComponent(".claude/settings.local.json"),
+        ]
+        let codex = home.appendingPathComponent(".codex/config.toml")
+        let claudeOK = claudeCandidates.contains { url in
+            (try? String(contentsOf: url, encoding: .utf8))?.contains("pulse_hook.py") == true
+        }
         let codexOK = (try? String(contentsOf: codex, encoding: .utf8))?.contains("pulse_hook.py") == true
         switch (claudeOK, codexOK) {
         case (true, true): return .installedBoth
@@ -70,6 +76,19 @@ enum HooksSupport {
         }
     }
 
+    /// Remove Pulse hooks from Claude/Codex configs. Leaving dead hook commands
+    /// behind after uninstall made both tools spawn a missing script every turn.
+    @discardableResult
+    static func uninstall() -> Status {
+        let script = supportDir().appendingPathComponent("install_hooks.py")
+        guard FileManager.default.fileExists(atPath: script.path) else {
+            return .failed("install_hooks.py missing")
+        }
+        let result = run(script: script, arguments: ["--uninstall"])
+        if case .failure(let message) = result { return .failed(message) }
+        return probeStatus()
+    }
+
     @discardableResult
     static func install() -> Status {
         seedAssets()
@@ -77,9 +96,21 @@ enum HooksSupport {
         guard FileManager.default.fileExists(atPath: script.path) else {
             return .failed("install_hooks.py missing")
         }
+        let result = run(script: script, arguments: [])
+        if case .failure(let message) = result { return .failed(message) }
+        let status = probeStatus()
+        return status == .missing ? .missing : status
+    }
+
+    private enum RunResult {
+        case success
+        case failure(String)
+    }
+
+    private static func run(script: URL, arguments: [String]) -> RunResult {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = [script.path]
+        task.arguments = [script.path] + arguments
         let out = Pipe()
         let err = Pipe()
         task.standardOutput = out
@@ -91,13 +122,12 @@ enum HooksSupport {
             task.waitUntilExit()
             if task.terminationStatus != 0 {
                 let msg = String(data: errData, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit \(task.terminationStatus)"
-                return .failed(msg.isEmpty ? "exit \(task.terminationStatus)" : msg)
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return .failure(msg.isEmpty ? "exit \(task.terminationStatus)" : msg)
             }
-            let status = probeStatus()
-            return status == .missing ? .missing : status
+            return .success
         } catch {
-            return .failed(error.localizedDescription)
+            return .failure(error.localizedDescription)
         }
     }
 
@@ -115,7 +145,7 @@ enum HooksSupport {
            fm.fileExists(atPath: res.path) {
             return res
         }
-        if let url = Bundle.module.url(forResource: name.replacingOccurrences(of: ".py", with: ""), withExtension: "py") {
+        if let url = PulseResources.url(forResource: name.replacingOccurrences(of: ".py", with: ""), withExtension: "py") {
             return url
         }
         let bundled = here.appendingPathComponent("Resources/\(name)")

@@ -15,7 +15,6 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -117,8 +116,6 @@ def session_from_json(payload: dict) -> str:
             name = Path(v).name
             if name.endswith(".jsonl"):
                 name = name[: -len(".jsonl")]
-            if name.startswith("rollout-"):
-                name = name
             return name[:80]
     return ""
 

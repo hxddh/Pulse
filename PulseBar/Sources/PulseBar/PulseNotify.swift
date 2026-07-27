@@ -36,19 +36,33 @@ enum PulseNotify {
     private static let delegate = PulseNotifyDelegate()
     private static var requested = false
 
-    static func configure() {
+    /// Reports whether the user actually granted permission. Dropping this
+    /// result meant a denied prompt left both notification toggles reading
+    /// "on" while nothing would ever fire.
+    static func configure(onAuthorization: @escaping (Bool) -> Void) {
         center.delegate = delegate
+        authorizationHandler = onAuthorization
         requestAuthorizationIfNeeded()
+        refreshAuthorization()
     }
+
+    private static var authorizationHandler: ((Bool) -> Void)?
 
     static func requestAuthorizationIfNeeded() {
         guard !requested else { return }
         requested = true
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            authorizationHandler?(granted)
+        }
     }
 
-    static func post(title: String, body: String) {
-        postIdle(title: title, body: body)
+    /// Re-read the live setting — the user may have flipped it in System Settings.
+    static func refreshAuthorization() {
+        center.getNotificationSettings { settings in
+            let ok = settings.authorizationStatus == .authorized
+                || settings.authorizationStatus == .provisional
+            authorizationHandler?(ok)
+        }
     }
 
     static func postIdle(title: String, body: String) {

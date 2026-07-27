@@ -199,7 +199,7 @@ enum ProcessProbe {
         var acc: [AgentID: Hit] = [:]
         for p in procs {
             if p.args.contains("Warp.app") { continue }
-            guard let id = match(args: p.args), id.isSurface else { continue }
+            guard let id = match(args: p.args) else { continue }
             if id == .cursor { continue }
             var hit = acc[id] ?? Hit(id: id, count: 0, viaWarp: false)
             hit.count += 1
@@ -219,6 +219,16 @@ enum ProcessProbe {
         let hits = Array(acc.values)
         DebugLog.write("probe psLines=\(procs.count) hits=\(hits.count) ids=\(hits.map(\.id.rawValue).joined(separator: ","))")
         return hits
+    }
+
+    /// Stable fingerprint of the live agent set. When this is unchanged there is
+    /// very little chance session data moved, so the expensive harvest can be
+    /// skipped for a tick or two.
+    static func signature(_ hits: [Hit]) -> String {
+        hits
+            .map { "\($0.id.rawValue):\($0.count):\($0.pid)" }
+            .sorted()
+            .joined(separator: "|")
     }
 
     private static func isRealTTY(_ raw: String) -> Bool {

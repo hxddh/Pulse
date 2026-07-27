@@ -3,7 +3,6 @@ import Foundation
 /// Near-realtime refresh when attention.tsv changes.
 final class AttentionWatcher: @unchecked Sendable {
     private var source: DispatchSourceFileSystemObject?
-    private var fileFD: CInt = -1
     private var onChange: (() -> Void)?
     private var lastFire: TimeInterval = 0
     private var path: String = ""
@@ -19,7 +18,7 @@ final class AttentionWatcher: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("attention.tsv")
         if !FileManager.default.fileExists(atPath: file.path) {
-            try? "# Pulse attention log\n".write(to: file, atomically: true, encoding: .utf8)
+            try? AttentionIO.header.write(to: file, atomically: true, encoding: .utf8)
         }
         path = file.path
         arm()
@@ -28,24 +27,20 @@ final class AttentionWatcher: @unchecked Sendable {
     func stop() {
         lock.lock()
         defer { lock.unlock() }
+        teardownLocked()
+    }
+
+    /// The fd is owned by the source's cancel handler — closing it here would
+    /// race cancellation and could close a descriptor GCD still holds.
+    private func teardownLocked() {
         source?.setEventHandler {}
         source?.cancel()
         source = nil
-        if fileFD >= 0 {
-            close(fileFD)
-            fileFD = -1
-        }
     }
 
     private func arm() {
         lock.lock()
-        if fileFD >= 0 {
-            close(fileFD)
-            fileFD = -1
-        }
-        source?.setEventHandler {}
-        source?.cancel()
-        source = nil
+        teardownLocked()
         let watchPath = path
         lock.unlock()
 
@@ -75,10 +70,9 @@ final class AttentionWatcher: @unchecked Sendable {
             }
         }
         src.setCancelHandler {
-            // fd owned by watcher.stop / re-arm — do not double-close here
+            close(fd)
         }
         lock.lock()
-        fileFD = fd
         source = src
         lock.unlock()
         src.resume()
