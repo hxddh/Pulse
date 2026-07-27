@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - Glance
 
+// SwiftUI views only ever run on the main actor, but only `body` is
+// implicitly isolated — helper computed properties are not, so calling
+// StatusStore's @MainActor methods from them is an error. Annotate the
+// whole view rather than sprinkling MainActor.assumeIsolated.
+@MainActor
 struct MenuBarLabel: View {
     let snapshot: PulseSnapshot
     @State private var waitPulse = false
@@ -122,6 +127,7 @@ private struct StatusChip: View {
 
 // MARK: - Tray panel
 
+@MainActor
 struct TrayPanel: View {
     @ObservedObject var store: StatusStore
 
@@ -355,6 +361,7 @@ struct TrayPanel: View {
 
 // MARK: - Agent row
 
+@MainActor
 private struct AgentRowButton: View {
     let row: AgentRow
     let store: StatusStore
@@ -565,6 +572,7 @@ private struct OptionalShortcut: ViewModifier {
 // MARK: - Settings
 
 
+@MainActor
 struct SettingsView: View {
     @ObservedObject var store: StatusStore
 
