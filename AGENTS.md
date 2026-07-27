@@ -1,81 +1,101 @@
 # Agent handoff — Pulse
 
-macOS menu-bar status lamp for coding agents (`idle` / `running` / `needs you`).
+macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 
-## Start here
+## Orientation
 
-| Doc | Role |
+| Doc | Read it when |
 | --- | --- |
-| [`EXPERIENCE.md`](EXPERIENCE.md) | Product IA / non-goals (source of truth for UX) |
-| [`CHANGELOG.md`](CHANGELOG.md) | What shipped per version |
-| [`README.md`](README.md) | Build & run |
-| [`docs/attention-bridge.md`](docs/attention-bridge.md) | Optional waiting-signal bridge |
-| [`docs/review-0.21.md`](docs/review-0.21.md) | Open findings + product gaps (read before planning work) |
+| [`README.md`](README.md) | You want to know what the product is |
+| [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
+| [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
+| [`docs/plan-0.23.md`](docs/plan-0.23.md) | You are picking up the next piece of work |
+| [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
+
+Everything is Swift under `PulseBar/`, plus three Python scripts in `src/`
+(harvest and hooks). The old Vercel Native SDK shell was deleted in 0.22 —
+recover from git history if you ever need it.
+
+## Invariants
+
+These are product decisions, not preferences. Breaking one is a bug even if it
+compiles and ships.
+
+- **No fake Waiting.** Waiting comes from hooks or harvest `skill=pending`,
+  never from inference. An agent with no Waiting path shows Running and says so.
+- **No quota, cost, or reset HUD.** That is a different product.
+- **No approve/deny in the tray.** Pulse tells you to go look; it does not act
+  for you.
+- **A harvest failure must not blank the scan.** Per-agent `guard()` in
+  `activity_scan.py`; one broken collector cannot blind the other 31.
+- **No fixed probe interval.** Cadence follows `ProbeSchedule` — a resident
+  menu-bar app flagged for energy use is a dead product.
+- **The builder stays pure.** `SnapshotBuilder` takes the world through
+  `Context` and returns intents. Side effects belong in `StatusStore`.
+- **Don't expand the hook installer** past Claude and Codex. Everything else
+  goes through [`docs/attention-bridge.md`](docs/attention-bridge.md).
+
+## Working on it
+
+```bash
+cd PulseBar && swift build      # macOS 14+, Swift 5.9
+cd PulseBar && swift test       # 107 tests
+```
+
+Gates, from the repo root — `package.sh` and CI both run all three:
+
+```bash
+python3 scripts/version_check.py    # --fix aligns the followers
+python3 scripts/coverage_check.py
+python3 scripts/matrix_check.py
+```
+
+`src/*.py` is the source of truth; `PulseBar/Sources/PulseBar/Resources/*.py`
+are copies `package.sh` syncs. CI fails if they diverge — run `package.sh`
+after editing harvest or hooks.
 
 **Version truth:** `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`.
-`app.zon` / `src/version.zig` / CHANGELOG / README follow it — run
-`python3 scripts/version_check.py --fix` after any bump. Build fingerprint
-(git sha + date) is stamped into `Info.plist` by `package.sh`.
+CHANGELOG's newest heading and the README badge follow it.
 
-## Architecture (keep)
-
-Probe + Harvest + Attention → `StatusStore.applyScan`. Python SoT lives in `src/`; `package.sh` syncs into app Resources (CI enforces the copies match).
-
-Everything is Swift `PulseBar/`. The old Vercel Native SDK shell (`src/*.zig`, `app.zon`, `assets/`) was deleted in 0.22 — recover from git history if ever needed.
+Debug log: `~/Library/Application Support/Pulse/debug.log` (rolls at 2 MB).
 
 ## Ship
 
 ```bash
-./PulseBar/Scripts/package.sh          # runs all three gates first
+./PulseBar/Scripts/package.sh
 open zig-out/package/Pulse.app
-(cd PulseBar && swift test)            # PulseBar unit tests
 ```
 
-Gates (also in CI): `scripts/version_check.py`, `scripts/coverage_check.py`,
-`scripts/matrix_check.py`.
-
-Distribution needs `PULSE_SIGN_IDENTITY` (+ optional `PULSE_NOTARY_PROFILE`);
-without it the build is ad-hoc signed and Gatekeeper blocks it elsewhere.
+Signing uses `PULSE_SIGN_IDENTITY` (+ optional `PULSE_NOTARY_PROFILE`). Without
+it the build is ad-hoc signed and Gatekeeper blocks it on other machines.
 
 ## Release
 
 Write the `## x.y.z` section in CHANGELOG.md first — every path refuses without it.
 
 ```bash
-# preferred: bump + gates, then let CI publish
-./scripts/release.sh 0.23.0                 # dry run: bump + gates + diff
-./scripts/release.sh 0.23.0 --commit        # commit with the [release] marker
-git push                                    # CI builds, tags and publishes
+./scripts/release.sh 0.23.0            # dry run: bump + gates + diff
+./scripts/release.sh 0.23.0 --commit   # commit carrying the [release] marker
+git push                               # CI builds, tags and publishes
 ```
 
-Three triggers, all landing in the same job:
-
-| Trigger | When to use |
+| Trigger | When |
 | --- | --- |
-| `[release]` in the pushed commit subject | default; works from any branch, no tag-write rights needed |
-| push a `v*.*.*` tag | if you prefer explicit tags and have tag-write access |
-| `workflow_dispatch` | only once `release.yml` is on the **default branch** |
+| `[release]` in the pushed commit subject | default; works from any branch |
+| a `v*.*.*` tag push | if you prefer explicit tags and have tag-write rights |
+| `workflow_dispatch` | only once `release.yml` is on the default branch |
 
-CI verifies the requested version matches `PulseVersion.semver`, runs the gates
-and tests, packages the DMG, and publishes a Release whose body is that
-version's CHANGELOG section. It creates the tag itself with its own
-`contents: write` token — that is deliberate, so publishing never depends on a
-developer's or agent's local credentials. It refuses to publish a version that
-already has a Release, so re-pushing is harmless.
+CI verifies the version matches `PulseVersion.semver`, runs gates and tests,
+packages the DMG, and publishes a Release whose body is that version's CHANGELOG
+section. **It creates the tag with its own `contents: write` token** — publishing
+deliberately does not depend on any developer's or agent's local credentials. A
+version that already has a Release is refused, so re-pushing is harmless.
 
-The in-app update check reads these Releases, so a version that never got
-released is invisible to users.
+The in-app update check reads those Releases; an untagged version is invisible
+to users.
 
-## Do not break
+## Current state
 
-- No quota / $ / reset HUD
-- No tray approve/deny
-- No fake Waiting (hooks / `skill=pending` only)
-- No SessionStore / event bus rewrite
-- Do not expand hook installer to ~22 agents
-- Do not restore a fixed probe interval — cadence follows `ProbeSchedule`
-- Do not let a harvest failure blank the whole scan (per-agent `guard`)
-
-## Current IA (0.22+)
-
-Glance traffic-light · session title as row hero · process-only rows de-ranked · whole-row click = focus.
+0.22.0 released. 0.23 is in progress — `SnapshotBuilder` and `PulseSettings`
+are extracted and covered; see [`docs/plan-0.23.md`](docs/plan-0.23.md) for what
+remains and what is deliberately out of scope.

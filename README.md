@@ -1,80 +1,66 @@
 # Pulse
 
-macOS **菜单栏** 编码 Agent 运行态感知。
+macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.22.0`** — Swift `MenuBarExtra` 壳（`PulseBar/`）。
+**版本：`0.22.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
-> 一眼知道 Agent **空闲 / 运行中 / 等待你**。会话标题是主语；Glance 用交通灯色。
+---
 
-Agent 接手：[`AGENTS.md`](AGENTS.md) · 体验规格：[`EXPERIENCE.md`](EXPERIENCE.md) · 可选 attention 桥：[`docs/attention-bridge.md`](docs/attention-bridge.md)
+## 它解决什么
 
-## 运行（推荐）
+开着 Claude Code 写代码，切去开会 / 写文档，回来发现它二十分钟前就停在一个授权提示上。
+Pulse 把这件事变成余光可见：
 
-```bash
-./PulseBar/Scripts/package.sh
-open zig-out/package/Pulse.app
-```
-
-开发调试（从仓库根目录跑门禁，`swift run` / `swift test` 在 `PulseBar/` 下）：
-
-```bash
-(cd PulseBar && swift run)           # 开发壳，About 显示 x.y.z-dev
-(cd PulseBar && swift test)          # PulseBar 单元测试
-python3 scripts/version_check.py     # 版本一致性（--fix 自动对齐）
-python3 scripts/coverage_check.py    # harvest 接线覆盖
-python3 scripts/matrix_check.py      # README 支持矩阵 vs waitingSource
-```
-
-三个门禁都由 `package.sh` 自动执行，打包前会先失败在这里；
-CI（`.github/workflows/ci.yml`）在每次 push 上跑门禁 + macOS 构建与测试。
-
-## 分发
-
-默认 ad-hoc 签名，只能自己用 —— 其他 Mac 会被 Gatekeeper 拦。要真正分发：
-
-```bash
-export PULSE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
-export PULSE_NOTARY_PROFILE=pulse-notary   # 可选，触发公证 + stapler
-./PulseBar/Scripts/package.sh
-```
-
-应用每天最多检查一次 GitHub Releases（设置里可关）。
-
-> 仓库目前是 private，而更新检查是**匿名**请求 —— private 仓库对匿名请求返回 404，
-> 所以该功能会一直显示「检查失败」。转 public，或用 `Info.plist` 的 `PulseUpdateFeed`
-> 指向可匿名访问的 feed，即可生效。
-
-## 0.21 特色
-
-| 方向 | 行为 |
-| --- | --- |
-| 会话作主语 | 行 hero = 任务标题，Agent 名降到次行 |
-| Glance | 交通灯：Waiting 红 / Running 绿 / Idle 灰 / Error 橙 |
-| 进程降权 | 无任务的 live 显示「检测到进程」，排在有标题会话之后 |
-| Waiting 来源 | 行内 `hooks` / `pending` 可信标签 |
-| Focus | TTY / Warp / open cwd 三档诚实路由；整行点击即 Focus |
-| 版本可辨识 | Tray 页脚 + 关于区带构建指纹，一键复制诊断 |
-
-## 0.22 特色
-
-| 方向 | 行为 |
-| --- | --- |
-| 省电 | 探测节奏跟随状态（2/5/15/30s），息屏锁屏停表，低电量减半 |
-| 通知 | 标题带项目、正文带等待原因；权限被拒时明确提示 |
-| 多会话 | 每 Agent 最多 4 个会话，超出部分显式告知而非静默丢弃 |
-| 可控 | 快捷键可选、按 Agent 静音、安静时段精确到分钟、hooks 可卸载 |
-| 更新 | 每天至多一次检查 GitHub Releases，可关 |
-| 质量 | PulseBar 单元测试 + CI + 支持矩阵门禁 |
-
-## 能力层（0.17+）
-
-| 层 | 含义 | Waiting 来源 |
+| 灯 | 含义 | 你该做什么 |
 | --- | --- | --- |
-| **A Probe** | 进程 Running | — |
-| **B Harvest** | 任务 / 项目 / cwd / session | — |
-| **C Waiting** | 需要你 | `hooks` 或 harvest `skill=pending` |
+| 🔴 红（呼吸） | **需要你** —— 在等授权或输入 | 点一下，直接跳到那个终端页 |
+| 🟢 绿 | 运行中 | 不用管 |
+| ⚪️ 灰 | 空闲 / 只有最近会话 | 不用管 |
+| 🟠 橙 | 探测不可用 | 看「关于 → 复制诊断信息」 |
 
-**诚实规则：** `waitingSource=none` 的 Agent 只显示 Running，Tray 可提示「暂无 Waiting 信号」——不强抬。
+点开托盘看到的是**会话**，不是进程：行标题是任务名，Agent 名退到次行。
+整行点击 = 聚焦到对应的终端页。
+
+**明确不做**：额度 / 费用 / 重置倒计时、桌面宠物、统计大盘、托盘内批准或拒绝。
+详见 [`EXPERIENCE.md`](EXPERIENCE.md)。
+
+---
+
+## 安装
+
+从 [Releases](https://github.com/hxddh/Pulse/releases/latest) 下载 DMG，拖进「应用程序」。
+
+> 目前的构建是 ad-hoc 签名，首次打开 macOS 会拦。右键点应用选「打开」，或：
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/Pulse.app
+> ```
+> 配置了 Developer ID 之后这一步就不需要了，见[发布](#发布)。
+
+装好后打开 **偏好设置 → 等待信号 → 安装连接**。
+这一步把 hook 写进 Claude Code 与 Codex 的配置，Pulse 才能点亮「需要你」——
+不装也能用，只是红灯永远不会亮。
+
+---
+
+## 它怎么知道
+
+三层，能力递增，**每层只承诺自己能兑现的**：
+
+| 层 | 手段 | 能回答 |
+| --- | --- | --- |
+| **A · Probe** | `ps` 扫进程 | 有没有人在跑 |
+| **B · Harvest** | 读各 Agent 自己的会话文件 / sqlite | 在跑什么、哪个项目、哪个会话 |
+| **C · Waiting** | hooks，或 harvest 里的 `pending` 标记 | 是不是在等你 |
+
+**诚实规则**（写死的产品约束，见 [`AGENTS.md`](AGENTS.md)）：
+
+- 进程在 ≠ 会话在干活。没有任务标题的 live 行只显示「检测到进程」，排在有标题的会话之后。
+- Waiting 只来自 hooks 或 `skill=pending`，**绝不推断**。没有 Waiting 通路的 Agent，
+  托盘明说「暂无 Waiting 信号」，不假装。
+- 每条 Waiting 行标注来源是 `hooks` 还是 `pending`，你自己判断可信度。
+- Focus 不吹牛：有 TTY 才聚焦终端页，Warp 下只激活 Warp，只有 cwd 就说「在终端打开」。
+
+## 支持的 Agent
 
 | Agent | Probe | Harvest | Waiting |
 | --- | --- | --- | --- |
@@ -83,46 +69,89 @@ export PULSE_NOTARY_PROFILE=pulse-notary   # 可选，触发公证 + stapler
 | Droid / Kimi / Command Code | A | B | pending |
 | Gemini / OpenCode / Amp / Aider / Goose | A | B | pending |
 | Grok / Pi / Cline / Roo / Kilo | A | B | pending（尽力） |
-| Continue / Copilot / Amazon Q / OpenHands / Zed | A | B | pending（0.17 加深） |
+| Continue / Copilot / Amazon Q / OpenHands / Zed | A | B | pending |
 | Cascade / Windsurf / Augment / Kiro | A | B | pending（尽力） |
-| Antigravity / Trae / Warp / Devin / Junie / Replit | A | B* | **none**（本机 C 弱） |
+| Antigravity / Trae / Warp / Devin / Junie / Replit | A | B* | **none**（本机无可靠信号） |
 
-\* Cursor 进程常跳过壳，靠 harvest；none 组 harvest 尽力但不承诺 Waiting。
+\* Cursor 进程常跳过外壳，靠 harvest 认；none 组 harvest 尽力，但不承诺 Waiting。
 
-## 版本与发布
+这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.waitingSource` 校验，
+不一致 CI 就红——它是承诺，不是宣传。
 
-**唯一真源**：`PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`。
-`scripts/version_check.py` 强制 CHANGELOG 最新标题与 README 徽标跟随（`--fix` 自动对齐）。
+想让名单外的工具点亮 Waiting，走 [`docs/attention-bridge.md`](docs/attention-bridge.md)。
 
-**构建指纹**：`package.sh` 把 git short sha 与构建日期写入 `Info.plist`
-（`PulseGitCommit` / `PulseBuildDate`），`PulseVersion` 运行时读取：
+---
 
-- 打包运行 → `Pulse 0.22.0`，关于区第二行 `a1b2c3d · 2026-07-27`（`+` 表示有未提交改动）
-- `swift run` → `Pulse 0.22.0-dev`，构建行显示「开发构建」
-- bundle 与二进制版本不一致 → `0.22.0≠0.21.1` 并高亮，提示重新打包
+## 配置
 
-界面落点：Tray 底部页脚（点击复制诊断）、偏好设置 → 关于。
+偏好设置分区，全部即时生效：
 
-### 发布
+- **通用** —— 实时更新、登录时启动、语言（跟随系统 / English / 中文）
+- **通知** —— 空闲通知、新 Waiting 通知、安静时段（精确到分钟、可跨午夜）、按 Agent 静音
+- **等待信号** —— 安装 / 移除 hooks，以及当前状态
+- **快捷键** —— 唤出面板的组合键（⌘⇧P / ⌘⇧U / ⌘⌥P / ⌃⌥P / 关闭）
+- **最近的等待** —— 已结束的等待记录，回答「我是不是错过了什么」
+- **关于** —— 版本、构建指纹、检查更新、复制诊断信息
 
-先在 CHANGELOG.md 写好 `## x.y.z` 段落 —— 没有它所有路径都会拒绝。
+省电是硬约束：探测节奏跟着状态走（等待 2s / 运行 5s / 最近 15s / 空 30s），
+托盘打开时提速，低电量模式减半，**息屏或锁屏直接停表**。
+
+---
+
+## 开发
+
+```bash
+cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
+cd PulseBar && swift test    # 107 个单元测试
+```
+
+三个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
+
+```bash
+python3 scripts/version_check.py    # 版本一致性（--fix 自动对齐）
+python3 scripts/coverage_check.py   # 每个 AgentID 都有 harvest 接线
+python3 scripts/matrix_check.py     # README 支持矩阵 == 代码
+```
+
+打包：
+
+```bash
+./PulseBar/Scripts/package.sh
+open zig-out/package/Pulse.app
+```
+
+架构见 [`docs/architecture.md`](docs/architecture.md)。
+
+## 发布
+
+先在 `CHANGELOG.md` 写好 `## x.y.z` 段落 —— 没有它所有路径都会拒绝。
 
 ```bash
 ./scripts/release.sh 0.23.0            # 预演：改版本、跑门禁、给出 diff
-./scripts/release.sh 0.23.0 --commit   # 提交（附带 [release] 标记）
+./scripts/release.sh 0.23.0 --commit   # 提交（标题带 [release] 标记）
 git push                               # CI 构建、打 tag、发布
 ```
 
-三种触发方式，最终都进同一个 job：
+**tag 由 CI 用自己的 `contents: write` token 创建**，发布不依赖任何人的本地推送权限。
+已发布过的版本会被拒绝重复发布，重推是安全的。
 
-| 触发 | 适用 |
+要产出别人能直接打开的包，设仓库 secret `PULSE_SIGN_IDENTITY`
+（可选 `PULSE_NOTARY_PROFILE` 触发公证）。未设置时 Release 说明会自动附上绕过提示。
+
+> **已知限制**：仓库当前是 private，而应用内的「检查更新」发的是匿名请求，
+> GitHub 对匿名请求返回 404，所以该功能会一直显示「检查失败」。
+> 转 public，或用 `Info.plist` 的 `PulseUpdateFeed` 指向可匿名访问的 feed 即可解决。
+
+---
+
+## 文档
+
+| 文件 | 内容 |
 | --- | --- |
-| 提交标题含 `[release]` | 默认；任意分支可用，不需要 tag 写权限 |
-| 推送 `v*.*.*` tag | 偏好显式 tag 且有相应权限时 |
-| `workflow_dispatch` | 仅当 `release.yml` 已在**默认分支**上 |
-
-**tag 由 CI 用自己的 `contents: write` token 创建** —— 这是刻意设计：发布不应
-依赖某个开发者或 agent 的本地凭据。已存在 Release 的版本会被拒绝重复发布，
-所以重推是安全的。
-
-应用内的「检查更新」读的就是这些 Release。
+| [`AGENTS.md`](AGENTS.md) | 接手须知：不变量、门禁、发布流程 |
+| [`EXPERIENCE.md`](EXPERIENCE.md) | 体验规格 —— UI 改动的验收依据 |
+| [`docs/architecture.md`](docs/architecture.md) | 数据从进程到菜单栏的完整路径 |
+| [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
+| [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+| [`docs/plan-0.23.md`](docs/plan-0.23.md) | 下个版本的计划 |
+| [`docs/review-0.21.md`](docs/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |

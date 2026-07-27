@@ -21,9 +21,11 @@
 
 ---
 
+> **进度**：P0-1、P0-2 已完成（共 57 个新测试，全量 107）。P0-3 待产品决定。
+
 ## P0 — 必须
 
-### 1. 把 `applyScan` 变成可测的，然后测它
+### 1. 把 `applyScan` 变成可测的，然后测它 — ✅ 已完成
 
 **为什么是它。** 它是整个产品的逻辑所在：多会话去重、每 Agent 上限与 `hiddenSessions`
 记账、live 进程只挂一行、cursor/cursorAgent 合并、attention 匹配、Waiting 边沿、
@@ -53,20 +55,29 @@
 
 `StatusStore` 退化成薄壳：拥有定时器、I/O、通知与设置，调用 builder。
 
-**测试目标（约 25–30 例）：** 多会话去重与 key 唯一化 · 每 Agent 上限与 `hiddenSessions`
+**已交付：** `SnapshotBuilder.swift`（纯函数，`Context` 注入外部世界，
+返回边沿意图而非直接执行）+ 34 个测试。`applyScan` 381 → 115 行。
+数据流见 [`architecture.md`](architecture.md)。
+
+**覆盖：** 多会话去重与 key 唯一化 · 每 Agent 上限与 `hiddenSessions`
 只记在首行 · live 进程只挂一行不涂抹 · cursor/cursorAgent 合并 · attention 按
 session / cwd / 兜底三级匹配 · 陈旧 harvest 丢弃 · pending → Waiting 与软忽略 ·
 Waiting 边沿（首扫只播种不通知）· idle 边沿 · harvest fresh/skipped/failed 三态 ·
 等待历史记录 · 排序（Waiting → 有标题 → live → recent → 优先级）· glance 四态编码。
 
-### 2. 设置读写 + 迁移的测试
+### 2. 设置读写 + 迁移的测试 — ✅ 已完成
 
 0.22 把安静时段从整点改成分钟，附带一段 hours → minutes 迁移逻辑 ——
 **零测试，且在每个老用户升级后的首次启动上跑一次**。错了就是静默丢掉用户配置，
 且不可逆。
 
-覆盖：旧版整点文件正确迁移 · 已有分钟键时不重复迁移 · 损坏 / 半截文件 ·
-未知 key 忽略 · `mute` 列表与 `hotkey` 反序列化 · 越界值 clamp · 完整往返。
+**已交付：** `PulseSettings.swift`（值 + 解析 + 序列化 + 安静时段判定，
+全部不碰 Application Support）+ 23 个测试。
+
+覆盖：旧版整点文件正确迁移 · 分钟键优先于遗留键（22:30 不会退回 22:00）·
+0.22 写出的文件不重复迁移 · 完整往返是恒等 · `mute` 列表丢弃未知 agent ·
+枚举解析失败回落默认 · 非数字分钟保留默认而非归零 · 垃圾行只损失自己 ·
+解析与序列化两端都 clamp · 安静时段半开区间且可跨午夜。
 
 ### 3. 更新检查目前是永久失败状态
 
