@@ -23,6 +23,20 @@ jobs:
         run: python3 scripts/matrix_check.py
       - name: Python compiles
         run: python3 -m py_compile src/*.py scripts/*.py
+      # SwiftPM's generated Bundle.module accessor for an executable target
+      # checks only the .app root and the baked build path, then calls
+      # fatalError(). Using it turns a packaging mistake into a launch crash —
+      # which is what shipped in 0.21.0, 0.22.0 and 0.23.0. PulseResources
+      # resolves the same bundle and returns nil instead.
+      - name: No Bundle.module in app code
+        run: |
+          # `^[^/]*` keeps the doc comments in PulseResources.swift from
+          # matching the rule they exist to explain.
+          if grep -rnE --include='*.swift' '^[^/]*[^.a-zA-Z]Bundle\.module' PulseBar/Sources; then
+            echo "::error::use PulseResources instead of Bundle.module — it fatalErrors when the bundle moves"
+            exit 1
+          fi
+          echo "OK — no Bundle.module references"
       - name: Bundled resources are in sync with src/
         run: |
           for py in activity_scan.py pulse_hook.py install_hooks.py; do

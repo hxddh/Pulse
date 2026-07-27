@@ -5,7 +5,18 @@ enum AppServices {
     @MainActor static let store = StatusStore()
 }
 
+/// Explicit entry point so `--selftest` can answer before AppKit starts —
+/// `App.main()` connects to the WindowServer, which a CI runner may not have.
 @main
+enum PulseBarMain {
+    static func main() {
+        if CommandLine.arguments.contains("--selftest") {
+            exit(PulseSelfTest.run() ? 0 : 1)
+        }
+        PulseBarApp.main()
+    }
+}
+
 struct PulseBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @ObservedObject private var store = AppServices.store

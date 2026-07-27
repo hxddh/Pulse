@@ -122,6 +122,13 @@ PLIST
 # passed all of them and still crashed on launch.
 python3 "$ROOT/scripts/package_check.py" "$APP"
 
+# And then ask the app itself, which is the only check that does not depend on
+# our own assumptions about where the runtime looks. Runs the real binary from
+# inside the real bundle; --selftest returns before AppKit starts, so this
+# works headless.
+echo "running --selftest inside the packaged app..."
+"$APP/Contents/MacOS/PulseBar" --selftest
+
 # Signing. Ad-hoc (`-`) is fine for local use but Gatekeeper blocks the DMG on
 # any other Mac. Set these to produce something actually distributable:
 #   PULSE_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"

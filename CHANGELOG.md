@@ -2,6 +2,52 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.23.2 — 打包自检，并订正 0.23.1 的归因
+
+功能没动。这一版加的是**验证手段**，同时订正 0.23.1 说明里一处讲错的根因。
+
+### 0.23.1 的根因说错了
+
+0.23.1 里我写的是「包内多出的 `Contents/` 让 CFBundle 打不开」。**这是错的。**
+
+真正的原因是查找路径不匹配。SwiftPM 给 **executable target** 生成的访问器只有两个候选：
+
+```swift
+let mainPath  = Bundle.main.bundleURL.appendingPathComponent("PulseBar_PulseBar.bundle").path
+let buildPath = "/Users/runner/work/.../PulseBar_PulseBar.bundle"
+guard let bundle = Bundle(path: mainPath) ?? Bundle(path: buildPath) else { fatalError(...) }
+```
+
+`.app` 根目录，和编译期写死的构建目录 —— **`Contents/Resources/` 从来不在候选里**。
+而 `package.sh` 恰好把资源包放在 `Contents/Resources/`。多出来的 `Contents/` 确实是脏的，
+但访问器压根没走到那一层，它不是崩溃原因。
+
+在 v0.23.0 的二进制里搜字符串可以直接确认：`could not load resource bundle: from `
+命中 1 次（双候选版），`unable to find bundle named`（多候选版）命中 0 次。
+v0.23.1 里前者已经归零 —— 因为所有调用点都换成了 `PulseResources`。
+
+0.23.1 的修复本身是有效的，但它有效是因为 `PulseResources` 的候选表以
+`Bundle.main.resourceURL` 打头，不是因为我当时给出的那个理由。
+
+### 加了什么
+
+- **`PulseBar --selftest`**：打包后用**真实的二进制、在真实的 `.app` 里**跑一遍资源解析，
+  逐项报告能不能找到。入口点移到 `PulseBarMain`，在 AppKit 初始化之前返回，
+  所以无头 CI 上也能跑。这是唯一一种不依赖「我们以为运行时去哪找」的检查。
+- **`package_check.py` 不再把单一位置写死成唯一正确答案**：
+  `Contents/Resources/` 和 `.app` 根都接受，两处都校验扁平结构与 `Info.plist`。
+  之前那版断言包必须在 `Contents/Resources/` —— 而这只有在换掉 `Bundle.module`
+  之后才成立，等于把我自己的假设当成了不变量。
+- **门禁禁止 `Bundle.module`**：它一旦解析失败就 `fatalError()`，
+  把打包失误变成没有线索的启动崩溃。用 `PulseResources`，找不到返回 nil。
+
+### 没做的一件事
+
+原计划还要往 `.app` 根目录再放一份资源包（或做 symlink）以兼容两种查找。
+最后没做：`.app` 顶层除 `Contents/` 外放东西是非标准结构，有 codesign / Gatekeeper 风险，
+而 `--selftest` 已经能直接证明解析可用，禁用 `Bundle.module` 的门禁也堵死了退化路径。
+为一个已被证明不存在的问题引入一个真实的签名风险，不划算。
+
 ## 0.23.1 — 修复启动崩溃
 
 **0.21.0 / 0.22.0 / 0.23.0 的 DMG 装上去打不开，一启动就崩。请升级到本版。**

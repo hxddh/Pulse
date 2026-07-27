@@ -198,6 +198,10 @@ enum ActivityHarvest {
         return out
     }
 
+    /// Exposed for `--selftest`, which must check the same resolution the app
+    /// actually uses rather than a re-implementation of it.
+    static func selfTestScriptPath() -> String? { scriptURL()?.path }
+
     private static func scriptURL() -> URL? {
         let fm = FileManager.default
         let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()

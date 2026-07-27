@@ -82,27 +82,42 @@ def main(argv: list[str]) -> int:
         if info.get("CFBundleExecutable") != "PulseBar":
             problems.append("Contents/Info.plist CFBundleExecutable is not PulseBar")
 
-    bundle = resources / BUNDLE_NAME
-    if not bundle.is_dir():
+    # Two locations are defensible, and which one works depends on how the
+    # resource bundle is resolved:
+    #
+    #   Contents/Resources/  — where an app bundle normally keeps resources, and
+    #                          where PulseResources looks first.
+    #   <app root>/          — where SwiftPM's generated `Bundle.module` accessor
+    #                          for an *executable* target looks, and the reason
+    #                          0.21–0.23.0 crashed: package.sh used the first,
+    #                          the accessor only ever checked the second.
+    #
+    # Accept either, so this gate does not quietly encode one resolution
+    # strategy as the only correct one. `--selftest` is what proves the app can
+    # actually reach them.
+    candidates = [resources / BUNDLE_NAME, app / BUNDLE_NAME]
+    found = [c for c in candidates if c.is_dir()]
+    if not found:
         problems.append(
-            f"Contents/Resources/{BUNDLE_NAME} is missing — Bundle.module will "
-            "fatalError() on first resource lookup, i.e. the app crashes on launch"
+            f"{BUNDLE_NAME} is in neither Contents/Resources/ nor the app root — "
+            "resource lookup will fail and the app cannot show its icons"
         )
-    else:
-        # The bug. A Contents/ directory inside a flat SwiftPM bundle flips
-        # CFBundle to the modern layout and hides everything at the root.
+    for bundle in found:
+        # A SwiftPM resource bundle is flat. Adding Contents/ flips CFBundle to
+        # the modern layout, so it stops reading the root and looks for
+        # Contents/Info.plist instead.
         stray = bundle / "Contents"
         if stray.exists():
             problems.append(
-                f"{BUNDLE_NAME}/Contents/ exists — CFBundle will read this as a "
-                "modern bundle, ignore the flat resources at the root, and fail "
-                "to open the bundle (this is the 0.21–0.23.0 launch crash)"
+                f"{bundle.name} at {bundle.parent.name}/ has a Contents/ directory — "
+                "a SwiftPM resource bundle is flat, and CFBundle will stop reading "
+                "the root once it sees this"
             )
 
         if not (bundle / "Info.plist").is_file():
             problems.append(
-                f"{BUNDLE_NAME}/Info.plist is missing — a directory without one is "
-                "not a bundle, so Bundle(url:) returns nil and Bundle.module traps"
+                f"{bundle.name} at {bundle.parent.name}/ has no Info.plist — a "
+                "directory without one may not open as a bundle at all"
             )
 
         for rel in REQUIRED_IN_BUNDLE:
@@ -117,8 +132,10 @@ def main(argv: list[str]) -> int:
         return fail(problems)
 
     icons = len(list((resources / "AgentIcons").glob("*.png")))
+    where = ", ".join(str(b.relative_to(app)) for b in found)
     print(f"package OK — {app.name} {version or '?'} · {icons} agent icons")
-    print(f"  resource bundle: flat layout, Info.plist present, no stray Contents/")
+    print(f"  resource bundle at: {where} (flat, Info.plist present)")
+    print("  structure only — run `PulseBar --selftest` to prove it resolves")
     return 0
 
 
