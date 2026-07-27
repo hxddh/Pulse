@@ -533,6 +533,14 @@ struct PulseSnapshot: Equatable {
 /// sessions, nothing to act on, taking half the panel and half the reading.
 /// Folding them is the largest space win available without dropping a fact.
 enum TrayFold {
+    /// Below this many rows the panel is not crowded, so nothing folds.
+    ///
+    /// A 0.27 screenshot showed three sessions with two of them folded away —
+    /// one visible row in a panel that had room for all three. Folding traded a
+    /// line of screen for a click and hidden content, which is only a good
+    /// trade when the screen is the scarce thing. It was not.
+    static let crowdedFrom = 5
+
     /// A project group folds when nothing in it is waiting.
     ///
     /// `foldable` only ever answered for the Recent *section*, so grouping by
@@ -540,8 +548,13 @@ enum TrayFold {
     /// the one mode where nothing folded and the panel was a flat list of every
     /// project. Same two guards as Recent, plus the one that matters here: a
     /// project holding a wait is never folded away.
-    static func foldableProject(hasWaiting: Bool, groupCount: Int, rowCount: Int) -> Bool {
-        !hasWaiting && groupCount > 1 && rowCount >= 2
+    static func foldableProject(
+        hasWaiting: Bool,
+        groupCount: Int,
+        rowCount: Int,
+        totalRows: Int
+    ) -> Bool {
+        !hasWaiting && groupCount > 1 && rowCount >= 2 && totalRows >= crowdedFrom
     }
 
     /// Recent is foldable, but only when it is not the whole list.
@@ -549,8 +562,23 @@ enum TrayFold {
     /// If Recent is all there is, those rows *are* the content and folding
     /// them leaves a panel that says nothing. The rule is "hide the part you
     /// are not here for", which requires there to be another part.
-    static func foldable(section: TraySection, groupCount: Int, rowCount: Int) -> Bool {
-        section == .recent && groupCount > 1 && rowCount >= 2
+    static func foldable(
+        section: TraySection,
+        groupCount: Int,
+        rowCount: Int,
+        totalRows: Int
+    ) -> Bool {
+        section == .recent && groupCount > 1 && rowCount >= 2 && totalRows >= crowdedFrom
+    }
+
+    /// True when the summary names every row, making the count a repeat.
+    ///
+    /// Three Claude sessions summarise to "Claude" — one name for three rows,
+    /// so the count is still the only thing saying how many. Two rows named
+    /// "Pi · Amp" are a different case: the names *are* the count.
+    static func summaryNamesEveryRow(_ rows: [AgentRow], limit: Int = 3) -> Bool {
+        let distinct = Set(rows.map(\.agent)).count
+        return distinct == rows.count && rows.count <= limit
     }
 
     /// Agents in the folded group, in first-seen order, deduplicated.
