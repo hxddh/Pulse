@@ -549,11 +549,6 @@ struct TrayPanel: View {
 @MainActor
 private struct AgentRowButton: View {
     let row: AgentRow
-    /// True when a project heading directly above already states this path, so
-    /// the row must not repeat it. 0.25 wrote the rule "a fact appears once,
-    /// row > heading > header" and then applied it only to the panel header —
-    /// grouped by project, every path was printed twice.
-    var pathInHeading = false
     /// Must be observed, not merely held.
     ///
     /// This was `let store: StatusStore`. The row's body reads `store.tr(...)`
@@ -563,6 +558,14 @@ private struct AgentRowButton: View {
     /// inputs and skipped the child entirely. The result was a panel whose
     /// chrome was English and whose rows were still Chinese.
     @ObservedObject var store: StatusStore
+    /// True when a project heading directly above already states this path, so
+    /// the row must not repeat it. 0.25 wrote the rule "a fact appears once,
+    /// row > heading > header" and then applied it only to the panel header —
+    /// grouped by project, every path was printed twice.
+    ///
+    /// Declared after `store` because the memberwise initialiser takes
+    /// arguments in declaration order, and the call site passes it last.
+    var pathInHeading = false
     @State private var hovering = false
     @State private var expanded = false
 
