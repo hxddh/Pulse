@@ -298,7 +298,7 @@ struct TrayPanel: View {
                 overflowButton(
                     String(format: store.tr(.andMore), store.snapshot.hiddenCount)
                 ) { store.toggleShowAllAgents() }
-            } else if store.showAllAgents, store.snapshot.totalCount > StatusStore.maxVisibleRows {
+            } else if store.showAllAgents, store.snapshot.totalCount > SnapshotBuilder.maxVisibleRows {
                 overflowButton(store.tr(.showLess)) { store.toggleShowAllAgents() }
             }
 

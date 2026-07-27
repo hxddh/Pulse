@@ -43,11 +43,8 @@ final class StatusStore: ObservableObject {
         var waitedSeconds: Double
     }
 
-    /// Sessions kept per agent. Was hardcoded to 2, which made the third
-    /// concurrent Claude invisible with no hint that anything was dropped.
-    static let maxSessionsPerAgent = 4
-    /// Rows shown before the "and N more" fold.
-    static let maxVisibleRows = 5
+    /// Resolved waits kept for the Settings history list.
+    static let maxWaitHistory = 12
 
     private var timer: Timer?
     private var cachedAll: [AgentRow] = []
@@ -412,11 +409,7 @@ final class StatusStore: ObservableObject {
         lastAppliedTicket = ticket
         lastProcessSignature = processSignature
 
-        let previousLampBusy = cachedAll.contains { $0.waiting || $0.liveProcess || $0.subRunning > 0 }
-        let previousWaitingKeys = knownWaitingKeys
-        // Captured before `cachedAll` is replaced — wait history needs the old titles.
-        let previousRows = cachedAll
-
+        // Resolve which harvest rows this scan should use, and remember them.
         let acts: [ActivityHarvest.Row]
         switch harvest {
         case .fresh(let rows):
@@ -444,324 +437,62 @@ final class StatusStore: ObservableObject {
             return false
         }()
 
-        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        var rowsByKey: [String: AgentRow] = [:]
-        var liveHits: [AgentID: ProcessProbe.Hit] = [:]
-        var perAgentSessionCount: [AgentID: Int] = [:]
-        var droppedSessionsByAgent: [AgentID: Int] = [:]
-
-        for hit in procs {
-            // Prefer richer hit if duplicate agent ids appear.
-            if let existing = liveHits[hit.id] {
-                if existing.tty.isEmpty, !hit.tty.isEmpty { liveHits[hit.id] = hit }
-            } else {
-                liveHits[hit.id] = hit
-            }
-        }
-        // cursor_agent live counts as Cursor live for merge.
-        if let agentHit = liveHits[.cursorAgent] {
-            if var cursor = liveHits[.cursor] {
-                cursor.count = max(cursor.count, agentHit.count)
-                if cursor.tty.isEmpty { cursor.tty = agentHit.tty }
-                if cursor.pid == 0 { cursor.pid = agentHit.pid }
-                cursor.viaWarp = cursor.viaWarp || agentHit.viaWarp
-                liveHits[.cursor] = cursor
-            } else {
-                var mapped = agentHit
-                mapped.id = .cursor
-                liveHits[.cursor] = mapped
-            }
-            liveHits.removeValue(forKey: .cursorAgent)
-        }
-
-        for act in acts {
-            var agentID = act.id
-            if agentID == .cursorAgent { agentID = .cursor }
-
-            let live = liveHits[agentID] != nil
-            if !live, !ActivityHarvest.isFresh(act, nowMs: nowMs), act.subRunning == 0 {
-                DebugLog.write("drop stale harvest \(agentID.rawValue) hm=\(act.harvestMs)")
-                continue
-            }
-
-            let count = perAgentSessionCount[agentID, default: 0]
-            if count >= Self.maxSessionsPerAgent {
-                // Don't drop it silently — the tray says how many were held back.
-                droppedSessionsByAgent[agentID, default: 0] += 1
-                continue
-            }
-
-            let key = ActivityHarvest.sessionKey(
-                id: agentID,
-                sessionID: act.sessionID,
-                project: act.project,
-                cwd: act.cwd
+        let now = Date()
+        let result = SnapshotBuilder.build(
+            SnapshotBuilder.Input(
+                procs: procs,
+                harvest: acts,
+                harvestUnreliable: harvestUnreliable,
+                attention: attention
+            ),
+            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: knownWaitingKeys),
+            context: SnapshotBuilder.Context(
+                nowMs: Int64(now.timeIntervalSince1970 * 1000),
+                terminal: TerminalFocus.Environment.current(),
+                lang: lang,
+                relativeLabel: relative(now),
+                dismissedPendingKeys: dismissedPendingKeys,
+                showAllAgents: showAllAgents
             )
-            // Avoid colliding keys when second session lacks project — uniquify.
-            var finalKey = key
-            if rowsByKey[finalKey] != nil, rowsByKey[finalKey]?.sessionID != act.sessionID || act.sessionID.isEmpty {
-                finalKey = "\(key)#\(count + 1)"
-            }
+        )
 
-            var row = rowsByKey[finalKey] ?? AgentRow(rowKey: finalKey, agent: agentID)
-            if !act.sessionID.isEmpty { row.sessionID = act.sessionID }
-            if !act.task.isEmpty { row.task = act.task }
-            if !act.project.isEmpty { row.project = act.project }
-            if !act.cwd.isEmpty { row.cwd = act.cwd }
-            if !act.tool.isEmpty { row.tool = act.tool }
-            if !act.skill.isEmpty { row.skill = act.skill }
-            if act.tokensIn > 0 { row.tokensIn = act.tokensIn }
-            if act.tokensOut > 0 { row.tokensOut = act.tokensOut }
-            if act.harvestMs > 0 { row.harvestMs = act.harvestMs }
-            if act.subTotal > 0 {
-                row.subRunning = act.subRunning
-                row.subTotal = act.subTotal
-            }
-            row.processCount = max(row.processCount, 1)
+        for note in result.debugNotes { DebugLog.write(note) }
+        dismissedPendingKeys.subtract(result.clearedPendingKeys)
+        cachedAll = result.rows
+        showAllAgents = result.showAllAgents
+        knownWaitingKeys = result.waitingKeys
 
-            // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.
-            if act.skill == "pending", ActivityHarvest.isFresh(act, nowMs: nowMs) {
-                if !dismissedPendingKeys.contains(finalKey) {
-                    row.waiting = true
-                    row.waitKind = "Input"
-                    row.waitSignal = .pending
-                    row.waitSinceMs = act.harvestMs > 0 ? act.harvestMs : nowMs
-                }
-            } else {
-                dismissedPendingKeys.remove(finalKey)
-            }
+        var snap = result.snapshot
+        snap.updatedAt = now
 
-            rowsByKey[finalKey] = row
-            perAgentSessionCount[agentID] = count + 1
-        }
-
-        // Attach live process to at most one session row per agent (no smear).
-        for (agentID, hit) in liveHits {
-            let keys = rowsByKey.keys.filter { rowsByKey[$0]?.agent == agentID }
-            if keys.isEmpty {
-                let key = agentID.rawValue
-                var row = AgentRow(rowKey: key, agent: agentID)
-                row.liveProcess = true
-                row.processCount = hit.count
-                row.viaWarp = hit.viaWarp
-                row.pid = hit.pid
-                row.tty = hit.tty
-                rowsByKey[key] = row
-                continue
-            }
-            let bestKey = keys.max { a, b in
-                let ra = rowsByKey[a]!, rb = rowsByKey[b]!
-                if ra.waiting != rb.waiting { return !ra.waiting && rb.waiting }
-                if ra.harvestMs != rb.harvestMs { return ra.harvestMs < rb.harvestMs }
-                return a < b
-            }!
-            for key in keys {
-                guard var row = rowsByKey[key] else { continue }
-                if key == bestKey {
-                    row.liveProcess = true
-                    row.processCount = max(row.processCount, hit.count)
-                    row.viaWarp = hit.viaWarp || row.viaWarp
-                    if hit.pid != 0 { row.pid = hit.pid }
-                    if !hit.tty.isEmpty { row.tty = hit.tty }
-                } else {
-                    row.liveProcess = false
-                    // Don't inherit ×N on sibling sessions.
-                    row.processCount = max(row.processCount, 1)
-                }
-                rowsByKey[key] = row
-            }
-        }
-
-        // Hooks attention — prefer session / cwd match, else best row for agent.
-        for att in attention {
-            if let targetKey = matchAttentionRow(att, in: rowsByKey) {
-                guard var best = rowsByKey[targetKey] else { continue }
-                best.waiting = true
-                best.waitKind = att.kind
-                best.waitSignal = .hooks
-                best.waitMessage = att.message
-                best.waitSinceMs = att.tsMs
-                if best.sessionID.isEmpty, !att.session.isEmpty { best.sessionID = att.session }
-                if best.cwd.isEmpty, !att.cwd.isEmpty { best.cwd = att.cwd }
-                best.processCount = max(best.processCount, 1)
-                rowsByKey[targetKey] = best
-                continue
-            }
-            let key: String = {
-                if !att.session.isEmpty {
-                    return ActivityHarvest.sessionKey(id: att.id, sessionID: att.session, project: "", cwd: att.cwd)
-                }
-                return att.id.rawValue
-            }()
-            var row = AgentRow(rowKey: key, agent: att.id)
-            row.sessionID = att.session
-            row.cwd = att.cwd
-            row.project = AgentRow.shortProject(att.cwd)
-            row.waiting = true
-            row.waitKind = att.kind
-            row.waitSignal = .hooks
-            row.waitMessage = att.message
-            row.waitSinceMs = att.tsMs
-            row.processCount = max(row.processCount, 1)
-            rowsByKey[key] = row
-        }
-
-        var all = Array(rowsByKey.values).filter { $0.processCount > 0 || $0.waiting || $0.subRunning > 0 }
-
-        // Resolve focus once per scan. Doing this per row inside the SwiftUI body
-        // meant enumerating running apps and stat-ing the disk on every redraw.
-        let terminalEnv = TerminalFocus.Environment.current()
-        let fm = FileManager.default
-        for i in all.indices {
-            let row = all[i]
-            let folderPath = row.cwd.isEmpty ? row.project : row.cwd
-            let cwdExists = !row.cwd.isEmpty && fm.fileExists(atPath: row.cwd)
-            all[i].canOpenFolder = !folderPath.isEmpty && fm.fileExists(atPath: folderPath)
-            all[i].focusTier = TerminalFocus.focusTier(
-                tty: row.tty,
-                viaWarp: row.viaWarp,
-                cwdExists: cwdExists,
-                env: terminalEnv
-            )
-        }
-
-        // Waiting → titled sessions → live process → recent; agent priority last.
-        all.sort { a, b in
-            if a.waiting != b.waiting { return a.waiting && !b.waiting }
-            if a.hasSessionTitle != b.hasSessionTitle { return a.hasSessionTitle && !b.hasSessionTitle }
-            if a.liveProcess != b.liveProcess { return a.liveProcess && !b.liveProcess }
-            if (a.subRunning > 0) != (b.subRunning > 0) { return a.subRunning > 0 && b.subRunning == 0 }
-            let ra = AgentID.priority.firstIndex(of: a.agent) ?? 999
-            let rb = AgentID.priority.firstIndex(of: b.agent) ?? 999
-            return ra < rb
-        }
-        // Attribute held-back sessions to that agent's top row, so the badge
-        // appears once rather than on every sibling session.
-        var creditedAgents: Set<AgentID> = []
-        for i in all.indices {
-            let agent = all[i].agent
-            guard let dropped = droppedSessionsByAgent[agent], dropped > 0 else { continue }
-            if creditedAgents.insert(agent).inserted {
-                all[i].hiddenSessions = dropped
-            }
-        }
-
-        cachedAll = all
-        if showAllAgents, all.count <= Self.maxVisibleRows {
-            showAllAgents = false
-        }
-
-        let waitingCount = all.filter(\.waiting).count
-        let liveRunning = all.filter { !$0.waiting && ($0.liveProcess || $0.subRunning > 0) }.count
-        let recentOnly = all.filter { !$0.waiting && !$0.liveProcess && $0.subRunning == 0 }.count
-        knownWaitingKeys = Set(all.filter(\.waiting).map(\.rowKey))
-
-        var snap = PulseSnapshot()
-        snap.totalCount = all.count
-        snap.updatedAt = Date()
-        applyRows(into: &snap)
-
-        // Header answers only "N need you / N running"; row detail carries the rest.
-        let rel = relative(snap.updatedAt)
-
-        if all.isEmpty, harvestUnreliable, liveHits.isEmpty {
-            snap.glance = .error
-            snap.title = "!"
-            snap.tooltip = tr(.cantRefresh)
-            snap.headerTitle = tr(.cantRefresh)
-            snap.headerDetail = ""
-            snap.header = tr(.cantRefresh)
-            snap.probeError = "probe+harvest unavailable"
-        } else if waitingCount > 0 {
-            snap.glance = .waiting
-            let waitingRows = all.filter(\.waiting)
-            let nameBits = waitingRows.prefix(3).map(\.agent.displayName)
-            let nameJoin = nameBits.joined(separator: " · ")
-            if waitingCount == 1, let w = waitingRows.first {
-                snap.title = "\(w.agent.displayName)…"
-                snap.tooltip = "\(tr(.needsYou)) · \(w.agent.displayName)"
-                snap.headerTitle = tr(.needsYou)
-            } else {
-                snap.title = "\(waitingCount)"
-                snap.tooltip = "\(tr(.needsYou)): \(nameJoin)"
-                snap.headerTitle = "\(waitingCount) \(tr(.waitingN))"
-            }
-            snap.headerDetail = rel
-            snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
-        } else if liveRunning > 0 {
-            snap.glance = .running
-            let liveRows = all.filter { !$0.waiting && ($0.liveProcess || $0.subRunning > 0) }
-            let liveNames = liveRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            if liveRunning == 1 {
-                snap.title = liveRows[0].agent.displayName
-                snap.tooltip = "\(liveRows[0].agent.displayName) \(tr(.running))"
-                snap.headerTitle = tr(.running1)
-            } else {
-                snap.title = "\(liveRunning)"
-                snap.tooltip = "\(liveRunning) \(tr(.runningN)): \(liveNames)"
-                snap.headerTitle = "\(liveRunning) \(tr(.runningN))"
-            }
-            snap.headerDetail = rel
-            snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
-        } else if recentOnly > 0 {
-            snap.glance = .idle
-            snap.title = ""
-            snap.tooltip = "Pulse · \(recentOnly) \(tr(.recentN))"
-            if recentOnly == 1 {
-                snap.headerTitle = tr(.recent1)
-            } else {
-                snap.headerTitle = "\(recentOnly) \(tr(.recentN))"
-            }
-            snap.headerDetail = rel
-            snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
-        } else {
-            snap.glance = .idle
-            snap.title = ""
-            snap.tooltip = "Pulse · \(tr(.idleWord))"
-            snap.headerTitle = tr(.noAgents)
-            snap.headerDetail = ""
-            snap.header = tr(.noAgents)
-        }
-
-        let nowLampBusy = all.contains { $0.waiting || $0.liveProcess || $0.subRunning > 0 }
+        // Notification policy lives here; the builder only reports the edges.
         let quiet = isInQuietHours()
-        if notifyOnIdle, !quiet, previousLampBusy, !nowLampBusy {
+        if notifyOnIdle, !quiet, result.wentIdle {
             PulseNotify.postIdle(title: "Pulse", body: tr(.idleNotify))
         }
         // Waiting edges stay available even during quiet hours (when enabled).
         // Skip the first scan so launch doesn't flood for already-waiting rows.
-        if notifyOnWaiting, waitingCount > 0, waitingNotifySeeded {
-            let newcomers = knownWaitingKeys.subtracting(previousWaitingKeys)
-            let candidates = all.filter { newcomers.contains($0.rowKey) && !mutedAgents.contains($0.agent) }
-            if let waiting = candidates.first {
-                PulseNotify.postWaiting(
-                    title: notificationTitle(waiting),
-                    body: notificationBody(waiting),
-                    agent: waiting.agent.rawValue,
-                    session: waiting.sessionID,
-                    rowKey: waiting.rowKey
-                )
-            }
+        if notifyOnWaiting, waitingNotifySeeded,
+           let waiting = result.newlyWaiting.first(where: { !mutedAgents.contains($0.agent) }) {
+            PulseNotify.postWaiting(
+                title: notificationTitle(waiting),
+                body: notificationBody(waiting),
+                agent: waiting.agent.rawValue,
+                session: waiting.sessionID,
+                rowKey: waiting.rowKey
+            )
         }
         if !waitingNotifySeeded {
             waitingNotifySeeded = true
         }
 
-        recordResolvedWaits(previous: previousRows, current: all)
+        recordResolvedWaits(result.resolvedWaits, at: now)
 
         snapshot = snap
         if clearRefreshing { isRefreshing = false }
 
         let previousActivity = activity
-        if waitingCount > 0 {
-            activity = .waiting
-        } else if liveRunning > 0 {
-            activity = .running
-        } else if recentOnly > 0 {
-            activity = .recent
-        } else {
-            activity = .empty
-        }
+        activity = result.activity
         // Only re-arm when the cadence tier actually moved — a timer rebuilt on
         // every tick never fires at its own interval.
         if previousActivity != activity || timer == nil {
@@ -770,28 +501,20 @@ final class StatusStore: ObservableObject {
 
         DebugLog.write(
             "apply #\(ticket) rows=\(snap.rows.count)/\(snap.totalCount) glance=\(snap.glance) " +
-            "live=\(liveRunning) recent=\(recentOnly) wait=\(waitingCount) " +
-            "activity=\(activity) every=\(currentInterval.map { String(Int($0)) } ?? "parked")"
+            "activity=\(activity) wait=\(result.waitingKeys.count) " +
+            "every=\(currentInterval.map { String(Int($0)) } ?? "parked")"
         )
     }
 
     private func applyRowWindow() {
         var snap = snapshot
-        applyRows(into: &snap)
+        SnapshotBuilder.window(
+            rows: cachedAll,
+            showAll: showAllAgents,
+            maxVisible: SnapshotBuilder.maxVisibleRows,
+            into: &snap
+        )
         snapshot = snap
-    }
-
-    private func applyRows(into snap: inout PulseSnapshot) {
-        if showAllAgents || cachedAll.count <= Self.maxVisibleRows {
-            snap.rows = cachedAll
-            snap.hiddenCount = 0
-        } else {
-            snap.rows = Array(cachedAll.prefix(Self.maxVisibleRows))
-            snap.hiddenCount = cachedAll.count - Self.maxVisibleRows
-        }
-        snap.totalCount = cachedAll.count
-        // Sessions dropped by the per-agent cap are separate from folded rows.
-        snap.cappedSessions = cachedAll.reduce(0) { $0 + $1.hiddenSessions }
     }
 
     /// `Claude · Pulse` — who and where, so the banner is actionable at a glance.
@@ -818,26 +541,26 @@ final class StatusStore: ObservableObject {
     }
 
     /// Keep a short trail of waits that already cleared, so "I think something
-    /// pinged me while I was away" has an answer.
-    private func recordResolvedWaits(previous: [AgentRow], current: [AgentRow]) {
-        let stillWaiting = Set(current.filter(\.waiting).map(\.rowKey))
-        let now = Date()
-        var added = false
-        for row in previous where row.waiting && !stillWaiting.contains(row.rowKey) {
-            let entry = ResolvedWait(
-                rowKey: row.rowKey,
-                agent: row.agent,
-                title: row.usefulTask ?? AgentRow.shortProject(row.project),
-                kind: row.waitKind,
-                project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
-                resolvedAt: now,
-                waitedSeconds: row.waitAgeSeconds
+    /// pinged me while I was away" has an answer. The builder decides *which*
+    /// waits resolved; this only records them.
+    private func recordResolvedWaits(_ resolved: [AgentRow], at now: Date) {
+        guard !resolved.isEmpty else { return }
+        for row in resolved {
+            waitHistory.insert(
+                ResolvedWait(
+                    rowKey: row.rowKey,
+                    agent: row.agent,
+                    title: row.usefulTask ?? AgentRow.shortProject(row.project),
+                    kind: row.waitKind,
+                    project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
+                    resolvedAt: now,
+                    waitedSeconds: row.waitAgeSeconds
+                ),
+                at: 0
             )
-            waitHistory.insert(entry, at: 0)
-            added = true
         }
-        if added, waitHistory.count > 12 {
-            waitHistory = Array(waitHistory.prefix(12))
+        if waitHistory.count > Self.maxWaitHistory {
+            waitHistory = Array(waitHistory.prefix(Self.maxWaitHistory))
         }
     }
 
@@ -923,52 +646,6 @@ final class StatusStore: ObservableObject {
             dismissedPendingKeys.insert(row.rowKey)
         }
         refresh(reason: "dismissWaiting")
-    }
-
-    /// Match attention to an existing harvest/process row.
-    private func matchAttentionRow(
-        _ att: AttentionReader.Entry,
-        in rowsByKey: [String: AgentRow]
-    ) -> String? {
-        let candidates = rowsByKey.values.filter { $0.agent == att.id }
-        guard !candidates.isEmpty else { return nil }
-
-        if !att.session.isEmpty {
-            // `rowKey` elides long session ids (prefix…suffix), so a full id can
-            // never be a substring of it — that check silently never matched.
-            // Compare session ids directly, both directions for truncated forms.
-            if let hit = candidates.first(where: {
-                guard !$0.sessionID.isEmpty else { return false }
-                return $0.sessionID == att.session
-                    || att.session.hasPrefix($0.sessionID)
-                    || $0.sessionID.hasPrefix(att.session)
-            }) {
-                return hit.rowKey
-            }
-        }
-        if !att.cwd.isEmpty {
-            if let hit = candidates.first(where: {
-                !$0.cwd.isEmpty && (
-                    $0.cwd == att.cwd
-                        || $0.cwd.hasPrefix(att.cwd)
-                        || att.cwd.hasPrefix($0.cwd)
-                )
-            }) {
-                return hit.rowKey
-            }
-            let want = AgentRow.shortProject(att.cwd)
-            if !want.isEmpty, let hit = candidates.first(where: {
-                AgentRow.shortProject($0.project) == want || AgentRow.shortProject($0.cwd) == want
-            }) {
-                return hit.rowKey
-            }
-        }
-        var ranked = candidates
-        ranked.sort { a, b in
-            if a.liveProcess != b.liveProcess { return a.liveProcess && !b.liveProcess }
-            return a.harvestMs > b.harvestMs
-        }
-        return ranked.first?.rowKey
     }
 
     func primaryAction(_ row: AgentRow) {
