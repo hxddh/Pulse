@@ -2,19 +2,23 @@ name: Release
 
 # Three ways in, all ending at the same job:
 #
-#   1. push a `v*.*.*` tag                    — the classic path
-#   2. workflow_dispatch                      — only once this file is on the default branch
-#   3. push a commit whose message has [release]
+#   1. push a `v*.*.*` tag                     — the classic path
+#   2. workflow_dispatch                       — from the Actions tab
+#   3. push to main with [release] in the message
 #
 # (3) exists because tag pushes need tag-write credentials that a CI/agent
-# session may not have, and (2) is unavailable until the workflow reaches the
-# default branch. The marker keeps it explicit — no push ever releases by
+# session may not have. The marker keeps it explicit — no push ever releases by
 # accident — and the job additionally refuses to publish a version that already
 # has a Release, so re-running is harmless.
+#
+# The marker path is limited to `main`. It was `**` while this workflow lived
+# only on a feature branch, which was the sole way to publish at all; now that
+# it is on the default branch, a release can no longer be cut from a branch
+# nobody has reviewed. Tag pushes still work from anywhere.
 on:
   push:
     tags: ["v*.*.*"]
-    branches: ["**"]
+    branches: ["main"]
   workflow_dispatch:
     inputs:
       version:

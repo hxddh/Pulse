@@ -16,7 +16,13 @@ enum SnapshotBuilder {
     /// concurrent Claude invisible with no hint that anything was dropped.
     static let maxSessionsPerAgent = 4
     /// Rows shown before the "and N more" fold.
-    static let maxVisibleRows = 5
+    ///
+    /// Was 5, but every row also carried a permanently visible action strip, so
+    /// the panel's fixed 300pt viewport fit about three — people with four or
+    /// five agents running had to scroll to learn that. Actions moved to hover
+    /// for non-waiting rows and the panel is sized by its content now, so this
+    /// can be what it should always have been.
+    static let maxVisibleRows = 8
 
     /// Outside-world facts, captured once per scan.
     struct Context {
@@ -25,8 +31,6 @@ enum SnapshotBuilder {
         /// Injected so tests do not depend on the filesystem.
         var pathExists: (String) -> Bool
         var lang: ResolvedLanguage
-        /// Pre-formatted relative time for the header's second line.
-        var relativeLabel: String
         var maxSessionsPerAgent: Int
         var maxVisibleRows: Int
         /// Harvest `pending` rows the user soft-dismissed.
@@ -38,7 +42,6 @@ enum SnapshotBuilder {
             terminal: TerminalFocus.Environment,
             pathExists: @escaping (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
             lang: ResolvedLanguage,
-            relativeLabel: String,
             maxSessionsPerAgent: Int = SnapshotBuilder.maxSessionsPerAgent,
             maxVisibleRows: Int = SnapshotBuilder.maxVisibleRows,
             dismissedPendingKeys: Set<String> = [],
@@ -48,7 +51,6 @@ enum SnapshotBuilder {
             self.terminal = terminal
             self.pathExists = pathExists
             self.lang = lang
-            self.relativeLabel = relativeLabel
             self.maxSessionsPerAgent = maxSessionsPerAgent
             self.maxVisibleRows = maxVisibleRows
             self.dismissedPendingKeys = dismissedPendingKeys
@@ -277,8 +279,17 @@ enum SnapshotBuilder {
         }
 
         // Waiting → titled sessions → live process → recent; agent priority last.
+        //
+        // Within Waiting, the oldest goes first: when three agents are blocked,
+        // "who has been stuck longest" is the question the list should answer.
+        // A zero timestamp means unknown, which sorts last rather than first.
         all.sort { a, b in
             if a.waiting != b.waiting { return a.waiting && !b.waiting }
+            if a.waiting && b.waiting, a.waitSinceMs != b.waitSinceMs {
+                if a.waitSinceMs == 0 { return false }
+                if b.waitSinceMs == 0 { return true }
+                return a.waitSinceMs < b.waitSinceMs
+            }
             if a.hasSessionTitle != b.hasSessionTitle { return a.hasSessionTitle && !b.hasSessionTitle }
             if a.liveProcess != b.liveProcess { return a.liveProcess && !b.liveProcess }
             if (a.subRunning > 0) != (b.subRunning > 0) { return a.subRunning > 0 && b.subRunning == 0 }
@@ -307,10 +318,32 @@ enum SnapshotBuilder {
 
         var snap = PulseSnapshot()
         snap.totalCount = all.count
+        snap.sectionTotals = [
+            .needsYou: waitingCount,
+            .running: liveRunning,
+            .recent: recentOnly,
+        ]
+        // Oldest wait = smallest non-zero timestamp. Computed here so the view
+        // never has to scan rows to decide what the menu bar should say.
+        let waitStamps = all.filter { $0.waiting && $0.waitSinceMs > 0 }.map(\.waitSinceMs)
+        if let oldest = waitStamps.min() {
+            snap.longestWaitSeconds = max(0, Double(context.nowMs - oldest) / 1000.0)
+        }
         window(rows: all, showAll: result.showAllAgents, maxVisible: context.maxVisibleRows, into: &snap)
 
         let lang = context.lang
-        let rel = context.relativeLabel
+
+        /// The header's second line used to be `relative(updatedAt)`, computed
+        /// microseconds after `updatedAt = Date()` — so it always read "just
+        /// now" and carried nothing. Who is involved is the fact worth the row.
+        func names(_ rows: [AgentRow]) -> String {
+            var seen: [String] = []
+            for r in rows where !seen.contains(r.agent.displayName) {
+                seen.append(r.agent.displayName)
+                if seen.count == 3 { break }
+            }
+            return seen.joined(separator: " · ")
+        }
 
         // Header answers only "N need you / N running"; row detail carries the rest.
         if all.isEmpty, input.harvestUnreliable, liveHits.isEmpty {
@@ -325,16 +358,29 @@ enum SnapshotBuilder {
             snap.glance = .waiting
             let waitingRows = all.filter(\.waiting)
             let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
+            // The menu bar carries the two facts that decide whether to look:
+            // how many are blocked, and how long the worst one has waited.
+            //
+            // A wait younger than five seconds formats as "now", which says
+            // nothing the lamp has not already said — so hold the space until
+            // the number is worth it, and let the label escalate on its own
+            // from "Claude…" to "Claude · 4m".
+            let rawDuration = snap.longestWaitSeconds > 0
+                ? DurationFormat.label(seconds: snap.longestWaitSeconds, lang: lang)
+                : ""
+            let dur = rawDuration == t(.durNow, lang) ? "" : rawDuration
             if waitingCount == 1, let w = waitingRows.first {
-                snap.title = "\(w.agent.displayName)…"
+                snap.title = dur.isEmpty
+                    ? "\(w.agent.displayName)…"
+                    : "\(w.agent.displayName) · \(dur)"
                 snap.tooltip = "\(t(.needsYou, lang)) · \(w.agent.displayName)"
                 snap.headerTitle = t(.needsYou, lang)
             } else {
-                snap.title = "\(waitingCount)"
+                snap.title = dur.isEmpty ? "\(waitingCount)" : "\(waitingCount) · \(dur)"
                 snap.tooltip = "\(t(.needsYou, lang)): \(nameJoin)"
                 snap.headerTitle = "\(waitingCount) \(t(.waitingN, lang))"
             }
-            snap.headerDetail = rel
+            snap.headerDetail = names(waitingRows)
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if liveRunning > 0 {
             snap.glance = .running
@@ -349,7 +395,7 @@ enum SnapshotBuilder {
                 snap.tooltip = "\(liveRunning) \(t(.runningN, lang)): \(liveNames)"
                 snap.headerTitle = "\(liveRunning) \(t(.runningN, lang))"
             }
-            snap.headerDetail = rel
+            snap.headerDetail = names(liveRows)
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if recentOnly > 0 {
             snap.glance = .idle
@@ -358,7 +404,7 @@ enum SnapshotBuilder {
             snap.headerTitle = recentOnly == 1
                 ? t(.recent1, lang)
                 : "\(recentOnly) \(t(.recentN, lang))"
-            snap.headerDetail = rel
+            snap.headerDetail = names(all.filter { !$0.waiting && !$0.liveProcess && $0.subRunning == 0 })
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else {
             snap.glance = .idle

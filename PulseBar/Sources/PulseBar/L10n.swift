@@ -151,6 +151,17 @@ enum L10n {
         case .a11yRunning: return "Running"
         case .a11yWaiting: return "Needs attention"
         case .a11yError: return "Cannot refresh"
+        case .sectionNeedsYou: return "Needs you"
+        case .sectionRunning: return "Running"
+        case .sectionRecent: return "Recent"
+        case .groupByAgent: return "By agent"
+        case .groupByProject: return "By project"
+        case .groupingLabel: return "Group tray by"
+        case .jumpToOldest: return "Jump to longest wait"
+        case .interruptionsToday: return "Today: %d interruptions, %@ average wait"
+        case .playSound: return "Play a sound on new waits"
+        case .waitedLongest: return "longest"
+        case .moreDetail: return "Details"
         }
     }
 
@@ -260,6 +271,17 @@ enum L10n {
         case .a11yRunning: return "运行中"
         case .a11yWaiting: return "需要你处理"
         case .a11yError: return "无法刷新"
+        case .sectionNeedsYou: return "需要你"
+        case .sectionRunning: return "运行中"
+        case .sectionRecent: return "最近"
+        case .groupByAgent: return "按 Agent"
+        case .groupByProject: return "按项目"
+        case .groupingLabel: return "托盘分组方式"
+        case .jumpToOldest: return "跳到等待最久的"
+        case .interruptionsToday: return "今天：被打断 %d 次，平均等待 %@"
+        case .playSound: return "新等待时播放提示音"
+        case .waitedLongest: return "最久"
+        case .moreDetail: return "详情"
         }
     }
 
@@ -291,5 +313,21 @@ enum L10n {
         case updateIdle, updateChecking, updateCurrent, updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
         case a11yIdle, a11yRunning, a11yWaiting, a11yError
+        case sectionNeedsYou, sectionRunning, sectionRecent
+        case groupByAgent, groupByProject, groupingLabel
+        case jumpToOldest, interruptionsToday, playSound
+        case waitedLongest, moreDetail
+    }
+}
+
+/// Shared duration wording. Lived on `StatusStore` as an instance method, so
+/// `SnapshotBuilder` — which is pure and has no store — could not reuse it and
+/// the menu bar had no way to say how long something had been waiting.
+enum DurationFormat {
+    static func label(seconds ago: Double, lang: ResolvedLanguage) -> String {
+        if ago < 5 { return L10n.t(.durNow, lang) }
+        if ago < 60 { return String(format: L10n.t(.durSec, lang), Int(ago)) }
+        if ago < 3600 { return String(format: L10n.t(.durMin, lang), Int(ago / 60)) }
+        return String(format: L10n.t(.durHour, lang), Int(ago / 3600))
     }
 }

@@ -22,6 +22,8 @@ final class StatusStore: ObservableObject {
     /// Agents the user muted — no notifications, still shown in the tray.
     @Published var mutedAgents: Set<AgentID> = []
     @Published var hotkey: HotkeyChoice = .commandShiftP
+    @Published var trayGrouping: TrayGrouping = .status
+    @Published var playSoundOnWaiting = false
     /// False when the system refused the shortcut (another app owns it).
     @Published private(set) var hotkeyRegistered = true
     @Published var updateCheckEnabled = true
@@ -475,7 +477,6 @@ final class StatusStore: ObservableObject {
                 nowMs: Int64(now.timeIntervalSince1970 * 1000),
                 terminal: TerminalFocus.Environment.current(),
                 lang: lang,
-                relativeLabel: relative(now),
                 dismissedPendingKeys: dismissedPendingKeys,
                 showAllAgents: showAllAgents
             )
@@ -506,6 +507,11 @@ final class StatusStore: ObservableObject {
                 session: waiting.sessionID,
                 rowKey: waiting.rowKey
             )
+            // Opt-in, and deliberately quiet: Tink, not an alert tone. Muting an
+            // agent silences this too, same as the banner.
+            if playSoundOnWaiting {
+                NSSound(named: NSSound.Name("Tink"))?.play()
+            }
         }
         if !waitingNotifySeeded {
             waitingNotifySeeded = true
@@ -611,6 +617,41 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    /// The row that has been blocked longest, if any.
+    ///
+    /// Rows arrive sorted oldest-wait-first, so this is the top of the list —
+    /// but the lookup does not rely on that, because a caller reaching for
+    /// "the most urgent thing" should not silently depend on sort order.
+    var oldestWait: AgentRow? {
+        cachedAll
+            .filter { $0.waiting && $0.waitSinceMs > 0 }
+            .min { $0.waitSinceMs < $1.waitSinceMs }
+            ?? cachedAll.first(where: \.waiting)
+    }
+
+    /// Focus the longest-outstanding wait. One step from "something needs me"
+    /// to the terminal tab it is blocked in.
+    func focusOldestWait() {
+        guard let row = oldestWait else { return }
+        DebugLog.write("jump to oldest wait \(row.rowKey)")
+        primaryAction(row)
+    }
+
+    /// "Today: 4 interruptions, 6m average wait" — built from the wait history
+    /// already kept for the Settings list. A single line, not a dashboard:
+    /// `EXPERIENCE.md` rules out a stats panel and this does not become one.
+    var interruptionsTodayLine: String? {
+        let calendar = Calendar.current
+        let today = waitHistory.filter { calendar.isDateInToday($0.resolvedAt) }
+        guard !today.isEmpty else { return nil }
+        let mean = today.reduce(0.0) { $0 + $1.waitedSeconds } / Double(today.count)
+        return String(
+            format: tr(.interruptionsToday),
+            today.count,
+            durationLabel(seconds: mean)
+        )
+    }
+
     /// Human wait age in the resolved language (`2 分` / `2m`).
     func waitDurationLabel(_ row: AgentRow) -> String {
         guard row.waitSinceMs > 0 else { return "" }
@@ -618,10 +659,7 @@ final class StatusStore: ObservableObject {
     }
 
     func durationLabel(seconds ago: Double) -> String {
-        if ago < 5 { return tr(.durNow) }
-        if ago < 60 { return String(format: tr(.durSec), Int(ago)) }
-        if ago < 3600 { return String(format: tr(.durMin), Int(ago / 60)) }
-        return String(format: tr(.durHour), Int(ago / 3600))
+        DurationFormat.label(seconds: ago, lang: lang)
     }
 
     /// Rebuild wait detail under the badge: duration · signal · message (kind lives in the badge).
@@ -763,7 +801,9 @@ final class StatusStore: ObservableObject {
             language: language,
             updateCheckEnabled: updateCheckEnabled,
             hotkey: hotkey,
-            mutedAgents: mutedAgents
+            mutedAgents: mutedAgents,
+            trayGrouping: trayGrouping,
+            playSoundOnWaiting: playSoundOnWaiting
         )
     }
 
@@ -779,6 +819,8 @@ final class StatusStore: ObservableObject {
         updateCheckEnabled = s.updateCheckEnabled
         hotkey = s.hotkey
         mutedAgents = s.mutedAgents
+        trayGrouping = s.trayGrouping
+        playSoundOnWaiting = s.playSoundOnWaiting
     }
 
     func loadSettings() {

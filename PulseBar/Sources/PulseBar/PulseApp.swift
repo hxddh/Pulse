@@ -60,26 +60,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 struct MenuBarLabel: View {
     let snapshot: PulseSnapshot
-    @State private var waitPulse = false
+    /// Dips once when a *new* wait arrives, then holds steady.
+    ///
+    /// This used to breathe forever while anything was waiting. A permanent
+    /// animation in the menu bar is noise: it draws the eye every time it
+    /// crosses zero, says nothing new after the first second, and — because it
+    /// looks identical at 30 seconds and 40 minutes — competes with the one
+    /// signal that does carry urgency, the elapsed time beside it.
+    @State private var flash = false
+    @State private var flashTask: Task<Void, Never>?
+
+    private var waitingCount: Int { snapshot.sectionTotals[.needsYou] ?? 0 }
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             Image(nsImage: PulseBrand.menuIcon(for: snapshot.glance))
                 .resizable()
                 .renderingMode(.template)
                 .frame(width: 14, height: 14)
                 .foregroundStyle(snapshot.glance.lampColor)
-                .opacity(snapshot.glance == .waiting ? (waitPulse ? 1.0 : 0.55) : 1.0)
-                .animation(
-                    snapshot.glance == .waiting
-                        ? .easeInOut(duration: 1.1).repeatForever(autoreverses: true)
-                        : .default,
-                    value: waitPulse
-                )
-                .onAppear { waitPulse = snapshot.glance == .waiting }
-                .onChange(of: snapshot.glance) { _, g in
-                    waitPulse = g == .waiting
-                }
+                .opacity(flash ? 0.4 : 1.0)
                 .accessibilityLabel(snapshot.accessibilityLabel)
             if snapshot.glance != .idle, !snapshot.title.isEmpty {
                 Text(snapshot.title)
@@ -90,6 +90,16 @@ struct MenuBarLabel: View {
             }
         }
         .help(snapshot.tooltip)
+        .onChange(of: waitingCount) { old, new in
+            guard new > old else { return }
+            flashTask?.cancel()
+            flashTask = Task { @MainActor in
+                withAnimation(.easeOut(duration: 0.10)) { flash = true }
+                try? await Task.sleep(nanoseconds: 110_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeIn(duration: 0.45)) { flash = false }
+            }
+        }
     }
 }
 
@@ -138,9 +148,44 @@ private struct StatusChip: View {
 
 // MARK: - Tray panel
 
+/// Measured height of the row list, so the panel is sized by its content
+/// instead of by arithmetic.
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// One heading per tray section: "Needs you · 2".
+private struct SectionHeader: View {
+    let title: String
+    let count: Int
+    let accent: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+            Text("\(count)")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .opacity(0.7)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(accent ? TrayChrome.waitAccent : Color.secondary)
+        .padding(.horizontal, TrayChrome.padX)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thickMaterial)
+    }
+}
+
 @MainActor
 struct TrayPanel: View {
     @ObservedObject var store: StatusStore
+    @State fileprivate var measuredHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -285,25 +330,106 @@ struct TrayPanel: View {
         .padding(.horizontal, 20)
     }
 
+    /// A tray group: heading, count, and its rows.
+    fileprivate struct RowGroup: Identifiable {
+        var id: String
+        var title: String
+        var count: Int
+        var accent: Bool
+        var rows: [AgentRow]
+    }
+
+    /// Rows grouped under a heading.
+    ///
+    /// The list was sorted by urgency but rendered as one flat stack, so five
+    /// rows read as five equals. A heading costs one line and answers "which of
+    /// these actually need me" before any row is read.
+    ///
+    /// Grouping by project is the alternative for people running several repos
+    /// at once; a project containing a wait sorts first, so the urgent case
+    /// still surfaces without reading every heading.
+    fileprivate var groupedRows: [RowGroup] {
+        let rows = store.snapshot.rows
+        switch store.trayGrouping {
+        case .status:
+            return TraySection.allCases.compactMap { section in
+                let group = rows.filter { $0.section == section }
+                guard !group.isEmpty else { return nil }
+                return RowGroup(
+                    id: "s\(section.rawValue)",
+                    title: store.tr(section.titleKey),
+                    count: store.snapshot.sectionTotals[section] ?? group.count,
+                    accent: section == .needsYou,
+                    rows: group
+                )
+            }
+        case .project:
+            var order: [String] = []
+            var byProject: [String: [AgentRow]] = [:]
+            for row in rows {
+                let name = AgentRow.shortProject(row.project)
+                let key = name.isEmpty ? row.agent.displayName : name
+                if byProject[key] == nil { order.append(key) }
+                byProject[key, default: []].append(row)
+            }
+            // Projects with something waiting float up; ties keep row order.
+            let ranked = order.enumerated().sorted { a, b in
+                let aWait = byProject[a.element]?.contains(where: \.waiting) ?? false
+                let bWait = byProject[b.element]?.contains(where: \.waiting) ?? false
+                if aWait != bWait { return aWait && !bWait }
+                return a.offset < b.offset
+            }
+            return ranked.map { entry in
+                let group = byProject[entry.element] ?? []
+                return RowGroup(
+                    id: "p\(entry.element)",
+                    title: entry.element,
+                    count: group.count,
+                    accent: group.contains(where: \.waiting),
+                    rows: group
+                )
+            }
+        }
+    }
+
     private var agentList: some View {
-        let maxH: CGFloat = store.showAllAgents ? 440 : 300
-        let contentH = min(maxH, store.snapshot.rows.reduce(CGFloat(0)) { $0 + Self.estimateHeight($1) })
+        // Height comes from the content now. It used to be a hand-summed
+        // estimate (44 + 20 - 4 + 14 + 28 + 8) that any font or spacing change
+        // silently invalidated — the panel and its contents disagreed and there
+        // was no way to notice except by looking.
+        let cap: CGFloat = store.showAllAgents ? 620 : 420
 
         return VStack(spacing: 0) {
             ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(store.snapshot.rows.enumerated()), id: \.element.id) { index, row in
-                        AgentRowButton(row: row, store: store)
-                        if index < store.snapshot.rows.count - 1 {
-                            Divider()
-                                .padding(.leading, row.waiting ? 18 : 46)
-                                .opacity(0.28)
+                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    ForEach(groupedRows) { group in
+                        Section {
+                            ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
+                                AgentRowButton(row: row, store: store)
+                                if index < group.rows.count - 1 {
+                                    Divider()
+                                        .padding(.leading, 48)
+                                        .opacity(0.22)
+                                }
+                            }
+                        } header: {
+                            SectionHeader(
+                                title: group.title,
+                                count: group.count,
+                                accent: group.accent
+                            )
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
+                    }
+                )
             }
-            .frame(height: max(56, contentH))
+            .frame(height: min(max(measuredHeight, 56), cap))
+            .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
 
             if store.snapshot.hiddenCount > 0 {
                 overflowButton(
@@ -346,6 +472,11 @@ struct TrayPanel: View {
             }
             .disabled(store.isRefreshing)
             if store.snapshot.rows.contains(where: \.waiting) {
+                // One step from "something needs me" to the terminal it is
+                // blocked in, without picking the right row by eye first.
+                TrayAction(title: store.tr(.jumpToOldest), systemImage: "arrow.uturn.forward", shortcut: "j") {
+                    store.focusOldestWait()
+                }
                 TrayAction(title: store.tr(.clearWaiting), systemImage: "checkmark.circle") {
                     store.clearWaiting()
                 }
@@ -360,14 +491,6 @@ struct TrayPanel: View {
         .padding(.vertical, 5)
     }
 
-    private static func estimateHeight(_ row: AgentRow) -> CGFloat {
-        var h: CGFloat = 44
-        if row.waiting { h += 20 }
-        if row.isProcessOnly { h -= 4 }
-        if row.metaLine != nil { h += 14 }
-        if row.waiting || row.canFocusTerminal || row.canOpenFolder { h += 28 }
-        return h + 8
-    }
 }
 
 // MARK: - Agent row
@@ -376,6 +499,7 @@ struct TrayPanel: View {
 private struct AgentRowButton: View {
     let row: AgentRow
     let store: StatusStore
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -383,57 +507,54 @@ private struct AgentRowButton: View {
                 store.primaryAction(row)
             } label: {
                 HStack(alignment: .top, spacing: 0) {
-                    // Waiting scream: solid color block, not a 3pt rail.
+                    // Encoding 1 of 3: does this need me, and has it been
+                    // waiting a long time. Width is the *only* thing in the row
+                    // that changes with age — everything else stays constant so
+                    // the escalation actually reads as one.
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
                         .fill(row.waiting ? TrayChrome.waitAccent : Color.clear)
-                        .frame(width: row.waiting ? 8 : 0)
+                        .frame(width: row.waiting ? (row.isUrgentWait ? 6 : 3) : 0)
                         .padding(.vertical, 4)
 
                     HStack(alignment: .top, spacing: 10) {
                         AgentIconView(id: row.agent, waiting: row.waiting)
                             .padding(.top, 2)
-                            .opacity(row.isProcessOnly ? 0.55 : 1)
 
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2) {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                // Encoding 3 of 3: a real session is semibold,
+                                // a bare process is not.
                                 Text(heroTitle)
                                     .font(.system(
-                                        size: row.isProcessOnly ? 12.5 : 13.5,
-                                        weight: row.isProcessOnly ? .medium : .semibold,
+                                        size: 13,
+                                        weight: row.isProcessOnly ? .regular : .semibold,
                                         design: .rounded
                                     ))
-                                    .foregroundStyle(heroColor)
-                                    .lineLimit(2)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
                                 Spacer(minLength: 6)
                                 statusChip
                             }
 
                             Text(agentLine)
                                 .font(.system(size: 11))
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
 
+                            // Waiting rows get a third line, because the actual
+                            // question is the entire point of the product.
                             if let detail = store.localizedWaitDetail(row) {
                                 Text(Self.truncate(detail, 78))
-                                    .font(.system(size: 11.5, weight: .medium))
+                                    .font(.system(size: 11))
                                     .foregroundStyle(TrayChrome.waitAccent)
                                     .lineLimit(2)
                             }
-
-                            if let meta = row.metaLine {
-                                Text(meta)
-                                    .font(.system(size: 10.5, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                            }
                         }
                     }
-                    .padding(.leading, row.waiting ? 10 : TrayChrome.padX - 2)
+                    .padding(.leading, 12)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.vertical, row.waiting ? 11 : 9)
+                    .padding(.vertical, 8)
                 }
-                .background(row.waiting ? TrayChrome.waitAccent.opacity(0.10) : Color.clear)
-                .opacity(row.isProcessOnly ? 0.82 : 1)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -441,7 +562,10 @@ private struct AgentRowButton: View {
             .accessibilityLabel(accessibilityText)
             .accessibilityHint(store.focusActionTitle(row))
 
-            if row.waiting || row.canFocusTerminal || row.canOpenFolder {
+            // Actions stay visible where they are urgent, and appear on hover
+            // everywhere else. Showing them on every row cost ~28pt each and
+            // was the main reason only three agents fit in the panel.
+            if showActions {
                 HStack(spacing: 16) {
                     if row.waiting {
                         Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
@@ -458,13 +582,22 @@ private struct AgentRowButton: View {
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
                     }
+                    Spacer(minLength: 0)
                 }
-                .padding(.leading, row.waiting ? 52 : 48)
+                .padding(.leading, 48)
                 .padding(.trailing, TrayChrome.padX)
                 .padding(.bottom, 8)
-                .background(row.waiting ? TrayChrome.waitAccent.opacity(0.10) : Color.clear)
             }
         }
+        .onHover { hovering = $0 }
+        // The detail that used to crowd every row full-time: tokens, tool,
+        // skill, subagents, session id. Still available, no longer competing.
+        .help(hoverDetail)
+    }
+
+    private var showActions: Bool {
+        guard row.waiting || row.canFocusTerminal || row.canOpenFolder else { return false }
+        return row.waiting || hovering
     }
 
     /// Session title is the row hero; process-only rows de-rank to a status phrase.
@@ -489,13 +622,12 @@ private struct AgentRowButton: View {
         return row.agent.displayName
     }
 
-    private var heroColor: Color {
-        if row.waiting { return .primary }
-        if row.isProcessOnly { return .secondary }
-        return .primary
-    }
-
-    /// Agent identity as secondary line (name · project · Warp).
+    /// Second line, capped at two facts: who, and where.
+    ///
+    /// It used to join up to five (`Claude · Pulse · ×3 · Warp · hooks`) and a
+    /// `metaLine` under it joined up to five more, so a row carried ten equal
+    /// facts in two lines of tertiary text and none of them could be scanned.
+    /// The rest moved to `hoverDetail`.
     private var agentLine: String {
         var bits: [String] = [row.agent.displayName]
         let short = AgentRow.shortProject(row.project)
@@ -504,20 +636,34 @@ private struct AgentRowButton: View {
         } else if let hint = row.shortSessionHint, row.usefulTask != nil {
             bits.append(hint)
         }
+        return bits.joined(separator: " · ")
+    }
+
+    /// Everything the second line no longer carries.
+    private var hoverDetail: String {
+        var bits: [String] = [row.agent.displayName]
+        let short = AgentRow.shortProject(row.project)
+        if !short.isEmpty { bits.append(short) }
         if row.processCount > 1 { bits.append("×\(row.processCount)") }
         if row.viaWarp { bits.append("Warp") }
         if let sig = row.waitSignal {
             bits.append(sig == .hooks ? store.tr(.signalHooks) : store.tr(.signalPending))
         }
+        if let meta = row.metaLine { bits.append(meta) }
         return bits.joined(separator: " · ")
     }
 
+    /// Encoding 2 of 3: status word, plus how long it has been waiting.
     @ViewBuilder
     private var statusChip: some View {
         if row.waiting {
+            let kind = row.waitKind.isEmpty
+                ? store.tr(.needsYou)
+                : store.localizedWaitKind(row.waitKind)
+            let dur = store.waitDurationLabel(row)
             StatusChip(
                 kind: .waiting,
-                label: row.waitKind.isEmpty ? store.tr(.needsYou) : store.localizedWaitKind(row.waitKind)
+                label: dur.isEmpty ? kind : "\(kind) · \(dur)"
             )
         } else if row.isProcessOnly {
             StatusChip(kind: .process, label: store.tr(.processWord))
@@ -647,6 +793,12 @@ struct SettingsView: View {
                 }
             }
             .onChange(of: store.language) { _, _ in store.saveSettings() }
+            Picker(store.tr(.groupingLabel), selection: $store.trayGrouping) {
+                ForEach(TrayGrouping.allCases) { mode in
+                    Text(store.tr(mode.labelKey)).tag(mode)
+                }
+            }
+            .onChange(of: store.trayGrouping) { _, _ in store.saveSettings() }
         }
     }
 
@@ -668,6 +820,8 @@ struct SettingsView: View {
                 .onChange(of: store.notifyOnIdle) { _, _ in store.saveSettings() }
                 .disabled(store.notifyAuthorized == false)
             Toggle(store.tr(.notifyWaiting), isOn: $store.notifyOnWaiting)
+            Toggle(store.tr(.playSound), isOn: $store.playSoundOnWaiting)
+                .onChange(of: store.playSoundOnWaiting) { _, _ in store.saveSettings() }
                 .onChange(of: store.notifyOnWaiting) { _, _ in store.saveSettings() }
                 .disabled(store.notifyAuthorized == false)
 
@@ -772,6 +926,13 @@ struct SettingsView: View {
 
     private var historySection: some View {
         Section(store.tr(.recentWaits)) {
+            // One line, not a dashboard: how often today's work was actually
+            // interrupted, and for how long on average.
+            if let summary = store.interruptionsTodayLine {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             ForEach(store.waitHistory) { entry in
                 HStack(alignment: .top, spacing: 8) {
                     AgentIconView(id: entry.agent, waiting: false)

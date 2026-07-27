@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.23.2`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.24.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -102,7 +102,7 @@ Pulse 把这件事变成余光可见：
 
 ```bash
 cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test    # 120 个单元测试
+cd PulseBar && swift test    # 142 个单元测试
 ```
 
 四个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
@@ -180,4 +180,5 @@ git push                               # CI 构建、打 tag、发布
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
 | [`docs/plan-0.23.md`](docs/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
+| [`docs/plan-0.24.md`](docs/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
 | [`docs/review-0.21.md`](docs/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |
