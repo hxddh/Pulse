@@ -106,7 +106,12 @@ struct MenuBarLabel: View {
 // MARK: - Tray chrome
 
 private enum TrayChrome {
-    static let width: CGFloat = 360
+    /// 360 lost the end of most session titles: after the 12pt accent gutter,
+    /// the 18pt icon, and the status chip, a row title had ~230pt — roughly
+    /// thirty characters, where a real task name is fifty. A menu-bar panel at
+    /// 400 is still narrow next to the calendar and reminder popovers people
+    /// already run, and it is forty characters instead of thirty.
+    static let width: CGFloat = 400
     static let padX: CGFloat = 14
     static let waitAccent = GlanceKind.waiting.lampColor
     static let runAccent = GlanceKind.running.lampColor
@@ -162,15 +167,34 @@ private struct SectionHeader: View {
     let title: String
     let count: Int
     let accent: Bool
+    /// Non-nil turns the heading into the group's disclosure control.
+    var collapsed: Bool?
+    /// Who is in the group, shown while it is folded away — a count alone
+    /// answers "how many" and not "which", and folded is exactly when the
+    /// rows are not there to answer it.
+    var summary: String = ""
+    var toggle: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 6) {
+        let line = HStack(spacing: 6) {
+            if let collapsed {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .opacity(0.6)
+            }
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
             Text("\(count)")
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .monospacedDigit()
                 .opacity(0.7)
+            if !summary.isEmpty {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .opacity(0.55)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 0)
         }
         .foregroundStyle(accent ? TrayChrome.waitAccent : Color.secondary)
@@ -179,6 +203,13 @@ private struct SectionHeader: View {
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.thickMaterial)
+
+        if let toggle {
+            Button(action: toggle) { line.contentShape(Rectangle()) }
+                .buttonStyle(.plain)
+        } else {
+            line
+        }
     }
 }
 
@@ -186,6 +217,15 @@ private struct SectionHeader: View {
 struct TrayPanel: View {
     @ObservedObject var store: StatusStore
     @State fileprivate var measuredHeight: CGFloat = 0
+    /// Groups the user has opened. Foldable groups start closed, and the set
+    /// is per-panel rather than persisted: reopening the tray is a new glance,
+    /// and a glance should start at "what needs me", not at last time's
+    /// bookkeeping.
+    @State fileprivate var unfolded: Set<String> = []
+
+    fileprivate func toggleFold(_ id: String) {
+        if unfolded.contains(id) { unfolded.remove(id) } else { unfolded.insert(id) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -335,6 +375,8 @@ struct TrayPanel: View {
         var rows: [AgentRow]
         /// The heading is a location, so rows underneath must not repeat it.
         var statesPath = false
+        /// The heading doubles as a disclosure control and the rows start folded.
+        var foldable = false
     }
 
     /// A heading earns its line only when it separates things.
@@ -360,15 +402,20 @@ struct TrayPanel: View {
         let rows = store.snapshot.rows
         switch store.trayGrouping {
         case .status:
-            return TraySection.allCases.compactMap { section in
+            let present = TraySection.allCases.filter { s in rows.contains { $0.section == s } }
+            return present.map { section in
                 let group = rows.filter { $0.section == section }
-                guard !group.isEmpty else { return nil }
                 return RowGroup(
                     id: "s\(section.rawValue)",
                     title: store.tr(section.titleKey),
                     count: store.snapshot.sectionTotals[section] ?? group.count,
                     accent: section == .needsYou,
-                    rows: group
+                    rows: group,
+                    foldable: TrayFold.foldable(
+                        section: section,
+                        groupCount: present.count,
+                        rowCount: group.count
+                    )
                 )
             }
         case .project:
@@ -422,12 +469,14 @@ struct TrayPanel: View {
                             // No rules between rows: whitespace already
                             // separates them, and a line every 56pt turns a
                             // short list into a table.
-                            ForEach(group.rows) { row in
-                                AgentRowButton(
-                                    row: row,
-                                    store: store,
-                                    pathInHeading: group.statesPath && showHeading(group, of: groups)
-                                )
+                            if !(group.foldable && !unfolded.contains(group.id)) {
+                                ForEach(group.rows) { row in
+                                    AgentRowButton(
+                                        row: row,
+                                        store: store,
+                                        pathInHeading: group.statesPath && showHeading(group, of: groups)
+                                    )
+                                }
                             }
                         } header: {
                             // A lone heading restates the panel header directly
@@ -437,10 +486,14 @@ struct TrayPanel: View {
                             // heading over a single row is just that row's own
                             // path on a line of its own.
                             if showHeading(group, of: groups) {
+                                let folded = group.foldable && !unfolded.contains(group.id)
                                 SectionHeader(
                                     title: group.title,
                                     count: group.count,
-                                    accent: group.accent
+                                    accent: group.accent,
+                                    collapsed: group.foldable ? folded : nil,
+                                    summary: folded ? TrayFold.summary(group.rows) : "",
+                                    toggle: group.foldable ? { toggleFold(group.id) } : nil
                                 )
                             }
                         }
@@ -599,7 +652,14 @@ private struct AgentRowButton: View {
                                         design: .rounded
                                     ))
                                     .foregroundStyle(.primary)
-                                    .lineLimit(1)
+                                    // Width alone does not fix a fifty-character
+                                    // title; it moves where the ellipsis lands.
+                                    // A second line costs ~16pt on the rows that
+                                    // need it and nothing on the rows that do
+                                    // not, and the end of a task name is the
+                                    // half that identifies it.
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 6)
                                 statusChip
                             }
@@ -698,7 +758,7 @@ private struct AgentRowButton: View {
     /// Session title is the row hero; process-only rows de-rank to a status phrase.
     private var heroTitle: String {
         if row.waiting {
-            if let t = row.usefulTask { return Self.truncate(t, 72) }
+            if let t = row.usefulTask { return Self.truncate(t, Self.heroLimit) }
             let short = AgentRow.shortProject(row.project)
             if !short.isEmpty { return short }
             return store.tr(.needsYou)
@@ -713,7 +773,7 @@ private struct AgentRowButton: View {
             // The prefix used to be added precisely when the row was *not*
             // live, so a row read "Doing · New Session" next to a "Recent"
             // badge — two contradictory claims about the same session.
-            return Self.truncate(t, 72)
+            return Self.truncate(t, Self.heroLimit)
         }
         let short = AgentRow.shortProject(row.project)
         if !short.isEmpty { return short }
@@ -787,6 +847,15 @@ private struct AgentRowButton: View {
         }
         return parts.joined(separator: ", ")
     }
+
+    /// Hard ceiling on the row hero, in characters.
+    ///
+    /// It is a guard against a pathological title, not the thing that shapes
+    /// the row — two lines at 400pt hold roughly eighty, so at 96 SwiftUI's
+    /// own wrapping decides where the line ends and this only stops a title
+    /// that would take the whole panel. It used to be 72, which is under what
+    /// the panel can show: the string was cut before it was ever laid out.
+    static let heroLimit = 96
 
     private static func truncate(_ s: String, _ n: Int) -> String {
         guard s.count > n else { return s }

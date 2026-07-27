@@ -503,3 +503,35 @@ struct PulseSnapshot: Equatable {
     var probeError: String?
     var updatedAt: Date = .distantPast
 }
+
+/// Which tray groups fold, and what a folded group still says.
+///
+/// Screenshots of 0.25.0 showed four rows, two of them Recent — finished
+/// sessions, nothing to act on, taking half the panel and half the reading.
+/// Folding them is the largest space win available without dropping a fact.
+enum TrayFold {
+    /// Recent is foldable, but only when it is not the whole list.
+    ///
+    /// If Recent is all there is, those rows *are* the content and folding
+    /// them leaves a panel that says nothing. The rule is "hide the part you
+    /// are not here for", which requires there to be another part.
+    static func foldable(section: TraySection, groupCount: Int, rowCount: Int) -> Bool {
+        section == .recent && groupCount > 1 && rowCount >= 2
+    }
+
+    /// Agents in the folded group, in first-seen order, deduplicated.
+    ///
+    /// A folded heading otherwise reads "Recent 3" — a count with no identity,
+    /// which is exactly the question folding creates.
+    static func summary(_ rows: [AgentRow], limit: Int = 3) -> String {
+        var seen = Set<AgentID>()
+        var names: [String] = []
+        for row in rows where !seen.contains(row.agent) {
+            seen.insert(row.agent)
+            names.append(row.agent.displayName)
+        }
+        guard !names.isEmpty else { return "" }
+        if names.count <= limit { return names.joined(separator: " · ") }
+        return names.prefix(limit).joined(separator: " · ") + " +\(names.count - limit)"
+    }
+}

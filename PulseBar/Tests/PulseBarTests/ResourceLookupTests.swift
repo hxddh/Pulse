@@ -253,3 +253,59 @@ final class ScreenshotRegressionTests: XCTestCase {
         XCTAssertTrue(r.needsStatusChip)
     }
 }
+
+/// Folding Recent: the panel's largest space win, and the one that can most
+/// easily hide something the user came for.
+final class TrayFoldTests: XCTestCase {
+    private func row(_ agent: AgentID) -> AgentRow {
+        AgentRow(rowKey: "k-\(agent.rawValue)", agent: agent)
+    }
+
+    func testRecentFoldsWhenItIsNotTheWholeList() {
+        XCTAssertTrue(TrayFold.foldable(section: .recent, groupCount: 2, rowCount: 3))
+    }
+
+    /// Folding the only group leaves a panel that says nothing.
+    func testRecentDoesNotFoldWhenItIsAllThereIs() {
+        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 1, rowCount: 5))
+    }
+
+    /// One row under a heading is already one line; folding it saves nothing
+    /// and costs a click.
+    func testASingleRowIsNotWorthFolding() {
+        XCTAssertFalse(TrayFold.foldable(section: .recent, groupCount: 3, rowCount: 1))
+    }
+
+    /// Needs-you and Running are why the panel is open. They never fold.
+    func testActionableSectionsNeverFold() {
+        for section in [TraySection.needsYou, .running] {
+            XCTAssertFalse(
+                TrayFold.foldable(section: section, groupCount: 3, rowCount: 4),
+                "\(section) must stay open"
+            )
+        }
+    }
+
+    func testFoldedHeadingStillSaysWhoIsInThere() {
+        let s = TrayFold.summary([row(.claude), row(.cursor)])
+        XCTAssertTrue(s.contains("Claude"), s)
+        XCTAssertTrue(s.contains("Cursor"), s)
+    }
+
+    /// Three sessions of one agent is one name, not three.
+    func testRepeatedAgentsAreNamedOnce() {
+        XCTAssertEqual(TrayFold.summary([row(.claude), row(.claude), row(.claude)]), "Claude")
+    }
+
+    /// A folded heading is one line; the summary must not be what breaks that.
+    func testLongRostersCountTheRestInsteadOfListingThem() {
+        let rows = [row(.claude), row(.cursor), row(.amp), row(.aider), row(.goose)]
+        let s = TrayFold.summary(rows)
+        XCTAssertTrue(s.hasSuffix("+2"), s)
+        XCTAssertFalse(s.contains("Goose"), s)
+    }
+
+    func testEmptyGroupHasNoSummary() {
+        XCTAssertEqual(TrayFold.summary([]), "")
+    }
+}
