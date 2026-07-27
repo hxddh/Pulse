@@ -117,3 +117,49 @@ final class RowRedundancyTests: XCTestCase {
         XCTAssertNil(r.usefulTask)
     }
 }
+
+
+/// The two facts a row could never state, both collected from the start.
+final class RowContextTests: XCTestCase {
+    private func row(cwd: String = "", project: String = "", harvestMs: Int64 = 0) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.cwd = cwd
+        r.project = project
+        r.harvestMs = harvestMs
+        return r
+    }
+
+    func testHomeIsWrittenAsTilde() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        XCTAssertEqual(row(cwd: home).displayPath, "~")
+        XCTAssertEqual(row(cwd: home + "/code").displayPath, "~/code")
+    }
+
+    /// The middle of a deep path carries no identity; the tail does.
+    func testDeepPathsKeepTheirTail() {
+        let p = row(cwd: "/a/b/c/d/e/Pulse").displayPath
+        XCTAssertTrue(p.hasSuffix("e/Pulse"), p)
+        XCTAssertTrue(p.contains("…"), p)
+    }
+
+    func testShallowPathsAreLeftAlone() {
+        XCTAssertEqual(row(cwd: "/tmp/alpha").displayPath, "/tmp/alpha")
+    }
+
+    func testNoLocationYieldsNoPathRatherThanAPlaceholder() {
+        XCTAssertEqual(row().displayPath, "")
+    }
+
+    func testProjectIsUsedWhenThereIsNoCwd() {
+        XCTAssertEqual(row(project: "Pulse").displayPath, "Pulse")
+    }
+
+    func testUnknownActivityIsZeroNotEpoch() {
+        XCTAssertEqual(row().lastActivitySeconds, 0)
+    }
+
+    func testActivityAgeCountsFromTheHarvestStamp() {
+        let tenMinutesAgo = Int64((Date().timeIntervalSince1970 - 600) * 1000)
+        XCTAssertEqual(row(harvestMs: tenMinutesAgo).lastActivitySeconds, 600, accuracy: 5)
+    }
+}

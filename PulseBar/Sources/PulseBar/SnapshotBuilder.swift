@@ -357,7 +357,8 @@ enum SnapshotBuilder {
             if projectNames.count > 1 {
                 return String(format: t(.acrossProjects, lang), projectNames.count)
             }
-            if projectNames.count == 1 { return projectNames[0] }
+            // One project is on every row already. Saying it again here is the
+            // exact duplication this rewrite exists to remove.
             return ""
         }
 

@@ -481,11 +481,56 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.snapshot.title.contains("10m"), "age missing from \(r.snapshot.title)")
     }
 
-    /// The header's second line used to be a constant ("just now").
-    func testHeaderDetailNamesWhoIsInvolved() {
+    // MARK: 0.25 — the header may only speak in aggregates
+
+    /// It was a constant ("just now"), then the agent names — which every row
+    /// already carried. Now it says nothing rather than repeat them.
+    func testHeaderStaysSilentWhenRowsSayItAll() {
         let r = build(procs: [hit(.claude)], attention: [attention(.claude)])
-        XCTAssertEqual(r.snapshot.headerDetail, AgentID.claude.displayName)
-        XCTAssertFalse(r.snapshot.headerDetail.isEmpty)
+        XCTAssertEqual(r.snapshot.headerDetail, "", "must not restate what the rows show")
+    }
+
+    func testOneProjectIsNotWorthTheHeaderLine() {
+        let r = build(harvest: [
+            harvest(.claude, task: "a", session: "s1", cwd: "/tmp/alpha"),
+            harvest(.codex, task: "b", session: "s2", cwd: "/tmp/alpha"),
+        ])
+        XCTAssertEqual(r.snapshot.projectCount, 1)
+        XCTAssertEqual(r.snapshot.headerDetail, "")
+    }
+
+    /// Spread across projects is a genuine aggregate — no single row shows it.
+    func testSpreadAcrossProjectsIsAnAggregateWorthSaying() {
+        let r = build(harvest: [
+            harvest(.claude, task: "a", session: "s1", cwd: "/tmp/alpha"),
+            harvest(.codex, task: "b", session: "s2", cwd: "/tmp/beta"),
+        ])
+        XCTAssertEqual(r.snapshot.projectCount, 2)
+        XCTAssertTrue(r.snapshot.headerDetail.contains("2"), r.snapshot.headerDetail)
+    }
+
+    func testHiddenRowsOutrankProjectSpread() {
+        let rows = (1...9).map { harvest(.claude, task: "T\($0)", session: "s\($0)", cwd: "/tmp/p\($0)") }
+        let r = build(harvest: rows, context: context(maxSessions: 99, maxRows: 3))
+        XCTAssertGreaterThan(r.snapshot.hiddenCount, 0)
+        XCTAssertTrue(r.snapshot.headerDetail.contains("\(r.snapshot.hiddenCount)"), r.snapshot.headerDetail)
+    }
+
+    /// Running with a live session is ordinary and gets no badge.
+    func testOrdinaryRunningRowNeedsNoChip() {
+        let r = build(
+            procs: [hit(.claude)],
+            harvest: [harvest(.claude, task: "Refactor", session: "s1", cwd: "/tmp/alpha")]
+        )
+        let row = try? XCTUnwrap(r.rows.first)
+        XCTAssertEqual(row?.needsStatusChip, false)
+    }
+
+    func testProcessOnlyAndWaitingRowsDoGetAChip() {
+        let r = build(procs: [hit(.amp)], attention: [attention(.claude)])
+        for row in r.rows where row.waiting || row.isProcessOnly {
+            XCTAssertTrue(row.needsStatusChip, "\(row.agent) should be badged")
+        }
     }
 
     func testSectionsPartitionEveryRow() {
