@@ -219,9 +219,12 @@ final class StatusStore: ObservableObject {
             return
         }
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            // Bind before the Task: the timer block is @Sendable, and referencing
+            // the captured `weak self` var from inside a Task is not allowed.
+            guard let store = self else { return }
             Task { @MainActor in
-                guard let self, self.autoProbe else { return }
-                self.refresh(reason: "timer")
+                guard store.autoProbe else { return }
+                store.refresh(reason: "timer")
             }
         }
         // Let the system coalesce wakeups — meaningful battery win for a
@@ -233,21 +236,23 @@ final class StatusStore: ObservableObject {
 
     func installHooks() {
         hooksStatus = .unknown
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let status = HooksSupport.install()
-            Task { @MainActor in
-                self?.hooksStatus = status
-            }
+        // `Task` inherits this class's main-actor isolation, so the assignment
+        // lands on main while the blocking Python run stays off it.
+        Task { [weak self] in
+            let status = await Task.detached(priority: .userInitiated) {
+                HooksSupport.install()
+            }.value
+            self?.hooksStatus = status
         }
     }
 
     func uninstallHooks() {
         hooksStatus = .unknown
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let status = HooksSupport.uninstall()
-            Task { @MainActor in
-                self?.hooksStatus = status
-            }
+        Task { [weak self] in
+            let status = await Task.detached(priority: .userInitiated) {
+                HooksSupport.uninstall()
+            }.value
+            self?.hooksStatus = status
         }
     }
 
