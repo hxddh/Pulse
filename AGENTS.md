@@ -39,15 +39,17 @@ compiles and ships.
 
 ```bash
 cd PulseBar && swift build      # macOS 14+, Swift 5.9
-cd PulseBar && swift test       # 107 tests
+cd PulseBar && swift test       # 169 tests
 ```
 
-Gates, from the repo root — `package.sh` and CI both run all three:
+Gates, from the repo root — `package.sh` and CI both run all five:
 
 ```bash
 python3 scripts/version_check.py    # --fix aligns the followers
 python3 scripts/coverage_check.py
 python3 scripts/matrix_check.py
+python3 scripts/make_agent_icons.py --check   # every AgentID has a mark
+python3 scripts/package_check.py    # reads the built .app
 ```
 
 `src/*.py` is the source of truth; `PulseBar/Sources/PulseBar/Resources/*.py`
