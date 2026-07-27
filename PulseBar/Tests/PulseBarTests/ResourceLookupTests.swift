@@ -209,23 +209,47 @@ final class ScreenshotRegressionTests: XCTestCase {
     }
 
     /// Live for twenty minutes with nothing happening looked like health.
+    ///
+    /// Evaluated against the scan's clock, so these pass an explicit `nowMs`
+    /// rather than depending on when the suite happens to run.
+    private let now: Int64 = 1_700_000_000_000
+
+    private func stalled(agoSeconds: Double, waiting: Bool = false, live: Bool = true) -> Bool {
+        AgentRow.stalled(
+            harvestMs: now - Int64(agoSeconds * 1000),
+            nowMs: now,
+            waiting: waiting,
+            live: live
+        )
+    }
+
     func testLongSilenceWhileLiveIsStalled() {
-        let old = Int64((Date().timeIntervalSince1970 - 25 * 60) * 1000)
-        XCTAssertTrue(row(harvestMs: old, live: true).isStalled)
-        XCTAssertTrue(row(harvestMs: old, live: true).needsStatusChip)
+        XCTAssertTrue(stalled(agoSeconds: 25 * 60))
     }
 
     func testRecentActivityIsNotStalled() {
-        let fresh = Int64((Date().timeIntervalSince1970 - 60) * 1000)
-        XCTAssertFalse(row(harvestMs: fresh, live: true).isStalled)
+        XCTAssertFalse(stalled(agoSeconds: 60))
     }
 
     func testAStalledRowMustBeLive() {
-        let old = Int64((Date().timeIntervalSince1970 - 25 * 60) * 1000)
-        XCTAssertFalse(row(harvestMs: old, live: false).isStalled, "a finished session is not stalled")
+        XCTAssertFalse(stalled(agoSeconds: 25 * 60, live: false), "a finished session is not stalled")
+    }
+
+    func testAWaitingRowIsNotAlsoStalled() {
+        XCTAssertFalse(stalled(agoSeconds: 25 * 60, waiting: true), "Waiting already says why it is idle")
     }
 
     func testUnknownActivityIsNotStalled() {
-        XCTAssertFalse(row(harvestMs: 0, live: true).isStalled, "no timestamp is not evidence of silence")
+        XCTAssertFalse(
+            AgentRow.stalled(harvestMs: 0, nowMs: now, waiting: false, live: true),
+            "no timestamp is not evidence of silence"
+        )
+    }
+
+    /// A stalled row is one the user should react to, so it keeps its badge.
+    func testStalledRowsAreBadged() {
+        var r = row(live: true)
+        r.isStalled = true
+        XCTAssertTrue(r.needsStatusChip)
     }
 }

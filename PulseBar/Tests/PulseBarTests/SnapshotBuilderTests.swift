@@ -548,6 +548,16 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.snapshot.projectCount, 1, "only /tmp/real is a project")
     }
 
+    /// A long-silent live session is worth a badge; the builder decides that
+    /// against the scan's clock, so it is deterministic.
+    func testLongSilenceIsMarkedStalledAtScanTime() {
+        let r = build(
+            procs: [hit(.claude)],
+            harvest: [harvest(.claude, task: "x", session: "s1", ageMs: 30 * 60 * 1000)]
+        )
+        XCTAssertEqual(r.rows.first?.isStalled, true)
+    }
+
     /// Running with a live session is ordinary and gets no badge.
     func testOrdinaryRunningRowNeedsNoChip() {
         let r = build(

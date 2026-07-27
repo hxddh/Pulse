@@ -429,10 +429,18 @@ struct AgentRow: Identifiable, Hashable {
     /// on something, and the tray showed it exactly like a healthy session.
     static let stalledSeconds: Double = 20 * 60
 
-    var isStalled: Bool {
-        guard !waiting, liveProcess || subRunning > 0 else { return false }
-        guard harvestMs > 0 else { return false }
-        return lastActivitySeconds >= Self.stalledSeconds
+    /// Resolved once per scan against the scan's own clock, not `Date()`.
+    ///
+    /// As a computed property this reached for the real clock while the builder
+    /// around it ran on an injected `nowMs` — so with a fixed test clock every
+    /// row read as stalled by years. `focusTier` and `canOpenFolder` were moved
+    /// to scan time in 0.23 for the same reason.
+    var isStalled: Bool = false
+
+    /// Whether this row would be stalled at the given instant.
+    static func stalled(harvestMs: Int64, nowMs: Int64, waiting: Bool, live: Bool) -> Bool {
+        guard !waiting, live, harvestMs > 0 else { return false }
+        return Double(nowMs - harvestMs) / 1000.0 >= stalledSeconds
     }
 
     /// A wait old enough to deserve more than the ordinary Waiting treatment.
