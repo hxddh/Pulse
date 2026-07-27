@@ -117,10 +117,20 @@ python3 scripts/package_check.py    # 打出来的 .app 能找到自己的资源
 前三个读源码，第四个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
 源码没问题、测试全绿，照样连发三个打不开的 DMG。这类 bug 只有对着 `.app` 才看得见。
 
+但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。
+所以还要让 app 自己回答：
+
+```bash
+zig-out/package/Pulse.app/Contents/MacOS/PulseBar --selftest
+```
+
+用真实二进制、在真实 `.app` 里跑一遍资源解析，逐项报告。在 AppKit 初始化之前返回，
+无头环境也能跑。`package.sh` 打完包会自动执行。
+
 打包：
 
 ```bash
-./PulseBar/Scripts/package.sh        # 结尾会自动跑 package_check
+./PulseBar/Scripts/package.sh        # 结尾自动跑 package_check + --selftest
 open zig-out/package/Pulse.app
 ```
 
