@@ -16,6 +16,8 @@ final class StatusStore: ObservableObject {
     @Published var hooksStatus: HooksSupport.Status = .unknown
     @Published var showAllAgents = false
     @Published private(set) var isRefreshing = false
+    /// Transient "Copied" confirmation on the diagnostics button.
+    @Published private(set) var didCopyDiagnostics = false
 
     private var timer: Timer?
     private var cachedAll: [AgentRow] = []
@@ -57,8 +59,48 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    /// Packaged bundle version disagrees with the compiled semver — usually a
+    /// stale `Pulse.app` next to a fresh build. Worth saying out loud.
+    var isVersionMismatch: Bool {
+        if case .mismatch = PulseVersion.channel { return true }
+        return false
+    }
+
+    /// Everything a bug report needs, in one paste.
+    func diagnosticsText() -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        var lines: [String] = [
+            PulseVersion.fingerprint,
+            "channel: \(isVersionMismatch ? "mismatch" : (PulseVersion.bundleVersion == nil ? "dev" : "release"))",
+            "macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+            "lang: \(language.rawValue) · autoProbe: \(autoProbe)",
+            "hooks: \(hooksStatus.label(lang: lang))",
+            "glance: \(snapshot.glance) · rows: \(snapshot.rows.count)/\(snapshot.totalCount)",
+        ]
+        if let err = snapshot.probeError { lines.append("probeError: \(err)") }
+        for row in cachedAll.prefix(8) {
+            lines.append(
+                "  \(row.agent.rawValue) waiting=\(row.waiting) live=\(row.liveProcess) "
+                    + "signal=\(row.waitSignal?.rawValue ?? "-") sub=\(row.subRunning)/\(row.subTotal)"
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func copyDiagnostics() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(diagnosticsText(), forType: .string)
+        didCopyDiagnostics = true
+        DebugLog.write("diagnostics copied")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            self?.didCopyDiagnostics = false
+        }
+    }
+
     func start() {
-        DebugLog.write("start begin version=\(PulseVersion.semver)")
+        DebugLog.write("start begin \(PulseVersion.fingerprint)")
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
         PulseNotify.configure()
@@ -502,12 +544,22 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    /// Human wait age in the resolved language (`2 分` / `2m`).
+    func waitDurationLabel(_ row: AgentRow) -> String {
+        guard row.waitSinceMs > 0 else { return "" }
+        let ago = row.waitAgeSeconds
+        if ago < 5 { return tr(.durNow) }
+        if ago < 60 { return String(format: tr(.durSec), Int(ago)) }
+        if ago < 3600 { return String(format: tr(.durMin), Int(ago / 60)) }
+        return String(format: tr(.durHour), Int(ago / 3600))
+    }
+
     /// Rebuild wait detail under the badge: duration · signal · message (kind lives in the badge).
     /// Returns nil when there is nothing beyond the badge label.
     func localizedWaitDetail(_ row: AgentRow) -> String? {
         guard row.waiting else { return nil }
         var head: [String] = []
-        let dur = AgentRow.waitDurationLabel(sinceMs: row.waitSinceMs)
+        let dur = waitDurationLabel(row)
         if !dur.isEmpty { head.append(dur) }
         if let sig = row.waitSignal {
             head.append(sig == .hooks ? tr(.signalHooks) : tr(.signalPending))
@@ -739,16 +791,44 @@ enum DebugLog {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Pulse/debug.log")
     }()
+    private static var previousPath: URL {
+        path.deletingLastPathComponent().appendingPathComponent("debug.log.1")
+    }
+    /// Pulse writes ~5 lines every probe tick; without a cap the log grows
+    /// unbounded (tens of MB per day). Roll at 2 MB, keep one generation.
+    private static let maxBytes: UInt64 = 2 * 1024 * 1024
     private static let lock = NSLock()
+    private static let stamp: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static var bytesWritten: UInt64 = 0
+    private static var sizeKnown = false
 
     static func write(_ message: String) {
         lock.lock()
         defer { lock.unlock() }
+        let fm = FileManager.default
         let dir = path.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        if !sizeKnown {
+            let attrs = try? fm.attributesOfItem(atPath: path.path)
+            bytesWritten = (attrs?[.size] as? NSNumber)?.uint64Value ?? 0
+            sizeKnown = true
+        }
+
+        let line = "\(stamp.string(from: Date())) \(message)\n"
         guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: path.path),
+
+        if bytesWritten + UInt64(data.count) > maxBytes, fm.fileExists(atPath: path.path) {
+            try? fm.removeItem(at: previousPath)
+            try? fm.moveItem(at: path, to: previousPath)
+            bytesWritten = 0
+        }
+
+        if fm.fileExists(atPath: path.path),
            let handle = try? FileHandle(forWritingTo: path) {
             defer { try? handle.close() }
             _ = try? handle.seekToEnd()
@@ -756,6 +836,7 @@ enum DebugLog {
         } else {
             try? data.write(to: path, options: .atomic)
         }
+        bytesWritten += UInt64(data.count)
     }
 }
 

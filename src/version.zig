@@ -1,14 +1,16 @@
-//! Single source of truth for Pulse product version (semver).
-//! Keep in sync with app.zon `.version` — tests enforce equality.
+//! Legacy Zig shell's copy of the product version.
+//! NOT the source of truth — that is `PulseVersion.semver` in
+//! `PulseBar/Sources/PulseBar/Models.swift`. `scripts/version_check.py`
+//! keeps this file and `app.zon` from drifting away from it.
 
 const std = @import("std");
 
 /// Marketing / package version (MAJOR.MINOR.PATCH).
-pub const semver: []const u8 = "0.5.0";
+pub const semver: []const u8 = "0.21.1";
 
 pub const major: u32 = 0;
-pub const minor: u32 = 5;
-pub const patch: u32 = 0;
+pub const minor: u32 = 21;
+pub const patch: u32 = 1;
 
 /// Product line for About / status-bar.
 pub fn aboutLine(buf: []u8) []const u8 {

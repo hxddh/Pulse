@@ -18,7 +18,15 @@ for py in activity_scan.py pulse_hook.py install_hooks.py; do
   cp "$ROOT/src/$py" "$ROOT/PulseBar/Sources/PulseBar/Resources/$py"
 done
 
+python3 "$ROOT/scripts/version_check.py"
 python3 "$ROOT/scripts/coverage_check.py"
+
+# Build identity stamped into Info.plist — PulseVersion reads it at runtime.
+GIT_COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if ! git -C "$ROOT" diff --quiet HEAD 2>/dev/null; then
+  GIT_COMMIT="${GIT_COMMIT}+"
+fi
+BUILD_DATE="$(date -u +%Y-%m-%d)"
 
 echo "building PulseBar ${VERSION}..."
 swift build -c release
@@ -79,6 +87,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
+  <key>PulseGitCommit</key><string>${GIT_COMMIT}</string>
+  <key>PulseBuildDate</key><string>${BUILD_DATE}</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
@@ -95,7 +105,7 @@ DMG="$ROOT/zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
 rm -f "$DMG"
 hdiutil create -volname "Pulse ${VERSION}" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
 
-echo "version:  ${VERSION}"
+echo "version:  ${VERSION} (${GIT_COMMIT} · ${BUILD_DATE})"
 echo "packaged: ${APP}"
 echo "archive:  ${DMG}"
 echo "run:      open \"${APP}\""

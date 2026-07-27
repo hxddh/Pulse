@@ -9,6 +9,7 @@ import glob
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -159,6 +160,9 @@ def session_title_from_text(text: str) -> str:
 
 
 FRESH_SEC = 45 * 60  # Claude session files older than this (and no live subs) are skipped
+# A `pending` guess is a Waiting claim — only trust it on a very recently
+# touched file, so a stale session can never sit lit as "needs you".
+PENDING_FRESH_SEC = 5 * 60
 
 def codex_has_unresolved_approval(text: str) -> bool:
     """True when rollout tail shows an approval/user request without a later resolution."""
@@ -1884,10 +1888,13 @@ def aider_activities() -> list[tuple]:
         HOME / "dev",
         HOME / "Projects",
         HOME / "Pulse",
-        Path("/Users/rustjia/Pulse"),
-        Path("/Users/rustjia/Documents"),
-        Path("/Users/rustjia/Desktop"),
     ]
+    # Escape hatch instead of hardcoded developer paths:
+    #   PULSE_AIDER_ROOTS=/path/one:/path/two
+    for extra in (os.environ.get("PULSE_AIDER_ROOTS") or "").split(":"):
+        extra = extra.strip()
+        if extra:
+            roots.append(Path(extra).expanduser())
     seen_files: set[str] = set()
 
     def scan_root(root: Path, max_depth: int = 3) -> None:
@@ -2000,11 +2007,15 @@ def goose_activities() -> list[tuple]:
         cwd = str(obj.get("working_dir") or obj.get("cwd") or obj.get("directory") or "")
         status = str(obj.get("status") or obj.get("state") or "").lower()
         pending = status in ("waiting", "awaiting_approval", "needs_input", "pending", "paused")
-        # nested messages ask
-        blob = json.dumps(obj)[-8000:].lower()
-        if any(x in blob for x in ("awaiting_approval", "needs_permission", "ask_user", "\"waiting\"")):
-            # only if near end / recent file
-            pending = pending or True
+        # Nested ask/approval markers only count on a recently touched session,
+        # and only for explicit markers — a bare "waiting" string anywhere in the
+        # blob used to mark every Goose session as Needs-you (fake Waiting).
+        if not pending and f.stat().st_mtime > time.time() - PENDING_FRESH_SEC:
+            blob = json.dumps(obj)[-8000:].lower()
+            pending = any(
+                x in blob
+                for x in ('"awaiting_approval"', '"needs_permission"', '"ask_user"')
+            )
         if not (title or cwd or pending):
             continue
         # skip huge unrelated json
@@ -2019,18 +2030,39 @@ def goose_activities() -> list[tuple]:
     return out
 
 
-def main() -> None:
+def guard(label: str, body) -> None:
+    """Run one agent's harvest in isolation.
+
+    Every harvester touches other tools' private files, so any of them can hit a
+    vanished path, a locked sqlite db, or unexpected JSON. Without this, one bad
+    agent raised out of main(), the script exited non-zero, and Pulse threw away
+    the whole scan (`harvestUnreliable`) — a single broken harvester blinded all
+    32 agents.
+    """
+    try:
+        body()
+    except Exception as exc:  # harvest is best-effort by design
+        print(f"# pulse: {label} harvest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+
+def emit_all(agent: str, rows) -> None:
+    for row in rows:
+        emit_row(agent, row)
+
+
+def claude_block() -> None:
     for row in claude_activities():
         emit("claude", *row)
-    for row in codex_activities():
-        # Prefer newest matching session file mtime via side channel in row if present
-        emit_row("codex", row)
-    for row in cursor_activities():
-        emit_row("cursor", row)
+
+
+def grok_pi_block() -> None:
     for name, fn in (("grok", grok_activity), ("pi", pi_activity)):
         row = fn()
         if any(row[:7]):
             emit_row(name, row)
+
+
+def amp_block() -> None:
     amp_skill, amp_sid, amp_ms = amp_pending_from_logs()
     amp_rows = amp_activities()
     if amp_rows:
@@ -2053,60 +2085,61 @@ def main() -> None:
                 emit_row("amp", row)
     elif amp_skill:
         emit("amp", "Amp thread", 0, 0, "", amp_skill, "", "", amp_ms or int(time.time() * 1000), 0, 0, amp_sid)
-    for row in gemini_activities():
-        emit_row("gemini", row)
-    for row in opencode_activities():
-        emit_row("opencode", row)
-    for row in aider_activities():
-        emit_row("aider", row)
-    for row in goose_activities():
-        emit_row("goose", row)
 
-    # 0.15 backfill + hot agents
-    for row in cline_activities():
-        emit_row("cline", row)
-    for row in roo_activities():
-        emit_row("roo", row)
-    for row in continue_activities():
-        emit_row("continue", row)
-    for row in copilot_activities():
-        emit_row("copilot", row)
-    for row in amazon_q_activities():
-        emit_row("amazon_q", row)
+
+def cascade_block() -> None:
     cascade_rows = cascade_windsurf_activities()
     for row in cascade_rows:
         emit_row("cascade", row)
     if not cascade_rows:
         for row in windsurf_shell_activities():
             emit_row("windsurf", row)
-    for row in augment_activities():
-        emit_row("augment", row)
-    for row in zed_agent_activities():
-        emit_row("zed_agent", row)
-    for row in trae_activities():
-        emit_row("trae", row)
-    for row in warp_agent_activities():
-        emit_row("warp_agent", row)
-    for row in openhands_activities():
-        emit_row("openhands", row)
-    for row in kilo_activities():
-        emit_row("kilo", row)
-    for row in devin_activities():
-        emit_row("devin", row)
-    for row in kiro_activities():
-        emit_row("kiro", row)
-    for row in junie_activities():
-        emit_row("junie", row)
-    for row in replit_activities():
-        emit_row("replit", row)
-    for row in droid_activities():
-        emit_row("droid", row)
-    for row in command_code_activities():
-        emit_row("command_code", row)
-    for row in kimi_activities():
-        emit_row("kimi", row)
-    for row in antigravity_activities():
-        emit_row("antigravity", row)
+
+
+def simple(agent: str, fn):
+    """One agent whose harvester is a plain `() -> list[row]`."""
+    return (agent, lambda: emit_all(agent, fn()))
+
+
+# Emission order is preserved from the pre-0.21.1 inline main(); each entry now
+# runs under `guard` so one failure cannot take the rest of the scan with it.
+HARVESTERS = (
+    ("claude", claude_block),
+    simple("codex", codex_activities),
+    simple("cursor", cursor_activities),
+    ("grok/pi", grok_pi_block),
+    ("amp", amp_block),
+    simple("gemini", gemini_activities),
+    simple("opencode", opencode_activities),
+    simple("aider", aider_activities),
+    simple("goose", goose_activities),
+    # 0.15 backfill + hot agents
+    simple("cline", cline_activities),
+    simple("roo", roo_activities),
+    simple("continue", continue_activities),
+    simple("copilot", copilot_activities),
+    simple("amazon_q", amazon_q_activities),
+    ("cascade/windsurf", cascade_block),
+    simple("augment", augment_activities),
+    simple("zed_agent", zed_agent_activities),
+    simple("trae", trae_activities),
+    simple("warp_agent", warp_agent_activities),
+    simple("openhands", openhands_activities),
+    simple("kilo", kilo_activities),
+    simple("devin", devin_activities),
+    simple("kiro", kiro_activities),
+    simple("junie", junie_activities),
+    simple("replit", replit_activities),
+    simple("droid", droid_activities),
+    simple("command_code", command_code_activities),
+    simple("kimi", kimi_activities),
+    simple("antigravity", antigravity_activities),
+)
+
+
+def main() -> None:
+    for label, body in HARVESTERS:
+        guard(label, body)
 
 
 if __name__ == "__main__":

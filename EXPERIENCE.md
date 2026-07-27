@@ -1,7 +1,9 @@
 # Pulse 体验规格 — macOS 菜单栏工具
 
 版本目标：对齐「一眼知道 Agent 空闲 / 运行 / 等你」；**不**做配额仪表盘。  
-约束延续：tray 有数据才显示；版本双写 `app.zon` + `version.zig`；窗口用 hide / show，不用 destroy。
+约束延续：tray 有数据才显示；窗口用 hide / show，不用 destroy。  
+版本真源是 `PulseVersion.semver`，`app.zon` / `version.zig` 是跟随者，由
+`scripts/version_check.py` 强制一致（0.21.1 前二者漂到 `0.5.0`）。
 
 ---
 
@@ -75,7 +77,13 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 ⑤ 偏好设置…
 ———
 ⑥ 退出 Pulse
+⑦ 版本页脚（tertiary，10pt）
 ```
+
+### ⑦ 版本页脚（0.21.1+）
+`Pulse x.y.z` + 右侧「复制诊断信息」。tertiary 字色、10pt，永远排在动作之后——
+它回答「我跑的是哪个 build」，不参与状态叙事。bundle 与二进制版本不一致时，
+追加橙色「版本不一致」。点击复制版本 / 构建 / macOS / hooks 状态 / 各行状态。
 
 ### ① Header
 - **两行结构：** 上行只答状态（需要你 / N 个等待中 / N 个运行中）；下行仅相对时间。
@@ -138,7 +146,11 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
    - 主按钮：安装连接
    - 状态反馈：已安装 / 失败（footer 或行内，不抢主层级）
    - 一句可选 attention 桥提示（Droid/Kimi → `docs/attention-bridge.md`）
-4. **关于** — `Pulse x.y.z`（读 `PulseVersion.semver`）
+4. **关于** — 三行，够写 bug 报告即可：
+   - `Pulse x.y.z`（`swift run` 显示 `x.y.z-dev`；版本不一致显示 `x.y.z≠bundle`）
+   - 构建行：`{git short sha} · {构建日期}`，无指纹时显示「开发构建」；可选中复制
+   - 「复制诊断信息」按钮 —— 版本 / 构建 / macOS / 语言 / hooks 状态 / 前 8 行状态
+   - 版本不一致时补一句橙色提示，指向 `PulseBar/Scripts/package.sh`
 
 ### 视觉（在 Native canvas 约束下尽量靠 HIG）
 - 字阶：分区小标题 muted；正文 regular；避免全页 heading。
@@ -224,7 +236,8 @@ Pulse 是 **菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；�
 | Prefs 布局 | `PulseBar/.../PulseApp.swift` → `SettingsView` + `SettingsWindowController` |
 | 文案 | `PulseBar/.../L10n.swift` |
 | 状态合并 | `PulseBar/.../StatusStore.swift` |
-| 版本 | `PulseBar/.../Models.swift` → `PulseVersion.semver` |
+| 版本 / 构建指纹 | `PulseBar/.../Models.swift` → `PulseVersion`；`scripts/version_check.py` |
+| 诊断复制 | `PulseBar/.../StatusStore.swift` → `diagnosticsText()` |
 | Harvest / hooks | `src/activity_scan.py`, `src/pulse_hook.py`（打包同步进 app） |
 
 Zig 树（`src/*.zig`）仅作参考实现，不以之为 Swift 壳验收依据。

@@ -2,6 +2,26 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.21.1 — Version identity · honesty fixes
+
+### Version identity
+- **单一真源**：`PulseVersion.semver` 为准；`scripts/version_check.py` 校验 `app.zon` / `src/version.zig` / CHANGELOG / README 不漂移（`--fix` 自动对齐）
+- **修正漂移**：`app.zon` 与 `src/version.zig` 此前停在 `0.5.0`，与实际 `0.21.x` 差 16 个版本
+- **构建指纹**：打包时把 git short sha + 构建日期写进 `Info.plist`，运行时可读；`swift run` 诚实显示 `-dev`
+- **Tray 版本页脚**：底部一行极弱化 `Pulse x.y.z`，点击复制诊断信息
+- **关于区重做**：版本 / 构建行 / 复制诊断按钮；bundle 与二进制版本不一致时高亮「版本不一致」
+
+### Fixes
+- **Goose 假 Waiting**：`pending = pending or True` 恒为真 —— 任何 tail 里出现 `"waiting"` 的 Goose 会话都会被点亮成「需要你」。改为显式标记 + 5 分钟新鲜度门槛
+- **harvest 单点故障**：任一 agent 采集抛异常会让整个 `activity_scan.py` 非零退出，Pulse 丢弃全部 32 个 agent 的扫描结果。改为逐 agent 隔离，失败只写 stderr
+- **Codex hook 装错表**：`notify` 曾被追加到文件末尾，落进最后一个 `[table]`（如 `[mcp_servers.x]`），Codex 永远读不到。改为定位到 root table
+- **Claude settings.json 覆盖**：解析失败时曾把用户全部设置替换成只剩 hooks。改为拒绝写入并保留 `.pulse-backup`
+- **调试日志无限增长**：`debug.log` 每次探测写 ~5 行且永不轮转（约 20 MB/天）。改为 2 MB 轮转保留一代
+- **等待时长未本地化**：中文界面下显示 `2m` / `30s`。改为跟随语言
+- **写死开发机路径**：`/Users/rustjia/*` 从 aider 扫描根移除，改用 `PULSE_AIDER_ROOTS`
+- **watcher fd 竞态**：`DispatchSource` 的 fd 改为在 cancel handler 内关闭
+- **覆盖门禁**：新增 `AgentID` 未登记到 `coverage_check.py` 时报错，不再静默缩小覆盖面
+
 ## 0.21.0 — Session-first IA
 
 ### Experience

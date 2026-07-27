@@ -158,6 +158,33 @@ enum L10n {
         case (.processDetected, .zh): return "检测到进程"
         case (.processWord, .en): return "process"
         case (.processWord, .zh): return "进程"
+        case (.about, .en): return "About"
+        case (.about, .zh): return "关于"
+        case (.tagline, .en): return "Status lamp for coding agents"
+        case (.tagline, .zh): return "编码 Agent 状态灯"
+        case (.build, .en): return "Build"
+        case (.build, .zh): return "构建"
+        case (.devBuild, .en): return "dev build"
+        case (.devBuild, .zh): return "开发构建"
+        case (.copyDiagnostics, .en): return "Copy diagnostics"
+        case (.copyDiagnostics, .zh): return "复制诊断信息"
+        case (.copied, .en): return "Copied"
+        case (.copied, .zh): return "已复制"
+        case (.versionStale, .en): return "stale bundle"
+        case (.versionStale, .zh): return "版本不一致"
+        case (.versionMismatchHint, .en):
+            return "Binary reports %@ but the bundle says %@ — repackage with PulseBar/Scripts/package.sh."
+        case (.versionMismatchHint, .zh):
+            return "程序版本为 %@，但 app 包标记为 %@ — 请用 PulseBar/Scripts/package.sh 重新打包。"
+        // Relative wait durations — English units leaked into the zh tray before 0.21.1.
+        case (.durNow, .en): return "now"
+        case (.durNow, .zh): return "刚刚"
+        case (.durSec, .en): return "%ds"
+        case (.durSec, .zh): return "%d 秒"
+        case (.durMin, .en): return "%dm"
+        case (.durMin, .zh): return "%d 分"
+        case (.durHour, .en): return "%dh"
+        case (.durHour, .zh): return "%d 小时"
         }
     }
 
@@ -176,5 +203,8 @@ enum L10n {
         case kindPermission, kindInput, kindWaiting
         case activityPrefix, signalHooks, signalPending
         case processDetected, processWord
+        case about, tagline, build, devBuild, copyDiagnostics, copied
+        case versionStale, versionMismatchHint
+        case durNow, durSec, durMin, durHour
     }
 }

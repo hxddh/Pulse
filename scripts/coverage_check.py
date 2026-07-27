@@ -51,19 +51,48 @@ EXPECTED = {
 }
 
 
+def swift_agent_ids() -> set[str]:
+    """Raw values of `AgentID` — the surface list the gate must keep up with."""
+    text = MODELS.read_text(encoding="utf-8")
+    block = re.search(r"enum AgentID[^{]*\{(.*?)\n\n", text, re.S)
+    if not block:
+        return set()
+    ids: set[str] = set()
+    for line in block.group(1).splitlines():
+        line = line.strip()
+        if not line.startswith("case "):
+            continue
+        for part in line[len("case "):].split(","):
+            part = part.strip()
+            if not part:
+                continue
+            m = re.match(r'\w+\s*=\s*"([a-z0-9_]+)"', part)
+            ids.add(m.group(1) if m else part.rstrip("_"))
+    return ids
+
+
 def main() -> int:
     text = SCAN.read_text(encoding="utf-8")
-    wired = set(re.findall(r'emit(?:_row)?\(\s*"([a-z0-9_]+)"', text))
-    # Explicit loop wiring: (("grok", grok_activity), ("pi", pi_activity))
-    wired |= set(re.findall(r'\(\s*"(grok|pi)"\s*,\s*\w+_activity', text))
+    wired = set(re.findall(r'emit(?:_row|_all)?\(\s*"([a-z0-9_]+)"', text))
+    # Table wiring: ("codex", codex_activities), ("grok", grok_activity)
+    wired |= set(re.findall(r'\(\s*"([a-z0-9_]+)"\s*,\s*\w+_activit(?:y|ies)\s*\)', text))
     missing = sorted(EXPECTED - wired)
     print(f"emitters wired: {len(wired & EXPECTED)}/{len(EXPECTED)}")
     if missing:
         print("MISSING harvest wiring:", ", ".join(missing))
         return 1
+
+    # A new AgentID must be added to EXPECTED too, or the gate silently shrinks.
+    # cursor_agent merges into cursor at scan time, so it never emits its own id.
+    known = swift_agent_ids() - {"cursor_agent"}
+    ungated = sorted(known - EXPECTED)
+    if ungated:
+        print("AgentID missing from this gate's EXPECTED set:", ", ".join(ungated))
+        return 1
+
     probe = (ROOT / "PulseBar/Sources/PulseBar/ProcessProbe.swift").read_text(encoding="utf-8")
     probe_ids = set(re.findall(r"id:\s*\.(\w+)", probe))
-    print(f"probe rules: {len(probe_ids)}")
+    print(f"probe rules: {len(probe_ids)} · AgentID cases: {len(known) + 1}")
     print("OK — all expected harvest emitters present")
     return 0
 

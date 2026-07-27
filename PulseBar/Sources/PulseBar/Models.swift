@@ -1,8 +1,68 @@
 import Foundation
 
+/// Single source of truth for the product version.
+///
+/// `semver` is the truth; `scripts/version_check.py` keeps `app.zon` and
+/// `src/version.zig` from drifting away from it. Build metadata (commit, date)
+/// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
+/// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.21.0"
-    static let about = "Pulse \(semver)"
+    static let semver = "0.21.1"
+
+    enum Channel {
+        /// Packaged Pulse.app whose bundle version matches this binary.
+        case release
+        /// `swift run` / unpackaged — no build metadata.
+        case dev
+        /// Packaged, but Info.plist disagrees with the compiled semver.
+        case mismatch(bundle: String)
+    }
+
+    private static func plist(_ key: String) -> String? {
+        guard let raw = Bundle.main.infoDictionary?[key] as? String else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// `CFBundleShortVersionString` of the running bundle, when packaged.
+    static var bundleVersion: String? { plist("CFBundleShortVersionString") }
+
+    /// Short git sha stamped at package time (`dev` when unpackaged).
+    static var commit: String { plist("PulseGitCommit") ?? "dev" }
+
+    /// ISO date stamped at package time (empty when unpackaged).
+    static var buildDate: String { plist("PulseBuildDate") ?? "" }
+
+    static var channel: Channel {
+        guard let bundle = bundleVersion else { return .dev }
+        return bundle == semver ? .release : .mismatch(bundle: bundle)
+    }
+
+    /// Compact badge for tray footer / logs: `x.y.z`, `x.y.z-dev`, `x.y.z≠<bundle>`.
+    static var short: String {
+        switch channel {
+        case .release: return semver
+        case .dev: return "\(semver)-dev"
+        case .mismatch(let bundle): return "\(semver)≠\(bundle)"
+        }
+    }
+
+    /// `Pulse x.y.z` — About heading.
+    static var about: String { "Pulse \(short)" }
+
+    /// Second About line: `<sha> · <date>`. Empty when there is nothing honest to show.
+    static var buildLine: String {
+        var bits: [String] = []
+        if commit != "dev" { bits.append(commit) }
+        if !buildDate.isEmpty { bits.append(buildDate) }
+        return bits.joined(separator: " · ")
+    }
+
+    /// One line that fully identifies this build — logs and bug reports.
+    static var fingerprint: String {
+        let build = buildLine
+        return build.isEmpty ? "Pulse \(short)" : "Pulse \(short) (\(build))"
+    }
 }
 
 enum AgentID: String, CaseIterable, Identifiable, Hashable {
@@ -191,22 +251,8 @@ struct AgentRow: Identifiable, Hashable {
         return String(sid.suffix(8))
     }
 
-    /// Waiting reason line: "↳ Permission · 2m · hooks: please approve"
-    var waitLine: String? {
-        guard waiting else { return nil }
-        var head: [String] = []
-        if !waitKind.isEmpty { head.append(waitKind) }
-        let dur = Self.waitDurationLabel(sinceMs: waitSinceMs)
-        if !dur.isEmpty { head.append(dur) }
-        if let sig = waitSignal { head.append(sig.rawValue) }
-        let headText = head.joined(separator: " · ")
-        if !waitMessage.isEmpty {
-            if headText.isEmpty { return "↳ \(waitMessage)" }
-            return "↳ \(headText): \(waitMessage)"
-        }
-        if headText.isEmpty { return "↳ Needs you" }
-        return "↳ \(headText)"
-    }
+    // Waiting reason lines are built in `StatusStore.localizedWaitDetail` so
+    // durations and kinds follow the resolved language.
 
     var taskLine: String? {
         let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -246,11 +292,6 @@ struct AgentRow: Identifiable, Hashable {
 
     /// Has a first-class session title (sorts above process-only peers).
     var hasSessionTitle: Bool { usefulTask != nil }
-
-    /// "What it was doing" — kept for callers; prefer `sessionDetail` in tray.
-    var activitySnippet: String? {
-        sessionDetail
-    }
 
     var focusTier: FocusTier? {
         TerminalFocus.focusTier(row: self)
@@ -322,13 +363,11 @@ struct AgentRow: Identifiable, Hashable {
         return String(format: "%.1fM", Double(n) / 1_000_000.0)
     }
 
-    static func waitDurationLabel(sinceMs: Int64) -> String {
-        guard sinceMs > 0 else { return "" }
-        let ago = Date().timeIntervalSince1970 - Double(sinceMs) / 1000.0
-        if ago < 5 { return "now" }
-        if ago < 60 { return "\(Int(ago))s" }
-        if ago < 3600 { return "\(Int(ago / 60))m" }
-        return "\(Int(ago / 3600))h"
+    /// Seconds a Waiting row has been outstanding (0 when unknown).
+    /// Formatting lives in `StatusStore.waitDurationLabel` so units localize.
+    var waitAgeSeconds: Double {
+        guard waitSinceMs > 0 else { return 0 }
+        return max(0, Date().timeIntervalSince1970 - Double(waitSinceMs) / 1000.0)
     }
 }
 

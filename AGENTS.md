@@ -10,8 +10,12 @@ macOS menu-bar status lamp for coding agents (`idle` / `running` / `needs you`).
 | [`CHANGELOG.md`](CHANGELOG.md) | What shipped per version |
 | [`README.md`](README.md) | Build & run |
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | Optional waiting-signal bridge |
+| [`docs/review-0.21.md`](docs/review-0.21.md) | Open findings + product gaps (read before planning work) |
 
-**Version truth:** `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`
+**Version truth:** `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`.
+`app.zon` / `src/version.zig` / CHANGELOG / README follow it — run
+`python3 scripts/version_check.py --fix` after any bump. Build fingerprint
+(git sha + date) is stamped into `Info.plist` by `package.sh`.
 
 ## Architecture (keep)
 

@@ -139,8 +139,35 @@ struct TrayPanel: View {
 
             Divider().opacity(0.4)
             actions
+            versionFooter
         }
         .frame(width: TrayChrome.width)
+    }
+
+    /// Tertiary build badge — answers "which Pulse am I running?" without
+    /// opening Settings. Muted so it never competes with the status narrative.
+    private var versionFooter: some View {
+        Button {
+            store.copyDiagnostics()
+        } label: {
+            HStack(spacing: 5) {
+                Text(PulseVersion.about)
+                if store.isVersionMismatch {
+                    Text(store.tr(.versionStale))
+                        .foregroundStyle(GlanceKind.error.lampColor)
+                }
+                Spacer(minLength: 0)
+                Text(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics))
+            }
+            .font(.system(size: 10))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, TrayChrome.padX)
+            .padding(.bottom, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(PulseVersion.fingerprint)
+        .accessibilityLabel(PulseVersion.fingerprint)
     }
 
     private var header: some View {
@@ -621,16 +648,31 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
+            Section(store.tr(.about)) {
                 HStack(spacing: 10) {
                     PulseMarkView(size: 22, tone: .secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(PulseVersion.about)
-                            .foregroundStyle(.secondary)
-                        Text("Status lamp for coding agents")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        Text(store.tr(.tagline))
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
+                    Spacer(minLength: 4)
+                }
+                LabeledContent(store.tr(.build)) {
+                    Text(buildText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if store.isVersionMismatch, let bundle = PulseVersion.bundleVersion {
+                    Text(String(format: store.tr(.versionMismatchHint), PulseVersion.semver, bundle))
+                        .font(.caption2)
+                        .foregroundStyle(GlanceKind.error.lampColor)
+                }
+                Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
+                    store.copyDiagnostics()
                 }
             }
         }
@@ -639,6 +681,12 @@ struct SettingsView: View {
         .onAppear {
             store.hooksStatus = HooksSupport.probeStatus()
         }
+    }
+
+    /// `a1b2c3d · 2026-07-27`, or an honest `dev build` when unpackaged.
+    private var buildText: String {
+        let line = PulseVersion.buildLine
+        return line.isEmpty ? store.tr(.devBuild) : line
     }
 
     private static func statusLabel(row: AgentRow, store: StatusStore) -> String {

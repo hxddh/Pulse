@@ -41,10 +41,22 @@ def install_claude() -> str:
     settings.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if settings.exists():
+        raw = settings.read_text(encoding="utf-8")
         try:
-            data = json.loads(settings.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            data = {}
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            # Never silently replace a config we could not read — that used to
+            # wipe every unrelated Claude Code setting the user had.
+            raise SystemExit(
+                f"refusing to rewrite {settings}: not valid JSON ({exc}). "
+                "Fix or move the file, then install hooks again."
+            )
+        if not isinstance(data, dict):
+            raise SystemExit(f"refusing to rewrite {settings}: top level is not a JSON object.")
+        # Keep one restore point next to the original before we touch it.
+        backup = settings.with_suffix(".json.pulse-backup")
+        if not backup.exists():
+            backup.write_text(raw, encoding="utf-8")
     hooks = data.setdefault("hooks", {})
     notify_cmd = hook_cmd("claude")
     stop_cmd = hook_cmd("claude", "stop")
@@ -74,6 +86,17 @@ def install_claude() -> str:
     return str(settings)
 
 
+def root_table_end(text: str) -> int:
+    """Offset where Codex's root table ends (start of the first `[section]`).
+
+    `notify` is a root-level key. Appending it at EOF put it inside whatever
+    table happened to be last (`[mcp_servers.x]`, a profile, …), where Codex
+    never reads it — the hook looked installed but never fired.
+    """
+    m = re.search(r"(?m)^\s*\[", text)
+    return len(text) if m is None else m.start()
+
+
 def install_codex() -> str:
     cfg = Path.home() / ".codex" / "config.toml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -81,18 +104,28 @@ def install_codex() -> str:
     py = sys.executable or "python3"
     hook = pulse_dir() / "pulse_hook.py"
     line = f'notify = ["{py}", "{hook}", "codex"]\n'
-    if "pulse_hook.py" in text and "notify" in text:
+
+    end = root_table_end(text)
+    root, rest = text[:end], text[end:]
+
+    if re.search(r"(?m)^\s*notify\s*=.*pulse_hook\.py", root):
         return str(cfg) + " (already present)"
-    # Replace existing notify = ... line or append
-    if re.search(r"(?m)^\s*notify\s*=", text):
-        text = re.sub(r"(?m)^\s*notify\s*=.*$", line.rstrip(), text, count=1)
-        if not text.endswith("\n"):
-            text += "\n"
+
+    if re.search(r"(?m)^\s*notify\s*=", root):
+        root = re.sub(r"(?m)^\s*notify\s*=.*$", line.rstrip(), root, count=1)
+        if not root.endswith("\n"):
+            root += "\n"
     else:
-        if text and not text.endswith("\n"):
-            text += "\n"
-        text += "\n# Pulse v2 attention hooks\n" + line
-    cfg.write_text(text, encoding="utf-8")
+        if root and not root.endswith("\n"):
+            root += "\n"
+        root += "\n# Pulse v2 attention hooks\n" + line
+
+    if rest:
+        if not root.endswith("\n"):
+            root += "\n"
+        if not root.endswith("\n\n"):
+            root += "\n"
+    cfg.write_text(root + rest, encoding="utf-8")
     return str(cfg)
 
 
