@@ -7,7 +7,7 @@ macOS **菜单栏** 编码 Agent 运行态感知。
 
 > 一眼知道 Agent **空闲 / 运行中 / 等待你**。会话标题是主语；Glance 用交通灯色。
 
-体验规格：[`EXPERIENCE.md`](EXPERIENCE.md) · 可选 attention 桥：[`docs/attention-bridge.md`](docs/attention-bridge.md)
+Agent 接手：[`AGENTS.md`](AGENTS.md) · 体验规格：[`EXPERIENCE.md`](EXPERIENCE.md) · 可选 attention 桥：[`docs/attention-bridge.md`](docs/attention-bridge.md)
 
 ## 运行（推荐）
 
