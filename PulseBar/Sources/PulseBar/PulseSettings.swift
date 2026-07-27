@@ -1,5 +1,20 @@
 import Foundation
 
+/// How the tray groups its rows.
+enum TrayGrouping: String, CaseIterable, Identifiable {
+    case status
+    case project
+
+    var id: String { rawValue }
+
+    var labelKey: L10n.Key {
+        switch self {
+        case .status: return .groupByAgent
+        case .project: return .groupByProject
+        }
+    }
+}
+
 /// User settings as a value, plus the flat `key=value` format they persist in.
 ///
 /// Split out of `StatusStore` so the parts that can silently lose a user's
@@ -20,6 +35,13 @@ struct PulseSettings: Equatable {
     var hotkey: HotkeyChoice = .commandShiftP
     /// Muted agents still appear in the tray; they just stop notifying.
     var mutedAgents: Set<AgentID> = []
+    /// How the tray groups rows. Status is the default because "who needs me"
+    /// is the question the product exists to answer; project grouping is for
+    /// people running several repos at once.
+    var trayGrouping: TrayGrouping = .status
+    /// Off by default — an unsolicited sound is a bigger interruption than the
+    /// one it is reporting.
+    var playSoundOnWaiting = false
 
     static let minutesPerDay = 24 * 60
 
@@ -60,6 +82,8 @@ struct PulseSettings: Equatable {
             case "mute":
                 s.mutedAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
             case "lang": s.language = AppLanguage(rawValue: raw) ?? .auto
+            case "grouping": s.trayGrouping = TrayGrouping(rawValue: raw) ?? .status
+            case "waitSound": s.playSoundOnWaiting = on
             default: break
             }
         }
@@ -87,6 +111,8 @@ struct PulseSettings: Equatable {
             login=\(launchAtLogin ? 1 : 0)
             updates=\(updateCheckEnabled ? 1 : 0)
             hotkey=\(hotkey.rawValue)
+            grouping=\(trayGrouping.rawValue)
+            waitSound=\(playSoundOnWaiting ? 1 : 0)
             mute=\(muted)
             """
     }
@@ -111,6 +137,7 @@ struct PulseSettings: Equatable {
         "auto=\(autoProbe) notifyIdle=\(notifyOnIdle) notifyWait=\(notifyOnWaiting) "
             + "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) "
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
-            + "hotkey=\(hotkey.rawValue) muted=\(mutedAgents.count) updates=\(updateCheckEnabled)"
+            + "hotkey=\(hotkey.rawValue) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
+            + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting)"
     }
 }

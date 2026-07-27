@@ -18,8 +18,7 @@ final class AccessibilityLocalizationTests: XCTestCase {
             nowMs: 1_700_000_000_000,
             terminal: .init(warpRunning: false, ttyHostRunning: false, anyTerminalInstalled: false),
             pathExists: { _ in false },
-            lang: .zh,
-            relativeLabel: "刚刚"
+            lang: .zh
         )
         let result = SnapshotBuilder.build(.init(), previous: .init(), context: ctx)
         XCTAssertEqual(result.snapshot.accessibilityLabel, L10n.t(.a11yIdle, .zh))

@@ -30,12 +30,15 @@ final class SnapshotBuilderTests: XCTestCase {
             terminal: terminal ?? bareTerminal,
             pathExists: exists,
             lang: lang,
-            relativeLabel: "just now",
             maxSessionsPerAgent: maxSessions,
             maxVisibleRows: maxRows,
             dismissedPendingKeys: dismissed,
             showAllAgents: showAll
         )
+    }
+
+    private func hit(_ id: AgentID, count: Int = 1, pid: Int = 100, tty: String = "") -> ProcessProbe.Hit {
+        ProcessProbe.Hit(id: id, count: count, viaWarp: false, pid: pid, tty: tty)
     }
 
     private func harvest(
@@ -62,9 +65,10 @@ final class SnapshotBuilderTests: XCTestCase {
         kind: String = "Permission",
         message: String = "",
         session: String = "",
-        cwd: String = ""
+        cwd: String = "",
+        ageMs: Int64 = 500
     ) -> AttentionReader.Entry {
-        AttentionReader.Entry(id: id, kind: kind, message: message, tsMs: now - 500, session: session, cwd: cwd)
+        AttentionReader.Entry(id: id, kind: kind, message: message, tsMs: now - ageMs, session: session, cwd: cwd)
     }
 
     private func build(
@@ -394,4 +398,97 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertFalse(r.rows[0].canOpenFolder)
         XCTAssertNil(r.rows[0].focusTier)
     }
+
+    // MARK: 0.24 — legibility
+
+    /// Three agents blocked at once: the list has to answer "who first".
+    func testWaitingRowsAreOrderedOldestFirst() {
+        let r = build(
+            procs: [hit(.claude), hit(.codex), hit(.cursor)],
+            attention: [
+                attention(.claude, ageMs: 60_000),
+                attention(.codex, ageMs: 900_000),
+                attention(.cursor, ageMs: 5_000),
+            ]
+        )
+        let waiting = r.rows.filter(\.waiting)
+        XCTAssertEqual(waiting.count, 3)
+        XCTAssertEqual(waiting.map(\.agent), [.codex, .claude, .cursor], "oldest wait must lead")
+    }
+
+    /// An unknown wait start must not jump the queue by sorting as "epoch".
+    func testUnknownWaitAgeSortsLastAmongWaiting() {
+        var stale = attention(.cursor, ageMs: 0)
+        stale.tsMs = 0
+        let r = build(
+            procs: [hit(.claude), hit(.cursor)],
+            attention: [stale, attention(.claude, ageMs: 30_000)]
+        )
+        let waiting = r.rows.filter(\.waiting)
+        XCTAssertEqual(waiting.first?.agent, .claude)
+    }
+
+    func testSectionTotalsCountTheWholeListNotTheWindow() {
+        let r = build(
+            procs: [hit(.claude), hit(.codex)],
+            harvest: [harvest(.gemini, task: "build"), harvest(.aider, task: "test")],
+            attention: [attention(.claude)],
+            context: context(maxRows: 1)
+        )
+        XCTAssertEqual(r.snapshot.rows.count, 1, "window is one row")
+        XCTAssertEqual(r.snapshot.sectionTotals[.needsYou], 1)
+        XCTAssertGreaterThan(r.snapshot.sectionTotals[.running] ?? 0, 0)
+        XCTAssertEqual(
+            (r.snapshot.sectionTotals.values.reduce(0, +)),
+            r.snapshot.totalCount,
+            "totals must partition the full list"
+        )
+    }
+
+    func testLongestWaitReachesTheSnapshot() {
+        let r = build(
+            procs: [hit(.claude), hit(.codex)],
+            attention: [attention(.claude, ageMs: 30_000), attention(.codex, ageMs: 600_000)]
+        )
+        XCTAssertEqual(r.snapshot.longestWaitSeconds, 600, accuracy: 2)
+    }
+
+    func testNoWaitsMeansNoLongestWait() {
+        let r = build(procs: [hit(.claude)], harvest: [harvest(.claude, task: "x")])
+        XCTAssertEqual(r.snapshot.longestWaitSeconds, 0)
+    }
+
+    /// The menu bar has to carry count and age — that is the whole point of
+    /// glancing at it instead of opening the panel.
+    func testMenuBarTitleCarriesCountAndAge() {
+        let r = build(
+            procs: [hit(.claude), hit(.codex)],
+            attention: [attention(.claude, ageMs: 120_000), attention(.codex, ageMs: 600_000)]
+        )
+        XCTAssertTrue(r.snapshot.title.contains("2"), "count missing from \(r.snapshot.title)")
+        XCTAssertTrue(r.snapshot.title.contains("10m"), "age missing from \(r.snapshot.title)")
+    }
+
+    /// The header's second line used to be a constant ("just now").
+    func testHeaderDetailNamesWhoIsInvolved() {
+        let r = build(procs: [hit(.claude)], attention: [attention(.claude)])
+        XCTAssertEqual(r.snapshot.headerDetail, AgentID.claude.displayName)
+        XCTAssertFalse(r.snapshot.headerDetail.isEmpty)
+    }
+
+    func testSectionsPartitionEveryRow() {
+        let r = build(
+            procs: [hit(.claude), hit(.codex)],
+            harvest: [harvest(.gemini, task: "compile", ageMs: 1000)],
+            attention: [attention(.claude)]
+        )
+        for row in r.rows {
+            switch row.section {
+            case .needsYou: XCTAssertTrue(row.waiting)
+            case .running: XCTAssertTrue(row.liveProcess || row.subRunning > 0)
+            case .recent: XCTAssertFalse(row.waiting)
+            }
+        }
+    }
+
 }

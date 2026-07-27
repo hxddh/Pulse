@@ -225,4 +225,35 @@ final class StoreSettingsBridgeTests: XCTestCase {
         let inWindow = Calendar.current.date(from: c)!
         XCTAssertTrue(store.isInQuietHours(now: inWindow))
     }
+
+    // MARK: 0.24 additions
+
+    func testGroupingAndSoundRoundTrip() {
+        var s = PulseSettings()
+        s.trayGrouping = .project
+        s.playSoundOnWaiting = true
+        let back = PulseSettings.parse(s.serialized())
+        XCTAssertEqual(back.trayGrouping, .project)
+        XCTAssertTrue(back.playSoundOnWaiting)
+    }
+
+    /// A settings file written before 0.24 must not change how the tray groups
+    /// or start making noise.
+    func testPre024FileKeepsQuietDefaults() {
+        let old = """
+            auto=1
+            notify=1
+            lang=zh
+            hotkey=cmd_shift_p
+            """
+        let s = PulseSettings.parse(old)
+        XCTAssertEqual(s.trayGrouping, .status)
+        XCTAssertFalse(s.playSoundOnWaiting)
+    }
+
+    func testUnknownGroupingFallsBackToStatus() {
+        let s = PulseSettings.parse("grouping=byVibes")
+        XCTAssertEqual(s.trayGrouping, .status)
+    }
+
 }

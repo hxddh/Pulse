@@ -351,6 +351,36 @@ struct AgentRow: Identifiable, Hashable {
         guard waitSinceMs > 0 else { return 0 }
         return max(0, Date().timeIntervalSince1970 - Double(waitSinceMs) / 1000.0)
     }
+
+    /// A wait old enough to deserve more than the ordinary Waiting treatment.
+    /// This is the *only* place "longer" becomes "louder" — every other visual
+    /// encoding stays constant, so the escalation actually reads as one.
+    static let urgentWaitSeconds: Double = 600
+
+    var isUrgentWait: Bool { waiting && waitAgeSeconds >= Self.urgentWaitSeconds }
+
+    /// Which tray section this row belongs to.
+    var section: TraySection {
+        if waiting { return .needsYou }
+        if liveProcess || subRunning > 0 { return .running }
+        return .recent
+    }
+}
+
+/// Tray rows are grouped under a heading rather than relying on sort order
+/// alone — five rows in one undifferentiated stack read as five equals.
+enum TraySection: Int, CaseIterable, Hashable {
+    case needsYou = 0
+    case running = 1
+    case recent = 2
+
+    var titleKey: L10n.Key {
+        switch self {
+        case .needsYou: return .sectionNeedsYou
+        case .running: return .sectionRunning
+        case .recent: return .sectionRecent
+        }
+    }
 }
 
 struct PulseSnapshot: Equatable {
@@ -365,6 +395,13 @@ struct PulseSnapshot: Equatable {
     var headerDetail: String = ""
     var header: String = "No coding agents"
     var rows: [AgentRow] = []
+    /// Section totals over the *whole* list, so a heading can say "3 running"
+    /// even when the window is showing two of them.
+    var sectionTotals: [TraySection: Int] = [:]
+    /// Longest outstanding wait, in seconds — the number that decides who to
+    /// deal with first, so it reaches the menu bar rather than staying buried
+    /// in a row's third line.
+    var longestWaitSeconds: Double = 0
     var hiddenCount: Int = 0
     /// Sessions suppressed by the per-agent cap (never silently dropped).
     var cappedSessions: Int = 0
