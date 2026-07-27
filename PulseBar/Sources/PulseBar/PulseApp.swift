@@ -333,6 +333,18 @@ struct TrayPanel: View {
         var count: Int
         var accent: Bool
         var rows: [AgentRow]
+        /// The heading is a location, so rows underneath must not repeat it.
+        var statesPath = false
+    }
+
+    /// A heading earns its line only when it separates things.
+    fileprivate func showHeading(_ group: RowGroup, of groups: [RowGroup]) -> Bool {
+        guard groups.count > 1 else { return false }
+        // Grouping by project produced "~/Documents/Cursor 1" over exactly one
+        // row whose own second line said "~/Documents/Cursor". Two lines, one
+        // fact, and a whole row of height spent on it.
+        if group.statesPath && group.rows.count == 1 { return false }
+        return true
     }
 
     /// Rows grouped under a heading.
@@ -367,7 +379,9 @@ struct TrayPanel: View {
                 // headings that restated the row beneath them ("Amp 1" over a
                 // row whose only content was Amp).
                 let path = row.displayPath
-                let key = path.isEmpty ? store.tr(.noActivityYet) : path
+                // Home is not a project; everything without a real location
+                // shares one bucket instead of inventing names for it.
+                let key = path.isEmpty ? store.tr(.noProject) : path
                 if byProject[key] == nil { order.append(key) }
                 byProject[key, default: []].append(row)
             }
@@ -385,7 +399,8 @@ struct TrayPanel: View {
                     title: entry.element,
                     count: group.count,
                     accent: group.contains(where: \.waiting),
-                    rows: group
+                    rows: group,
+                    statesPath: true
                 )
             }
         }
@@ -408,14 +423,20 @@ struct TrayPanel: View {
                             // separates them, and a line every 56pt turns a
                             // short list into a table.
                             ForEach(group.rows) { row in
-                                AgentRowButton(row: row, store: store)
+                                AgentRowButton(
+                                    row: row,
+                                    store: store,
+                                    pathInHeading: group.statesPath && showHeading(group, of: groups)
+                                )
                             }
                         } header: {
                             // A lone heading restates the panel header directly
                             // above it — "2 running / Cursor · Amp" followed by
                             // "Running 2". Headings earn their line only when
-                            // there is more than one group to tell apart.
-                            if groups.count > 1 {
+                            // there is more than one group to tell apart, and a
+                            // heading over a single row is just that row's own
+                            // path on a line of its own.
+                            if showHeading(group, of: groups) {
                                 SectionHeader(
                                     title: group.title,
                                     count: group.count,
@@ -528,6 +549,11 @@ struct TrayPanel: View {
 @MainActor
 private struct AgentRowButton: View {
     let row: AgentRow
+    /// True when a project heading directly above already states this path, so
+    /// the row must not repeat it. 0.25 wrote the rule "a fact appears once,
+    /// row > heading > header" and then applied it only to the panel header —
+    /// grouped by project, every path was printed twice.
+    var pathInHeading = false
     /// Must be observed, not merely held.
     ///
     /// This was `let store: StatusStore`. The row's body reads `store.tr(...)`
@@ -681,10 +707,10 @@ private struct AgentRowButton: View {
             return row.agent.displayName
         }
         if let t = row.sessionDetail {
-            let label = row.isRecentOnly
-                ? "\(store.tr(.activityPrefix)) · \(t)"
-                : t
-            return Self.truncate(label, 72)
+            // The prefix used to be added precisely when the row was *not*
+            // live, so a row read "Doing · New Session" next to a "Recent"
+            // badge — two contradictory claims about the same session.
+            return Self.truncate(t, 72)
         }
         let short = AgentRow.shortProject(row.project)
         if !short.isEmpty { return short }
@@ -698,7 +724,7 @@ private struct AgentRowButton: View {
     /// facts a row could never state were *where* and *how long*; both were
     /// collected all along.
     private var contextLine: String {
-        store.rowContextLine(row)
+        store.rowContextLine(row, omitPath: pathInHeading)
     }
 
     /// Everything the row does not show inline, revealed on demand.
@@ -738,6 +764,10 @@ private struct AgentRowButton: View {
             )
         } else if row.isProcessOnly {
             StatusChip(kind: .process, label: store.tr(.processWord))
+        } else if row.isStalled {
+            // Live for twenty minutes with nothing happening. Never surfaced
+            // before, and it looked exactly like a healthy session.
+            StatusChip(kind: .process, label: store.tr(.stalled))
         } else if row.subRunning > 0 {
             StatusChip(kind: .running, label: "sub \(row.subRunning)↑")
         } else if row.isRecentOnly {
@@ -756,7 +786,13 @@ private struct AgentRowButton: View {
     }
 
     private static func truncate(_ s: String, _ n: Int) -> String {
-        s.count <= n ? s : String(s.prefix(n - 1)) + "…"
+        guard s.count > n else { return s }
+        let cut = String(s.prefix(n - 1))
+        // Cutting mid-word ("Review repository for bugs a…") reads as damage.
+        if let space = cut.lastIndex(of: " "), cut.distance(from: cut.startIndex, to: space) > n / 2 {
+            return String(cut[..<space]) + "…"
+        }
+        return cut + "…"
     }
 }
 

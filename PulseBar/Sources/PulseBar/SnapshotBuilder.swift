@@ -412,6 +412,11 @@ enum SnapshotBuilder {
                 snap.tooltip = "\(liveRunning) \(t(.runningN, lang)): \(liveNames)"
                 snap.headerTitle = "\(liveRunning) \(t(.runningN, lang))"
             }
+            // "2 running" above four rows left the other two unaccounted for.
+            // The header counts what the list contains.
+            if recentOnly > 0 {
+                snap.headerTitle += " · \(recentOnly) \(t(.recentN, lang))"
+            }
             snap.headerDetail = aggregate()
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if recentOnly > 0 {

@@ -129,9 +129,10 @@ final class RowContextTests: XCTestCase {
         return r
     }
 
-    func testHomeIsWrittenAsTilde() {
+    /// Home itself is not a location worth naming; anything under it is.
+    func testPathsUnderHomeUseTilde() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        XCTAssertEqual(row(cwd: home).displayPath, "~")
+        XCTAssertEqual(row(cwd: home).displayPath, "", "home is not a project")
         XCTAssertEqual(row(cwd: home + "/code").displayPath, "~/code")
     }
 
@@ -161,5 +162,70 @@ final class RowContextTests: XCTestCase {
     func testActivityAgeCountsFromTheHarvestStamp() {
         let tenMinutesAgo = Int64((Date().timeIntervalSince1970 - 600) * 1000)
         XCTAssertEqual(row(harvestMs: tenMinutesAgo).lastActivitySeconds, 600, accuracy: 5)
+    }
+}
+
+/// Each of these is a defect visible in a 0.25.0 screenshot.
+final class ScreenshotRegressionTests: XCTestCase {
+    private let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+    private func row(cwd: String = "", project: String = "", harvestMs: Int64 = 0, live: Bool = false) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.cwd = cwd
+        r.project = project
+        r.harvestMs = harvestMs
+        r.liveProcess = live
+        r.processCount = live ? 1 : 0
+        return r
+    }
+
+    /// The panel grouped two sessions under "~" and a third under
+    /// "users-rustjia" — the same directory, twice, and a header claiming
+    /// three projects where there were two.
+    func testHomeIsNotAProject() {
+        XCTAssertEqual(row(cwd: home).displayPath, "")
+        XCTAssertEqual(row(project: "~").displayPath, "")
+    }
+
+    func testEncodedHomeCollapsesToTheSamePlaceAsHome() {
+        let user = (home as NSString).lastPathComponent
+        XCTAssertTrue(AgentRow.isHomeLike("users-\(user)", home: home))
+        XCTAssertTrue(AgentRow.isHomeLike(user, home: home))
+        XCTAssertEqual(row(project: "users-\(user)").displayPath, "")
+    }
+
+    func testARealProjectIsStillAProject() {
+        XCTAssertEqual(row(cwd: home + "/Documents/Cursor").displayPath, "~/Documents/Cursor")
+        XCTAssertFalse(AgentRow.isHomeLike("/tmp/alpha", home: home))
+    }
+
+    /// "New Session" was shown as a row title.
+    func testPlaceholderTitlesAreNotTitles() {
+        for junk in ["New Session", "Untitled", "New Chat", "Agent session"] {
+            var r = row()
+            r.task = junk
+            XCTAssertNil(r.usefulTask, "\(junk) is a placeholder, not a task")
+        }
+    }
+
+    /// Live for twenty minutes with nothing happening looked like health.
+    func testLongSilenceWhileLiveIsStalled() {
+        let old = Int64((Date().timeIntervalSince1970 - 25 * 60) * 1000)
+        XCTAssertTrue(row(harvestMs: old, live: true).isStalled)
+        XCTAssertTrue(row(harvestMs: old, live: true).needsStatusChip)
+    }
+
+    func testRecentActivityIsNotStalled() {
+        let fresh = Int64((Date().timeIntervalSince1970 - 60) * 1000)
+        XCTAssertFalse(row(harvestMs: fresh, live: true).isStalled)
+    }
+
+    func testAStalledRowMustBeLive() {
+        let old = Int64((Date().timeIntervalSince1970 - 25 * 60) * 1000)
+        XCTAssertFalse(row(harvestMs: old, live: false).isStalled, "a finished session is not stalled")
+    }
+
+    func testUnknownActivityIsNotStalled() {
+        XCTAssertFalse(row(harvestMs: 0, live: true).isStalled, "no timestamp is not evidence of silence")
     }
 }
