@@ -1,0 +1,70 @@
+<!-- Pulse Preferences — system Settings density; no hero / no nested card noise. -->
+<column background="background">
+  <row height="{header_height}" padding="10" gap="8" cross="center" background="surface" window-drag="true" label="Pulse header">
+    <spacer width="{chrome_leading}" />
+    <text grow="1">{prefsTitle}</text>
+    <button size="sm" variant="ghost" icon="refresh-cw" on-press="refresh" label="{refreshA11y}" />
+  </row>
+  <separator />
+
+  <scroll grow="1">
+    <column gap="16" padding="14">
+      <text foreground="text_muted">{contextLine}</text>
+      <if test="{hasProbeError}">
+        <text foreground="destructive">{probeError}</text>
+      </if>
+
+      <column gap="6" label="General">
+        <text foreground="text_muted">{sectionSettings}</text>
+        <column gap="0">
+          <row gap="10" padding="10" cross="center" label="Live updates">
+            <text grow="1">{liveUpdatesLabel}</text>
+            <switch checked="{auto_probe}" on-toggle="toggle_auto_probe" label="{liveUpdatesLabel}" />
+          </row>
+          <separator />
+          <row gap="10" padding="10" cross="center" label="Notifications">
+            <text grow="1">{notificationsLabel}</text>
+            <switch checked="{notify_on_idle}" on-toggle="toggle_notify_idle" label="{notificationsLabel}" />
+          </row>
+          <separator />
+          <row gap="10" padding="10" cross="center" label="Launch at login">
+            <text grow="1">{loginAtStartLabel}</text>
+            <switch checked="{login_at_start}" on-toggle="toggle_login_at_start" label="{loginAtStartLabel}" />
+          </row>
+          <separator />
+          <row gap="10" padding="10" cross="center" label="Language">
+            <text grow="1">{languageSectionLabel}</text>
+            <toggle-group gap="2" label="{languageSectionLabel}">
+              <toggle-button size="sm" selected="{langIsAuto}" on-toggle="set_lang_auto">{langAutoLabel}</toggle-button>
+              <toggle-button size="sm" selected="{langIsEn}" on-toggle="set_lang_en">EN</toggle-button>
+              <toggle-button size="sm" selected="{langIsZh}" on-toggle="set_lang_zh">中文</toggle-button>
+            </toggle-group>
+          </row>
+        </column>
+      </column>
+
+      <column gap="6" label="Waiting signals">
+        <text foreground="text_muted">{sectionConnect}</text>
+        <text foreground="text_muted">{connectBody}</text>
+        <button size="sm" on-press="install_hooks">{installHooksLabel}</button>
+      </column>
+
+      <if test="{hasPreferenceRows}">
+        <column gap="4" label="Agents">
+          <text foreground="text_muted">{sectionAgents}</text>
+          <for each="preferenceRows" as="r">
+            <row gap="8" padding="6" cross="center" label="{r.name}">
+              <text grow="1">{r.name}</text>
+              <text foreground="text_muted">{r.status}</text>
+            </row>
+          </for>
+        </column>
+      </if>
+      <else>
+        <text foreground="text_muted">{emptyBody}</text>
+      </else>
+    </column>
+  </scroll>
+
+  <status-bar>{footerLine}</status-bar>
+</column>

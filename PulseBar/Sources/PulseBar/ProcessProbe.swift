@@ -1,0 +1,274 @@
+import Foundation
+
+/// Port of Zig probe rules for surface coding agents (+ Warp parent + TTY).
+enum ProcessProbe {
+    struct Hit: Hashable {
+        var id: AgentID
+        var count: Int
+        var viaWarp: Bool
+        var pid: Int = 0
+        /// Kernel tty name without `/dev/`, e.g. `ttys003`.
+        var tty: String = ""
+    }
+
+    private struct Rule {
+        var id: AgentID
+        var basenames: [String]
+        var pathNeedles: [String]
+        var denyNeedles: [String]
+    }
+
+    private static let rules: [Rule] = [
+        .init(id: .claude, basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude"], denyNeedles: ["Claude.app", "chrome-native-host"]),
+        .init(id: .codex, basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
+        .init(id: .cursor, basenames: ["Cursor", "cursor"], pathNeedles: ["Cursor.app/Contents/MacOS/Cursor"], denyNeedles: ["crashpad", "CursorUIViewService"]),
+        .init(id: .cursorAgent, basenames: ["cursor-agent", "cursor_agent"], pathNeedles: ["cursor-agent", "anysphere.cursor-agent", "cursor-agent-worker"], denyNeedles: ["crashpad"]),
+        .init(id: .grok, basenames: ["grok"], pathNeedles: ["/.grok/bin/grok", "grok-0.", "GROK_AGENT=", "/bin/grok"], denyNeedles: []),
+        .init(id: .pi, basenames: ["pi"], pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"], denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"]),
+        .init(
+            id: .amp,
+            basenames: ["amp"],
+            // Bare argv `amp` is 3 chars; non-empty pathNeedles would skip basename-only matches.
+            pathNeedles: [],
+            denyNeedles: ["AMPDevice", "AMPLibrary", "AMPDevices", "iTunesCloud", "AMPLibraryAgent"]
+        ),
+        .init(id: .aider, basenames: ["aider"], pathNeedles: ["/bin/aider", "-m aider"], denyNeedles: []),
+        .init(id: .gemini, basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: ["Gemini.app"]),
+        .init(
+            id: .copilot,
+            basenames: ["copilot"],
+            pathNeedles: ["/bin/copilot", "github/gh-copilot", "@github/copilot", "copilot-cli"],
+            denyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
+        ),
+        .init(id: .opencode, basenames: ["opencode", "open-code"], pathNeedles: ["/bin/opencode", "/opencode/", "opencode@", "@opencode"], denyNeedles: []),
+        .init(id: .goose, basenames: ["goose"], pathNeedles: ["/bin/goose", "block/goose", "goose-cli"], denyNeedles: []),
+        .init(id: .openhands, basenames: ["openhands", "opendevin"], pathNeedles: ["openhands", "OpenHands", "OpenDevin"], denyNeedles: []),
+        .init(id: .cline, basenames: ["cline"], pathNeedles: ["saoudrizwan.claude-dev", "/cline/", "cline@", "claude-dev"], denyNeedles: ["crashpad", "decline", "incline"]),
+        .init(id: .roo, basenames: ["roo", "roo-code"], pathNeedles: ["roo-cline", "roo-code", "RooCode"], denyNeedles: ["crashpad"]),
+        .init(id: .continue_, basenames: ["continue", "continue-cli"], pathNeedles: ["continue.dev", "Continue.continue", "continue-cli"], denyNeedles: ["crashpad"]),
+        .init(id: .amazonQ, basenames: ["amazon-q", "q-chat", "qchat"], pathNeedles: ["amazon-q", "Amazon Q", "/opt/homebrew/bin/q"], denyNeedles: ["qemu", "QuickTime"]),
+        .init(
+            id: .cascade,
+            basenames: ["cascade", "windsurf-cascade"],
+            pathNeedles: ["cascade-agent", "windsurf-cascade", "codeium.cascade", "Codeium.Cascade"],
+            denyNeedles: ["crashpad", "Windsurf.app/Contents/MacOS/Windsurf", "Windsurf Helper"]
+        ),
+        .init(
+            id: .windsurf,
+            basenames: ["Windsurf", "windsurf"],
+            pathNeedles: ["Windsurf.app/Contents/MacOS/Windsurf", "Exafunction/windsurf", "codeium.windsurf"],
+            denyNeedles: ["crashpad", "Windsurf Helper", "WindsurfUI", "cascade-agent", "windsurf-cascade"]
+        ),
+        .init(
+            id: .augment,
+            basenames: ["augment", "auggie"],
+            pathNeedles: ["augmentcode", "augment-code", "/bin/augment", "Augment"],
+            denyNeedles: ["crashpad"]
+        ),
+        .init(
+            id: .zedAgent,
+            basenames: ["zed-agent", "zed_agent"],
+            pathNeedles: ["zed-agent", "zed_agent", "Zed Agent", "zed-agentic"],
+            denyNeedles: ["crashpad", "Zed.app/Contents/MacOS/Zed", "Zed.app/Contents/MacOS/zed"]
+        ),
+        .init(
+            id: .trae,
+            basenames: ["trae-agent", "TraeAgent"],
+            pathNeedles: ["trae-agent", "bytedance.trae", "Trae Agent", "trae/agent"],
+            denyNeedles: ["crashpad", "Trae Helper", "Trae.app/Contents/MacOS/Trae"]
+        ),
+        .init(
+            id: .warpAgent,
+            basenames: ["warp-agent", "warp_agent", "warp-ai"],
+            pathNeedles: ["warp-agent", "warp_agent", "WarpAgent", "warp ai agent"],
+            denyNeedles: ["crashpad", "Warp.app/Contents/MacOS/stable", "Warp.app/Contents/MacOS/Warp"]
+        ),
+        .init(
+            id: .devin,
+            basenames: ["devin", "devin-cli"],
+            pathNeedles: ["/bin/devin", "cognition.devin", "devin-cli", "@cognition/devin"],
+            denyNeedles: ["crashpad"]
+        ),
+        .init(
+            id: .kiro,
+            basenames: ["kiro", "kiro-cli", "kiro-agent"],
+            pathNeedles: ["/bin/kiro", "kiro-cli", "kiro-agent", "amazon.kiro", "Kiro.app"],
+            denyNeedles: ["crashpad", "Kiro Helper"]
+        ),
+        .init(
+            id: .junie,
+            basenames: ["junie", "junie-cli"],
+            pathNeedles: ["/bin/junie", "junie-cli", "jetbrains.junie", "Junie"],
+            denyNeedles: ["crashpad"]
+        ),
+        .init(
+            id: .kilo,
+            basenames: ["kilo", "kilo-code"],
+            pathNeedles: ["kilocode", "kilo-code", "kilo.code", "Kilo Code"],
+            denyNeedles: ["crashpad", "kilobyte"]
+        ),
+        .init(
+            id: .replit,
+            basenames: ["replit", "replit-agent"],
+            pathNeedles: ["replit-agent", "replit.com/agent", "@replit/agent", "Replit Agent"],
+            denyNeedles: ["crashpad"]
+        ),
+        .init(
+            id: .droid,
+            basenames: ["droid"],
+            pathNeedles: ["/bin/droid", "factory.ai", "/.factory/", "@factory", "Factory-AI", "factory/droid"],
+            denyNeedles: ["crashpad", "android", "droidcam"]
+        ),
+        .init(
+            id: .commandCode,
+            basenames: ["cmd", "command-code"],
+            pathNeedles: [
+                "command-code",
+                "commandcode",
+                "/.commandcode/",
+                "@command-code",
+                "node_modules/command-code",
+                "/opt/homebrew/bin/cmd",
+                "/usr/local/bin/cmd",
+            ],
+            denyNeedles: ["crashpad", "cmd.exe", "cmdline-tools"]
+        ),
+        .init(
+            id: .antigravity,
+            basenames: ["Antigravity", "antigravity", "Antigravity IDE"],
+            pathNeedles: [
+                "Antigravity.app/Contents/MacOS/Antigravity",
+                "Antigravity IDE.app",
+                "/bin/antigravity",
+                "google.antigravity",
+            ],
+            denyNeedles: ["crashpad", "Antigravity Helper", "AntigravityUI"]
+        ),
+        .init(
+            id: .kimi,
+            basenames: ["kimi"],
+            pathNeedles: ["kimi-code", "/.kimi-code/", "@moonshot-ai/kimi-code", "moonshotai/kimi", "/bin/kimi"],
+            denyNeedles: ["crashpad", "Kimis", "kimisc"]
+        ),
+    ]
+
+    static func scan() -> [Hit] {
+        let output = shell("/bin/ps", ["-axo", "pid=,ppid=,tty=,args="]) ?? ""
+        if output.isEmpty {
+            DebugLog.write("probe ps output EMPTY")
+        }
+        var procs: [(pid: Int, ppid: Int, tty: String, args: String)] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            let parts = trimmed.split(maxSplits: 3, whereSeparator: { $0.isWhitespace || $0 == "\t" })
+            guard parts.count >= 4,
+                  let pid = Int(parts[0]),
+                  let ppid = Int(parts[1]) else { continue }
+            procs.append((pid, ppid, String(parts[2]), String(parts[3])))
+        }
+
+        var byPid: [Int: Int] = [:]
+        for p in procs { byPid[p.pid] = p.ppid }
+        var argsByPid: [Int: String] = [:]
+        for p in procs { argsByPid[p.pid] = p.args }
+        var ttyByPid: [Int: String] = [:]
+        for p in procs { ttyByPid[p.pid] = p.tty }
+
+        func underWarp(_ pid: Int) -> Bool {
+            var seen = Set<Int>()
+            var cur: Int? = pid
+            while let c = cur, seen.insert(c).inserted {
+                if let a = argsByPid[c], a.contains("Warp.app") { return true }
+                cur = byPid[c]
+            }
+            return false
+        }
+
+        /// Walk parents for a real tty when the process itself is `??`.
+        func resolveTTY(_ pid: Int) -> String {
+            var seen = Set<Int>()
+            var cur: Int? = pid
+            while let c = cur, seen.insert(c).inserted {
+                if let t = ttyByPid[c], isRealTTY(t) { return normalizeTTY(t) }
+                cur = byPid[c]
+            }
+            return ""
+        }
+
+        var acc: [AgentID: Hit] = [:]
+        for p in procs {
+            if p.args.contains("Warp.app") { continue }
+            guard let id = match(args: p.args), id.isSurface else { continue }
+            if id == .cursor { continue }
+            var hit = acc[id] ?? Hit(id: id, count: 0, viaWarp: false)
+            hit.count += 1
+            if underWarp(p.pid) { hit.viaWarp = true }
+            if hit.pid == 0 {
+                hit.pid = p.pid
+                hit.tty = resolveTTY(p.pid)
+            } else if hit.tty.isEmpty {
+                let t = resolveTTY(p.pid)
+                if !t.isEmpty {
+                    hit.pid = p.pid
+                    hit.tty = t
+                }
+            }
+            acc[id] = hit
+        }
+        let hits = Array(acc.values)
+        DebugLog.write("probe psLines=\(procs.count) hits=\(hits.count) ids=\(hits.map(\.id.rawValue).joined(separator: ","))")
+        return hits
+    }
+
+    private static func isRealTTY(_ raw: String) -> Bool {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        return !(t.isEmpty || t == "?" || t == "??" || t == "-")
+    }
+
+    private static func normalizeTTY(_ raw: String) -> String {
+        var t = raw.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("/dev/") { t = String(t.dropFirst(5)) }
+        return isRealTTY(t) ? t : ""
+    }
+
+    private static func match(args: String) -> AgentID? {
+        let exe = args.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? args
+        let base = (exe as NSString).lastPathComponent
+        for rule in rules {
+            if rule.denyNeedles.contains(where: { args.contains($0) }) { continue }
+            let baseHit = rule.basenames.contains { $0.caseInsensitiveCompare(base) == .orderedSame }
+            // Prefer path needles; bare basename only when pathNeedles empty or base is distinctive.
+            let pathHit = rule.pathNeedles.contains { args.contains($0) }
+            if pathHit { return rule.id }
+            if baseHit, !rule.pathNeedles.isEmpty {
+                // Basename-only match: require path-ish evidence for short names.
+                if base.count <= 3 {
+                    continue
+                }
+                return rule.id
+            }
+            if baseHit, rule.pathNeedles.isEmpty { return rule.id }
+        }
+        return nil
+    }
+
+    private static func shell(_ launchPath: String, _ arguments: [String]) -> String? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: launchPath)
+        task.arguments = arguments
+        let out = Pipe()
+        let err = Pipe()
+        task.standardOutput = out
+        task.standardError = err
+        do {
+            try task.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            _ = err.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
+        }
+    }
+}

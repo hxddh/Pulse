@@ -1,0 +1,11 @@
+.DS_Store
+.native/
+zig-out/
+.zig-cache/
+PulseBar/.build/
+**/__pycache__/
+*.pyc
+*.pyo
+.SwiftPM/
+DerivedData/
+*.xcuserstate
