@@ -251,13 +251,13 @@ struct AgentRow: Identifiable, Hashable {
     var titleLine: String {
         var parts: [String] = [agent.displayName]
         let short = Self.shortProject(project)
-        if !short.isEmpty {
+        if !short.isEmpty,
+           short.compare(agent.displayName, options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame {
             parts.append(short)
         } else if let hint = shortSessionHint {
             // No project — show short session so multi-row agents stay distinguishable.
             parts.append(hint)
         }
-        if processCount > 1 { parts.append("×\(processCount)") }
         if viaWarp { parts.append("via Warp") }
         return parts.joined(separator: " · ")
     }

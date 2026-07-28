@@ -27,7 +27,13 @@ enum ActivityHarvest {
     /// Harvest-only rows older than this are dropped unless a live process exists.
     static let freshWindowMs: Int64 = 45 * 60 * 1000
     /// Kill hung activity_scan.py so Refresh cannot stick forever.
-    static let harvestTimeoutSec: Double = 2.5
+    ///
+    /// A cold Python/SQLite start under App Nap can take just over 2.5 s even
+    /// though warm scans finish below one second. The old deadline therefore
+    /// guaranteed a process-only first snapshot and hid useful activity until
+    /// the next 15-second harvest cadence. Keep the bound tight, but allow the
+    /// first honest result to land.
+    static let harvestTimeoutSec: Double = 3.5
 
     static func mapAgent(_ raw: String) -> AgentID? {
         if let id = AgentID(rawValue: raw) { return id }
@@ -117,7 +123,11 @@ enum ActivityHarvest {
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = [script.path]
+        // `scan()` promises that a timeout keeps every complete row already
+        // emitted. Python buffers stdout when it is a pipe, so without `-u`
+        // the parent saw partial=0 even after early collectors had finished;
+        // one slow late adapter blinded every agent before it.
+        task.arguments = ["-u", script.path]
         let out = Pipe()
         let err = Pipe()
         task.standardOutput = out

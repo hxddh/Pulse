@@ -532,12 +532,12 @@ final class StatusStore: ObservableObject {
 
         // Notification policy lives here; the builder only reports the edges.
         let quiet = isInQuietHours()
-        if notifyOnIdle, !quiet, result.wentIdle {
+        if notifyAuthorized != false, notifyOnIdle, !quiet, result.wentIdle {
             PulseNotify.postIdle(title: "Pulse", body: tr(.idleNotify))
         }
         // Waiting edges stay available even during quiet hours (when enabled).
         // Skip the first scan so launch doesn't flood for already-waiting rows.
-        if notifyOnWaiting, waitingNotifySeeded,
+        if notifyAuthorized != false, notifyOnWaiting, waitingNotifySeeded,
            let waiting = result.newlyWaiting.first(where: { !mutedAgents.contains($0.agent) }) {
             PulseNotify.postWaiting(
                 title: notificationTitle(waiting),
@@ -753,9 +753,12 @@ final class StatusStore: ObservableObject {
         // moved, never how long it has been going — a session three hours old
         // and one three minutes old read identically.
         let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
-        if age >= 60 { bits.append(DurationFormat.label(seconds: age, lang: lang)) }
-        if row.records > 0 { bits.append("\(row.records)\(tr(.recordsSuffix))") }
-        if let tokens = row.tokenLine { bits.append(tokens) }
+        if age >= 60 {
+            bits.append(String(
+                format: tr(.sessionAge),
+                DurationFormat.label(seconds: age, lang: lang)
+            ))
+        }
         if let sub = row.subagentLine { bits.append(sub) }
         return bits.joined(separator: " · ")
     }

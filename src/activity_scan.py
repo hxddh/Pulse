@@ -20,7 +20,7 @@ HOME = Path.home()
 #
 # The per-file cap alone was not a bound: nineteen call sites, several looping
 # over eight or ten files each, could in principle read hundreds of megabytes
-# inside a 2.5 s harvest window (`ActivityHarvest.harvestTimeoutSec`). On
+# inside the bounded harvest window (`ActivityHarvest.harvestTimeoutSec`). On
 # timeout the partial output is treated as a good scan, so a slow collector
 # does not just lose its own row — it can drop every collector after it. That
 # breaks "one agent's harvest must never blind the others".
@@ -106,6 +106,63 @@ def tail_bytes(path: Path, n: int = 400_000) -> str:
         return ""
 
 
+def head_tail_text(path: Path, head_n: int = 96_000, tail_n: int = 400_000) -> str:
+    """Read stable session metadata and recent activity with a hard byte bound.
+
+    Session metadata (cwd, repository, session id) is normally written once at
+    the start of JSONL files, while the useful live facts are at the end. A
+    tail-only read silently loses the former on long sessions and makes the UI
+    fall back to an opaque UUID. Keep both ends without reading the full file.
+
+    Torn boundary records are removed. Structured readers below must never join
+    two unrelated fragments into a plausible JSON object.
+    """
+    try:
+        with path.open("rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            if size <= head_n + tail_n:
+                data = f.read()
+                return data.decode("utf-8", errors="replace")
+
+            head = f.read(head_n)
+            f.seek(-tail_n, os.SEEK_END)
+            tail = f.read(tail_n)
+
+        head_cut = head.rfind(b"\n")
+        if head_cut >= 0:
+            head = head[: head_cut + 1]
+        tail_cut = tail.find(b"\n")
+        if tail_cut >= 0:
+            tail = tail[tail_cut + 1 :]
+        return (head + tail).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def json_records(text: str) -> list[object]:
+    """Decode complete JSON/JSONL records, ignoring bounded-read fragments."""
+    if not text:
+        return []
+    records: list[object] = []
+    for raw in text.splitlines():
+        raw = raw.strip()
+        if not raw.startswith(("{", "[")):
+            continue
+        try:
+            records.append(json.loads(raw))
+        except Exception:
+            continue
+    if records:
+        return records
+    stripped = text.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            return [json.loads(stripped)]
+        except Exception:
+            pass
+    return []
+
+
 def extract_field(text: str, key: str) -> str | None:
     # "key":"value" with JSON string escapes
     m = re.search(rf'"{re.escape(key)}"\s*:\s*"((?:\\.|[^"\\])*)"', text)
@@ -170,14 +227,43 @@ def last_tool_name(text: str) -> str:
     return ""
 
 
+TOOL_CALL_TYPES = {
+    "tool_use",
+    "tool_call",
+    "toolcall",
+    "custom_tool_call",
+    "function_call",
+    "functioncall",
+    "mcp_tool_call",
+}
+
+TOOL_RESULT_TYPES = {
+    "tool_result",
+    "tool_call_output",
+    "custom_tool_call_output",
+    "function_call_output",
+    "function_response",
+    "mcp_tool_call_end",
+}
+
+
 def _tool_use_names(value) -> list[str]:
-    """Every `name` belonging to a dict that is itself a `tool_use` record."""
+    """Every explicit tool-call name, never a nested argument or result."""
     found: list[str] = []
 
     def walk(node) -> None:
         if isinstance(node, dict):
-            if node.get("type") == "tool_use" and isinstance(node.get("name"), str):
-                found.append(node["name"])
+            kind = str(node.get("type") or "").replace("-", "_").lower()
+            if kind in TOOL_RESULT_TYPES:
+                return
+            if kind in TOOL_CALL_TYPES:
+                name = node.get("name")
+                if not isinstance(name, str):
+                    function = node.get("function")
+                    if isinstance(function, dict):
+                        name = function.get("name")
+                if isinstance(name, str) and name.strip():
+                    found.append(name.strip())
             for child in node.values():
                 walk(child)
         elif isinstance(node, list):
@@ -212,29 +298,10 @@ def last_tool_name_strict(text: str) -> str:
     if not text:
         return ""
 
-    lines = text.splitlines()
-    for raw in reversed(lines):
-        raw = raw.strip()
-        if not raw.startswith(("{", "[")):
-            continue
-        try:
-            obj = json.loads(raw)
-        except Exception:
-            # `tail_bytes` cuts mid-record; a torn line is not a tool.
-            continue
+    for obj in reversed(json_records(text)):
         names = _tool_use_names(obj)
         if names:
             return names[-1][:40]
-
-    # Whole-file JSON (some agents write one array or object, not JSONL).
-    stripped = text.strip()
-    if stripped.startswith(("{", "[")):
-        try:
-            names = _tool_use_names(json.loads(stripped))
-            if names:
-                return names[-1][:40]
-        except Exception:
-            pass
 
     # Compatibility tier: a name we recognise as a tool, on a key that means
     # "tool". Bounded by a whitelist, so it cannot invent a new one — but it
@@ -265,12 +332,135 @@ def last_skill_name(text: str) -> str:
     return ""
 
 
+def clean_session_title(value) -> str:
+    """Normalize a human-facing title and reject injected context envelopes."""
+    if not isinstance(value, str):
+        return ""
+    title = " ".join(value.strip().split())
+    if len(title) < 3:
+        return ""
+    low = title.lower()
+    if low.startswith(("<environment_context", "<recommended_plugins", "<app-context")):
+        return ""
+    return title[:160]
+
+
+def _title_candidates(value) -> list[str]:
+    """Title-like strings outside tool calls/results, in document order."""
+    found: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            kind = str(node.get("type") or "").replace("-", "_").lower()
+            if kind in TOOL_CALL_TYPES or kind in TOOL_RESULT_TYPES:
+                return
+            for key in ("aiTitle", "customTitle", "title", "summary", "lastPrompt"):
+                title = clean_session_title(node.get(key))
+                if title:
+                    found.append(title)
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    return found
+
+
 def session_title_from_text(text: str) -> str:
-    for key in ("aiTitle", "customTitle", "title", "summary", "lastPrompt"):
-        v = extract_field(text, key)
-        if v and len(v.strip()) >= 3:
-            return v.strip().replace("\n", " ")[:160]
-    return ""
+    """Last explicit session title that is not embedded in a tool payload."""
+    found: list[str] = []
+    for obj in json_records(text):
+        found.extend(_title_candidates(obj))
+    return found[-1] if found else ""
+
+
+def codex_user_title(text: str) -> str:
+    """Latest substantive user request from a Codex rollout."""
+    found: list[str] = []
+    # Tool result records can be hundreds of KB. Decode only lines that can
+    # actually be user messages; parsing every recent tool event made the
+    # background harvester scrape its 2.5 s deadline under App Nap.
+    candidates: list[object] = []
+    for raw in text.splitlines():
+        if '"user_message"' not in raw and '"role":"user"' not in raw.replace(" ", ""):
+            continue
+        try:
+            candidates.append(json.loads(raw))
+        except Exception:
+            continue
+    for obj in candidates:
+        if not isinstance(obj, dict):
+            continue
+        top_type = str(obj.get("type") or "")
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        payload_type = str(payload.get("type") or "")
+        if top_type == "event_msg" and payload_type == "user_message":
+            title = clean_session_title(payload.get("message"))
+            if title:
+                found.append(title)
+            continue
+        if top_type == "response_item" and payload_type == "message":
+            if str(payload.get("role") or "") != "user":
+                continue
+            content = payload.get("content")
+            if isinstance(content, str):
+                title = clean_session_title(content)
+                if title:
+                    found.append(title)
+            elif isinstance(content, list):
+                text_parts = [
+                    str(part.get("text") or "")
+                    for part in content
+                    if isinstance(part, dict)
+                    and str(part.get("type") or "") in ("input_text", "text")
+                ]
+                title = clean_session_title(" ".join(text_parts))
+                if title:
+                    found.append(title)
+    return found[-1] if found else ""
+
+
+def codex_user_title_from_file(path: Path, max_bytes: int = 8_000_000) -> str:
+    """Read a bounded rollout window and parse only real user-message lines."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ""
+    if size <= max_bytes:
+        try:
+            return codex_user_title(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ""
+    # Preserve the initial prompt and the latest few MB of turns. If a long
+    # tool chain pushes the most recent user turn out of the tail, the first
+    # real request remains a stable, honest fallback.
+    return codex_user_title(head_tail_text(path, 512_000, 4_000_000))
+
+
+def codex_last_usage(text: str) -> tuple[int, int]:
+    """Token usage for the latest model turn, not the whole rollout."""
+    latest = (0, 0)
+    for obj in json_records(text):
+        if not isinstance(obj, dict) or obj.get("type") != "event_msg":
+            continue
+        payload = obj.get("payload")
+        if not isinstance(payload, dict) or payload.get("type") != "token_count":
+            continue
+        info = payload.get("info")
+        if not isinstance(info, dict):
+            continue
+        usage = info.get("last_token_usage")
+        if not isinstance(usage, dict):
+            continue
+        latest = (
+            int(usage.get("input_tokens") or 0),
+            int(usage.get("output_tokens") or 0),
+        )
+    return latest
 
 
 FRESH_SEC = 45 * 60  # Claude session files older than this (and no live subs) are skipped
@@ -536,24 +726,15 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
     out: list[tuple[str, int, int, str, str, str, str]] = []
     seen: set[str] = set()
     for f in files:
-        text = tail_bytes(f, 600_000)
-        task = session_title_from_text(text)
-        if not task:
-            msgs = re.findall(r'"last_agent_message"\s*:\s*"((?:\\.|[^"\\])*)"', text)
-            if msgs:
-                task = decode_json_string(msgs[-1]).replace("\n", " ")[:160]
-        tin = tout = 0
-        for m in re.finditer(
-            r'"type"\s*:\s*"token_count"[\s\S]{0,400}?"total_token_usage"\s*:\s*\{([^}]+)\}',
-            text,
-        ):
-            block = m.group(1)
-            im = re.search(r'"input_tokens"\s*:\s*(\d+)', block)
-            om = re.search(r'"output_tokens"\s*:\s*(\d+)', block)
-            if im:
-                tin = int(im.group(1))
-            if om:
-                tout = int(om.group(1))
+        # Stable metadata comes from the head; dynamic events from the tail.
+        # The task has its own sparse reader below so we do not parse megabytes
+        # of tool output on every probe.
+        text = head_tail_text(f, 96_000, 600_000)
+        # Never fall back to the generic title extractor here. MCP invocations
+        # carry UI-only `title` strings ("Inspect settings") that are neither a
+        # session title nor a user request.
+        task = codex_user_title_from_file(f)
+        tin, tout = codex_last_usage(text)
         tool = last_tool_name_strict(text)
         skill = last_skill_name(text)
         cwd = extract_field(text, "cwd") or extract_field(text, "workdir") or ""

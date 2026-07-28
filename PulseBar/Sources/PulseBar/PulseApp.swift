@@ -830,6 +830,7 @@ private struct AgentRowButton: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 6)
                                 statusChip
+                                secondaryActionsMenu
                             }
 
                             if !contextLine.isEmpty || !metrics.isEmpty {
@@ -846,7 +847,7 @@ private struct AgentRowButton: View {
                                     if !metrics.isEmpty {
                                         Text(metrics)
                                             .font(.system(size: 10.5))
-                                            .foregroundStyle(.tertiary)
+                                            .foregroundStyle(.secondary)
                                             .monospacedDigit()
                                             .lineLimit(1)
                                             .layoutPriority(1)
@@ -926,6 +927,9 @@ private struct AgentRowButton: View {
                 .padding(.horizontal, 6)
         )
         .onHover { hovering = $0 }
+        .contextMenu {
+            secondaryActionItems
+        }
     }
 
     /// Inline detail, opened on demand.
@@ -971,6 +975,42 @@ private struct AgentRowButton: View {
         row.waiting || hovering || expanded
     }
 
+    /// Always-present action access for keyboard and VoiceOver users.
+    ///
+    /// Hover actions remain a fast pointer path, but are no longer the only
+    /// route to focus, folder and details.
+    private var secondaryActionsMenu: some View {
+        Menu {
+            secondaryActionItems
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel(store.tr(.moreActions))
+    }
+
+    @ViewBuilder
+    private var secondaryActionItems: some View {
+        if row.waiting {
+            Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
+            Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
+                if row.isSnoozed { store.unsnooze(row) } else { store.snooze(row) }
+            }
+        }
+        if row.canFocusTerminal {
+            Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
+        }
+        if row.canOpenFolder {
+            Button(store.tr(.openFolder)) { store.openProject(row) }
+        }
+        Button(store.tr(.moreDetail)) { expanded.toggle() }
+    }
+
     /// Session title is the row hero; process-only rows de-rank to a status phrase.
     private var heroTitle: String {
         if row.waiting {
@@ -1013,13 +1053,25 @@ private struct AgentRowButton: View {
         if !full.isEmpty, full != row.displayPath { out.append(full) }
         if let task = row.usefulTask, task != heroTitle { out.append(task) }
         var facts: [String] = [row.agent.displayName]
-        if row.processCount > 1 { facts.append("×\(row.processCount)") }
+        if row.processCount > 1 {
+            facts.append(String(format: store.tr(.processCount), row.processCount))
+        }
         if row.viaWarp { facts.append("Warp") }
         if let sig = row.waitSignal {
             facts.append(sig == .hooks ? store.tr(.signalHooks) : store.tr(.signalPending))
         }
         out.append(facts.joined(separator: " · "))
-        if let meta = row.metaLine { out.append(meta) }
+        if let tokens = row.tokenLine {
+            out.append(String(format: store.tr(.tokenSnapshot), tokens))
+        }
+        if row.records > 0 {
+            out.append("\(row.records)\(store.tr(.recordsSuffix))")
+        }
+        var activity: [String] = []
+        if !row.tool.isEmpty, row.usefulTask != nil { activity.append(row.tool) }
+        if !row.skill.isEmpty, row.skill != "pending" { activity.append(row.skill) }
+        if let sub = row.subagentLine { activity.append(sub) }
+        if !activity.isEmpty { out.append(activity.joined(separator: " · ")) }
         if let hint = row.shortSessionHint { out.append(hint) }
         return out
     }
@@ -1053,7 +1105,7 @@ private struct AgentRowButton: View {
             StatusChip(
                 kind: .process,
                 label: row.processCount > 1
-                    ? "\(store.tr(.processWord)) ×\(row.processCount)"
+                    ? String(format: store.tr(.processCount), row.processCount)
                     : store.tr(.processWord)
             )
         } else if row.isStalled {
@@ -1070,6 +1122,19 @@ private struct AgentRowButton: View {
 
     private var accessibilityText: String {
         var parts = [heroTitle, row.agent.displayName]
+        let state: String
+        if row.waiting {
+            state = row.waitKind.isEmpty ? store.tr(.needsYou) : store.localizedWaitKind(row.waitKind)
+        } else if row.isStalled {
+            state = store.tr(.stalled)
+        } else if row.isRecentOnly {
+            state = store.tr(.recent)
+        } else {
+            state = store.tr(.running)
+        }
+        parts.append(state)
+        if !contextLine.isEmpty { parts.append(contextLine) }
+        if !metrics.isEmpty { parts.append(metrics) }
         if row.waiting {
             let line = store.localizedWaitLine(row)
             if !line.isEmpty { parts.append(line) }
@@ -1246,9 +1311,10 @@ struct SettingsView: View {
                 .onChange(of: store.notifyOnIdle) { _, _ in store.saveSettings() }
                 .disabled(store.notifyAuthorized == false)
             Toggle(store.tr(.notifyWaiting), isOn: $store.notifyOnWaiting)
+                .onChange(of: store.notifyOnWaiting) { _, _ in store.saveSettings() }
+                .disabled(store.notifyAuthorized == false)
             Toggle(store.tr(.playSound), isOn: $store.playSoundOnWaiting)
                 .onChange(of: store.playSoundOnWaiting) { _, _ in store.saveSettings() }
-                .onChange(of: store.notifyOnWaiting) { _, _ in store.saveSettings() }
                 .disabled(store.notifyAuthorized == false)
 
             Toggle(store.tr(.quietHours), isOn: $store.quietHoursEnabled)
@@ -1395,6 +1461,14 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
+                        let context = store.rowContextLine(row)
+                        let metrics = store.rowMetrics(row)
+                        if !context.isEmpty || !metrics.isEmpty {
+                            Text([context, metrics].filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
                     }
                     Spacer(minLength: 4)
                     Text(Self.statusLabel(row: row, store: store))
@@ -1470,6 +1544,9 @@ struct SettingsView: View {
             return row.waitKind.isEmpty ? store.tr(.needsYou) : store.localizedWaitKind(row.waitKind)
         }
         if row.liveProcess || row.subRunning > 0 {
+            if row.processCount > 1 {
+                return String(format: store.tr(.processCount), row.processCount)
+            }
             return store.tr(.running)
         }
         return store.tr(.recent)

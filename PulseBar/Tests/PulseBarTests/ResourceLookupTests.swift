@@ -479,8 +479,8 @@ final class LiveToolTests: XCTestCase {
     }
 }
 
-/// Every fact that moves while work happens was behind a hover and a click,
-/// so the panel was only observable on demand.
+/// The row keeps short-window progress inline and leaves ambiguous counters in
+/// Details. Last activity and the latest tool are covered above.
 final class RowMetricsTests: XCTestCase {
     @MainActor
     private func store() -> StatusStore { StatusStore() }
@@ -503,10 +503,10 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testTokensRideOnTheRowWithoutAClick() {
+    func testTokenSnapshotStaysOutOfThePrimaryRow() {
         let m = store().rowMetrics(row(inTok: 12_000, outTok: 3_000))
-        XCTAssertTrue(m.contains("↑"), m)
-        XCTAssertTrue(m.contains("↓"), m)
+        XCTAssertFalse(m.contains("↑"), m)
+        XCTAssertFalse(m.contains("↓"), m)
     }
 
     @MainActor
@@ -515,8 +515,8 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testRecordsAreAMetricToo() {
-        XCTAssertTrue(store().rowMetrics(row(records: 34)).contains("34"))
+    func testMixedRecordCountStaysOutOfThePrimaryRow() {
+        XCTAssertFalse(store().rowMetrics(row(records: 34)).contains("34"))
     }
 
     /// On a waiting row the question is the point; numbers beside it are noise
@@ -535,15 +535,16 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertEqual(store().rowMetrics(loaded), "", "a waiting row carries no metrics at all")
     }
 
-    /// …and the same row, not waiting, carries every one of them.
+    /// The same row, not waiting, carries duration and real subagent progress,
+    /// while token snapshots and mixed event records stay in Details.
     @MainActor
     func testTheSameRowNotWaitingCarriesEverything() {
         let m = store().rowMetrics(row(
             inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
             records: 34, startedAgo: 3 * 3600
         ))
-        XCTAssertTrue(m.contains("34"), m)
-        XCTAssertTrue(m.contains("↑"), m)
+        XCTAssertFalse(m.contains("34"), m)
+        XCTAssertFalse(m.contains("↑"), m)
         XCTAssertTrue(m.contains("2"), m)
     }
 
@@ -556,6 +557,14 @@ final class RowMetricsTests: XCTestCase {
     func testTokenLineIsSuppressedWhileWaiting() {
         XCTAssertNil(row(inTok: 5_000, waiting: true).tokenLine)
         XCTAssertNotNil(row(inTok: 5_000).tokenLine)
+    }
+
+    func testIdentityDoesNotRepeatAgentOrUseAnUnlabelledMultiplier() {
+        var r = AgentRow(rowKey: "cursor", agent: .cursor)
+        r.project = "Cursor"
+        r.processCount = 2
+        XCTAssertEqual(r.titleLine, "Cursor")
+        XCTAssertFalse(r.titleLine.contains("×"))
     }
 }
 
