@@ -716,6 +716,26 @@ final class SnapshotBuilderTests: XCTestCase {
             harvest: [harvest(.claude, task: "x", session: "s1", ageMs: 30 * 60 * 1000)]
         )
         XCTAssertEqual(r.rows.first?.isStalled, true)
+        XCTAssertEqual(r.rows.first?.section, .stalled)
+        XCTAssertEqual(r.snapshot.sectionTotals[.stalled], 1)
+        XCTAssertEqual(r.snapshot.sectionTotals[.running], 0)
+    }
+
+    func testHeaderSeparatesActiveStalledAndRecent() {
+        let r = build(
+            procs: [hit(.claude), hit(.codex)],
+            harvest: [
+                harvest(.claude, task: "active", session: "s1", ageMs: 1_000),
+                harvest(.codex, task: "quiet", session: "s2", ageMs: 30 * 60 * 1000),
+                harvest(.gemini, task: "done", session: "s3", ageMs: 60_000),
+            ]
+        )
+        XCTAssertEqual(r.snapshot.sectionTotals[.running], 1)
+        XCTAssertEqual(r.snapshot.sectionTotals[.stalled], 1)
+        XCTAssertEqual(r.snapshot.sectionTotals[.recent], 1)
+        XCTAssertTrue(r.snapshot.headerTitle.contains("1 running"), r.snapshot.headerTitle)
+        XCTAssertTrue(r.snapshot.headerTitle.lowercased().contains("1 stalled"), r.snapshot.headerTitle)
+        XCTAssertTrue(r.snapshot.headerTitle.contains("1 recent"), r.snapshot.headerTitle)
     }
 
     /// Running with a live session is ordinary and gets no badge.

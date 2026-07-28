@@ -138,26 +138,55 @@ echo "running --selftest inside the packaged app..."
 #   PULSE_NOTARY_PROFILE=<notarytool keychain profile>   # optional
 SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
 # `--deep` is deprecated by Apple; sign nested code first, then the bundle.
-find "$APP/Contents" -type f -perm +111 -not -path "*/MacOS/PulseBar" -print0 2>/dev/null \
-  | xargs -0 -I{} codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" {} 2>/dev/null || true
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
-  codesign --force --sign - "$APP"
+  find "$APP/Contents" -type f -perm +111 -not -path "*/MacOS/PulseBar" -print0 2>/dev/null \
+    | xargs -0 -I{} codesign --force --options runtime --sign - {}
+  codesign --force --options runtime --sign - "$APP"
   echo "warning:  ad-hoc signed — Gatekeeper will block this on other Macs."
   echo "          set PULSE_SIGN_IDENTITY to a Developer ID to distribute."
 else
+  if ! security find-identity -v -p codesigning | grep -Fq "$SIGN_IDENTITY"; then
+    echo "error: signing identity is not present in the active keychains: $SIGN_IDENTITY" >&2
+    exit 1
+  fi
+  find "$APP/Contents" -type f -perm +111 -not -path "*/MacOS/PulseBar" -print0 2>/dev/null \
+    | xargs -0 -I{} codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" {}
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
 fi
-codesign --verify --verbose=2 "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP"
+
+NOTARY_PROFILE="${PULSE_NOTARY_PROFILE:-}"
+if [[ -n "$NOTARY_PROFILE" && "$SIGN_IDENTITY" == "-" ]]; then
+  echo "error: notarization requires a Developer ID signature" >&2
+  exit 1
+fi
+
+# Notarize and staple the app itself before putting it in the DMG. Submitting
+# only the DMG can pass Gatekeeper online but leaves the installed app without
+# an offline ticket.
+if [[ -n "$NOTARY_PROFILE" ]]; then
+  APP_ZIP="$ROOT/zig-out/package/pulse-${VERSION}-notary.zip"
+  rm -f "$APP_ZIP"
+  ditto -c -k --keepParent "$APP" "$APP_ZIP"
+  echo "notarizing ${APP}..."
+  xcrun notarytool submit "$APP_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$APP"
+  xcrun stapler validate "$APP"
+  spctl -a -vv --type execute "$APP"
+  rm -f "$APP_ZIP"
+fi
 
 DMG="$ROOT/zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
 rm -f "$DMG"
 hdiutil create -volname "Pulse ${VERSION}" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
 
-if [[ -n "${PULSE_NOTARY_PROFILE:-}" && "$SIGN_IDENTITY" != "-" ]]; then
+if [[ -n "$NOTARY_PROFILE" ]]; then
   echo "notarizing ${DMG}..."
-  xcrun notarytool submit "$DMG" --keychain-profile "$PULSE_NOTARY_PROFILE" --wait
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$DMG"
-  echo "notarized: stapled ticket attached"
+  xcrun stapler validate "$DMG"
+  spctl -a -vv -t open --context context:primary-signature "$DMG"
+  echo "notarized: app + DMG tickets stapled and Gatekeeper accepted"
 fi
 
 echo "version:  ${VERSION} (${GIT_COMMIT} · ${BUILD_DATE})"

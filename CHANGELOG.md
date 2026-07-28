@@ -2,6 +2,46 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.34.0 — 支持不是名单，而是本机上可验证的观测
+
+这一版把此前评估中的 P0、P1、P2 一次收口：状态计数必须诚实，任意路径启动只能有
+一个 Pulse，31 个采集器都要经过真实磁盘输入，默认行必须区分“当前阶段”和“历史动作”，
+发布物必须具备可验证的 Developer ID / 公证链路。
+
+### 四态、分组与单实例
+
+- 将停滞从 Running 中拆出为独立 Stalled 状态；Header、分组和全量计数统一使用
+  Needs you / Active / Stalled / Recent 四态，停滞会话不再抬高健康运行数。
+- 按项目分组时明确展示“工作区未知”表头；无 cwd 的 Pi、Amp 等不再视觉上挂到前一个项目。
+- 新增跨 bundle 路径的 BSD 进程锁；`/Applications/Pulse.app` 与开发打包副本同时启动时，
+  后启动者只激活现有副本，不再制造两个状态栏图标、两套扫描与通知。
+
+### 默认信息层级与支持健康度
+
+- 增加严格的 `Now` 层，只接受显式生命周期事件或尚未收到结果的工具调用；
+  已完成工具保留为“最近动作”，不得伪装成当前仍在执行。
+- 每行只选一个最强进度事实；模型、模式与会话年龄降为次级上下文。拥挤面板保留
+  Agent、目标、Now、位置/时间和进度，压缩次级信息而不是隐藏整个会话。
+- 正常结构化会话不再重复显示无信息量的 `Session`；仅缓存和仅进程仍明确标注证据降级。
+- 偏好设置新增 Agent 支持健康度：对 32 个 Agent 展示本机实际检测、证据级别、
+  最近成功读取、目标/工作区/活动可用性、Waiting 来源与缺失能力。
+- 无原生 Waiting 路径的 Trae、Warp、Antigravity、Devin、Junie、Replit 在运行行和
+  支持健康度中明确说明限制，不再把“能检测进程”包装成完整可观测。
+
+### 31 个采集器与发布质量门
+
+- Harvest 门禁从 5 个扩到全部 31 个端到端磁盘 fixture；每个 fixture 都经过真实路径、
+  真实 collector、统一 row shaping 和 24 列 TSV。扩展过程中修复 Kimi collector
+  调用 `session_stats` 时缺失参数、会导致整项失效的真实问题。
+- Claude、Codex、Pi 从有序事件读取 Planning / Reading / Researching / Editing /
+  Testing / Responding / Waiting / Turn complete；工具结果会清除未完成工具阶段，
+  防止最后一次旧工具长期霸占 `Now`。
+- 新增 compact / crowded 的真实 TrayPanel 视觉 fixture，以及四态计数、停滞归类、
+  单实例回收和语义阶段回归测试；恢复原生键盘焦点，并在状态变化时发送 VoiceOver 公告。
+- 发布 workflow 改为强制导入 Developer ID 证书与 App Store Connect API key；
+  App 和 DMG 分别公证、staple、validate，并以 `spctl` 验收。缺少任一发布凭据时拒绝
+  继续发布 ad-hoc 构建。
+
 ## 0.33.1 — 看见的数量，必须就是实际的数量
 
 - 项目和 Recent 分组默认完整展开；折叠只在用户主动操作后发生，避免标题显示多个

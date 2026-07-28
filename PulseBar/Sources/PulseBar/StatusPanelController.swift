@@ -23,6 +23,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private var subscriptions = Set<AnyCancellable>()
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var lastAnnouncedState: String?
 
     init(store: StatusStore) {
         self.store = store
@@ -194,6 +195,26 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         button.title = snapshot.glance == .idle ? "" : snapshot.title
         button.toolTip = snapshot.tooltip
         button.setAccessibilityLabel(snapshot.accessibilityLabel)
+
+        let state = TraySection.allCases
+            .map { "\(String(describing: $0))=\(snapshot.sectionTotals[$0] ?? 0)" }
+            .joined(separator: ",")
+        // The empty bootstrap snapshot is not a state transition. Seed from
+        // the first completed scan so launching Pulse does not speak an
+        // unsolicited "Running" announcement.
+        if snapshot.updatedAt != .distantPast {
+            if let previous = lastAnnouncedState, previous != state {
+                NSAccessibility.post(
+                    element: button,
+                    notification: .announcementRequested,
+                    userInfo: [
+                        .announcement: snapshot.headerTitle,
+                        .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+                    ]
+                )
+            }
+            lastAnnouncedState = state
+        }
     }
 
     private func scheduleResize() {

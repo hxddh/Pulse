@@ -71,8 +71,10 @@ Debug log: `~/Library/Application Support/Pulse/debug.log` (rolls at 2 MB).
 open zig-out/package/Pulse.app
 ```
 
-Signing uses `PULSE_SIGN_IDENTITY` (+ optional `PULSE_NOTARY_PROFILE`). Without
-it the build is ad-hoc signed and Gatekeeper blocks it on other machines.
+Local packaging uses `PULSE_SIGN_IDENTITY` plus `PULSE_NOTARY_PROFILE` for a
+distributable build. Release CI additionally requires the base64 Developer ID
+certificate/password and App Store Connect API key secrets documented in the
+README; it refuses to publish an ad-hoc or unnotarized build.
 
 ## Release
 

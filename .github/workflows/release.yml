@@ -111,28 +111,55 @@ jobs:
         run: swift test
         working-directory: PulseBar
 
+      - name: Prepare Developer ID and notarization credentials
+        env:
+          PULSE_CERTIFICATE_P12: ${{ secrets.PULSE_CERTIFICATE_P12 }}
+          PULSE_CERTIFICATE_PASSWORD: ${{ secrets.PULSE_CERTIFICATE_PASSWORD }}
+          PULSE_SIGN_IDENTITY: ${{ secrets.PULSE_SIGN_IDENTITY }}
+          PULSE_NOTARY_KEY_P8: ${{ secrets.PULSE_NOTARY_KEY_P8 }}
+          PULSE_NOTARY_KEY_ID: ${{ secrets.PULSE_NOTARY_KEY_ID }}
+          PULSE_NOTARY_ISSUER_ID: ${{ secrets.PULSE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for name in PULSE_CERTIFICATE_P12 PULSE_CERTIFICATE_PASSWORD PULSE_SIGN_IDENTITY \
+                      PULSE_NOTARY_KEY_P8 PULSE_NOTARY_KEY_ID PULSE_NOTARY_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::missing required release secret: $name"
+              exit 1
+            fi
+          done
+
+          KEYCHAIN="$RUNNER_TEMP/pulse-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+          CERT="$RUNNER_TEMP/pulse-developer-id.p12"
+          printf '%s' "$PULSE_CERTIFICATE_P12" | base64 -D > "$CERT"
+          security import "$CERT" -k "$KEYCHAIN" -P "$PULSE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "$PULSE_SIGN_IDENTITY"
+
+          NOTARY_KEY="$RUNNER_TEMP/AuthKey_${PULSE_NOTARY_KEY_ID}.p8"
+          printf '%s' "$PULSE_NOTARY_KEY_P8" | base64 -D > "$NOTARY_KEY"
+          xcrun notarytool store-credentials pulse-release \
+            --key "$NOTARY_KEY" \
+            --key-id "$PULSE_NOTARY_KEY_ID" \
+            --issuer "$PULSE_NOTARY_ISSUER_ID"
+
       - name: Package
         env:
-          # Optional: set these repo secrets to ship a Gatekeeper-friendly build.
           PULSE_SIGN_IDENTITY: ${{ secrets.PULSE_SIGN_IDENTITY }}
-          PULSE_NOTARY_PROFILE: ${{ secrets.PULSE_NOTARY_PROFILE }}
+          PULSE_NOTARY_PROFILE: pulse-release
         run: ./PulseBar/Scripts/package.sh
 
       - name: Release notes from CHANGELOG
         run: |
           python3 scripts/changelog_section.py "${{ needs.decide.outputs.version }}" > /tmp/notes.md
-          if [[ -z "${{ secrets.PULSE_SIGN_IDENTITY }}" ]]; then
-            {
-              echo
-              echo "---"
-              echo "**This build is ad-hoc signed.** macOS will refuse it on first open —"
-              echo "right-click the app and choose Open, or run:"
-              echo
-              echo '```'
-              echo 'xattr -dr com.apple.quarantine /Applications/Pulse.app'
-              echo '```'
-            } >> /tmp/notes.md
-          fi
 
       - name: Publish
         uses: softprops/action-gh-release@v2

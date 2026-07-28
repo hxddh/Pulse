@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
+import json
 import sys
 import tempfile
 import time
@@ -249,6 +250,25 @@ def check_tool_reading() -> int:
     )
     if A.session_title_from_text(fake_title) != "Human session title":
         return fail("generic title extractor accepted a title embedded in a tool call")
+
+    unresolved = (
+        '{"type":"response_item","payload":{"type":"function_call",'
+        '"name":"view_image","call_id":"call-1"}}\n'
+    )
+    if A.semantic_phase_from_events(unresolved) != "working":
+        return fail("an unresolved explicit tool call did not produce a semantic phase")
+    resolved = unresolved + (
+        '{"type":"response_item","payload":{"type":"function_call_output",'
+        '"call_id":"call-1","output":"ok"}}\n'
+    )
+    if A.semantic_phase_from_events(resolved):
+        return fail("a completed historical tool was presented as the current phase")
+    completed = resolved + '{"type":"event_msg","payload":{"type":"turn_complete"}}\n'
+    if A.semantic_phase_from_events(completed) != "turn_complete":
+        return fail("an explicit turn completion was not preserved")
+    permission = '{"type":"permission_requested","message":"approve command"}\n'
+    if A.semantic_phase_from_events(permission) != "waiting_permission":
+        return fail("an explicit permission wait was not preserved")
     return 0
 
 
@@ -261,6 +281,29 @@ def check_collectors(home: Path) -> int:
     count said they were wired.
     """
     cases: list[tuple[str, Path, object]] = []
+
+    def write_session(path: Path, agent: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({
+                "type": "session",
+                "id": f"{agent}-fixture",
+                "sessionId": f"{agent}-fixture",
+                "title": f"Observe {agent} activity",
+                "task": f"Observe {agent} activity",
+                "cwd": "/Users/me/code/Pulse",
+                "workspacePath": "/Users/me/code/Pulse",
+                "phase": "testing",
+                "completedTasks": 2,
+                "totalTasks": 3,
+                "agent": True,
+                "event": "agent",
+                "action": "tool_call",
+                "chat": "message",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        return path
 
     claude = home / ".claude" / "projects" / "-Users-me-code-Pulse"
     claude.mkdir(parents=True, exist_ok=True)
@@ -348,6 +391,166 @@ def check_collectors(home: Path) -> int:
     )
     cases.append(("grok", grok_session, lambda: A.emit_all("grok", [A.grok_activity()])))
 
+    # Every remaining adapter gets a source-shaped disk fixture and is run
+    # through its real collector plus emit_row. Shared helpers are deliberately
+    # exercised once per public Agent contract: a change to a needle or root
+    # must identify which Agent lost observability.
+    pi = write_session(
+        home / ".pi" / "agent" / "sessions" / "pulse" / "pi-fixture.jsonl",
+        "pi",
+    )
+    cases.append(("pi", pi, lambda: A.emit_all("pi", [A.pi_activity()])))
+
+    continue_file = write_session(home / ".continue" / "sessions" / "continue.jsonl", "continue")
+    cases.append(("continue", continue_file, lambda: A.emit_all("continue", A.continue_activities())))
+
+    copilot_dir = home / ".copilot" / "session-state" / "copilot-fixture"
+    copilot_events = write_session(copilot_dir / "events.jsonl", "copilot")
+    (copilot_dir / "workspace.yaml").write_text(
+        'title: Observe Copilot activity\ncwd: /Users/me/code/Pulse\n',
+        encoding="utf-8",
+    )
+    cases.append(("copilot", copilot_events, lambda: A.emit_all("copilot", A.copilot_activities())))
+
+    simple_sources = {
+        "amazon_q": home / ".aws" / "amazonq" / "session.json",
+        "zed_agent": home / ".zed" / "threads" / "agent-session.json",
+        "openhands": home / ".openhands" / "sessions" / "session.json",
+        "antigravity": home / ".antigravity" / "sessions" / "session.json",
+        "cascade": home / ".codeium" / "sessions" / "cascade.json",
+        "windsurf": home / ".windsurf" / "sessions" / "windsurf.json",
+        "augment": home / ".augment" / "sessions" / "session.json",
+        "trae": home / ".trae" / "sessions" / "agent-session.json",
+        "warp_agent": home / ".warp" / "conversations" / "agent-session.json",
+        "devin": home / ".devin" / "sessions" / "session.json",
+        "junie": home / ".junie" / "sessions" / "session.json",
+        "replit": home / ".replit" / "sessions" / "session.json",
+        "goose": home / ".config" / "goose" / "sessions" / "session.json",
+    }
+    simple_functions = {
+        "amazon_q": A.amazon_q_activities,
+        "zed_agent": A.zed_agent_activities,
+        "openhands": A.openhands_activities,
+        "antigravity": A.antigravity_activities,
+        "cascade": A.cascade_windsurf_activities,
+        "windsurf": A.windsurf_shell_activities,
+        "augment": A.augment_activities,
+        "trae": A.trae_activities,
+        "warp_agent": A.warp_agent_activities,
+        "devin": A.devin_activities,
+        "junie": A.junie_activities,
+        "replit": A.replit_activities,
+        "goose": A.goose_activities,
+    }
+    for name, path in simple_sources.items():
+        write_session(path, name)
+        fn = simple_functions[name]
+        cases.append((name, path, lambda name=name, fn=fn: A.emit_all(name, fn())))
+
+    code_storage = home / "Library" / "Application Support" / "Code" / "User" / "globalStorage"
+    extension_sources = {
+        "cline": code_storage / "saoudrizwan.claude-dev" / "session.json",
+        "roo": code_storage / "roo-code" / "session.json",
+        "kilo": code_storage / "kilocode" / "session.json",
+        "kiro": code_storage / "amazon.kiro" / "session.json",
+    }
+    extension_functions = {
+        "cline": A.cline_activities,
+        "roo": A.roo_activities,
+        "kilo": A.kilo_activities,
+        "kiro": A.kiro_activities,
+    }
+    for name, path in extension_sources.items():
+        write_session(path, name)
+        fn = extension_functions[name]
+        cases.append((name, path, lambda name=name, fn=fn: A.emit_all(name, fn())))
+
+    aider = home / "code" / "Pulse" / ".aider.chat.history.md"
+    aider.parent.mkdir(parents=True, exist_ok=True)
+    aider.write_text(
+        "# aider chat\nObserve aider activity\n", encoding="utf-8"
+    )
+    cases.append(("aider", aider, lambda: A.emit_all("aider", A.aider_activities())))
+
+    command_dir = home / ".commandcode" / "projects" / "pulse"
+    command_meta = write_session(command_dir / "command-fixture.meta.json", "command_code")
+    write_session(command_dir / "command-fixture.jsonl", "command_code")
+    (command_dir / "settings.json").write_text(
+        '{"cwd":"/Users/me/code/Pulse"}', encoding="utf-8"
+    )
+    cases.append((
+        "command_code",
+        command_meta,
+        lambda: A.emit_all("command_code", A.command_code_activities()),
+    ))
+
+    kimi_dir = home / ".kimi-code" / "sessions" / "kimi-fixture"
+    kimi_state = write_session(kimi_dir / "state.json", "kimi")
+    write_session(kimi_dir / "agents" / "main" / "wire.jsonl", "kimi")
+    cases.append(("kimi", kimi_state, lambda: A.emit_all("kimi", A.kimi_activities())))
+
+    gemini = home / ".gemini" / "tmp" / "pulse" / "chats" / "session-fixture.jsonl"
+    gemini.parent.mkdir(parents=True, exist_ok=True)
+    gemini.write_text(
+        '{"type":"user","content":"Observe Gemini activity"}\n'
+        '{"functionCall":{"name":"read_file"},"promptTokenCount":120,"candidatesTokenCount":30}\n',
+        encoding="utf-8",
+    )
+    (gemini.parent.parent / ".project_root").write_text(
+        "/Users/me/code/Pulse", encoding="utf-8"
+    )
+    cases.append(("gemini", gemini, lambda: A.emit_all("gemini", A.gemini_activities())))
+
+    import sqlite3
+
+    cursor_db = home / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
+    cursor_db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(cursor_db)
+    con.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+    con.execute(
+        "CREATE TABLE composerHeaders "
+        "(composerId TEXT, workspaceId TEXT, lastUpdatedAt INTEGER, value TEXT, "
+        "isArchived INTEGER, isSubagent INTEGER)"
+    )
+    now_ms = int(time.time() * 1000)
+    con.execute(
+        "INSERT INTO ItemTable VALUES (?, ?)",
+        ("cursor/glass.selectedAgent", '"cursor-fixture"'),
+    )
+    con.execute(
+        "INSERT INTO composerHeaders VALUES (?, ?, ?, ?, 0, 0)",
+        (
+            "cursor-fixture",
+            "workspace-fixture",
+            now_ms,
+            json.dumps({"name": "Observe Cursor activity", "unifiedMode": "agent"}),
+        ),
+    )
+    con.commit()
+    con.close()
+    workspace = cursor_db.parent.parent / "workspaceStorage" / "workspace-fixture"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "workspace.json").write_text(
+        '{"folder":"file:///Users/me/code/Pulse"}', encoding="utf-8"
+    )
+    cases.append(("cursor", cursor_db, lambda: A.emit_all("cursor", A.cursor_activities())))
+
+    opencode_db = home / ".local" / "share" / "opencode" / "opencode.db"
+    opencode_db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(opencode_db)
+    con.execute(
+        "CREATE TABLE session "
+        "(id TEXT, title TEXT, directory TEXT, tokens_input INTEGER, "
+        "tokens_output INTEGER, time_updated INTEGER, time_archived INTEGER)"
+    )
+    con.execute(
+        "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, 0)",
+        ("opencode-fixture", "Observe OpenCode activity", "/Users/me/code/Pulse", 120, 30, now_ms),
+    )
+    con.commit()
+    con.close()
+    cases.append(("opencode", opencode_db, lambda: A.emit_all("opencode", A.opencode_activities())))
+
     saw_any = False
     for name, where, block in cases:
         try:
@@ -368,11 +571,16 @@ def check_collectors(home: Path) -> int:
                 f"{name}: emitted {row[COL_EVIDENCE]!r}, "
                 f"contract says {A.HARVEST_CONTRACTS[name]!r}"
             )
-        if row[COL_RECORDS] == "0" and row[COL_STARTED] == "0":
+        if name in {"claude", "amp", "droid", "codex", "grok"} \
+                and row[COL_RECORDS] == "0" and row[COL_STARTED] == "0":
             return fail(
                 f"{name}: the collector paid for the file scan and shipped 0/0 — "
                 f"its row shaping drops the extras (row={row})"
             )
+        if not row[COL_TASK] and not row[7]:
+            return fail(f"{name}: fixture produced neither a goal nor a workspace: {row}")
+        if int(row[8] or 0) <= 0:
+            return fail(f"{name}: fixture produced no activity timestamp: {row}")
         if name == "amp" and row[5] != "pending":
             return fail(
                 "amp fixture did not reach the pending branch, so the index "
@@ -477,7 +685,7 @@ def main() -> int:
         return fail(f"agents without the minimum useful observation: {thin}")
     print(
         f"harvest stats OK — {COLUMNS} columns · 31 evidence contracts · "
-        "5 end-to-end collector fixtures"
+        "31 end-to-end collector fixtures"
     )
     return 0
 

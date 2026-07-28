@@ -59,6 +59,10 @@ final class StatusStore: ObservableObject {
     private var timer: Timer?
     private var cachedAll: [AgentRow] = []
     private var lastGoodHarvest: [ActivityHarvest.Row] = []
+    /// Latest successful collector read by Agent, retained even after its
+    /// session row ages out so Settings can distinguish "not running" from
+    /// "collector has never produced evidence".
+    private var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
     private let powerMonitor = PowerMonitor()
     /// Tray panel is on screen — worth probing faster while the user reads it.
     private var trayOpen = false
@@ -154,6 +158,88 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    var supportHealth: [AgentSupportHealth] {
+        AgentID.priority.map { agent in
+            let rows = cachedAll.filter { $0.agent == agent }
+            let strongest: ObservationSource? = {
+                if rows.contains(where: { $0.observationSource == .session }) { return .session }
+                if rows.contains(where: { $0.observationSource == .cache }) { return .cache }
+                if rows.contains(where: { $0.observationSource == .process }) { return .process }
+                return nil
+            }()
+            return AgentSupportHealth(
+                agent: agent,
+                processDetected: rows.contains(where: \.liveProcess),
+                evidence: strongest,
+                lastSuccessfulReadMs: max(
+                    lastSuccessfulReadByAgent[agent] ?? 0,
+                    rows.map(\.harvestMs).max() ?? 0
+                ),
+                hasGoal: rows.contains { $0.usefulTask != nil },
+                hasWorkspace: rows.contains { !$0.displayPath.isEmpty },
+                hasProgress: rows.contains {
+                    !$0.phase.isEmpty || !$0.tool.isEmpty || !$0.outcome.isEmpty
+                        || $0.progressDone > 0 || $0.progressTotal > 0
+                        || $0.tokensIn > 0 || $0.tokensOut > 0
+                        || $0.records > 0 || $0.subTotal > 0
+                }
+            )
+        }
+    }
+
+    func supportEvidenceLabel(_ health: AgentSupportHealth) -> String {
+        guard health.isObserved else { return tr(.supportNotDetected) }
+        switch health.evidence {
+        case .session: return tr(.supportStructured)
+        case .cache: return tr(.supportCache)
+        case .process: return tr(.supportProcess)
+        case .none: return tr(.supportDetected)
+        }
+    }
+
+    func supportHealthDetail(_ health: AgentSupportHealth) -> String {
+        if !health.isObserved {
+            return supportWaitingLabel(health.agent)
+        }
+        var facts: [String] = []
+        if health.hasGoal { facts.append(tr(.supportGoal)) }
+        if health.hasWorkspace { facts.append(tr(.supportWorkspace)) }
+        if health.hasProgress { facts.append(tr(.supportProgress)) }
+        facts.append(supportWaitingLabel(health.agent))
+        if health.lastSuccessfulReadMs > 0 {
+            let seconds = max(
+                0,
+                Date().timeIntervalSince1970 - Double(health.lastSuccessfulReadMs) / 1000.0
+            )
+            facts.append(String(
+                format: tr(.supportLastRead),
+                DurationFormat.label(seconds: seconds, lang: lang)
+            ))
+        }
+        let missing = health.missingCapabilities.map { capability -> String in
+            switch capability {
+            case .notDetected: return tr(.supportNotDetected)
+            case .activityFeed: return tr(.supportMissingFeed)
+            case .goal: return tr(.supportMissingGoal)
+            case .workspace: return tr(.supportMissingWorkspace)
+            case .progress: return tr(.supportMissingProgress)
+            case .waitingSignal: return tr(.supportMissingWaiting)
+            }
+        }
+        if !missing.isEmpty {
+            facts.append(String(format: tr(.supportMissing), missing.joined(separator: ", ")))
+        }
+        return facts.joined(separator: " · ")
+    }
+
+    private func supportWaitingLabel(_ agent: AgentID) -> String {
+        switch agent.waitingSource {
+        case .hooks: return tr(.supportWaitingHooks)
+        case .harvestPending: return tr(.supportWaitingHarvest)
+        case .none: return tr(.supportWaitingNone)
+        }
+    }
+
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
         HooksSupport.seedAssets()
@@ -184,6 +270,132 @@ final class StatusStore: ObservableObject {
         }
         UpdateCheck.shared.startIfEnabled(store: self)
         DebugLog.write("start armed auto=\(autoProbe)")
+    }
+
+    /// Deterministic visual contract for compact/crowded tray QA.
+    ///
+    /// This is command-line only (`--tray-fixture=compact|crowded`) and never
+    /// reachable from product UI. It hosts the real TrayPanel and catches
+    /// count, state, grouping, alignment and density regressions without
+    /// depending on whichever Agents happen to be running on a test machine.
+    func installPreviewFixture(_ name: String) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+        func row(
+            _ key: String,
+            _ agent: AgentID,
+            task: String,
+            cwd: String = "/Users/me/code/Pulse",
+            source: ObservationSource = .session,
+            live: Bool = true,
+            ageMinutes: Int = 1
+        ) -> AgentRow {
+            var value = AgentRow(rowKey: key, agent: agent)
+            value.sessionID = key
+            value.task = task
+            value.cwd = cwd
+            value.project = AgentRow.shortProject(cwd)
+            value.observationSource = source
+            value.liveProcess = live
+            value.processCount = live ? 1 : 0
+            value.harvestMs = now - Int64(ageMinutes * 60 * 1000)
+            value.startedMs = now - 54 * 60 * 1000
+            value.records = 126
+            return value
+        }
+
+        var waiting = row("claude-preview", .claude, task: "Approve the release build")
+        waiting.waiting = true
+        waiting.waitKind = "Permission"
+        waiting.waitMessage = "Run the signed packaging step"
+        waiting.waitSignal = .hooks
+        waiting.waitSinceMs = now - 8 * 60 * 1000
+
+        var active = row("codex-preview", .codex, task: "Finish Pulse 0.34 observability")
+        active.phase = "testing"
+        active.progressDone = 18
+        active.progressTotal = 31
+        active.tool = "swift_test"
+        active.tokensIn = 12_400
+        active.tokensOut = 860
+
+        var stalled = row(
+            "pi-preview",
+            .pi,
+            task: "Check the process detector",
+            cwd: "",
+            ageMinutes: 32
+        )
+        stalled.isStalled = true
+
+        var recent = row(
+            "cursor-preview",
+            .cursor,
+            task: "Refine crowded tray alignment",
+            cwd: "/Users/me/code/Design",
+            live: false,
+            ageMinutes: 4
+        )
+        recent.phase = "turn_complete"
+
+        var rows = [waiting, active, stalled, recent]
+        if name != "compact" {
+            var cache = row(
+                "kiro-preview",
+                .kiro,
+                task: "Audit settings copy",
+                cwd: "/Users/me/code/Docs",
+                source: .cache,
+                live: false,
+                ageMinutes: 6
+            )
+            cache.phase = "completed"
+            var process = row(
+                "replit-preview",
+                .replit,
+                task: "",
+                cwd: "",
+                source: .process,
+                ageMinutes: 0
+            )
+            process.harvestMs = 0
+            process.processStartedMs = now - 70 * 60 * 1000
+            var sub = row(
+                "claude-sub-preview",
+                .claude,
+                task: "Run collector fixtures",
+                cwd: "/Users/me/code/Pulse"
+            )
+            sub.subRunning = 2
+            sub.subTotal = 3
+            rows += [cache, process, sub]
+        }
+        trayGrouping = name == "project" ? .project : .status
+        rows.sort { $0.section.rawValue < $1.section.rawValue }
+        cachedAll = rows
+
+        var snap = PulseSnapshot()
+        snap.glance = .waiting
+        snap.title = "Claude · 8m"
+        snap.tooltip = "Needs you · Claude"
+        snap.accessibilityLabel = tr(.a11yWaiting)
+        snap.rows = rows
+        snap.totalCount = rows.count
+        snap.sectionTotals = Dictionary(
+            uniqueKeysWithValues: TraySection.allCases.map { section in
+                (section, rows.filter { $0.section == section }.count)
+            }
+        )
+        let bits = TraySection.allCases.compactMap { section -> String? in
+            let count = snap.sectionTotals[section] ?? 0
+            guard count > 0 else { return nil }
+            return "\(count) \(tr(section.titleKey).lowercased())"
+        }
+        snap.headerTitle = bits.joined(separator: " · ")
+        snap.header = snap.headerTitle
+        snap.projectCount = Set(rows.map(\.displayPath).filter { !$0.isEmpty }).count
+        snap.updatedAt = Date()
+        snapshot = snap
     }
 
     /// launchctl unload+load are two blocking subprocesses; never run them on
@@ -461,6 +673,12 @@ final class StatusStore: ObservableObject {
         case .fresh(let rows):
             acts = rows
             lastGoodHarvest = rows
+            for row in rows where row.harvestMs > 0 {
+                lastSuccessfulReadByAgent[row.id] = max(
+                    lastSuccessfulReadByAgent[row.id] ?? 0,
+                    row.harvestMs
+                )
+            }
             ticksSinceHarvest = 0
         case .skipped:
             // Cached rows are at most a couple of ticks old — keep them whole,
@@ -725,20 +943,36 @@ final class StatusStore: ObservableObject {
         var bits: [String] = []
         let path = row.displayPath
         if !path.isEmpty, !omitPath { bits.append(path) }
-        if let phase = readablePhase(row.phase) {
-            bits.append(phase)
-        } else if let tool = liveTool(row), usefulAction(tool) {
+        if let tool = liveTool(row), usefulAction(tool) {
             bits.append(String(format: tr(.lastAction), readableAction(tool)))
         }
         let ago = lastActivityLabel(row)
         if !ago.isEmpty { bits.append(String(format: tr(.lastActive), ago)) }
+        let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+        if age >= 60 {
+            bits.append(String(
+                format: tr(.sessionAge),
+                DurationFormat.label(seconds: age, lang: lang)
+            ))
+        }
+        if row.liveProcess, row.agent.waitingSource == .none {
+            bits.append(tr(.supportWaitingNone))
+        }
         // With none of them, fall back to naming the agent rather than an
         // empty line.
         if bits.isEmpty { return row.isProcessOnly ? "" : row.agent.displayName }
         return bits.joined(separator: " · ")
     }
 
-    /// The numbers a row can show without a click.
+    /// Explicit lifecycle state only. A historical last tool is deliberately
+    /// excluded: it belongs in `rowContextLine` as "Last action", never under
+    /// a "Now" label.
+    func rowNowLine(_ row: AgentRow) -> String {
+        guard !row.waiting, let phase = readablePhase(row.phase) else { return "" }
+        return String(format: tr(.nowActivity), phase)
+    }
+
+    /// The single strongest progress fact for this row.
     ///
     /// `EXPERIENCE.md` used to send tokens, sub-agent progress and skill to a
     /// hover overlay, on a rule written when a row was cramming ten facts into
@@ -765,6 +999,38 @@ final class StatusStore: ObservableObject {
                 DurationFormat.label(seconds: age, lang: lang)
             )
         }
+        if row.errors > 0 {
+            return row.errors == 1
+                ? tr(.errorFactOne)
+                : String(format: tr(.errorsFact), row.errors)
+        }
+        if let outcome = readableFailure(row.outcome) { return outcome }
+        if row.progressTotal > 0 {
+            return String(format: tr(.progressFact), row.progressDone, row.progressTotal)
+        }
+        if row.progressDone > 0 {
+            return String(format: tr(.turnsFact), row.progressDone)
+        }
+        if row.subTotal > 0 {
+            return row.subRunning > 0
+                ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
+                : String(format: tr(.subagentsObserved), row.subTotal)
+        }
+        if row.files > 0 { return String(format: tr(.filesFact), row.files) }
+        if row.contextPercent > 0 { return String(format: tr(.contextFact), row.contextPercent) }
+        let input = AgentRow.compactToken(row.tokensIn)
+        let output = AgentRow.compactToken(row.tokensOut)
+        if !input.isEmpty || !output.isEmpty {
+            let scope: L10n.Key = [.claude, .codex].contains(row.agent)
+                ? .latestCallTokens
+                : .reportedTokens
+            return String(
+                format: tr(scope),
+                input.isEmpty ? "0" : input,
+                output.isEmpty ? "0" : output
+            )
+        }
+        if row.records > 0 { return "\(row.records)\(tr(.recordsSuffix))" }
         return ""
     }
 
@@ -778,61 +1044,13 @@ final class StatusStore: ObservableObject {
         // returns an empty line because none of the checks below add anything.
         guard !row.waiting else { return "" }
         var bits: [String] = []
-        if row.errors > 0 {
-            bits.append(
-                row.errors == 1
-                    ? tr(.errorFactOne)
-                    : String(format: tr(.errorsFact), row.errors)
-            )
-        } else if let outcome = readableFailure(row.outcome) {
-            bits.append(outcome)
-        }
-        if row.progressTotal > 0 {
-            bits.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
-        } else if row.progressDone > 0 {
-            bits.append(String(format: tr(.turnsFact), row.progressDone))
-        }
-        if row.files > 0 { bits.append(String(format: tr(.filesFact), row.files)) }
-        if row.contextPercent > 0 { bits.append(String(format: tr(.contextFact), row.contextPercent)) }
+        // Progress already has a dedicated line. This line carries stable
+        // execution context, not four competing counters.
         let mode = readableMode(row.mode)
         if !mode.isEmpty { bits.append(mode) }
         let model = readableModel(row.model)
         if !model.isEmpty { bits.append(String(format: tr(.modelFact), model)) }
-        // Start age belongs with the other session evidence. Keeping it on its
-        // own line created five-line rows even when only one numeric fact was
-        // available.
-        let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
-        if age >= 60 {
-            bits.append(String(
-                format: tr(.sessionAge),
-                DurationFormat.label(seconds: age, lang: lang)
-            ))
-        }
-        let input = AgentRow.compactToken(row.tokensIn)
-        let output = AgentRow.compactToken(row.tokensOut)
-        if !input.isEmpty || !output.isEmpty {
-            let scope: L10n.Key = [.claude, .codex].contains(row.agent)
-                ? .latestCallTokens
-                : .reportedTokens
-            bits.append(String(
-                format: tr(scope),
-                input.isEmpty ? "0" : input,
-                output.isEmpty ? "0" : output
-            ))
-        }
-        if row.subTotal > 0 {
-            if row.subRunning > 0 {
-                bits.append(String(
-                    format: tr(.subagentsActive),
-                    row.subRunning,
-                    row.subTotal
-                ))
-            } else {
-                bits.append(String(format: tr(.subagentsObserved), row.subTotal))
-            }
-        }
-        if row.records > 0 { bits.append("\(row.records)\(tr(.recordsSuffix))") }
-        return bits.prefix(4).joined(separator: " · ")
+        return bits.prefix(2).joined(separator: " · ")
     }
 
     /// The most recent tool a live row recorded — not necessarily one still

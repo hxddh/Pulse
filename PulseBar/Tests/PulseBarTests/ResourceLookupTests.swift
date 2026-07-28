@@ -319,7 +319,7 @@ final class TrayFoldTests: XCTestCase {
 
     /// Needs-you and Running are why the panel is open. They never fold.
     func testActionableSectionsNeverFold() {
-        for section in [TraySection.needsYou, .running] {
+        for section in [TraySection.needsYou, .running, .stalled] {
             XCTAssertFalse(
                 TrayFold.foldable(section: section, groupCount: 3, rowCount: 4, totalRows: 9),
                 "\(section) must stay open"

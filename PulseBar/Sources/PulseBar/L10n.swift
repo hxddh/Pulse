@@ -171,10 +171,12 @@ enum L10n {
         case .probePaused: return "live updates off"
         case .a11yIdle: return "Idle"
         case .a11yRunning: return "Running"
+        case .a11yStalled: return "Stalled"
         case .a11yWaiting: return "Needs attention"
         case .a11yError: return "Cannot refresh"
         case .sectionNeedsYou: return "Needs you"
         case .sectionRunning: return "Running"
+        case .sectionStalled: return "Stalled"
         case .sectionRecent: return "Recent"
         case .groupByAgent: return "By agent"
         case .groupByProject: return "By project"
@@ -188,8 +190,31 @@ enum L10n {
         case .agoFormat: return "%@ ago"
         case .whileAway: return "%d wait(s) ended while you were away"
         case .noActivityYet: return "no activity yet"
-        case .noProject: return "No project"
+        case .noProject: return "Workspace unknown"
         case .stalled: return "Stalled"
+        case .supportHealth: return "Agent support health"
+        case .supportHealthHint:
+            return "Observed runtime evidence, not marketing coverage. Missing facts stay explicit."
+        case .supportNoneObserved: return "No Agent evidence observed in the latest scan."
+        case .supportAllAgents: return "Other %d supported Agents"
+        case .supportNotDetected: return "Not detected"
+        case .supportStructured: return "Structured session"
+        case .supportCache: return "Local cache"
+        case .supportProcess: return "Process only"
+        case .supportDetected: return "Detected"
+        case .supportGoal: return "goal"
+        case .supportWorkspace: return "workspace"
+        case .supportProgress: return "activity"
+        case .supportLastRead: return "read %@ ago"
+        case .supportMissing: return "missing: %@"
+        case .supportMissingFeed: return "activity feed"
+        case .supportMissingGoal: return "goal"
+        case .supportMissingWorkspace: return "workspace"
+        case .supportMissingProgress: return "progress"
+        case .supportMissingWaiting: return "Waiting signal"
+        case .supportWaitingHooks: return "Waiting via hooks"
+        case .supportWaitingHarvest: return "Waiting via session data"
+        case .supportWaitingNone: return "Waiting unavailable"
         case .snooze: return "Later"
         case .snoozed: return "snoozed"
         case .snoozedFor: return "Later · %@ left"
@@ -205,6 +230,7 @@ enum L10n {
         case .phasePlanning: return "Planning"
         case .phaseWorking: return "Working"
         case .phaseTesting: return "Testing"
+        case .nowActivity: return "Now · %@"
         case .modelFact: return "Model %@"
         case .errorFactOne: return "1 failure"
         case .errorsFact: return "%d failures"
@@ -343,10 +369,12 @@ enum L10n {
         case .probePaused: return "实时更新已关闭"
         case .a11yIdle: return "空闲"
         case .a11yRunning: return "运行中"
+        case .a11yStalled: return "已停滞"
         case .a11yWaiting: return "需要你处理"
         case .a11yError: return "无法刷新"
         case .sectionNeedsYou: return "需要你"
         case .sectionRunning: return "运行中"
+        case .sectionStalled: return "停滞"
         case .sectionRecent: return "最近"
         case .groupByAgent: return "按 Agent"
         case .groupByProject: return "按项目"
@@ -360,8 +388,30 @@ enum L10n {
         case .agoFormat: return "%@前"
         case .whileAway: return "你离开时有 %d 个等待已结束"
         case .noActivityYet: return "暂无动静"
-        case .noProject: return "无项目"
+        case .noProject: return "工作区未知"
         case .stalled: return "停滞"
+        case .supportHealth: return "Agent 支持健康度"
+        case .supportHealthHint: return "展示本机实际观测证据，而非静态支持名单；缺失信息会明确标出。"
+        case .supportNoneObserved: return "最近一次扫描未观测到 Agent 证据。"
+        case .supportAllAgents: return "其他 %d 个已支持 Agent"
+        case .supportNotDetected: return "未检测到"
+        case .supportStructured: return "结构化会话"
+        case .supportCache: return "本地缓存"
+        case .supportProcess: return "仅进程"
+        case .supportDetected: return "已检测"
+        case .supportGoal: return "目标"
+        case .supportWorkspace: return "工作区"
+        case .supportProgress: return "活动"
+        case .supportLastRead: return "%@前读取"
+        case .supportMissing: return "缺少：%@"
+        case .supportMissingFeed: return "活动数据"
+        case .supportMissingGoal: return "目标"
+        case .supportMissingWorkspace: return "工作区"
+        case .supportMissingProgress: return "进度"
+        case .supportMissingWaiting: return "等待信号"
+        case .supportWaitingHooks: return "等待：hooks"
+        case .supportWaitingHarvest: return "等待：会话数据"
+        case .supportWaitingNone: return "等待：不可用"
         case .snooze: return "稍后"
         case .snoozed: return "已稍后"
         case .snoozedFor: return "已稍后 · 剩 %@"
@@ -377,6 +427,7 @@ enum L10n {
         case .phasePlanning: return "正在规划"
         case .phaseWorking: return "正在执行"
         case .phaseTesting: return "正在测试"
+        case .nowActivity: return "当前 · %@"
         case .modelFact: return "模型 %@"
         case .errorFactOne: return "1 项失败"
         case .errorsFact: return "%d 项失败"
@@ -422,16 +473,23 @@ enum L10n {
         case checkForUpdates, checkNow, openRelease
         case updateIdle, updateChecking, updateCurrent, updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
-        case a11yIdle, a11yRunning, a11yWaiting, a11yError
-        case sectionNeedsYou, sectionRunning, sectionRecent
+        case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
+        case sectionNeedsYou, sectionRunning, sectionStalled, sectionRecent
         case groupByAgent, groupByProject, groupingLabel
         case jumpToOldest, interruptionsToday, playSound
         case waitedLongest, moreActions
         case acrossProjects, agoFormat, whileAway, noActivityYet
         case noProject, stalled
+        case supportHealth, supportHealthHint, supportNoneObserved, supportAllAgents
+        case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
+        case supportGoal, supportWorkspace, supportProgress, supportLastRead, supportMissing
+        case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
+        case supportMissingProgress, supportMissingWaiting
+        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting
+        case nowActivity
         case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
         case filesFact, contextFact, progressFact, turnsFact
     }

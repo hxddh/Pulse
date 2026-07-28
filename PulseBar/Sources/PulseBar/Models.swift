@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.33.1"
+    static let semver = "0.34.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -204,6 +204,7 @@ enum FocusTier: Equatable {
 enum GlanceKind: Equatable {
     case idle
     case running
+    case stalled
     case waiting
     case error
 
@@ -214,6 +215,7 @@ enum GlanceKind: Equatable {
         switch self {
         case .idle: return .a11yIdle
         case .running: return .a11yRunning
+        case .stalled: return .a11yStalled
         case .waiting: return .a11yWaiting
         case .error: return .a11yError
         }
@@ -561,6 +563,7 @@ struct AgentRow: Identifiable, Hashable {
     var section: TraySection {
         if waiting { return .needsYou }
         if isCompletedPhase, subRunning == 0 { return .recent }
+        if isStalled { return .stalled }
         if liveProcess || subRunning > 0 { return .running }
         return .recent
     }
@@ -571,15 +574,57 @@ struct AgentRow: Identifiable, Hashable {
 enum TraySection: Int, CaseIterable, Hashable {
     case needsYou = 0
     case running = 1
-    case recent = 2
+    case stalled = 2
+    case recent = 3
 
     var titleKey: L10n.Key {
         switch self {
         case .needsYou: return .sectionNeedsYou
         case .running: return .sectionRunning
+        case .stalled: return .sectionStalled
         case .recent: return .sectionRecent
         }
     }
+}
+
+/// Runtime truth for one supported Agent.
+///
+/// The support matrix says what an adapter is designed to read. This model
+/// says what Pulse actually observed on this Mac in the latest good scan.
+/// Keeping the two distinct prevents a declared collector from being presented
+/// as rich support when the vendor store is missing, unreadable, or changed.
+struct AgentSupportHealth: Identifiable, Equatable {
+    var agent: AgentID
+    var processDetected: Bool
+    var evidence: ObservationSource?
+    var lastSuccessfulReadMs: Int64
+    var hasGoal: Bool
+    var hasWorkspace: Bool
+    var hasProgress: Bool
+
+    var id: AgentID { agent }
+
+    var isObserved: Bool { processDetected || evidence != nil }
+
+    var missingCapabilities: [SupportCapability] {
+        guard isObserved else { return [.notDetected] }
+        var missing: [SupportCapability] = []
+        if evidence == .process { missing.append(.activityFeed) }
+        if !hasGoal { missing.append(.goal) }
+        if !hasWorkspace { missing.append(.workspace) }
+        if !hasProgress { missing.append(.progress) }
+        if agent.waitingSource == .none { missing.append(.waitingSignal) }
+        return missing
+    }
+}
+
+enum SupportCapability: String, Equatable {
+    case notDetected
+    case activityFeed
+    case goal
+    case workspace
+    case progress
+    case waitingSignal
 }
 
 struct PulseSnapshot: Equatable {

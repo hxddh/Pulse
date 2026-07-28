@@ -315,7 +315,8 @@ enum SnapshotBuilder {
             )
         }
 
-        // Waiting → titled sessions → live process → recent; agent priority last.
+        // Waiting → active → stalled → recent; evidence quality and agent
+        // priority only break ties inside the same operational state.
         //
         // Within Waiting, the oldest goes first: when three agents are blocked,
         // "who has been stuck longest" is the question the list should answer.
@@ -327,6 +328,7 @@ enum SnapshotBuilder {
                 if b.waitSinceMs == 0 { return true }
                 return a.waitSinceMs < b.waitSinceMs
             }
+            if a.section != b.section { return a.section.rawValue < b.section.rawValue }
             if a.hasSessionTitle != b.hasSessionTitle { return a.hasSessionTitle && !b.hasSessionTitle }
             if a.liveProcess != b.liveProcess { return a.liveProcess && !b.liveProcess }
             if (a.subRunning > 0) != (b.subRunning > 0) { return a.subRunning > 0 && b.subRunning == 0 }
@@ -350,6 +352,7 @@ enum SnapshotBuilder {
 
         let waitingCount = all.filter(\.waiting).count
         let liveRunning = all.filter { $0.section == .running }.count
+        let stalledCount = all.filter { $0.section == .stalled }.count
         let recentOnly = all.filter { $0.section == .recent }.count
         result.waitingKeys = Set(all.filter(\.waiting).map(\.rowKey))
 
@@ -358,6 +361,7 @@ enum SnapshotBuilder {
         snap.sectionTotals = [
             .needsYou: waitingCount,
             .running: liveRunning,
+            .stalled: stalledCount,
             .recent: recentOnly,
         ]
         // Oldest wait = smallest non-zero timestamp. Computed here so the view
@@ -399,7 +403,20 @@ enum SnapshotBuilder {
             return ""
         }
 
-        // Header answers only "N need you / N running"; row detail carries the rest.
+        /// A complete operational census. Unlike agent names or "just now",
+        /// these counts cannot be recovered from a single row and they explain
+        /// every row the header sits above.
+        func stateSummary() -> String {
+            var bits: [String] = []
+            if waitingCount > 0 { bits.append("\(waitingCount) \(t(.waitingN, lang))") }
+            if liveRunning > 0 { bits.append("\(liveRunning) \(t(.runningN, lang))") }
+            if stalledCount > 0 { bits.append("\(stalledCount) \(t(.sectionStalled, lang).lowercased())") }
+            if recentOnly > 0 { bits.append("\(recentOnly) \(t(.recentN, lang))") }
+            return bits.joined(separator: " · ")
+        }
+
+        // Header accounts for all four states; no live-but-stalled row is
+        // allowed to inflate the healthy Running count.
         if all.isEmpty, input.harvestUnreliable, liveHits.isEmpty {
             snap.glance = .error
             snap.title = "!"
@@ -415,7 +432,9 @@ enum SnapshotBuilder {
             // your eye. That suppression *is* the feature; without it "remind
             // me later" reminds you continuously.
             let waitingRows = all.filter { $0.waiting && !$0.isSnoozed }
-            snap.glance = waitingRows.isEmpty ? (liveRunning > 0 ? .running : .idle) : .waiting
+            snap.glance = waitingRows.isEmpty
+                ? (liveRunning > 0 ? .running : (stalledCount > 0 ? .stalled : .idle))
+                : .waiting
             let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
             // The menu bar carries the two facts that decide whether to look:
             // how many are blocked, and how long the worst one has waited.
@@ -437,42 +456,39 @@ enum SnapshotBuilder {
                 // menu bar text goes with it, and the panel keeps the count.
                 snap.title = ""
                 snap.tooltip = "\(t(.needsYou, lang)) · \(t(.snoozed, lang))"
-                snap.headerTitle = "\(waitingCount) \(t(.waitingN, lang))"
+                snap.headerTitle = stateSummary()
             } else if waitingRows.count == 1, let w = waitingRows.first {
                 snap.title = dur.isEmpty
                     ? "\(w.agent.displayName)…"
                     : "\(w.agent.displayName) · \(dur)"
                 snap.tooltip = "\(t(.needsYou, lang)) · \(w.agent.displayName)"
-                snap.headerTitle = waitingCount == 1
-                    ? t(.needsYou, lang)
-                    : "\(waitingCount) \(t(.waitingN, lang))"
+                snap.headerTitle = stateSummary()
             } else {
                 snap.title = dur.isEmpty
                     ? "\(waitingRows.count)"
                     : "\(waitingRows.count) · \(dur)"
                 snap.tooltip = "\(t(.needsYou, lang)): \(nameJoin)"
-                snap.headerTitle = "\(waitingCount) \(t(.waitingN, lang))"
+                snap.headerTitle = stateSummary()
             }
             snap.headerDetail = aggregate()
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
-        } else if liveRunning > 0 {
-            snap.glance = .running
+        } else if liveRunning > 0 || stalledCount > 0 {
+            snap.glance = liveRunning > 0 ? .running : .stalled
             let liveRows = all.filter { $0.section == .running }
-            let liveNames = liveRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            if liveRunning == 1 {
+            let stalledRows = all.filter { $0.section == .stalled }
+            let busyRows = liveRows + stalledRows
+            let liveNames = busyRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
+            if liveRunning == 1, stalledCount == 0 {
                 snap.title = liveRows[0].agent.displayName
                 snap.tooltip = "\(liveRows[0].agent.displayName) \(t(.running, lang))"
-                snap.headerTitle = t(.running1, lang)
+            } else if liveRunning == 0 {
+                snap.title = "\(stalledCount)"
+                snap.tooltip = "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames)"
             } else {
-                snap.title = "\(liveRunning)"
-                snap.tooltip = "\(liveRunning) \(t(.runningN, lang)): \(liveNames)"
-                snap.headerTitle = "\(liveRunning) \(t(.runningN, lang))"
+                snap.title = "\(liveRunning + stalledCount)"
+                snap.tooltip = "\(stateSummary()): \(liveNames)"
             }
-            // "2 running" above four rows left the other two unaccounted for.
-            // The header counts what the list contains.
-            if recentOnly > 0 {
-                snap.headerTitle += " · \(recentOnly) \(t(.recentN, lang))"
-            }
+            snap.headerTitle = stateSummary()
             snap.headerDetail = aggregate()
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if recentOnly > 0 {
@@ -496,8 +512,12 @@ enum SnapshotBuilder {
         result.snapshot = snap
 
         // Edges — reported, not acted on. The store owns notification policy.
-        let previousLampBusy = previous.rows.contains { $0.waiting || $0.section == .running }
-        let nowLampBusy = all.contains { $0.waiting || $0.section == .running }
+        let previousLampBusy = previous.rows.contains {
+            $0.waiting || $0.section == .running || $0.section == .stalled
+        }
+        let nowLampBusy = all.contains {
+            $0.waiting || $0.section == .running || $0.section == .stalled
+        }
         result.wentIdle = previousLampBusy && !nowLampBusy
 
         let newcomers = result.waitingKeys.subtracting(previous.waitingKeys)
@@ -508,7 +528,7 @@ enum SnapshotBuilder {
 
         if waitingCount > 0 {
             result.activity = .waiting
-        } else if liveRunning > 0 {
+        } else if liveRunning > 0 || stalledCount > 0 {
             result.activity = .running
         } else if recentOnly > 0 {
             result.activity = .recent

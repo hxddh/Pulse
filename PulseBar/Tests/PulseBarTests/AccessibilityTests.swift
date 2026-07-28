@@ -4,7 +4,7 @@ import XCTest
 /// VoiceOver must speak the interface language, not English.
 final class AccessibilityLocalizationTests: XCTestCase {
     func testGlanceStatesHaveDistinctLocalizedLabels() {
-        for glance in [GlanceKind.idle, .running, .waiting, .error] {
+        for glance in [GlanceKind.idle, .running, .stalled, .waiting, .error] {
             let en = L10n.t(glance.accessibilityKey, .en)
             let zh = L10n.t(glance.accessibilityKey, .zh)
             XCTAssertFalse(en.isEmpty)

@@ -9,6 +9,8 @@ enum AppServices {
 /// `App.main()` connects to the WindowServer, which a CI runner may not have.
 @main
 enum PulseBarMain {
+    private static var instanceGuard: SingleInstanceGuard?
+
     static func main() {
         if CommandLine.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
@@ -22,6 +24,16 @@ enum PulseBarMain {
             )
             exit(result.unreliable ? 1 : 0)
         }
+        let guardLock = SingleInstanceGuard()
+        guard guardLock.acquire() else {
+            Task { @MainActor in
+                SingleInstanceGuard.activateExistingCopy()
+                exit(0)
+            }
+            RunLoop.main.run()
+            return
+        }
+        instanceGuard = guardLock
         PulseBarApp.main()
     }
 }
@@ -50,7 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusPanel = panel
         StatusPanelController.shared = panel
         panel.install()
-        AppServices.store.start()
+        if let fixture = CommandLine.arguments.first(where: { $0.hasPrefix("--tray-fixture=") }) {
+            AppServices.store.installPreviewFixture(
+                String(fixture.dropFirst("--tray-fixture=".count))
+            )
+        } else {
+            AppServices.store.start()
+        }
         if CommandLine.arguments.contains("--open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 AppServices.store.openSettings()
@@ -229,7 +247,7 @@ private struct SectionHeader: View {
     var showCount = true
 
     var body: some View {
-        let line = HStack(spacing: 6) {
+        let line = HStack(spacing: 9) {
             Group {
                 if let collapsed {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.down")
@@ -242,10 +260,9 @@ private struct SectionHeader: View {
             // Reserve the disclosure column even for a non-foldable group.
             // Otherwise neighbouring section titles start at two different
             // x positions depending on whether they happen to be collapsible.
-            // 14 pt from the 16 pt panel inset puts this column's centre at
-            // x=23, exactly the centre of the 18 pt row-icon column that starts
-            // at x=14.
-            .frame(width: 14, height: 14, alignment: .center)
+            // 18 pt column + 9 pt gap aligns the heading text with the Agent
+            // identity text below: 16 + 18 + 9 = 43 pt.
+            .frame(width: 18, height: 14, alignment: .center)
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
             // "No project 2 Pi · Amp" — two names and a 2. The count only
@@ -523,13 +540,10 @@ struct TrayPanel: View {
         // Grouping by project produced "~/Documents/Cursor 1" over exactly one
         // row whose own second line said "~/Documents/Cursor". Two lines, one
         // fact, and a whole row of height spent on it.
-        if group.statesPath && group.rows.count == 1 { return false }
-        // "No project 2" is a whole row of panel spent saying that the two
-        // rows below it are missing something. It is the worst line in the
-        // panel by information per pixel: a negative fact, about rows the user
-        // can already see, that they can do nothing with. The bucket keeps its
-        // rows and loses its heading.
-        if group.isBucket { return false }
+        if group.statesPath && group.rows.count == 1 && !group.isBucket { return false }
+        // An unlocated bucket must keep its heading. Hiding it made the first
+        // unlocated Agent look as if it belonged to the preceding project,
+        // which is worse than spending one compact line on an honest unknown.
         return true
     }
 
@@ -634,7 +648,12 @@ struct TrayPanel: View {
                 // panel that caps at a handful of rows gains nothing from
                 // sticky headings, and un-pinning removes the band by
                 // construction rather than by picking a better shade.
-                LazyVStack(spacing: 0) {
+                // At most eight rows are visible. A LazyVStack inside a
+                // ScrollView reports the viewport proposal rather than its
+                // materialised content height on some macOS builds, pinning
+                // the list to the 420 pt cap and leaving a large empty tail.
+                // A regular stack is cheap at this scale and measures exactly.
+                VStack(spacing: 0) {
                     ForEach(groups) { group in
                         Section {
                             // No rules between rows: whitespace already
@@ -646,7 +665,8 @@ struct TrayPanel: View {
                                         row: row,
                                         store: store,
                                         pathInHeading: group.statesPath && showHeading(group, of: groups),
-                                        selected: selectedKey == row.rowKey
+                                        selected: selectedKey == row.rowKey,
+                                        compact: store.snapshot.rows.count >= TrayFold.crowdedFrom
                                     )
                                     .id(row.rowKey)
                                     .transition(.opacity)
@@ -693,7 +713,6 @@ struct TrayPanel: View {
             // part. Arrow keys walk the visible rows, Return focuses the
             // terminal, Escape gives up.
             .focusable()
-            .focusEffectDisabled()
             .focused($listFocused)
             .onAppear { listFocused = true }
             .onKeyPress(.downArrow) { moveSelection(1, in: groups); return .handled }
@@ -801,6 +820,9 @@ private struct AgentRowButton: View {
     var pathInHeading = false
     /// True when keyboard navigation has this row selected.
     var selected = false
+    /// Preserve the core hierarchy when the list is crowded; only secondary
+    /// execution context is sacrificed.
+    var compact = false
     @State private var hovering = false
 
     private var highlight: Color {
@@ -814,17 +836,7 @@ private struct AgentRowButton: View {
                 actionable: row.canFocusTerminal,
                 action: { store.primaryAction(row) }
             ) {
-                HStack(alignment: .top, spacing: 0) {
-                    // Encoding 1 of 3: does this need me, and has it been
-                    // waiting a long time. Width is the *only* thing in the row
-                    // that changes with age — everything else stays constant so
-                    // the escalation actually reads as one.
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(accentFill)
-                        .frame(width: accentWidth)
-                        .padding(.vertical, 4)
-
-                    HStack(alignment: .top, spacing: 11) {
+                HStack(alignment: .top, spacing: 11) {
                         AgentIconView(id: row.agent, waiting: row.waiting)
                             .padding(.top, 3)
 
@@ -858,8 +870,15 @@ private struct AgentRowButton: View {
                                     design: .rounded
                                 ))
                                 .foregroundStyle(.primary)
-                                .lineLimit(row.isProcessOnly ? 1 : 2)
+                                .lineLimit(compact || row.isProcessOnly ? 1 : 2)
                                 .fixedSize(horizontal: false, vertical: true)
+
+                            if !nowLine.isEmpty {
+                                Text(nowLine)
+                                    .font(.system(size: 10.75, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
 
                             if !contextLine.isEmpty {
                                 Text(contextLine)
@@ -890,7 +909,7 @@ private struct AgentRowButton: View {
                             // Token activity, subagent progress and record count
                             // used to require hover + Details, making the tray
                             // look static until the user interrogated it.
-                            if !observationLine.isEmpty {
+                            if !observationLine.isEmpty && (!compact || metrics.isEmpty) {
                                 Text(observationLine)
                                     .font(.system(size: 10.5, weight: .regular))
                                     .foregroundStyle(.secondary)
@@ -902,8 +921,17 @@ private struct AgentRowButton: View {
                     }
                     .padding(.leading, 14)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.vertical, row.isProcessOnly ? 7 : 9)
-                }
+                    .padding(.vertical, compact ? 6 : (row.isProcessOnly ? 7 : 9))
+                    // The wait gutter overlays its own inset and never
+                    // participates in layout. Waiting and non-waiting identity
+                    // columns therefore remain exactly aligned.
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(accentFill)
+                            .frame(width: accentWidth)
+                            .padding(.leading, 6)
+                            .padding(.vertical, 4)
+                    }
                 .contentShape(Rectangle())
             }
             .accessibilityElement(children: .combine)
@@ -972,10 +1000,13 @@ private struct AgentRowButton: View {
     }
 
     private var metrics: String { store.rowMetrics(row) }
+    private var nowLine: String { store.rowNowLine(row) }
     private var observationLine: String { store.rowObservationLine(row) }
     private var sourceLabel: String? {
         switch row.observationSource {
-        case .session: return store.tr(.sessionEvidence)
+        // A real session is the normal case. Labelling every healthy row
+        // "Session" adds no distinction; only degraded evidence needs a tag.
+        case .session: return nil
         case .cache: return store.tr(.cacheEvidence)
         case .process: return store.tr(.limitedData)
         }
@@ -1182,6 +1213,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             statusSection
+            supportHealthSection
             generalSection
             notificationsSection
             waitingSignalsSection
@@ -1194,6 +1226,37 @@ struct SettingsView: View {
         .onAppear {
             store.hooksStatus = HooksSupport.probeStatus()
             PulseNotify.refreshAuthorization()
+        }
+    }
+
+    // MARK: Observed support
+
+    private var supportHealthSection: some View {
+        let health = store.supportHealth
+        let observed = health.filter(\.isObserved)
+        return Section(store.tr(.supportHealth)) {
+            Text(store.tr(.supportHealthHint))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if observed.isEmpty {
+                Text(store.tr(.supportNoneObserved))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(observed) { item in
+                    SupportHealthRow(item: item, store: store)
+                }
+            }
+            DisclosureGroup(
+                String(
+                    format: store.tr(.supportAllAgents),
+                    health.filter { !$0.isObserved }.count
+                )
+            ) {
+                ForEach(health.filter { !$0.isObserved }) { item in
+                    SupportHealthRow(item: item, store: store)
+                }
+            }
         }
     }
 
@@ -1470,6 +1533,38 @@ struct SettingsView: View {
         return line.isEmpty ? store.tr(.devBuild) : line
     }
 
+}
+
+@MainActor
+private struct SupportHealthRow: View {
+    let item: AgentSupportHealth
+    @ObservedObject var store: StatusStore
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            AgentIconView(id: item.agent, waiting: false)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(item.agent.displayName)
+                        .font(.system(size: 12, weight: .medium))
+                    Text(store.supportEvidenceLabel(item))
+                        .font(.caption2)
+                        .foregroundStyle(
+                            item.isObserved
+                                ? Color.secondary
+                                : Color.secondary.opacity(0.6)
+                        )
+                }
+                Text(store.supportHealthDetail(item))
+                    .font(.caption2)
+                    .foregroundStyle(item.missingCapabilities.isEmpty ? Color.secondary : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+        }
+        .accessibilityElement(children: .combine)
+    }
 }
 
 /// Hour+minute picker backed by minutes-since-midnight.

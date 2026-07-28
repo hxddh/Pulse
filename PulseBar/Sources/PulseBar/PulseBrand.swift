@@ -20,6 +20,7 @@ enum PulseBrand {
         switch glance {
         case .idle: asset = .idle
         case .running: asset = .running
+        case .stalled: asset = .error
         case .waiting: asset = .waiting
         case .error: asset = .error
         }
@@ -135,6 +136,7 @@ extension GlanceKind {
         switch self {
         case .waiting: return Color(red: 0.92, green: 0.28, blue: 0.22)
         case .running: return Color(red: 0.22, green: 0.68, blue: 0.40)
+        case .stalled: return Color.orange
         case .idle: return Color.secondary
         case .error: return Color.orange
         }

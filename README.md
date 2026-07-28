@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.33.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.34.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -169,8 +169,11 @@ git push                               # CI 构建、打 tag、发布
 **tag 由 CI 用自己的 `contents: write` token 创建**，发布不依赖任何人的本地推送权限。
 已发布过的版本会被拒绝重复发布，重推是安全的。
 
-要产出别人能直接打开的包，设仓库 secret `PULSE_SIGN_IDENTITY`
-（可选 `PULSE_NOTARY_PROFILE` 触发公证）。未设置时 Release 说明会自动附上绕过提示。
+发布 workflow 不再允许 ad-hoc 构建。仓库必须配置
+`PULSE_CERTIFICATE_P12`（base64）、`PULSE_CERTIFICATE_PASSWORD`、
+`PULSE_SIGN_IDENTITY`、`PULSE_NOTARY_KEY_P8`（base64）、
+`PULSE_NOTARY_KEY_ID` 和 `PULSE_NOTARY_ISSUER_ID`。CI 会导入临时 keychain，
+分别公证并 staple App 与 DMG，再以 `spctl` 验收；任一凭据缺失就拒绝发布。
 
 > 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
 > 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，

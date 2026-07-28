@@ -321,6 +321,112 @@ def last_tool_name_strict(text: str) -> str:
         return names[-1][:40]
     return ""
 
+
+def semantic_phase_from_events(text: str) -> str:
+    """Read an explicit current phase from ordered lifecycle events.
+
+    A last tool name is historical evidence, not proof that the tool is still
+    running. Calls are therefore considered current only until a matching tool
+    result arrives. Explicit permission/completion/phase events remain valid
+    because they describe lifecycle state rather than a guessed activity.
+    """
+    pending: dict[str, str] = {}
+    unkeyed_tool = ""
+    explicit = ""
+
+    def tool_phase(name: str) -> str:
+        low = (name or "").lower()
+        if any(x in low for x in ("plan", "todo")):
+            return "planning"
+        if any(x in low for x in ("read", "glob", "grep")):
+            return "reading"
+        if any(x in low for x in ("search", "web", "browser", "fetch")):
+            return "researching"
+        if any(x in low for x in ("edit", "patch", "write")):
+            return "editing"
+        if any(x in low for x in ("test", "verify", "check", "build")):
+            return "testing"
+        return "working"
+
+    def walk(value):
+        nonlocal explicit, unkeyed_tool
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+            return
+        if not isinstance(value, dict):
+            return
+        typ = str(
+            value.get("type") or value.get("event") or value.get("kind") or ""
+        ).lower()
+        if typ in ("phase_changed", "phase_change"):
+            phase = str(value.get("phase") or value.get("state") or "").strip()
+            if phase:
+                explicit = phase[:64]
+        elif typ in (
+            "permission_requested", "permission_request", "tool_permission",
+            "approval_requested", "input_requested", "ask_user",
+        ):
+            explicit = "waiting_permission"
+        elif typ in (
+            "turn_complete", "turn_completed", "task_complete", "task_completed",
+            "turn_ended", "task_ended",
+        ):
+            explicit = "turn_complete"
+            pending.clear()
+            unkeyed_tool = ""
+        elif typ in ("response_started", "message_stream_started", "responding"):
+            explicit = "responding"
+        elif typ in (
+            "tool_use", "custom_tool_call", "function_call", "tool_call",
+            "tool_started",
+        ):
+            fn = value.get("function") if isinstance(value.get("function"), dict) else {}
+            name = str(
+                value.get("name") or value.get("tool_name")
+                or value.get("toolName") or fn.get("name") or ""
+            ).strip()
+            if name:
+                call_id = str(
+                    value.get("id") or value.get("call_id")
+                    or value.get("tool_use_id") or ""
+                ).strip()
+                phase = tool_phase(name)
+                if call_id:
+                    pending[call_id] = phase
+                else:
+                    unkeyed_tool = phase
+                explicit = ""
+        elif typ in (
+            "tool_result", "tool_completed", "custom_tool_call_output",
+            "function_call_output", "tool_call_output",
+        ):
+            call_id = str(
+                value.get("call_id") or value.get("tool_use_id")
+                or value.get("id") or ""
+            ).strip()
+            if call_id:
+                pending.pop(call_id, None)
+            else:
+                unkeyed_tool = ""
+        for child in value.values():
+            if isinstance(child, (dict, list)):
+                walk(child)
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith(("{", "[")):
+            continue
+        try:
+            walk(json.loads(line))
+        except Exception:
+            continue
+    if pending:
+        return list(pending.values())[-1]
+    if unkeyed_tool:
+        return unkeyed_tool
+    return explicit
+
 def last_skill_name(text: str) -> str:
     """Return an explicitly invoked skill, never a path that happens to contain `skills/`.
 
@@ -758,6 +864,9 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
         # wait-signal column.
         skill = ""
         extra = session_stats(f, per_session=True)
+        phase = semantic_phase_from_events(text)
+        if phase:
+            extra["phase"] = phase
         progress = re.fullmatch(r"tasks\s+(\d+)/(\d+)", checklist or "")
         if progress:
             extra["progress_done"] = int(progress.group(1))
@@ -816,6 +925,10 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         if codex_has_unresolved_approval(text):
             skill = "pending"
         if task or tin or tout or tool or skill or project:
+            extra = session_stats(f, per_session=True)
+            phase = semantic_phase_from_events(text)
+            if phase:
+                extra["phase"] = phase
             out.append(
                 (
                     task,
@@ -827,7 +940,7 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                     (cwd or "")[:240],
                     file_mtime_ms(f),
                     f.stem,
-                    session_stats(f, per_session=True),
+                    extra,
                 )
             )
         if len(out) >= 2:
@@ -1093,7 +1206,11 @@ def pi_activity() -> tuple:
     cwd = extract_field(text, "cwd") or extract_field(text, "workingDirectory") or ""
     project = short_project(cwd) if cwd else short_project(f.parent.name)
     sid = f.stem
-    return task[:160], tin, tout, tool[:48], skill[:48], project[:48], (cwd or "")[:240], file_mtime_ms(f), sid[:80]
+    extra = session_stats(f, per_session=True)
+    phase = semantic_phase_from_events(text)
+    if phase:
+        extra["phase"] = phase
+    return task[:160], tin, tout, tool[:48], skill[:48], project[:48], (cwd or "")[:240], file_mtime_ms(f), sid[:80], extra
 
 
 def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
@@ -2220,7 +2337,10 @@ def kimi_activities() -> list[tuple]:
         project = short_project(cwd) if cwd else short_project(sdir.parent.name)
         skill = "pending" if text_looks_pending(text) else ""
         mtime = file_mtime_ms(wire if wire.is_file() else (state if state.is_file() else sdir))
-        stats = session_stats(wire if wire.is_file() else (state if state.is_file() else sdir))
+        stats = session_stats(
+            wire if wire.is_file() else (state if state.is_file() else sdir),
+            per_session=True,
+        )
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sid or sdir.name[:80], stats))
         if len(out) >= 2:
             break
