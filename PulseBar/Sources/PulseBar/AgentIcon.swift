@@ -115,6 +115,16 @@ enum AgentIcon {
             height: targetSize.height
         )
         guard let output = bitmap() else { return source }
+        // `NSBitmapImageRep.colorAt` and `NSImage.draw(from:)` disagree about
+        // the vertical origin. Convert the measured top-origin pixel bounds
+        // into AppKit's bottom-origin source rect before drawing; without this
+        // Pi, Amazon Q, Junie and Droid were cropped and shifted.
+        let drawingBounds = NSRect(
+            x: bounds.minX,
+            y: CGFloat(rasterSize) - bounds.maxY,
+            width: bounds.width,
+            height: bounds.height
+        )
         let context = NSGraphicsContext(bitmapImageRep: output)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
@@ -126,7 +136,7 @@ enum AgentIcon {
         rasterImage.addRepresentation(raster)
         rasterImage.draw(
             in: target,
-            from: bounds,
+            from: drawingBounds,
             operation: .sourceOver,
             fraction: 1,
             respectFlipped: false,
