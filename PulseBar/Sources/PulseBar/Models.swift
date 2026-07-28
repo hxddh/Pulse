@@ -160,7 +160,6 @@ enum WaitSignalKind: String, Equatable {
 enum FocusTier: Equatable {
     case tty
     case warp
-    case openCwd
 }
 
 enum GlanceKind: Equatable {

@@ -74,7 +74,6 @@ enum L10n {
         case .quietEnd: return "Until"
         case .focusTTY: return "Focus TTY"
         case .focusWarp: return "Focus Warp"
-        case .openInTerminal: return "Open in terminal"
         case .activityPrefix: return "Doing"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
@@ -162,7 +161,6 @@ enum L10n {
         case .interruptionsToday: return "Today: %d interruptions, %@ average wait"
         case .playSound: return "Play a sound on new waits"
         case .waitedLongest: return "longest"
-        case .moreDetail: return "Details"
         case .moreActions: return "More actions"
         case .acrossProjects: return "across %d projects"
         case .agoFormat: return "%@ ago"
@@ -179,7 +177,6 @@ enum L10n {
         case .notifFocus: return "Focus"
         case .recordsSuffix: return " records"
         case .sessionAge: return "session %@"
-        case .tokenSnapshot: return "token snapshot %@"
         }
     }
 
@@ -216,7 +213,6 @@ enum L10n {
         case .quietEnd: return "结束"
         case .focusTTY: return "聚焦终端页"
         case .focusWarp: return "聚焦 Warp"
-        case .openInTerminal: return "在终端打开"
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
@@ -300,7 +296,6 @@ enum L10n {
         case .interruptionsToday: return "今天：被打断 %d 次，平均等待 %@"
         case .playSound: return "新等待时播放提示音"
         case .waitedLongest: return "最久"
-        case .moreDetail: return "详情"
         case .moreActions: return "更多操作"
         case .acrossProjects: return "%d 个项目"
         case .agoFormat: return "%@前"
@@ -317,7 +312,6 @@ enum L10n {
         case .notifFocus: return "去看看"
         case .recordsSuffix: return " 条记录"
         case .sessionAge: return "会话 %@"
-        case .tokenSnapshot: return "token 快照 %@"
         }
     }
 
@@ -328,7 +322,7 @@ enum L10n {
         case recent1, recentN, recent, idleWord
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
-        case focusTerminal, focusTTY, focusWarp, openInTerminal, openFolder, dismissWait
+        case focusTerminal, focusTTY, focusWarp, openFolder, dismissWait
         case general, liveUpdates, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, attentionBridgeHint, shortcuts, hotkeyHint, a11yHint
@@ -352,11 +346,11 @@ enum L10n {
         case sectionNeedsYou, sectionRunning, sectionRecent
         case groupByAgent, groupByProject, groupingLabel
         case jumpToOldest, interruptionsToday, playSound
-        case waitedLongest, moreDetail, moreActions
+        case waitedLongest, moreActions
         case acrossProjects, agoFormat, whileAway, noActivityYet
         case noProject, stalled
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
-        case recordsSuffix, sessionAge, tokenSnapshot
+        case recordsSuffix, sessionAge
     }
 }
 

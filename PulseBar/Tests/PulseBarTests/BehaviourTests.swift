@@ -60,48 +60,45 @@ final class ProbeScheduleTests: XCTestCase {
 /// Focus honesty: never claim a TTY we cannot select.
 final class FocusTierTests: XCTestCase {
     private let fullEnv = TerminalFocus.Environment(
-        warpRunning: true, ttyHostRunning: true, anyTerminalInstalled: true
+        warpRunning: true, ttyHostRunning: true
     )
 
     func testWarpWins_WhenProcessRunsUnderWarp() {
-        let tier = TerminalFocus.focusTier(tty: "ttys003", viaWarp: true, cwdExists: true, env: fullEnv)
+        let tier = TerminalFocus.focusTier(tty: "ttys003", viaWarp: true, env: fullEnv)
         XCTAssertEqual(tier, .warp, "TTY tab select does not work inside Warp")
     }
 
     func testTTYUsedWhenTerminalOrITermIsRunning() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, anyTerminalInstalled: true
+            warpRunning: false, ttyHostRunning: true
         )
         XCTAssertEqual(
-            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, cwdExists: true, env: env),
+            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: env),
             .tty
         )
     }
 
-    func testFallsBackToOpenCwdWhenNoTTYHost() {
+    func testCwdDoesNotPretendToBeAFocusHandle() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, anyTerminalInstalled: true
+            warpRunning: false, ttyHostRunning: false
         )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, cwdExists: true, env: env),
-            .openCwd
-        )
+        XCTAssertNil(TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: env))
     }
 
     func testNoHandleMeansNoFocusButtonAtAll() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, anyTerminalInstalled: true
+            warpRunning: false, ttyHostRunning: false
         )
-        XCTAssertNil(TerminalFocus.focusTier(tty: "", viaWarp: false, cwdExists: false, env: env))
+        XCTAssertNil(TerminalFocus.focusTier(tty: "", viaWarp: false, env: env))
     }
 
     func testPlaceholderTTYValuesAreNotRealHandles() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, anyTerminalInstalled: false
+            warpRunning: false, ttyHostRunning: true
         )
         for placeholder in ["", "?", "??", "-"] {
             XCTAssertNil(
-                TerminalFocus.focusTier(tty: placeholder, viaWarp: false, cwdExists: false, env: env),
+                TerminalFocus.focusTier(tty: placeholder, viaWarp: false, env: env),
                 "\(placeholder) should not count as a TTY"
             )
         }

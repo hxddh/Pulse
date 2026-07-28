@@ -759,8 +759,19 @@ final class StatusStore: ObservableObject {
                 DurationFormat.label(seconds: age, lang: lang)
             ))
         }
-        if let sub = row.subagentLine { bits.append(sub) }
         return bits.joined(separator: " · ")
+    }
+
+    /// Stable, useful session evidence that should not require opening a
+    /// disclosure. This is deliberately bounded to four facts and excludes
+    /// diagnostic-only values such as the full cwd and session identifier.
+    func rowObservationLine(_ row: AgentRow) -> String {
+        guard !row.waiting, !row.isProcessOnly else { return "" }
+        var bits: [String] = []
+        if let tokens = row.tokenLine { bits.append(tokens) }
+        if let sub = row.subagentLine { bits.append(sub) }
+        if row.records > 0 { bits.append("\(row.records)\(tr(.recordsSuffix))") }
+        return bits.prefix(4).joined(separator: " · ")
     }
 
     /// The most recent tool a live row recorded — not necessarily one still
@@ -826,9 +837,14 @@ final class StatusStore: ObservableObject {
         switch row.focusTier {
         case .tty: return tr(.focusTTY)
         case .warp: return tr(.focusWarp)
-        case .openCwd: return tr(.openInTerminal)
         case .none: return tr(.focusTerminal)
         }
+    }
+
+    func primaryActionTitle(_ row: AgentRow) -> String {
+        if row.canFocusTerminal { return focusActionTitle(row) }
+        if row.canOpenFolder { return tr(.openFolder) }
+        return tr(.moreActions)
     }
 
     /// "Remind me later" — the answer that did not exist.
@@ -874,7 +890,7 @@ final class StatusStore: ObservableObject {
         if row.canFocusTerminal {
             if TerminalFocus.focus(row: row) { return }
         }
-        openProject(row)
+        if row.canOpenFolder { openProject(row) }
     }
 
     func focusTerminal(_ row: AgentRow) {

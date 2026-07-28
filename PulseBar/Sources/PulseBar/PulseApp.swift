@@ -40,6 +40,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AppServices.store.openSettings()
             }
         }
+        // MenuBarExtra windows are not exposed reliably to UI automation.
+        // This opt-in QA surface hosts the exact TrayPanel view in a normal
+        // window so screenshots and accessibility regressions are testable.
+        if CommandLine.arguments.contains("--open-tray-preview") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                TrayPreviewWindowController.shared.show(store: AppServices.store)
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -417,12 +425,19 @@ struct TrayPanel: View {
     private var nudge: some View {
         if store.needsHooksNudge {
             Button { store.openSettings() } label: {
-                Text(store.tr(.hooksNudge))
-                    .font(.system(size: 11))
-                    .foregroundStyle(TrayChrome.waitAccent.opacity(0.95))
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Image(systemName: "link")
+                        .font(.system(size: 10.5, weight: .medium))
+                    Text(store.tr(.hooksNudge))
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .opacity(0.55)
+                }
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, TrayChrome.padX)
-                    .padding(.bottom, 10)
+                    .padding(.bottom, 9)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -783,7 +798,6 @@ private struct AgentRowButton: View {
     /// True when keyboard navigation has this row selected.
     var selected = false
     @State private var hovering = false
-    @State private var expanded = false
 
     private var highlight: Color {
         if selected { return Color.primary.opacity(0.10) }
@@ -863,6 +877,19 @@ private struct AgentRowButton: View {
                                     .foregroundStyle(TrayChrome.waitAccent)
                                     .lineLimit(2)
                             }
+
+                            // Core observability is content, not a disclosure.
+                            // Token activity, subagent progress and record count
+                            // used to require hover + Details, making the tray
+                            // look static until the user interrogated it.
+                            if !observationLine.isEmpty {
+                                Text(observationLine)
+                                    .font(.system(size: 10.5, weight: .regular))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
                         }
                     }
                     .padding(.leading, 12)
@@ -874,7 +901,7 @@ private struct AgentRowButton: View {
             .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
-            .accessibilityHint(store.focusActionTitle(row))
+            .accessibilityHint(store.primaryActionTitle(row))
 
             // Actions stay visible where they are urgent, and appear on hover
             // everywhere else. Showing them on every row cost ~28pt each and
@@ -903,16 +930,12 @@ private struct AgentRowButton: View {
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
                     }
-                    Button(store.tr(.moreDetail)) { expanded.toggle() }
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 11, weight: .medium))
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, 48)
                 .padding(.trailing, TrayChrome.padX)
                 .padding(.bottom, 8)
             }
-            detailBlock
         }
         // Inset rounded, not a full-bleed rectangle.
         //
@@ -932,29 +955,6 @@ private struct AgentRowButton: View {
         }
     }
 
-    /// Inline detail, opened on demand.
-    ///
-    /// 0.24 pushed this into a tooltip, which cannot be selected, cannot be
-    /// copied, and vanishes while being read.
-    @ViewBuilder
-    private var detailBlock: some View {
-        if expanded {
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(Array(detailLines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding(.leading, 48)
-            .padding(.trailing, TrayChrome.padX)
-            .padding(.bottom, 8)
-        }
-    }
-
     /// The gutter is the loudest thing in the row, so a snoozed wait must not
     /// keep it. Everything else about the row stays put — the point is that it
     /// is still there, just not shouting.
@@ -970,9 +970,10 @@ private struct AgentRowButton: View {
     }
 
     private var metrics: String { store.rowMetrics(row) }
+    private var observationLine: String { store.rowObservationLine(row) }
 
     private var showActions: Bool {
-        row.waiting || hovering || expanded
+        row.waiting || hovering
     }
 
     /// Always-present action access for keyboard and VoiceOver users.
@@ -983,13 +984,18 @@ private struct AgentRowButton: View {
         Menu {
             secondaryActionItems
         } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 12))
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 18, height: 18)
+                .frame(width: 24, height: 20)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.primary.opacity(hovering ? 0.08 : 0.045))
+                )
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
         .accessibilityLabel(store.tr(.moreActions))
     }
@@ -1008,7 +1014,6 @@ private struct AgentRowButton: View {
         if row.canOpenFolder {
             Button(store.tr(.openFolder)) { store.openProject(row) }
         }
-        Button(store.tr(.moreDetail)) { expanded.toggle() }
     }
 
     /// Session title is the row hero; process-only rows de-rank to a status phrase.
@@ -1044,36 +1049,6 @@ private struct AgentRowButton: View {
     /// collected all along.
     private var contextLine: String {
         store.rowContextLine(row, omitPath: pathInHeading)
-    }
-
-    /// Everything the row does not show inline, revealed on demand.
-    private var detailLines: [String] {
-        var out: [String] = []
-        let full = row.cwd.isEmpty ? row.project : row.cwd
-        if !full.isEmpty, full != row.displayPath { out.append(full) }
-        if let task = row.usefulTask, task != heroTitle { out.append(task) }
-        var facts: [String] = [row.agent.displayName]
-        if row.processCount > 1 {
-            facts.append(String(format: store.tr(.processCount), row.processCount))
-        }
-        if row.viaWarp { facts.append("Warp") }
-        if let sig = row.waitSignal {
-            facts.append(sig == .hooks ? store.tr(.signalHooks) : store.tr(.signalPending))
-        }
-        out.append(facts.joined(separator: " · "))
-        if let tokens = row.tokenLine {
-            out.append(String(format: store.tr(.tokenSnapshot), tokens))
-        }
-        if row.records > 0 {
-            out.append("\(row.records)\(store.tr(.recordsSuffix))")
-        }
-        var activity: [String] = []
-        if !row.tool.isEmpty, row.usefulTask != nil { activity.append(row.tool) }
-        if !row.skill.isEmpty, row.skill != "pending" { activity.append(row.skill) }
-        if let sub = row.subagentLine { activity.append(sub) }
-        if !activity.isEmpty { out.append(activity.joined(separator: " · ")) }
-        if let hint = row.shortSessionHint { out.append(hint) }
-        return out
     }
 
     /// Only abnormal states get a badge.
@@ -1135,6 +1110,7 @@ private struct AgentRowButton: View {
         parts.append(state)
         if !contextLine.isEmpty { parts.append(contextLine) }
         if !metrics.isEmpty { parts.append(metrics) }
+        if !observationLine.isEmpty { parts.append(observationLine) }
         if row.waiting {
             let line = store.localizedWaitLine(row)
             if !line.isEmpty { parts.append(line) }
@@ -1215,7 +1191,6 @@ struct SettingsView: View {
             waitingSignalsSection
             shortcutsSection
             if !store.waitHistory.isEmpty { historySection }
-            if !store.snapshot.rows.isEmpty { agentsSection }
             aboutSection
         }
         .formStyle(.grouped)
@@ -1444,46 +1419,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Agents
-
-    private var agentsSection: some View {
-        Section(store.tr(.agents)) {
-            ForEach(store.snapshot.rows) { row in
-                HStack(alignment: .top, spacing: 8) {
-                    AgentIconView(id: row.agent, waiting: row.waiting)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.titleLine)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .lineLimit(1)
-                        if let session = row.sessionDetail {
-                            Text(session)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        let context = store.rowContextLine(row)
-                        let metrics = store.rowMetrics(row)
-                        if !context.isEmpty || !metrics.isEmpty {
-                            Text([context, metrics].filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    Text(Self.statusLabel(row: row, store: store))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(row.waiting ? GlanceKind.waiting.lampColor : Color.secondary)
-                }
-            }
-            if store.snapshot.cappedSessions > 0 {
-                Text(String(format: store.tr(.cappedSessions), store.snapshot.cappedSessions))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-    }
-
     // MARK: About
 
     private var aboutSection: some View {
@@ -1539,18 +1474,6 @@ struct SettingsView: View {
         return line.isEmpty ? store.tr(.devBuild) : line
     }
 
-    private static func statusLabel(row: AgentRow, store: StatusStore) -> String {
-        if row.waiting {
-            return row.waitKind.isEmpty ? store.tr(.needsYou) : store.localizedWaitKind(row.waitKind)
-        }
-        if row.liveProcess || row.subRunning > 0 {
-            if row.processCount > 1 {
-                return String(format: store.tr(.processCount), row.processCount)
-            }
-            return store.tr(.running)
-        }
-        return store.tr(.recent)
-    }
 }
 
 /// Hour+minute picker backed by minutes-since-midnight.

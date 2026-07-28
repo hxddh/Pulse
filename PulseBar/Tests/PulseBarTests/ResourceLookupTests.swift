@@ -479,8 +479,8 @@ final class LiveToolTests: XCTestCase {
     }
 }
 
-/// The row keeps short-window progress inline and leaves ambiguous counters in
-/// Details. Last activity and the latest tool are covered above.
+/// The row keeps useful session evidence visible without a disclosure. Last
+/// activity and the latest tool are covered above.
 final class RowMetricsTests: XCTestCase {
     @MainActor
     private func store() -> StatusStore { StatusStore() }
@@ -503,20 +503,20 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testTokenSnapshotStaysOutOfThePrimaryRow() {
-        let m = store().rowMetrics(row(inTok: 12_000, outTok: 3_000))
-        XCTAssertFalse(m.contains("↑"), m)
-        XCTAssertFalse(m.contains("↓"), m)
+    func testTokenSnapshotIsVisibleByDefault() {
+        let line = store().rowObservationLine(row(inTok: 12_000, outTok: 3_000))
+        XCTAssertTrue(line.contains("↑12k"), line)
+        XCTAssertTrue(line.contains("↓3.0k"), line)
     }
 
     @MainActor
-    func testSubagentProgressIsAMetricToo() {
-        XCTAssertTrue(store().rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
+    func testSubagentProgressIsVisibleByDefault() {
+        XCTAssertTrue(store().rowObservationLine(row(subRunning: 2, subTotal: 5)).contains("2"))
     }
 
     @MainActor
-    func testMixedRecordCountStaysOutOfThePrimaryRow() {
-        XCTAssertFalse(store().rowMetrics(row(records: 34)).contains("34"))
+    func testRecordCountIsVisibleByDefault() {
+        XCTAssertTrue(store().rowObservationLine(row(records: 34)).contains("34"))
     }
 
     /// On a waiting row the question is the point; numbers beside it are noise
@@ -533,28 +533,31 @@ final class RowMetricsTests: XCTestCase {
             waiting: true, records: 34, startedAgo: 3 * 3600
         )
         XCTAssertEqual(store().rowMetrics(loaded), "", "a waiting row carries no metrics at all")
+        XCTAssertEqual(store().rowObservationLine(loaded), "", "a waiting row carries no telemetry line")
     }
 
-    /// The same row, not waiting, carries duration and real subagent progress,
-    /// while token snapshots and mixed event records stay in Details.
+    /// The same row, not waiting, carries duration on the context line and
+    /// bounded session evidence on one always-visible observation line.
     @MainActor
     func testTheSameRowNotWaitingCarriesEverything() {
-        let m = store().rowMetrics(row(
+        let loaded = row(
             inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
             records: 34, startedAgo: 3 * 3600
-        ))
-        XCTAssertFalse(m.contains("34"), m)
-        // The subagent progress intentionally uses ↑. Assert the token
-        // magnitudes are absent instead of banning the shared glyph.
-        XCTAssertFalse(m.contains("12k"), m)
-        XCTAssertFalse(m.contains("3.0k"), m)
-        XCTAssertTrue(m.contains("2"), m)
+        )
+        let metrics = store().rowMetrics(loaded)
+        let observation = store().rowObservationLine(loaded)
+        XCTAssertTrue(metrics.contains("3h"), metrics)
+        XCTAssertTrue(observation.contains("12k"), observation)
+        XCTAssertTrue(observation.contains("3.0k"), observation)
+        XCTAssertTrue(observation.contains("2"), observation)
+        XCTAssertTrue(observation.contains("34"), observation)
     }
 
     /// Nothing to say means no text, not a placeholder.
     @MainActor
     func testARowWithNoNumbersShowsNothing() {
         XCTAssertEqual(store().rowMetrics(row()), "")
+        XCTAssertEqual(store().rowObservationLine(row()), "")
     }
 
     func testTokenLineIsSuppressedWhileWaiting() {

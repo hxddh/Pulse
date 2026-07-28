@@ -16,7 +16,7 @@ final class AccessibilityLocalizationTests: XCTestCase {
     func testSnapshotCarriesTheResolvedLabelSoTheViewNeedsNoLanguage() {
         let ctx = SnapshotBuilder.Context(
             nowMs: 1_700_000_000_000,
-            terminal: .init(warpRunning: false, ttyHostRunning: false, anyTerminalInstalled: false),
+            terminal: .init(warpRunning: false, ttyHostRunning: false),
             pathExists: { _ in false },
             lang: .zh
         )

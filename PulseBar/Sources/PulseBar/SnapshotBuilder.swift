@@ -278,7 +278,6 @@ enum SnapshotBuilder {
         for i in all.indices {
             let row = all[i]
             let folderPath = row.cwd.isEmpty ? row.project : row.cwd
-            let cwdExists = !row.cwd.isEmpty && context.pathExists(row.cwd)
             all[i].canOpenFolder = !folderPath.isEmpty && context.pathExists(folderPath)
             all[i].isStalled = AgentRow.stalled(
                 harvestMs: row.harvestMs,
@@ -296,7 +295,6 @@ enum SnapshotBuilder {
             all[i].focusTier = TerminalFocus.focusTier(
                 tty: row.tty,
                 viaWarp: row.viaWarp,
-                cwdExists: cwdExists,
                 env: context.terminal
             )
         }

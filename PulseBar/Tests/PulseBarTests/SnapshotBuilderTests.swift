@@ -13,7 +13,7 @@ final class SnapshotBuilderTests: XCTestCase {
     /// No terminal anywhere — keeps focus resolution out of the way unless a
     /// test opts into it.
     private var bareTerminal: TerminalFocus.Environment {
-        TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false, anyTerminalInstalled: false)
+        TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false)
     }
 
     private func context(
@@ -396,7 +396,7 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testFocusTierIsResolvedOncePerScanNotInTheView() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, anyTerminalInstalled: true
+            warpRunning: false, ttyHostRunning: true
         )
         let r = build(
             procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 1, tty: "ttys004")],
