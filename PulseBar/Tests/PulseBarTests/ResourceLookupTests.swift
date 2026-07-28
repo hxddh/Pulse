@@ -610,9 +610,10 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
         r.processCount = 3
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("session feed unavailable"), line)
+        XCTAssertTrue(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
         XCTAssertFalse(line.contains("3"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("process"), line)
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("agent app running"), line)
     }
 
     @MainActor
@@ -622,8 +623,8 @@ final class RowMetricsTests: XCTestCase {
         r.processCount = 1
         r.focusTier = .warp
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Terminal session running"), line)
-        XCTAssertTrue(line.contains("activity feed unavailable"), line)
+        XCTAssertTrue(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("terminal session running"), line)
     }
 }
 
