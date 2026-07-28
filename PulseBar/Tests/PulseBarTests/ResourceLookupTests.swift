@@ -433,3 +433,48 @@ final class ProjectFoldTests: XCTestCase {
         )
     }
 }
+
+/// A running row said the same two things at minute one and minute forty.
+///
+/// `tool` is the only live fact the harvest collects, and it only ever
+/// appeared behind a hover or an expand.
+final class LiveToolTests: XCTestCase {
+    @MainActor
+    private func store() -> StatusStore { StatusStore() }
+
+    private func row(tool: String, task: String, live: Bool, waiting: Bool = false) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.tool = tool
+        r.task = task
+        r.liveProcess = live
+        r.processCount = live ? 1 : 0
+        r.waiting = waiting
+        return r
+    }
+
+    @MainActor
+    func testALiveRowShowsWhatItIsRunning() {
+        XCTAssertEqual(store().liveTool(row(tool: "Bash", task: "Fix the parser", live: true)), "Bash")
+    }
+
+    /// On a finished session the last tool is history, not status.
+    @MainActor
+    func testAFinishedRowDoesNotClaimToBeRunningATool() {
+        XCTAssertNil(store().liveTool(row(tool: "Bash", task: "Fix the parser", live: false)))
+    }
+
+    /// Waiting rows already spend their third line on the actual question.
+    @MainActor
+    func testAWaitingRowKeepsItsQuestionInstead() {
+        XCTAssertNil(store().liveTool(row(tool: "Bash", task: "x", live: true, waiting: true)))
+    }
+
+    /// With no task the tool is promoted to the title, so repeating it on the
+    /// line below would be the same word twice.
+    @MainActor
+    func testTheToolIsNotSaidTwiceWhenItIsAlreadyTheTitle() {
+        let r = row(tool: "Bash", task: "", live: true)
+        XCTAssertEqual(r.sessionDetail, "Bash", "the tool is the hero here")
+        XCTAssertNil(store().liveTool(r))
+    }
+}

@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Gate: nothing in the UI may freeze the system appearance into a constant.
+
+0.27.1 shipped a panel that rendered light grey with black text on a dark
+desktop. The cause was one line:
+
+    static let surface = Color(nsColor: .windowBackgroundColor)
+
+A Swift `static let` is a global initialised once, on first touch. Whatever
+appearance happened to be current when the panel first drew got baked in for
+the lifetime of the process, and no amount of switching to dark mode after
+that could move it. The app had no dark mode at all, and every test passed,
+because nothing here renders.
+
+The rule this gate enforces is narrow and mechanical, which is the only kind
+worth automating: **an appearance-dependent value may not be stored in a
+`static let` / `let` constant.** Read it inside a `body`, or use a token the
+renderer resolves per frame (`Material`, `.primary`, `.secondary`, a
+`Color` asset). Both of those are re-evaluated against the view's own
+appearance every time it draws, which is the property that was missing.
+
+    python3 scripts/appearance_check.py
+
+Exit 1 on a violation, naming the file and line.
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCES = ROOT / "PulseBar" / "Sources" / "PulseBar"
+
+# `static let x = Color(nsColor: …)` and friends: a constant binding whose
+# value is read out of the appearance-dependent NSColor catalogue.
+FROZEN = re.compile(
+    r"^\s*(?:public\s+|private\s+|fileprivate\s+|internal\s+)?"
+    r"(?:static\s+)?let\s+\w+[^=\n]*=\s*"
+    r"(?:Color\s*\(\s*nsColor\s*:|NSColor\s*\.|Color\s*\(\s*NSColor)"
+)
+
+# Deliberate exceptions, each with a reason. A lamp colour is a brand value
+# that must NOT flip with the system theme — red means "needs you" on every
+# desktop — so those are fixed on purpose.
+ALLOW_SUFFIX = "// appearance-fixed:"
+
+
+def main() -> int:
+    problems: list[str] = []
+    scanned = 0
+    for path in sorted(SOURCES.rglob("*.swift")):
+        scanned += 1
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if ALLOW_SUFFIX in line:
+                continue
+            if FROZEN.match(line):
+                rel = path.relative_to(ROOT)
+                problems.append(f"  · {rel}:{n}  {line.strip()}")
+
+    if problems:
+        print("appearance frozen into a constant:", file=sys.stderr)
+        for p in problems:
+            print(p, file=sys.stderr)
+        print(
+            "\nA `let` is initialised once, so this value keeps whatever the\n"
+            "appearance was at first draw — the app then has no dark mode.\n"
+            "Read it in `body`, or use Material / .primary / .secondary.\n"
+            f"If it is meant to be fixed on every theme, append `{ALLOW_SUFFIX} why`.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"appearance OK — {scanned} sources, no colour frozen into a constant")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

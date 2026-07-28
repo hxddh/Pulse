@@ -116,18 +116,22 @@ private enum TrayChrome {
     static let waitAccent = GlanceKind.waiting.lampColor
     static let runAccent = GlanceKind.running.lampColor
 
-    /// The panel's own surface — opaque, and the only one.
+    /// The panel's surface.
     ///
-    /// 0.27 screenshots showed the same panel turning blue over a blue
-    /// wallpaper and flat grey over a dark desktop, because the content sat
-    /// directly on the popover's vibrancy. Legibility became a function of the
-    /// user's desktop picture: the green header read as green-on-saturated-blue
-    /// in one and was nearly invisible in the other.
+    /// This was `Color(nsColor: .windowBackgroundColor)` in a `static let` for
+    /// exactly one release, and it broke the app in dark mode: a light grey
+    /// slab with black text on a dark desktop. A `static let` is a global
+    /// initialised once on first touch, so whatever appearance happened to be
+    /// current when the panel first drew got frozen in for the process's
+    /// lifetime. Nothing about dark mode is dynamic after that.
     ///
-    /// Translucency is not worth that. An accent-coloured word has to be
-    /// readable on every machine, and `windowBackgroundColor` already tracks
-    /// light and dark on its own.
-    static let surface = Color(nsColor: .windowBackgroundColor)
+    /// A `Material` cannot have that bug. It is resolved by the renderer
+    /// against the view's own appearance every frame, which is the property
+    /// that actually matters here — more than any particular shade.
+    ///
+    /// `scripts/appearance_check.py` fails the build if a stored colour
+    /// constant reappears.
+    static let surface: Material = .regularMaterial
 }
 
 private struct StatusChip: View {
@@ -225,13 +229,13 @@ private struct SectionHeader: View {
         .padding(.top, 12)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Same surface as the panel, not a material on top of it.
+        // The same material as the panel, not a heavier one on top of it.
         //
-        // `.thickMaterial` here made the heading the *brightest* block in the
-        // panel — brighter than the rows it was separating, and carrying the
-        // least important information on screen. It still has to be opaque,
+        // `.thickMaterial` here made the heading the brightest block in the
+        // panel — brighter than the rows it separated, carrying the least
+        // important information on screen. It still needs a background,
         // because it is pinned and rows scroll underneath it; it just must not
-        // be a different value.
+        // be a different weight from everything else.
         .background(TrayChrome.surface)
 
         if let toggle {
@@ -300,7 +304,7 @@ struct TrayPanel: View {
             header
             missedNotice
             nudge
-            Divider().opacity(0.4)
+            rule
 
             if store.snapshot.rows.isEmpty {
                 emptyState
@@ -308,22 +312,33 @@ struct TrayPanel: View {
                 agentList
             }
 
-            Divider().opacity(0.4)
+            rule
             actions
         }
         .frame(width: TrayChrome.width)
-        // The window was drawing about 110pt taller than the panel, leaving a
-        // band of bare window above and below it — visible as a different
-        // surface in both screenshots, and confirmed as window rather than
-        // content because clicking it dismisses the popover. Asking for the
-        // ideal height makes the window size to what the panel actually draws
-        // instead of to a stale or speculative measurement.
-        .fixedSize(horizontal: false, vertical: true)
+        // The window still draws taller than the panel — `.fixedSize` did not
+        // change that, so it is gone again rather than left in as cargo. What
+        // made the gap *visible* was painting an opaque rectangle inside a
+        // rounded translucent window: the leftover band read as a second
+        // surface and the panel read as a box pasted into the popover. A
+        // material sits on the same backdrop the window already uses, so the
+        // seam stops existing instead of being chased.
         .background(TrayChrome.surface)
         // Tray visibility drives the probe cadence — fast while being read,
         // slow (or parked) when nobody is looking.
         .onAppear { store.trayDidAppear() }
         .onDisappear { store.trayDidDisappear() }
+    }
+
+    /// Inset, not edge to edge.
+    ///
+    /// A full-bleed divider is a table rule. Two of them across a flat panel
+    /// cut it into banded strips, which is the look the 0.27.1 screenshots
+    /// had. Pulling them in to the text margin makes them separators again.
+    private var rule: some View {
+        Divider()
+            .opacity(0.5)
+            .padding(.horizontal, TrayChrome.padX)
     }
 
     private var header: some View {
@@ -341,8 +356,12 @@ struct TrayPanel: View {
                         ProgressView()
                             .controlSize(.mini)
                     }
+                    // Bigger, because it is now the only thing in the header.
+                    // Dropping the 18pt mark was right — it restated the lamp
+                    // the user had just clicked — but the padding stayed, and
+                    // a 13pt label alone in a 40pt band reads as a leftover.
                     Text(store.isRefreshing ? store.tr(.refreshing) : headerTitle)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(headerTitleColor)
                         .lineLimit(1)
                 }
@@ -356,8 +375,8 @@ struct TrayPanel: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, TrayChrome.padX)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
     }
 
     private var headerTitle: String {
@@ -989,7 +1008,16 @@ private struct AgentRowButton: View {
                 label: dur.isEmpty ? kind : "\(kind) · \(dur)"
             )
         } else if row.isProcessOnly {
-            StatusChip(kind: .process, label: store.tr(.processWord))
+            // A process-only row is the panel's thinnest: harvest knows nothing
+            // about it, so the title falls back to the agent name and the
+            // second line is empty. The count is the one extra fact that
+            // exists, and it lived in the expand block where nobody saw it.
+            StatusChip(
+                kind: .process,
+                label: row.processCount > 1
+                    ? "\(store.tr(.processWord)) ×\(row.processCount)"
+                    : store.tr(.processWord)
+            )
         } else if row.isStalled {
             // Live for twenty minutes with nothing happening. Never surfaced
             // before, and it looked exactly like a healthy session.

@@ -76,6 +76,7 @@ python3 scripts/version_check.py
 python3 scripts/coverage_check.py
 python3 scripts/matrix_check.py
 python3 scripts/make_agent_icons.py --check
+python3 scripts/appearance_check.py
 python3 -m py_compile src/*.py scripts/*.py
 
 for py in activity_scan.py pulse_hook.py install_hooks.py; do
