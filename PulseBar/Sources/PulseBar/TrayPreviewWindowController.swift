@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Opt-in visual QA host for the MenuBarExtra content.
+/// Opt-in visual QA host for the tray content.
 ///
 /// It is reachable only through `--open-tray-preview`; no production control
 /// links to it. The actual `TrayPanel` is hosted unchanged so screenshot tests
@@ -12,11 +12,14 @@ final class TrayPreviewWindowController: NSObject, NSWindowDelegate {
 
     private var window: NSWindow?
     private var hosting: NSHostingController<TrayPanel>?
+    private weak var store: StatusStore?
 
     func show(store: StatusStore) {
+        self.store = store
         if let window, let hosting {
             hosting.rootView = TrayPanel(store: store)
             present(window)
+            store.trayDidAppear()
             return
         }
 
@@ -39,6 +42,11 @@ final class TrayPreviewWindowController: NSObject, NSWindowDelegate {
             height: min(620, max(180, fitting.height))
         ))
         present(win)
+        store.trayDidAppear()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        store?.trayDidDisappear()
     }
 
     private func present(_ window: NSWindow) {

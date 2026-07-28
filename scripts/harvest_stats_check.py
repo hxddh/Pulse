@@ -129,6 +129,36 @@ def check_helper_contract(d: Path) -> int:
     )
     if not observed or observed[COL_EVIDENCE] != A.EVIDENCE_CACHE:
         return fail(f"useful cache observation lost its tier: {observed}")
+
+    nested = {
+        "state": {
+            "sessions": [
+                {
+                    "sessionId": "s-cache-1",
+                    "title": "Refactor authentication",
+                    "workspacePath": "/Users/me/code/app",
+                }
+            ]
+        }
+    }
+    if A.observed_session_from_json(nested) != (
+        "Refactor authentication", "/Users/me/code/app", "s-cache-1"
+    ):
+        return fail("nested extension session facts were not recovered")
+    config = {
+        "profile": {"name": "Default"},
+        "model": {"name": "claude_sonnet"},
+        "theme": {"title": "Dark"},
+    }
+    if A.observed_session_from_json(config) != ("", "", ""):
+        return fail("configuration names were guessed as a session")
+    jsonl = (
+        '{"type":"meta","sessionId":"s2","workspacePath":"/Users/me/code/pulse"}\n'
+        '{"type":"session","title":"Polish the tray"}\n'
+    )
+    title, cwd, _ = A.observed_session_from_text(jsonl)
+    if title != "Polish the tray" or cwd != "/Users/me/code/pulse":
+        return fail(f"JSONL session facts were not recovered: {(title, cwd)}")
     return 0
 
 

@@ -716,9 +716,11 @@ final class StatusStore: ObservableObject {
     /// history, not status, and would read as though it were still going.
     func rowContextLine(_ row: AgentRow, omitPath: Bool = false) -> String {
         if row.isProcessOnly {
-            return row.canFocusTerminal
-                ? tr(.terminalDetectedNoDetails)
-                : tr(.appDetectedNoDetails)
+            var bits: [String] = []
+            let path = row.displayPath
+            if !path.isEmpty, !omitPath { bits.append(path) }
+            bits.append(tr(.activityUnavailable))
+            return bits.joined(separator: " · ")
         }
         var bits: [String] = []
         let path = row.displayPath
@@ -761,20 +763,7 @@ final class StatusStore: ObservableObject {
                 DurationFormat.label(seconds: age, lang: lang)
             )
         }
-        var bits: [String] = []
-        // Session age first: of the three it is the one every file-backed
-        // agent can answer, so it is the fact most rows will actually carry.
-        // "1m ago" was the panel's only number and it says when a session last
-        // moved, never how long it has been going — a session three hours old
-        // and one three minutes old read identically.
-        let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
-        if age >= 60 {
-            bits.append(String(
-                format: tr(.sessionAge),
-                DurationFormat.label(seconds: age, lang: lang)
-            ))
-        }
-        return bits.joined(separator: " · ")
+        return ""
     }
 
     /// Stable, useful session evidence that should not require opening a
@@ -787,6 +776,16 @@ final class StatusStore: ObservableObject {
         // returns an empty line because none of the checks below add anything.
         guard !row.waiting else { return "" }
         var bits: [String] = []
+        // Start age belongs with the other session evidence. Keeping it on its
+        // own line created five-line rows even when only one numeric fact was
+        // available.
+        let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+        if age >= 60 {
+            bits.append(String(
+                format: tr(.sessionAge),
+                DurationFormat.label(seconds: age, lang: lang)
+            ))
+        }
         let input = AgentRow.compactToken(row.tokensIn)
         let output = AgentRow.compactToken(row.tokensOut)
         if !input.isEmpty || !output.isEmpty {
@@ -916,7 +915,6 @@ final class StatusStore: ObservableObject {
 
     func primaryActionTitle(_ row: AgentRow) -> String {
         if row.canFocusTerminal { return focusActionTitle(row) }
-        if row.canOpenFolder { return tr(.openFolder) }
         return tr(.moreActions)
     }
 
@@ -961,9 +959,8 @@ final class StatusStore: ObservableObject {
 
     func primaryAction(_ row: AgentRow) {
         if row.canFocusTerminal {
-            if TerminalFocus.focus(row: row) { return }
+            _ = TerminalFocus.focus(row: row)
         }
-        if row.canOpenFolder { openProject(row) }
     }
 
     func focusTerminal(_ row: AgentRow) {
@@ -973,8 +970,6 @@ final class StatusStore: ObservableObject {
     func focusFirstWaiting() {
         if let row = cachedAll.first(where: \.waiting) ?? snapshot.rows.first(where: \.waiting) {
             if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
-            openProject(row)
-            return
         }
         TrayReveal.show()
     }
@@ -982,14 +977,14 @@ final class StatusStore: ObservableObject {
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
         if !rowKey.isEmpty, let row = cachedAll.first(where: { $0.rowKey == rowKey }) {
             if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
-            openProject(row)
+            TrayReveal.show()
             return
         }
         if !session.isEmpty, let row = cachedAll.first(where: {
             !$0.sessionID.isEmpty && ($0.sessionID == session || session.hasPrefix($0.sessionID))
         }) {
             if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
-            openProject(row)
+            TrayReveal.show()
             return
         }
         guard let id = ActivityHarvest.mapAgent(idRaw) else {
@@ -999,18 +994,10 @@ final class StatusStore: ObservableObject {
         if let row = cachedAll.first(where: { $0.agent == id && $0.waiting })
             ?? cachedAll.first(where: { $0.agent == id }) {
             if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
-            openProject(row)
+            TrayReveal.show()
             return
         }
         TrayReveal.show()
-    }
-
-    func openProject(_ row: AgentRow) {
-        let path = row.cwd.isEmpty ? row.project : row.cwd
-        guard !path.isEmpty else { return }
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     func openSettings() {

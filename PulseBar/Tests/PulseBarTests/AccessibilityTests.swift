@@ -17,7 +17,6 @@ final class AccessibilityLocalizationTests: XCTestCase {
         let ctx = SnapshotBuilder.Context(
             nowMs: 1_700_000_000_000,
             terminal: .init(warpRunning: false, ttyHostRunning: false),
-            pathExists: { _ in false },
             lang: .zh
         )
         let result = SnapshotBuilder.build(.init(), previous: .init(), context: ctx)

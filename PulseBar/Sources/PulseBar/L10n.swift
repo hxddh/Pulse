@@ -62,7 +62,6 @@ enum L10n {
         case .settings: return "Settings…"
         case .quit: return "Quit Pulse"
         case .focusTerminal: return "Focus terminal"
-        case .openFolder: return "Open folder"
         case .general: return "General"
         case .liveUpdates: return "Live updates"
         case .notifications: return "Notify when idle"
@@ -101,7 +100,7 @@ enum L10n {
         case .hooksInstalledClaude: return "Installed · Claude"
         case .hooksInstalledCodex: return "Installed · Codex"
         case .hooksFailed: return "Failed"
-        case .a11yHint: return "If the shortcut does nothing, grant Accessibility to Pulse in System Settings."
+        case .a11yHint: return "The shortcut opens Pulse directly and requires no Accessibility permission."
         case .kindPermission: return "Permission"
         case .kindInput: return "Input"
         case .kindWaiting: return "Waiting"
@@ -110,6 +109,7 @@ enum L10n {
         case .processWord: return "process"
         case .processCount: return "%d processes"
         case .limitedData: return "Process only"
+        case .sessionEvidence: return "Session"
         case .cacheEvidence: return "Local cache"
         case .terminalSession: return "Terminal session running"
         case .appSession: return "Agent app running"
@@ -224,7 +224,6 @@ enum L10n {
         case .settings: return "偏好设置…"
         case .quit: return "退出 Pulse"
         case .focusTerminal: return "聚焦终端"
-        case .openFolder: return "打开目录"
         case .general: return "通用"
         case .liveUpdates: return "实时更新"
         case .notifications: return "全部空闲时通知"
@@ -260,7 +259,7 @@ enum L10n {
         case .hooksInstalledClaude: return "已安装 · Claude"
         case .hooksInstalledCodex: return "已安装 · Codex"
         case .hooksFailed: return "失败"
-        case .a11yHint: return "若快捷键无响应，请在系统设置中为 Pulse 开启辅助功能权限。"
+        case .a11yHint: return "快捷键会直接打开 Pulse，无需辅助功能权限。"
         case .kindPermission: return "需要授权"
         case .kindInput: return "等待输入"
         case .kindWaiting: return "等待中"
@@ -269,6 +268,7 @@ enum L10n {
         case .processWord: return "进程"
         case .processCount: return "%d 个进程"
         case .limitedData: return "仅进程"
+        case .sessionEvidence: return "结构化会话"
         case .cacheEvidence: return "本地缓存"
         case .terminalSession: return "终端会话正在运行"
         case .appSession: return "Agent 应用正在运行"
@@ -366,7 +366,7 @@ enum L10n {
         case recent1, recentN, recent, idleWord
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
-        case focusTerminal, focusTTY, focusWarp, openFolder, dismissWait
+        case focusTerminal, focusTTY, focusWarp, dismissWait
         case general, liveUpdates, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, attentionBridgeHint, shortcuts, hotkeyHint, a11yHint
@@ -376,7 +376,7 @@ enum L10n {
         case kindPermission, kindInput, kindWaiting
         case activityPrefix, signalHooks, signalPending
         case processDetected, processWord, processCount
-        case limitedData, cacheEvidence, terminalSession, appSession, activityUnavailable, processAge
+        case limitedData, sessionEvidence, cacheEvidence, terminalSession, appSession, activityUnavailable, processAge
         case terminalDetectedNoDetails, appDetectedNoDetails
         case lastAction, lastActive, latestCallTokens, reportedTokens
         case subagentsActive, subagentsObserved

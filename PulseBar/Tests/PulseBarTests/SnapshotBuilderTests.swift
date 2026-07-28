@@ -21,7 +21,6 @@ final class SnapshotBuilderTests: XCTestCase {
         showAll: Bool = false,
         maxSessions: Int = SnapshotBuilder.maxSessionsPerAgent,
         maxRows: Int = SnapshotBuilder.maxVisibleRows,
-        exists: @escaping (String) -> Bool = { _ in false },
         terminal: TerminalFocus.Environment? = nil,
         lang: ResolvedLanguage = .en,
         snoozed: [String: Int64] = [:],
@@ -30,7 +29,6 @@ final class SnapshotBuilderTests: XCTestCase {
         SnapshotBuilder.Context(
             nowMs: now,
             terminal: terminal ?? bareTerminal,
-            pathExists: exists,
             lang: lang,
             maxSessionsPerAgent: maxSessions,
             maxVisibleRows: maxRows,
@@ -413,18 +411,16 @@ final class SnapshotBuilderTests: XCTestCase {
         )
         let r = build(
             procs: [.init(id: .claude, count: 1, viaWarp: true, pid: 1, tty: "ttys004")],
-            context: context(exists: { _ in true }, terminal: env)
+            context: context(terminal: env)
         )
         XCTAssertEqual(r.rows[0].focusTier, .warp)
         XCTAssertTrue(r.rows[0].canFocusTerminal)
     }
 
-    func testMissingPathsMeanNoOpenFolderAction() {
+    func testRowsWithoutFocusHaveNoPrimaryNavigationAction() {
         let r = build(
-            harvest: [harvest(.claude, task: "A", session: "s1", cwd: "/gone")],
-            context: context(exists: { _ in false })
+            harvest: [harvest(.claude, task: "A", session: "s1", cwd: "/gone")]
         )
-        XCTAssertFalse(r.rows[0].canOpenFolder)
         XCTAssertNil(r.rows[0].focusTier)
     }
 

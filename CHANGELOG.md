@@ -2,6 +2,43 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.32.0 — 观测必须有来源，动作必须完成任务
+
+0.31.0 让 `MenuBarExtra` 独占材质，却没有移除它根视图之外的系统 content inset；
+因此上下长条仍然存在。它也保留了「打开目录」作为无 Focus 句柄时的替代动作，
+而 Finder 既不能恢复 Agent 会话，也不能提高响应效率。这一版从窗口承载、动作语义和
+最低观测能力三层一起收敛。
+
+### 上下长条从视图层级消失
+
+- 用应用自有的原生状态项和无边框 `NSPanel` 替换 `MenuBarExtra(.window)`；
+  单个 `NSVisualEffectView(.popover)` 四边贴合内容，窗口与内容不再各有一层表面或 inset。
+- 快捷键与通知直接调用应用内面板控制器，不再通过辅助功能 API 点击状态栏；
+  唤出面板不需要 Accessibility / Automation 权限，也不存在失败后的反复授权请求。
+- 状态项仍保留动态灯色、短标题、tooltip 与 VoiceOver 标签；托盘继续使用同一个
+  `TrayPanel`，不是为了截图另做一套界面。
+
+### 删除不能完成用户任务的动作
+
+- 删除「打开目录」及 `canOpenFolder/pathExists/openProject` 整条运行时路径。
+  cwd 仍用于定位和区分会话，但不再把切到 Finder 包装成处理 Agent 的动作。
+- 整行只有在确实能聚焦 Warp 时才是按钮；其他行保持为可读的观测内容。
+  Waiting 的忽略与稍后仍是明确的行内动作。
+- 无法聚焦的通知与全局快捷键打开 Pulse 面板，让用户看到原因和上下文，而不是静默失败
+  或跳到一个不能恢复会话的目录。
+
+### 所有覆盖 Agent 都有明确的最低信息合同
+
+- 每一行都明确显示「结构化会话 / 本地缓存 / 仅进程」，不再让无标签的 Codex 行与
+  缓存猜测看起来同样可信。
+- ProcessProbe 对匹配到的 CLI 进程做一次有界 cwd 读取；没有可读会话存储时，
+  仍可展示 Agent、真实工作区、进程启动时长和“暂无活动数据”，不显示内部进程数。
+- VS Code 系 agent 的缓存适配从“只看根对象/最后一个数组项”升级为有界嵌套 session
+  遍历，能读取 `state.sessions/conversations/tasks/composers` 里的任务、工作区和 id。
+  profile、model、theme 的任意 `name/title` 被明确拒绝，避免用配置噪音填充界面。
+- 会话开始时间与 token / subagent / 事件数合并为一条最多四事实的观测行；
+  有数据才出现，信息更丰富但不再为一个时长单独增加第五行。
+
 ## 0.31.0 — 支持名单必须等于可解释的观测
 
 0.30.0 仍把系统弹窗和内容材质叠在一起，上、下 inset 因而露成两条长条；

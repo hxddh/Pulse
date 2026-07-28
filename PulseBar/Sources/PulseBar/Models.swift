@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.31.0"
+    static let semver = "0.32.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -251,8 +251,6 @@ struct AgentRow: Identifiable, Hashable {
     var liveProcess: Bool = false
     /// How this row can be focused — resolved once per scan, never in a view body.
     var focusTier: FocusTier? = nil
-    /// cwd/project exists on disk — resolved once per scan.
-    var canOpenFolder: Bool = false
     /// Sessions of this agent that exist but did not fit the per-agent cap.
     var hiddenSessions: Int = 0
     /// Records in the session file. 0 = unknown, never estimated.
@@ -519,8 +517,8 @@ struct AgentRow: Identifiable, Hashable {
     ///
     /// As a computed property this reached for the real clock while the builder
     /// around it ran on an injected `nowMs` — so with a fixed test clock every
-    /// row read as stalled by years. `focusTier` and `canOpenFolder` were moved
-    /// to scan time in 0.23 for the same reason.
+    /// row read as stalled by years. `focusTier` was moved to scan time in
+    /// 0.23 for the same reason.
     var isStalled: Bool = false
 
     /// Whether this row would be stalled at the given instant.

@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.31.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.32.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -18,8 +18,8 @@ Pulse 把这件事变成余光可见：
 | ⚪️ 灰 | 空闲 / 只有最近会话 | 不用管 |
 | 🟠 橙 | 探测不可用 | 看「关于 → 复制诊断信息」 |
 
-点开托盘看到的是**会话**，不是进程：行标题是任务名，Agent 名退到次行。
-整行点击 = 聚焦到对应的终端页。
+点开托盘看到的是**可解释的观测**：每行明确标出结构化会话、本地缓存或仅进程；
+有可靠 Warp 句柄时整行可聚焦，否则保持为信息，不制造无效动作。
 
 **明确不做**：额度 / 费用 / 重置倒计时、桌面宠物、统计大盘、托盘内批准或拒绝。
 详见 [`EXPERIENCE.md`](EXPERIENCE.md)。
@@ -59,7 +59,8 @@ Pulse 把这件事变成余光可见：
   托盘明说「暂无 Waiting 信号」，不假装。
 - 每条 Waiting 行标注来源是 `hooks` 还是 `pending`，你自己判断可信度。
 - Focus 不吹牛：Warp 下可直接激活 Warp；Terminal/iTerm 的 TTY 选择需要系统自动化权限，
-  Pulse 不会隐式索取，因此只提供可靠的「打开目录」。
+  Pulse 不会隐式索取。没有可验证 Focus 句柄时，行保持为观测内容，不提供低价值的
+  「打开目录」替代动作。
 
 ## 支持的 Agent
 
@@ -74,7 +75,10 @@ Pulse 把这件事变成余光可见：
 `Structured session` 读取真实 transcript / thread / composer / session database；
 `Best effort cache` 只承诺缓存中确实存在的标题、工作区和更新时间。缓存里只有扩展名、
 文件名或 `Agent session` 这类占位词时，Pulse 会直接丢弃该条，不再把“找到一个文件”
-伪装成会话观测。两者若没有当前数据都会明确降级，不会用进程数冒充会话信息。
+伪装成会话观测。VS Code 系扩展的 session 常被包在多层 state/container 中，Pulse 会
+有界遍历这些结构，只接受同时带会话上下文、标识或绝对工作区的事实；不会把 profile、
+model、theme 的 `name/title` 当成任务。两者若没有当前数据都会明确降级；CLI 进程还能
+补充其真实工作目录与进程时长，但不会用进程数冒充会话信息。
 
 这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.harvestSource` 和
 `AgentID.waitingSource` 校验，
@@ -109,7 +113,7 @@ Pulse 把这件事变成余光可见：
 
 ```bash
 cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test    # 217 个单元测试
+cd PulseBar && swift test    # 228 个单元测试
 ```
 
 七个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：

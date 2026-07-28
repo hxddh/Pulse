@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -1201,7 +1202,7 @@ def recent_files_under(root: Path, patterns: tuple[str, ...] = ("*.json", "*.jso
 def task_from_json_obj(obj: dict) -> tuple[str, str, str]:
     """Return (task, cwd, session)."""
     task = ""
-    for k in ("task", "title", "name", "summary", "prompt", "query", "lastMessage", "text"):
+    for k in ("task", "title", "summary", "prompt", "query", "lastMessage"):
         v = obj.get(k)
         if isinstance(v, str) and v.strip():
             task = v.strip()
@@ -1219,6 +1220,110 @@ def task_from_json_obj(obj: dict) -> tuple[str, str, str]:
             sid = v.strip()
             break
     return task[:160], cwd[:240], sid[:80]
+
+
+def observed_session_from_json(obj) -> tuple[str, str, str]:
+    """Find a real session-like object inside a private extension cache.
+
+    VS Code-family extensions usually wrap sessions in a versioned container
+    (`state.sessions[]`, `conversations.byId`, `tasks`, …). Reading only the
+    root or last list item discarded the useful title/workspace for most of
+    those agents. This walk is bounded and conservative: an arbitrary `name`
+    in settings/profile/model JSON is never accepted as a task.
+    """
+    context_needles = ("session", "thread", "conversation", "chat", "task", "composer", "history")
+    title_keys = ("task", "title", "summary", "prompt", "query", "lastMessage", "subject")
+    cwd_keys = (
+        "cwd", "workingDirectory", "workdir", "workspacePath", "workspace",
+        "projectPath", "project_path", "directory", "worktree",
+    )
+    sid_keys = ("sessionId", "session_id", "taskId", "conversationId", "threadId", "uuid", "id")
+
+    best: tuple[int, str, str, str] = (0, "", "", "")
+    stack: list[tuple[object, str, int]] = [(obj, "", 0)]
+    seen = 0
+    while stack and seen < 1200:
+        value, context, depth = stack.pop()
+        seen += 1
+        if depth > 7:
+            continue
+        if isinstance(value, list):
+            for item in value[:200]:
+                stack.append((item, context, depth + 1))
+            continue
+        if not isinstance(value, dict):
+            continue
+
+        task = cwd = sid = ""
+        for key in title_keys:
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                task = " ".join(raw.strip().split())
+                break
+        for key in cwd_keys:
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip().startswith("/"):
+                cwd = raw.strip()
+                break
+        for key in sid_keys:
+            raw = value.get(key)
+            if isinstance(raw, (str, int)) and str(raw).strip():
+                sid = str(raw).strip()
+                break
+
+        record_type = str(value.get("type") or value.get("kind") or "").lower()
+        context_is_session = (
+            any(n in context.lower() for n in context_needles)
+            or any(n in record_type for n in context_needles)
+        )
+        # A title alone at the root may be a theme/profile/model. It needs a
+        # session context, identity, or workspace before it becomes evidence.
+        qualified = bool(cwd or (task and sid) or (task and context_is_session))
+        if qualified:
+            score = (8 if task else 0) + (6 if cwd else 0) + (3 if sid else 0)
+            if context_is_session:
+                score += 4
+            if score > best[0]:
+                best = (score, task[:160], cwd[:240], sid[:80])
+
+        for key, child in value.items():
+            if isinstance(child, (dict, list)):
+                child_context = f"{context}.{key}" if context else str(key)
+                stack.append((child, child_context, depth + 1))
+
+    return best[1], best[2], best[3]
+
+
+def observed_session_from_text(text: str) -> tuple[str, str, str]:
+    """Decode a JSON document or recent JSONL records, then walk it."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return "", "", ""
+    try:
+        if stripped.startswith(("{", "[")):
+            return observed_session_from_json(json.loads(stripped))
+    except Exception:
+        pass
+    records = []
+    for line in stripped.splitlines()[-160:]:
+        line = line.strip()
+        if not line.startswith(("{", "[")):
+            continue
+        try:
+            records.append(json.loads(line))
+        except Exception:
+            continue
+    task, cwd, sid = observed_session_from_json(records)
+    # JSONL commonly separates immutable session metadata from later title or
+    # prompt records. Merge only within this one session file, newest first.
+    for record in reversed(records):
+        rt, rc, rs = observed_session_from_json(record)
+        task = task or rt
+        cwd = cwd or rc
+        sid = sid or rs
+        if task and cwd and sid:
+            break
+    return task, cwd, sid
 
 
 def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list[tuple]:
@@ -1251,15 +1356,16 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list
                 obj = {}
                 text = tail_bytes(f, 80_000)
             task = cwd = sid = ""
-            if isinstance(obj, dict):
-                task, cwd, sid = task_from_json_obj(obj)
-                pending = json_looks_pending(obj)
-            elif isinstance(obj, list) and obj:
-                last = obj[-1] if isinstance(obj[-1], dict) else {}
-                task, cwd, sid = task_from_json_obj(last) if isinstance(last, dict) else ("", "", "")
+            if isinstance(obj, (dict, list)):
+                task, cwd, sid = observed_session_from_json(obj)
                 pending = json_looks_pending(obj)
             else:
                 pending = text_looks_pending(text)
+            if not (task and cwd and sid):
+                text_task, text_cwd, text_sid = observed_session_from_text(text)
+                task = task or text_task
+                cwd = cwd or text_cwd
+                sid = sid or text_sid
             if not pending:
                 pending = text_looks_pending(text)
             if not task:
@@ -1689,12 +1795,20 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = 2) -> list[t
         if root.is_dir():
             files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=8))
     for f in newest(files, 8):
-        text = tail_bytes(Path(f), 100_000)
-        task = session_title_from_text(text) or extract_field(text, "title") or f"{agent} session"
-        cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
-        project = short_project(cwd) if cwd else short_project(Path(f).stem)
+        path = Path(f)
+        text = tail_bytes(path, 100_000)
+        task, cwd, sid = observed_session_from_text(text)
+        sessionish_path = any(
+            word in str(path).lower()
+            for word in ("session", "thread", "conversation", "chat", "task", "composer")
+        )
+        if not task and sessionish_path:
+            task = session_title_from_text(text) or extract_field(text, "title") or ""
+        if not cwd:
+            cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
+        project = short_project(cwd) if cwd else short_project(path.stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=False)))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(path), sid or path.stem[:80], session_stats(path, per_session=False)))
         if len(out) >= limit:
             break
     return out
@@ -2346,9 +2460,31 @@ def emit_row(
 def aider_activities() -> list[tuple]:
     """Aider: recent .aider.chat.history.md — ask/confirm at tail → pending."""
     paths: list[Path] = []
+    # The old adapter recursively walked ~/Documents and ~/Desktop to depth 3.
+    # On a real iCloud/large Documents tree that one collector consumed the
+    # entire harvest deadline, so every adapter after Aider disappeared. Ask
+    # Spotlight for the exact filename first; it is indexed, bounded, and does
+    # not enumerate unrelated user files.
+    try:
+        found = subprocess.run(
+            ["/usr/bin/mdfind", "-0", 'kMDItemFSName == ".aider.chat.history.md"'],
+            capture_output=True,
+            timeout=0.45,
+            check=False,
+        ).stdout
+        home_prefix = str(HOME) + os.sep
+        for raw in found.split(b"\0"):
+            if not raw:
+                continue
+            value = raw.decode("utf-8", errors="replace")
+            if value.startswith(home_prefix):
+                paths.append(Path(value))
+                if len(paths) >= 12:
+                    break
+    except (OSError, subprocess.SubprocessError):
+        pass
+
     roots = [
-        HOME / "Documents",
-        HOME / "Desktop",
         HOME / "code",
         HOME / "src",
         HOME / "dev",
@@ -2505,10 +2641,18 @@ def guard(label: str, body) -> None:
     the whole scan (`harvestUnreliable`) — a single broken harvester blinded all
     32 agents.
     """
+    trace = os.environ.get("PULSE_HARVEST_TRACE") == "1"
+    started = time.monotonic()
+    if trace:
+        print(f"# pulse trace: begin {label}", file=sys.stderr, flush=True)
     try:
         body()
     except Exception as exc:  # harvest is best-effort by design
         print(f"# pulse: {label} harvest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+    finally:
+        if trace:
+            elapsed = time.monotonic() - started
+            print(f"# pulse trace: end {label} {elapsed:.3f}s", file=sys.stderr, flush=True)
 
 
 def emit_all(agent: str, rows, evidence: str | None = None) -> None:

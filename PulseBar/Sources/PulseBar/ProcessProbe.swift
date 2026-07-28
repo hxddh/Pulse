@@ -2,6 +2,11 @@ import Foundation
 
 /// Port of Zig probe rules for surface coding agents (+ Warp parent + TTY).
 enum ProcessProbe {
+    /// `lsof` is only needed when a new agent process appears. Re-running it at
+    /// the 2 s Waiting cadence would turn one useful fallback fact into a
+    /// permanent energy cost.
+    private static var cwdCache: [Int: (path: String, observedAt: TimeInterval)] = [:]
+
     struct Hit: Hashable {
         var id: AgentID
         var count: Int
@@ -11,6 +16,10 @@ enum ProcessProbe {
         var tty: String = ""
         /// Age of the matched process, not the agent session.
         var elapsedSeconds: Double = 0
+        /// Current working directory observed from the process. This is useful
+        /// context for CLI agents even when they expose no readable session
+        /// store; it is not a focus handle and never creates an action.
+        var cwd: String = ""
     }
 
     private struct Rule {
@@ -234,6 +243,14 @@ enum ProcessProbe {
             }
             acc[id] = hit
         }
+        let workingDirectories = currentWorkingDirectories(
+            pids: acc.values.map(\.pid).filter { $0 > 0 }
+        )
+        for id in acc.keys {
+            guard var hit = acc[id], let cwd = workingDirectories[hit.pid] else { continue }
+            hit.cwd = usefulWorkingDirectory(cwd)
+            acc[id] = hit
+        }
         let hits = Array(acc.values)
         DebugLog.write("probe psLines=\(procs.count) hits=\(hits.count) ids=\(hits.map(\.id.rawValue).joined(separator: ","))")
         return hits
@@ -270,6 +287,69 @@ enum ProcessProbe {
         let minutes = clock.count == 3 ? clock[1] : clock[0]
         let seconds = clock.count == 3 ? clock[2] : clock[1]
         return days * 86_400 + hours * 3_600 + minutes * 60 + seconds
+    }
+
+    /// Parse `lsof -Fpn -a -d cwd -p ...` without depending on column spacing.
+    static func parseWorkingDirectories(_ output: String) -> [Int: String] {
+        var result: [Int: String] = [:]
+        var pid: Int?
+        var sawCwd = false
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let line = String(raw)
+            if line.hasPrefix("p"), let value = Int(line.dropFirst()) {
+                pid = value
+                sawCwd = false
+            } else if line == "fcwd" {
+                sawCwd = true
+            } else if line.hasPrefix("n"), sawCwd, let pid {
+                result[pid] = String(line.dropFirst())
+                sawCwd = false
+            }
+        }
+        return result
+    }
+
+    /// Keep only paths that can identify user work. `/`, app bundles and
+    /// support folders are implementation context, not a project.
+    static func usefulWorkingDirectory(_ raw: String) -> String {
+        let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/"), path != "/" else { return "" }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard path != home, path != home + "/" else { return "" }
+        let excluded = [
+            "/Applications/", "/System/", "/Library/",
+            home + "/Library/", "/private/var/", "/var/",
+        ]
+        guard !excluded.contains(where: path.hasPrefix) else { return "" }
+        return path
+    }
+
+    private static func currentWorkingDirectories(pids: [Int]) -> [Int: String] {
+        let unique = Array(Set(pids)).sorted()
+        guard !unique.isEmpty else { return [:] }
+        let now = Date().timeIntervalSince1970
+        var result: [Int: String] = [:]
+        var unresolved: [Int] = []
+        for pid in unique {
+            if let cached = cwdCache[pid], now - cached.observedAt < 60 {
+                result[pid] = cached.path
+            } else {
+                unresolved.append(pid)
+            }
+        }
+        if !unresolved.isEmpty {
+            let list = unresolved.map(String.init).joined(separator: ",")
+            let output = shell(
+                "/usr/sbin/lsof",
+                ["-Fpn", "-a", "-d", "cwd", "-p", list]
+            ) ?? ""
+            for (pid, path) in parseWorkingDirectories(output) {
+                cwdCache[pid] = (path, now)
+                result[pid] = path
+            }
+        }
+        cwdCache = cwdCache.filter { unique.contains($0.key) && now - $0.value.observedAt < 300 }
+        return result
     }
 
     private static func match(args: String) -> AgentID? {

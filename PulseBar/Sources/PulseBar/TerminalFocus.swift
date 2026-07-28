@@ -1,4 +1,3 @@
-import ApplicationServices
 import AppKit
 
 /// Best-effort: focus the terminal surface tied to an agent's TTY / Warp parent.
@@ -84,35 +83,15 @@ enum TerminalFocus {
 
 }
 
-/// Reveal the app's own MenuBarExtra panel through its accessibility element.
+/// Reveal the app-owned panel directly.
 ///
-/// Do not fall back to System Events / Apple Events here. That path asks macOS
-/// for Automation or Accessibility permission merely because the user pressed
-/// Pulse's shortcut or clicked a notification, and repeated retries can become
-/// a stream of permission dialogs. If the app-owned status item is not
-/// available, fail quietly and let the user click it normally.
+/// This intentionally has no Accessibility or Apple Events fallback. The
+/// shortcut and notification actions call the panel controller owned by this
+/// process, so they cannot trigger an Automation permission prompt.
 enum TrayReveal {
     static func show() {
-        NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            clickStatusItem()
+        Task { @MainActor in
+            StatusPanelController.shared?.show()
         }
-    }
-
-    private static func clickStatusItem() {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let app = AXUIElementCreateApplication(pid)
-        var extras: CFTypeRef?
-        if AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras) == .success,
-           let extrasBar = extras {
-            var items: CFTypeRef?
-            if AXUIElementCopyAttributeValue(extrasBar as! AXUIElement, kAXChildrenAttribute as CFString, &items) == .success,
-               let arr = items as? [AXUIElement],
-               let first = arr.first {
-                AXUIElementPerformAction(first, kAXPressAction as CFString)
-                return
-            }
-        }
-        DebugLog.write("tray reveal unavailable — no app-owned status item")
     }
 }

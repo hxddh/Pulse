@@ -40,7 +40,7 @@ compiles and ships.
 
 ```bash
 cd PulseBar && swift build      # macOS 14+, Swift 5.9
-cd PulseBar && swift test       # 217 tests
+cd PulseBar && swift test       # 228 tests
 ```
 
 Gates, from the repo root — `package.sh` and CI both run all seven:
@@ -105,8 +105,7 @@ to users.
 
 ## Current state
 
-0.30.0 is the latest public release; 0.31.0 is the current local candidate.
-0.31 carries the evidence tier on every harvest row, rejects placeholder-only
-cache observations, reports honest process age, removes the permission-prompting
-System Events fallback, and lets the native MenuBarExtra own the only tray
-surface. See `CHANGELOG.md` for the complete contract.
+0.31.0 is the latest public release. The next local candidate replaces
+MenuBarExtra's inset container with an app-owned single-surface panel, removes
+Open Folder, enriches process-only rows with observed cwd, and deepens nested
+extension-session parsing. See `CHANGELOG.md` for the complete contract.

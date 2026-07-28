@@ -119,6 +119,16 @@ enum ActivityHarvest {
     /// A timeout no longer throws away what already arrived: harvest streams one
     /// complete line per agent, so partial output is still honest data.
     static func scan() -> (rows: [Row], unreliable: Bool) {
+        // LSUIElement apps with no visible window are prime App Nap targets.
+        // The Python child can finish in ~300 ms when scheduled yet scrape the
+        // 3.5 s deadline when the parent is napped. Keep only this bounded scan
+        // responsive; allow system sleep and end the activity immediately.
+        let activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Read coding-agent session activity"
+        )
+        defer { ProcessInfo.processInfo.endActivity(activity) }
+
         guard let script = scriptURL() else {
             DebugLog.write("harvest scriptURL=nil")
             return ([], true)
@@ -130,6 +140,11 @@ enum ActivityHarvest {
         // the parent saw partial=0 even after early collectors had finished;
         // one slow late adapter blinded every agent before it.
         task.arguments = ["-u", script.path]
+        if CommandLine.arguments.contains("--trace-harvest") {
+            var environment = ProcessInfo.processInfo.environment
+            environment["PULSE_HARVEST_TRACE"] = "1"
+            task.environment = environment
+        }
         let out = Pipe()
         let err = Pipe()
         task.standardOutput = out
@@ -150,17 +165,21 @@ enum ActivityHarvest {
         drain(out.fileHandleForReading, into: outSink, done: outDone)
         drain(err.fileHandleForReading, into: errSink, done: errDone)
 
-        let deadline = Date().addingTimeInterval(harvestTimeoutSec)
-        var timedOut = false
-        while task.isRunning {
-            if Date() >= deadline {
-                timedOut = true
-                task.terminate()
-                break
-            }
-            Thread.sleep(forTimeInterval: 0.02)
+        // `Process.isRunning` can remain stale for a child launched from an
+        // LSUIElement app whose owning queue has no run loop. The child had
+        // already emitted both rows and exited, yet the polling loop waited the
+        // whole deadline and logged a timeout every cadence. Wait for the real
+        // process exit on a dedicated thread instead.
+        let exitDone = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            task.waitUntilExit()
+            exitDone.signal()
         }
-        task.waitUntilExit()
+        let timedOut = exitDone.wait(timeout: .now() + harvestTimeoutSec) == .timedOut
+        if timedOut {
+            task.terminate()
+            _ = exitDone.wait(timeout: .now() + 1.0)
+        }
         // Pipes close on child exit; these return promptly now that the child is gone.
         _ = outDone.wait(timeout: .now() + 1.0)
         _ = errDone.wait(timeout: .now() + 1.0)
@@ -169,7 +188,8 @@ enum ActivityHarvest {
         let errText = errSink.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !errText.isEmpty {
             // Per-agent harvest failures arrive here as `# pulse: <agent> …` lines.
-            for line in errText.split(whereSeparator: \.isNewline).prefix(8) {
+            let limit = CommandLine.arguments.contains("--trace-harvest") ? 80 : 8
+            for line in errText.split(whereSeparator: \.isNewline).prefix(limit) {
                 DebugLog.write("harvest stderr \(line.prefix(180))")
             }
         }

@@ -28,8 +28,6 @@ enum SnapshotBuilder {
     struct Context {
         var nowMs: Int64
         var terminal: TerminalFocus.Environment
-        /// Injected so tests do not depend on the filesystem.
-        var pathExists: (String) -> Bool
         var lang: ResolvedLanguage
         var maxSessionsPerAgent: Int
         var maxVisibleRows: Int
@@ -44,7 +42,6 @@ enum SnapshotBuilder {
         init(
             nowMs: Int64,
             terminal: TerminalFocus.Environment,
-            pathExists: @escaping (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
             lang: ResolvedLanguage,
             maxSessionsPerAgent: Int = SnapshotBuilder.maxSessionsPerAgent,
             maxVisibleRows: Int = SnapshotBuilder.maxVisibleRows,
@@ -55,7 +52,6 @@ enum SnapshotBuilder {
         ) {
             self.nowMs = nowMs
             self.terminal = terminal
-            self.pathExists = pathExists
             self.lang = lang
             self.maxSessionsPerAgent = maxSessionsPerAgent
             self.maxVisibleRows = maxVisibleRows
@@ -212,6 +208,8 @@ enum SnapshotBuilder {
                 row.viaWarp = hit.viaWarp
                 row.pid = hit.pid
                 row.tty = hit.tty
+                row.cwd = hit.cwd
+                row.project = AgentRow.shortProject(hit.cwd)
                 if hit.elapsedSeconds > 0 {
                     row.processStartedMs = context.nowMs - Int64(hit.elapsedSeconds * 1000)
                 }
@@ -232,6 +230,10 @@ enum SnapshotBuilder {
                     row.viaWarp = hit.viaWarp || row.viaWarp
                     if hit.pid != 0 { row.pid = hit.pid }
                     if !hit.tty.isEmpty { row.tty = hit.tty }
+                    if row.cwd.isEmpty, !hit.cwd.isEmpty {
+                        row.cwd = hit.cwd
+                        row.project = AgentRow.shortProject(hit.cwd)
+                    }
                     if hit.elapsedSeconds > 0 {
                         row.processStartedMs = context.nowMs - Int64(hit.elapsedSeconds * 1000)
                     }
@@ -284,8 +286,6 @@ enum SnapshotBuilder {
         // meant enumerating running apps and stat-ing the disk on every redraw.
         for i in all.indices {
             let row = all[i]
-            let folderPath = row.cwd.isEmpty ? row.project : row.cwd
-            all[i].canOpenFolder = !folderPath.isEmpty && context.pathExists(folderPath)
             all[i].isStalled = AgentRow.stalled(
                 harvestMs: row.harvestMs,
                 nowMs: context.nowMs,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build + package PulseBar (Swift MenuBarExtra shell) as Pulse.app
+# Build + package PulseBar (Swift/AppKit status-panel shell) as Pulse.app
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT/PulseBar"

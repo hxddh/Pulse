@@ -73,7 +73,7 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 4. `skill=pending` → Waiting，除非用户软忽略过
 5. live 进程**只挂到一行**，不在同 agent 的兄弟会话间涂抹
 6. attention 三级匹配：session id → cwd → 该 agent 最合适的行；都不中就新建一行
-7. 解析 focus 分级和目录存在性（每轮一次，不在视图里）
+7. 解析 focus 分级；进程探测补充可验证的工作目录（每轮一次，不在视图里）
 8. 排序：Waiting → 有会话标题 → live → recent → agent 优先级
 9. 编码 glance 状态、标题、tooltip、header
 10. 算边沿：哪些是**新**的 Waiting、哪些等待结束了、灯是否刚变灰
@@ -91,12 +91,13 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 - **通知策略**。builder 报告边沿，store 决定要不要发：安静时段、按 agent 静音、
   开关、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）。
 - **设置**。`PulseSettings` 负责解析和序列化，store 只做桥接和落盘。
-- **动作**。Focus、打开目录、安装 / 移除 hooks、复制诊断信息。
+- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息。
 
 ## 视图
 
-`MenuBarLabel`（灯 + 极短标题）、`TrayPanel`（连续会话列表 + Header 动作）、
-`SettingsView`。四个都标了 `@MainActor`——SwiftUI 只有 `body` 隐式主 actor 隔离，
+`StatusPanelController` 拥有原生状态项和单表面 `NSPanel`；其中承载
+`TrayPanel`（连续会话列表 + Header 动作），`SettingsView` 管偏好。SwiftUI 视图都标了
+`@MainActor`——SwiftUI 只有 `body` 隐式主 actor 隔离，
 辅助计算属性不是，调 store 的 `@MainActor` 方法会编译失败。
 
 视图里不做 I/O。focus 分级和目录存在性在扫描时算好存进 `AgentRow`，

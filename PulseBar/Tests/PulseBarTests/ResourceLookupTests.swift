@@ -555,8 +555,8 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertEqual(store().rowObservationLine(loaded), "", "a waiting row carries no telemetry line")
     }
 
-    /// The same row, not waiting, carries duration on the context line and
-    /// bounded session evidence on one always-visible observation line.
+    /// The same row, not waiting, carries all bounded session evidence on one
+    /// always-visible observation line.
     @MainActor
     func testTheSameRowNotWaitingCarriesEverything() {
         let loaded = row(
@@ -565,7 +565,8 @@ final class RowMetricsTests: XCTestCase {
         )
         let metrics = store().rowMetrics(loaded)
         let observation = store().rowObservationLine(loaded)
-        XCTAssertTrue(metrics.contains("3h"), metrics)
+        XCTAssertEqual(metrics, "", "session age must not create a fifth line")
+        XCTAssertTrue(observation.contains("3h"), observation)
         XCTAssertTrue(observation.contains("12k"), observation)
         XCTAssertTrue(observation.contains("3.0k"), observation)
         XCTAssertTrue(observation.contains("2"), observation)

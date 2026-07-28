@@ -13,39 +13,66 @@ enum PulseBarMain {
         if CommandLine.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
+        if CommandLine.arguments.contains("--harvest-test") {
+            let started = Date()
+            let result = ActivityHarvest.scan()
+            print(
+                "harvest rows=\(result.rows.count) unreliable=\(result.unreliable) "
+                    + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
+            )
+            exit(result.unreliable ? 1 : 0)
+        }
         PulseBarApp.main()
     }
 }
 
 struct PulseBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @ObservedObject private var store = AppServices.store
 
     var body: some Scene {
-        MenuBarExtra {
-            TrayPanel(store: store)
-        } label: {
-            MenuBarLabel(snapshot: store.snapshot)
+        // The status item and its panel are AppKit-owned by `StatusPanelController`.
+        // A SwiftUI MenuBarExtra(.window) adds private top/bottom content insets
+        // outside the root view. Those insets remained visible as two long bars
+        // regardless of which material the root painted. An app-owned panel has
+        // one exact content rect and therefore one surface.
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusPanel: StatusPanelController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        let panel = StatusPanelController(store: AppServices.store)
+        statusPanel = panel
+        StatusPanelController.shared = panel
+        panel.install()
         AppServices.store.start()
         if CommandLine.arguments.contains("--open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 AppServices.store.openSettings()
             }
         }
-        // MenuBarExtra windows are not exposed reliably to UI automation.
         // This opt-in QA surface hosts the exact TrayPanel view in a normal
-        // window so screenshots and accessibility regressions are testable.
+        // window so layout and accessibility regressions are testable without
+        // Screen Recording or UI automation permissions.
         if CommandLine.arguments.contains("--open-tray-preview") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 TrayPreviewWindowController.shared.show(store: AppServices.store)
+            }
+        }
+        if CommandLine.arguments.contains("--open-tray-panel") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                StatusPanelController.shared?.show()
+            }
+        }
+        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-tray-panel=") }) {
+            let path = String(capture.dropFirst("--capture-tray-panel=".count))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                StatusPanelController.shared?.capture(to: URL(fileURLWithPath: path))
             }
         }
     }
@@ -56,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         GlobalHotKey.uninstall()
+        statusPanel?.uninstall()
     }
 }
 
@@ -295,15 +323,13 @@ struct TrayPanel: View {
             }
         }
         .frame(width: TrayChrome.width)
-        // MenuBarExtra owns the rounded window and its material. Painting a
-        // second rectangular material at the content's measured bounds left
-        // the system's top and bottom insets exposed as two long strips. One
-        // owner, one surface: content stays transparent and inherits the
-        // native popover chrome all the way to its rounded edge.
-        // Tray visibility drives the probe cadence — fast while being read,
-        // slow (or parked) when nobody is looking.
-        .onAppear { store.trayDidAppear() }
-        .onDisappear { store.trayDidDisappear() }
+        // StatusPanelController owns the rounded material surface. Content is
+        // transparent and pinned to that surface's exact bounds: one owner,
+        // one rect, no extra top or bottom inset.
+        // Visibility is owned by StatusPanelController. A hosting view appears
+        // when the hidden panel is constructed, not when the user opens it;
+        // tying cadence to SwiftUI onAppear left the app in its 2 s foreground
+        // probe mode permanently.
     }
 
     private var header: some View {
@@ -691,6 +717,35 @@ struct TrayPanel: View {
 
 // MARK: - Agent row
 
+/// Give the whole row button semantics only when it can complete a real
+/// navigation task. Observational rows remain readable content; they no longer
+/// advertise a click that either did nothing or merely opened Finder.
+private struct ConditionalRowButton<Content: View>: View {
+    let actionable: Bool
+    let action: () -> Void
+    let content: Content
+
+    init(
+        actionable: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.actionable = actionable
+        self.action = action
+        self.content = content()
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if actionable {
+            Button(action: action) { content }
+                .buttonStyle(.plain)
+        } else {
+            content
+        }
+    }
+}
+
 @MainActor
 private struct AgentRowButton: View {
     let row: AgentRow
@@ -722,9 +777,10 @@ private struct AgentRowButton: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                store.primaryAction(row)
-            } label: {
+            ConditionalRowButton(
+                actionable: row.canFocusTerminal,
+                action: { store.primaryAction(row) }
+            ) {
                 HStack(alignment: .top, spacing: 0) {
                     // Encoding 1 of 3: does this need me, and has it been
                     // waiting a long time. Width is the *only* thing in the row
@@ -817,10 +873,9 @@ private struct AgentRowButton: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityText)
-            .accessibilityHint(store.primaryActionTitle(row))
+            .accessibilityHint(row.canFocusTerminal ? store.primaryActionTitle(row) : "")
 
             // Actions stay visible where they are urgent, and appear on hover
             // everywhere else. Showing them on every row cost ~28pt each and
@@ -841,11 +896,6 @@ private struct AgentRowButton: View {
                     }
                     if row.canFocusTerminal {
                         Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
-                            .buttonStyle(.borderless)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    if row.canOpenFolder {
-                        Button(store.tr(.openFolder)) { store.openProject(row) }
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
                     }
@@ -892,7 +942,7 @@ private struct AgentRowButton: View {
     private var observationLine: String { store.rowObservationLine(row) }
     private var sourceLabel: String? {
         switch row.observationSource {
-        case .session: return nil
+        case .session: return store.tr(.sessionEvidence)
         case .cache: return store.tr(.cacheEvidence)
         case .process: return store.tr(.limitedData)
         }
@@ -937,9 +987,6 @@ private struct AgentRowButton: View {
         if row.canFocusTerminal {
             Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
         }
-        if row.canOpenFolder {
-            Button(store.tr(.openFolder)) { store.openProject(row) }
-        }
     }
 
     /// Session title is the row hero; process-only rows de-rank to a status phrase.
@@ -971,7 +1018,6 @@ private struct AgentRowButton: View {
     /// facts a row could never state were *where* and *how long*; both were
     /// collected all along.
     private var contextLine: String {
-        if row.isProcessOnly { return store.tr(.activityUnavailable) }
         return store.rowContextLine(row, omitPath: pathInHeading)
     }
 

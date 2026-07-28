@@ -193,6 +193,25 @@ final class ProcessProbeTests: XCTestCase {
         XCTAssertNotEqual(ProcessProbe.signature([a]), ProcessProbe.signature([more]))
         XCTAssertNotEqual(ProcessProbe.signature([a]), ProcessProbe.signature([]))
     }
+
+    func testWorkingDirectoryParserKeepsEachPidAttachedToItsCwd() {
+        let output = """
+        p101
+        fcwd
+        n/Users/me/code/Pulse
+        p202
+        fcwd
+        n/Users/me/code/Other
+        """
+        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[101], "/Users/me/code/Pulse")
+        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[202], "/Users/me/code/Other")
+    }
+
+    func testWorkingDirectoryFilterRejectsInfrastructurePaths() {
+        XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/"), "")
+        XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/Applications/Pulse.app"), "")
+        XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/Users/me/code/Pulse"), "/Users/me/code/Pulse")
+    }
 }
 
 /// Notification copy — the banner has to say what is wanted.
