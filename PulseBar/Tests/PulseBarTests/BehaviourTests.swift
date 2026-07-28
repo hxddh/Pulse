@@ -174,6 +174,63 @@ final class AgentRowTests: XCTestCase {
 
 /// `ps` parsing and the harvest-skip fingerprint.
 final class ProcessProbeTests: XCTestCase {
+    func testEverySupportedAgentHasACanonicalProcessSignature() {
+        let samples: [(AgentID, String)] = [
+            (.claude, "/Users/me/.local/bin/claude"),
+            (.codex, "/opt/homebrew/bin/codex app-server"),
+            (.cursor, "/Applications/Cursor.app/Contents/MacOS/Cursor"),
+            (.cursorAgent, "/Users/me/.local/bin/cursor-agent"),
+            (.grok, "/Users/me/.grok/bin/grok"),
+            (.pi, "pi"),
+            (.amp, "amp"),
+            (.aider, "aider"),
+            (.gemini, "gemini"),
+            (.copilot, "/opt/homebrew/bin/copilot"),
+            (.opencode, "opencode"),
+            (.goose, "goose"),
+            (.openhands, "openhands"),
+            (.cline, "/tmp/saoudrizwan.claude-dev/cline"),
+            (.roo, "roo"),
+            (.continue_, "continue"),
+            (.amazonQ, "/opt/homebrew/bin/q chat"),
+            (.cascade, "/tmp/cascade-agent"),
+            (.windsurf, "/Applications/Windsurf.app/Contents/MacOS/Windsurf"),
+            (.augment, "augment"),
+            (.zedAgent, "/tmp/zed-agent"),
+            (.trae, "/tmp/trae-agent"),
+            (.warpAgent, "/tmp/warp-agent"),
+            (.devin, "devin"),
+            (.kiro, "kiro"),
+            (.junie, "junie"),
+            (.kilo, "kilo"),
+            (.replit, "replit"),
+            (.droid, "droid"),
+            (.commandCode, "cmd"),
+            (.antigravity, "/Applications/Antigravity.app/Contents/MacOS/Antigravity"),
+            (.kimi, "kimi"),
+        ]
+
+        XCTAssertEqual(samples.count, AgentID.allCases.count)
+        XCTAssertEqual(Set(samples.map(\.0)), Set(AgentID.allCases))
+        for (agent, argv) in samples {
+            XCTAssertEqual(ProcessProbe.match(args: argv), agent, "\(agent.displayName): \(argv)")
+        }
+    }
+
+    func testShortAgentNamesDoNotReintroduceKnownFalsePositives() {
+        let falsePositives = [
+            "/usr/bin/pip install pulse",
+            "/usr/local/bin/pip3",
+            "/usr/sbin/pihole",
+            "/System/Library/PrivateFrameworks/AMPDevices.framework/AMPDeviceDiscoveryAgent",
+            "/opt/android/droidcam",
+            "/opt/android/cmdline-tools",
+        ]
+        for argv in falsePositives {
+            XCTAssertNil(ProcessProbe.match(args: argv), argv)
+        }
+    }
+
     func testParsesProcessElapsedTimeWithoutCallingItSessionAge() {
         XCTAssertEqual(ProcessProbe.parseElapsed("04:12"), 252)
         XCTAssertEqual(ProcessProbe.parseElapsed("02:04:12"), 7_452)

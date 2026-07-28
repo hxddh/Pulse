@@ -155,6 +155,10 @@ private enum TrayChrome {
     /// already run, and it is forty characters instead of thirty.
     static let width: CGFloat = 420
     static let padX: CGFloat = 16
+    /// One hit target for every compact header action. SF Symbols have
+    /// different intrinsic boxes; the shared frame aligns their visible
+    /// centres and keeps the title on the same row.
+    static let headerControlSize: CGFloat = 28
     static let waitAccent = GlanceKind.waiting.lampColor
     static let runAccent = GlanceKind.running.lampColor
 
@@ -226,11 +230,22 @@ private struct SectionHeader: View {
 
     var body: some View {
         let line = HStack(spacing: 6) {
-            if let collapsed {
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .opacity(0.6)
+            Group {
+                if let collapsed {
+                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .opacity(0.6)
+                } else {
+                    Color.clear
+                }
             }
+            // Reserve the disclosure column even for a non-foldable group.
+            // Otherwise neighbouring section titles start at two different
+            // x positions depending on whether they happen to be collapsible.
+            // 14 pt from the 16 pt panel inset puts this column's centre at
+            // x=23, exactly the centre of the 18 pt row-icon column that starts
+            // at x=14.
+            .frame(width: 14, height: 14, alignment: .center)
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
             // "No project 2 Pi · Amp" — two names and a 2. The count only
@@ -269,11 +284,9 @@ private struct SectionHeader: View {
 struct TrayPanel: View {
     @ObservedObject var store: StatusStore
     @State fileprivate var measuredHeight: CGFloat = 0
-    /// Groups the user has opened. Foldable groups start closed, and the set
-    /// is per-panel rather than persisted: reopening the tray is a new glance,
-    /// and a glance should start at "what needs me", not at last time's
-    /// bookkeeping.
-    @State fileprivate var unfolded: Set<String> = []
+    /// Folding is opt-in and per-panel. A fresh glance shows every row; the
+    /// header must never claim five sessions while the list silently shows one.
+    @State fileprivate var folded: Set<String> = []
 
     /// Row key the keyboard has selected, if any.
     @State fileprivate var selectedKey: String?
@@ -285,7 +298,7 @@ struct TrayPanel: View {
         // from a reorder, and you re-read the whole list to find out which it
         // was. Short and flat — this is a menu-bar panel, not a launch screen.
         withAnimation(.easeOut(duration: 0.16)) {
-            if unfolded.contains(id) { unfolded.remove(id) } else { unfolded.insert(id) }
+            if folded.contains(id) { folded.remove(id) } else { folded.insert(id) }
         }
     }
 
@@ -293,7 +306,7 @@ struct TrayPanel: View {
     /// so a folded group is skipped rather than silently selected.
     fileprivate func visibleRows(_ groups: [RowGroup]) -> [AgentRow] {
         groups.flatMap { group -> [AgentRow] in
-            if group.foldable && !unfolded.contains(group.id) { return [] }
+            if group.foldable && TrayFold.isCollapsed(group.id, manuallyFolded: folded) { return [] }
             return group.rows
         }
     }
@@ -346,8 +359,8 @@ struct TrayPanel: View {
         // the rows cannot; repeating the thing the user just clicked on is the
         // opposite. The status word keeps the glance colour, which is the part
         // that carried information.
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .center, spacing: 10) {
                 HStack(spacing: 6) {
                     if store.isRefreshing {
                         ProgressView()
@@ -362,54 +375,66 @@ struct TrayPanel: View {
                         .foregroundStyle(headerTitleColor)
                         .lineLimit(1)
                 }
-                if !store.isRefreshing, !headerDetail.isEmpty {
-                    Text(headerDetail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            TrayIconAction(
-                systemImage: "arrow.clockwise",
-                help: store.tr(.refresh),
-                shortcut: "r"
-            ) {
-                store.refresh(reason: "manual")
-            }
-            .disabled(store.isRefreshing)
+                HStack(alignment: .center, spacing: 4) {
+                    TrayIconAction(
+                        systemImage: "arrow.clockwise",
+                        help: store.tr(.refresh),
+                        shortcut: "r"
+                    ) {
+                        store.refresh(reason: "manual")
+                    }
+                    .disabled(store.isRefreshing)
 
-            Menu {
-                if store.needsHooksNudge || store.needsWaitingSignalNudge {
-                    Button(store.tr(.setupWaitingSignals)) { store.openSettings() }
-                    Divider()
+                    Menu {
+                        if store.needsHooksNudge || store.needsWaitingSignalNudge {
+                            Button(store.tr(.setupWaitingSignals)) { store.openSettings() }
+                            Divider()
+                        }
+                        if store.snapshot.rows.contains(where: \.waiting) {
+                            Button(store.tr(.jumpToOldest)) { store.focusOldestWait() }
+                            Button(store.tr(.clearWaiting)) { store.clearWaiting() }
+                            Divider()
+                        }
+                        Button(store.tr(.settings)) { store.openSettings() }
+                            .keyboardShortcut(",", modifiers: .command)
+                        Button("\(store.tr(.copyDiagnostics)) · \(PulseVersion.about)") {
+                            store.copyDiagnostics()
+                        }
+                        Divider()
+                        Button(store.tr(.quit)) { store.quit() }
+                            .keyboardShortcut("q", modifiers: .command)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .frame(
+                                width: TrayChrome.headerControlSize,
+                                height: TrayChrome.headerControlSize,
+                                alignment: .center
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(
+                        width: TrayChrome.headerControlSize,
+                        height: TrayChrome.headerControlSize,
+                        alignment: .center
+                    )
+                    .help(store.tr(.moreActions))
+                    .accessibilityLabel(store.tr(.moreActions))
                 }
-                if store.snapshot.rows.contains(where: \.waiting) {
-                    Button(store.tr(.jumpToOldest)) { store.focusOldestWait() }
-                    Button(store.tr(.clearWaiting)) { store.clearWaiting() }
-                    Divider()
-                }
-                Button(store.tr(.settings)) { store.openSettings() }
-                    .keyboardShortcut(",", modifiers: .command)
-                Button("\(store.tr(.copyDiagnostics)) · \(PulseVersion.about)") {
-                    store.copyDiagnostics()
-                }
-                Divider()
-                Button(store.tr(.quit)) { store.quit() }
-                    .keyboardShortcut("q", modifiers: .command)
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 22)
-                    .contentShape(Rectangle())
+                .frame(height: TrayChrome.headerControlSize, alignment: .center)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(store.tr(.moreActions))
-            .accessibilityLabel(store.tr(.moreActions))
+
+            if !store.isRefreshing, !headerDetail.isEmpty {
+                Text(headerDetail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
         }
         .padding(.horizontal, TrayChrome.padX)
         .padding(.top, 12)
@@ -485,7 +510,8 @@ struct TrayPanel: View {
         var rows: [AgentRow]
         /// The heading is a location, so rows underneath must not repeat it.
         var statesPath = false
-        /// The heading doubles as a disclosure control and the rows start folded.
+        /// The heading doubles as a disclosure control when the user chooses
+        /// to fold the otherwise-visible rows.
         var foldable = false
         /// Not a project — the bucket for rows that have no location at all.
         var isBucket = false
@@ -614,7 +640,7 @@ struct TrayPanel: View {
                             // No rules between rows: whitespace already
                             // separates them, and a line every 56pt turns a
                             // short list into a table.
-                            if !(group.foldable && !unfolded.contains(group.id)) {
+                            if !(group.foldable && TrayFold.isCollapsed(group.id, manuallyFolded: folded)) {
                                 ForEach(group.rows) { row in
                                     AgentRowButton(
                                         row: row,
@@ -634,15 +660,16 @@ struct TrayPanel: View {
                             // heading over a single row is just that row's own
                             // path on a line of its own.
                             if showHeading(group, of: groups) {
-                                let folded = group.foldable && !unfolded.contains(group.id)
+                                let isFolded = group.foldable
+                                    && TrayFold.isCollapsed(group.id, manuallyFolded: folded)
                                 SectionHeader(
                                     title: group.title,
                                     count: group.count,
                                     accent: group.accent,
-                                    collapsed: group.foldable ? folded : nil,
-                                    summary: folded ? TrayFold.summary(group.rows) : "",
+                                    collapsed: group.foldable ? isFolded : nil,
+                                    summary: isFolded ? TrayFold.summary(group.rows) : "",
                                     toggle: group.foldable ? { toggleFold(group.id) } : nil,
-                                    showCount: !(folded && TrayFold.summaryNamesEveryRow(group.rows))
+                                    showCount: !(isFolded && TrayFold.summaryNamesEveryRow(group.rows))
                                 )
                             }
                         }
@@ -1115,7 +1142,11 @@ private struct TrayIconAction: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 13))
-                .frame(width: 28, height: 22)
+                .frame(
+                    width: TrayChrome.headerControlSize,
+                    height: TrayChrome.headerControlSize,
+                    alignment: .center
+                )
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(hovering ? Color.primary.opacity(0.08) : Color.clear)
