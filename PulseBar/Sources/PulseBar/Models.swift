@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.29.1"
+    static let semver = "0.30.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -135,6 +135,27 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// What the local collector is allowed to promise before runtime data is
+    /// considered. Every agent can still degrade to process detection.
+    ///
+    /// `structuredSession` means the adapter reads a session/thread/composer
+    /// identity and its activity facts. `bestEffortCache` means the vendor
+    /// exposes no stable local session contract and Pulse may only recover a
+    /// workspace or title. The README matrix is checked against this switch so
+    /// "a collector function exists" can no longer be advertised as equivalent
+    /// session observability.
+    var harvestSource: HarvestSource {
+        switch self {
+        case .claude, .codex, .cursor, .grok, .pi, .amp, .aider, .gemini,
+             .copilot, .opencode, .goose, .openhands, .cline, .roo, .continue_,
+             .amazonQ, .cascade, .augment, .zedAgent, .trae, .warpAgent, .kilo,
+             .kiro, .droid, .commandCode, .kimi:
+            return .structuredSession
+        case .cursorAgent, .windsurf, .devin, .junie, .replit, .antigravity:
+            return .bestEffortCache
+        }
+    }
+
     static let priority: [AgentID] = [
         .claude, .cursorAgent, .codex, .droid, .kimi, .commandCode, .devin,
         .antigravity, .cascade, .windsurf, .kiro, .junie, .kilo, .augment,
@@ -148,6 +169,11 @@ enum WaitingSource {
     case hooks
     case harvestPending
     case none
+}
+
+enum HarvestSource {
+    case structuredSession
+    case bestEffortCache
 }
 
 /// How this row's Waiting was raised (shown as a short credibility tag).
@@ -287,6 +313,10 @@ struct AgentRow: Identifiable, Hashable {
             "New Session", "New session", "Untitled", "New Chat", "New chat",
         ]
         if junk.contains(t) { return nil }
+        let low = t.lowercased()
+        let agent = agent.displayName.lowercased()
+        let genericSuffixes = [" session", " thread", " chat", " task", " agent"]
+        if genericSuffixes.contains(where: { low == agent + $0 }) { return nil }
         if t.hasPrefix("/"), !t.contains(" ") { return nil }
         return t
     }

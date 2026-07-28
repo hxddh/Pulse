@@ -715,12 +715,19 @@ final class StatusStore: ObservableObject {
     /// Only for live rows: on a finished session the last tool it touched is
     /// history, not status, and would read as though it were still going.
     func rowContextLine(_ row: AgentRow, omitPath: Bool = false) -> String {
+        if row.isProcessOnly {
+            return row.canFocusTerminal
+                ? tr(.terminalDetectedNoDetails)
+                : tr(.appDetectedNoDetails)
+        }
         var bits: [String] = []
         let path = row.displayPath
         if !path.isEmpty, !omitPath { bits.append(path) }
-        if let tool = liveTool(row) { bits.append(tool) }
+        if let tool = liveTool(row) {
+            bits.append(String(format: tr(.lastAction), readableAction(tool)))
+        }
         let ago = lastActivityLabel(row)
-        if !ago.isEmpty { bits.append(ago) }
+        if !ago.isEmpty { bits.append(String(format: tr(.lastActive), ago)) }
         // With none of them, fall back to naming the agent rather than an
         // empty line.
         if bits.isEmpty { return row.isProcessOnly ? "" : row.agent.displayName }
@@ -772,8 +779,29 @@ final class StatusStore: ObservableObject {
         // returns an empty line because none of the checks below add anything.
         guard !row.waiting else { return "" }
         var bits: [String] = []
-        if let tokens = row.tokenLine { bits.append(tokens) }
-        if let sub = row.subagentLine { bits.append(sub) }
+        let input = AgentRow.compactToken(row.tokensIn)
+        let output = AgentRow.compactToken(row.tokensOut)
+        if !input.isEmpty || !output.isEmpty {
+            let scope: L10n.Key = [.claude, .codex].contains(row.agent)
+                ? .latestCallTokens
+                : .reportedTokens
+            bits.append(String(
+                format: tr(scope),
+                input.isEmpty ? "0" : input,
+                output.isEmpty ? "0" : output
+            ))
+        }
+        if row.subTotal > 0 {
+            if row.subRunning > 0 {
+                bits.append(String(
+                    format: tr(.subagentsActive),
+                    row.subRunning,
+                    row.subTotal
+                ))
+            } else {
+                bits.append(String(format: tr(.subagentsObserved), row.subTotal))
+            }
+        }
         if row.records > 0 { bits.append("\(row.records)\(tr(.recordsSuffix))") }
         return bits.prefix(4).joined(separator: " · ")
     }
@@ -793,6 +821,39 @@ final class StatusStore: ObservableObject {
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !tool.isEmpty, row.usefulTask != nil else { return nil }
         return tool
+    }
+
+    /// Translate implementation-level tool identifiers into an action a
+    /// person can scan. This is intentionally phrased as the *last* action:
+    /// harvest observes an event, not whether that action is still executing.
+    private func readableAction(_ raw: String) -> String {
+        let tool = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let low = tool.lowercased()
+        if low.contains("plan") { return tr(.actionPlanning) }
+        if low.contains("patch") || low.contains("edit") || low.contains("write") {
+            return tr(.actionEditing)
+        }
+        if low.contains("image") || low.contains("screenshot") {
+            return tr(.actionImage)
+        }
+        if low.contains("search") || low.contains("web") || low.contains("browser") {
+            return tr(.actionResearch)
+        }
+        if low.contains("read") || low.contains("glob") || low.contains("grep") {
+            return tr(.actionReading)
+        }
+        if low == "exec" || low.contains("command") || low == "bash" || low == "shell" {
+            return tr(.actionCommand)
+        }
+        if low == "js" || low.contains("automation") || low.contains("computer") {
+            return tr(.actionAutomation)
+        }
+        let spaced = tool
+            .replacingOccurrences(of: "__", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        guard let first = spaced.first else { return tool }
+        return String(first).uppercased() + spaced.dropFirst()
     }
 
     /// Human wait age in the resolved language (`2 分` / `2m`).

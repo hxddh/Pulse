@@ -95,7 +95,7 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 
 ## 视图
 
-`MenuBarLabel`（灯 + 极短标题）、`TrayPanel`（会话列表 + 动作 + 版本页脚）、
+`MenuBarLabel`（灯 + 极短标题）、`TrayPanel`（连续会话列表 + Header 动作）、
 `SettingsView`。四个都标了 `@MainActor`——SwiftUI 只有 `body` 隐式主 actor 隔离，
 辅助计算属性不是，调 store 的 `@MainActor` 方法会编译失败。
 
@@ -128,7 +128,7 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 | --- | --- |
 | `version_check.py` | 版本只有一个真源，CHANGELOG 与 README 徽标跟随 |
 | `coverage_check.py` | 每个 `AgentID` 都有 harvest 接线；新增 id 未登记即失败 |
-| `matrix_check.py` | README 支持矩阵 == `AgentID.waitingSource` |
+| `matrix_check.py` | README 支持矩阵 == `AgentID.harvestSource` + `waitingSource` |
 | `make_agent_icons.py --check` | 每个 `AgentID` 都有图标，且与生成器逐字节一致 |
 | `appearance_check.py` | 没有把随外观变化的值冻进常量（0.27.1 因此丢了深色模式） |
 | `harvest_stats_check.py` | 把真实会话文件摆到真实位置，跑真实 collector，验完整 TSV |

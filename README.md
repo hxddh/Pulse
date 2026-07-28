@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.29.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.30.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -49,7 +49,7 @@ Pulse 把这件事变成余光可见：
 | 层 | 手段 | 能回答 |
 | --- | --- | --- |
 | **A · Probe** | `ps` 扫进程 | 有没有人在跑 |
-| **B · Harvest** | 读各 Agent 自己的会话文件 / sqlite | 在跑什么、哪个项目、哪个会话 |
+| **B · Harvest** | 读各 Agent 自己的会话文件 / sqlite / 可验证缓存 | 有结构化数据时回答任务、项目、会话与最近活动 |
 | **C · Waiting** | hooks，或 harvest 里的 `pending` 标记 | 是不是在等你 |
 
 **诚实规则**（写死的产品约束，见 [`AGENTS.md`](AGENTS.md)）：
@@ -58,24 +58,29 @@ Pulse 把这件事变成余光可见：
 - Waiting 只来自 hooks 或 `skill=pending`，**绝不推断**。没有 Waiting 通路的 Agent，
   托盘明说「暂无 Waiting 信号」，不假装。
 - 每条 Waiting 行标注来源是 `hooks` 还是 `pending`，你自己判断可信度。
-- Focus 不吹牛：有 TTY 才聚焦终端页，Warp 下只激活 Warp，只有 cwd 就说「在终端打开」。
+- Focus 不吹牛：有 TTY 才聚焦终端页，Warp 下只激活 Warp；只有 cwd 时仅提供「打开目录」。
 
 ## 支持的 Agent
 
 | Agent | Probe | Harvest | Waiting |
 | --- | --- | --- | --- |
-| Claude / Codex | A | B | hooks（+ Codex pending） |
-| Cursor | A* | B | pending |
-| Droid / Kimi / Command Code | A | B | pending |
-| Gemini / OpenCode / Amp / Aider / Goose | A | B | pending |
-| Grok / Pi / Cline / Roo / Kilo | A | B | pending（尽力） |
-| Continue / Copilot / Amazon Q / OpenHands / Zed | A | B | pending |
-| Cascade / Windsurf / Augment / Kiro | A | B | pending（尽力） |
-| Antigravity / Trae / Warp / Devin / Junie / Replit | A | B* | **none**（本机无可靠信号） |
+| Claude / Codex | A | Structured session | hooks（+ Codex pending） |
+| Cursor | A* | Structured session | pending |
+| Droid / Kimi / Command Code | A | Structured session | pending |
+| Gemini / OpenCode / Amp / Aider / Goose | A | Structured session | pending |
+| Grok / Pi / Cline / Roo / Kilo | A | Structured session | pending（尽力） |
+| Continue / Copilot / Amazon Q / OpenHands / Zed | A | Structured session | pending |
+| Cascade / Augment / Kiro | A | Structured session | pending（尽力） |
+| Trae / Warp | A | Structured session | **none**（本机无可靠信号） |
+| Windsurf | A | Best effort cache | pending（尽力） |
+| Antigravity / Devin / Junie / Replit | A | Best effort cache | **none**（本机无可靠信号） |
 
-\* Cursor 进程常跳过外壳，靠 harvest 认；none 组 harvest 尽力，但不承诺 Waiting。
+\* Cursor 进程常跳过外壳，靠 harvest 认。`Structured session` 读取真实会话身份；
+`Best effort cache` 只承诺可验证的本地缓存事实。两者若没有当前数据都会明确降级，
+不会用进程数冒充会话观测。
 
-这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.waitingSource` 校验，
+这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.harvestSource` 和
+`AgentID.waitingSource` 校验，
 不一致 CI 就红——它是承诺，不是宣传。
 
 想让名单外的工具点亮 Waiting，走 [`docs/attention-bridge.md`](docs/attention-bridge.md)。

@@ -109,6 +109,23 @@ enum L10n {
         case .processDetected: return "Process detected"
         case .processWord: return "process"
         case .processCount: return "%d processes"
+        case .limitedData: return "Limited data"
+        case .terminalDetectedNoDetails: return "Terminal session detected · activity details unavailable"
+        case .appDetectedNoDetails: return "App detected · no active session data"
+        case .lastAction: return "Last action: %@"
+        case .lastActive: return "Last active %@"
+        case .latestCallTokens: return "Model call · %@ in · %@ out"
+        case .reportedTokens: return "Reported · %@ in · %@ out"
+        case .subagentsActive: return "%d of %d subagents active"
+        case .subagentsObserved: return "%d subagents observed"
+        case .actionPlanning: return "Planning"
+        case .actionCommand: return "Command"
+        case .actionEditing: return "Editing files"
+        case .actionImage: return "Reviewing image"
+        case .actionResearch: return "Research"
+        case .actionReading: return "Reading files"
+        case .actionAutomation: return "Automation"
+        case .setupWaitingSignals: return "Set up Waiting signals…"
         case .about: return "About"
         case .tagline: return "Status lamp for coding agents"
         case .build: return "Build"
@@ -175,8 +192,8 @@ enum L10n {
         case .stallOff: return "Never"
         case .minutesShort: return "%d min"
         case .notifFocus: return "Focus"
-        case .recordsSuffix: return " records"
-        case .sessionAge: return "session %@"
+        case .recordsSuffix: return " events"
+        case .sessionAge: return "Started %@ ago"
         }
     }
 
@@ -246,6 +263,23 @@ enum L10n {
         case .processDetected: return "检测到进程"
         case .processWord: return "进程"
         case .processCount: return "%d 个进程"
+        case .limitedData: return "信息有限"
+        case .terminalDetectedNoDetails: return "已检测到终端会话 · 暂无活动详情"
+        case .appDetectedNoDetails: return "已检测到应用 · 暂无活跃会话数据"
+        case .lastAction: return "最近动作：%@"
+        case .lastActive: return "最近活动：%@"
+        case .latestCallTokens: return "模型调用 · 入 %@ · 出 %@"
+        case .reportedTokens: return "Agent 上报 · 入 %@ · 出 %@"
+        case .subagentsActive: return "%d / %d 个 subagent 活跃"
+        case .subagentsObserved: return "已观测 %d 个 subagent"
+        case .actionPlanning: return "规划"
+        case .actionCommand: return "执行命令"
+        case .actionEditing: return "编辑文件"
+        case .actionImage: return "查看图片"
+        case .actionResearch: return "检索资料"
+        case .actionReading: return "读取文件"
+        case .actionAutomation: return "自动化操作"
+        case .setupWaitingSignals: return "设置 Waiting 信号…"
         case .about: return "关于"
         case .tagline: return "编码 Agent 状态灯"
         case .build: return "构建"
@@ -310,8 +344,8 @@ enum L10n {
         case .stallOff: return "不判定"
         case .minutesShort: return "%d 分钟"
         case .notifFocus: return "去看看"
-        case .recordsSuffix: return " 条记录"
-        case .sessionAge: return "会话 %@"
+        case .recordsSuffix: return " 条事件"
+        case .sessionAge: return "始于%@前"
         }
     }
 
@@ -332,6 +366,11 @@ enum L10n {
         case kindPermission, kindInput, kindWaiting
         case activityPrefix, signalHooks, signalPending
         case processDetected, processWord, processCount
+        case limitedData, terminalDetectedNoDetails, appDetectedNoDetails
+        case lastAction, lastActive, latestCallTokens, reportedTokens
+        case subagentsActive, subagentsObserved
+        case actionPlanning, actionCommand, actionEditing, actionImage
+        case actionResearch, actionReading, actionAutomation, setupWaitingSignals
         case about, tagline, build, devBuild, copyDiagnostics, copied
         case versionStale, versionMismatchHint
         case durNow, durSec, durMin, durHour

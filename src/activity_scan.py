@@ -345,6 +345,25 @@ def clean_session_title(value) -> str:
     return title[:160]
 
 
+def clean_codex_user_request(value) -> str:
+    """Extract the user's request from Codex Desktop attachment envelopes.
+
+    Codex Desktop prepends file metadata and appends an image transport block
+    to the real prompt. That transport text is useful to the runtime, but it
+    is not the task title a person should see in Pulse.
+    """
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    marker = re.search(r"##\s+My request for Codex:\s*", text, re.I)
+    if marker:
+        text = text[marker.end() :]
+    text = re.sub(r"<image\b[^>]*>[\s\S]*?</image>", " ", text, flags=re.I)
+    text = re.sub(r"<image\b[^>]*/?>", " ", text, flags=re.I)
+    text = re.sub(r"\[Image\s*#[^\]]*\]\([^)]*\)", " ", text, flags=re.I)
+    return clean_session_title(text)
+
+
 def _title_candidates(value) -> list[str]:
     """Title-like strings outside tool calls/results, in document order."""
     found: list[str] = []
@@ -399,7 +418,7 @@ def codex_user_title(text: str) -> str:
             continue
         payload_type = str(payload.get("type") or "")
         if top_type == "event_msg" and payload_type == "user_message":
-            title = clean_session_title(payload.get("message"))
+            title = clean_codex_user_request(payload.get("message"))
             if title:
                 found.append(title)
             continue
@@ -408,7 +427,7 @@ def codex_user_title(text: str) -> str:
                 continue
             content = payload.get("content")
             if isinstance(content, str):
-                title = clean_session_title(content)
+                title = clean_codex_user_request(content)
                 if title:
                     found.append(title)
             elif isinstance(content, list):
@@ -418,7 +437,7 @@ def codex_user_title(text: str) -> str:
                     if isinstance(part, dict)
                     and str(part.get("type") or "") in ("input_text", "text")
                 ]
-                title = clean_session_title(" ".join(text_parts))
+                title = clean_codex_user_request(" ".join(text_parts))
                 if title:
                     found.append(title)
     return found[-1] if found else ""

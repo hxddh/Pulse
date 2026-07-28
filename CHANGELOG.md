@@ -2,6 +2,36 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.30.0 — 覆盖不再等于有个进程
+
+这版修的不是“再多塞几个字段”，而是把观测语义重新立规矩：
+一条信息必须说明它来自会话、缓存还是进程，必须让用户知道它代表现在、最近一次事件，
+还是会话开始时间。没有数据时明确降级，绝不再用内部实现细节填空。
+
+### 默认信息改成可判断的句子
+
+- Codex 的 `update_plan / exec / view_image` 映射成「规划 / 执行命令 / 查看图片」，
+  并标为“最近动作”，不再暗示工具仍在运行。
+- `5m ago`、`session 1h` 分别改成“最近活动：5 分钟前”和“始于 1 小时前”；
+  `↑183k ↓468` 改成带范围的“模型调用 · 入 183k · 出 468”。
+- 混合 transcript 的计数改称“事件”，不再用 records/记录暗示会话轮数。
+- Codex Desktop 带图片时会剥离 `Files mentioned` 与图片传输包络，主标题只保留真实请求。
+
+### 所有 Agent 使用同一降级契约
+
+- 有结构化会话时显示任务、项目、最近动作、活动时间与可验证指标。
+- 只有进程时不再显示 `process / 2 processes`，而是明确写
+  “已检测到终端会话 / 应用，暂无活动详情”，芯片标为“信息有限”。
+- Cursor 的常驻 private-worker 被排除：基础设施进程不再让空闲 IDE 长期显示 Running。
+- 支持矩阵新增 `Structured session / Best effort cache` 区分，
+  `matrix_check.py` 同时校验 Harvest 和 Waiting 承诺；有 collector 函数不再等于有会话观测。
+
+### 弹窗回归一个连续表面
+
+- 删除 Header 下方与底部的两条 Divider。
+- 删除独立底部工具栏和版本页脚；刷新移到 Header，设置、Waiting 连接、诊断与退出收进更多菜单。
+- hooks 提示不再占据顶部整条横带。实时内容从 Header 直接进入会话列表。
+
 ## 0.29.1 — 核心事实不该藏在详情里
 
 0.29.0 把真实任务、工具、时间和会话指标接进了界面，

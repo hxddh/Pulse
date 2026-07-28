@@ -93,6 +93,11 @@ def main() -> int:
     probe = (ROOT / "PulseBar/Sources/PulseBar/ProcessProbe.swift").read_text(encoding="utf-8")
     probe_ids = set(re.findall(r"id:\s*\.(\w+)", probe))
     print(f"probe rules: {len(probe_ids)} · AgentID cases: {len(known) + 1}")
+    if '"worker start"' not in probe or '"--worker-dir"' not in probe:
+        print(
+            "Cursor private-worker daemon must be denied; it is infrastructure, not an active session"
+        )
+        return 1
     print("OK — all expected harvest emitters present")
     return 0
 

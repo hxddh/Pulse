@@ -105,9 +105,7 @@ to users.
 
 ## Current state
 
-0.28.1 released. 0.23–0.27 are done (see `CHANGELOG.md`); 0.28 moved the
-information problem out of the panel and into `src/activity_scan.py`, which
-is where the next work is. Two third-party reviews of 0.28.0 found six real
-defects in it — all fixed in 0.28.1, and every one of them is now a case in
-`scripts/harvest_stats_check.py`. See [`docs/plan-0.23.md`](docs/plan-0.23.md) for what
-remains and what is deliberately out of scope.
+0.29.1 is the latest public release; 0.30.0 is the current local candidate.
+0.30 distinguishes structured sessions, best-effort caches and process-only
+fallbacks, removes Cursor's persistent worker false positive, and makes the
+tray one continuous surface. See `CHANGELOG.md` for the complete contract.

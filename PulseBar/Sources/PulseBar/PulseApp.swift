@@ -310,17 +310,12 @@ struct TrayPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             missedNotice
-            nudge
-            rule
 
             if store.snapshot.rows.isEmpty {
                 emptyState
             } else {
                 agentList
             }
-
-            rule
-            actions
         }
         .frame(width: TrayChrome.width)
         // The window still draws taller than the panel — `.fixedSize` did not
@@ -335,17 +330,6 @@ struct TrayPanel: View {
         // slow (or parked) when nobody is looking.
         .onAppear { store.trayDidAppear() }
         .onDisappear { store.trayDidDisappear() }
-    }
-
-    /// Inset, not edge to edge.
-    ///
-    /// A full-bleed divider is a table rule. Two of them across a flat panel
-    /// cut it into banded strips, which is the look the 0.27.1 screenshots
-    /// had. Pulling them in to the text margin makes them separators again.
-    private var rule: some View {
-        Divider()
-            .opacity(0.5)
-            .padding(.horizontal, TrayChrome.padX)
     }
 
     private var header: some View {
@@ -380,10 +364,50 @@ struct TrayPanel: View {
                 }
             }
             Spacer(minLength: 0)
+
+            TrayIconAction(
+                systemImage: "arrow.clockwise",
+                help: store.tr(.refresh),
+                shortcut: "r"
+            ) {
+                store.refresh(reason: "manual")
+            }
+            .disabled(store.isRefreshing)
+
+            Menu {
+                if store.needsHooksNudge || store.needsWaitingSignalNudge {
+                    Button(store.tr(.setupWaitingSignals)) { store.openSettings() }
+                    Divider()
+                }
+                if store.snapshot.rows.contains(where: \.waiting) {
+                    Button(store.tr(.jumpToOldest)) { store.focusOldestWait() }
+                    Button(store.tr(.clearWaiting)) { store.clearWaiting() }
+                    Divider()
+                }
+                Button(store.tr(.settings)) { store.openSettings() }
+                    .keyboardShortcut(",", modifiers: .command)
+                Button("\(store.tr(.copyDiagnostics)) · \(PulseVersion.about)") {
+                    store.copyDiagnostics()
+                }
+                Divider()
+                Button(store.tr(.quit)) { store.quit() }
+                    .keyboardShortcut("q", modifiers: .command)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(store.tr(.moreActions))
+            .accessibilityLabel(store.tr(.moreActions))
         }
         .padding(.horizontal, TrayChrome.padX)
         .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.bottom, 6)
     }
 
     private var headerTitle: String {
@@ -418,36 +442,6 @@ struct TrayPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-        }
-    }
-
-    @ViewBuilder
-    private var nudge: some View {
-        if store.needsHooksNudge {
-            Button { store.openSettings() } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "link")
-                        .font(.system(size: 10.5, weight: .medium))
-                    Text(store.tr(.hooksNudge))
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .opacity(0.55)
-                }
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, TrayChrome.padX)
-                    .padding(.bottom, 9)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } else if store.needsWaitingSignalNudge {
-            Text(store.tr(.waitingSignalNudge))
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, TrayChrome.padX)
-                .padding(.bottom, 10)
         }
     }
 
@@ -719,58 +713,6 @@ struct TrayPanel: View {
         .buttonStyle(.plain)
     }
 
-    /// One bar, not five stacked rows.
-    ///
-    /// Five full-width menu items plus a version footer cost about 170pt of a
-    /// 600pt panel — more than the two rows of content it was framing. Icons
-    /// with tooltips carry the same actions in ~34pt, and the build badge rides
-    /// along at the end where it was already meant to sit quietly.
-    private var actions: some View {
-        HStack(spacing: 2) {
-            TrayIconAction(systemImage: "arrow.clockwise", help: store.tr(.refresh), shortcut: "r") {
-                store.refresh(reason: "manual")
-            }
-            .disabled(store.isRefreshing)
-
-            if store.snapshot.rows.contains(where: \.waiting) {
-                TrayIconAction(
-                    systemImage: "arrow.uturn.forward",
-                    help: store.tr(.jumpToOldest),
-                    shortcut: "j"
-                ) { store.focusOldestWait() }
-                TrayIconAction(systemImage: "checkmark.circle", help: store.tr(.clearWaiting)) {
-                    store.clearWaiting()
-                }
-            }
-
-            TrayIconAction(systemImage: "gearshape", help: store.tr(.settings), shortcut: ",") {
-                store.openSettings()
-            }
-            TrayIconAction(systemImage: "power", help: store.tr(.quit), shortcut: "q") {
-                store.quit()
-            }
-
-            Spacer(minLength: 6)
-
-            Button { store.copyDiagnostics() } label: {
-                HStack(spacing: 4) {
-                    Text(store.didCopyDiagnostics ? store.tr(.copied) : PulseVersion.about)
-                    if store.isVersionMismatch {
-                        Text(store.tr(.versionStale))
-                            .foregroundStyle(GlanceKind.error.lampColor)
-                    }
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(PulseVersion.fingerprint)
-            .accessibilityLabel(PulseVersion.fingerprint)
-        }
-        .padding(.horizontal, TrayChrome.padX)
-        .padding(.vertical, 8)
-    }
 }
 
 // MARK: - Agent row
@@ -1073,16 +1015,9 @@ private struct AgentRowButton: View {
                 label: dur.isEmpty ? kind : "\(kind) · \(dur)"
             )
         } else if row.isProcessOnly {
-            // A process-only row is the panel's thinnest: harvest knows nothing
-            // about it, so the title falls back to the agent name and the
-            // second line is empty. The count is the one extra fact that
-            // exists, and it lived in the expand block where nobody saw it.
-            StatusChip(
-                kind: .process,
-                label: row.processCount > 1
-                    ? String(format: store.tr(.processCount), row.processCount)
-                    : store.tr(.processWord)
-            )
+            // The badge states observation quality, not the implementation
+            // detail that `ps` happened to match one or more processes.
+            StatusChip(kind: .process, label: store.tr(.limitedData))
         } else if row.isStalled {
             // Live for twenty minutes with nothing happening. Never surfaced
             // before, and it looked exactly like a healthy session.

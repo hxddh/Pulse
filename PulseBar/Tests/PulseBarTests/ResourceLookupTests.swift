@@ -116,6 +116,14 @@ final class RowRedundancyTests: XCTestCase {
         XCTAssertTrue(r.isProcessOnly, "no task means the hero falls back to the agent name")
         XCTAssertNil(r.usefulTask)
     }
+
+    func testEveryAgentDropsItsOwnGenericSessionPlaceholder() {
+        for agent in AgentID.allCases {
+            var r = row(agent: agent, task: "\(agent.displayName) session")
+            r.sessionID = "real-id"
+            XCTAssertNil(r.usefulTask, "\(agent.displayName) placeholder escaped as a task")
+        }
+    }
 }
 
 
@@ -505,8 +513,9 @@ final class RowMetricsTests: XCTestCase {
     @MainActor
     func testTokenSnapshotIsVisibleByDefault() {
         let line = store().rowObservationLine(row(inTok: 12_000, outTok: 3_000))
-        XCTAssertTrue(line.contains("↑12k"), line)
-        XCTAssertTrue(line.contains("↓3.0k"), line)
+        XCTAssertTrue(line.contains("Model call"), line)
+        XCTAssertTrue(line.contains("12k in"), line)
+        XCTAssertTrue(line.contains("3.0k out"), line)
     }
 
     @MainActor
@@ -571,6 +580,28 @@ final class RowMetricsTests: XCTestCase {
         r.processCount = 2
         XCTAssertEqual(r.titleLine, "Cursor")
         XCTAssertFalse(r.titleLine.contains("×"))
+    }
+
+    @MainActor
+    func testRawToolIdentifierReadsAsALastAction() {
+        var r = row()
+        r.task = "Improve observability"
+        r.tool = "update_plan"
+        r.liveProcess = true
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.contains("Last action: Planning"), line)
+        XCTAssertFalse(line.contains("update_plan"), line)
+    }
+
+    @MainActor
+    func testProcessOnlyRowStatesTheVisibilityLimit() {
+        var r = row()
+        r.liveProcess = true
+        r.processCount = 3
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.contains("activity details unavailable"), line)
+        XCTAssertFalse(line.contains("3"), line)
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("process"), line)
     }
 }
 

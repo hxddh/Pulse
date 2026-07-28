@@ -22,7 +22,15 @@ enum ProcessProbe {
         .init(id: .claude, basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude"], denyNeedles: ["Claude.app", "chrome-native-host"]),
         .init(id: .codex, basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
         .init(id: .cursor, basenames: ["Cursor", "cursor"], pathNeedles: ["Cursor.app/Contents/MacOS/Cursor"], denyNeedles: ["crashpad", "CursorUIViewService"]),
-        .init(id: .cursorAgent, basenames: ["cursor-agent", "cursor_agent"], pathNeedles: ["cursor-agent", "anysphere.cursor-agent", "cursor-agent-worker"], denyNeedles: ["crashpad"]),
+        .init(
+            id: .cursorAgent,
+            basenames: ["cursor-agent", "cursor_agent"],
+            pathNeedles: ["cursor-agent", "anysphere.cursor-agent", "cursor-agent-worker"],
+            // Cursor's private-worker daemon is persistent infrastructure. It
+            // remains alive with no composer running, so counting it as an
+            // agent made an idle IDE look like "2 processes" forever.
+            denyNeedles: ["crashpad", "worker start", "--worker-dir"]
+        ),
         .init(id: .grok, basenames: ["grok"], pathNeedles: ["/.grok/bin/grok", "grok-0.", "GROK_AGENT=", "/bin/grok"], denyNeedles: []),
         .init(id: .pi, basenames: ["pi"], pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"], denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"]),
         .init(
