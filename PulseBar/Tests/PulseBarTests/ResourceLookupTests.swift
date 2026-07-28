@@ -594,14 +594,25 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testProcessOnlyRowStatesTheVisibilityLimit() {
+    func testProcessOnlyAppStatesTheVisibilityLimit() {
         var r = row()
         r.liveProcess = true
         r.processCount = 3
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("activity details unavailable"), line)
+        XCTAssertTrue(line.contains("no active session data"), line)
         XCTAssertFalse(line.contains("3"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("process"), line)
+    }
+
+    @MainActor
+    func testProcessOnlyTerminalStatesItsActionableEvidence() {
+        var r = row()
+        r.liveProcess = true
+        r.processCount = 1
+        r.focusTier = .tty
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.contains("Terminal session detected"), line)
+        XCTAssertTrue(line.contains("activity details unavailable"), line)
     }
 }
 
