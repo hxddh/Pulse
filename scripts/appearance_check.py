@@ -40,6 +40,12 @@ FROZEN = re.compile(
     r"(?:Color\s*\(\s*nsColor\s*:|NSColor\s*\.|Color\s*\(\s*NSColor)"
 )
 
+# A template image in an NSStatusBarButton must be resolved by the menu bar's
+# own effective appearance. AppKit documents `nil` as the standard adaptive
+# rendering path. A fixed content tint also recolors the title and can become
+# black-on-black when the menu bar and app resolve different appearances.
+FORCED_STATUS_TINT = re.compile(r"\bbutton\.contentTintColor\s*=\s*(\S.*)$")
+
 # Deliberate exceptions, each with a reason. A lamp colour is a brand value
 # that must NOT flip with the system theme — red means "needs you" on every
 # desktop — so those are fixed on purpose.
@@ -57,15 +63,26 @@ def main() -> int:
             if FROZEN.match(line):
                 rel = path.relative_to(ROOT)
                 problems.append(f"  · {rel}:{n}  {line.strip()}")
+            tint_match = FORCED_STATUS_TINT.search(line)
+            if (
+                path.name == "StatusPanelController.swift"
+                and tint_match
+                and not tint_match.group(1).startswith("nil")
+            ):
+                rel = path.relative_to(ROOT)
+                problems.append(
+                    f"  · {rel}:{n}  forced status-item tint: {line.strip()}"
+                )
 
     if problems:
-        print("appearance frozen into a constant:", file=sys.stderr)
+        print("appearance contract violation:", file=sys.stderr)
         for p in problems:
             print(p, file=sys.stderr)
         print(
-            "\nA `let` is initialised once, so this value keeps whatever the\n"
-            "appearance was at first draw — the app then has no dark mode.\n"
-            "Read it in `body`, or use Material / .primary / .secondary.\n"
+            "\nDo not freeze an appearance-dependent value into a `let`, and\n"
+            "leave NSStatusBarButton.contentTintColor nil so the menu bar can\n"
+            "resolve template images against its own effective appearance.\n"
+            "Read other dynamic colours in `body`, or use Material / .primary / .secondary.\n"
             f"If it is meant to be fixed on every theme, append `{ALLOW_SUFFIX} why`.",
             file=sys.stderr,
         )

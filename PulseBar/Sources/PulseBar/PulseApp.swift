@@ -75,6 +75,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 StatusPanelController.shared?.capture(to: URL(fileURLWithPath: path))
             }
         }
+        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-status-item=") }) {
+            let path = String(capture.dropFirst("--capture-status-item=".count))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                StatusPanelController.shared?.captureStatusItem(to: URL(fileURLWithPath: path))
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -111,6 +111,39 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Capture only this app's status-bar button for appearance QA.
+    ///
+    /// `cacheDisplay` renders a view owned by this process, so this proves the
+    /// actual `NSStatusBarButton` presentation without Screen Recording,
+    /// Accessibility, Apple Events, or UI automation permissions.
+    func captureStatusItem(to url: URL) {
+        guard let button = statusItem.button else {
+            DebugLog.write("status item capture failed — no button")
+            return
+        }
+        button.layoutSubtreeIfNeeded()
+        let bounds = button.bounds
+        guard bounds.width > 0, bounds.height > 0,
+              let bitmap = button.bitmapImageRepForCachingDisplay(in: bounds) else {
+            DebugLog.write("status item capture failed — no bitmap")
+            return
+        }
+        button.cacheDisplay(in: bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            DebugLog.write("status item capture failed — no PNG representation")
+            return
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+            DebugLog.write(
+                "status item capture wrote \(url.path) "
+                    + "appearance=\(button.effectiveAppearance.name.rawValue)"
+            )
+        } catch {
+            DebugLog.write("status item capture failed \(error.localizedDescription)")
+        }
+    }
+
     func windowDidResignKey(_ notification: Notification) {
         close()
     }
@@ -152,19 +185,15 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         image?.isTemplate = true
         image?.size = NSSize(width: 15, height: 15)
         button.image = image
-        button.contentTintColor = statusColor(snapshot.glance)
+        // A status button's effective appearance belongs to the menu bar, not
+        // necessarily to the app's Aqua/Dark Aqua appearance. A forced
+        // contentTintColor is applied to both the template image and title and
+        // can therefore resolve to black on a dark menu bar. `nil` asks AppKit
+        // to apply its standard menu-bar effects at draw time.
+        button.contentTintColor = nil
         button.title = snapshot.glance == .idle ? "" : snapshot.title
         button.toolTip = snapshot.tooltip
         button.setAccessibilityLabel(snapshot.accessibilityLabel)
-    }
-
-    private func statusColor(_ glance: GlanceKind) -> NSColor {
-        switch glance {
-        case .waiting: return .systemRed
-        case .running: return .systemGreen
-        case .error: return .systemOrange
-        case .idle: return .secondaryLabelColor
-        }
     }
 
     private func scheduleResize() {

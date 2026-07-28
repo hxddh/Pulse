@@ -105,7 +105,6 @@ to users.
 
 ## Current state
 
-0.31.0 is the latest public release. The next local candidate replaces
-MenuBarExtra's inset container with an app-owned single-surface panel, removes
-Open Folder, enriches process-only rows with observed cwd, and deepens nested
-extension-session parsing. See `CHANGELOG.md` for the complete contract.
+0.32.0 is the latest public release. The 0.32.1 candidate restores native,
+appearance-adaptive status-item rendering after the AppKit status-button
+migration. See `CHANGELOG.md` for the complete contract.

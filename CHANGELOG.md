@@ -2,6 +2,21 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.32.1 — 状态灯必须先看得见
+
+0.32.0 把菜单栏从 SwiftUI `MenuBarExtra` 换成原生 `NSStatusItem`，却继续把
+交通灯颜色强制写进 `NSStatusBarButton.contentTintColor`。这个属性会同时染模板图和标题，
+而状态按钮的菜单栏外观不一定等于应用窗口外观；在深色菜单栏上因此可能解析成黑色，
+主入口直接消失。
+
+- 删除状态按钮的强制 tint，让 AppKit 在菜单栏自己的 effective appearance 中逐次解析
+  template 图标与标题，恢复深浅菜单栏的原生对比度。
+- Waiting / Running / Idle 不再只依赖颜色区分，分别使用暂停形、实心灯和脉冲线；
+  短标题与 VoiceOver 标签继续提供文字语义。
+- 新增 `--capture-status-item` QA 入口，直接捕获本进程实际的 `NSStatusBarButton`，
+  无需 Screen Recording、Accessibility、Apple Events 或 UI 自动化权限。
+- 外观门禁拒绝再次给原生状态项写入非空 `contentTintColor`。
+
 ## 0.32.0 — 观测必须有来源，动作必须完成任务
 
 0.31.0 让 `MenuBarExtra` 独占材质，却没有移除它根视图之外的系统 content inset；
