@@ -583,10 +583,11 @@ final class RowMetricsTests: XCTestCase {
     /// creating another row.
     @MainActor
     func testTheSameRowNotWaitingPrioritisesOneProgressFact() {
-        let loaded = row(
+        var loaded = row(
             inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
             records: 34, startedAgo: 3 * 3600
         )
+        loaded.task = "Refactor observability"
         let metrics = store().rowMetrics(loaded)
         let observation = store().rowObservationLine(loaded)
         let context = store().rowContextLine(loaded)
