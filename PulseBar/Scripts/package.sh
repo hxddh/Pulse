@@ -22,6 +22,7 @@ python3 "$ROOT/scripts/version_check.py"
 python3 "$ROOT/scripts/coverage_check.py"
 python3 "$ROOT/scripts/matrix_check.py"
 python3 "$ROOT/scripts/make_agent_icons.py" --check
+python3 "$ROOT/scripts/appearance_check.py"
 
 # Build identity stamped into Info.plist — PulseVersion reads it at runtime.
 GIT_COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"

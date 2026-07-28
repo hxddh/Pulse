@@ -702,19 +702,40 @@ final class StatusStore: ObservableObject {
         return String(format: tr(.agoFormat), durationLabel(seconds: secs))
     }
 
-    /// Second line of a row: where it is, and how long since it moved.
+    /// Second line of a row: where it is, what it is doing, and how long since
+    /// it moved.
     ///
-    /// Both facts were collected from the start and never shown. The line used
-    /// to repeat the agent name that the icon already carries.
+    /// The middle fact is the one the panel was missing. A row's title is the
+    /// *session* name — it is fixed for the whole life of the session, so a
+    /// running row said the same two things at minute one and minute forty and
+    /// the panel read as static. `tool` is the live fact, it has been harvested
+    /// since the first version, and it only ever appeared behind a hover or an
+    /// expand. It is what turns "Claude is open" into "Claude is running Bash".
+    ///
+    /// Only for live rows: on a finished session the last tool it touched is
+    /// history, not status, and would read as though it were still going.
     func rowContextLine(_ row: AgentRow, omitPath: Bool = false) -> String {
         var bits: [String] = []
         let path = row.displayPath
         if !path.isEmpty, !omitPath { bits.append(path) }
+        if let tool = liveTool(row) { bits.append(tool) }
         let ago = lastActivityLabel(row)
         if !ago.isEmpty { bits.append(ago) }
-        // With neither, fall back to naming the agent rather than an empty line.
+        // With none of them, fall back to naming the agent rather than an
+        // empty line.
         if bits.isEmpty { return row.isProcessOnly ? "" : row.agent.displayName }
         return bits.joined(separator: " · ")
+    }
+
+    /// The tool a live row is running, when it is not already the row's title.
+    ///
+    /// `sessionDetail` promotes `tool` to the hero when there is no task, so
+    /// showing it again here would be the same word twice on two lines.
+    func liveTool(_ row: AgentRow) -> String? {
+        guard row.liveProcess || row.subRunning > 0, !row.waiting else { return nil }
+        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tool.isEmpty, row.usefulTask != nil else { return nil }
+        return tool
     }
 
     /// Human wait age in the resolved language (`2 分` / `2m`).
