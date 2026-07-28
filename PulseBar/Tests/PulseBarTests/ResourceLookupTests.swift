@@ -544,7 +544,10 @@ final class RowMetricsTests: XCTestCase {
             records: 34, startedAgo: 3 * 3600
         ))
         XCTAssertFalse(m.contains("34"), m)
-        XCTAssertFalse(m.contains("↑"), m)
+        // The subagent progress intentionally uses ↑. Assert the token
+        // magnitudes are absent instead of banning the shared glyph.
+        XCTAssertFalse(m.contains("12k"), m)
+        XCTAssertFalse(m.contains("3.0k"), m)
         XCTAssertTrue(m.contains("2"), m)
     }
 
