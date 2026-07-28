@@ -10,6 +10,7 @@ final class HarvestParsingTests: XCTestCase {
         let text = line([
             "claude", "Refactor probe", "1200", "340", "Bash", "",
             "Pulse", "/Users/me/Pulse", "1700000000000", "2", "5", "sess-abc",
+            "34", "1699999000000", "session",
         ]) + "\n"
         let rows = ActivityHarvest.parse(text)
         XCTAssertEqual(rows.count, 1)
@@ -25,6 +26,17 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(r.subRunning, 2)
         XCTAssertEqual(r.subTotal, 5)
         XCTAssertEqual(r.sessionID, "sess-abc")
+        XCTAssertEqual(r.records, 34)
+        XCTAssertEqual(r.startedMs, 1_699_999_000_000)
+        XCTAssertEqual(r.evidence, .session)
+    }
+
+    func testOldRowsDegradeToCacheEvidenceInsteadOfClaimingASession() {
+        let text = line([
+            "roo", "Refactor auth", "0", "0", "", "",
+            "App", "/Users/me/App", "1700000000000", "0", "0", "state",
+        ]) + "\n"
+        XCTAssertEqual(ActivityHarvest.parse(text).first?.evidence, .cache)
     }
 
     /// A harvest killed on timeout leaves a half-written final line. Parsing it

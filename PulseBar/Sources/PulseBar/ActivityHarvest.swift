@@ -22,6 +22,8 @@ enum ActivityHarvest {
         var records: Int = 0
         /// When the session started, so a row can say how long it has been going.
         var startedMs: Int64 = 0
+        /// Runtime evidence tier emitted by the collector.
+        var evidence: ObservationSource = .cache
     }
 
     /// Harvest-only rows older than this are dropped unless a live process exists.
@@ -214,7 +216,10 @@ enum ActivityHarvest {
                 // Appended in 0.28; a harvest from an older bundled script
                 // simply has no columns here and reads as unknown.
                 records: cols.count > 12 ? Int(cols[12]) ?? 0 : 0,
-                startedMs: cols.count > 13 ? Int64(cols[13]) ?? 0 : 0
+                startedMs: cols.count > 13 ? Int64(cols[13]) ?? 0 : 0,
+                evidence: cols.count > 14
+                    ? ObservationSource(rawValue: cols[14]) ?? .cache
+                    : .cache
             ))
         }
         return out

@@ -82,6 +82,30 @@ def main() -> int:
         print("MISSING harvest wiring:", ", ".join(missing))
         return 1
 
+    contract_block = re.search(r"HARVEST_CONTRACTS\s*=\s*\{(.*?)\n\}", text, re.S)
+    if not contract_block:
+        print("MISSING HARVEST_CONTRACTS")
+        return 1
+    contracts = {
+        name: tier
+        for name, tier in re.findall(
+            r'"([a-z0-9_]+)"\s*:\s*(EVIDENCE_SESSION|EVIDENCE_CACHE)',
+            contract_block.group(1),
+        )
+    }
+    missing_contracts = sorted(EXPECTED - contracts.keys())
+    extra_contracts = sorted(contracts.keys() - EXPECTED)
+    if missing_contracts or extra_contracts:
+        print(
+            "harvest contract mismatch:",
+            f"missing={','.join(missing_contracts) or '-'}",
+            f"extra={','.join(extra_contracts) or '-'}",
+        )
+        return 1
+    session_count = sum(value == "EVIDENCE_SESSION" for value in contracts.values())
+    cache_count = sum(value == "EVIDENCE_CACHE" for value in contracts.values())
+    print(f"collector evidence: {session_count} session · {cache_count} cache")
+
     # A new AgentID must be added to EXPECTED too, or the gate silently shrinks.
     # cursor_agent merges into cursor at scan time, so it never emits its own id.
     known = swift_agent_ids() - {"cursor_agent"}
@@ -96,6 +120,15 @@ def main() -> int:
     if '"worker start"' not in probe or '"--worker-dir"' not in probe:
         print(
             "Cursor private-worker daemon must be denied; it is infrastructure, not an active session"
+        )
+        return 1
+    terminal_focus_source = (
+        ROOT / "PulseBar/Sources/PulseBar/TerminalFocus.swift"
+    ).read_text(encoding="utf-8")
+    if "/usr/bin/osascript" in terminal_focus_source or "tell application" in terminal_focus_source:
+        print(
+            "Pulse must not request Automation through AppleScript; tray reveal "
+            "fails quietly and Terminal/iTerm focus is not advertised"
         )
         return 1
     print("OK — all expected harvest emitters present")

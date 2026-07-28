@@ -68,13 +68,13 @@ final class FocusTierTests: XCTestCase {
         XCTAssertEqual(tier, .warp, "TTY tab select does not work inside Warp")
     }
 
-    func testTTYUsedWhenTerminalOrITermIsRunning() {
+    func testTTYIsNotAdvertisedBecauseItWouldRequestAutomationPermission() {
         let env = TerminalFocus.Environment(
             warpRunning: false, ttyHostRunning: true
         )
-        XCTAssertEqual(
+        XCTAssertNil(
             TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: env),
-            .tty
+            "a real TTY is still not permission-free focus"
         )
     }
 
@@ -174,6 +174,13 @@ final class AgentRowTests: XCTestCase {
 
 /// `ps` parsing and the harvest-skip fingerprint.
 final class ProcessProbeTests: XCTestCase {
+    func testParsesProcessElapsedTimeWithoutCallingItSessionAge() {
+        XCTAssertEqual(ProcessProbe.parseElapsed("04:12"), 252)
+        XCTAssertEqual(ProcessProbe.parseElapsed("02:04:12"), 7_452)
+        XCTAssertEqual(ProcessProbe.parseElapsed("3-02:04:12"), 266_652)
+        XCTAssertEqual(ProcessProbe.parseElapsed("not-a-time"), 0)
+    }
+
     func testSignatureIsOrderIndependent() {
         let a = ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 10)
         let b = ProcessProbe.Hit(id: .codex, count: 2, viaWarp: false, pid: 20)

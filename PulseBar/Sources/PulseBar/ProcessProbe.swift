@@ -9,6 +9,8 @@ enum ProcessProbe {
         var pid: Int = 0
         /// Kernel tty name without `/dev/`, e.g. `ttys003`.
         var tty: String = ""
+        /// Age of the matched process, not the agent session.
+        var elapsedSeconds: Double = 0
     }
 
     private struct Rule {
@@ -161,19 +163,25 @@ enum ProcessProbe {
     ]
 
     static func scan() -> [Hit] {
-        let output = shell("/bin/ps", ["-axo", "pid=,ppid=,tty=,args="]) ?? ""
+        let output = shell("/bin/ps", ["-axo", "pid=,ppid=,tty=,etime=,args="]) ?? ""
         if output.isEmpty {
             DebugLog.write("probe ps output EMPTY")
         }
-        var procs: [(pid: Int, ppid: Int, tty: String, args: String)] = []
+        var procs: [(pid: Int, ppid: Int, tty: String, elapsed: Double, args: String)] = []
         for line in output.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
-            let parts = trimmed.split(maxSplits: 3, whereSeparator: { $0.isWhitespace || $0 == "\t" })
-            guard parts.count >= 4,
+            let parts = trimmed.split(maxSplits: 4, whereSeparator: { $0.isWhitespace || $0 == "\t" })
+            guard parts.count >= 5,
                   let pid = Int(parts[0]),
                   let ppid = Int(parts[1]) else { continue }
-            procs.append((pid, ppid, String(parts[2]), String(parts[3])))
+            procs.append((
+                pid,
+                ppid,
+                String(parts[2]),
+                parseElapsed(String(parts[3])),
+                String(parts[4])
+            ))
         }
 
         var byPid: [Int: Int] = [:]
@@ -215,11 +223,13 @@ enum ProcessProbe {
             if hit.pid == 0 {
                 hit.pid = p.pid
                 hit.tty = resolveTTY(p.pid)
+                hit.elapsedSeconds = p.elapsed
             } else if hit.tty.isEmpty {
                 let t = resolveTTY(p.pid)
                 if !t.isEmpty {
                     hit.pid = p.pid
                     hit.tty = t
+                    hit.elapsedSeconds = p.elapsed
                 }
             }
             acc[id] = hit
@@ -248,6 +258,18 @@ enum ProcessProbe {
         var t = raw.trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("/dev/") { t = String(t.dropFirst(5)) }
         return isRealTTY(t) ? t : ""
+    }
+
+    /// `ps etime`: `mm:ss`, `hh:mm:ss`, or `dd-hh:mm:ss`.
+    static func parseElapsed(_ raw: String) -> Double {
+        let split = raw.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "-", maxSplits: 1)
+        let days = split.count == 2 ? Double(split[0]) ?? 0 : 0
+        let clock = (split.last ?? "").split(separator: ":").compactMap { Double($0) }
+        guard clock.count == 2 || clock.count == 3 else { return 0 }
+        let hours = clock.count == 3 ? clock[0] : 0
+        let minutes = clock.count == 3 ? clock[1] : clock[0]
+        let seconds = clock.count == 3 ? clock[2] : clock[1]
+        return days * 86_400 + hours * 3_600 + minutes * 60 + seconds
     }
 
     private static func match(args: String) -> AgentID? {

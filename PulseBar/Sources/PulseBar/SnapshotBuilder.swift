@@ -181,6 +181,7 @@ enum SnapshotBuilder {
             }
             if act.records > 0 { row.records = act.records }
             if act.startedMs > 0 { row.startedMs = act.startedMs }
+            row.observationSource = act.evidence
             row.processCount = max(row.processCount, 1)
 
             // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.
@@ -211,6 +212,9 @@ enum SnapshotBuilder {
                 row.viaWarp = hit.viaWarp
                 row.pid = hit.pid
                 row.tty = hit.tty
+                if hit.elapsedSeconds > 0 {
+                    row.processStartedMs = context.nowMs - Int64(hit.elapsedSeconds * 1000)
+                }
                 rowsByKey[key] = row
                 continue
             }
@@ -228,6 +232,9 @@ enum SnapshotBuilder {
                     row.viaWarp = hit.viaWarp || row.viaWarp
                     if hit.pid != 0 { row.pid = hit.pid }
                     if !hit.tty.isEmpty { row.tty = hit.tty }
+                    if hit.elapsedSeconds > 0 {
+                        row.processStartedMs = context.nowMs - Int64(hit.elapsedSeconds * 1000)
+                    }
                 } else {
                     row.liveProcess = false
                     // Don't inherit ×N on sibling sessions.

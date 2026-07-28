@@ -55,12 +55,14 @@ final class SnapshotBuilderTests: XCTestCase {
         tool: String = "",
         ageMs: Int64 = 1000,
         subRunning: Int = 0,
-        subTotal: Int = 0
+        subTotal: Int = 0,
+        evidence: ObservationSource = .session
     ) -> ActivityHarvest.Row {
         ActivityHarvest.Row(
             id: id, task: task, project: project, cwd: cwd, skill: skill,
             tool: tool, harvestMs: now - ageMs,
-            subRunning: subRunning, subTotal: subTotal, sessionID: session
+            subRunning: subRunning, subTotal: subTotal, sessionID: session,
+            evidence: evidence
         )
     }
 
@@ -114,6 +116,17 @@ final class SnapshotBuilderTests: XCTestCase {
         let r = build(procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 10)], unreliable: true)
         XCTAssertEqual(r.snapshot.glance, .running, "probe still had an answer")
         XCTAssertNil(r.snapshot.probeError)
+    }
+
+    func testRuntimeEvidenceTierSurvivesTheMerge() {
+        let r = build(
+            harvest: [
+                harvest(.roo, task: "Refactor auth", evidence: .cache),
+                harvest(.codex, task: "Fix parser", evidence: .session),
+            ]
+        )
+        XCTAssertEqual(r.rows.first(where: { $0.agent == .roo })?.observationSource, .cache)
+        XCTAssertEqual(r.rows.first(where: { $0.agent == .codex })?.observationSource, .session)
     }
 
     // MARK: Multi-session
@@ -396,13 +409,13 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testFocusTierIsResolvedOncePerScanNotInTheView() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true
+            warpRunning: true, ttyHostRunning: false
         )
         let r = build(
-            procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 1, tty: "ttys004")],
+            procs: [.init(id: .claude, count: 1, viaWarp: true, pid: 1, tty: "ttys004")],
             context: context(exists: { _ in true }, terminal: env)
         )
-        XCTAssertEqual(r.rows[0].focusTier, .tty)
+        XCTAssertEqual(r.rows[0].focusTier, .warp)
         XCTAssertTrue(r.rows[0].canFocusTerminal)
     }
 

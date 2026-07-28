@@ -109,13 +109,18 @@ enum L10n {
         case .processDetected: return "Process detected"
         case .processWord: return "process"
         case .processCount: return "%d processes"
-        case .limitedData: return "Limited data"
-        case .terminalDetectedNoDetails: return "Terminal session detected · activity details unavailable"
-        case .appDetectedNoDetails: return "App detected · no active session data"
+        case .limitedData: return "Process only"
+        case .cacheEvidence: return "Local cache"
+        case .terminalSession: return "Terminal session running"
+        case .appSession: return "Agent app running"
+        case .activityUnavailable: return "Activity feed unavailable"
+        case .processAge: return "Process started %@ ago"
+        case .terminalDetectedNoDetails: return "Terminal session running · activity feed unavailable"
+        case .appDetectedNoDetails: return "Agent app running · session feed unavailable"
         case .lastAction: return "Last action: %@"
         case .lastActive: return "Last active %@"
-        case .latestCallTokens: return "Model call · %@ in · %@ out"
-        case .reportedTokens: return "Reported · %@ in · %@ out"
+        case .latestCallTokens: return "Latest model call · %@ input · %@ output"
+        case .reportedTokens: return "Agent reported · %@ input · %@ output"
         case .subagentsActive: return "%d of %d subagents active"
         case .subagentsObserved: return "%d subagents observed"
         case .actionPlanning: return "Planning"
@@ -263,13 +268,18 @@ enum L10n {
         case .processDetected: return "检测到进程"
         case .processWord: return "进程"
         case .processCount: return "%d 个进程"
-        case .limitedData: return "信息有限"
-        case .terminalDetectedNoDetails: return "已检测到终端会话 · 暂无活动详情"
-        case .appDetectedNoDetails: return "已检测到应用 · 暂无活跃会话数据"
+        case .limitedData: return "仅进程"
+        case .cacheEvidence: return "本地缓存"
+        case .terminalSession: return "终端会话正在运行"
+        case .appSession: return "Agent 应用正在运行"
+        case .activityUnavailable: return "暂无活动数据"
+        case .processAge: return "进程始于%@前"
+        case .terminalDetectedNoDetails: return "终端会话正在运行 · 暂无活动数据"
+        case .appDetectedNoDetails: return "Agent 应用正在运行 · 暂无会话数据"
         case .lastAction: return "最近动作：%@"
         case .lastActive: return "最近活动：%@"
-        case .latestCallTokens: return "模型调用 · 入 %@ · 出 %@"
-        case .reportedTokens: return "Agent 上报 · 入 %@ · 出 %@"
+        case .latestCallTokens: return "最近一次模型调用 · 输入 %@ · 输出 %@"
+        case .reportedTokens: return "Agent 上报 · 输入 %@ · 输出 %@"
         case .subagentsActive: return "%d / %d 个 subagent 活跃"
         case .subagentsObserved: return "已观测 %d 个 subagent"
         case .actionPlanning: return "规划"
@@ -366,7 +376,8 @@ enum L10n {
         case kindPermission, kindInput, kindWaiting
         case activityPrefix, signalHooks, signalPending
         case processDetected, processWord, processCount
-        case limitedData, terminalDetectedNoDetails, appDetectedNoDetails
+        case limitedData, cacheEvidence, terminalSession, appSession, activityUnavailable, processAge
+        case terminalDetectedNoDetails, appDetectedNoDetails
         case lastAction, lastActive, latestCallTokens, reportedTokens
         case subagentsActive, subagentsObserved
         case actionPlanning, actionCommand, actionEditing, actionImage

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.30.0"
+    static let semver = "0.31.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -147,11 +147,12 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
     var harvestSource: HarvestSource {
         switch self {
         case .claude, .codex, .cursor, .grok, .pi, .amp, .aider, .gemini,
-             .copilot, .opencode, .goose, .openhands, .cline, .roo, .continue_,
-             .amazonQ, .cascade, .augment, .zedAgent, .trae, .warpAgent, .kilo,
-             .kiro, .droid, .commandCode, .kimi:
+             .copilot, .opencode, .goose, .openhands, .continue_, .droid,
+             .commandCode, .kimi:
             return .structuredSession
-        case .cursorAgent, .windsurf, .devin, .junie, .replit, .antigravity:
+        case .cursorAgent, .amazonQ, .cline, .roo, .cascade, .windsurf,
+             .augment, .zedAgent, .trae, .warpAgent, .kilo, .devin, .kiro,
+             .junie, .replit, .antigravity:
             return .bestEffortCache
         }
     }
@@ -174,6 +175,18 @@ enum WaitingSource {
 enum HarvestSource {
     case structuredSession
     case bestEffortCache
+}
+
+/// Evidence carried by this specific row, not a blanket promise for an agent.
+///
+/// An agent may have a structured collector and still degrade to a process
+/// row when its local session store is unavailable. The view uses this value
+/// to choose an information architecture instead of making every row look
+/// equally certain.
+enum ObservationSource: String, Equatable, Hashable {
+    case session
+    case cache
+    case process
 }
 
 /// How this row's Waiting was raised (shown as a short credibility tag).
@@ -250,6 +263,10 @@ struct AgentRow: Identifiable, Hashable {
     var records: Int = 0
     /// When the session began, in ms. 0 = unknown.
     var startedMs: Int64 = 0
+    /// What this concrete row is backed by.
+    var observationSource: ObservationSource = .process
+    /// When the matched OS process began, in ms. Never presented as session age.
+    var processStartedMs: Int64 = 0
 
     /// How long this session has been going, in seconds; 0 when unknown.
     ///

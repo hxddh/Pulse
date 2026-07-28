@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.30.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.31.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -58,26 +58,23 @@ Pulse 把这件事变成余光可见：
 - Waiting 只来自 hooks 或 `skill=pending`，**绝不推断**。没有 Waiting 通路的 Agent，
   托盘明说「暂无 Waiting 信号」，不假装。
 - 每条 Waiting 行标注来源是 `hooks` 还是 `pending`，你自己判断可信度。
-- Focus 不吹牛：有 TTY 才聚焦终端页，Warp 下只激活 Warp；只有 cwd 时仅提供「打开目录」。
+- Focus 不吹牛：Warp 下可直接激活 Warp；Terminal/iTerm 的 TTY 选择需要系统自动化权限，
+  Pulse 不会隐式索取，因此只提供可靠的「打开目录」。
 
 ## 支持的 Agent
 
 | Agent | Probe | Harvest | Waiting |
 | --- | --- | --- | --- |
 | Claude / Codex | A | Structured session | hooks（+ Codex pending） |
-| Cursor | A* | Structured session | pending |
-| Droid / Kimi / Command Code | A | Structured session | pending |
-| Gemini / OpenCode / Amp / Aider / Goose | A | Structured session | pending |
-| Grok / Pi / Cline / Roo / Kilo | A | Structured session | pending（尽力） |
-| Continue / Copilot / Amazon Q / OpenHands / Zed | A | Structured session | pending |
-| Cascade / Augment / Kiro | A | Structured session | pending（尽力） |
-| Trae / Warp | A | Structured session | **none**（本机无可靠信号） |
-| Windsurf | A | Best effort cache | pending（尽力） |
-| Antigravity / Devin / Junie / Replit | A | Best effort cache | **none**（本机无可靠信号） |
+| Cursor / Grok / Pi / Amp / Aider / Gemini / Copilot / OpenCode / Goose / OpenHands / Continue / Droid / Command Code / Kimi | A* | Structured session | pending |
+| Amazon Q / Cline / Roo / Cascade / Windsurf / Augment / Zed / Kilo / Kiro | A | Best effort cache | pending（尽力） |
+| Trae / Warp / Antigravity / Devin / Junie / Replit | A | Best effort cache | **none**（本机无可靠信号） |
 
-\* Cursor 进程常跳过外壳，靠 harvest 认。`Structured session` 读取真实会话身份；
-`Best effort cache` 只承诺可验证的本地缓存事实。两者若没有当前数据都会明确降级，
-不会用进程数冒充会话观测。
+\* Cursor 进程常跳过外壳，靠 harvest 认；其余 Agent 的 Probe 仍为 A。
+`Structured session` 读取真实 transcript / thread / composer / session database；
+`Best effort cache` 只承诺缓存中确实存在的标题、工作区和更新时间。缓存里只有扩展名、
+文件名或 `Agent session` 这类占位词时，Pulse 会直接丢弃该条，不再把“找到一个文件”
+伪装成会话观测。两者若没有当前数据都会明确降级，不会用进程数冒充会话信息。
 
 这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.harvestSource` 和
 `AgentID.waitingSource` 校验，

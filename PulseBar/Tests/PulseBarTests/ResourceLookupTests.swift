@@ -513,14 +513,24 @@ final class RowMetricsTests: XCTestCase {
     @MainActor
     func testTokenSnapshotIsVisibleByDefault() {
         let line = store().rowObservationLine(row(inTok: 12_000, outTok: 3_000))
-        XCTAssertTrue(line.contains("Model call"), line)
-        XCTAssertTrue(line.contains("12k in"), line)
-        XCTAssertTrue(line.contains("3.0k out"), line)
+        XCTAssertTrue(line.contains("Latest model call"), line)
+        XCTAssertTrue(line.contains("12k input"), line)
+        XCTAssertTrue(line.contains("3.0k output"), line)
     }
 
     @MainActor
     func testSubagentProgressIsVisibleByDefault() {
         XCTAssertTrue(store().rowObservationLine(row(subRunning: 2, subTotal: 5)).contains("2"))
+    }
+
+    @MainActor
+    func testProcessOnlyRowReportsHonestProcessAge() {
+        var r = AgentRow(rowKey: "amp", agent: .amp)
+        r.liveProcess = true
+        r.processStartedMs = Int64((Date().timeIntervalSince1970 - 3_600) * 1000)
+        let line = store().rowMetrics(r)
+        XCTAssertTrue(line.contains("Process started"), line)
+        XCTAssertTrue(line.contains("1h"), line)
     }
 
     @MainActor
@@ -599,7 +609,7 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
         r.processCount = 3
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("no active session data"), line)
+        XCTAssertTrue(line.contains("session feed unavailable"), line)
         XCTAssertFalse(line.contains("3"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("process"), line)
     }
@@ -609,10 +619,10 @@ final class RowMetricsTests: XCTestCase {
         var r = row()
         r.liveProcess = true
         r.processCount = 1
-        r.focusTier = .tty
+        r.focusTier = .warp
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Terminal session detected"), line)
-        XCTAssertTrue(line.contains("activity details unavailable"), line)
+        XCTAssertTrue(line.contains("Terminal session running"), line)
+        XCTAssertTrue(line.contains("activity feed unavailable"), line)
     }
 }
 

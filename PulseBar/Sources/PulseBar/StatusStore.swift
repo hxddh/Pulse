@@ -753,6 +753,14 @@ final class StatusStore: ObservableObject {
         // progress all still appeared beside the one thing that needs an
         // answer. The rule is the right one; it just was not implemented.
         guard !row.waiting else { return "" }
+        if row.isProcessOnly, row.processStartedMs > 0 {
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let age = max(0, Double(nowMs - row.processStartedMs) / 1000.0)
+            return String(
+                format: tr(.processAge),
+                DurationFormat.label(seconds: age, lang: lang)
+            )
+        }
         var bits: [String] = []
         // Session age first: of the three it is the one every file-backed
         // agent can answer, so it is the fact most rows will actually carry.

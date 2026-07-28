@@ -36,9 +36,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import activity_scan as A  # noqa: E402
 
-COLUMNS = 14
+COLUMNS = 15
 COL_TASK, COL_TIN, COL_TOUT, COL_TOOL = 1, 2, 3, 4
 COL_PROJECT, COL_CWD, COL_SESSION, COL_RECORDS, COL_STARTED = 6, 7, 11, 12, 13
+COL_EVIDENCE = 14
 
 RECORDS = 34
 TRANSCRIPT = "".join(
@@ -61,10 +62,10 @@ def capture(fn) -> list[list[str]]:
     return [ln.split("\t") for ln in buf.getvalue().splitlines() if ln and not ln.startswith("#")]
 
 
-def emit_to_line(*args) -> list[str]:
+def emit_to_line(*args, **kwargs) -> list[str]:
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        A.emit_row(*args)
+        A.emit_row(*args, **kwargs)
     text = buf.getvalue().strip("\n")
     return text.split("\t") if text else []
 
@@ -110,6 +111,24 @@ def check_helper_contract(d: Path) -> int:
     )
     if with_extras[COL_SESSION] != "sid-9" or with_extras[COL_RECORDS] != str(RECORDS):
         return fail(f"dict sentinel shifted a field: {with_extras}")
+    if with_extras[COL_EVIDENCE] != A.EVIDENCE_SESSION:
+        return fail(f"structured fixture lost its evidence tier: {with_extras}")
+
+    # Cache adapters must not turn their own fallback labels into observations.
+    placeholder = emit_to_line(
+        "roo",
+        ("Roo session", 0, 0, "", "", "roo-code", "", int(time.time() * 1000), "state"),
+        evidence=A.EVIDENCE_CACHE,
+    )
+    if placeholder:
+        return fail(f"cache placeholder escaped admission filter: {placeholder}")
+    observed = emit_to_line(
+        "roo",
+        ("Refactor authentication", 0, 0, "", "", "app", "", int(time.time() * 1000), "state"),
+        evidence=A.EVIDENCE_CACHE,
+    )
+    if not observed or observed[COL_EVIDENCE] != A.EVIDENCE_CACHE:
+        return fail(f"useful cache observation lost its tier: {observed}")
     return 0
 
 
@@ -241,6 +260,11 @@ def check_collectors(home: Path) -> int:
         row = rows[0]
         if len(row) != COLUMNS:
             return fail(f"{name} emitted {len(row)} columns: {row}")
+        if row[COL_EVIDENCE] != A.HARVEST_CONTRACTS[name]:
+            return fail(
+                f"{name}: emitted {row[COL_EVIDENCE]!r}, "
+                f"contract says {A.HARVEST_CONTRACTS[name]!r}"
+            )
         if row[COL_RECORDS] == "0" and row[COL_STARTED] == "0":
             return fail(
                 f"{name}: the collector paid for the file scan and shipped 0/0 — "
@@ -317,8 +341,18 @@ def main() -> int:
             "remain trapped in stdout"
         )
 
-    wired = source.count("session_stats(") - 1
-    print(f"harvest stats OK — {COLUMNS} columns, {wired} collectors wired, flagships named")
+    if set(A.HARVEST_CONTRACTS) != {
+        "claude", "codex", "cursor", "grok", "pi", "amp", "aider", "gemini",
+        "copilot", "opencode", "goose", "openhands", "continue", "droid",
+        "command_code", "kimi", "amazon_q", "cline", "roo", "cascade",
+        "windsurf", "augment", "zed_agent", "trae", "warp_agent", "kilo",
+        "devin", "kiro", "junie", "replit", "antigravity",
+    }:
+        return fail("collector evidence contracts do not cover all 31 harvest agents")
+    print(
+        f"harvest stats OK — {COLUMNS} columns · 31 evidence contracts · "
+        "4 end-to-end collector fixtures"
+    )
     return 0
 
 

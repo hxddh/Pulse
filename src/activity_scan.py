@@ -2188,6 +2188,70 @@ def session_stats(path: Path, per_session: bool, budget_bytes: int = 2_000_000) 
                 pass
     return out
 
+EVIDENCE_SESSION = "session"
+EVIDENCE_CACHE = "cache"
+
+# The collector contract is also the product contract. A function existing in
+# this file does not make its output a structured session: several IDE agents
+# only expose private extension/cache blobs whose shape changes between builds.
+# Those rows are still useful when they contain a real title or workspace, but
+# the UI must never present them with the same certainty as a transcript,
+# thread, composer or session database.
+HARVEST_CONTRACTS = {
+    "claude": EVIDENCE_SESSION,
+    "codex": EVIDENCE_SESSION,
+    "cursor": EVIDENCE_SESSION,
+    "grok": EVIDENCE_SESSION,
+    "pi": EVIDENCE_SESSION,
+    "amp": EVIDENCE_SESSION,
+    "aider": EVIDENCE_SESSION,
+    "gemini": EVIDENCE_SESSION,
+    "copilot": EVIDENCE_SESSION,
+    "opencode": EVIDENCE_SESSION,
+    "goose": EVIDENCE_SESSION,
+    "openhands": EVIDENCE_SESSION,
+    "continue": EVIDENCE_SESSION,
+    "droid": EVIDENCE_SESSION,
+    "command_code": EVIDENCE_SESSION,
+    "kimi": EVIDENCE_SESSION,
+    "amazon_q": EVIDENCE_CACHE,
+    "cline": EVIDENCE_CACHE,
+    "roo": EVIDENCE_CACHE,
+    "cascade": EVIDENCE_CACHE,
+    "windsurf": EVIDENCE_CACHE,
+    "augment": EVIDENCE_CACHE,
+    "zed_agent": EVIDENCE_CACHE,
+    "trae": EVIDENCE_CACHE,
+    "warp_agent": EVIDENCE_CACHE,
+    "kilo": EVIDENCE_CACHE,
+    "devin": EVIDENCE_CACHE,
+    "kiro": EVIDENCE_CACHE,
+    "junie": EVIDENCE_CACHE,
+    "replit": EVIDENCE_CACHE,
+    "antigravity": EVIDENCE_CACHE,
+}
+
+
+def useful_cache_task(agent: str, task: str) -> bool:
+    """Whether a cache title is an observed user fact rather than our fallback."""
+    value = " ".join((task or "").strip().split())
+    if not value:
+        return False
+    low = value.lower()
+    generic = {
+        agent.lower(),
+        "chat",
+        "new chat",
+        "new session",
+        "session",
+        "thread",
+        "task",
+        "untitled",
+    }
+    generic.update(f"{agent.lower()} {suffix}" for suffix in ("agent", "chat", "session", "task", "thread"))
+    return low not in generic
+
+
 def emit(
     agent: str,
     task: str,
@@ -2203,6 +2267,7 @@ def emit(
     session_id: str = "",
     records: int = 0,
     started_ms: int = 0,
+    evidence: str = EVIDENCE_SESSION,
 ) -> None:
     def clean(s: str) -> str:
         return (s or "").replace("\t", " ").replace("\n", " ").replace("\r", " ").strip()
@@ -2213,15 +2278,27 @@ def emit(
     # Refuse harvest-only rows with no mtime (prevents eternal "running" ghosts).
     if mtime_ms <= 0 and sub_run == 0 and sub_total == 0:
         return
+    evidence = evidence if evidence in (EVIDENCE_SESSION, EVIDENCE_CACHE) else EVIDENCE_CACHE
+    # A random cache file is not an observation. Cache-backed collectors must
+    # have either a user-recognisable title or a real absolute workspace path;
+    # extension folder names and "<agent> session" placeholders are dropped.
+    if evidence == EVIDENCE_CACHE and not useful_cache_task(agent, task):
+        if not (cwd or "").strip().startswith("/"):
+            return
 
     print(
         f"{agent}\t{clean(task)}\t{tin}\t{tout}\t{clean(tool)}\t{clean(skill)}\t"
         f"{clean(project)}\t{clean(cwd)}\t{mtime_ms}\t{sub_run}\t{sub_total}\t{clean(session_id)}\t"
-        f"{records}\t{started_ms}"
+        f"{records}\t{started_ms}\t{evidence}"
     )
 
 
-def emit_row(agent: str, row: tuple, path: Path | None = None) -> None:
+def emit_row(
+    agent: str,
+    row: tuple,
+    path: Path | None = None,
+    evidence: str | None = None,
+) -> None:
     """Accept 7/8/10/11/12-tuple activity rows; stamp mtime from path when needed.
 
     A row may carry a trailing **dict** of extras (`turns`, `started_ms`).
@@ -2237,9 +2314,10 @@ def emit_row(agent: str, row: tuple, path: Path | None = None) -> None:
         row = row[:-1]
     records = int(extra.get("records") or 0)
     started_ms = int(extra.get("started_ms") or 0)
+    row_evidence = str(extra.get("evidence") or evidence or HARVEST_CONTRACTS.get(agent, EVIDENCE_CACHE))
 
     def emit_x(*args) -> None:
-        emit(*args, records=records, started_ms=started_ms)
+        emit(*args, records=records, started_ms=started_ms, evidence=row_evidence)
 
     if len(row) >= 12:
         emit_x(agent, *row[:12])
@@ -2433,9 +2511,9 @@ def guard(label: str, body) -> None:
         print(f"# pulse: {label} harvest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
-def emit_all(agent: str, rows) -> None:
+def emit_all(agent: str, rows, evidence: str | None = None) -> None:
     for row in rows:
-        emit_row(agent, row)
+        emit_row(agent, row, evidence=evidence)
 
 
 def claude_block() -> None:
@@ -2444,14 +2522,14 @@ def claude_block() -> None:
     # skipped it entirely. Claude is the agent most people actually run, so
     # "23 of 32 harvesters wired" meant very little while this line stood.
     for row in claude_activities():
-        emit_row("claude", row)
+        emit_row("claude", row, evidence=HARVEST_CONTRACTS["claude"])
 
 
 def grok_pi_block() -> None:
     for name, fn in (("grok", grok_activity), ("pi", pi_activity)):
         row = fn()
         if any(row[:7]):
-            emit_row(name, row)
+            emit_row(name, row, evidence=HARVEST_CONTRACTS[name])
 
 
 def amp_block() -> None:
@@ -2481,25 +2559,39 @@ def amp_block() -> None:
                         lst.append(amp_sid)
                 if extras is not None:
                     lst.append(extras)
-                emit_row("amp", tuple(lst))
+                emit_row("amp", tuple(lst), evidence=HARVEST_CONTRACTS["amp"])
             else:
-                emit_row("amp", row)
+                emit_row("amp", row, evidence=HARVEST_CONTRACTS["amp"])
     elif amp_skill:
-        emit("amp", "Amp thread", 0, 0, "", amp_skill, "", "", amp_ms or int(time.time() * 1000), 0, 0, amp_sid)
+        emit(
+            "amp",
+            "Amp thread",
+            0,
+            0,
+            "",
+            amp_skill,
+            "",
+            "",
+            amp_ms or int(time.time() * 1000),
+            0,
+            0,
+            amp_sid,
+            evidence=HARVEST_CONTRACTS["amp"],
+        )
 
 
 def cascade_block() -> None:
     cascade_rows = cascade_windsurf_activities()
     for row in cascade_rows:
-        emit_row("cascade", row)
+        emit_row("cascade", row, evidence=HARVEST_CONTRACTS["cascade"])
     if not cascade_rows:
         for row in windsurf_shell_activities():
-            emit_row("windsurf", row)
+            emit_row("windsurf", row, evidence=HARVEST_CONTRACTS["windsurf"])
 
 
 def simple(agent: str, fn):
     """One agent whose harvester is a plain `() -> list[row]`."""
-    return (agent, lambda: emit_all(agent, fn()))
+    return (agent, lambda: emit_all(agent, fn(), evidence=HARVEST_CONTRACTS[agent]))
 
 
 # Emission order is preserved from the pre-0.21.1 inline main(); each entry now

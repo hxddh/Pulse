@@ -119,34 +119,11 @@ private enum TrayChrome {
     /// thirty characters, where a real task name is fifty. A menu-bar panel at
     /// 400 is still narrow next to the calendar and reminder popovers people
     /// already run, and it is forty characters instead of thirty.
-    static let width: CGFloat = 400
-    static let padX: CGFloat = 14
+    static let width: CGFloat = 420
+    static let padX: CGFloat = 16
     static let waitAccent = GlanceKind.waiting.lampColor
     static let runAccent = GlanceKind.running.lampColor
 
-    /// The panel's surface.
-    ///
-    /// This was `Color(nsColor: .windowBackgroundColor)` in a `static let` for
-    /// exactly one release, and it broke the app in dark mode: a light grey
-    /// slab with black text on a dark desktop. A `static let` is a global
-    /// initialised once on first touch, so whatever appearance happened to be
-    /// current when the panel first drew got frozen in for the process's
-    /// lifetime. Nothing about dark mode is dynamic after that.
-    ///
-    /// A `Material` cannot have that bug. It is resolved by the renderer
-    /// against the view's own appearance every frame, which is the property
-    /// that actually matters here — more than any particular shade.
-    ///
-    /// `scripts/appearance_check.py` fails the build if a stored colour
-    /// constant reappears.
-    /// Thick rather than regular: strictly less desktop through it.
-    ///
-    /// The panel is still tinted by a saturated wallpaper at `.regularMaterial`,
-    /// which is what put an accent-coloured word on a cyan field. Going thicker
-    /// is the one move here that is monotonic — more opaque is always less
-    /// wallpaper — as opposed to picking a colour, which is how dark mode was
-    /// lost in the first place.
-    static let surface: Material = .thickMaterial
 }
 
 private struct StatusChip: View {
@@ -318,14 +295,11 @@ struct TrayPanel: View {
             }
         }
         .frame(width: TrayChrome.width)
-        // The window still draws taller than the panel — `.fixedSize` did not
-        // change that, so it is gone again rather than left in as cargo. What
-        // made the gap *visible* was painting an opaque rectangle inside a
-        // rounded translucent window: the leftover band read as a second
-        // surface and the panel read as a box pasted into the popover. A
-        // material sits on the same backdrop the window already uses, so the
-        // seam stops existing instead of being chased.
-        .background(TrayChrome.surface)
+        // MenuBarExtra owns the rounded window and its material. Painting a
+        // second rectangular material at the content's measured bounds left
+        // the system's top and bottom insets exposed as two long strips. One
+        // owner, one surface: content stays transparent and inherits the
+        // native popover chrome all the way to its rounded edge.
         // Tray visibility drives the probe cadence — fast while being read,
         // slow (or parked) when nobody is looking.
         .onAppear { store.trayDidAppear() }
@@ -761,54 +735,57 @@ private struct AgentRowButton: View {
                         .frame(width: accentWidth)
                         .padding(.vertical, 4)
 
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .top, spacing: 11) {
                         AgentIconView(id: row.agent, waiting: row.waiting)
-                            .padding(.top, 2)
+                            .padding(.top, 3)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                // Encoding 3 of 3: a real session is semibold,
-                                // a bare process is not.
-                                Text(heroTitle)
-                                    .font(.system(
-                                        size: 13,
-                                        weight: row.isProcessOnly ? .regular : .semibold,
-                                        design: .rounded
-                                    ))
-                                    .foregroundStyle(.primary)
-                                    // Width alone does not fix a fifty-character
-                                    // title; it moves where the ellipsis lands.
-                                    // A second line costs ~16pt on the rows that
-                                    // need it and nothing on the rows that do
-                                    // not, and the end of a task name is the
-                                    // half that identifies it.
-                                    .lineLimit(2)
-                                    .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            // Agent identity is text, not an icon-recognition
+                            // quiz. With 32 marks (ten of them Pulse-made), an
+                            // icon alone cannot answer "which agent?".
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(row.agent.displayName)
+                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                if let sourceLabel {
+                                    Text(sourceLabel)
+                                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                                        .foregroundStyle(.tertiary)
+                                }
                                 Spacer(minLength: 6)
                                 statusChip
                                 secondaryActionsMenu
+                                    .opacity(hovering || selected ? 1 : 0)
+                                    .accessibilityHidden(false)
                             }
 
-                            if !contextLine.isEmpty || !metrics.isEmpty {
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text(contextLine)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.head)
-                                    Spacer(minLength: 4)
-                                    // The right half of this line was empty on
-                                    // every row. The numbers go there rather
-                                    // than into a hover nobody opens.
-                                    if !metrics.isEmpty {
-                                        Text(metrics)
-                                            .font(.system(size: 10.5))
-                                            .foregroundStyle(.secondary)
-                                            .monospacedDigit()
-                                            .lineLimit(1)
-                                            .layoutPriority(1)
-                                    }
-                                }
+                            // Encoding 3 of 3: a real session is semibold, a
+                            // bare process is not. The title no longer competes
+                            // horizontally with age, state and the menu.
+                            Text(heroTitle)
+                                .font(.system(
+                                    size: 13,
+                                    weight: row.isProcessOnly ? .regular : .semibold,
+                                    design: .rounded
+                                ))
+                                .foregroundStyle(.primary)
+                                .lineLimit(row.isProcessOnly ? 1 : 2)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if !contextLine.isEmpty {
+                                Text(contextLine)
+                                    .font(.system(size: 10.75))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+
+                            if !metrics.isEmpty {
+                                Text(metrics)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.tertiary)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
                             }
 
                             // Waiting rows get a third line, because the actual
@@ -834,9 +811,9 @@ private struct AgentRowButton: View {
                             }
                         }
                     }
-                    .padding(.leading, 12)
+                    .padding(.leading, 14)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, row.isProcessOnly ? 7 : 9)
                 }
                 .contentShape(Rectangle())
             }
@@ -913,6 +890,13 @@ private struct AgentRowButton: View {
 
     private var metrics: String { store.rowMetrics(row) }
     private var observationLine: String { store.rowObservationLine(row) }
+    private var sourceLabel: String? {
+        switch row.observationSource {
+        case .session: return nil
+        case .cache: return store.tr(.cacheEvidence)
+        case .process: return store.tr(.limitedData)
+        }
+    }
 
     private var showActions: Bool {
         row.waiting || hovering
@@ -967,10 +951,7 @@ private struct AgentRowButton: View {
             return store.tr(.needsYou)
         }
         if row.isProcessOnly {
-            // The agent name *is* the information here. Saying "Process
-            // detected" as the title, "process" in the badge, and the agent
-            // name on the line below states one fact three times.
-            return row.agent.displayName
+            return row.canFocusTerminal ? store.tr(.terminalSession) : store.tr(.appSession)
         }
         if let t = row.sessionDetail {
             // The prefix used to be added precisely when the row was *not*
@@ -990,7 +971,8 @@ private struct AgentRowButton: View {
     /// facts a row could never state were *where* and *how long*; both were
     /// collected all along.
     private var contextLine: String {
-        store.rowContextLine(row, omitPath: pathInHeading)
+        if row.isProcessOnly { return store.tr(.activityUnavailable) }
+        return store.rowContextLine(row, omitPath: pathInHeading)
     }
 
     /// Only abnormal states get a badge.
@@ -1014,10 +996,6 @@ private struct AgentRowButton: View {
                 kind: .waiting,
                 label: dur.isEmpty ? kind : "\(kind) · \(dur)"
             )
-        } else if row.isProcessOnly {
-            // The badge states observation quality, not the implementation
-            // detail that `ps` happened to match one or more processes.
-            StatusChip(kind: .process, label: store.tr(.limitedData))
         } else if row.isStalled {
             // Live for twenty minutes with nothing happening. Never surfaced
             // before, and it looked exactly like a healthy session.
