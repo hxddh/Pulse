@@ -110,7 +110,7 @@ cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
 cd PulseBar && swift test    # 202 个单元测试
 ```
 
-六个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
+七个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
 
 ```bash
 python3 scripts/version_check.py            # 版本一致性（--fix 自动对齐）
@@ -118,10 +118,11 @@ python3 scripts/coverage_check.py           # 每个 AgentID 都有 harvest 接�
 python3 scripts/matrix_check.py             # README 支持矩阵 == 代码
 python3 scripts/make_agent_icons.py --check # 每个 AgentID 都有图标，且与生成器一致
 python3 scripts/appearance_check.py         # 没有把外观冻进常量（0.27.1 因此丢了深色模式）
+python3 scripts/harvest_stats_check.py      # harvest 真的产出会变化的事实，且不猜工具名
 python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
 ```
 
-前五个读源码，最后一个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
+前六个读源码，最后一个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
 源码没问题、测试全绿，照样连发三个打不开的 DMG。这类 bug 只有对着 `.app` 才看得见。
 
 但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。
@@ -171,7 +172,7 @@ git push                               # CI 构建、打 tag、发布
 那几条是产品决策（不假装 Waiting、不做配额 HUD、不在托盘里批准），
 不是可以顺手改掉的偏好。
 
-改动请保证 `swift test` 与六个门禁通过；CI 会替你再跑一遍。
+改动请保证 `swift test` 与七个门禁通过；CI 会替你再跑一遍。
 
 ## 许可
 

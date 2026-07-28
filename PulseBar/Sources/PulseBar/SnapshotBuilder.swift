@@ -179,6 +179,8 @@ enum SnapshotBuilder {
                 row.subRunning = act.subRunning
                 row.subTotal = act.subTotal
             }
+            if act.turns > 0 { row.turns = act.turns }
+            if act.startedMs > 0 { row.startedMs = act.startedMs }
             row.processCount = max(row.processCount, 1)
 
             // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.

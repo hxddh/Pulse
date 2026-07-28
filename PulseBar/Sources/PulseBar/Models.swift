@@ -217,6 +217,20 @@ struct AgentRow: Identifiable, Hashable {
     var canOpenFolder: Bool = false
     /// Sessions of this agent that exist but did not fit the per-agent cap.
     var hiddenSessions: Int = 0
+    /// Records in the session file. 0 = unknown, never estimated.
+    var turns: Int = 0
+    /// When the session began, in ms. 0 = unknown.
+    var startedMs: Int64 = 0
+
+    /// How long this session has been going, in seconds; 0 when unknown.
+    ///
+    /// Distinct from `lastActivitySeconds`, which is when it last moved. The
+    /// panel could say "1m ago" for a session that started three hours back and
+    /// had no way to say the three hours.
+    func sessionAgeSeconds(nowMs: Int64) -> Double {
+        guard startedMs > 0, nowMs > startedMs else { return 0 }
+        return Double(nowMs - startedMs) / 1000.0
+    }
     /// Seconds left on a "remind me later", resolved at scan time. 0 = not snoozed.
     ///
     /// Snoozing suppresses the *interruption* — lamp, menu-bar text, banner —

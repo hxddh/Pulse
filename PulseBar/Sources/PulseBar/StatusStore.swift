@@ -740,6 +740,14 @@ final class StatusStore: ObservableObject {
     /// already wasting, so density costs no height.
     func rowMetrics(_ row: AgentRow) -> String {
         var bits: [String] = []
+        // Session age first: of the three it is the one every file-backed
+        // agent can answer, so it is the fact most rows will actually carry.
+        // "1m ago" was the panel's only number and it says when a session last
+        // moved, never how long it has been going — a session three hours old
+        // and one three minutes old read identically.
+        let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+        if age >= 60 { bits.append(DurationFormat.label(seconds: age, lang: lang)) }
+        if row.turns > 0 { bits.append("\(row.turns)\(tr(.turnsSuffix))") }
         if let tokens = row.tokenLine { bits.append(tokens) }
         if let sub = row.subagentLine { bits.append(sub) }
         return bits.joined(separator: " · ")

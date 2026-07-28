@@ -525,3 +525,87 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertNotNil(row(inTok: 5_000).tokenLine)
     }
 }
+
+/// The two facts every file-backed agent can answer, and none were answering.
+///
+/// Measured before building this: of 32 harvesters, 5 produced tokens and 5
+/// produced a tool name. Twenty-six produced nothing that changes while work
+/// happens, so their rows could only ever say a title and a path — both fixed
+/// for the session's whole life.
+final class SessionAgeTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
+    private func row(startedAgo: Double) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.startedMs = now - Int64(startedAgo * 1000)
+        return r
+    }
+
+    func testASessionKnowsHowLongItHasBeenGoing() {
+        XCTAssertEqual(row(startedAgo: 3 * 3600).sessionAgeSeconds(nowMs: now), 10_800, accuracy: 1)
+    }
+
+    /// Distinct from "last moved": a session can be three hours old and have
+    /// touched something a minute ago. The panel only ever had the minute.
+    func testAgeIsNotLastActivity() {
+        var r = row(startedAgo: 3 * 3600)
+        r.harvestMs = now - 60_000
+        XCTAssertEqual(r.lastActivitySeconds, 60, accuracy: 5)
+        XCTAssertGreaterThan(r.sessionAgeSeconds(nowMs: now), 10_000)
+    }
+
+    /// No start stamp is unknown, and unknown is 0 — never a guess.
+    func testUnknownStartIsZero() {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.startedMs = 0
+        XCTAssertEqual(r.sessionAgeSeconds(nowMs: now), 0)
+    }
+
+    /// A clock that disagrees with the file system must not produce a negative
+    /// age that formats as a time in the future.
+    func testAStartInTheFutureIsNotNegativeAge() {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.startedMs = now + 60_000
+        XCTAssertEqual(r.sessionAgeSeconds(nowMs: now), 0)
+    }
+
+    func testTurnsDefaultToUnknown() {
+        XCTAssertEqual(AgentRow(rowKey: "k", agent: .claude).turns, 0)
+    }
+}
+
+/// The wire format grew two columns; an older bundled script must still parse.
+final class HarvestWireFormatTests: XCTestCase {
+    private func line(_ cols: [String]) -> String { cols.joined(separator: "\t") }
+
+    func testTheNewColumnsAreRead() {
+        let rows = ActivityHarvest.parse(line([
+            "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
+            "1700000000000", "0", "0", "sess-1", "34", "1699999000000",
+        ]) + "\n")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.turns, 34)
+        XCTAssertEqual(rows.first?.startedMs, 1_699_999_000_000)
+    }
+
+    /// A DMG whose bundled script predates 0.28 emits twelve columns. That has
+    /// to keep working and read as "unknown", not as a parse failure.
+    func testATwelveColumnLineStillParses() {
+        let rows = ActivityHarvest.parse(line([
+            "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
+            "1700000000000", "0", "0", "sess-1",
+        ]) + "\n")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.task, "Fix the parser")
+        XCTAssertEqual(rows.first?.turns, 0)
+        XCTAssertEqual(rows.first?.startedMs, 0)
+    }
+
+    func testGarbageInTheNewColumnsIsUnknownNotACrash() {
+        let rows = ActivityHarvest.parse(line([
+            "claude", "t", "0", "0", "", "", "", "", "0", "0", "0", "s", "abc", "xyz",
+        ]) + "\n")
+        XCTAssertEqual(rows.first?.turns, 0)
+        XCTAssertEqual(rows.first?.startedMs, 0)
+    }
+}

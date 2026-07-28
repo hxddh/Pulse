@@ -42,7 +42,7 @@ cd PulseBar && swift build      # macOS 14+, Swift 5.9
 cd PulseBar && swift test       # 202 tests
 ```
 
-Gates, from the repo root — `package.sh` and CI both run all six:
+Gates, from the repo root — `package.sh` and CI both run all seven:
 
 ```bash
 python3 scripts/version_check.py    # --fix aligns the followers
@@ -50,6 +50,7 @@ python3 scripts/coverage_check.py
 python3 scripts/matrix_check.py
 python3 scripts/make_agent_icons.py --check   # every AgentID has a mark
 python3 scripts/appearance_check.py          # no appearance frozen into a constant
+python3 scripts/harvest_stats_check.py       # harvest emits facts that move, and never guesses a tool
 python3 scripts/package_check.py    # reads the built .app
 ```
 
