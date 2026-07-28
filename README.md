@@ -107,7 +107,7 @@ Pulse 把这件事变成余光可见：
 
 ```bash
 cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
-cd PulseBar && swift test    # 215 个单元测试
+cd PulseBar && swift test    # 217 个单元测试
 ```
 
 七个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：

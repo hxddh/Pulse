@@ -40,7 +40,7 @@ compiles and ships.
 
 ```bash
 cd PulseBar && swift build      # macOS 14+, Swift 5.9
-cd PulseBar && swift test       # 215 tests
+cd PulseBar && swift test       # 217 tests
 ```
 
 Gates, from the repo root — `package.sh` and CI both run all seven:
