@@ -478,3 +478,50 @@ final class LiveToolTests: XCTestCase {
         XCTAssertNil(store().liveTool(r))
     }
 }
+
+/// Every fact that moves while work happens was behind a hover and a click,
+/// so the panel was only observable on demand.
+final class RowMetricsTests: XCTestCase {
+    @MainActor
+    private func store() -> StatusStore { StatusStore() }
+
+    private func row(inTok: Int = 0, outTok: Int = 0, subRunning: Int = 0, subTotal: Int = 0, waiting: Bool = false) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.tokensIn = inTok
+        r.tokensOut = outTok
+        r.subRunning = subRunning
+        r.subTotal = subTotal
+        r.waiting = waiting
+        return r
+    }
+
+    @MainActor
+    func testTokensRideOnTheRowWithoutAClick() {
+        let m = store().rowMetrics(row(inTok: 12_000, outTok: 3_000))
+        XCTAssertTrue(m.contains("↑"), m)
+        XCTAssertTrue(m.contains("↓"), m)
+    }
+
+    @MainActor
+    func testSubagentProgressIsAMetricToo() {
+        XCTAssertTrue(store().rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
+    }
+
+    /// On a waiting row the question is the point; a token count next to it is
+    /// noise competing with the one thing that needs an answer.
+    @MainActor
+    func testAWaitingRowSpendsItsSpaceOnTheQuestion() {
+        XCTAssertEqual(store().rowMetrics(row(inTok: 12_000, waiting: true)), "")
+    }
+
+    /// Nothing to say means no text, not a placeholder.
+    @MainActor
+    func testARowWithNoNumbersShowsNothing() {
+        XCTAssertEqual(store().rowMetrics(row()), "")
+    }
+
+    func testTokenLineIsSuppressedWhileWaiting() {
+        XCTAssertNil(row(inTok: 5_000, waiting: true).tokenLine)
+        XCTAssertNotNil(row(inTok: 5_000).tokenLine)
+    }
+}

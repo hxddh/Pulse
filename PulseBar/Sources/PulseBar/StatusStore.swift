@@ -727,6 +727,24 @@ final class StatusStore: ObservableObject {
         return bits.joined(separator: " · ")
     }
 
+    /// The numbers a row can show without a click.
+    ///
+    /// `EXPERIENCE.md` used to send tokens, sub-agent progress and skill to a
+    /// hover overlay, on a rule written when a row was cramming ten facts into
+    /// two lines. That rule over-corrected: rows ended up carrying two facts,
+    /// both of them static — a session title fixed for the session's life, and
+    /// a path. Everything that moves while work happens was one hover and one
+    /// "Details" click away, so the panel was only observable on demand.
+    ///
+    /// These ride on the right of the context line, in the space that line was
+    /// already wasting, so density costs no height.
+    func rowMetrics(_ row: AgentRow) -> String {
+        var bits: [String] = []
+        if let tokens = row.tokenLine { bits.append(tokens) }
+        if let sub = row.subagentLine { bits.append(sub) }
+        return bits.joined(separator: " · ")
+    }
+
     /// The tool a live row is running, when it is not already the row's title.
     ///
     /// `sessionDetail` promotes `tool` to the hero when there is no task, so

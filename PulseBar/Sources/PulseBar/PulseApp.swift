@@ -131,7 +131,14 @@ private enum TrayChrome {
     ///
     /// `scripts/appearance_check.py` fails the build if a stored colour
     /// constant reappears.
-    static let surface: Material = .regularMaterial
+    /// Thick rather than regular: strictly less desktop through it.
+    ///
+    /// The panel is still tinted by a saturated wallpaper at `.regularMaterial`,
+    /// which is what put an accent-coloured word on a cyan field. Going thicker
+    /// is the one move here that is monotonic — more opaque is always less
+    /// wallpaper — as opposed to picking a colour, which is how dark mode was
+    /// lost in the first place.
+    static let surface: Material = .thickMaterial
 }
 
 private struct StatusChip: View {
@@ -229,14 +236,6 @@ private struct SectionHeader: View {
         .padding(.top, 12)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // The same material as the panel, not a heavier one on top of it.
-        //
-        // `.thickMaterial` here made the heading the brightest block in the
-        // panel — brighter than the rows it separated, carrying the least
-        // important information on screen. It still needs a background,
-        // because it is pinned and rows scroll underneath it; it just must not
-        // be a different weight from everything else.
-        .background(TrayChrome.surface)
 
         if let toggle {
             Button(action: toggle) { line.contentShape(Rectangle()) }
@@ -473,6 +472,8 @@ struct TrayPanel: View {
         var statesPath = false
         /// The heading doubles as a disclosure control and the rows start folded.
         var foldable = false
+        /// Not a project — the bucket for rows that have no location at all.
+        var isBucket = false
     }
 
     /// A heading earns its line only when it separates things.
@@ -482,8 +483,18 @@ struct TrayPanel: View {
         // row whose own second line said "~/Documents/Cursor". Two lines, one
         // fact, and a whole row of height spent on it.
         if group.statesPath && group.rows.count == 1 { return false }
+        // "No project 2" is a whole row of panel spent saying that the two
+        // rows below it are missing something. It is the worst line in the
+        // panel by information per pixel: a negative fact, about rows the user
+        // can already see, that they can do nothing with. The bucket keeps its
+        // rows and loses its heading.
+        if group.isBucket { return false }
         return true
     }
+
+    /// Sentinel for "this row has no location", kept out of the localized
+    /// strings so the grouping key does not change with the language.
+    fileprivate static let bucketKey = "\u{0}no-project"
 
     /// Rows grouped under a heading.
     ///
@@ -525,7 +536,7 @@ struct TrayPanel: View {
                 let path = row.displayPath
                 // Home is not a project; everything without a real location
                 // shares one bucket instead of inventing names for it.
-                let key = path.isEmpty ? store.tr(.noProject) : path
+                let key = path.isEmpty ? Self.bucketKey : path
                 if byProject[key] == nil { order.append(key) }
                 byProject[key, default: []].append(row)
             }
@@ -539,9 +550,10 @@ struct TrayPanel: View {
             return ranked.map { entry in
                 let group = byProject[entry.element] ?? []
                 let hasWaiting = group.contains(where: \.waiting)
+                let bucket = entry.element == Self.bucketKey
                 return RowGroup(
                     id: "p\(entry.element)",
-                    title: entry.element,
+                    title: bucket ? store.tr(.noProject) : entry.element,
                     count: group.count,
                     accent: hasWaiting,
                     rows: group,
@@ -555,7 +567,8 @@ struct TrayPanel: View {
                         groupCount: ranked.count,
                         rowCount: group.count,
                         totalRows: rows.count
-                    )
+                    ),
+                    isBucket: bucket
                 )
             }
         }
@@ -571,7 +584,16 @@ struct TrayPanel: View {
         let groups = groupedRows
         return VStack(spacing: 0) {
             ScrollView {
-                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                // Not pinned.
+                //
+                // A pinned heading has to be opaque so rows can scroll under
+                // it, and every opaque thing laid over the panel's material
+                // compounds with it into a lighter band — which is what both
+                // 0.27.1 and 0.27.2 showed, whichever material was used. A
+                // panel that caps at a handful of rows gains nothing from
+                // sticky headings, and un-pinning removes the band by
+                // construction rather than by picking a better shade.
+                LazyVStack(spacing: 0) {
                     ForEach(groups) { group in
                         Section {
                             // No rules between rows: whitespace already
@@ -810,12 +832,26 @@ private struct AgentRowButton: View {
                                 statusChip
                             }
 
-                            if !contextLine.isEmpty {
-                                Text(contextLine)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.head)
+                            if !contextLine.isEmpty || !metrics.isEmpty {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(contextLine)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.head)
+                                    Spacer(minLength: 4)
+                                    // The right half of this line was empty on
+                                    // every row. The numbers go there rather
+                                    // than into a hover nobody opens.
+                                    if !metrics.isEmpty {
+                                        Text(metrics)
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(.tertiary)
+                                            .monospacedDigit()
+                                            .lineLimit(1)
+                                            .layoutPriority(1)
+                                    }
+                                }
                             }
 
                             // Waiting rows get a third line, because the actual
@@ -928,6 +964,8 @@ private struct AgentRowButton: View {
         if row.isSnoozed { return 3 }
         return row.isUrgentWait ? 6 : 3
     }
+
+    private var metrics: String { store.rowMetrics(row) }
 
     private var showActions: Bool {
         row.waiting || hovering || expanded
