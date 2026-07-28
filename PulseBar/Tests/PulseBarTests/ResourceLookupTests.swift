@@ -42,6 +42,22 @@ final class ResourceLookupTests: XCTestCase {
     }
 }
 
+/// Every brand source uses different transparent padding. The row should align
+/// the visible mark, not the arbitrary file canvas.
+final class AgentIconAlignmentTests: XCTestCase {
+    func testEveryAgentIconHasAConsistentOpticalBox() {
+        for agent in AgentID.allCases {
+            guard let bounds = AgentIcon.alphaBounds(in: AgentIcon.image(for: agent)) else {
+                return XCTFail("\(agent.displayName) icon rendered blank")
+            }
+            XCTAssertGreaterThanOrEqual(max(bounds.width, bounds.height), 49, agent.displayName)
+            XCTAssertLessThanOrEqual(max(bounds.width, bounds.height), 54, agent.displayName)
+            XCTAssertEqual(bounds.midX, 32, accuracy: 1.5, agent.displayName)
+            XCTAssertEqual(bounds.midY, 32, accuracy: 1.5, agent.displayName)
+        }
+    }
+}
+
 /// Duration wording moved off `StatusStore` so `SnapshotBuilder` — which is
 /// pure and has no store — could put the elapsed wait in the menu bar.
 final class DurationFormatTests: XCTestCase {
@@ -271,6 +287,13 @@ final class TrayFoldTests: XCTestCase {
 
     func testRecentFoldsWhenItIsNotTheWholeList() {
         XCTAssertTrue(TrayFold.foldable(section: .recent, groupCount: 2, rowCount: 3, totalRows: 6))
+    }
+
+    func testFoldableGroupsStartExpandedAndOnlyManualChoiceCollapsesThem() {
+        XCTAssertFalse(TrayFold.isCollapsed("project:vps", manuallyFolded: []))
+        XCTAssertTrue(
+            TrayFold.isCollapsed("project:vps", manuallyFolded: ["project:vps"])
+        )
     }
 
     /// A 0.27 screenshot: three sessions, two folded, one row on screen.

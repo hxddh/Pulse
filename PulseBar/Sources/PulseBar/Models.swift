@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.33.0"
+    static let semver = "0.33.1"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -618,6 +618,13 @@ struct PulseSnapshot: Equatable {
 /// sessions, nothing to act on, taking half the panel and half the reading.
 /// Folding them is the largest space win available without dropping a fact.
 enum TrayFold {
+    /// Groups are visible on every fresh panel open. Folding is an explicit,
+    /// reversible user action; the aggregate count must never promise rows
+    /// that the default view silently hides.
+    static func isCollapsed(_ groupID: String, manuallyFolded: Set<String>) -> Bool {
+        manuallyFolded.contains(groupID)
+    }
+
     /// Below this many rows the panel is not crowded, so nothing folds.
     ///
     /// A 0.27 screenshot showed three sessions with two of them folded away —

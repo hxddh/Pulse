@@ -27,6 +27,10 @@ enum ProcessProbe {
         var basenames: [String]
         var pathNeedles: [String]
         var denyNeedles: [String]
+        /// Some real CLIs intentionally use a short executable name (`pi`,
+        /// `roo`, `cmd`). Their exact basename is useful evidence after the
+        /// deny list has run; length alone must not make a live agent vanish.
+        var allowBareBasename: Bool = false
     }
 
     private static let rules: [Rule] = [
@@ -43,7 +47,7 @@ enum ProcessProbe {
             denyNeedles: ["crashpad", "worker start", "--worker-dir"]
         ),
         .init(id: .grok, basenames: ["grok"], pathNeedles: ["/.grok/bin/grok", "grok-0.", "GROK_AGENT=", "/bin/grok"], denyNeedles: []),
-        .init(id: .pi, basenames: ["pi"], pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"], denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"]),
+        .init(id: .pi, basenames: ["pi"], pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"], denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"], allowBareBasename: true),
         .init(
             id: .amp,
             basenames: ["amp"],
@@ -63,7 +67,7 @@ enum ProcessProbe {
         .init(id: .goose, basenames: ["goose"], pathNeedles: ["/bin/goose", "block/goose", "goose-cli"], denyNeedles: []),
         .init(id: .openhands, basenames: ["openhands", "opendevin"], pathNeedles: ["openhands", "OpenHands", "OpenDevin"], denyNeedles: []),
         .init(id: .cline, basenames: ["cline"], pathNeedles: ["saoudrizwan.claude-dev", "/cline/", "cline@", "claude-dev"], denyNeedles: ["crashpad", "decline", "incline"]),
-        .init(id: .roo, basenames: ["roo", "roo-code"], pathNeedles: ["roo-cline", "roo-code", "RooCode"], denyNeedles: ["crashpad"]),
+        .init(id: .roo, basenames: ["roo", "roo-code"], pathNeedles: ["roo-cline", "roo-code", "RooCode"], denyNeedles: ["crashpad"], allowBareBasename: true),
         .init(id: .continue_, basenames: ["continue", "continue-cli"], pathNeedles: ["continue.dev", "Continue.continue", "continue-cli"], denyNeedles: ["crashpad"]),
         .init(id: .amazonQ, basenames: ["amazon-q", "q-chat", "qchat"], pathNeedles: ["amazon-q", "Amazon Q", "/opt/homebrew/bin/q"], denyNeedles: ["qemu", "QuickTime"]),
         .init(
@@ -150,7 +154,8 @@ enum ProcessProbe {
                 "/opt/homebrew/bin/cmd",
                 "/usr/local/bin/cmd",
             ],
-            denyNeedles: ["crashpad", "cmd.exe", "cmdline-tools"]
+            denyNeedles: ["crashpad", "cmd.exe", "cmdline-tools"],
+            allowBareBasename: true
         ),
         .init(
             id: .antigravity,
@@ -352,18 +357,20 @@ enum ProcessProbe {
         return result
     }
 
-    private static func match(args: String) -> AgentID? {
+    /// Match one `ps` argv. Internal so the complete supported-agent roster
+    /// can be held to a detection contract in tests.
+    static func match(args: String) -> AgentID? {
         let exe = args.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? args
         let base = (exe as NSString).lastPathComponent
         for rule in rules {
             if rule.denyNeedles.contains(where: { args.contains($0) }) { continue }
             let baseHit = rule.basenames.contains { $0.caseInsensitiveCompare(base) == .orderedSame }
-            // Prefer path needles; bare basename only when pathNeedles empty or base is distinctive.
+            // Prefer path needles; bare basename only when explicitly trusted,
+            // pathNeedles are absent, or the name is naturally distinctive.
             let pathHit = rule.pathNeedles.contains { args.contains($0) }
             if pathHit { return rule.id }
             if baseHit, !rule.pathNeedles.isEmpty {
-                // Basename-only match: require path-ish evidence for short names.
-                if base.count <= 3 {
+                if base.count <= 3 && !rule.allowBareBasename {
                     continue
                 }
                 return rule.id
