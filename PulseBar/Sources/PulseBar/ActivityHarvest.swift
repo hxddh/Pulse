@@ -14,6 +14,10 @@ enum ActivityHarvest {
         var subRunning: Int = 0
         var subTotal: Int = 0
         var sessionID: String = ""
+        /// Records in the session file — how much has actually happened.
+        var turns: Int = 0
+        /// When the session started, so a row can say how long it has been going.
+        var startedMs: Int64 = 0
     }
 
     /// Harvest-only rows older than this are dropped unless a live process exists.
@@ -192,7 +196,11 @@ enum ActivityHarvest {
                 harvestMs: cols.count > 8 ? Int64(cols[8]) ?? 0 : 0,
                 subRunning: cols.count > 9 ? Int(cols[9]) ?? 0 : 0,
                 subTotal: cols.count > 10 ? Int(cols[10]) ?? 0 : 0,
-                sessionID: cols.count > 11 ? cols[11] : ""
+                sessionID: cols.count > 11 ? cols[11] : "",
+                // Appended in 0.28; a harvest from an older bundled script
+                // simply has no columns here and reads as unknown.
+                turns: cols.count > 12 ? Int(cols[12]) ?? 0 : 0,
+                startedMs: cols.count > 13 ? Int64(cols[13]) ?? 0 : 0
             ))
         }
         return out

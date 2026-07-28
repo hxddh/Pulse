@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.27.2"
+    static let semver = "0.28.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -217,6 +217,20 @@ struct AgentRow: Identifiable, Hashable {
     var canOpenFolder: Bool = false
     /// Sessions of this agent that exist but did not fit the per-agent cap.
     var hiddenSessions: Int = 0
+    /// Records in the session file. 0 = unknown, never estimated.
+    var turns: Int = 0
+    /// When the session began, in ms. 0 = unknown.
+    var startedMs: Int64 = 0
+
+    /// How long this session has been going, in seconds; 0 when unknown.
+    ///
+    /// Distinct from `lastActivitySeconds`, which is when it last moved. The
+    /// panel could say "1m ago" for a session that started three hours back and
+    /// had no way to say the three hours.
+    func sessionAgeSeconds(nowMs: Int64) -> Double {
+        guard startedMs > 0, nowMs > startedMs else { return 0 }
+        return Double(nowMs - startedMs) / 1000.0
+    }
     /// Seconds left on a "remind me later", resolved at scan time. 0 = not snoozed.
     ///
     /// Snoozing suppresses the *interruption* — lamp, menu-bar text, banner —
@@ -299,23 +313,31 @@ struct AgentRow: Identifiable, Hashable {
     var hasSessionTitle: Bool { usefulTask != nil }
 
 
+    /// `↑12k ↓3k` — how much this session has actually moved.
+    ///
+    /// The only quantity the app has, and until 0.28 it lived behind a hover
+    /// and then behind an expand. A panel whose rows carry a name, a path and
+    /// a relative time has nothing on it that changes as work happens; this
+    /// does. Waiting rows omit it, because there the question is the point.
+    var tokenLine: String? {
+        guard !waiting else { return nil }
+        let tin = Self.compactToken(tokensIn)
+        let tout = Self.compactToken(tokensOut)
+        guard !tin.isEmpty || !tout.isEmpty else { return nil }
+        var tok = ""
+        if !tin.isEmpty { tok += "↑\(tin)" }
+        if !tout.isEmpty {
+            if !tok.isEmpty { tok += " " }
+            tok += "↓\(tout)"
+        }
+        return tok
+    }
+
     /// Compact meta: "↑12k ↓3k · Bash · sub 2↑/5"
     /// Waiting rows omit tokens (status first). Tool alone goes to sessionDetail when no task.
     var metaLine: String? {
         var bits: [String] = []
-        if !waiting {
-            let tin = Self.compactToken(tokensIn)
-            let tout = Self.compactToken(tokensOut)
-            if !tin.isEmpty || !tout.isEmpty {
-                var tok = ""
-                if !tin.isEmpty { tok += "↑\(tin)" }
-                if !tout.isEmpty {
-                    if !tok.isEmpty { tok += " " }
-                    tok += "↓\(tout)"
-                }
-                bits.append(tok)
-            }
-        }
+        if let tok = tokenLine { bits.append(tok) }
         if !tool.isEmpty, usefulTask != nil { bits.append(tool) }
         if !skill.isEmpty, skill != "pending" { bits.append(skill) }
         if let sub = subagentLine { bits.append(sub) }

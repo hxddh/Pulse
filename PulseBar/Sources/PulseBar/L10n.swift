@@ -175,6 +175,7 @@ enum L10n {
         case .stallOff: return "Never"
         case .minutesShort: return "%d min"
         case .notifFocus: return "Focus"
+        case .turnsSuffix: return " turns"
         }
     }
 
@@ -308,6 +309,7 @@ enum L10n {
         case .stallOff: return "不判定"
         case .minutesShort: return "%d 分钟"
         case .notifFocus: return "去看看"
+        case .turnsSuffix: return " 轮"
         }
     }
 
@@ -346,6 +348,7 @@ enum L10n {
         case acrossProjects, agoFormat, whileAway, noActivityYet
         case noProject, stalled
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
+        case turnsSuffix
     }
 }
 

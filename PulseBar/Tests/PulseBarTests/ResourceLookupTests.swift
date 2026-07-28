@@ -478,3 +478,149 @@ final class LiveToolTests: XCTestCase {
         XCTAssertNil(store().liveTool(r))
     }
 }
+
+/// Every fact that moves while work happens was behind a hover and a click,
+/// so the panel was only observable on demand.
+final class RowMetricsTests: XCTestCase {
+    @MainActor
+    private func store() -> StatusStore { StatusStore() }
+
+    private func row(inTok: Int = 0, outTok: Int = 0, subRunning: Int = 0, subTotal: Int = 0, waiting: Bool = false) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.tokensIn = inTok
+        r.tokensOut = outTok
+        r.subRunning = subRunning
+        r.subTotal = subTotal
+        r.waiting = waiting
+        return r
+    }
+
+    @MainActor
+    func testTokensRideOnTheRowWithoutAClick() {
+        let m = store().rowMetrics(row(inTok: 12_000, outTok: 3_000))
+        XCTAssertTrue(m.contains("↑"), m)
+        XCTAssertTrue(m.contains("↓"), m)
+    }
+
+    @MainActor
+    func testSubagentProgressIsAMetricToo() {
+        XCTAssertTrue(store().rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
+    }
+
+    /// On a waiting row the question is the point; a token count next to it is
+    /// noise competing with the one thing that needs an answer.
+    @MainActor
+    func testAWaitingRowSpendsItsSpaceOnTheQuestion() {
+        XCTAssertEqual(store().rowMetrics(row(inTok: 12_000, waiting: true)), "")
+    }
+
+    /// Nothing to say means no text, not a placeholder.
+    @MainActor
+    func testARowWithNoNumbersShowsNothing() {
+        XCTAssertEqual(store().rowMetrics(row()), "")
+    }
+
+    func testTokenLineIsSuppressedWhileWaiting() {
+        XCTAssertNil(row(inTok: 5_000, waiting: true).tokenLine)
+        XCTAssertNotNil(row(inTok: 5_000).tokenLine)
+    }
+}
+
+/// The two facts every file-backed agent can answer, and none were answering.
+///
+/// Measured before building this: of 32 harvesters, 5 produced tokens and 5
+/// produced a tool name. Twenty-six produced nothing that changes while work
+/// happens, so their rows could only ever say a title and a path — both fixed
+/// for the session's whole life.
+final class SessionAgeTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
+    private func row(startedAgo: Double) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.startedMs = now - Int64(startedAgo * 1000)
+        return r
+    }
+
+    func testASessionKnowsHowLongItHasBeenGoing() {
+        XCTAssertEqual(row(startedAgo: 3 * 3600).sessionAgeSeconds(nowMs: now), 10_800, accuracy: 1)
+    }
+
+    /// Distinct from "last moved": a session can be three hours old and have
+    /// touched something a minute ago. The panel only ever had the minute.
+    ///
+    /// The two facts read different clocks — `lastActivitySeconds` is a
+    /// computed property against `Date()`, `sessionAgeSeconds` takes the scan's
+    /// injected `nowMs` — so the row has to be built against both. The first
+    /// version of this test stamped `harvestMs` from the fixed 2023 constant
+    /// and asserted it was a minute old, which against the wall clock is three
+    /// years. Same shape as the 0.25 `isStalled` bug: a fixed test clock next
+    /// to a function that reaches for the real one.
+    func testAgeIsNotLastActivity() {
+        let wallNow = Int64(Date().timeIntervalSince1970 * 1000)
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.harvestMs = wallNow - 60_000
+        r.startedMs = wallNow - Int64(3 * 3600 * 1000)
+        XCTAssertEqual(r.lastActivitySeconds, 60, accuracy: 5)
+        XCTAssertEqual(r.sessionAgeSeconds(nowMs: wallNow), 10_800, accuracy: 5)
+        XCTAssertGreaterThan(
+            r.sessionAgeSeconds(nowMs: wallNow),
+            r.lastActivitySeconds,
+            "a long session that just moved must still read as long"
+        )
+    }
+
+    /// No start stamp is unknown, and unknown is 0 — never a guess.
+    func testUnknownStartIsZero() {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.startedMs = 0
+        XCTAssertEqual(r.sessionAgeSeconds(nowMs: now), 0)
+    }
+
+    /// A clock that disagrees with the file system must not produce a negative
+    /// age that formats as a time in the future.
+    func testAStartInTheFutureIsNotNegativeAge() {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.startedMs = now + 60_000
+        XCTAssertEqual(r.sessionAgeSeconds(nowMs: now), 0)
+    }
+
+    func testTurnsDefaultToUnknown() {
+        XCTAssertEqual(AgentRow(rowKey: "k", agent: .claude).turns, 0)
+    }
+}
+
+/// The wire format grew two columns; an older bundled script must still parse.
+final class HarvestWireFormatTests: XCTestCase {
+    private func line(_ cols: [String]) -> String { cols.joined(separator: "\t") }
+
+    func testTheNewColumnsAreRead() {
+        let rows = ActivityHarvest.parse(line([
+            "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
+            "1700000000000", "0", "0", "sess-1", "34", "1699999000000",
+        ]) + "\n")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.turns, 34)
+        XCTAssertEqual(rows.first?.startedMs, 1_699_999_000_000)
+    }
+
+    /// A DMG whose bundled script predates 0.28 emits twelve columns. That has
+    /// to keep working and read as "unknown", not as a parse failure.
+    func testATwelveColumnLineStillParses() {
+        let rows = ActivityHarvest.parse(line([
+            "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
+            "1700000000000", "0", "0", "sess-1",
+        ]) + "\n")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.task, "Fix the parser")
+        XCTAssertEqual(rows.first?.turns, 0)
+        XCTAssertEqual(rows.first?.startedMs, 0)
+    }
+
+    func testGarbageInTheNewColumnsIsUnknownNotACrash() {
+        let rows = ActivityHarvest.parse(line([
+            "claude", "t", "0", "0", "", "", "", "", "0", "0", "0", "s", "abc", "xyz",
+        ]) + "\n")
+        XCTAssertEqual(rows.first?.turns, 0)
+        XCTAssertEqual(rows.first?.startedMs, 0)
+    }
+}

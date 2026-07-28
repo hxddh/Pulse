@@ -727,6 +727,32 @@ final class StatusStore: ObservableObject {
         return bits.joined(separator: " · ")
     }
 
+    /// The numbers a row can show without a click.
+    ///
+    /// `EXPERIENCE.md` used to send tokens, sub-agent progress and skill to a
+    /// hover overlay, on a rule written when a row was cramming ten facts into
+    /// two lines. That rule over-corrected: rows ended up carrying two facts,
+    /// both of them static — a session title fixed for the session's life, and
+    /// a path. Everything that moves while work happens was one hover and one
+    /// "Details" click away, so the panel was only observable on demand.
+    ///
+    /// These ride on the right of the context line, in the space that line was
+    /// already wasting, so density costs no height.
+    func rowMetrics(_ row: AgentRow) -> String {
+        var bits: [String] = []
+        // Session age first: of the three it is the one every file-backed
+        // agent can answer, so it is the fact most rows will actually carry.
+        // "1m ago" was the panel's only number and it says when a session last
+        // moved, never how long it has been going — a session three hours old
+        // and one three minutes old read identically.
+        let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+        if age >= 60 { bits.append(DurationFormat.label(seconds: age, lang: lang)) }
+        if row.turns > 0 { bits.append("\(row.turns)\(tr(.turnsSuffix))") }
+        if let tokens = row.tokenLine { bits.append(tokens) }
+        if let sub = row.subagentLine { bits.append(sub) }
+        return bits.joined(separator: " · ")
+    }
+
     /// The tool a live row is running, when it is not already the row's title.
     ///
     /// `sessionDetail` promotes `tool` to the hero when there is no task, so
