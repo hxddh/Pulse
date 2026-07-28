@@ -218,7 +218,11 @@ struct AgentRow: Identifiable, Hashable {
     /// Sessions of this agent that exist but did not fit the per-agent cap.
     var hiddenSessions: Int = 0
     /// Records in the session file. 0 = unknown, never estimated.
-    var turns: Int = 0
+    ///
+    /// Not conversational turns — the transcript counts tool calls, tool
+    /// results and token events too. Shipped as "turns" in 0.28.0, which
+    /// promised a precision the number does not have.
+    var records: Int = 0
     /// When the session began, in ms. 0 = unknown.
     var startedMs: Int64 = 0
 

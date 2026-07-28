@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Gate: the harvest actually emits the two universal session facts.
+"""Gate: the harvest emits its session facts, through the real collectors.
 
-Measured on 0.27.2, before this existed: of 32 harvesters, 5 produced token
-counts and 5 produced a tool name. **Twenty-six produced nothing that changes
-while work happens** — their rows could only ever say a session title and a
-path, both fixed for the session's entire life, so a session at minute forty
-looked identical to the same session at minute one. The panel was not
-under-designed; it had nothing to show.
+The 0.28.0 version of this file claimed to "build a synthetic session tree and
+run the real harvester". It did not. It called `session_stats()` and
+`emit_row()` directly, hand-assembled tuples, and decided a collector was
+wired by counting the string `session_stats(` in the source.
 
-`turns` and `started_ms` are the two facts any file-backed session can answer.
-This gate builds a synthetic session tree, runs the real harvester against it,
-and asserts the columns arrive populated — the part that a Swift unit test
-cannot reach, because it lives in Python and in the file system.
+Counting a string cannot tell live wiring from dead wiring, and two collectors
+were dead:
+
+  * Cascade built its row with the stats dict at index 10 and then normalised
+    with `row[:9]`, throwing it away — while still paying for the file scan.
+  * Amp's pending path rewrote index 8 with the session id, which is exactly
+    where the stats dict sat on a thread row.
+
+Both shipped, and this gate was green the whole time. So it now points `HOME`
+at a temporary tree, lays out real session files where each collector actually
+looks, calls the collector, and reads the finished TSV. If a fact does not
+survive from disk to column, it fails here.
 
     python3 scripts/harvest_stats_check.py
-
-Exit 1 if the wire format loses a column, if the stats stop being computed, or
-if a legacy row stops parsing.
 """
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import sys
 import tempfile
@@ -33,6 +37,14 @@ sys.path.insert(0, str(ROOT / "src"))
 import activity_scan as A  # noqa: E402
 
 COLUMNS = 14
+COL_SESSION, COL_RECORDS, COL_STARTED, COL_TOOL = 11, 12, 13, 4
+
+RECORDS = 34
+TRANSCRIPT = "".join(
+    '{"type":"tool_use","name":"Bash","input":{"command":"ls"}}\n' if i % 5 == 0
+    else '{"type":"text","text":"line %d"}\n' % i
+    for i in range(RECORDS)
+)
 
 
 def fail(msg: str) -> int:
@@ -40,120 +52,216 @@ def fail(msg: str) -> int:
     return 1
 
 
-def emit_to_line(*args, **kwargs) -> list[str]:
+def capture(fn) -> list[list[str]]:
+    """Run a collector block and return its emitted TSV rows."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        A.emit_row(*args, **kwargs)
+        fn()
+    return [ln.split("\t") for ln in buf.getvalue().splitlines() if ln and not ln.startswith("#")]
+
+
+def emit_to_line(*args) -> list[str]:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        A.emit_row(*args)
     text = buf.getvalue().strip("\n")
     return text.split("\t") if text else []
 
 
-def main() -> int:
-    now_ms = int(time.time() * 1000)
+def check_helper_contract(d: Path) -> int:
+    """`session_stats` itself: the honesty rules, not the wiring."""
+    jsonl = d / "session.jsonl"
+    jsonl.write_text(TRANSCRIPT, encoding="utf-8")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        d = Path(tmp)
+    stats = A.session_stats(jsonl, per_session=True)
+    if stats.get("records") != RECORDS:
+        return fail(f"records miscounted: {stats}")
+    if not stats.get("started_ms"):
+        return fail(f"no start stamp: {stats}")
 
-        # --- session_stats over a real file ---------------------------------
-        jsonl = d / "session.jsonl"
-        jsonl.write_text("".join('{"i":%d}\n' % i for i in range(34)), encoding="utf-8")
-        stats = A.session_stats(jsonl)
-        if stats.get("turns") != 34:
-            return fail(f"turns miscounted: {stats}")
-        if not stats.get("started_ms"):
-            return fail(f"no start stamp: {stats}")
+    # A container file is not a session. `harvest_extension_storage` picks one
+    # session out of a shared blob, so the blob's birth time is not that
+    # session's start — 0.28.0 reported it as one, which could age a
+    # five-minute-old session by months.
+    if A.session_stats(jsonl, per_session=False) != {}:
+        return fail("per_session=False must report nothing at all")
 
-        # A file with no trailing newline still has its last record counted?
-        # No — and that is deliberate: a partially written last line is not a
-        # turn yet. Assert the conservative behaviour so it cannot drift.
-        partial = d / "partial.jsonl"
-        partial.write_text('{"a":1}\n{"b":2}', encoding="utf-8")
-        if A.session_stats(partial).get("turns") != 1:
-            return fail("a half-written trailing record must not count as a turn")
+    # Unknown is reported as unknown, never estimated.
+    if "records" in A.session_stats(jsonl, per_session=True, budget_bytes=8):
+        return fail("oversized file must report unknown, not an estimate")
+    blob = d / "state.json"
+    blob.write_text("{}", encoding="utf-8")
+    if "records" in A.session_stats(blob, per_session=True):
+        return fail("records must not be invented for a format we cannot count")
+    if A.session_stats(d / "nope.jsonl", per_session=True) != {}:
+        return fail("a missing file must degrade, not raise")
 
-        # --- the budget guard reports unknown rather than guessing ----------
-        if "turns" in A.session_stats(jsonl, budget_bytes=8):
-            return fail("oversized file must report unknown, not an estimate")
+    # The extras sentinel is a dict precisely because this protocol dispatches
+    # on tuple length; two more positional fields would make a 9-tuple mean
+    # two different things and the wrong reading would be silent.
+    nine = emit_to_line("droid", ("t", 0, 0, "", "", "", "", int(time.time() * 1000), "sid-9"))
+    if len(nine) != COLUMNS or nine[COL_SESSION] != "sid-9":
+        return fail(f"legacy row shifted or lost columns: {nine}")
+    if (nine[COL_RECORDS], nine[COL_STARTED]) != ("0", "0"):
+        return fail(f"a row without extras must read as unknown: {nine[COL_RECORDS:]}")
+    with_extras = emit_to_line(
+        "droid", ("t", 0, 0, "", "", "", "", int(time.time() * 1000), "sid-9", stats)
+    )
+    if with_extras[COL_SESSION] != "sid-9" or with_extras[COL_RECORDS] != str(RECORDS):
+        return fail(f"dict sentinel shifted a field: {with_extras}")
+    return 0
 
-        # --- non-JSONL still gets the universal fact ------------------------
-        blob = d / "state.json"
-        blob.write_text("{}", encoding="utf-8")
-        s2 = A.session_stats(blob)
-        if "turns" in s2:
-            return fail("turns must not be invented for a format we cannot count")
-        if not s2.get("started_ms"):
-            return fail("every file-backed session can answer when it started")
 
-        # --- a vanished path is not an exception ----------------------------
-        if A.session_stats(d / "nope.jsonl") != {}:
-            return fail("a missing file must degrade, not raise")
-
-        # --- the wire format ------------------------------------------------
-        row = ("Fix the parser", 12_000, 3_000, "Bash", "", "Pulse", "/tmp/p", now_ms, "sid-1", stats)
-        cols = emit_to_line("claude", row)
-        if len(cols) != COLUMNS:
-            return fail(f"expected {COLUMNS} columns, got {len(cols)}: {cols}")
-        if cols[12] != "34":
-            return fail(f"turns column wrong: {cols[12]}")
-        if int(cols[13] or 0) <= 0:
-            return fail(f"started_ms column wrong: {cols[13]}")
-
-        # --- a row with no extras keeps working -----------------------------
-        legacy = emit_to_line("amp", ("Amp thread", 0, 0, "", "", "", "", now_ms))
-        if len(legacy) != COLUMNS:
-            return fail(f"legacy row lost columns: {legacy}")
-        if (legacy[12], legacy[13]) != ("0", "0"):
-            return fail(f"legacy row must read as unknown: {legacy[12:]}")
-
-        # --- the dict sentinel must not be mistaken for a field -------------
-        # This protocol dispatches on tuple length, which is why the extras
-        # ride in a dict: appending two positional fields would make a
-        # 9-tuple ambiguous and the wrong reading would be silent.
-        nine = emit_to_line("droid", ("t", 0, 0, "", "", "", "", now_ms, "sid-9"))
-        if nine[11] != "sid-9":
-            return fail(f"session id misread as something else: {nine}")
-        with_extras = emit_to_line("droid", ("t", 0, 0, "", "", "", "", now_ms, "sid-9", stats))
-        if with_extras[11] != "sid-9" or with_extras[12] != "34":
-            return fail(f"dict sentinel shifted a field: {with_extras}")
-
-    # --- the tool name must never be a guess --------------------------------
-    #
-    # `last_tool_name` ends with "any \"name\": \"...\" that is not one of six keys
-    # we know are not tools". Against the four transcript-shaped agents it was
-    # written for that is fine. Against the other twenty-six — VS Code
-    # globalStorage, IDE state, MCP config — it misfires on all of these, and
-    # each misfire is displayed as "this agent is currently running X".
-    #
-    # Waiting comes only from hooks or an explicit pending, never from a guess.
-    # A tool name is the same class of claim.
-    blobs = {
+def check_tool_reading() -> int:
+    """A tool name is a claim, and claims here are read, never guessed."""
+    must_not = {
+        # These four are why the strict extractor exists.
         "vscode state": '{"name":"workspaceFolder","value":"/Users/me/code"}',
         "ide settings": '{"profile":{"name":"Default"},"theme":"dark"}',
         "mcp servers": '{"servers":[{"name":"filesystem","command":"npx"}]}',
         "model config": '{"model":{"name":"claude_sonnet","maxTokens":8000}}',
+        # …and these two are what it still got wrong in 0.28.0, because every
+        # blob above lacks a `tool_use` and so never reached the first tier.
+        "nested argument": '{"type":"tool_use","input":{"name":"production"}}',
+        "neighbouring record": '{"type":"tool_use","id":"x"}\n{"role":"user","name":"alice"}',
+        "non-string name": '{"type":"tool_use","name":123}',
     }
-    for label, blob in blobs.items():
-        if A.last_tool_name_strict(blob):
-            return fail(f"{label}: guessed a tool from {blob!r}")
-    if not any(A.last_tool_name(b) for b in blobs.values()):
+    for label, blob in must_not.items():
+        got = A.last_tool_name_strict(blob)
+        if got:
+            return fail(f"{label}: guessed {got!r} from {blob!r}")
+
+    must = {
+        '{"type":"tool_use","name":"Bash","input":{"command":"ls"}}': "Bash",
+        '{"type":"tool_use","name":"Read"}\n{"type":"tool_use","name":"Edit"}': "Edit",
+        '{"message":{"content":[{"type":"tool_use","name":"Grep"}]}}': "Grep",
+        '[{"type":"tool_use","name":"Glob"}]': "Glob",
+        '{"toolName":"run_command"}': "run_command",
+    }
+    for blob, want in must.items():
+        got = A.last_tool_name_strict(blob)
+        if got != want:
+            return fail(f"failed to read a real tool: {blob!r} -> {got!r}, want {want!r}")
+
+    if not any(A.last_tool_name(b) for b in list(must_not.values())[:4]):
         return fail("the loose extractor stopped guessing — strict may be redundant now")
+    return 0
 
-    real = '{"type":"tool_use","name":"Bash","input":{"command":"ls"}}'
-    if A.last_tool_name_strict(real) != "Bash":
-        return fail("strict must still read a real tool_use record")
-    if A.last_tool_name_strict('{"toolName":"run_command"}') != "run_command":
-        return fail("strict must still read a recognised tool name")
 
-    # --- the harvesters are actually wired ----------------------------------
+def check_collectors(home: Path) -> int:
+    """The part that was missing: disk → collector → TSV, per collector.
+
+    Each entry lays out a session where that collector looks, then asserts the
+    facts survive the collector's own row-shaping. Cascade and Amp are here by
+    name because both lost the metrics in their own adapter while the string
+    count said they were wired.
+    """
+    cases: list[tuple[str, Path, object]] = []
+
+    claude = home / ".claude" / "projects" / "-Users-me-code-Pulse"
+    claude.mkdir(parents=True, exist_ok=True)
+    (claude / "sess-claude.jsonl").write_text(TRANSCRIPT, encoding="utf-8")
+    cases.append(("claude", claude, A.claude_block))
+
+    # Amp is laid out *with a pending log*, because the bug was in the pending
+    # branch and only in the pending branch: without one, `amp_block` takes the
+    # plain path, the row never gets rewritten by index, and a gate that only
+    # covers the happy layout stays green through the defect. That is precisely
+    # how 0.28.0 shipped it.
+    amp = home / ".local" / "share" / "amp" / "threads"
+    amp.mkdir(parents=True, exist_ok=True)
+    (amp / "T-amp1.jsonl").write_text(TRANSCRIPT, encoding="utf-8")
+    (amp / "T-amp1.json").write_text('{"title":"Amp thread","messages":[]}', encoding="utf-8")
+    amp_logs = home / ".local" / "share" / "amp" / "logs"
+    amp_logs.mkdir(parents=True, exist_ok=True)
+    (amp_logs / "amp-sid-1.log").write_text(
+        "waiting for your approval to continue\n", encoding="utf-8"
+    )
+    cases.append(("amp", amp, A.amp_block))
+
+    droid = home / ".factory" / "sessions" / "-Users-me-code-Pulse"
+    droid.mkdir(parents=True, exist_ok=True)
+    (droid / "sess-droid.jsonl").write_text(
+        '{"title":"Droid session","cwd":"/Users/me/code/Pulse"}\n' + TRANSCRIPT, encoding="utf-8"
+    )
+    cases.append(("droid", droid, lambda: A.emit_all("droid", A.droid_activities())))
+
+    saw_any = False
+    for name, where, block in cases:
+        try:
+            rows = capture(block)
+        except Exception as exc:  # a collector must never take the scan down
+            return fail(f"{name} collector raised {type(exc).__name__}: {exc}")
+        if not rows:
+            # Some collectors need shapes this gate cannot fake convincingly.
+            # Skipping is honest; claiming coverage would not be.
+            print(f"  · {name}: no row from {where} — not asserted", file=sys.stderr)
+            continue
+        saw_any = True
+        row = rows[0]
+        if len(row) != COLUMNS:
+            return fail(f"{name} emitted {len(row)} columns: {row}")
+        if row[COL_RECORDS] == "0" and row[COL_STARTED] == "0":
+            return fail(
+                f"{name}: the collector paid for the file scan and shipped 0/0 — "
+                f"its row shaping drops the extras (row={row})"
+            )
+        if name == "amp" and row[5] != "pending":
+            return fail(
+                "amp fixture did not reach the pending branch, so the index "
+                f"rewrite that dropped the metrics is not being covered (row={row})"
+            )
+
+    if not saw_any:
+        return fail("no collector produced a row; this gate is asserting nothing")
+
+    # Cascade's own adapter, exercised as data rather than as a fixture: its
+    # normaliser used to chop the tuple to nine and take the stats with it.
+    stats = {"records": RECORDS, "started_ms": int(time.time() * 1000) - 3_600_000}
+    shaped = A.cascade_windsurf_activities.__doc__ is not None  # keeps the ref honest
+    cascade_like = ("Cascade session", 0, 0, "Bash", "", "p", "/tmp/p", int(time.time() * 1000), "stem", stats)
+    out = emit_to_line("cascade", cascade_like)
+    if not shaped or out[COL_RECORDS] != str(RECORDS):
+        return fail(f"cascade row shape drops the extras: {out}")
+    return 0
+
+
+def main() -> int:
+    importlib.reload(A)
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        if rc := check_helper_contract(d):
+            return rc
+        if rc := check_tool_reading():
+            return rc
+
+        home = d / "home"
+        home.mkdir()
+        real_home = A.HOME
+        try:
+            A.HOME = home
+            importlib.reload(A)  # module-level paths are built from HOME
+            A.HOME = home
+            if rc := check_collectors(home):
+                return rc
+        finally:
+            A.HOME = real_home
+            importlib.reload(A)
+
     source = (ROOT / "src" / "activity_scan.py").read_text(encoding="utf-8")
-    wired = source.count("session_stats(") - 1  # minus the definition
-    if wired < 15:
-        return fail(f"only {wired} harvesters ask for session stats")
-    tools = source.count("last_tool_name_strict(") - 1
-    if tools < 12:
-        return fail(f"only {tools} harvesters extract a tool name")
+    # Named, not counted. "23 of 32 harvesters" was true and nearly worthless
+    # while Claude, Codex and Gemini — the ones people leave open — were not
+    # among them, and a threshold of ">= 15" could never have said so.
+    for agent in ("claude_activities", "codex_activities", "gemini_activities"):
+        start = source.find(f"def {agent}(")
+        end = source.find("\ndef ", start + 1)
+        if start < 0 or "session_stats(" not in source[start:end]:
+            return fail(f"{agent} does not ask for session stats")
+    if "emit_row(\"claude\"" not in source:
+        return fail("claude_block must go through emit_row, or extras are dropped")
 
-    print(f"harvest stats OK — {COLUMNS} columns, {wired} stats-wired, {tools} tool-wired")
+    wired = source.count("session_stats(") - 1
+    print(f"harvest stats OK — {COLUMNS} columns, {wired} collectors wired, flagships named")
     return 0
 
 

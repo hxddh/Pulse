@@ -2,7 +2,7 @@
 """Best-effort local harvest of agent task/tokens/tools/skills for Pulse.
 Prints one TSV line per session/agent:
   agent_id<TAB>task<TAB>tokens_in<TAB>tokens_out<TAB>last_tool<TAB>last_skill<TAB>project<TAB>cwd
-  <TAB>mtime_ms<TAB>sub_run<TAB>sub_total<TAB>session_id<TAB>turns<TAB>started_ms
+  <TAB>mtime_ms<TAB>sub_run<TAB>sub_total<TAB>session_id<TAB>records<TAB>started_ms
 """
 from __future__ import annotations
 
@@ -15,6 +15,26 @@ import time
 from pathlib import Path
 
 HOME = Path.home()
+
+# Bytes the whole scan may spend counting records, across every collector.
+#
+# The per-file cap alone was not a bound: nineteen call sites, several looping
+# over eight or ten files each, could in principle read hundreds of megabytes
+# inside a 2.5 s harvest window (`ActivityHarvest.harvestTimeoutSec`). On
+# timeout the partial output is treated as a good scan, so a slow collector
+# does not just lose its own row — it can drop every collector after it. That
+# breaks "one agent's harvest must never blind the others".
+SCAN_READ_BUDGET_BYTES = 24_000_000
+_scan_bytes_spent = 0
+
+
+def _spend_scan_budget(size: int) -> bool:
+    """Reserve `size` bytes of the scan-wide read budget."""
+    global _scan_bytes_spent
+    if _scan_bytes_spent + size > SCAN_READ_BUDGET_BYTES:
+        return False
+    _scan_bytes_spent += size
+    return True
 
 
 def newest(paths: list[str], limit: int = 1) -> list[Path]:
@@ -150,25 +170,77 @@ def last_tool_name(text: str) -> str:
     return ""
 
 
+def _tool_use_names(value) -> list[str]:
+    """Every `name` belonging to a dict that is itself a `tool_use` record."""
+    found: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "tool_use" and isinstance(node.get("name"), str):
+                found.append(node["name"])
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    return found
+
+
 def last_tool_name_strict(text: str) -> str:
-    """`last_tool_name` without its guessing tier.
+    """The tool a transcript last recorded, read rather than pattern-matched.
 
-    The general version ends with "any `\"name\": \"...\"` that is not one of six
-    keys we know are not tools". That is fine for the four agents it was
-    written against, whose files are transcripts. Pointed at the other
-    twenty-six — VS Code globalStorage blobs, sqlite dumps, IDE state files —
-    it would happily surface a model id or a config key in the slot that says
-    "this agent is currently running X".
+    This existed to stop the loose extractor guessing, and then guessed anyway.
+    Its first tier was `"type":"tool_use"` followed by *any* `"name"` within two
+    hundred characters, which is not the same claim at all:
 
-    That is precisely the inference this product refuses to make everywhere
-    else: Waiting comes only from hooks or an explicit `pending`, never from a
-    guess. A tool name is the same kind of claim. Agents whose transcripts use
-    the structured `tool_use` shape, or name a tool we can recognise, get one;
-    the rest show nothing, which is the honest answer.
+        {"type":"tool_use","input":{"name":"production"}}   -> "production"
+        {"type":"tool_use","id":"x"}\n{"role":"user","name":"alice"} -> "alice"
+
+    The first reads a nested argument; the second reaches into the *next*
+    record. Both were shown as "this agent is currently running X". The gate
+    that was supposed to prevent exactly this only exercised the fallback tier,
+    because none of its four blobs began with a `tool_use`.
+
+    So the record is decoded and inspected: a name counts only when it is a
+    string on the same dictionary that carries `type == "tool_use"`. Nesting
+    cannot smuggle one in and a neighbouring record cannot lend one.
+
+    Transcripts are read newest-first, because the last tool is the point.
     """
-    names = re.findall(r'"type"\s*:\s*"tool_use"[\s\S]{0,200}?"name"\s*:\s*"([^"]+)"', text)
-    if names:
-        return names[-1][:40]
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw.startswith(("{", "[")):
+            continue
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            # `tail_bytes` cuts mid-record; a torn line is not a tool.
+            continue
+        names = _tool_use_names(obj)
+        if names:
+            return names[-1][:40]
+
+    # Whole-file JSON (some agents write one array or object, not JSONL).
+    stripped = text.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            names = _tool_use_names(json.loads(stripped))
+            if names:
+                return names[-1][:40]
+        except Exception:
+            pass
+
+    # Compatibility tier: a name we recognise as a tool, on a key that means
+    # "tool". Bounded by a whitelist, so it cannot invent a new one — but it
+    # does match a `tool_result` as readily as a `tool_use`, which is why this
+    # column is *last* tool and not *running* tool. Nothing here can tell you
+    # whether the process is still executing it.
     names = re.findall(
         r'"(?:name|tool|toolName|tool_name)"\s*:\s*"'
         r"(exec_command|apply_patch|shell|terminal|Bash|Read|Write|Edit|MultiEdit|"
@@ -179,7 +251,6 @@ def last_tool_name_strict(text: str) -> str:
     if names:
         return names[-1][:40]
     return ""
-
 
 def last_skill_name(text: str) -> str:
     m = re.findall(r'"name"\s*:\s*"Skill"[\s\S]{0,300}?"skill"\s*:\s*"([^"]+)"', text)
@@ -431,7 +502,7 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
         task = session_title_from_text(text) or (task_hint or "")
         # Prefer last usage snapshot (context size now) — never sum every turn.
         tin, tout = last_usage_tokens(text)
-        tool = last_tool_name(text)
+        tool = last_tool_name_strict(text)
         skill = last_skill_name(text)
         if checklist and not skill:
             skill = checklist
@@ -452,6 +523,7 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
                     sub_run,
                     sub_total,
                     f.stem,
+                    session_stats(f, per_session=True),
                 )
             )
         if len(out) >= 2:
@@ -482,7 +554,7 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 tin = int(im.group(1))
             if om:
                 tout = int(om.group(1))
-        tool = last_tool_name(text)
+        tool = last_tool_name_strict(text)
         skill = last_skill_name(text)
         cwd = extract_field(text, "cwd") or extract_field(text, "workdir") or ""
         project = short_project(cwd) if cwd else ""
@@ -510,6 +582,7 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                     (cwd or "")[:240],
                     file_mtime_ms(f),
                     f.stem,
+                    session_stats(f, per_session=True),
                 )
             )
         if len(out) >= 2:
@@ -697,7 +770,7 @@ def pi_activity() -> tuple:
     task = session_title_from_text(text) or extract_field(text, "text") or extract_field(text, "content") or ""
     tin = sum_int_fields(text, "input_tokens")
     tout = sum_int_fields(text, "output_tokens")
-    tool = last_tool_name(text)
+    tool = last_tool_name_strict(text)
     skill = last_skill_name(text)
     if text_looks_pending(text):
         skill = "pending"
@@ -760,7 +833,7 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 continue
             seen.add(key)
             skill = "pending" if (json_looks_pending(obj) or text_looks_pending(json.dumps(obj)[-8000:])) else ""
-            out.append((title[:160] or "Amp thread", 0, 0, "", skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), session_stats(f)))
+            out.append((title[:160] or "Amp thread", 0, 0, "", skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), session_stats(f, per_session=True)))
             if len(out) >= 2:
                 return out
 
@@ -995,7 +1068,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list
             skill = "pending" if pending else ""
             if not (task or pending or cwd):
                 continue
-            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], cwd[:240], file_mtime_ms(f), sid or f.stem[:80], session_stats(f)))
+            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], cwd[:240], file_mtime_ms(f), sid or f.stem[:80], session_stats(f, per_session=False)))
             if len(out) >= limit:
                 return out
     return out
@@ -1042,7 +1115,7 @@ def continue_activities() -> list[tuple]:
             for x in ("awaiting_user", "needs_response", "tool_permission", "confirmation")
         )
         skill = "pending" if pending else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f)))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -1100,7 +1173,7 @@ def copilot_activities() -> list[tuple]:
         )
         skill = "pending" if pending else ""
         mtime = file_mtime_ms(events if events.is_file() else sdir)
-        stats = session_stats(events if events.is_file() else sdir)
+        stats = session_stats(events if events.is_file() else sdir, per_session=True)
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sdir.name[:80], stats))
         if len(out) >= 2:
             break
@@ -1133,7 +1206,7 @@ def amazon_q_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f))))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -1171,7 +1244,7 @@ def zed_agent_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or extract_field(text, "project_path") or extract_field(text, "worktree") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f))))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -1207,7 +1280,7 @@ def openhands_activities() -> list[tuple]:
             or "confirmation" in low[-3000:]
             or '"action":"message"' in low[-2000:] and "wait" in low[-2000:]
         ) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f))))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -1285,7 +1358,7 @@ def kilo_activities() -> list[tuple]:
             skill = "pending" if pending else ""
             if not (task or pending):
                 continue
-            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f)))
+            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
             if len(out) >= 2:
                 return out[:2]
     return out[:2]
@@ -1318,16 +1391,12 @@ def cascade_windsurf_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        agent = "cascade"
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], agent, session_stats(Path(f))))
-    # Normalize to 9-tuples without agent tag for emit_row; agent chosen in main
-    norm: list[tuple] = []
-    for row in out[:2]:
-        if len(row) >= 10:
-            norm.append(row[:9])
-        else:
-            norm.append(row if len(row) >= 9 else row)
-    return norm[:2]
+        # No trailing `agent` field. It was added here and chopped off two
+        # lines later by `row[:9]`, which also took the stats dict with it —
+        # so Cascade paid for the file scan every tick and shipped 0/0. The
+        # agent name is chosen by `cascade_block` anyway.
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
+    return out[:2]
 
 
 def augment_activities() -> list[tuple]:
@@ -1345,7 +1414,7 @@ def augment_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f))))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -1372,7 +1441,7 @@ def trae_activities() -> list[tuple]:
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(f.stem)
             skill = "pending" if text_looks_pending(text) else ""
-            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f)))
+            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
             if len(out) >= 2:
                 return out
     return out
@@ -1407,7 +1476,7 @@ def warp_agent_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or extract_field(text, "working_directory") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f))))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -1425,7 +1494,7 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = 2) -> list[t
         cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f))))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=False)))
         if len(out) >= limit:
             break
     return out
@@ -1498,7 +1567,7 @@ def droid_activities() -> list[tuple]:
             cwd = decode_claude_project_dir(enc) if enc.startswith("-") else ""
         project = short_project(cwd) if cwd else short_project(f.parent.name)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), sid or f.stem[:80], session_stats(f)))
+        out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), sid or f.stem[:80], session_stats(f, per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -1549,7 +1618,7 @@ def command_code_activities() -> list[tuple]:
             if any(x in low for x in ("permission", "awaiting", "needs_approval", "ask_user", '"ask"')):
                 skill = "pending"
         mtime = file_mtime_ms(jl if jl.is_file() else mp)
-        stats = session_stats(jl if jl.is_file() else mp)
+        stats = session_stats(jl if jl.is_file() else mp, per_session=True)
         seen.add(sid)
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sid[:80], stats))
         if len(out) >= 2:
@@ -1797,6 +1866,8 @@ def gemini_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 project[:48],
                 (cwd or "")[:240],
                 file_mtime_ms(f),
+                f.stem[:80],
+                session_stats(f, per_session=True),
             )
         )
         if len(out) >= 2:
@@ -1867,24 +1938,31 @@ def opencode_activities() -> list[tuple[str, int, int, str, str, str, str]]:
     return out
 
 
-def session_stats(path: Path, budget_bytes: int = 8_000_000) -> dict:
-    """`{"turns": n, "started_ms": t}` for a file-backed session.
+def session_stats(path: Path, per_session: bool, budget_bytes: int = 2_000_000) -> dict:
+    """`{"records": n, "started_ms": t}` for a file that **is** one session.
 
-    These are the two facts every file-backed agent can answer and none of them
-    were answering. Before this, 26 of 32 harvesters produced nothing that
-    changes while work happens — a row could only ever say a title and a path,
-    both fixed for the session's whole life, so a session at minute forty
-    looked exactly like the same session at minute one.
+    `per_session` has no default on purpose. The first version computed both
+    facts from any path it was handed, and `harvest_extension_storage` hands it
+    a shared container: that collector reads a globalStorage blob holding a list
+    of sessions, takes `obj[-1]`, and would then have reported the *container
+    file's* birth time as that session's start and the container's whole line
+    count as its records. A VS Code storage file created in March would have
+    made a session opened five minutes ago read as four months old.
 
-    `turns` is the record count: for JSONL that is the line count, which is a
-    genuine measure of how much has happened and costs one streaming pass.
-    Past `budget_bytes` it returns 0 rather than a guess — an unknown count is
-    reported as unknown, never estimated, the same rule Waiting follows.
+    That is a fabricated fact, which is the one thing this product does not do.
+    So the flag is required at every call site, and a collector that cannot
+    honestly claim "this file is this session" passes False and reports nothing.
 
-    `started_ms` is the file's birth time, so a row can say how long the
-    session has been going rather than only when it last moved.
+    `records` is the record count, not a count of conversational turns: a JSONL
+    transcript interleaves user messages, assistant messages, tool calls, tool
+    results and token events, so thirty-four records is not thirty-four
+    exchanges. It shipped in 0.28.0 labelled "turns", which overclaimed.
+
+    Past `budget_bytes` it returns unknown rather than an estimate.
     """
     out: dict = {}
+    if not per_session:
+        return out
     try:
         st = path.stat()
     except OSError:
@@ -1898,17 +1976,17 @@ def session_stats(path: Path, budget_bytes: int = 8_000_000) -> dict:
             out["started_ms"] = started
 
     if path.suffix.lower() in (".jsonl", ".ndjson") and st.st_size <= budget_bytes:
-        try:
-            turns = 0
-            with path.open("rb") as fh:
-                while chunk := fh.read(1 << 20):
-                    turns += chunk.count(b"\n")
-            if turns > 0:
-                out["turns"] = turns
-        except OSError:
-            pass
+        if _spend_scan_budget(st.st_size):
+            try:
+                records = 0
+                with path.open("rb") as fh:
+                    while chunk := fh.read(1 << 20):
+                        records += chunk.count(b"\n")
+                if records > 0:
+                    out["records"] = records
+            except OSError:
+                pass
     return out
-
 
 def emit(
     agent: str,
@@ -1923,7 +2001,7 @@ def emit(
     sub_run: int = 0,
     sub_total: int = 0,
     session_id: str = "",
-    turns: int = 0,
+    records: int = 0,
     started_ms: int = 0,
 ) -> None:
     def clean(s: str) -> str:
@@ -1939,7 +2017,7 @@ def emit(
     print(
         f"{agent}\t{clean(task)}\t{tin}\t{tout}\t{clean(tool)}\t{clean(skill)}\t"
         f"{clean(project)}\t{clean(cwd)}\t{mtime_ms}\t{sub_run}\t{sub_total}\t{clean(session_id)}\t"
-        f"{turns}\t{started_ms}"
+        f"{records}\t{started_ms}"
     )
 
 
@@ -1957,11 +2035,11 @@ def emit_row(agent: str, row: tuple, path: Path | None = None) -> None:
     if row and isinstance(row[-1], dict):
         extra = row[-1]
         row = row[:-1]
-    turns = int(extra.get("turns") or 0)
+    records = int(extra.get("records") or 0)
     started_ms = int(extra.get("started_ms") or 0)
 
     def emit_x(*args) -> None:
-        emit(*args, turns=turns, started_ms=started_ms)
+        emit(*args, records=records, started_ms=started_ms)
 
     if len(row) >= 12:
         emit_x(agent, *row[:12])
@@ -2078,7 +2156,7 @@ def aider_activities() -> list[tuple]:
         skill = "pending" if pending else ""
         if not (task or project or pending):
             continue
-        out.append((task or "Aider session", 0, 0, last_tool_name_strict(text), skill, project[:48], cwd[:240], file_mtime_ms(Path(f)), Path(f).parent.name, session_stats(Path(f))))
+        out.append((task or "Aider session", 0, 0, last_tool_name_strict(text), skill, project[:48], cwd[:240], file_mtime_ms(Path(f)), Path(f).parent.name, session_stats(Path(f), per_session=False)))
         if len(out) >= 2:
             break
     return out
@@ -2134,7 +2212,7 @@ def goose_activities() -> list[tuple]:
         seen.add(sid)
         project = short_project(cwd)
         skill = "pending" if pending else ""
-        out.append((title[:160] or "Goose session", 0, 0, "", skill, project[:48], cwd[:240], file_mtime_ms(f), sid[:80], session_stats(f)))
+        out.append((title[:160] or "Goose session", 0, 0, "", skill, project[:48], cwd[:240], file_mtime_ms(f), sid[:80], session_stats(f, per_session=True)))
         if len(out) >= 2:
             break
     return out
@@ -2161,8 +2239,12 @@ def emit_all(agent: str, rows) -> None:
 
 
 def claude_block() -> None:
+    # `emit`, not `emit_row`, was the reason Claude could never carry the new
+    # facts: the extras sentinel is unpacked by `emit_row`, and this path
+    # skipped it entirely. Claude is the agent most people actually run, so
+    # "23 of 32 harvesters wired" meant very little while this line stood.
     for row in claude_activities():
-        emit("claude", *row)
+        emit_row("claude", row)
 
 
 def grok_pi_block() -> None:
@@ -2178,8 +2260,15 @@ def amp_block() -> None:
     if amp_rows:
         for i, row in enumerate(amp_rows):
             if i == 0 and amp_skill:
-                # inject pending into skill field (index 4)
+                # Lift the extras off first.
+                #
+                # This rewrites positions by index, and the stats dict sits at
+                # index 8 on an Amp thread row — so `lst[8] = amp_sid` wrote
+                # the session id straight over it and the metrics vanished
+                # whenever a pending was detected. Positional surgery and a
+                # trailing sentinel do not mix; separate them, then reattach.
                 lst = list(row)
+                extras = lst.pop() if lst and isinstance(lst[-1], dict) else None
                 while len(lst) < 8:
                     lst.append("" if len(lst) != 7 else 0)
                 if len(lst) >= 5:
@@ -2190,6 +2279,8 @@ def amp_block() -> None:
                     # 8-tuple → add session
                     if len(lst) == 8:
                         lst.append(amp_sid)
+                if extras is not None:
+                    lst.append(extras)
                 emit_row("amp", tuple(lst))
             else:
                 emit_row("amp", row)
