@@ -326,13 +326,14 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.rows[0].waiting, "Waiting always leads")
     }
 
-    func testTitledSessionsSortAboveProcessOnlyRows() {
+    func testActiveRowsSortAboveRecentTitledSessions() {
         let r = build(
             procs: [.init(id: .aider, count: 1, viaWarp: false, pid: 4)],
             harvest: [harvest(.goose, task: "Real title", session: "g1")]
         )
-        XCTAssertEqual(r.rows[0].agent, .goose)
-        XCTAssertTrue(r.rows[1].isProcessOnly)
+        XCTAssertEqual(r.rows[0].agent, .aider)
+        XCTAssertTrue(r.rows[0].isProcessOnly)
+        XCTAssertEqual(r.rows[1].agent, .goose)
     }
 
     // MARK: Glance encoding
@@ -340,7 +341,7 @@ final class SnapshotBuilderTests: XCTestCase {
     func testSingleWaitingNamesTheAgent() {
         let r = build(harvest: [harvest(.claude, task: "x", session: "s1", skill: "pending")])
         XCTAssertEqual(r.snapshot.title, "Claude…")
-        XCTAssertEqual(r.snapshot.headerTitle, L10n.t(.needsYou, .en))
+        XCTAssertEqual(r.snapshot.headerTitle, "1 \(L10n.t(.waitingN, .en))")
     }
 
     /// A fresh wait says "now", which the lamp already conveys. The label
@@ -379,7 +380,7 @@ final class SnapshotBuilderTests: XCTestCase {
             context: context(lang: .zh)
         )
         XCTAssertNotEqual(en.snapshot.headerTitle, zh.snapshot.headerTitle)
-        XCTAssertEqual(zh.snapshot.headerTitle, L10n.t(.needsYou, .zh))
+        XCTAssertEqual(zh.snapshot.headerTitle, "1 \(L10n.t(.waitingN, .zh))")
     }
 
     // MARK: Edges

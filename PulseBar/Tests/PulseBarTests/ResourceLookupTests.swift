@@ -535,7 +535,7 @@ final class RowMetricsTests: XCTestCase {
 
     @MainActor
     func testTokenSnapshotIsVisibleByDefault() {
-        let line = store().rowObservationLine(row(inTok: 12_000, outTok: 3_000))
+        let line = store().rowMetrics(row(inTok: 12_000, outTok: 3_000))
         XCTAssertTrue(line.contains("Latest model call"), line)
         XCTAssertTrue(line.contains("12k input"), line)
         XCTAssertTrue(line.contains("3.0k output"), line)
@@ -543,7 +543,7 @@ final class RowMetricsTests: XCTestCase {
 
     @MainActor
     func testSubagentProgressIsVisibleByDefault() {
-        XCTAssertTrue(store().rowObservationLine(row(subRunning: 2, subTotal: 5)).contains("2"))
+        XCTAssertTrue(store().rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
     }
 
     @MainActor
@@ -558,7 +558,7 @@ final class RowMetricsTests: XCTestCase {
 
     @MainActor
     func testRecordCountIsVisibleByDefault() {
-        XCTAssertTrue(store().rowObservationLine(row(records: 34)).contains("34"))
+        XCTAssertTrue(store().rowMetrics(row(records: 34)).contains("34"))
     }
 
     /// On a waiting row the question is the point; numbers beside it are noise
@@ -578,22 +578,23 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertEqual(store().rowObservationLine(loaded), "", "a waiting row carries no telemetry line")
     }
 
-    /// The same row, not waiting, carries all bounded session evidence on one
-    /// always-visible observation line.
+    /// The same row, not waiting, keeps stable model context separate from one
+    /// strongest progress fact. Session age shares the context line instead of
+    /// creating another row.
     @MainActor
-    func testTheSameRowNotWaitingCarriesEverything() {
+    func testTheSameRowNotWaitingPrioritisesOneProgressFact() {
         let loaded = row(
             inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
             records: 34, startedAgo: 3 * 3600
         )
         let metrics = store().rowMetrics(loaded)
         let observation = store().rowObservationLine(loaded)
-        XCTAssertEqual(metrics, "", "session age must not create a fifth line")
-        XCTAssertTrue(observation.contains("3h"), observation)
-        XCTAssertTrue(observation.contains("12k"), observation)
-        XCTAssertTrue(observation.contains("3.0k"), observation)
-        XCTAssertTrue(observation.contains("2"), observation)
-        XCTAssertTrue(observation.contains("34"), observation)
+        let context = store().rowContextLine(loaded)
+        XCTAssertTrue(metrics.contains("2 of 5"), metrics)
+        XCTAssertEqual(observation, "")
+        XCTAssertTrue(context.contains("3h"), context)
+        XCTAssertFalse(metrics.contains("12k"), metrics)
+        XCTAssertFalse(metrics.contains("34"), metrics)
     }
 
     /// Nothing to say means no text, not a placeholder.
@@ -651,14 +652,16 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
 
         let context = store().rowContextLine(r)
-        XCTAssertTrue(context.contains("Turn complete"), context)
         XCTAssertFalse(context.localizedCaseInsensitiveContains("command"), context)
+        XCTAssertTrue(store().rowNowLine(r).contains("Turn complete"))
 
         let observation = store().rowObservationLine(r)
         XCTAssertTrue(observation.contains("Build Plan"), observation)
         XCTAssertTrue(observation.contains("Model grok 4.5"), observation)
-        XCTAssertTrue(observation.contains("1 failure"), observation)
-        XCTAssertTrue(observation.contains("Context 27%"), observation)
+        XCTAssertTrue(store().rowMetrics(r).contains("1 failure"))
+
+        r.errors = 0
+        XCTAssertTrue(store().rowMetrics(r).contains("Context 27%"))
     }
 
     @MainActor
