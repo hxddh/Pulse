@@ -766,7 +766,11 @@ final class StatusStore: ObservableObject {
     /// disclosure. This is deliberately bounded to four facts and excludes
     /// diagnostic-only values such as the full cwd and session identifier.
     func rowObservationLine(_ row: AgentRow) -> String {
-        guard !row.waiting, !row.isProcessOnly else { return "" }
+        // A process-only row can still carry real subagent progress, tokens or
+        // records. Suppressing the whole line by presentation category hid the
+        // only useful facts on exactly those rows. A bare process naturally
+        // returns an empty line because none of the checks below add anything.
+        guard !row.waiting else { return "" }
         var bits: [String] = []
         if let tokens = row.tokenLine { bits.append(tokens) }
         if let sub = row.subagentLine { bits.append(sub) }
