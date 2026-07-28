@@ -102,6 +102,39 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertNil(r.snapshot.probeError)
     }
 
+    func testStructuredObservabilityFactsSurviveMerge() {
+        var source = harvest(
+            .grok,
+            task: "Fix multipart upload",
+            session: "grok-1",
+            cwd: "/Users/me/Pulse"
+        )
+        source.phase = "testing"
+        source.outcome = "completed"
+        source.model = "grok-4.5"
+        source.mode = "build-plan"
+        source.errors = 1
+        source.files = 3
+        source.contextPercent = 27
+        source.progressDone = 4
+
+        let result = build(procs: [hit(.grok)], harvest: [source])
+        let row = try! XCTUnwrap(result.rows.first)
+        XCTAssertEqual(row.phase, "testing")
+        XCTAssertEqual(row.outcome, "completed")
+        XCTAssertEqual(row.model, "grok-4.5")
+        XCTAssertEqual(row.mode, "build-plan")
+        XCTAssertEqual(row.errors, 1)
+        XCTAssertEqual(row.files, 3)
+        XCTAssertEqual(row.contextPercent, 27)
+        XCTAssertEqual(row.progressDone, 4)
+        XCTAssertEqual(row.section, .recent, "a completed turn is not still Running just because its CLI stays open")
+        XCTAssertFalse(row.isStalled, "completed work cannot simultaneously be stalled")
+        XCTAssertEqual(result.snapshot.sectionTotals[.running], 0)
+        XCTAssertEqual(result.snapshot.sectionTotals[.recent], 1)
+        XCTAssertEqual(result.snapshot.glance, .idle)
+    }
+
     func testErrorOnlyWhenHarvestFailedAndNothingIsLive() {
         let r = build(unreliable: true)
         XCTAssertEqual(r.snapshot.glance, .error)

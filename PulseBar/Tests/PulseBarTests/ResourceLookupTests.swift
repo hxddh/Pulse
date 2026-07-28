@@ -605,6 +605,40 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testGenericCommandIsNotPromotedAsObservability() {
+        var r = row()
+        r.task = "Improve observability"
+        r.tool = "run_terminal_command"
+        r.liveProcess = true
+        let line = store().rowContextLine(r)
+        XCTAssertFalse(line.contains("Last action"), line)
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("command"), line)
+    }
+
+    @MainActor
+    func testStructuredPhaseBeatsRawToolAndRichFactsStayVisible() {
+        var r = row()
+        r.task = "Fix multipart upload"
+        r.tool = "run_terminal_command"
+        r.phase = "turn_complete"
+        r.model = "grok-4.5"
+        r.mode = "grok-build-plan"
+        r.errors = 1
+        r.contextPercent = 27
+        r.liveProcess = true
+
+        let context = store().rowContextLine(r)
+        XCTAssertTrue(context.contains("Turn complete"), context)
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("command"), context)
+
+        let observation = store().rowObservationLine(r)
+        XCTAssertTrue(observation.contains("Build Plan"), observation)
+        XCTAssertTrue(observation.contains("Model grok 4.5"), observation)
+        XCTAssertTrue(observation.contains("1 failure"), observation)
+        XCTAssertTrue(observation.contains("Context 27%"), observation)
+    }
+
+    @MainActor
     func testProcessOnlyAppStatesTheVisibilityLimit() {
         var r = row()
         r.liveProcess = true

@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.32.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.33.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -79,6 +79,12 @@ Pulse 把这件事变成余光可见：
 有界遍历这些结构，只接受同时带会话上下文、标识或绝对工作区的事实；不会把 profile、
 model、theme 的 `name/title` 当成任务。两者若没有当前数据都会明确降级；CLI 进程还能
 补充其真实工作目录与进程时长，但不会用进程数冒充会话信息。
+
+Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、模型/模式、进度、失败数、
+涉及文件和上下文占用。各 Agent 的本地格式能提供什么、缺什么，逐项记录在
+[`docs/observability-matrix.md`](docs/observability-matrix.md)。默认界面不会直接展示
+`exec`、`run_terminal_command` 或内部 skill/script 名；这类实现细节只有在能可靠转换为
+「正在规划 / 编辑 / 响应 / 等待权限 / 本轮完成」等用户可理解的阶段时才有可观测价值。
 
 这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.harvestSource` 和
 `AgentID.waitingSource` 校验，

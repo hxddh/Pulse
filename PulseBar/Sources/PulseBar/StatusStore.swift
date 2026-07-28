@@ -725,7 +725,9 @@ final class StatusStore: ObservableObject {
         var bits: [String] = []
         let path = row.displayPath
         if !path.isEmpty, !omitPath { bits.append(path) }
-        if let tool = liveTool(row) {
+        if let phase = readablePhase(row.phase) {
+            bits.append(phase)
+        } else if let tool = liveTool(row), usefulAction(tool) {
             bits.append(String(format: tr(.lastAction), readableAction(tool)))
         }
         let ago = lastActivityLabel(row)
@@ -776,6 +778,26 @@ final class StatusStore: ObservableObject {
         // returns an empty line because none of the checks below add anything.
         guard !row.waiting else { return "" }
         var bits: [String] = []
+        if row.errors > 0 {
+            bits.append(
+                row.errors == 1
+                    ? tr(.errorFactOne)
+                    : String(format: tr(.errorsFact), row.errors)
+            )
+        } else if let outcome = readableFailure(row.outcome) {
+            bits.append(outcome)
+        }
+        if row.progressTotal > 0 {
+            bits.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
+        } else if row.progressDone > 0 {
+            bits.append(String(format: tr(.turnsFact), row.progressDone))
+        }
+        if row.files > 0 { bits.append(String(format: tr(.filesFact), row.files)) }
+        if row.contextPercent > 0 { bits.append(String(format: tr(.contextFact), row.contextPercent)) }
+        let mode = readableMode(row.mode)
+        if !mode.isEmpty { bits.append(mode) }
+        let model = readableModel(row.model)
+        if !model.isEmpty { bits.append(String(format: tr(.modelFact), model)) }
         // Start age belongs with the other session evidence. Keeping it on its
         // own line created five-line rows even when only one numeric fact was
         // available.
@@ -830,13 +852,72 @@ final class StatusStore: ObservableObject {
         return tool
     }
 
+    /// Raw tool identifiers are diagnostic evidence. Only actions that convey
+    /// a user-recognisable workflow phase earn scarce default-row space.
+    private func usefulAction(_ raw: String) -> Bool {
+        let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if low.isEmpty || low == "exec" || low == "bash" || low == "shell" { return false }
+        if low.contains("command") || low.contains("terminal") { return false }
+        return [
+            "plan", "todo", "patch", "edit", "write", "image", "screenshot",
+            "search", "web", "browser", "read", "glob", "grep", "automation", "computer",
+        ].contains { low.contains($0) }
+    }
+
+    private func readablePhase(_ raw: String) -> String? {
+        let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if low.isEmpty { return nil }
+        if low.contains("permission") { return tr(.phaseWaitingPermission) }
+        if low.contains("turn_complete") || low == "completed" || low == "complete" {
+            return tr(.phaseTurnComplete)
+        }
+        if low.contains("stream") || low.contains("respond") || low.contains("generat") {
+            return tr(.phaseResponding)
+        }
+        if low.contains("test") || low.contains("verify") || low.contains("check") {
+            return tr(.phaseTesting)
+        }
+        if low.contains("plan") { return tr(.phasePlanning) }
+        if low.contains("search") || low.contains("research") { return tr(.actionResearch) }
+        if low.contains("read") { return tr(.actionReading) }
+        if low.contains("edit") || low.contains("write") { return tr(.actionEditing) }
+        if low.contains("work") || low.contains("run") || low.contains("tool") {
+            return tr(.phaseWorking)
+        }
+        return nil
+    }
+
+    private func readableMode(_ raw: String) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return "" }
+        value = value
+            .replacingOccurrences(of: "grok-", with: "", options: [.caseInsensitive, .anchored])
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        return value.split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    private func readableModel(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: " ")
+    }
+
+    private func readableFailure(_ raw: String) -> String? {
+        let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if low.contains("fail") || low.contains("error") { return tr(.outcomeFailed) }
+        if low.contains("cancel") || low.contains("abort") { return tr(.outcomeCancelled) }
+        return nil
+    }
+
     /// Translate implementation-level tool identifiers into an action a
     /// person can scan. This is intentionally phrased as the *last* action:
     /// harvest observes an event, not whether that action is still executing.
     private func readableAction(_ raw: String) -> String {
         let tool = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let low = tool.lowercased()
-        if low.contains("plan") { return tr(.actionPlanning) }
+        if low.contains("plan") || low.contains("todo") { return tr(.actionPlanning) }
         if low.contains("patch") || low.contains("edit") || low.contains("write") {
             return tr(.actionEditing)
         }

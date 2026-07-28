@@ -2,6 +2,40 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.33.0 — 支持 Agent，必须能解释它在做什么
+
+“检测到一个进程”不是可观测性；内部工具名、skill 路径和最后一条错误也不是任务。
+这一版把 31 个 Agent 的支持从一张名单改成逐 Agent 能力合同，并扩展统一行协议，
+让默认界面优先回答目标、阶段、进展、结果与阻塞。
+
+### 丰富信息成为统一协议
+
+- Harvest TSV 从 15 列扩展到 24 列，新增阶段、结果、模型、Agent 模式、失败数、
+  涉及文件、上下文占用和进度；Swift 合并层与默认行视图完整承接这些事实。
+- VS Code 系缓存适配只在合格的 session/thread/conversation 对象内提取丰富字段；
+  profile、theme、模型偏好等配置对象仍被拒绝，缺失值保持未知。
+- 增加 31 Agent 可观测能力合同与逐项文档；门禁要求每个 Agent 至少具备目标、
+  工作区、活动时间和证据等级，不允许用 process-only 冒充完整支持。
+
+### 修复真实 Agent 的错误语义
+
+- Grok 使用 `generated_title/session_summary` 作为任务，读取 lifecycle events、
+  signals 和 summary 中的阶段、结果、模型、模式、失败、文件、上下文和轮次；
+  tool error/tool result 不再抢占任务标题。
+- Amp 跳过“继续 / continue / go on”等延续词，向后寻找最近一个实质目标，并展示
+  Agent mode；长期运行但会话文件暂未更新时，已知目标和工作区不再被提前丢弃。
+- skill 只接受明确的 Skill 调用；`skills/.../scripts/preflight.py` 这类内部路径不再
+  被误认成用户可理解的能力。
+
+### 默认界面只展示能提高判断效率的事实
+
+- 结构化阶段优先于 raw tool；默认行展示 Planning、Reading、Researching、Editing、
+  Testing、Responding、Waiting for permission、Turn complete 等人类语义。
+- `exec`、`run_terminal_command`、`bash` 等通用命令被降为诊断信息；具体失败数、
+  文件数、进度、结果、模型和上下文占用优先显示。
+- 原始 skill/package/script 名不进入默认行。只有 Agent 明确记录、且能表达用户可识别
+  工作流角色的 skill 才有展示价值。
+
 ## 0.32.1 — 状态灯必须先看得见
 
 0.32.0 把菜单栏从 SwiftUI `MenuBarExtra` 换成原生 `NSStatusItem`，却继续把

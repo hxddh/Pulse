@@ -11,6 +11,8 @@ final class HarvestParsingTests: XCTestCase {
             "claude", "Refactor probe", "1200", "340", "Bash", "",
             "Pulse", "/Users/me/Pulse", "1700000000000", "2", "5", "sess-abc",
             "34", "1699999000000", "session",
+            "testing", "completed", "agent-4", "build",
+            "2", "7", "41", "3", "5",
         ]) + "\n"
         let rows = ActivityHarvest.parse(text)
         XCTAssertEqual(rows.count, 1)
@@ -29,6 +31,15 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(r.records, 34)
         XCTAssertEqual(r.startedMs, 1_699_999_000_000)
         XCTAssertEqual(r.evidence, .session)
+        XCTAssertEqual(r.phase, "testing")
+        XCTAssertEqual(r.outcome, "completed")
+        XCTAssertEqual(r.model, "agent-4")
+        XCTAssertEqual(r.mode, "build")
+        XCTAssertEqual(r.errors, 2)
+        XCTAssertEqual(r.files, 7)
+        XCTAssertEqual(r.contextPercent, 41)
+        XCTAssertEqual(r.progressDone, 3)
+        XCTAssertEqual(r.progressTotal, 5)
     }
 
     func testOldRowsDegradeToCacheEvidenceInsteadOfClaimingASession() {

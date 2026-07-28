@@ -177,6 +177,15 @@ enum SnapshotBuilder {
             }
             if act.records > 0 { row.records = act.records }
             if act.startedMs > 0 { row.startedMs = act.startedMs }
+            if !act.phase.isEmpty { row.phase = act.phase }
+            if !act.outcome.isEmpty { row.outcome = act.outcome }
+            if !act.model.isEmpty { row.model = act.model }
+            if !act.mode.isEmpty { row.mode = act.mode }
+            if act.errors > 0 { row.errors = act.errors }
+            if act.files > 0 { row.files = act.files }
+            if act.contextPercent > 0 { row.contextPercent = act.contextPercent }
+            if act.progressDone > 0 { row.progressDone = act.progressDone }
+            if act.progressTotal > 0 { row.progressTotal = act.progressTotal }
             row.observationSource = act.evidence
             row.processCount = max(row.processCount, 1)
 
@@ -286,7 +295,7 @@ enum SnapshotBuilder {
         // meant enumerating running apps and stat-ing the disk on every redraw.
         for i in all.indices {
             let row = all[i]
-            all[i].isStalled = AgentRow.stalled(
+            all[i].isStalled = !row.isCompletedPhase && AgentRow.stalled(
                 harvestMs: row.harvestMs,
                 nowMs: context.nowMs,
                 waiting: row.waiting,
@@ -340,8 +349,8 @@ enum SnapshotBuilder {
         result.showAllAgents = context.showAllAgents && all.count > context.maxVisibleRows
 
         let waitingCount = all.filter(\.waiting).count
-        let liveRunning = all.filter { !$0.waiting && ($0.liveProcess || $0.subRunning > 0) }.count
-        let recentOnly = all.filter { !$0.waiting && !$0.liveProcess && $0.subRunning == 0 }.count
+        let liveRunning = all.filter { $0.section == .running }.count
+        let recentOnly = all.filter { $0.section == .recent }.count
         result.waitingKeys = Set(all.filter(\.waiting).map(\.rowKey))
 
         var snap = PulseSnapshot()
@@ -448,7 +457,7 @@ enum SnapshotBuilder {
             snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if liveRunning > 0 {
             snap.glance = .running
-            let liveRows = all.filter { !$0.waiting && ($0.liveProcess || $0.subRunning > 0) }
+            let liveRows = all.filter { $0.section == .running }
             let liveNames = liveRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
             if liveRunning == 1 {
                 snap.title = liveRows[0].agent.displayName
@@ -487,8 +496,8 @@ enum SnapshotBuilder {
         result.snapshot = snap
 
         // Edges — reported, not acted on. The store owns notification policy.
-        let previousLampBusy = previous.rows.contains { $0.waiting || $0.liveProcess || $0.subRunning > 0 }
-        let nowLampBusy = all.contains { $0.waiting || $0.liveProcess || $0.subRunning > 0 }
+        let previousLampBusy = previous.rows.contains { $0.waiting || $0.section == .running }
+        let nowLampBusy = all.contains { $0.waiting || $0.section == .running }
         result.wentIdle = previousLampBusy && !nowLampBusy
 
         let newcomers = result.waitingKeys.subtracting(previous.waitingKeys)

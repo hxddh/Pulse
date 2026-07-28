@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.32.1"
+    static let semver = "0.33.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -259,6 +259,15 @@ struct AgentRow: Identifiable, Hashable {
     /// results and token events too. Shipped as "turns" in 0.28.0, which
     /// promised a precision the number does not have.
     var records: Int = 0
+    var phase: String = ""
+    var outcome: String = ""
+    var model: String = ""
+    var mode: String = ""
+    var errors: Int = 0
+    var files: Int = 0
+    var contextPercent: Int = 0
+    var progressDone: Int = 0
+    var progressTotal: Int = 0
     /// When the session began, in ms. 0 = unknown.
     var startedMs: Int64 = 0
     /// What this concrete row is backed by.
@@ -346,8 +355,13 @@ struct AgentRow: Identifiable, Hashable {
     }
 
     /// Recent (not live) rows may soft-prefix with L10n activityPrefix in the view.
+    var isCompletedPhase: Bool {
+        let value = phase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return value == "turn_complete" || value == "completed" || value == "complete"
+    }
+
     var isRecentOnly: Bool {
-        !waiting && !liveProcess && subRunning == 0
+        !waiting && (!liveProcess || isCompletedPhase) && subRunning == 0
     }
 
     /// Live / subagent with nothing to say about the session — secondary in list IA.
@@ -546,6 +560,7 @@ struct AgentRow: Identifiable, Hashable {
     /// Which tray section this row belongs to.
     var section: TraySection {
         if waiting { return .needsYou }
+        if isCompletedPhase, subRunning == 0 { return .recent }
         if liveProcess || subRunning > 0 { return .running }
         return .recent
     }

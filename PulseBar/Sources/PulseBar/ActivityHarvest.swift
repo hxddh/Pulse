@@ -24,6 +24,17 @@ enum ActivityHarvest {
         var startedMs: Int64 = 0
         /// Runtime evidence tier emitted by the collector.
         var evidence: ObservationSource = .cache
+        /// Structured workflow and capability facts. Empty/0 always means
+        /// unknown; the UI never invents them for process-only detection.
+        var phase: String = ""
+        var outcome: String = ""
+        var model: String = ""
+        var mode: String = ""
+        var errors: Int = 0
+        var files: Int = 0
+        var contextPercent: Int = 0
+        var progressDone: Int = 0
+        var progressTotal: Int = 0
     }
 
     /// Harvest-only rows older than this are dropped unless a live process exists.
@@ -239,7 +250,16 @@ enum ActivityHarvest {
                 startedMs: cols.count > 13 ? Int64(cols[13]) ?? 0 : 0,
                 evidence: cols.count > 14
                     ? ObservationSource(rawValue: cols[14]) ?? .cache
-                    : .cache
+                    : .cache,
+                phase: cols.count > 15 ? cols[15] : "",
+                outcome: cols.count > 16 ? cols[16] : "",
+                model: cols.count > 17 ? cols[17] : "",
+                mode: cols.count > 18 ? cols[18] : "",
+                errors: cols.count > 19 ? Int(cols[19]) ?? 0 : 0,
+                files: cols.count > 20 ? Int(cols[20]) ?? 0 : 0,
+                contextPercent: cols.count > 21 ? Int(cols[21]) ?? 0 : 0,
+                progressDone: cols.count > 22 ? Int(cols[22]) ?? 0 : 0,
+                progressTotal: cols.count > 23 ? Int(cols[23]) ?? 0 : 0
             ))
         }
         return out

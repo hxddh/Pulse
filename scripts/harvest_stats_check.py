@@ -36,10 +36,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import activity_scan as A  # noqa: E402
 
-COLUMNS = 15
+COLUMNS = 24
 COL_TASK, COL_TIN, COL_TOUT, COL_TOOL = 1, 2, 3, 4
 COL_PROJECT, COL_CWD, COL_SESSION, COL_RECORDS, COL_STARTED = 6, 7, 11, 12, 13
 COL_EVIDENCE = 14
+COL_PHASE, COL_OUTCOME, COL_MODEL, COL_MODE = 15, 16, 17, 18
+COL_ERRORS, COL_FILES, COL_CONTEXT, COL_PROGRESS_DONE, COL_PROGRESS_TOTAL = 19, 20, 21, 22, 23
 
 RECORDS = 34
 TRANSCRIPT = "".join(
@@ -152,6 +154,33 @@ def check_helper_contract(d: Path) -> int:
     }
     if A.observed_session_from_json(config) != ("", "", ""):
         return fail("configuration names were guessed as a session")
+    if A.observed_facts_from_json(config) != {}:
+        return fail("configuration values were guessed as session telemetry")
+    rich_nested = {
+        "state": {
+            "sessions": [{
+                "sessionId": "s-rich",
+                "title": "Ship observability",
+                "workspacePath": "/Users/me/code/Pulse",
+                "phase": "testing",
+                "modelId": "agent-4",
+                "agentMode": "build",
+                "errorCount": 2,
+                "filesChanged": 7,
+                "contextWindowUsage": 41,
+                "completedTasks": 3,
+                "totalTasks": 5,
+            }]
+        }
+    }
+    facts = A.observed_facts_from_json(rich_nested)
+    expected = {
+        "phase": "testing", "model": "agent-4", "mode": "build",
+        "errors": 2, "files": 7, "context_pct": 41,
+        "progress_done": 3, "progress_total": 5,
+    }
+    if facts != expected:
+        return fail(f"qualified cache telemetry was not recovered: {facts}")
     jsonl = (
         '{"type":"meta","sessionId":"s2","workspacePath":"/Users/me/code/pulse"}\n'
         '{"type":"session","title":"Polish the tray"}\n'
@@ -159,6 +188,20 @@ def check_helper_contract(d: Path) -> int:
     title, cwd, _ = A.observed_session_from_text(jsonl)
     if title != "Polish the tray" or cwd != "/Users/me/code/pulse":
         return fail(f"JSONL session facts were not recovered: {(title, cwd)}")
+
+    # Python cannot decide stale-vs-live because the process match happens in
+    # Swift. It must emit the row so a live process can keep its known goal.
+    stale = emit_to_line(
+        "amp",
+        ("Known long-running goal", 0, 0, "", "", "Pulse", "/Users/me/Pulse",
+         int(time.time() * 1000) - A.FRESH_SEC * 1000 - 10_000, "amp-stale"),
+    )
+    if not stale:
+        return fail("stale session evidence was dropped before live-process merge")
+
+    # A helper path is not an invoked skill.
+    if A.last_skill_name('{"path":"/tmp/skills/audit/scripts/preflight.py"}'):
+        return fail("a skill helper path was exposed as an invoked skill")
     return 0
 
 
@@ -270,10 +313,40 @@ def check_collectors(home: Path) -> int:
         + '{"type":"event_msg","payload":{"type":"token_count","info":{'
           '"total_token_usage":{"input_tokens":9000000,"output_tokens":800000},'
           '"last_token_usage":{"input_tokens":3210,"output_tokens":456}}}}\n'
+        + '{"type":"event_msg","payload":{"type":"user_message","message":"进展如何"}}\n'
+        + '{"type":"event_msg","payload":{"type":"user_message","message":"发布"}}\n'
         + '{"type":"response_item","payload":{"type":"function_call","name":"view_image"}}\n',
         encoding="utf-8",
     )
     cases.append(("codex", codex, lambda: A.emit_all("codex", A.codex_activities())))
+
+    grok = home / ".grok"
+    grok_session = grok / "sessions" / "%2FUsers%2Fme%2Fcode%2FPulse" / "grok-real"
+    grok_session.mkdir(parents=True, exist_ok=True)
+    grok.mkdir(parents=True, exist_ok=True)
+    (grok / "active_sessions.json").write_text(
+        '[{"session_id":"grok-real","cwd":"/Users/me/code/Pulse"}]',
+        encoding="utf-8",
+    )
+    (grok_session / "summary.json").write_text(
+        '{"generated_title":"Fix multipart upload","created_at":"2026-07-28T10:00:00Z",'
+        '"num_messages":23,"current_model_id":"grok-4.5","agent_name":"grok-build-plan"}',
+        encoding="utf-8",
+    )
+    (grok_session / "signals.json").write_text(
+        '{"turnCount":4,"toolFailureCount":1,"totalFilesTouched":3,"contextWindowUsage":27}',
+        encoding="utf-8",
+    )
+    (grok_session / "events.jsonl").write_text(
+        '{"type":"tool_started","tool_name":"read_file"}\n'
+        '{"type":"turn_ended","outcome":"completed"}\n',
+        encoding="utf-8",
+    )
+    (grok_session / "chat_history.jsonl").write_text(
+        '{"role":"tool","content":"internal failure must not become title"}\n',
+        encoding="utf-8",
+    )
+    cases.append(("grok", grok_session, lambda: A.emit_all("grok", [A.grok_activity()])))
 
     saw_any = False
     for name, where, block in cases:
@@ -314,6 +387,19 @@ def check_collectors(home: Path) -> int:
                 return fail(f"codex missed its explicit function call: {row}")
             if row[COL_PROJECT] != "Pulse" or row[COL_CWD] != "/Users/me/code/Pulse":
                 return fail(f"codex lost head metadata on a long rollout: {row}")
+        if name == "grok":
+            if row[COL_TASK] != "Fix multipart upload":
+                return fail(f"grok used tool output as its task: {row}")
+            expected_facts = (
+                "turn_complete", "completed", "grok-4.5", "grok-build-plan",
+                "1", "3", "27", "4",
+            )
+            got = (
+                row[COL_PHASE], row[COL_OUTCOME], row[COL_MODEL], row[COL_MODE],
+                row[COL_ERRORS], row[COL_FILES], row[COL_CONTEXT], row[COL_PROGRESS_DONE],
+            )
+            if got != expected_facts:
+                return fail(f"grok rich facts shifted or disappeared: {got}")
 
     if not saw_any:
         return fail("no collector produced a row; this gate is asserting nothing")
@@ -379,9 +465,19 @@ def main() -> int:
         "devin", "kiro", "junie", "replit", "antigravity",
     }:
         return fail("collector evidence contracts do not cover all 31 harvest agents")
+    if set(A.OBSERVABILITY_CONTRACTS) != set(A.HARVEST_CONTRACTS):
+        return fail("observability contracts do not cover the same 31 agents")
+    baseline = {"goal", "workspace", "activity", "evidence"}
+    thin = {
+        agent: sorted(baseline - set(facts))
+        for agent, facts in A.OBSERVABILITY_CONTRACTS.items()
+        if not baseline.issubset(facts)
+    }
+    if thin:
+        return fail(f"agents without the minimum useful observation: {thin}")
     print(
         f"harvest stats OK — {COLUMNS} columns · 31 evidence contracts · "
-        "4 end-to-end collector fixtures"
+        "5 end-to-end collector fixtures"
     )
     return 0
 

@@ -199,6 +199,21 @@ enum L10n {
         case .notifFocus: return "Focus"
         case .recordsSuffix: return " events"
         case .sessionAge: return "Started %@ ago"
+        case .phaseResponding: return "Responding"
+        case .phaseTurnComplete: return "Turn complete"
+        case .phaseWaitingPermission: return "Waiting for permission"
+        case .phasePlanning: return "Planning"
+        case .phaseWorking: return "Working"
+        case .phaseTesting: return "Testing"
+        case .modelFact: return "Model %@"
+        case .errorFactOne: return "1 failure"
+        case .errorsFact: return "%d failures"
+        case .outcomeFailed: return "Failed"
+        case .outcomeCancelled: return "Cancelled"
+        case .filesFact: return "%d files touched"
+        case .contextFact: return "Context %d%%"
+        case .progressFact: return "%d/%d complete"
+        case .turnsFact: return "%d turns"
         }
     }
 
@@ -356,6 +371,21 @@ enum L10n {
         case .notifFocus: return "去看看"
         case .recordsSuffix: return " 条事件"
         case .sessionAge: return "始于%@前"
+        case .phaseResponding: return "正在响应"
+        case .phaseTurnComplete: return "本轮已完成"
+        case .phaseWaitingPermission: return "等待权限"
+        case .phasePlanning: return "正在规划"
+        case .phaseWorking: return "正在执行"
+        case .phaseTesting: return "正在测试"
+        case .modelFact: return "模型 %@"
+        case .errorFactOne: return "1 项失败"
+        case .errorsFact: return "%d 项失败"
+        case .outcomeFailed: return "执行失败"
+        case .outcomeCancelled: return "已取消"
+        case .filesFact: return "涉及 %d 个文件"
+        case .contextFact: return "上下文 %d%%"
+        case .progressFact: return "完成 %d/%d"
+        case .turnsFact: return "%d 轮"
         }
     }
 
@@ -401,6 +431,9 @@ enum L10n {
         case noProject, stalled
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge
+        case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting
+        case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
+        case filesFact, contextFact, progressFact, turnsFact
     }
 }
 

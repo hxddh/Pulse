@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 HOME = Path.home()
@@ -321,16 +322,46 @@ def last_tool_name_strict(text: str) -> str:
     return ""
 
 def last_skill_name(text: str) -> str:
+    """Return an explicitly invoked skill, never a path that happens to contain `skills/`.
+
+    Skill package paths and helper script names are implementation detail. The
+    previous path fallback turned `skills/.../user_context_preflight.py` into a
+    user-facing "skill", even though no record claimed that it was invoked.
+    """
     m = re.findall(r'"name"\s*:\s*"Skill"[\s\S]{0,300}?"skill"\s*:\s*"([^"]+)"', text)
     if m:
         return m[-1]
     m = re.findall(r'"name"\s*:\s*"Skill"[\s\S]{0,300}?"name"\s*:\s*"([^"]+)"', text)
     if m:
         return m[-1]
-    m = re.findall(r"skills?/([A-Za-z0-9_./-]+)", text)
-    if m:
-        return m[-1].split("/")[-1][:48]
     return ""
+
+
+def iso_time_ms(value) -> int:
+    """ISO-8601 string → epoch milliseconds, or unknown."""
+    if not isinstance(value, str) or not value.strip():
+        return 0
+    try:
+        return int(datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp() * 1000)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def meaningful_prompt(value) -> str:
+    """Reject continuation buttons and transport envelopes as session goals."""
+    title = clean_session_title(value)
+    if not title:
+        return ""
+    low = re.sub(r"[\s.!！。?？]+", "", title.lower())
+    if low in {
+        "continue", "goon", "proceed", "resume", "keepgoing",
+        "继续", "继续分析", "继续修复", "继续处理", "继续推进",
+        "progress", "status", "statusupdate", "howisitgoing", "whatsprogress",
+        "进展如何", "进度如何", "状态如何", "现在怎么样",
+        "release", "publish", "ship", "发布", "合入发布",
+    }:
+        return ""
+    return title
 
 
 def clean_session_title(value) -> str:
@@ -441,7 +472,16 @@ def codex_user_title(text: str) -> str:
                 title = clean_codex_user_request(" ".join(text_parts))
                 if title:
                     found.append(title)
-    return found[-1] if found else ""
+    if not found:
+        return ""
+    # Status pings and one-word continuation commands are part of the same
+    # task, not a new goal. Walk backwards to keep the latest substantial user
+    # intent as the hero. If a session contains only a short command, keep it
+    # rather than inventing a title.
+    for title in reversed(found):
+        if meaningful_prompt(title):
+            return title
+    return found[-1]
 
 
 def codex_user_title_from_file(path: Path, max_bytes: int = 8_000_000) -> str:
@@ -713,11 +753,15 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
         # Prefer last usage snapshot (context size now) — never sum every turn.
         tin, tout = last_usage_tokens(text)
         tool = last_tool_name_strict(text)
-        skill = last_skill_name(text)
-        if checklist and not skill:
-            skill = checklist
-        elif checklist and skill and "tasks " not in skill:
-            skill = f"{skill} · {checklist}"
+        # Raw skill/package names are implementation detail. Checklist progress
+        # is useful, but it has its own typed fields instead of overloading the
+        # wait-signal column.
+        skill = ""
+        extra = session_stats(f, per_session=True)
+        progress = re.fullmatch(r"tasks\s+(\d+)/(\d+)", checklist or "")
+        if progress:
+            extra["progress_done"] = int(progress.group(1))
+            extra["progress_total"] = int(progress.group(2))
         mtime_ms = file_mtime_ms(f)
         if task or tin or tout or tool or skill or project or sub_total:
             out.append(
@@ -733,7 +777,7 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
                     sub_run,
                     sub_total,
                     f.stem,
-                    session_stats(f, per_session=True),
+                    extra,
                 )
             )
         if len(out) >= 2:
@@ -756,7 +800,7 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         task = codex_user_title_from_file(f)
         tin, tout = codex_last_usage(text)
         tool = last_tool_name_strict(text)
-        skill = last_skill_name(text)
+        skill = ""
         cwd = extract_field(text, "cwd") or extract_field(text, "workdir") or ""
         project = short_project(cwd) if cwd else ""
         if not project:
@@ -932,6 +976,9 @@ def grok_activity() -> tuple:
                         plan = d / "plan.md"
                         goal = d / "goal" / "plan.md"
                         summary = d / "summary.json"
+                        signals = d / "signals.json"
+                        events = d / "events.jsonl"
+                        extra: dict = {}
                         if plan.is_file():
                             task = plan.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0][:160]
                         elif goal.is_file():
@@ -939,7 +986,30 @@ def grok_activity() -> tuple:
                         elif summary.is_file():
                             try:
                                 obj = json.loads(summary.read_text(encoding="utf-8", errors="replace"))
-                                task = str(obj.get("title") or obj.get("summary") or "")[:160]
+                                task = meaningful_prompt(
+                                    obj.get("generated_title")
+                                    or obj.get("session_summary")
+                                    or obj.get("title")
+                                    or obj.get("summary")
+                                )[:160]
+                                extra["model"] = str(obj.get("current_model_id") or "")[:64]
+                                extra["mode"] = str(obj.get("agent_name") or "")[:64]
+                                extra["records"] = int(obj.get("num_messages") or 0)
+                                extra["started_ms"] = iso_time_ms(obj.get("created_at"))
+                            except Exception:
+                                pass
+                        if signals.is_file():
+                            try:
+                                sig = json.loads(signals.read_text(encoding="utf-8", errors="replace"))
+                                extra["errors"] = max(
+                                    int(sig.get("errorCount") or 0),
+                                    int(sig.get("toolFailureCount") or 0),
+                                )
+                                extra["files"] = int(sig.get("totalFilesTouched") or 0)
+                                extra["context_pct"] = int(sig.get("contextWindowUsage") or 0)
+                                extra["progress_done"] = int(sig.get("turnCount") or 0)
+                                if not extra.get("model"):
+                                    extra["model"] = str(sig.get("modelName") or sig.get("modelId") or "")[:64]
                             except Exception:
                                 pass
                         hist = d / "chat_history.jsonl"
@@ -947,14 +1017,59 @@ def grok_activity() -> tuple:
                         if hist.is_file():
                             htext = tail_bytes(hist, 200_000)
                             if not task:
-                                ms = re.findall(r'"content"\s*:\s*"((?:\\.|[^"\\]){10,200})"', htext)
-                                if ms:
-                                    task = decode_json_string(ms[-1])[:160]
+                                for record in reversed(json_records(htext)):
+                                    if not isinstance(record, dict):
+                                        continue
+                                    if str(record.get("role") or "").lower() not in ("user", "human"):
+                                        continue
+                                    candidate = meaningful_prompt(record.get("content"))
+                                    if candidate:
+                                        task = candidate[:160]
+                                        break
                             tools = last_tool_name(htext)
-                            skill = last_skill_name(htext)
                             if text_looks_pending(htext):
                                 skill = "pending"
-                        return task, 0, 0, tools, skill, project[:48], str(cwd)[:240], file_mtime_ms(hist if hist.is_file() else active), str(sid)[:80]
+                        if events.is_file():
+                            try:
+                                event_rows = json_records(tail_bytes(events, 240_000))
+                                last_phase = ""
+                                last_outcome = ""
+                                last_tool = ""
+                                for event in event_rows:
+                                    if not isinstance(event, dict):
+                                        continue
+                                    typ = str(event.get("type") or "")
+                                    if typ == "phase_changed":
+                                        last_phase = str(event.get("phase") or "")
+                                    elif typ in ("tool_started", "tool_completed"):
+                                        last_tool = str(event.get("tool_name") or last_tool)
+                                        if typ == "tool_completed":
+                                            last_outcome = str(event.get("outcome") or "")
+                                    elif typ == "turn_ended":
+                                        last_phase = "turn_complete"
+                                        last_outcome = str(event.get("outcome") or last_outcome)
+                                    elif typ == "permission_requested":
+                                        last_phase = "waiting_permission"
+                                if last_phase:
+                                    extra["phase"] = last_phase[:64]
+                                if last_outcome:
+                                    extra["outcome"] = last_outcome[:64]
+                                if last_tool:
+                                    tools = last_tool[:48]
+                            except Exception:
+                                pass
+                        return (
+                            task,
+                            0,
+                            0,
+                            tools,
+                            skill,
+                            project[:48],
+                            str(cwd)[:240],
+                            file_mtime_ms(events if events.is_file() else hist if hist.is_file() else active),
+                            str(sid)[:80],
+                            extra,
+                        )
         except Exception:
             pass
     # Fall through empty with no mtime
@@ -972,7 +1087,7 @@ def pi_activity() -> tuple:
     tin = sum_int_fields(text, "input_tokens")
     tout = sum_int_fields(text, "output_tokens")
     tool = last_tool_name_strict(text)
-    skill = last_skill_name(text)
+    skill = ""
     if text_looks_pending(text):
         skill = "pending"
     cwd = extract_field(text, "cwd") or extract_field(text, "workingDirectory") or ""
@@ -1041,25 +1156,31 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
     # Modern Amp: ~/.local/share/amp/session.json + history.jsonl (no local threads/)
     hist = share / "history.jsonl"
     session = share / "session.json"
-    title = cwd = sid = ""
+    title = cwd = sid = mode = ""
     ms = 0
     if hist.is_file():
         text = tail_bytes(hist, 80_000)
         lines = [ln for ln in text.splitlines() if ln.strip()]
-        if lines:
+        for line in reversed(lines):
             try:
-                obj = json.loads(lines[-1])
-                if isinstance(obj, dict):
-                    title = str(obj.get("prompt") or obj.get("text") or obj.get("content") or "")[:160]
-                    cwd = str(obj.get("cwd") or obj.get("workdir") or "")
+                obj = json.loads(line)
             except Exception:
-                pass
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if not cwd:
+                cwd = str(obj.get("cwd") or obj.get("workdir") or "")
+            candidate = meaningful_prompt(obj.get("prompt") or obj.get("text") or obj.get("content"))
+            if candidate:
+                title = candidate[:160]
+                break
         ms = file_mtime_ms(hist)
     if session.is_file():
         try:
             sobj = json.loads(session.read_text(encoding="utf-8", errors="replace"))
             if isinstance(sobj, dict):
                 sid = str(sobj.get("lastThreadId") or "")[:80]
+                mode = str(sobj.get("agentMode") or "")[:64]
                 # Prefer cwd from last terminal binding if history lacked it
                 by_tty = sobj.get("lastThreadByTerminal")
                 if isinstance(by_tty, dict) and not cwd:
@@ -1067,7 +1188,6 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                     pass
                 ms = max(ms, file_mtime_ms(session))
                 if not title:
-                    mode = str(sobj.get("agentMode") or "")
                     title = f"Amp · {mode}" if mode else "Amp session"
         except Exception:
             pass
@@ -1090,12 +1210,22 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         skill = ""
         if hist.is_file() and text_looks_pending(tail_bytes(hist, 8_000)):
             skill = "pending"
-        row = (title[:160] or "Amp session", 0, 0, "", skill, project[:48], (cwd or "")[:240], ms or int(time.time() * 1000))
+        extra = {"mode": mode} if mode else {}
+        row = (
+            title[:160] or "Amp session",
+            0,
+            0,
+            "",
+            skill,
+            project[:48],
+            (cwd or "")[:240],
+            ms or int(time.time() * 1000),
+        )
         # Prefer 9-tuple with session when available
         if sid:
-            out.append((*row, sid))
+            out.append((*row, sid, extra))
         else:
-            out.append(row)
+            out.append((*row, extra))
     return out[:2]
 
 
@@ -1326,6 +1456,87 @@ def observed_session_from_text(text: str) -> tuple[str, str, str]:
     return task, cwd, sid
 
 
+def observed_facts_from_json(obj) -> dict:
+    """Extract optional lifecycle facts only from session-qualified objects.
+
+    This is deliberately separate from `observed_session_from_json`: private
+    extension caches change shape often, and a model/theme/status preference
+    must never become session telemetry. A dictionary qualifies only when it
+    carries a session identity, absolute workspace, task title, or sits under a
+    session-like container.
+    """
+    session_needles = ("session", "thread", "conversation", "chat", "task", "composer", "history")
+    title_keys = ("task", "title", "summary", "prompt", "query", "lastMessage", "subject")
+    sid_keys = ("sessionId", "session_id", "taskId", "conversationId", "threadId", "uuid")
+    cwd_keys = ("cwd", "workingDirectory", "workdir", "workspacePath", "projectPath", "directory")
+    best: tuple[int, dict] = (0, {})
+    stack: list[tuple[object, str, int]] = [(obj, "", 0)]
+    seen = 0
+    while stack and seen < 1200:
+        value, context, depth = stack.pop()
+        seen += 1
+        if depth > 7:
+            continue
+        if isinstance(value, list):
+            for item in value[:200]:
+                stack.append((item, context, depth + 1))
+            continue
+        if not isinstance(value, dict):
+            continue
+
+        context_is_session = any(n in context.lower() for n in session_needles)
+        has_title = any(isinstance(value.get(k), str) and value.get(k).strip() for k in title_keys)
+        has_sid = any(isinstance(value.get(k), (str, int)) and str(value.get(k)).strip() for k in sid_keys)
+        has_cwd = any(
+            isinstance(value.get(k), str) and value.get(k).strip().startswith("/")
+            for k in cwd_keys
+        )
+        if context_is_session or has_title or has_sid or has_cwd:
+            facts: dict = {}
+            for key in ("phase", "stage", "status", "state"):
+                raw = value.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    facts["phase"] = raw.strip()[:64]
+                    break
+            for key in ("model", "modelId", "model_id", "currentModel", "current_model"):
+                raw = value.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    facts["model"] = raw.strip()[:64]
+                    break
+            for key in ("agentMode", "agent_mode", "mode", "role"):
+                raw = value.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    facts["mode"] = raw.strip()[:64]
+                    break
+            number_keys = {
+                "errors": ("errorCount", "errors", "toolFailureCount"),
+                "files": ("filesChanged", "totalFilesTouched", "filesTouched"),
+                "context_pct": ("contextWindowUsage", "contextUsagePercent", "contextPercent"),
+                "progress_done": ("completedTasks", "completed", "doneCount"),
+                "progress_total": ("totalTasks", "total", "taskCount"),
+            }
+            for fact, keys in number_keys.items():
+                for key in keys:
+                    raw = value.get(key)
+                    if isinstance(raw, (int, float)) and raw > 0:
+                        facts[fact] = int(raw)
+                        break
+            score = (
+                len(facts) * 3
+                + (5 if context_is_session else 0)
+                + (3 if has_sid else 0)
+                + (2 if has_cwd else 0)
+            )
+            if facts and score > best[0]:
+                best = (score, facts)
+
+        for key, child in value.items():
+            if isinstance(child, (dict, list)):
+                child_context = f"{context}.{key}" if context else str(key)
+                stack.append((child, child_context, depth + 1))
+    return best[1]
+
+
 def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list[tuple]:
     """Generic VS Code/Cursor globalStorage harvest → up to `limit` rows."""
     out: list[tuple] = []
@@ -1356,8 +1567,10 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list
                 obj = {}
                 text = tail_bytes(f, 80_000)
             task = cwd = sid = ""
+            extra: dict = {}
             if isinstance(obj, (dict, list)):
                 task, cwd, sid = observed_session_from_json(obj)
+                extra = observed_facts_from_json(obj)
                 pending = json_looks_pending(obj)
             else:
                 pending = text_looks_pending(text)
@@ -1374,7 +1587,18 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list
             skill = "pending" if pending else ""
             if not (task or pending or cwd):
                 continue
-            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], cwd[:240], file_mtime_ms(f), sid or f.stem[:80], session_stats(f, per_session=False)))
+            out.append((
+                task[:160],
+                0,
+                0,
+                last_tool_name_strict(text),
+                skill,
+                project[:48],
+                cwd[:240],
+                file_mtime_ms(f),
+                sid or f.stem[:80],
+                extra,
+            ))
             if len(out) >= limit:
                 return out
     return out
@@ -2345,6 +2569,47 @@ HARVEST_CONTRACTS = {
     "antigravity": EVIDENCE_CACHE,
 }
 
+# What each adapter can truthfully contribute when its local source contains
+# the corresponding fact. This is a capability contract, not a promise that an
+# idle installation has populated every value. Every covered agent must have
+# more than process detection: goal + workspace + activity + evidence are the
+# minimum useful observation.
+_BASE = frozenset(("goal", "workspace", "activity", "evidence"))
+_CACHE_RICH = _BASE | frozenset(("phase", "model", "mode", "progress", "outcome", "wait"))
+OBSERVABILITY_CONTRACTS = {
+    "claude": _BASE | frozenset(("tokens", "last_action", "records", "session_age", "subagents", "wait")),
+    "codex": _BASE | frozenset(("tokens", "last_action", "session_age", "subagents", "wait")),
+    "cursor": _BASE | frozenset(("mode", "wait")),
+    "grok": _BASE | frozenset(("phase", "model", "mode", "turns", "failures", "files", "context", "outcome", "wait")),
+    "pi": _BASE | frozenset(("tokens", "last_action", "wait")),
+    "amp": _BASE | frozenset(("mode", "session_age", "records", "wait")),
+    "aider": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "gemini": _BASE | frozenset(("tokens", "last_action", "session_age", "records", "wait")),
+    "copilot": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "opencode": _BASE | frozenset(("tokens", "wait")),
+    "goose": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "openhands": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "continue": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "droid": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "command_code": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "kimi": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
+    "amazon_q": _CACHE_RICH,
+    "cline": _CACHE_RICH,
+    "roo": _CACHE_RICH,
+    "cascade": _CACHE_RICH | frozenset(("session_age", "records")),
+    "windsurf": _CACHE_RICH | frozenset(("session_age", "records")),
+    "augment": _CACHE_RICH,
+    "zed_agent": _CACHE_RICH,
+    "trae": _CACHE_RICH - frozenset(("wait",)),
+    "warp_agent": _CACHE_RICH - frozenset(("wait",)),
+    "kilo": _CACHE_RICH,
+    "devin": _CACHE_RICH - frozenset(("wait",)),
+    "kiro": _CACHE_RICH,
+    "junie": _CACHE_RICH - frozenset(("wait",)),
+    "replit": _CACHE_RICH - frozenset(("wait",)),
+    "antigravity": _CACHE_RICH - frozenset(("wait",)),
+}
+
 
 def useful_cache_task(agent: str, task: str) -> bool:
     """Whether a cache title is an observed user fact rather than our fallback."""
@@ -2382,13 +2647,23 @@ def emit(
     records: int = 0,
     started_ms: int = 0,
     evidence: str = EVIDENCE_SESSION,
+    phase: str = "",
+    outcome: str = "",
+    model: str = "",
+    mode: str = "",
+    errors: int = 0,
+    files: int = 0,
+    context_pct: int = 0,
+    progress_done: int = 0,
+    progress_total: int = 0,
 ) -> None:
     def clean(s: str) -> str:
         return (s or "").replace("\t", " ").replace("\n", " ").replace("\r", " ").strip()
 
-    now_ms = int(time.time() * 1000)
-    if mtime_ms > 0 and sub_run == 0 and now_ms - mtime_ms > FRESH_SEC * 1000:
-        return
+    # Do not pre-filter stale rows here. Swift owns the freshness policy and can
+    # keep old session evidence when it matches a currently live process. The
+    # old Python filter ran before that merge and reduced long-running agents
+    # such as Amp to "Process only" even though their goal/workspace were known.
     # Refuse harvest-only rows with no mtime (prevents eternal "running" ghosts).
     if mtime_ms <= 0 and sub_run == 0 and sub_total == 0:
         return
@@ -2403,7 +2678,10 @@ def emit(
     print(
         f"{agent}\t{clean(task)}\t{tin}\t{tout}\t{clean(tool)}\t{clean(skill)}\t"
         f"{clean(project)}\t{clean(cwd)}\t{mtime_ms}\t{sub_run}\t{sub_total}\t{clean(session_id)}\t"
-        f"{records}\t{started_ms}\t{evidence}"
+        f"{records}\t{started_ms}\t{evidence}\t{clean(phase)}\t{clean(outcome)}\t"
+        f"{clean(model)}\t{clean(mode)}\t{max(0, int(errors or 0))}\t{max(0, int(files or 0))}\t"
+        f"{max(0, min(100, int(context_pct or 0)))}\t{max(0, int(progress_done or 0))}\t"
+        f"{max(0, int(progress_total or 0))}"
     )
 
 
@@ -2431,7 +2709,21 @@ def emit_row(
     row_evidence = str(extra.get("evidence") or evidence or HARVEST_CONTRACTS.get(agent, EVIDENCE_CACHE))
 
     def emit_x(*args) -> None:
-        emit(*args, records=records, started_ms=started_ms, evidence=row_evidence)
+        emit(
+            *args,
+            records=records,
+            started_ms=started_ms,
+            evidence=row_evidence,
+            phase=str(extra.get("phase") or ""),
+            outcome=str(extra.get("outcome") or ""),
+            model=str(extra.get("model") or ""),
+            mode=str(extra.get("mode") or ""),
+            errors=int(extra.get("errors") or 0),
+            files=int(extra.get("files") or 0),
+            context_pct=int(extra.get("context_pct") or 0),
+            progress_done=int(extra.get("progress_done") or 0),
+            progress_total=int(extra.get("progress_total") or 0),
+        )
 
     if len(row) >= 12:
         emit_x(agent, *row[:12])
