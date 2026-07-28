@@ -9,7 +9,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`README.md`](README.md) | You want to know what the product is |
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
-| [`docs/plan-0.23.md`](docs/plan-0.23.md) | You are picking up the next piece of work |
+| [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
+| [`docs/plan-0.27.md`](docs/plan-0.27.md) | The most recent written plan |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/`, plus three Python scripts in `src/`
@@ -39,7 +40,7 @@ compiles and ships.
 
 ```bash
 cd PulseBar && swift build      # macOS 14+, Swift 5.9
-cd PulseBar && swift test       # 215 tests
+cd PulseBar && swift test       # 217 tests
 ```
 
 Gates, from the repo root — `package.sh` and CI both run all seven:
@@ -78,8 +79,8 @@ it the build is ad-hoc signed and Gatekeeper blocks it on other machines.
 Write the `## x.y.z` section in CHANGELOG.md first — every path refuses without it.
 
 ```bash
-./scripts/release.sh 0.23.0            # dry run: bump + gates + diff
-./scripts/release.sh 0.23.0 --commit   # commit carrying the [release] marker
+./scripts/release.sh 0.29.0            # dry run: bump + gates + diff
+./scripts/release.sh 0.29.0 --commit   # commit carrying the [release] marker
 git push                               # CI builds, tags and publishes
 ```
 
@@ -104,6 +105,9 @@ to users.
 
 ## Current state
 
-0.22.0 released. 0.23 is in progress — `SnapshotBuilder` and `PulseSettings`
-are extracted and covered; see [`docs/plan-0.23.md`](docs/plan-0.23.md) for what
+0.28.1 released. 0.23–0.27 are done (see `CHANGELOG.md`); 0.28 moved the
+information problem out of the panel and into `src/activity_scan.py`, which
+is where the next work is. Two third-party reviews of 0.28.0 found six real
+defects in it — all fixed in 0.28.1, and every one of them is now a case in
+`scripts/harvest_stats_check.py`. See [`docs/plan-0.23.md`](docs/plan-0.23.md) for what
 remains and what is deliberately out of scope.

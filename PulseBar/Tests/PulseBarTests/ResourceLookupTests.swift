@@ -485,13 +485,20 @@ final class RowMetricsTests: XCTestCase {
     @MainActor
     private func store() -> StatusStore { StatusStore() }
 
-    private func row(inTok: Int = 0, outTok: Int = 0, subRunning: Int = 0, subTotal: Int = 0, waiting: Bool = false) -> AgentRow {
+    private func row(
+        inTok: Int = 0, outTok: Int = 0, subRunning: Int = 0, subTotal: Int = 0,
+        waiting: Bool = false, records: Int = 0, startedAgo: Double = 0
+    ) -> AgentRow {
         var r = AgentRow(rowKey: "k", agent: .claude)
         r.tokensIn = inTok
         r.tokensOut = outTok
         r.subRunning = subRunning
         r.subTotal = subTotal
         r.waiting = waiting
+        r.records = records
+        if startedAgo > 0 {
+            r.startedMs = Int64((Date().timeIntervalSince1970 - startedAgo) * 1000)
+        }
         return r
     }
 
@@ -507,11 +514,37 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(store().rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
     }
 
-    /// On a waiting row the question is the point; a token count next to it is
-    /// noise competing with the one thing that needs an answer.
+    @MainActor
+    func testRecordsAreAMetricToo() {
+        XCTAssertTrue(store().rowMetrics(row(records: 34)).contains("34"))
+    }
+
+    /// On a waiting row the question is the point; numbers beside it are noise
+    /// competing with the one thing that needs an answer.
+    ///
+    /// 0.28.0 asserted this with a row that carried *only* tokens, and tokens
+    /// were the only metric actually suppressed — age, records and sub-agent
+    /// progress went on appearing. A test that can only see the one case that
+    /// works is how the gap survived a release, so this row carries all four.
     @MainActor
     func testAWaitingRowSpendsItsSpaceOnTheQuestion() {
-        XCTAssertEqual(store().rowMetrics(row(inTok: 12_000, waiting: true)), "")
+        let loaded = row(
+            inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
+            waiting: true, records: 34, startedAgo: 3 * 3600
+        )
+        XCTAssertEqual(store().rowMetrics(loaded), "", "a waiting row carries no metrics at all")
+    }
+
+    /// …and the same row, not waiting, carries every one of them.
+    @MainActor
+    func testTheSameRowNotWaitingCarriesEverything() {
+        let m = store().rowMetrics(row(
+            inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
+            records: 34, startedAgo: 3 * 3600
+        ))
+        XCTAssertTrue(m.contains("34"), m)
+        XCTAssertTrue(m.contains("↑"), m)
+        XCTAssertTrue(m.contains("2"), m)
     }
 
     /// Nothing to say means no text, not a placeholder.
@@ -584,8 +617,8 @@ final class SessionAgeTests: XCTestCase {
         XCTAssertEqual(r.sessionAgeSeconds(nowMs: now), 0)
     }
 
-    func testTurnsDefaultToUnknown() {
-        XCTAssertEqual(AgentRow(rowKey: "k", agent: .claude).turns, 0)
+    func testRecordsDefaultToUnknown() {
+        XCTAssertEqual(AgentRow(rowKey: "k", agent: .claude).records, 0)
     }
 }
 
@@ -599,7 +632,7 @@ final class HarvestWireFormatTests: XCTestCase {
             "1700000000000", "0", "0", "sess-1", "34", "1699999000000",
         ]) + "\n")
         XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows.first?.turns, 34)
+        XCTAssertEqual(rows.first?.records, 34)
         XCTAssertEqual(rows.first?.startedMs, 1_699_999_000_000)
     }
 
@@ -612,7 +645,7 @@ final class HarvestWireFormatTests: XCTestCase {
         ]) + "\n")
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows.first?.task, "Fix the parser")
-        XCTAssertEqual(rows.first?.turns, 0)
+        XCTAssertEqual(rows.first?.records, 0)
         XCTAssertEqual(rows.first?.startedMs, 0)
     }
 
@@ -620,7 +653,7 @@ final class HarvestWireFormatTests: XCTestCase {
         let rows = ActivityHarvest.parse(line([
             "claude", "t", "0", "0", "", "", "", "", "0", "0", "0", "s", "abc", "xyz",
         ]) + "\n")
-        XCTAssertEqual(rows.first?.turns, 0)
+        XCTAssertEqual(rows.first?.records, 0)
         XCTAssertEqual(rows.first?.startedMs, 0)
     }
 }

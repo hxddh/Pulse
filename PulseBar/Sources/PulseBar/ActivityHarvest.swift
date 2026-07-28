@@ -15,7 +15,11 @@ enum ActivityHarvest {
         var subTotal: Int = 0
         var sessionID: String = ""
         /// Records in the session file — how much has actually happened.
-        var turns: Int = 0
+        ///
+        /// Records, not conversational turns: a transcript interleaves user
+        /// messages, assistant messages, tool calls, tool results and token
+        /// events. 0.28.0 labelled this "turns", which overclaimed.
+        var records: Int = 0
         /// When the session started, so a row can say how long it has been going.
         var startedMs: Int64 = 0
     }
@@ -199,7 +203,7 @@ enum ActivityHarvest {
                 sessionID: cols.count > 11 ? cols[11] : "",
                 // Appended in 0.28; a harvest from an older bundled script
                 // simply has no columns here and reads as unknown.
-                turns: cols.count > 12 ? Int(cols[12]) ?? 0 : 0,
+                records: cols.count > 12 ? Int(cols[12]) ?? 0 : 0,
                 startedMs: cols.count > 13 ? Int64(cols[13]) ?? 0 : 0
             ))
         }

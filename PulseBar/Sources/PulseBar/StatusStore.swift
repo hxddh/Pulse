@@ -739,6 +739,13 @@ final class StatusStore: ObservableObject {
     /// These ride on the right of the context line, in the space that line was
     /// already wasting, so density costs no height.
     func rowMetrics(_ row: AgentRow) -> String {
+        // Nothing at all on a waiting row.
+        //
+        // 0.28.0's notes said "waiting rows do not carry these", and only
+        // tokens were actually suppressed — age, records and sub-agent
+        // progress all still appeared beside the one thing that needs an
+        // answer. The rule is the right one; it just was not implemented.
+        guard !row.waiting else { return "" }
         var bits: [String] = []
         // Session age first: of the three it is the one every file-backed
         // agent can answer, so it is the fact most rows will actually carry.
@@ -747,13 +754,19 @@ final class StatusStore: ObservableObject {
         // and one three minutes old read identically.
         let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
         if age >= 60 { bits.append(DurationFormat.label(seconds: age, lang: lang)) }
-        if row.turns > 0 { bits.append("\(row.turns)\(tr(.turnsSuffix))") }
+        if row.records > 0 { bits.append("\(row.records)\(tr(.recordsSuffix))") }
         if let tokens = row.tokenLine { bits.append(tokens) }
         if let sub = row.subagentLine { bits.append(sub) }
         return bits.joined(separator: " · ")
     }
 
-    /// The tool a live row is running, when it is not already the row's title.
+    /// The most recent tool a live row recorded — not necessarily one still
+    /// executing.
+    ///
+    /// The wire column is `last_tool`, and the harvest reads it from whatever
+    /// the transcript wrote most recently, which includes a `tool_result`.
+    /// Calling it "running" would claim a process state nothing here observes,
+    /// and the row already has a badge for actual state.
     ///
     /// `sessionDetail` promotes `tool` to the hero when there is no task, so
     /// showing it again here would be the same word twice on two lines.
