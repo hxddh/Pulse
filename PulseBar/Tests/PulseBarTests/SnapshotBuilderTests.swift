@@ -765,6 +765,7 @@ final class SnapshotBuilderTests: XCTestCase {
             switch row.section {
             case .needsYou: XCTAssertTrue(row.waiting)
             case .running: XCTAssertTrue(row.liveProcess || row.subRunning > 0)
+            case .stalled: XCTAssertTrue(row.isStalled)
             case .recent: XCTAssertFalse(row.waiting)
             }
         }
