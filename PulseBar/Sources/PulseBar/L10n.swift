@@ -109,6 +109,7 @@ enum L10n {
         case .idleWord: return "idle"
         case .processDetected: return "Process detected"
         case .processWord: return "process"
+        case .processCount: return "%d processes"
         case .about: return "About"
         case .tagline: return "Status lamp for coding agents"
         case .build: return "Build"
@@ -162,6 +163,7 @@ enum L10n {
         case .playSound: return "Play a sound on new waits"
         case .waitedLongest: return "longest"
         case .moreDetail: return "Details"
+        case .moreActions: return "More actions"
         case .acrossProjects: return "across %d projects"
         case .agoFormat: return "%@ ago"
         case .whileAway: return "%d wait(s) ended while you were away"
@@ -175,7 +177,9 @@ enum L10n {
         case .stallOff: return "Never"
         case .minutesShort: return "%d min"
         case .notifFocus: return "Focus"
-        case .recordsSuffix: return " msgs"
+        case .recordsSuffix: return " records"
+        case .sessionAge: return "session %@"
+        case .tokenSnapshot: return "token snapshot %@"
         }
     }
 
@@ -245,6 +249,7 @@ enum L10n {
         case .idleWord: return "空闲"
         case .processDetected: return "检测到进程"
         case .processWord: return "进程"
+        case .processCount: return "%d 个进程"
         case .about: return "关于"
         case .tagline: return "编码 Agent 状态灯"
         case .build: return "构建"
@@ -296,6 +301,7 @@ enum L10n {
         case .playSound: return "新等待时播放提示音"
         case .waitedLongest: return "最久"
         case .moreDetail: return "详情"
+        case .moreActions: return "更多操作"
         case .acrossProjects: return "%d 个项目"
         case .agoFormat: return "%@前"
         case .whileAway: return "你离开时有 %d 个等待已结束"
@@ -309,7 +315,9 @@ enum L10n {
         case .stallOff: return "不判定"
         case .minutesShort: return "%d 分钟"
         case .notifFocus: return "去看看"
-        case .recordsSuffix: return " 条"
+        case .recordsSuffix: return " 条记录"
+        case .sessionAge: return "会话 %@"
+        case .tokenSnapshot: return "token 快照 %@"
         }
     }
 
@@ -329,7 +337,7 @@ enum L10n {
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
         case kindPermission, kindInput, kindWaiting
         case activityPrefix, signalHooks, signalPending
-        case processDetected, processWord
+        case processDetected, processWord, processCount
         case about, tagline, build, devBuild, copyDiagnostics, copied
         case versionStale, versionMismatchHint
         case durNow, durSec, durMin, durHour
@@ -344,11 +352,11 @@ enum L10n {
         case sectionNeedsYou, sectionRunning, sectionRecent
         case groupByAgent, groupByProject, groupingLabel
         case jumpToOldest, interruptionsToday, playSound
-        case waitedLongest, moreDetail
+        case waitedLongest, moreDetail, moreActions
         case acrossProjects, agoFormat, whileAway, noActivityYet
         case noProject, stalled
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
-        case recordsSuffix
+        case recordsSuffix, sessionAge, tokenSnapshot
     }
 }
 

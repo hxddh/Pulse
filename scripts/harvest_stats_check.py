@@ -37,7 +37,8 @@ sys.path.insert(0, str(ROOT / "src"))
 import activity_scan as A  # noqa: E402
 
 COLUMNS = 14
-COL_SESSION, COL_RECORDS, COL_STARTED, COL_TOOL = 11, 12, 13, 4
+COL_TASK, COL_TIN, COL_TOUT, COL_TOOL = 1, 2, 3, 4
+COL_PROJECT, COL_CWD, COL_SESSION, COL_RECORDS, COL_STARTED = 6, 7, 11, 12, 13
 
 RECORDS = 34
 TRANSCRIPT = "".join(
@@ -125,6 +126,7 @@ def check_tool_reading() -> int:
         "nested argument": '{"type":"tool_use","input":{"name":"production"}}',
         "neighbouring record": '{"type":"tool_use","id":"x"}\n{"role":"user","name":"alice"}',
         "non-string name": '{"type":"tool_use","name":123}',
+        "tool result": '{"type":"custom_tool_call_output","name":"not_a_call"}',
     }
     for label, blob in must_not.items():
         got = A.last_tool_name_strict(blob)
@@ -136,6 +138,9 @@ def check_tool_reading() -> int:
         '{"type":"tool_use","name":"Read"}\n{"type":"tool_use","name":"Edit"}': "Edit",
         '{"message":{"content":[{"type":"tool_use","name":"Grep"}]}}': "Grep",
         '[{"type":"tool_use","name":"Glob"}]': "Glob",
+        '{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec"}}': "exec",
+        '{"type":"response_item","payload":{"type":"function_call","name":"view_image"}}': "view_image",
+        '{"type":"tool_call","function":{"name":"search_code"}}': "search_code",
         '{"toolName":"run_command"}': "run_command",
     }
     for blob, want in must.items():
@@ -145,6 +150,13 @@ def check_tool_reading() -> int:
 
     if not any(A.last_tool_name(b) for b in list(must_not.values())[:4]):
         return fail("the loose extractor stopped guessing — strict may be redundant now")
+    fake_title = (
+        '{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",'
+        '"arguments":"{\\"title\\":\\"Internal tool title\\"}"}}\n'
+        '{"type":"session","title":"Human session title"}'
+    )
+    if A.session_title_from_text(fake_title) != "Human session title":
+        return fail("generic title extractor accepted a title embedded in a tool call")
     return 0
 
 
@@ -186,6 +198,32 @@ def check_collectors(home: Path) -> int:
     )
     cases.append(("droid", droid, lambda: A.emit_all("droid", A.droid_activities())))
 
+    # Codex writes stable metadata at the head, live events at the tail, and
+    # cumulative + last-turn token counters together. This fixture is larger
+    # than the collector's tail so all three regressions are exercised through
+    # the real adapter.
+    codex = home / ".codex" / "sessions" / "2026" / "07" / "28"
+    codex.mkdir(parents=True, exist_ok=True)
+    codex_file = codex / "rollout-codex-real.jsonl"
+    filler = (
+        '{"type":"event_msg","payload":{"type":"agent_message","message":"padding"}}\n'
+        * 10_000
+    )
+    codex_file.write_text(
+        '{"type":"session_meta","payload":{"id":"codex-real","cwd":"/Users/me/code/Pulse"}}\n'
+        + filler
+        + '{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",'
+          '"arguments":"{\\"title\\":\\"Internal tool title\\"}"}}\n'
+        + '{"type":"event_msg","payload":{"type":"user_message",'
+          '"message":"Fix all collector and tray issues"}}\n'
+        + '{"type":"event_msg","payload":{"type":"token_count","info":{'
+          '"total_token_usage":{"input_tokens":9000000,"output_tokens":800000},'
+          '"last_token_usage":{"input_tokens":3210,"output_tokens":456}}}}\n'
+        + '{"type":"response_item","payload":{"type":"function_call","name":"view_image"}}\n',
+        encoding="utf-8",
+    )
+    cases.append(("codex", codex, lambda: A.emit_all("codex", A.codex_activities())))
+
     saw_any = False
     for name, where, block in cases:
         try:
@@ -211,6 +249,15 @@ def check_collectors(home: Path) -> int:
                 "amp fixture did not reach the pending branch, so the index "
                 f"rewrite that dropped the metrics is not being covered (row={row})"
             )
+        if name == "codex":
+            if row[COL_TASK] != "Fix all collector and tray issues":
+                return fail(f"codex used an internal title instead of the user task: {row}")
+            if (row[COL_TIN], row[COL_TOUT]) != ("3210", "456"):
+                return fail(f"codex emitted cumulative rather than last-turn tokens: {row}")
+            if row[COL_TOOL] != "view_image":
+                return fail(f"codex missed its explicit function call: {row}")
+            if row[COL_PROJECT] != "Pulse" or row[COL_CWD] != "/Users/me/code/Pulse":
+                return fail(f"codex lost head metadata on a long rollout: {row}")
 
     if not saw_any:
         return fail("no collector produced a row; this gate is asserting nothing")
@@ -259,6 +306,14 @@ def main() -> int:
             return fail(f"{agent} does not ask for session stats")
     if "emit_row(\"claude\"" not in source:
         return fail("claude_block must go through emit_row, or extras are dropped")
+    swift = (ROOT / "PulseBar" / "Sources" / "PulseBar" / "ActivityHarvest.swift").read_text(
+        encoding="utf-8"
+    )
+    if 'task.arguments = ["-u", script.path]' not in swift:
+        return fail(
+            "ActivityHarvest must run Python unbuffered or timeout partial rows "
+            "remain trapped in stdout"
+        )
 
     wired = source.count("session_stats(") - 1
     print(f"harvest stats OK — {COLUMNS} columns, {wired} collectors wired, flagships named")
