@@ -109,7 +109,7 @@ final class SnapshotBuilderTests: XCTestCase {
             session: "grok-1",
             cwd: "/Users/me/Pulse"
         )
-        source.phase = "testing"
+        source.phase = "turn_complete"
         source.outcome = "completed"
         source.model = "grok-4.5"
         source.mode = "build-plan"
@@ -120,7 +120,7 @@ final class SnapshotBuilderTests: XCTestCase {
 
         let result = build(procs: [hit(.grok)], harvest: [source])
         let row = try! XCTUnwrap(result.rows.first)
-        XCTAssertEqual(row.phase, "testing")
+        XCTAssertEqual(row.phase, "turn_complete")
         XCTAssertEqual(row.outcome, "completed")
         XCTAssertEqual(row.model, "grok-4.5")
         XCTAssertEqual(row.mode, "build-plan")
