@@ -547,11 +547,26 @@ final class SessionAgeTests: XCTestCase {
 
     /// Distinct from "last moved": a session can be three hours old and have
     /// touched something a minute ago. The panel only ever had the minute.
+    ///
+    /// The two facts read different clocks — `lastActivitySeconds` is a
+    /// computed property against `Date()`, `sessionAgeSeconds` takes the scan's
+    /// injected `nowMs` — so the row has to be built against both. The first
+    /// version of this test stamped `harvestMs` from the fixed 2023 constant
+    /// and asserted it was a minute old, which against the wall clock is three
+    /// years. Same shape as the 0.25 `isStalled` bug: a fixed test clock next
+    /// to a function that reaches for the real one.
     func testAgeIsNotLastActivity() {
-        var r = row(startedAgo: 3 * 3600)
-        r.harvestMs = now - 60_000
+        let wallNow = Int64(Date().timeIntervalSince1970 * 1000)
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.harvestMs = wallNow - 60_000
+        r.startedMs = wallNow - Int64(3 * 3600 * 1000)
         XCTAssertEqual(r.lastActivitySeconds, 60, accuracy: 5)
-        XCTAssertGreaterThan(r.sessionAgeSeconds(nowMs: now), 10_000)
+        XCTAssertEqual(r.sessionAgeSeconds(nowMs: wallNow), 10_800, accuracy: 5)
+        XCTAssertGreaterThan(
+            r.sessionAgeSeconds(nowMs: wallNow),
+            r.lastActivitySeconds,
+            "a long session that just moved must still read as long"
+        )
     }
 
     /// No start stamp is unknown, and unknown is 0 — never a guess.
