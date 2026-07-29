@@ -19,6 +19,14 @@ from pathlib import Path
 
 HOME = Path.home()
 
+# One product-wide safety budget. It is deliberately much larger than the
+# tray's eight-row default fold: visual density is not a detection limit.
+#
+# Keep candidate scans wider than the output budget so an archived, draft, or
+# malformed record does not prevent a later active session from being found.
+MAX_SESSIONS_PER_AGENT = 32
+SESSION_CANDIDATE_LIMIT = MAX_SESSIONS_PER_AGENT * 2
+
 # Bytes the whole scan may spend counting records, across every collector.
 #
 # The per-file cap alone was not a bound: nineteen call sites, several looping
@@ -885,12 +893,12 @@ def claude_task_progress() -> str:
 
 
 def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, int, int]]:
-    """Up to 2 recent Claude sessions (distinct session files / projects).
+    """Recent Claude sessions (distinct session files / projects).
 
     Tuple: task, tin, tout, tool, skill, project, cwd, mtime_ms, sub_run, sub_total
     """
     paths = glob.glob(str(HOME / ".claude" / "projects" / "*" / "*.jsonl"))
-    files = newest(paths, 8)
+    files = newest(paths, SESSION_CANDIDATE_LIMIT)
     out: list[tuple[str, int, int, str, str, str, str, int, int, int]] = []
     seen: set[str] = set()
     task_hint = ""
@@ -961,13 +969,13 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
                     extra,
                 )
             )
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
 def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
     paths = glob.glob(str(HOME / ".codex" / "sessions" / "*" / "*" / "*" / "rollout-*.jsonl"))
-    files = newest(paths, 4)
+    files = newest(paths, SESSION_CANDIDATE_LIMIT)
     out: list[tuple[str, int, int, str, str, str, str]] = []
     seen: set[str] = set()
     for f in files:
@@ -1015,7 +1023,7 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                     extra,
                 )
             )
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -1058,12 +1066,17 @@ def path_from_composer_meta(meta: dict) -> str:
 
 
 def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
-    """Active Cursor Agent sessions from local DB — not Cursor.app process count.
+    """Cursor local and cloud Agent sessions from its local state DB.
 
     Sources:
       - ItemTable cursor/glass.selectedAgent
       - composerHeaders (name, pending, recency, workspaceId)
-    Active if: selected, or hasBlockingPendingActions, or updated within 30 minutes.
+      - ItemTable cloudAgentRepository.agents.* (cloud status/name/repository)
+
+    Local rows remain observable for the current working block rather than
+    disappearing after 30 minutes. Cloud rows use Cursor's explicit status:
+    status 1 is running; status 2 is completed and only retained while recent,
+    selected, or unread.
     """
     import sqlite3
     import time
@@ -1077,7 +1090,8 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         return []
     try:
         now_ms = int(time.time() * 1000)
-        active_window_ms = 30 * 60 * 1000
+        local_visible_window_ms = 6 * 60 * 60 * 1000
+        cloud_recent_window_ms = 45 * 60 * 1000
         selected = ""
         row = con.execute(
             "SELECT value FROM ItemTable WHERE key='cursor/glass.selectedAgent'"
@@ -1085,18 +1099,17 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         if row and row[0]:
             selected = str(row[0]).strip().strip('"')
 
-        rows = con.execute(
+        local_rows = con.execute(
             """
             SELECT composerId, workspaceId, lastUpdatedAt, value
             FROM composerHeaders
             WHERE IFNULL(isArchived, 0) = 0 AND IFNULL(isSubagent, 0) = 0
             ORDER BY lastUpdatedAt DESC
-            LIMIT 24
             """
         ).fetchall()
-        out: list[tuple[str, int, int, str, str, str, str]] = []
+        candidates: list[tuple] = []
         seen: set[str] = set()
-        for cid, ws_id, lu, val in rows:
+        for cid, ws_id, lu, val in local_rows:
             if not cid or cid == "empty-state-draft":
                 continue
             try:
@@ -1107,7 +1120,7 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 continue
             pending = bool(meta.get("hasBlockingPendingActions") or meta.get("hasPendingPlan"))
             is_sel = bool(selected and cid == selected)
-            age_ok = bool(lu and (now_ms - int(lu)) <= active_window_ms)
+            age_ok = bool(lu and (now_ms - int(lu)) <= local_visible_window_ms)
             if not (is_sel or pending or age_ok):
                 continue
             mode = meta.get("unifiedMode") or ""
@@ -1131,10 +1144,93 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             if not lu:
                 continue
             hm = int(lu)
-            out.append((task, 0, 0, "", skill, project[:48], (cwd or "")[:240], hm, str(cid)))
-            if len(out) >= 2:
-                break
-        return out
+            extra: dict = {"mode": "local"}
+            context_pct = meta.get("contextUsagePercent")
+            files_changed = meta.get("filesChangedCount")
+            if isinstance(context_pct, (int, float)) and context_pct > 0:
+                extra["context_pct"] = int(context_pct)
+            if isinstance(files_changed, (int, float)) and files_changed > 0:
+                extra["files"] = int(files_changed)
+            candidates.append(
+                (
+                    task,
+                    0,
+                    0,
+                    "",
+                    skill,
+                    project[:48],
+                    (cwd or "")[:240],
+                    hm,
+                    str(cid),
+                    extra,
+                )
+            )
+
+        cloud_values = con.execute(
+            "SELECT value FROM ItemTable WHERE key LIKE 'cloudAgentRepository.agents.%'"
+        ).fetchall()
+        for value_row in cloud_values:
+            try:
+                cloud_rows = json.loads(value_row[0] or "[]")
+            except Exception:
+                continue
+            if not isinstance(cloud_rows, list):
+                continue
+            for meta in cloud_rows:
+                if not isinstance(meta, dict):
+                    continue
+                sid = str(meta.get("bcId") or meta.get("id") or "")
+                if not sid or sid in seen or bool(meta.get("isArchived")):
+                    continue
+                try:
+                    status = int(meta.get("status"))
+                except (TypeError, ValueError):
+                    status = -1
+                try:
+                    updated_ms = int(meta.get("updatedAt") or 0)
+                except (TypeError, ValueError):
+                    updated_ms = 0
+                selected_cloud = bool(selected and sid == selected)
+                unread = bool(meta.get("isUnread"))
+                recent_cloud = bool(
+                    updated_ms and now_ms - updated_ms <= cloud_recent_window_ms
+                )
+                running_cloud = status == 1
+                if not (running_cloud or selected_cloud or unread or recent_cloud):
+                    continue
+                seen.add(sid)
+                title = str(meta.get("name") or "Cursor Cloud Agent").strip()
+                repo = str(meta.get("repoUrl") or "")
+                project = short_project(repo)
+                model_details = (
+                    meta.get("modelDetails")
+                    if isinstance(meta.get("modelDetails"), dict)
+                    else {}
+                )
+                extra = {
+                    "mode": "cloud",
+                    "phase": "running" if running_cloud else "completed" if status == 2 else "",
+                }
+                model = str(model_details.get("modelName") or "")
+                if model:
+                    extra["model"] = model[:64]
+                candidates.append(
+                    (
+                        title[:160],
+                        0,
+                        0,
+                        "",
+                        "",
+                        project[:48],
+                        "",
+                        updated_ms or now_ms,
+                        sid[:80],
+                        extra,
+                    )
+                )
+
+        candidates.sort(key=lambda item: int(item[7] or 0), reverse=True)
+        return candidates[:MAX_SESSIONS_PER_AGENT]
     except Exception:
         return []
     finally:
@@ -1144,145 +1240,205 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             pass
 
 
-def grok_activity() -> tuple:
-    active = HOME / ".grok" / "active_sessions.json"
+def grok_session_activity(active: Path, session: dict) -> tuple | None:
+    """Shape one explicit Grok active-session record into a harvest row."""
+    sid = str(session.get("session_id") or "")
+    if not sid:
+        return None
+    cwd = session.get("cwd") or session.get("workspace") or session.get("path") or ""
+    project = short_project(str(cwd)) if cwd else ""
     task = ""
-    if active.is_file():
-        try:
-            sessions = json.loads(active.read_text(encoding="utf-8"))
-            if sessions:
-                sid = sessions[0].get("session_id", "")
-                cwd = sessions[0].get("cwd") or sessions[0].get("workspace") or sessions[0].get("path") or ""
-                project = short_project(str(cwd)) if cwd else ""
-                for d in (HOME / ".grok" / "sessions").rglob(sid):
-                    if d.is_dir():
-                        if not project:
-                            project = short_project(d.name) or short_project(d.parent.name)
-                        plan = d / "plan.md"
-                        goal = d / "goal" / "plan.md"
-                        summary = d / "summary.json"
-                        signals = d / "signals.json"
-                        events = d / "events.jsonl"
-                        extra: dict = {}
-                        if plan.is_file():
-                            task = plan.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0][:160]
-                        elif goal.is_file():
-                            task = goal.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0][:160]
-                        elif summary.is_file():
-                            try:
-                                obj = json.loads(summary.read_text(encoding="utf-8", errors="replace"))
-                                task = meaningful_prompt(
-                                    obj.get("generated_title")
-                                    or obj.get("session_summary")
-                                    or obj.get("title")
-                                    or obj.get("summary")
-                                )[:160]
-                                extra["model"] = str(obj.get("current_model_id") or "")[:64]
-                                extra["mode"] = str(obj.get("agent_name") or "")[:64]
-                                extra["records"] = int(obj.get("num_messages") or 0)
-                                extra["started_ms"] = iso_time_ms(obj.get("created_at"))
-                            except Exception:
-                                pass
-                        if signals.is_file():
-                            try:
-                                sig = json.loads(signals.read_text(encoding="utf-8", errors="replace"))
-                                extra["errors"] = max(
-                                    int(sig.get("errorCount") or 0),
-                                    int(sig.get("toolFailureCount") or 0),
-                                )
-                                extra["files"] = int(sig.get("totalFilesTouched") or 0)
-                                extra["context_pct"] = int(sig.get("contextWindowUsage") or 0)
-                                extra["progress_done"] = int(sig.get("turnCount") or 0)
-                                if not extra.get("model"):
-                                    extra["model"] = str(sig.get("modelName") or sig.get("modelId") or "")[:64]
-                            except Exception:
-                                pass
-                        hist = d / "chat_history.jsonl"
-                        tools = skill = ""
-                        if hist.is_file():
-                            htext = tail_bytes(hist, 200_000)
-                            if not task:
-                                for record in reversed(json_records(htext)):
-                                    if not isinstance(record, dict):
-                                        continue
-                                    if str(record.get("role") or "").lower() not in ("user", "human"):
-                                        continue
-                                    candidate = meaningful_prompt(record.get("content"))
-                                    if candidate:
-                                        task = candidate[:160]
-                                        break
-                            tools = last_tool_name(htext)
-                            if text_looks_pending(htext):
-                                skill = "pending"
-                        if events.is_file():
-                            try:
-                                event_rows = json_records(tail_bytes(events, 240_000))
-                                last_phase = ""
-                                last_outcome = ""
-                                last_tool = ""
-                                for event in event_rows:
-                                    if not isinstance(event, dict):
-                                        continue
-                                    typ = str(event.get("type") or "")
-                                    if typ == "phase_changed":
-                                        last_phase = str(event.get("phase") or "")
-                                    elif typ in ("tool_started", "tool_completed"):
-                                        last_tool = str(event.get("tool_name") or last_tool)
-                                        if typ == "tool_completed":
-                                            last_outcome = str(event.get("outcome") or "")
-                                    elif typ == "turn_ended":
-                                        last_phase = "turn_complete"
-                                        last_outcome = str(event.get("outcome") or last_outcome)
-                                    elif typ == "permission_requested":
-                                        last_phase = "waiting_permission"
-                                if last_phase:
-                                    extra["phase"] = last_phase[:64]
-                                if last_outcome:
-                                    extra["outcome"] = last_outcome[:64]
-                                if last_tool:
-                                    tools = last_tool[:48]
-                            except Exception:
-                                pass
-                        return (
-                            task,
-                            0,
-                            0,
-                            tools,
-                            skill,
-                            project[:48],
-                            str(cwd)[:240],
-                            file_mtime_ms(events if events.is_file() else hist if hist.is_file() else active),
-                            str(sid)[:80],
-                            extra,
-                        )
-        except Exception:
-            pass
-    # Fall through empty with no mtime
-    return "", 0, 0, "", "", "", "", 0, ""
+    for d in (HOME / ".grok" / "sessions").rglob(sid):
+        if not d.is_dir():
+            continue
+        if not project:
+            project = short_project(d.name) or short_project(d.parent.name)
+        plan = d / "plan.md"
+        goal = d / "goal" / "plan.md"
+        summary = d / "summary.json"
+        signals = d / "signals.json"
+        events = d / "events.jsonl"
+        extra: dict = {}
+        if plan.is_file():
+            task = plan.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0][:160]
+        elif goal.is_file():
+            task = goal.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0][:160]
+        elif summary.is_file():
+            try:
+                obj = json.loads(summary.read_text(encoding="utf-8", errors="replace"))
+                task = meaningful_prompt(
+                    obj.get("generated_title")
+                    or obj.get("session_summary")
+                    or obj.get("title")
+                    or obj.get("summary")
+                )[:160]
+                extra["model"] = str(obj.get("current_model_id") or "")[:64]
+                extra["mode"] = str(obj.get("agent_name") or "")[:64]
+                extra["records"] = int(obj.get("num_messages") or 0)
+                extra["started_ms"] = iso_time_ms(obj.get("created_at"))
+            except Exception:
+                pass
+        if signals.is_file():
+            try:
+                sig = json.loads(signals.read_text(encoding="utf-8", errors="replace"))
+                extra["errors"] = max(
+                    int(sig.get("errorCount") or 0),
+                    int(sig.get("toolFailureCount") or 0),
+                )
+                extra["files"] = int(sig.get("totalFilesTouched") or 0)
+                extra["context_pct"] = int(sig.get("contextWindowUsage") or 0)
+                extra["progress_done"] = int(sig.get("turnCount") or 0)
+                if not extra.get("model"):
+                    extra["model"] = str(sig.get("modelName") or sig.get("modelId") or "")[:64]
+            except Exception:
+                pass
+        hist = d / "chat_history.jsonl"
+        tools = skill = ""
+        if hist.is_file():
+            htext = tail_bytes(hist, 200_000)
+            if not task:
+                for record in reversed(json_records(htext)):
+                    if not isinstance(record, dict):
+                        continue
+                    if str(record.get("role") or "").lower() not in ("user", "human"):
+                        continue
+                    candidate = meaningful_prompt(record.get("content"))
+                    if candidate:
+                        task = candidate[:160]
+                        break
+            tools = last_tool_name(htext)
+            if text_looks_pending(htext):
+                skill = "pending"
+        if events.is_file():
+            try:
+                event_rows = json_records(tail_bytes(events, 240_000))
+                last_phase = ""
+                last_outcome = ""
+                last_tool = ""
+                for event in event_rows:
+                    if not isinstance(event, dict):
+                        continue
+                    typ = str(event.get("type") or "")
+                    if typ == "phase_changed":
+                        last_phase = str(event.get("phase") or "")
+                    elif typ in ("tool_started", "tool_completed"):
+                        last_tool = str(event.get("tool_name") or last_tool)
+                        if typ == "tool_completed":
+                            last_outcome = str(event.get("outcome") or "")
+                    elif typ == "turn_ended":
+                        last_phase = "turn_complete"
+                        last_outcome = str(event.get("outcome") or last_outcome)
+                    elif typ == "permission_requested":
+                        last_phase = "waiting_permission"
+                if last_phase:
+                    extra["phase"] = last_phase[:64]
+                if last_outcome:
+                    extra["outcome"] = last_outcome[:64]
+                if last_tool:
+                    tools = last_tool[:48]
+            except Exception:
+                pass
+        return (
+            task or "Grok session",
+            0,
+            0,
+            tools,
+            skill,
+            project[:48],
+            str(cwd)[:240],
+            file_mtime_ms(events if events.is_file() else hist if hist.is_file() else active),
+            sid[:80],
+            extra,
+        )
+    # `active_sessions.json` is itself explicit runtime evidence. Keep the row
+    # even if Grok has not flushed the richer session directory yet.
+    return (
+        "Grok session",
+        0,
+        0,
+        "",
+        "",
+        project[:48],
+        str(cwd)[:240],
+        file_mtime_ms(active),
+        sid[:80],
+        {},
+    )
+
+
+def grok_activities() -> list[tuple]:
+    active = HOME / ".grok" / "active_sessions.json"
+    if not active.is_file():
+        return []
+    try:
+        raw = json.loads(active.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    sessions = raw if isinstance(raw, list) else raw.get("sessions", []) if isinstance(raw, dict) else []
+    out: list[tuple] = []
+    seen: set[str] = set()
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        sid = str(session.get("session_id") or "")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        row = grok_session_activity(active, session)
+        if row is not None:
+            out.append(row)
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
+            break
+    return out
+
+
+def grok_activity() -> tuple:
+    """Backward-compatible single-row helper for older callers."""
+    rows = grok_activities()
+    return rows[0] if rows else ("", 0, 0, "", "", "", "", 0, "")
+
+
+def pi_activities() -> list[tuple]:
+    paths = glob.glob(str(HOME / ".pi" / "agent" / "sessions" / "*" / "*.jsonl"))
+    files = newest(paths, SESSION_CANDIDATE_LIMIT)
+    out: list[tuple] = []
+    for f in files:
+        text = tail_bytes(f)
+        task = session_title_from_text(text) or extract_field(text, "text") or extract_field(text, "content") or ""
+        tin = sum_int_fields(text, "input_tokens")
+        tout = sum_int_fields(text, "output_tokens")
+        tool = last_tool_name_strict(text)
+        skill = "pending" if text_looks_pending(text) else ""
+        cwd = extract_field(text, "cwd") or extract_field(text, "workingDirectory") or ""
+        project = short_project(cwd) if cwd else short_project(f.parent.name)
+        sid = f.stem
+        extra = session_stats(f, per_session=True)
+        phase = semantic_phase_from_events(text)
+        if phase:
+            extra["phase"] = phase
+        out.append(
+            (
+                task[:160],
+                tin,
+                tout,
+                tool[:48],
+                skill[:48],
+                project[:48],
+                (cwd or "")[:240],
+                file_mtime_ms(f),
+                sid[:80],
+                extra,
+            )
+        )
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
+            break
+    return out
 
 
 def pi_activity() -> tuple:
-    paths = glob.glob(str(HOME / ".pi" / "agent" / "sessions" / "*" / "*.jsonl"))
-    files = newest(paths, 1)
-    if not files:
-        return "", 0, 0, "", "", "", "", 0, ""
-    f = files[0]
-    text = tail_bytes(f)
-    task = session_title_from_text(text) or extract_field(text, "text") or extract_field(text, "content") or ""
-    tin = sum_int_fields(text, "input_tokens")
-    tout = sum_int_fields(text, "output_tokens")
-    tool = last_tool_name_strict(text)
-    skill = ""
-    if text_looks_pending(text):
-        skill = "pending"
-    cwd = extract_field(text, "cwd") or extract_field(text, "workingDirectory") or ""
-    project = short_project(cwd) if cwd else short_project(f.parent.name)
-    sid = f.stem
-    extra = session_stats(f, per_session=True)
-    phase = semantic_phase_from_events(text)
-    if phase:
-        extra["phase"] = phase
-    return task[:160], tin, tout, tool[:48], skill[:48], project[:48], (cwd or "")[:240], file_mtime_ms(f), sid[:80], extra
+    """Backward-compatible single-row helper for older callers."""
+    rows = pi_activities()
+    return rows[0] if rows else ("", 0, 0, "", "", "", "", 0, "")
 
 
 def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
@@ -1339,7 +1495,7 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             seen.add(key)
             skill = "pending" if (json_looks_pending(obj) or text_looks_pending(json.dumps(obj)[-8000:])) else ""
             out.append((title[:160] or "Amp thread", 0, 0, "", skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), session_stats(f, per_session=True)))
-            if len(out) >= 2:
+            if len(out) >= MAX_SESSIONS_PER_AGENT:
                 return out
 
     # Modern Amp: ~/.local/share/amp/session.json + history.jsonl (no local threads/)
@@ -1415,7 +1571,7 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             out.append((*row, sid, extra))
         else:
             out.append((*row, extra))
-    return out[:2]
+    return out[:MAX_SESSIONS_PER_AGENT]
 
 
 PENDING_NEEDLES = (
@@ -1613,6 +1769,155 @@ def observed_session_from_json(obj) -> tuple[str, str, str]:
     return best[1], best[2], best[3]
 
 
+def observed_sessions_from_json(obj, limit: int = MAX_SESSIONS_PER_AGENT) -> list[tuple]:
+    """Return distinct session records from one shared extension container.
+
+    Many VS Code-family agents keep every conversation in one JSON document.
+    `observed_session_from_json` intentionally returns the single strongest
+    record for compatibility, but using it in a collector made a four-session
+    cache look like one session no matter how high the outer row cap was.
+
+    Tuple: task, cwd, session id, optional facts, pending, updated_ms.
+    """
+    context_needles = ("session", "thread", "conversation", "chat", "task", "composer", "history")
+    title_keys = ("task", "title", "summary", "prompt", "query", "lastMessage", "subject")
+    cwd_keys = (
+        "cwd", "workingDirectory", "workdir", "workspacePath", "workspace",
+        "projectPath", "project_path", "directory", "worktree",
+    )
+    sid_keys = ("sessionId", "session_id", "taskId", "conversationId", "threadId", "uuid", "id")
+    time_keys = (
+        "lastUpdatedAt", "updatedAt", "updated_at", "time_updated",
+        "timestamp", "modifiedAt", "createdAt",
+    )
+
+    candidates: dict[str, dict] = {}
+    stack: list[tuple[object, str, int]] = [(obj, "", 0)]
+    visited = 0
+    order = 0
+    while stack and visited < 1200:
+        value, context, depth = stack.pop()
+        visited += 1
+        if depth > 7:
+            continue
+        if isinstance(value, list):
+            for item in value[:200]:
+                stack.append((item, context, depth + 1))
+            continue
+        if not isinstance(value, dict):
+            continue
+
+        task = cwd = sid = ""
+        for key in title_keys:
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                task = " ".join(raw.strip().split())[:160]
+                break
+        for key in cwd_keys:
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip().startswith("/"):
+                cwd = raw.strip()[:240]
+                break
+        for key in sid_keys:
+            raw = value.get(key)
+            if isinstance(raw, (str, int)) and str(raw).strip():
+                sid = str(raw).strip()[:80]
+                break
+
+        record_type = str(value.get("type") or value.get("kind") or "").lower()
+        context_is_session = (
+            any(needle in context.lower() for needle in context_needles)
+            or any(needle in record_type for needle in context_needles)
+        )
+        strong_session_context = (
+            any(
+                needle in context.lower()
+                for needle in ("session", "thread", "conversation", "chat", "composer", "history")
+            )
+            or any(
+                needle in record_type
+                for needle in ("session", "thread", "conversation", "chat", "composer")
+            )
+        )
+        if not sid and context_is_session:
+            leaf = context.rsplit(".", 1)[-1]
+            if re.fullmatch(r"[0-9a-z_-]{8,80}", leaf, re.I) and leaf.lower() not in context_needles:
+                sid = leaf[:80]
+
+        # A checklist item under `tasks[]` is not automatically an agent
+        # session. It needs its own identity/workspace; stronger conversation
+        # containers may qualify a titled record without those fields.
+        qualified = bool((task and sid) or (task and cwd) or (task and strong_session_context) or (cwd and sid))
+        if qualified:
+            updated_ms = 0
+            for key in time_keys:
+                raw = value.get(key)
+                if isinstance(raw, (int, float)) and raw > 0:
+                    updated_ms = int(raw)
+                    if updated_ms < 10_000_000_000:
+                        updated_ms *= 1000
+                    break
+                if isinstance(raw, str) and raw.strip():
+                    updated_ms = iso_time_ms(raw)
+                    if updated_ms:
+                        break
+            score = (
+                (8 if task else 0)
+                + (6 if cwd else 0)
+                + (4 if sid else 0)
+                + (4 if context_is_session else 0)
+            )
+            identity = sid or f"{cwd}\x1f{task}"
+            existing = candidates.get(identity)
+            if existing is None:
+                order += 1
+                candidates[identity] = {
+                    "task": task,
+                    "cwd": cwd,
+                    "sid": sid,
+                    "node": value,
+                    "score": score,
+                    "updated_ms": updated_ms,
+                    "order": order,
+                }
+            else:
+                if task and (not existing["task"] or score > existing["score"]):
+                    existing["task"] = task
+                if cwd and not existing["cwd"]:
+                    existing["cwd"] = cwd
+                if sid and not existing["sid"]:
+                    existing["sid"] = sid
+                if score > existing["score"]:
+                    existing["node"] = value
+                    existing["score"] = score
+                existing["updated_ms"] = max(existing["updated_ms"], updated_ms)
+
+        for key, child in value.items():
+            if isinstance(child, (dict, list)):
+                child_context = f"{context}.{key}" if context else str(key)
+                stack.append((child, child_context, depth + 1))
+
+    ranked = sorted(
+        candidates.values(),
+        key=lambda item: (item["updated_ms"], item["score"], item["order"]),
+        reverse=True,
+    )
+    out: list[tuple] = []
+    for item in ranked[:max(0, limit)]:
+        node = item["node"]
+        out.append(
+            (
+                item["task"],
+                item["cwd"],
+                item["sid"],
+                observed_facts_from_json(node),
+                json_looks_pending(node),
+                item["updated_ms"],
+            )
+        )
+    return out
+
+
 def observed_session_from_text(text: str) -> tuple[str, str, str]:
     """Decode a JSON document or recent JSONL records, then walk it."""
     stripped = (text or "").strip()
@@ -1726,9 +2031,10 @@ def observed_facts_from_json(obj) -> dict:
     return best[1]
 
 
-def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list[tuple]:
+def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIONS_PER_AGENT) -> list[tuple]:
     """Generic VS Code/Cursor globalStorage harvest → up to `limit` rows."""
     out: list[tuple] = []
+    seen_sessions: set[str] = set()
     for store in vscode_global_storage_dirs(*needles):
         files = recent_files_under(store, ("*.json", "*.jsonl"), limit=10)
         for f in files:
@@ -1755,6 +2061,36 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = 2) -> list
             except Exception:
                 obj = {}
                 text = tail_bytes(f, 80_000)
+            shared_sessions = (
+                observed_sessions_from_json(obj, limit=limit - len(out))
+                if isinstance(obj, (dict, list))
+                else []
+            )
+            if shared_sessions:
+                for task, cwd, sid, extra, pending, updated_ms in shared_sessions:
+                    identity = sid or f"{cwd}\x1f{task}"
+                    if identity in seen_sessions:
+                        continue
+                    seen_sessions.add(identity)
+                    display_task = task or f"{agent} session"
+                    project = short_project(cwd) if cwd else short_project(store.name)
+                    out.append(
+                        (
+                            display_task[:160],
+                            0,
+                            0,
+                            last_tool_name_strict(text),
+                            "pending" if pending else "",
+                            project[:48],
+                            cwd[:240],
+                            updated_ms or file_mtime_ms(f),
+                            sid or f.stem[:80],
+                            extra,
+                        )
+                    )
+                    if len(out) >= limit:
+                        return out
+                continue
             task = cwd = sid = ""
             extra: dict = {}
             if isinstance(obj, (dict, list)):
@@ -1835,7 +2171,7 @@ def continue_activities() -> list[tuple]:
         )
         skill = "pending" if pending else ""
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -1847,7 +2183,7 @@ def copilot_activities() -> list[tuple]:
     out: list[tuple] = []
     if not state.is_dir():
         # Fallback legacy roots
-        return home_dir_activities("copilot", [home, HOME / ".config" / "copilot"], limit=2)
+        return home_dir_activities("copilot", [home, HOME / ".config" / "copilot"], limit=MAX_SESSIONS_PER_AGENT)
 
     sessions = []
     try:
@@ -1894,7 +2230,7 @@ def copilot_activities() -> list[tuple]:
         mtime = file_mtime_ms(events if events.is_file() else sdir)
         stats = session_stats(events if events.is_file() else sdir, per_session=True)
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sdir.name[:80], stats))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -1926,7 +2262,7 @@ def amazon_q_activities() -> list[tuple]:
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -1964,7 +2300,7 @@ def zed_agent_activities() -> list[tuple]:
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -2000,14 +2336,14 @@ def openhands_activities() -> list[tuple]:
             or '"action":"message"' in low[-2000:] and "wait" in low[-2000:]
         ) else ""
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
 
 def antigravity_activities() -> list[tuple]:
     """Antigravity IDE/2.0 — B 尽力；Waiting 通常 none。"""
-    out = harvest_extension_storage("antigravity", "antigravity", "google.antigravity", limit=2)
+    out = harvest_extension_storage("antigravity", "antigravity", "google.antigravity", limit=MAX_SESSIONS_PER_AGENT)
     support = HOME / "Library" / "Application Support"
     roots = [
         HOME / ".antigravity",
@@ -2023,22 +2359,22 @@ def antigravity_activities() -> list[tuple]:
         if user.is_dir():
             roots.append(user / "globalStorage")
             roots.append(user / "workspaceStorage")
-    if len(out) >= 2:
+    if len(out) >= MAX_SESSIONS_PER_AGENT:
         return out
-    more = home_dir_activities("antigravity", roots, limit=2 - len(out))
+    more = home_dir_activities("antigravity", roots, limit=MAX_SESSIONS_PER_AGENT - len(out))
     # Prefer rows that look agent-ish
     filtered = []
     for row in more:
         blob = " ".join(str(x) for x in row).lower()
         if any(x in blob for x in ("agent", "chat", "thread", "task", "pending", "antigravity")):
             filtered.append(row)
-    return (out + (filtered or more))[:2]
+    return (out + (filtered or more))[:MAX_SESSIONS_PER_AGENT]
 
 
 def roo_activities() -> list[tuple]:
     """Roo: deepen ask/approval like Cline."""
-    out = harvest_extension_storage("roo", "roo-cline", "roo-code", "rooveterinary", "RooCode", limit=2)
-    if len(out) >= 2 and any(r[4] == "pending" for r in out):
+    out = harvest_extension_storage("roo", "roo-cline", "roo-code", "rooveterinary", "RooCode", limit=MAX_SESSIONS_PER_AGENT)
+    if len(out) >= MAX_SESSIONS_PER_AGENT and any(r[4] == "pending" for r in out):
         return out
     for store in vscode_global_storage_dirs("roo-cline", "roo-code", "rooveterinary", "RooCode"):
         for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=8):
@@ -2058,13 +2394,13 @@ def roo_activities() -> list[tuple]:
                 out = [row] + [r for r in out if (len(r) < 9 or r[8] != row[8])]
             elif not out:
                 out.append(row)
-            if len(out) >= 2:
-                return out[:2]
-    return out[:2]
+            if len(out) >= MAX_SESSIONS_PER_AGENT:
+                return out[:MAX_SESSIONS_PER_AGENT]
+    return out[:MAX_SESSIONS_PER_AGENT]
 
 
 def kilo_activities() -> list[tuple]:
-    out = harvest_extension_storage("kilo", "kilocode", "kilo-code", "kilo.code", limit=2)
+    out = harvest_extension_storage("kilo", "kilocode", "kilo-code", "kilo.code", limit=MAX_SESSIONS_PER_AGENT)
     if any(r[4] == "pending" for r in out):
         return out
     for store in vscode_global_storage_dirs("kilocode", "kilo-code", "kilo.code"):
@@ -2078,9 +2414,9 @@ def kilo_activities() -> list[tuple]:
             if not (task or pending):
                 continue
             out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
-            if len(out) >= 2:
-                return out[:2]
-    return out[:2]
+            if len(out) >= MAX_SESSIONS_PER_AGENT:
+                return out[:MAX_SESSIONS_PER_AGENT]
+    return out[:MAX_SESSIONS_PER_AGENT]
 
 
 def cascade_windsurf_activities() -> list[tuple]:
@@ -2093,13 +2429,13 @@ def cascade_windsurf_activities() -> list[tuple]:
         HOME / "Library" / "Application Support" / "Codeium",
     ]
     # Extension storage
-    out.extend(harvest_extension_storage("cascade", "codeium.cascade", "codeium", "windsurf", limit=2))
+    out.extend(harvest_extension_storage("cascade", "codeium.cascade", "codeium", "windsurf", limit=MAX_SESSIONS_PER_AGENT))
     files: list[str] = []
     for root in roots:
         if root.is_dir():
             files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl"), limit=10))
     for f in newest(files, 8):
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
         text = tail_bytes(Path(f), 100_000)
         if "cascade" not in text.lower() and "windsurf" not in str(f).lower() and "codeium" not in str(f).lower():
@@ -2115,13 +2451,13 @@ def cascade_windsurf_activities() -> list[tuple]:
         # so Cascade paid for the file scan every tick and shipped 0/0. The
         # agent name is chosen by `cascade_block` anyway.
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
-    return out[:2]
+    return out[:MAX_SESSIONS_PER_AGENT]
 
 
 def augment_activities() -> list[tuple]:
-    out = harvest_extension_storage("augment", "augment", "auggie", limit=2)
+    out = harvest_extension_storage("augment", "augment", "auggie", limit=MAX_SESSIONS_PER_AGENT)
     roots = [HOME / ".augment", HOME / ".auggie", HOME / "Library" / "Application Support" / "Augment"]
-    if len(out) >= 2:
+    if len(out) >= MAX_SESSIONS_PER_AGENT:
         return out
     files: list[str] = []
     for root in roots:
@@ -2134,19 +2470,19 @@ def augment_activities() -> list[tuple]:
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
 
 def trae_activities() -> list[tuple]:
-    out = harvest_extension_storage("trae", "trae", "bytedance.trae", limit=2)
+    out = harvest_extension_storage("trae", "trae", "bytedance.trae", limit=MAX_SESSIONS_PER_AGENT)
     roots = [
         HOME / "Library" / "Application Support" / "Trae",
         HOME / "Library" / "Application Support" / "Trae" / "User" / "globalStorage",
         HOME / ".trae",
     ]
-    if len(out) >= 2:
+    if len(out) >= MAX_SESSIONS_PER_AGENT:
         return out
     for root in roots:
         if not root.is_dir():
@@ -2161,7 +2497,7 @@ def trae_activities() -> list[tuple]:
             project = short_project(cwd) if cwd else short_project(f.stem)
             skill = "pending" if text_looks_pending(text) else ""
             out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
-            if len(out) >= 2:
+            if len(out) >= MAX_SESSIONS_PER_AGENT:
                 return out
     return out
 
@@ -2196,12 +2532,12 @@ def warp_agent_activities() -> list[tuple]:
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
 
-def home_dir_activities(agent: str, roots: list[Path], limit: int = 2) -> list[tuple]:
+def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS_PER_AGENT) -> list[tuple]:
     out: list[tuple] = []
     files: list[str] = []
     for root in roots:
@@ -2229,9 +2565,9 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = 2) -> list[t
 
 def cline_activities() -> list[tuple]:
     """Cline: VS Code globalStorage — deepen ask/approval pending."""
-    out = harvest_extension_storage("cline", "saoudrizwan.claude-dev", "claude-dev", "cline", limit=2)
+    out = harvest_extension_storage("cline", "saoudrizwan.claude-dev", "claude-dev", "cline", limit=MAX_SESSIONS_PER_AGENT)
     # Extra pass: task history often stores ask_followup_question / api_req pending
-    if len(out) >= 2 and any(r[4] == "pending" for r in out):
+    if len(out) >= MAX_SESSIONS_PER_AGENT and any(r[4] == "pending" for r in out):
         return out
     extra_needles = (
         "ask_followup_question",
@@ -2260,9 +2596,9 @@ def cline_activities() -> list[tuple]:
                 out = [row] + [r for r in out if r[8:] != row[8:]]
             elif not out:
                 out.append(row)
-            if len(out) >= 2:
-                return out[:2]
-    return out[:2]
+            if len(out) >= MAX_SESSIONS_PER_AGENT:
+                return out[:MAX_SESSIONS_PER_AGENT]
+    return out[:MAX_SESSIONS_PER_AGENT]
 
 
 def droid_activities() -> list[tuple]:
@@ -2295,7 +2631,7 @@ def droid_activities() -> list[tuple]:
         project = short_project(cwd) if cwd else short_project(f.parent.name)
         skill = "pending" if text_looks_pending(text) else ""
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), sid or f.stem[:80], session_stats(f, per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -2348,7 +2684,7 @@ def command_code_activities() -> list[tuple]:
         stats = session_stats(jl if jl.is_file() else mp, per_session=True)
         seen.add(sid)
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sid[:80], stats))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -2414,7 +2750,7 @@ def kimi_activities() -> list[tuple]:
             per_session=True,
         )
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sid or sdir.name[:80], stats))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -2432,8 +2768,8 @@ def devin_activities() -> list[tuple]:
 
 
 def kiro_activities() -> list[tuple]:
-    out = harvest_extension_storage("kiro", "kiro", "amazon.kiro", limit=2)
-    if len(out) < 2:
+    out = harvest_extension_storage("kiro", "kiro", "amazon.kiro", limit=MAX_SESSIONS_PER_AGENT)
+    if len(out) < MAX_SESSIONS_PER_AGENT:
         out.extend(
             home_dir_activities(
                 "kiro",
@@ -2441,10 +2777,10 @@ def kiro_activities() -> list[tuple]:
                     HOME / ".kiro",
                     HOME / "Library" / "Application Support" / "Kiro",
                 ],
-                limit=2 - len(out),
+                limit=MAX_SESSIONS_PER_AGENT - len(out),
             )
         )
-    return out[:2]
+    return out[:MAX_SESSIONS_PER_AGENT]
 
 
 def junie_activities() -> list[tuple]:
@@ -2476,7 +2812,7 @@ def windsurf_shell_activities() -> list[tuple]:
         HOME / "Library" / "Application Support" / "Windsurf" / "User" / "workspaceStorage",
         HOME / ".windsurf",
     ]
-    return home_dir_activities("windsurf", roots, limit=1)
+    return home_dir_activities("windsurf", roots, limit=MAX_SESSIONS_PER_AGENT)
 
 
 def amp_pending_from_logs() -> tuple[str, str, int]:
@@ -2600,7 +2936,7 @@ def gemini_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 session_stats(f, per_session=True),
             )
         )
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -2663,7 +2999,7 @@ def opencode_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 ms,
             )
         )
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -3160,7 +3496,7 @@ def aider_activities() -> list[tuple]:
         if not (task or project or pending):
             continue
         out.append((task or "Aider session", 0, 0, last_tool_name_strict(text), skill, project[:48], cwd[:240], file_mtime_ms(Path(f)), Path(f).parent.name, session_stats(Path(f), per_session=False)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -3216,7 +3552,7 @@ def goose_activities() -> list[tuple]:
         project = short_project(cwd)
         skill = "pending" if pending else ""
         out.append((title[:160] or "Goose session", 0, 0, "", skill, project[:48], cwd[:240], file_mtime_ms(f), sid[:80], session_stats(f, per_session=True)))
-        if len(out) >= 2:
+        if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
 
@@ -3289,12 +3625,6 @@ def claude_block() -> None:
         emit_row("claude", row, evidence=HARVEST_CONTRACTS["claude"])
 
 
-def single_activity_block(agent: str, fn) -> None:
-    row = fn()
-    if any(row[:7]):
-        emit_row(agent, row, evidence=HARVEST_CONTRACTS[agent])
-
-
 def amp_block() -> None:
     amp_skill, amp_sid, amp_ms = amp_pending_from_logs()
     amp_rows = amp_activities()
@@ -3363,8 +3693,8 @@ HARVESTERS = (
     ("claude", claude_block),
     simple("codex", codex_activities),
     simple("cursor", cursor_activities),
-    ("grok", lambda: single_activity_block("grok", grok_activity)),
-    ("pi", lambda: single_activity_block("pi", pi_activity)),
+    simple("grok", grok_activities),
+    simple("pi", pi_activities),
     ("amp", amp_block),
     simple("gemini", gemini_activities),
     simple("opencode", opencode_activities),

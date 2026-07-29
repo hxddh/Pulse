@@ -12,9 +12,10 @@ import Foundation
 /// in charge of policy and I/O; this stays a function of its inputs.
 enum SnapshotBuilder {
 
-    /// Sessions kept per agent. Was hardcoded to 2, which made the third
-    /// concurrent Claude invisible with no hint that anything was dropped.
-    static let maxSessionsPerAgent = 4
+    /// Safety bound, not the default visual density. The tray folds globally
+    /// after `maxVisibleRows`; keeping this much higher means the fifth (or
+    /// twentieth) concurrent session can still be expanded and inspected.
+    static let maxSessionsPerAgent = 32
     /// Rows shown before the "and N more" fold.
     ///
     /// Was 5, but every row also carried a permanently visible action strip, so
@@ -309,7 +310,7 @@ enum SnapshotBuilder {
                 harvestMs: row.harvestMs,
                 nowMs: context.nowMs,
                 waiting: row.waiting,
-                live: row.liveProcess || row.subRunning > 0,
+                live: row.liveProcess || row.isExplicitlyRunningPhase || row.subRunning > 0,
                 threshold: context.stalledSeconds
             )
             // Resolved here for the same reason as `isStalled`: a countdown

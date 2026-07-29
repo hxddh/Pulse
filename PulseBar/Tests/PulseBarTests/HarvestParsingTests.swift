@@ -155,6 +155,22 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertFalse(ActivityHarvest.isFresh(row, nowMs: now))
     }
 
+    func testCursorLocalSessionsUseBoundedWorkWindow() {
+        let now: Int64 = 1_700_000_000_000
+        var cursor = ActivityHarvest.Row(id: .cursor, task: "Local task", project: "", cwd: "", skill: "")
+        cursor.mode = "local"
+        cursor.harvestMs = now - ActivityHarvest.freshWindowMs - 1
+        XCTAssertTrue(ActivityHarvest.isFresh(cursor, nowMs: now))
+
+        cursor.harvestMs = now - ActivityHarvest.cursorLocalWindowMs - 1
+        XCTAssertFalse(ActivityHarvest.isFresh(cursor, nowMs: now))
+
+        var generic = cursor
+        generic.id = .gemini
+        generic.harvestMs = now - ActivityHarvest.freshWindowMs - 1
+        XCTAssertFalse(ActivityHarvest.isFresh(generic, nowMs: now))
+    }
+
     func testCompletionClassificationUsesPhaseOrOutcome() {
         var row = ActivityHarvest.Row(id: .codex, task: "", project: "", cwd: "", skill: "")
         XCTAssertFalse(row.isCompleted)

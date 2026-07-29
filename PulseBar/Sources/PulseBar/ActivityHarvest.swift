@@ -96,6 +96,11 @@ enum ActivityHarvest {
 
     /// Harvest-only rows older than this are dropped unless a live process exists.
     static let freshWindowMs: Int64 = 45 * 60 * 1000
+    /// Cursor's local composer store is authoritative session history, but it
+    /// is not updated continuously while the persistent GUI process is alive.
+    /// Keep named, non-draft local sessions visible for a bounded work window
+    /// without treating the Cursor application itself as running evidence.
+    static let cursorLocalWindowMs: Int64 = 6 * 60 * 60 * 1000
     /// Kill hung activity_scan.py so Refresh cannot stick forever.
     ///
     /// A cold Python/SQLite start under App Nap can take just over 2.5 s even
@@ -146,7 +151,10 @@ enum ActivityHarvest {
         if row.subRunning > 0 { return true }
         // Missing mtime is not trustworthy as a standalone running signal.
         guard row.harvestMs > 0 else { return false }
-        return nowMs - row.harvestMs <= freshWindowMs
+        let window = row.id == .cursor && row.mode == "local"
+            ? cursorLocalWindowMs
+            : freshWindowMs
+        return nowMs - row.harvestMs <= window
     }
 
     /// Thread-safe sink for a child process pipe.

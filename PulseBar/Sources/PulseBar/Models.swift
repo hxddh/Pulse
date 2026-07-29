@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.36.1"
+    static let semver = "0.36.2"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -391,8 +391,21 @@ struct AgentRow: Identifiable, Hashable {
         return value == "turn_complete" || value == "completed" || value == "complete"
     }
 
+    /// Explicit lifecycle evidence from a session store can establish Running
+    /// even when the work is remote and has no matching local process.
+    var isExplicitlyRunningPhase: Bool {
+        let value = phase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return value == "running"
+            || value == "in_progress"
+            || value == "working"
+            || value == "executing"
+    }
+
     var isRecentOnly: Bool {
-        !waiting && (!liveProcess || isCompletedPhase) && subRunning == 0
+        !waiting
+            && !isExplicitlyRunningPhase
+            && (!liveProcess || isCompletedPhase)
+            && subRunning == 0
     }
 
     /// Live / subagent with nothing to say about the session — secondary in list IA.
@@ -593,7 +606,7 @@ struct AgentRow: Identifiable, Hashable {
         if waiting { return .needsYou }
         if isCompletedPhase, subRunning == 0 { return .recent }
         if isStalled { return .stalled }
-        if liveProcess || subRunning > 0 { return .running }
+        if liveProcess || isExplicitlyRunningPhase || subRunning > 0 { return .running }
         return .recent
     }
 }

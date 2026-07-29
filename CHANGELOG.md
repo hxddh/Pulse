@@ -2,6 +2,21 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.36.2 — 展示密度不是检测上限
+
+- Cursor 不再在采集到第二个会话后停止；本地 `composerHeaders` 与 Cursor Cloud Agent
+  仓库合并、按 session id 去重，并分别保留明确的运行/完成语义、模型、仓库、上下文占用
+  与文件变化。当前真实 Cursor 状态可同时产出本地和云会话。
+- 每个 Agent 的模型安全容量从 4 提升到 32；面板仍在全局 8 行后折叠，展开后可查看
+  第 9 条以后。默认视觉密度不再偷偷决定采集容量。
+- Claude、Codex、Amp、Gemini、OpenCode、Copilot、Continue、Aider、Goose、Cline、
+  Roo、Kilo、Cascade/Windsurf、Kiro、Droid、Kimi 等采集器移除散落的两条硬上限；
+  Grok 与 Pi 从只读取第一条会话改为输出多会话。
+- VS Code 系 Agent 的共享 JSON 缓存从“选一个得分最高的嵌套对象”改为按真实 session id
+  提取多个独立会话；配置、主题和普通 checklist 项仍不能冒充会话。
+- 端到端门禁新增 6 个并发 Cursor 本地会话、Cursor Cloud 运行会话、单文件 6 会话
+  及 Python/Swift 容量一致性回归，防止以后再次出现 4→2 或第 5 条静默消失。
+
 ## 0.36.1 — 窗口只有一个形状
 
 - 关闭仍按矩形合成的 WindowServer borderless-window 阴影，改为在透明窗口内用与材质

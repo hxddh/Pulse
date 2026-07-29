@@ -54,14 +54,19 @@ final class SnapshotBuilderTests: XCTestCase {
         ageMs: Int64 = 1000,
         subRunning: Int = 0,
         subTotal: Int = 0,
-        evidence: ObservationSource = .session
+        evidence: ObservationSource = .session,
+        phase: String = "",
+        mode: String = ""
     ) -> ActivityHarvest.Row {
-        ActivityHarvest.Row(
+        var row = ActivityHarvest.Row(
             id: id, task: task, project: project, cwd: cwd, skill: skill,
             tool: tool, harvestMs: now - ageMs,
             subRunning: subRunning, subTotal: subTotal, sessionID: session,
             evidence: evidence
         )
+        row.phase = phase
+        row.mode = mode
+        return row
     }
 
     private func attention(
@@ -193,6 +198,30 @@ final class SnapshotBuilderTests: XCTestCase {
         ])
         XCTAssertEqual(r.rows.count, 2)
         XCTAssertEqual(Set(r.rows.map(\.sessionID)), ["s1", "s2"])
+    }
+
+    func testDefaultCapacityKeepsMoreThanFourConcurrentSessions() {
+        let rows = (1...6).map {
+            harvest(.cursor, task: "Cursor task \($0)", session: "cursor-\($0)")
+        }
+        let r = build(harvest: rows)
+        XCTAssertEqual(r.rows.count, 6)
+        XCTAssertEqual(r.snapshot.cappedSessions, 0)
+        XCTAssertEqual(Set(r.rows.map(\.sessionID)), Set((1...6).map { "cursor-\($0)" }))
+    }
+
+    func testRemoteSessionWithExplicitRunningPhaseIsRunningWithoutLocalProcess() {
+        let r = build(harvest: [
+            harvest(
+                .cursor,
+                task: "Cloud task",
+                session: "cloud-1",
+                phase: "running",
+                mode: "cloud"
+            ),
+        ])
+        XCTAssertEqual(r.rows.first?.section, .running)
+        XCTAssertFalse(r.rows.first?.isRecentOnly ?? true)
     }
 
     func testSessionsBeyondTheCapAreCountedNotDropped() {

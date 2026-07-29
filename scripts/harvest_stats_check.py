@@ -27,6 +27,7 @@ import contextlib
 import importlib
 import io
 import json
+import re
 import sys
 import tempfile
 import time
@@ -45,6 +46,7 @@ COL_PHASE, COL_OUTCOME, COL_MODEL, COL_MODE = 15, 16, 17, 18
 COL_ERRORS, COL_FILES, COL_CONTEXT, COL_PROGRESS_DONE, COL_PROGRESS_TOTAL = 19, 20, 21, 22, 23
 
 RECORDS = 34
+MULTI_SESSION_TEST_COUNT = 6
 TRANSCRIPT = "".join(
     '{"type":"tool_use","name":"Bash","input":{"command":"ls"}}\n' if i % 5 == 0
     else '{"type":"text","text":"line %d"}\n' % i
@@ -148,6 +150,27 @@ def check_helper_contract(d: Path) -> int:
         "Refactor authentication", "/Users/me/code/app", "s-cache-1"
     ):
         return fail("nested extension session facts were not recovered")
+    multi_nested = {
+        "state": {
+            "sessions": [
+                {
+                    "sessionId": f"s-cache-{i}",
+                    "title": f"Concurrent task {i}",
+                    "workspacePath": f"/Users/me/code/app-{i}",
+                    "lastUpdatedAt": int(time.time() * 1000) - i * 1000,
+                }
+                for i in range(1, MULTI_SESSION_TEST_COUNT + 1)
+            ]
+        }
+    }
+    recovered = A.observed_sessions_from_json(multi_nested)
+    if len(recovered) != MULTI_SESSION_TEST_COUNT:
+        return fail(
+            "shared extension cache was collapsed before the product-wide "
+            f"session cap: {recovered}"
+        )
+    if len({row[2] for row in recovered}) != MULTI_SESSION_TEST_COUNT:
+        return fail(f"shared extension sessions were not kept distinct: {recovered}")
     config = {
         "profile": {"name": "Default"},
         "model": {"name": "claude_sonnet"},
@@ -599,19 +622,45 @@ def check_collectors(home: Path) -> int:
         "isArchived INTEGER, isSubagent INTEGER)"
     )
     now_ms = int(time.time() * 1000)
+    cursor_ids = [f"cursor-fixture-{i}" for i in range(1, MULTI_SESSION_TEST_COUNT + 1)]
     con.execute(
         "INSERT INTO ItemTable VALUES (?, ?)",
-        ("cursor/glass.selectedAgent", '"cursor-fixture"'),
+        ("cursor/glass.selectedAgent", json.dumps(cursor_ids[0])),
     )
     con.execute(
-        "INSERT INTO composerHeaders VALUES (?, ?, ?, ?, 0, 0)",
+        "INSERT INTO ItemTable VALUES (?, ?)",
         (
-            "cursor-fixture",
-            "workspace-fixture",
-            now_ms,
-            json.dumps({"name": "Observe Cursor activity", "unifiedMode": "agent"}),
+            "cloudAgentRepository.agents.fixture",
+            json.dumps(
+                [
+                    {
+                        "bcId": "cursor-cloud-fixture",
+                        "name": "Observe Cursor cloud activity",
+                        "status": 1,
+                        "updatedAt": now_ms,
+                        "isArchived": False,
+                        "repoUrl": "github.com/example/cloud-project",
+                        "modelDetails": {"modelName": "cursor-agent"},
+                    }
+                ]
+            ),
         ),
     )
+    for i, cursor_id in enumerate(cursor_ids):
+        con.execute(
+            "INSERT INTO composerHeaders VALUES (?, ?, ?, ?, 0, 0)",
+            (
+                cursor_id,
+                "workspace-fixture",
+                now_ms - i * 1000,
+                json.dumps(
+                    {
+                        "name": f"Observe Cursor activity {i + 1}",
+                        "unifiedMode": "agent",
+                    }
+                ),
+            ),
+        )
     con.commit()
     con.close()
     workspace = cursor_db.parent.parent / "workspaceStorage" / "workspace-fixture"
@@ -649,6 +698,32 @@ def check_collectors(home: Path) -> int:
             print(f"  · {name}: no row from {where} — not asserted", file=sys.stderr)
             continue
         saw_any = True
+        if name == "cursor":
+            expected_cursor_rows = MULTI_SESSION_TEST_COUNT + 1
+            if len(rows) != expected_cursor_rows:
+                return fail(
+                    f"Cursor emitted {len(rows)} active sessions; "
+                    f"expected {expected_cursor_rows}"
+                )
+            if len({row[COL_SESSION] for row in rows}) != expected_cursor_rows:
+                return fail(f"Cursor active sessions collapsed during emission: {rows}")
+            cloud = next(
+                (row for row in rows if row[COL_SESSION] == "cursor-cloud-fixture"),
+                None,
+            )
+            if (
+                cloud is None
+                or cloud[COL_PHASE] != "running"
+                or cloud[COL_MODE] != "cloud"
+                or cloud[COL_PROJECT] != "cloud-project"
+            ):
+                return fail(f"Cursor cloud session facts were not merged: {cloud}")
+            local_rows = [
+                row for row in rows
+                if row[COL_SESSION] != "cursor-cloud-fixture"
+            ]
+            if any(row[COL_MODE] != "local" for row in local_rows):
+                return fail(f"Cursor local session mode was not preserved: {local_rows}")
         row = rows[0]
         if len(row) != COLUMNS:
             return fail(f"{name} emitted {len(row)} columns: {row}")
@@ -734,6 +809,28 @@ def main() -> int:
             importlib.reload(A)
 
     source = (ROOT / "src" / "activity_scan.py").read_text(encoding="utf-8")
+    swift_builder = (
+        ROOT / "PulseBar" / "Sources" / "PulseBar" / "SnapshotBuilder.swift"
+    ).read_text(encoding="utf-8")
+    swift_cap = re.search(r"maxSessionsPerAgent\s*=\s*(\d+)", swift_builder)
+    if not swift_cap or int(swift_cap.group(1)) != A.MAX_SESSIONS_PER_AGENT:
+        return fail(
+            "Python collectors and SnapshotBuilder disagree on the per-agent "
+            f"session budget ({A.MAX_SESSIONS_PER_AGENT} vs "
+            f"{swift_cap.group(1) if swift_cap else 'missing'})"
+        )
+    low_cap_patterns = {
+        "literal two-row break": r"len\(out\)\s*>=\s*[123]\b",
+        "literal two-row slice": r"out\[:[123]\]",
+        "low extension-cache limit": r"harvest_extension_storage\([^\n]*limit\s*=\s*[123]\b",
+        "low home-session limit": r"home_dir_activities\([^\n]*limit\s*=\s*[123]\b",
+    }
+    for label, pattern in low_cap_patterns.items():
+        if re.search(pattern, source):
+            return fail(
+                f"{label} bypasses the product-wide "
+                f"{A.MAX_SESSIONS_PER_AGENT}-session budget"
+            )
     # Named, not counted. "23 of 32 harvesters" was true and nearly worthless
     # while Claude, Codex and Gemini — the ones people leave open — were not
     # among them, and a threshold of ">= 15" could never have said so.
