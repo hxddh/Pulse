@@ -40,7 +40,7 @@ compiles and ships.
 
 ```bash
 cd PulseBar && swift build      # macOS 14+, Swift 5.9
-cd PulseBar && swift test       # 228 tests
+cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
 Gates, from the repo root — `package.sh` and CI both run all seven:
@@ -107,6 +107,6 @@ to users.
 
 ## Current state
 
-0.32.0 is the latest public release. The 0.32.1 candidate restores native,
-appearance-adaptive status-item rendering after the AppKit status-button
-migration. See `CHANGELOG.md` for the complete contract.
+0.35.0 is the current source version. GitHub's latest public Release must be
+checked separately; a merged version is not proof that a signed/notarized DMG
+was published. See `CHANGELOG.md` for the complete contract.

@@ -654,7 +654,10 @@ final class RowMetricsTests: XCTestCase {
 
         let context = store().rowContextLine(r)
         XCTAssertFalse(context.localizedCaseInsensitiveContains("command"), context)
-        XCTAssertTrue(store().rowNowLine(r).contains("Turn complete"))
+        let lifecycle = store().rowNowLine(r)
+        XCTAssertTrue(lifecycle.contains("Outcome"), lifecycle)
+        XCTAssertTrue(lifecycle.contains("Turn complete"), lifecycle)
+        XCTAssertFalse(lifecycle.contains("Now"), lifecycle)
 
         let observation = store().rowObservationLine(r)
         XCTAssertTrue(observation.contains("Build Plan"), observation)

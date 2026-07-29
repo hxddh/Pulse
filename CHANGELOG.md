@@ -2,6 +2,31 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.35.0 — 支持度必须在运行时可证明
+
+这一版不再把“代码里有适配器”当成支持完成。Pulse 在同一轮采集里记录每个 Agent
+适配器究竟读到了会话、正常完成但暂无近期数据、解析失败，还是因超时没有执行完成；
+覆盖声明和本机运行事实从此是两层不同的证据。
+
+### 适配器运行健康与覆盖界面
+
+- 31 个采集器逐项输出 `observed / no recent data / failed / unscanned`、耗时和有效行数；
+  单项异常仅展示异常类型，不暴露供应商路径、会话内容或错误消息，也不增加第二轮磁盘扫描。
+- Cursor Agent 与 Cursor 的合并会话共享同一采集器健康结果，因此 32 个 Agent 身份都有
+  可解释的运行状态；超时只把尚未回报的后续适配器标为未完成，不抹掉先完成的证据。
+- 将支持健康度从 Preferences 的长 Disclosure 拆为独立、可搜索的 Agent 覆盖窗口；
+  Preferences 恢复为偏好选择，覆盖窗口直接展示证据等级、目标、工作区、活动、
+  Waiting 来源和缺失能力。
+
+### 当前状态、结果与扫描效率
+
+- `Now` 只用于仍活跃的会话；已结束的 `Turn complete` 改为 `Outcome`，Recent 行不再出现
+  “当前 · 本轮已完成”的语义矛盾。
+- Header 的 Needs you、Running、Stalled、Recent 分段着色；一个等待不再把全部状态计数
+  染成红色。滚动内容增加边界提示，键盘上下选择会自动把目标行带入可视区域。
+- 对通用命令只从结构化参数映射高置信角色：Testing、Building、Publishing、Reading；
+  原始命令、tool 名、skill 名和参数仍不进入默认界面。
+
 ## 0.34.0 — 支持不是名单，而是本机上可验证的观测
 
 这一版把此前评估中的 P0、P1、P2 一次收口：状态计数必须诚实，任意路径启动只能有

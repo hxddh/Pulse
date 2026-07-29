@@ -334,7 +334,7 @@ def semantic_phase_from_events(text: str) -> str:
     unkeyed_tool = ""
     explicit = ""
 
-    def tool_phase(name: str) -> str:
+    def tool_phase(name: str, event: dict) -> str:
         low = (name or "").lower()
         if any(x in low for x in ("plan", "todo")):
             return "planning"
@@ -346,6 +346,32 @@ def semantic_phase_from_events(text: str) -> str:
             return "editing"
         if any(x in low for x in ("test", "verify", "check", "build")):
             return "testing"
+        # Generic shell/exec tools carry no useful meaning by name. Structured
+        # arguments can still yield a high-confidence *role* without exposing
+        # the command, path, tool identifier, or skill name to the UI.
+        try:
+            args = json.dumps(event, ensure_ascii=False).lower()
+        except Exception:
+            args = ""
+        if any(x in args for x in ("gh release", "git push", "npm publish", "cargo publish")):
+            return "publishing"
+        if any(x in args for x in (
+            "swift test", "pytest", "npm test", "pnpm test", "yarn test",
+            "xcodebuild test", "cargo test", "go test",
+        )):
+            return "testing"
+        if any(x in args for x in (
+            "swift build", "xcodebuild", "npm run build", "pnpm build",
+            "yarn build", "cargo build", "go build",
+        )):
+            return "building"
+        if any(x in args for x in ("apply_patch", "git apply", "perl -pi", "sed -i")):
+            return "editing"
+        if any(x in args for x in (
+            '"rg ', '"sed -n', '"git diff', '"git status', '"git show',
+            '"ls ', '"find ', '"head ', '"tail ',
+        )):
+            return "reading"
         return "working"
 
     def walk(value):
@@ -391,7 +417,7 @@ def semantic_phase_from_events(text: str) -> str:
                     value.get("id") or value.get("call_id")
                     or value.get("tool_use_id") or ""
                 ).strip()
-                phase = tool_phase(name)
+                phase = tool_phase(name, value)
                 if call_id:
                     pending[call_id] = phase
                 else:
@@ -2751,6 +2777,9 @@ def useful_cache_task(agent: str, task: str) -> bool:
     return low not in generic
 
 
+EMITTED_COUNTS: dict[str, int] = {}
+
+
 def emit(
     agent: str,
     task: str,
@@ -2795,6 +2824,7 @@ def emit(
         if not (cwd or "").strip().startswith("/"):
             return
 
+    EMITTED_COUNTS[agent] = EMITTED_COUNTS.get(agent, 0) + 1
     print(
         f"{agent}\t{clean(task)}\t{tin}\t{tout}\t{clean(tool)}\t{clean(skill)}\t"
         f"{clean(project)}\t{clean(cwd)}\t{mtime_ms}\t{sub_run}\t{sub_total}\t{clean(session_id)}\t"
@@ -3044,7 +3074,7 @@ def goose_activities() -> list[tuple]:
     return out
 
 
-def guard(label: str, body) -> None:
+def guard(labels: str | tuple[str, ...], body) -> None:
     """Run one agent's harvest in isolation.
 
     Every harvester touches other tools' private files, so any of them can hit a
@@ -3053,18 +3083,33 @@ def guard(label: str, body) -> None:
     the whole scan (`harvestUnreliable`) — a single broken harvester blinded all
     32 agents.
     """
+    agent_labels = (labels,) if isinstance(labels, str) else labels
+    label = "/".join(agent_labels)
+    before = {agent: EMITTED_COUNTS.get(agent, 0) for agent in agent_labels}
     trace = os.environ.get("PULSE_HARVEST_TRACE") == "1"
     started = time.monotonic()
+    error_kind = ""
     if trace:
         print(f"# pulse trace: begin {label}", file=sys.stderr, flush=True)
     try:
         body()
     except Exception as exc:  # harvest is best-effort by design
+        error_kind = type(exc).__name__
         print(f"# pulse: {label} harvest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
+        elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
+        for agent in agent_labels:
+            emitted = max(0, EMITTED_COUNTS.get(agent, 0) - before[agent])
+            status = "failed" if error_kind else ("observed" if emitted else "no_recent_data")
+            # Runtime adapter health shares the existing scan stream. It does
+            # not expose vendor paths or exception messages and does not cost a
+            # second walk over 32 private stores.
+            print(
+                f"#health\t{agent}\t{status}\t{elapsed_ms}\t{emitted}\t{error_kind}",
+                flush=True,
+            )
         if trace:
-            elapsed = time.monotonic() - started
-            print(f"# pulse trace: end {label} {elapsed:.3f}s", file=sys.stderr, flush=True)
+            print(f"# pulse trace: end {label} {elapsed_ms / 1000:.3f}s", file=sys.stderr, flush=True)
 
 
 def emit_all(agent: str, rows, evidence: str | None = None) -> None:
@@ -3081,11 +3126,10 @@ def claude_block() -> None:
         emit_row("claude", row, evidence=HARVEST_CONTRACTS["claude"])
 
 
-def grok_pi_block() -> None:
-    for name, fn in (("grok", grok_activity), ("pi", pi_activity)):
-        row = fn()
-        if any(row[:7]):
-            emit_row(name, row, evidence=HARVEST_CONTRACTS[name])
+def single_activity_block(agent: str, fn) -> None:
+    row = fn()
+    if any(row[:7]):
+        emit_row(agent, row, evidence=HARVEST_CONTRACTS[agent])
 
 
 def amp_block() -> None:
@@ -3156,7 +3200,8 @@ HARVESTERS = (
     ("claude", claude_block),
     simple("codex", codex_activities),
     simple("cursor", cursor_activities),
-    ("grok/pi", grok_pi_block),
+    ("grok", lambda: single_activity_block("grok", grok_activity)),
+    ("pi", lambda: single_activity_block("pi", pi_activity)),
     ("amp", amp_block),
     simple("gemini", gemini_activities),
     simple("opencode", opencode_activities),
@@ -3168,7 +3213,7 @@ HARVESTERS = (
     simple("continue", continue_activities),
     simple("copilot", copilot_activities),
     simple("amazon_q", amazon_q_activities),
-    ("cascade/windsurf", cascade_block),
+    (("cascade", "windsurf"), cascade_block),
     simple("augment", augment_activities),
     simple("zed_agent", zed_agent_activities),
     simple("trae", trae_activities),

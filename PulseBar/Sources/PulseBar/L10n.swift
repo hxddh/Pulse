@@ -215,6 +215,16 @@ enum L10n {
         case .supportWaitingHooks: return "Waiting via hooks"
         case .supportWaitingHarvest: return "Waiting via session data"
         case .supportWaitingNone: return "Waiting unavailable"
+        case .supportCollectorObserved: return "adapter read %d row(s) in %d ms"
+        case .supportCollectorNoData: return "No recent data"
+        case .supportCollectorNoDataDetail: return "adapter healthy · %d ms"
+        case .supportCollectorFailed: return "Adapter error"
+        case .supportCollectorFailedDetail: return "adapter error: %@"
+        case .supportCollectorUnscanned: return "Not scanned"
+        case .supportCollectorUnscannedDetail: return "adapter did not finish in the latest scan"
+        case .supportObservedCount: return "%d observed"
+        case .supportIssueCount: return "%d adapter issue(s)"
+        case .supportSearch: return "Search Agents"
         case .snooze: return "Later"
         case .snoozed: return "snoozed"
         case .snoozedFor: return "Later · %@ left"
@@ -230,7 +240,10 @@ enum L10n {
         case .phasePlanning: return "Planning"
         case .phaseWorking: return "Working"
         case .phaseTesting: return "Testing"
+        case .phaseBuilding: return "Building"
+        case .phasePublishing: return "Publishing"
         case .nowActivity: return "Now · %@"
+        case .outcomeActivity: return "Outcome · %@"
         case .modelFact: return "Model %@"
         case .errorFactOne: return "1 failure"
         case .errorsFact: return "%d failures"
@@ -412,6 +425,16 @@ enum L10n {
         case .supportWaitingHooks: return "等待：hooks"
         case .supportWaitingHarvest: return "等待：会话数据"
         case .supportWaitingNone: return "等待：不可用"
+        case .supportCollectorObserved: return "适配器读取 %d 行 · %d 毫秒"
+        case .supportCollectorNoData: return "暂无近期数据"
+        case .supportCollectorNoDataDetail: return "适配器正常 · %d 毫秒"
+        case .supportCollectorFailed: return "适配器异常"
+        case .supportCollectorFailedDetail: return "适配器异常：%@"
+        case .supportCollectorUnscanned: return "未完成扫描"
+        case .supportCollectorUnscannedDetail: return "最近一次扫描中适配器未执行完成"
+        case .supportObservedCount: return "已观测 %d 个"
+        case .supportIssueCount: return "%d 个适配器异常"
+        case .supportSearch: return "搜索 Agent"
         case .snooze: return "稍后"
         case .snoozed: return "已稍后"
         case .snoozedFor: return "已稍后 · 剩 %@"
@@ -427,7 +450,10 @@ enum L10n {
         case .phasePlanning: return "正在规划"
         case .phaseWorking: return "正在执行"
         case .phaseTesting: return "正在测试"
+        case .phaseBuilding: return "正在构建"
+        case .phasePublishing: return "正在发布"
         case .nowActivity: return "当前 · %@"
+        case .outcomeActivity: return "结果 · %@"
         case .modelFact: return "模型 %@"
         case .errorFactOne: return "1 项失败"
         case .errorsFact: return "%d 项失败"
@@ -486,10 +512,15 @@ enum L10n {
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingProgress, supportMissingWaiting
         case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone
+        case supportCollectorObserved, supportCollectorNoData, supportCollectorNoDataDetail
+        case supportCollectorFailed, supportCollectorFailedDetail
+        case supportCollectorUnscanned, supportCollectorUnscannedDetail
+        case supportObservedCount, supportIssueCount, supportSearch
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting
-        case nowActivity
+        case phaseBuilding, phasePublishing
+        case nowActivity, outcomeActivity
         case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
         case filesFact, contextFact, progressFact, turnsFact
     }

@@ -72,6 +72,29 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(rows[0].task, "Real")
     }
 
+    func testParsesCollectorRuntimeHealthWithoutTreatingItAsARow() {
+        let text = """
+        #health\tclaude\tobserved\t12\t2\t
+        #health\tamp\tno_recent_data\t3\t0\t
+        #health\tcodex\tfailed\t21\t0\tJSONDecodeError
+
+        """
+        XCTAssertTrue(ActivityHarvest.parse(text).isEmpty)
+        let health = ActivityHarvest.parseHealth(text)
+        XCTAssertEqual(health.count, 3)
+        XCTAssertEqual(health[0].id, .claude)
+        XCTAssertEqual(health[0].state, .observed)
+        XCTAssertEqual(health[0].rowCount, 2)
+        XCTAssertEqual(health[1].state, .noRecentData)
+        XCTAssertEqual(health[2].state, .failed)
+        XCTAssertEqual(health[2].errorKind, "JSONDecodeError")
+    }
+
+    func testDropsIncompleteTrailingCollectorHealth() {
+        let text = "#health\tclaude\tobserved\t12\t1\t\n#health\tcodex\tfailed"
+        XCTAssertEqual(ActivityHarvest.parseHealth(text).map(\.id), [.claude])
+    }
+
     func testSessionKeyIsStableAndElidesLongIds() {
         let long = String(repeating: "a", count: 40)
         let key = ActivityHarvest.sessionKey(id: .claude, sessionID: long, project: "", cwd: "")

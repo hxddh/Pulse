@@ -59,6 +59,10 @@ final class StatusStore: ObservableObject {
     private var timer: Timer?
     private var cachedAll: [AgentRow] = []
     private var lastGoodHarvest: [ActivityHarvest.Row] = []
+    /// Result of the latest attempted adapter scan, including adapters that
+    /// ran successfully but had no recent local session. This is deliberately
+    /// separate from row evidence: zero rows is a useful result, not silence.
+    private var collectorHealthByAgent: [AgentID: ActivityHarvest.CollectorHealth] = [:]
     /// Latest successful collector read by Agent, retained even after its
     /// session row ages out so Settings can distinguish "not running" from
     /// "collector has never produced evidence".
@@ -136,6 +140,22 @@ final class StatusStore: ObservableObject {
             "glance: \(snapshot.glance) · rows: \(snapshot.rows.count)/\(snapshot.totalCount)",
             "cadence: \(probeIntervalDescription) · \(probeStats.summary(now: Date()))",
         ]
+        let collector = supportHealth
+        let collectorCounts = Dictionary(grouping: collector, by: \.collectorState).mapValues(\.count)
+        lines.append(
+            "collectors: observed=\(collectorCounts[.observed] ?? 0) "
+                + "noData=\(collectorCounts[.noRecentData] ?? 0) "
+                + "failed=\(collectorCounts[.failed] ?? 0) "
+                + "unscanned=\(collectorCounts[.unscanned] ?? 0)"
+        )
+        let failedCollectors = collector.filter { $0.collectorState == .failed }
+        if !failedCollectors.isEmpty {
+            lines.append(
+                "collectorErrors: " + failedCollectors.map {
+                    "\($0.agent.rawValue)=\($0.collectorErrorKind.isEmpty ? "unknown" : $0.collectorErrorKind)"
+                }.joined(separator: ",")
+            )
+        }
         if let err = snapshot.probeError { lines.append("probeError: \(err)") }
         for row in cachedAll.prefix(8) {
             lines.append(
@@ -169,6 +189,10 @@ final class StatusStore: ObservableObject {
             }()
             return AgentSupportHealth(
                 agent: agent,
+                collectorState: collectorHealthByAgent[agent]?.state ?? .unscanned,
+                collectorDurationMs: collectorHealthByAgent[agent]?.durationMs ?? 0,
+                collectorRows: collectorHealthByAgent[agent]?.rowCount ?? 0,
+                collectorErrorKind: collectorHealthByAgent[agent]?.errorKind ?? "",
                 processDetected: rows.contains(where: \.liveProcess),
                 evidence: strongest,
                 lastSuccessfulReadMs: max(
@@ -188,6 +212,11 @@ final class StatusStore: ObservableObject {
     }
 
     func supportEvidenceLabel(_ health: AgentSupportHealth) -> String {
+        if health.collectorState == .failed { return tr(.supportCollectorFailed) }
+        if health.collectorState == .unscanned { return tr(.supportCollectorUnscanned) }
+        if health.collectorState == .noRecentData, !health.isObserved {
+            return tr(.supportCollectorNoData)
+        }
         guard health.isObserved else { return tr(.supportNotDetected) }
         switch health.evidence {
         case .session: return tr(.supportStructured)
@@ -198,13 +227,30 @@ final class StatusStore: ObservableObject {
     }
 
     func supportHealthDetail(_ health: AgentSupportHealth) -> String {
-        if !health.isObserved {
-            return supportWaitingLabel(health.agent)
-        }
         var facts: [String] = []
-        if health.hasGoal { facts.append(tr(.supportGoal)) }
-        if health.hasWorkspace { facts.append(tr(.supportWorkspace)) }
-        if health.hasProgress { facts.append(tr(.supportProgress)) }
+        switch health.collectorState {
+        case .observed:
+            facts.append(String(
+                format: tr(.supportCollectorObserved),
+                health.collectorRows,
+                health.collectorDurationMs
+            ))
+        case .noRecentData:
+            facts.append(String(
+                format: tr(.supportCollectorNoDataDetail),
+                health.collectorDurationMs
+            ))
+        case .failed:
+            let kind = health.collectorErrorKind.isEmpty ? tr(.supportCollectorFailed) : health.collectorErrorKind
+            facts.append(String(format: tr(.supportCollectorFailedDetail), kind))
+        case .unscanned:
+            facts.append(tr(.supportCollectorUnscannedDetail))
+        }
+        if health.isObserved {
+            if health.hasGoal { facts.append(tr(.supportGoal)) }
+            if health.hasWorkspace { facts.append(tr(.supportWorkspace)) }
+            if health.hasProgress { facts.append(tr(.supportProgress)) }
+        }
         facts.append(supportWaitingLabel(health.agent))
         if health.lastSuccessfulReadMs > 0 {
             let seconds = max(
@@ -226,7 +272,7 @@ final class StatusStore: ObservableObject {
             case .waitingSignal: return tr(.supportMissingWaiting)
             }
         }
-        if !missing.isEmpty {
+        if health.isObserved, !missing.isEmpty {
             facts.append(String(format: tr(.supportMissing), missing.joined(separator: ", ")))
         }
         return facts.joined(separator: " · ")
@@ -311,7 +357,7 @@ final class StatusStore: ObservableObject {
         waiting.waitSignal = .hooks
         waiting.waitSinceMs = now - 8 * 60 * 1000
 
-        var active = row("codex-preview", .codex, task: "Finish Pulse 0.34 observability")
+        var active = row("codex-preview", .codex, task: "Finish Pulse 0.35 observability")
         active.phase = "testing"
         active.progressDone = 18
         active.progressTotal = 31
@@ -605,9 +651,11 @@ final class StatusStore: ObservableObject {
                 outcome = .skipped
             } else {
                 let h0 = Date()
-                let (rows, unreliable) = ActivityHarvest.scan()
+                let result = ActivityHarvest.scan()
                 harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
-                outcome = unreliable ? .failed : .fresh(rows)
+                outcome = result.unreliable
+                    ? .failed(result.health)
+                    : .fresh(result.rows, result.health)
             }
 
             let attention = AttentionReader.load()
@@ -641,11 +689,35 @@ final class StatusStore: ObservableObject {
     /// What the background scan managed to get from `activity_scan.py`.
     enum HarvestOutcome {
         /// Ran and produced rows (possibly partial after a timeout).
-        case fresh([ActivityHarvest.Row])
+        case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth])
         /// Deliberately not run this tick — cached rows are still current.
         case skipped
         /// Ran and failed; cached rows may be stale.
-        case failed
+        case failed([ActivityHarvest.CollectorHealth])
+    }
+
+    private func recordCollectorHealth(_ health: [ActivityHarvest.CollectorHealth]) {
+        var next = Dictionary(
+            uniqueKeysWithValues: AgentID.allCases.map {
+                ($0, ActivityHarvest.CollectorHealth.unscanned($0))
+            }
+        )
+        for item in health {
+            next[item.id] = item
+        }
+        // Cursor Agent sessions are merged into Cursor rows by SnapshotBuilder
+        // to avoid duplicate IDE/CLI entries. They share Cursor's local-store
+        // collector, so the runtime health must share that result too.
+        if let cursor = next[.cursor], cursor.state != .unscanned {
+            next[.cursorAgent] = ActivityHarvest.CollectorHealth(
+                id: .cursorAgent,
+                state: cursor.state,
+                durationMs: cursor.durationMs,
+                rowCount: cursor.rowCount,
+                errorKind: cursor.errorKind
+            )
+        }
+        collectorHealthByAgent = next
     }
 
     fileprivate func applyScan(
@@ -670,9 +742,10 @@ final class StatusStore: ObservableObject {
         // Resolve which harvest rows this scan should use, and remember them.
         let acts: [ActivityHarvest.Row]
         switch harvest {
-        case .fresh(let rows):
+        case .fresh(let rows, let health):
             acts = rows
             lastGoodHarvest = rows
+            recordCollectorHealth(health)
             for row in rows where row.harvestMs > 0 {
                 lastSuccessfulReadByAgent[row.id] = max(
                     lastSuccessfulReadByAgent[row.id] ?? 0,
@@ -685,7 +758,8 @@ final class StatusStore: ObservableObject {
             // pending included, or Waiting would flicker off between harvests.
             acts = lastGoodHarvest
             ticksSinceHarvest = ticksSinceHarvest == Int.max ? 1 : ticksSinceHarvest + 1
-        case .failed:
+        case .failed(let health):
+            recordCollectorHealth(health)
             // Keep last good shape, but never freeze Needs-you on stale pending.
             acts = lastGoodHarvest.map { row in
                 guard row.skill == "pending" else { return row }
@@ -968,7 +1042,12 @@ final class StatusStore: ObservableObject {
     /// excluded: it belongs in `rowContextLine` as "Last action", never under
     /// a "Now" label.
     func rowNowLine(_ row: AgentRow) -> String {
-        guard !row.waiting, let phase = readablePhase(row.phase) else { return "" }
+        guard !row.waiting else { return "" }
+        if row.isRecentOnly {
+            guard row.isCompletedPhase else { return "" }
+            return String(format: tr(.outcomeActivity), tr(.phaseTurnComplete))
+        }
+        guard let phase = readablePhase(row.phase) else { return "" }
         return String(format: tr(.nowActivity), phase)
     }
 
@@ -1094,6 +1173,10 @@ final class StatusStore: ObservableObject {
         }
         if low.contains("test") || low.contains("verify") || low.contains("check") {
             return tr(.phaseTesting)
+        }
+        if low.contains("build") { return tr(.phaseBuilding) }
+        if low.contains("publish") || low.contains("release") || low.contains("push") {
+            return tr(.phasePublishing)
         }
         if low.contains("plan") { return tr(.phasePlanning) }
         if low.contains("search") || low.contains("research") { return tr(.actionResearch) }
@@ -1301,6 +1384,10 @@ final class StatusStore: ObservableObject {
 
     func openSettings() {
         SettingsWindowController.shared.show(store: self)
+    }
+
+    func openSupportHealth() {
+        SupportCoverageWindowController.shared.show(store: self)
     }
 
     func quit() {

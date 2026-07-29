@@ -13,6 +13,21 @@ current phase, progress/outcome, failures, changed files, model/context, and
 volume counters. Unknown is shown as unknown; Pulse never fills a gap by
 guessing from process count, CPU, a filename, or an arbitrary JSON `name`.
 
+## Runtime adapter health
+
+Static coverage and runtime health are different claims. The same bounded scan
+that reads session data emits one privacy-safe result per collector:
+
+- **Observed** — the collector emitted one or more valid rows.
+- **No recent data** — the collector completed normally but emitted no row.
+- **Failed** — the collector raised; Pulse shows only the exception type.
+- **Unscanned** — a timeout or hard failure ended the scan before it reported.
+
+Pulse does not run a second diagnostics crawl. Completed health records and
+rows survive a later timeout, and one failed collector cannot blank other
+Agents. Cursor Agent shares Cursor's collector because their rows are merged
+into one user-facing session identity.
+
 ## Coverage
 
 “Conditional” means the Agent/version writes the fact in its local session or
@@ -71,8 +86,9 @@ Raw tool and skill names are usually low-value implementation metadata:
 
 Pulse therefore transforms explicit tool/lifecycle events into a small,
 user-facing phase vocabulary such as **Planning**, **Reading**, **Researching**,
-**Editing**, **Responding**, **Waiting for permission**, and **Turn complete**.
-Generic command execution is hidden. Concrete failure count, file count,
+**Editing**, **Testing**, **Building**, **Publishing**, **Responding** and
+**Waiting for permission**. `Turn complete` is an Outcome, never a current
+`Now` phase. Generic command execution is hidden. Concrete failure count, file count,
 progress and outcome outrank the raw tool name.
 
 Raw skill names do not appear in the default row. A path containing `skills/`,

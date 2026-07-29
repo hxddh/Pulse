@@ -47,27 +47,23 @@ enum PulseSelfTest {
             }
         }
 
-        // The harvest script resolves separately, and in a dev checkout it
-        // deliberately prefers the repo's src/ over the bundled copy. On CI the
-        // build and the run share a machine, so that repo path exists and
-        // shadows the packaged one — a missing bundled copy would sail past
-        // this check reporting "ok". So report what the app would actually use,
-        // and say plainly when that answer came from outside the bundle.
+        // A packaged app must resolve its own script even when the build
+        // checkout still exists on the same Mac. Otherwise this self-test
+        // validates source, not the artifact users download.
         let appRoot = Bundle.main.bundleURL.path
         if let script = ActivityHarvest.selfTestScriptPath() {
             if script.hasPrefix(appRoot + "/") {
                 print("  ok      harvest script → \(script)")
             } else {
-                print("  note    harvest script resolved OUTSIDE the app → \(script)")
-                print("          (dev checkout wins over the bundled copy; proves nothing about the package)")
+                print("  MISSING packaged harvest resolution → \(script)")
+                ok = false
             }
         } else {
             print("  MISSING harvest script")
             ok = false
         }
 
-        // Which is why the packaged copy is checked on its own. This is the
-        // path a user's machine actually falls back to, where no repo exists.
+        // Also check the direct Contents/Resources fallback explicitly.
         if Bundle.main.bundleURL.pathExtension == "app" {
             let inApp = Bundle.main.resourceURL?.appendingPathComponent("activity_scan.py")
             if let inApp, FileManager.default.fileExists(atPath: inApp.path) {

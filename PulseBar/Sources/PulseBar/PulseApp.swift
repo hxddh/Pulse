@@ -19,7 +19,8 @@ enum PulseBarMain {
             let started = Date()
             let result = ActivityHarvest.scan()
             print(
-                "harvest rows=\(result.rows.count) unreliable=\(result.unreliable) "
+                "harvest rows=\(result.rows.count) adapters=\(result.health.count) "
+                    + "unreliable=\(result.unreliable) "
                     + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
             )
             exit(result.unreliable ? 1 : 0)
@@ -253,6 +254,10 @@ private struct SectionHeader: View {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
                         .opacity(0.6)
+                } else if accent {
+                    Circle()
+                        .fill(TrayChrome.waitAccent)
+                        .frame(width: 5, height: 5)
                 } else {
                     Color.clear
                 }
@@ -265,6 +270,7 @@ private struct SectionHeader: View {
             .frame(width: 18, height: 14, alignment: .center)
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
             // "No project 2 Pi · Amp" — two names and a 2. The count only
             // earns its place when the names do not already give it.
             if showCount {
@@ -272,6 +278,7 @@ private struct SectionHeader: View {
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .monospacedDigit()
                     .opacity(0.7)
+                    .foregroundStyle(accent ? TrayChrome.waitAccent : Color.secondary)
             }
             if !summary.isEmpty {
                 Text(summary)
@@ -279,10 +286,10 @@ private struct SectionHeader: View {
                     .opacity(0.55)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
-        .foregroundStyle(accent ? TrayChrome.waitAccent : Color.secondary)
         .padding(.horizontal, TrayChrome.padX)
         .padding(.top, 12)
         .padding(.bottom, 4)
@@ -387,11 +394,25 @@ struct TrayPanel: View {
                     // Dropping the 18pt mark was right — it restated the lamp
                     // the user had just clicked — but the padding stayed, and
                     // a 13pt label alone in a 40pt band reads as a leftover.
-                    Text(store.isRefreshing ? store.tr(.refreshing) : headerTitle)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(headerTitleColor)
-                        .lineLimit(1)
+                    if store.isRefreshing {
+                        Text(store.tr(.refreshing))
+                            .foregroundStyle(.secondary)
+                    } else if headerStates.isEmpty {
+                        Text(headerTitle)
+                            .foregroundStyle(store.snapshot.glance.lampColor)
+                    } else {
+                        ForEach(Array(headerStates.enumerated()), id: \.element.0) { index, item in
+                            if index > 0 {
+                                Text("·").foregroundStyle(.tertiary)
+                            }
+                            Text("\(item.1) \(headerLabel(item.0))")
+                                .foregroundStyle(headerColor(item.0))
+                                .monospacedDigit()
+                        }
+                    }
                 }
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .lineLimit(1)
                 Spacer(minLength: 0)
 
                 HStack(alignment: .center, spacing: 4) {
@@ -414,6 +435,7 @@ struct TrayPanel: View {
                             Button(store.tr(.clearWaiting)) { store.clearWaiting() }
                             Divider()
                         }
+                        Button(store.tr(.supportHealth)) { store.openSupportHealth() }
                         Button(store.tr(.settings)) { store.openSettings() }
                             .keyboardShortcut(",", modifiers: .command)
                         Button("\(store.tr(.copyDiagnostics)) · \(PulseVersion.about)") {
@@ -467,8 +489,29 @@ struct TrayPanel: View {
         store.snapshot.headerDetail
     }
 
-    private var headerTitleColor: Color {
-        store.snapshot.glance.lampColor
+    private var headerStates: [(TraySection, Int)] {
+        TraySection.allCases.compactMap { section in
+            let count = store.snapshot.sectionTotals[section] ?? 0
+            return count > 0 ? (section, count) : nil
+        }
+    }
+
+    private func headerLabel(_ section: TraySection) -> String {
+        switch section {
+        case .needsYou: return store.tr(.waitingN)
+        case .running: return store.tr(.runningN)
+        case .stalled: return store.tr(.sectionStalled).lowercased()
+        case .recent: return store.tr(.recentN)
+        }
+    }
+
+    private func headerColor(_ section: TraySection) -> Color {
+        switch section {
+        case .needsYou: return GlanceKind.waiting.lampColor
+        case .running: return GlanceKind.running.lampColor
+        case .stalled: return GlanceKind.stalled.lampColor
+        case .recent: return .secondary
+        }
     }
 
     /// The panel only ever showed the present moment. Coming back to it, the
@@ -634,11 +677,16 @@ struct TrayPanel: View {
         // estimate (44 + 20 - 4 + 14 + 28 + 8) that any font or spacing change
         // silently invalidated — the panel and its contents disagreed and there
         // was no way to notice except by looking.
-        let cap: CGFloat = store.showAllAgents ? 620 : 420
+        // 420 pt regularly orphaned the next group heading at the bottom
+        // ("Recent 1" with no row), which reads like missing data rather than
+        // scrollable content. 500 still fits a compact menu-bar panel while
+        // keeping the first row of the fourth state visible.
+        let cap: CGFloat = store.showAllAgents ? 620 : 500
 
         let groups = groupedRows
         return VStack(spacing: 0) {
-            ScrollView {
+            ScrollViewReader { scrollProxy in
+                ScrollView {
                 // Not pinned.
                 //
                 // A pinned heading has to be opaque so rows can scroll under
@@ -705,21 +753,33 @@ struct TrayPanel: View {
                         Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
                     }
                 )
-            }
-            .frame(height: min(max(measuredHeight, 56), cap))
-            .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
+                }
+                .frame(height: min(max(measuredHeight, 56), cap))
+                .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
+                .overlay(alignment: .bottom) {
+                    if measuredHeight > cap + 1 {
+                        LinearGradient(
+                            colors: [.clear, Color.primary.opacity(0.055)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 18)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    }
+                }
             // The panel is usually summoned by a shortcut, so the hand is
             // already on the keyboard; finishing with the mouse is the awkward
             // part. Arrow keys walk the visible rows, Return focuses the
             // terminal, Escape gives up.
-            .focusable()
-            .focused($listFocused)
-            .onAppear { listFocused = true }
-            .onKeyPress(.downArrow) { moveSelection(1, in: groups); return .handled }
-            .onKeyPress(.upArrow) { moveSelection(-1, in: groups); return .handled }
-            .onKeyPress(.return) { activateSelection(groups); return .handled }
-            .onKeyPress(.escape) { selectedKey = nil; return .handled }
-            .onKeyPress(.space) {
+                .focusable()
+                .focused($listFocused)
+                .onAppear { listFocused = true }
+                .onKeyPress(.downArrow) { moveSelection(1, in: groups); return .handled }
+                .onKeyPress(.upArrow) { moveSelection(-1, in: groups); return .handled }
+                .onKeyPress(.return) { activateSelection(groups); return .handled }
+                .onKeyPress(.escape) { selectedKey = nil; return .handled }
+                .onKeyPress(.space) {
                 // Space folds whichever group owns the selection — the fold
                 // control is a heading, and headings are not in the tab order.
                 guard let key = selectedKey,
@@ -728,7 +788,14 @@ struct TrayPanel: View {
                       })
                 else { return .ignored }
                 toggleFold(group.id)
-                return .handled
+                    return .handled
+                }
+                .onChange(of: selectedKey) { _, key in
+                    guard let key else { return }
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        scrollProxy.scrollTo(key, anchor: .center)
+                    }
+                }
             }
 
             if store.snapshot.hiddenCount > 0 {
@@ -1213,7 +1280,6 @@ struct SettingsView: View {
     var body: some View {
         Form {
             statusSection
-            supportHealthSection
             generalSection
             notificationsSection
             waitingSignalsSection
@@ -1226,37 +1292,6 @@ struct SettingsView: View {
         .onAppear {
             store.hooksStatus = HooksSupport.probeStatus()
             PulseNotify.refreshAuthorization()
-        }
-    }
-
-    // MARK: Observed support
-
-    private var supportHealthSection: some View {
-        let health = store.supportHealth
-        let observed = health.filter(\.isObserved)
-        return Section(store.tr(.supportHealth)) {
-            Text(store.tr(.supportHealthHint))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if observed.isEmpty {
-                Text(store.tr(.supportNoneObserved))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                ForEach(observed) { item in
-                    SupportHealthRow(item: item, store: store)
-                }
-            }
-            DisclosureGroup(
-                String(
-                    format: store.tr(.supportAllAgents),
-                    health.filter { !$0.isObserved }.count
-                )
-            ) {
-                ForEach(health.filter { !$0.isObserved }) { item in
-                    SupportHealthRow(item: item, store: store)
-                }
-            }
         }
     }
 
@@ -1284,6 +1319,9 @@ struct SettingsView: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(.vertical, 2)
+            Button(store.tr(.supportHealth)) {
+                store.openSupportHealth()
+            }
         }
     }
 
@@ -1536,7 +1574,73 @@ struct SettingsView: View {
 }
 
 @MainActor
-private struct SupportHealthRow: View {
+struct SupportCoverageView: View {
+    @ObservedObject var store: StatusStore
+    @State private var query = ""
+
+    private var filtered: [AgentSupportHealth] {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return store.supportHealth }
+        return store.supportHealth.filter {
+            $0.agent.displayName.localizedCaseInsensitiveContains(text)
+        }
+    }
+
+    private var issueCount: Int {
+        store.supportHealth.filter {
+            $0.collectorState == .failed || $0.collectorState == .unscanned
+        }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(store.tr(.supportHealth))
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                Text(store.tr(.supportHealthHint))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 14) {
+                    Label(
+                        String(
+                            format: store.tr(.supportObservedCount),
+                            store.supportHealth.filter(\.isObserved).count
+                        ),
+                        systemImage: "waveform.path.ecg"
+                    )
+                    Label(
+                        String(format: store.tr(.supportIssueCount), issueCount),
+                        systemImage: issueCount == 0 ? "checkmark.circle" : "exclamationmark.triangle"
+                    )
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(filtered) { item in
+                        SupportHealthRow(item: item, store: store)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 8)
+                        if item.id != filtered.last?.id {
+                            Divider().padding(.leading, 54)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 480, minHeight: 500)
+        .searchable(text: $query, prompt: store.tr(.supportSearch))
+    }
+}
+
+@MainActor
+struct SupportHealthRow: View {
     let item: AgentSupportHealth
     @ObservedObject var store: StatusStore
 
@@ -1558,12 +1662,20 @@ private struct SupportHealthRow: View {
                 }
                 Text(store.supportHealthDetail(item))
                     .font(.caption2)
-                    .foregroundStyle(item.missingCapabilities.isEmpty ? Color.secondary : Color.orange)
+                    .foregroundStyle(detailColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var detailColor: Color {
+        if item.collectorState == .failed { return .red }
+        if item.collectorState == .unscanned || !item.missingCapabilities.isEmpty {
+            return .orange
+        }
+        return .secondary
     }
 }
 

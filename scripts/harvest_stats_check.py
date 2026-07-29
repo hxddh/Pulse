@@ -269,6 +269,59 @@ def check_tool_reading() -> int:
     permission = '{"type":"permission_requested","message":"approve command"}\n'
     if A.semantic_phase_from_events(permission) != "waiting_permission":
         return fail("an explicit permission wait was not preserved")
+    shell_test = (
+        '{"type":"function_call","name":"exec_command","call_id":"test-1",'
+        '"arguments":{"cmd":"swift test"}}\n'
+    )
+    if A.semantic_phase_from_events(shell_test) != "testing":
+        return fail("a structured test command did not become the semantic Testing role")
+    shell_build = (
+        '{"type":"function_call","name":"exec_command","call_id":"build-1",'
+        '"arguments":{"cmd":"swift build"}}\n'
+    )
+    if A.semantic_phase_from_events(shell_build) != "building":
+        return fail("a structured build command did not become the semantic Building role")
+    shell_publish = (
+        '{"type":"function_call","name":"exec_command","call_id":"publish-1",'
+        '"arguments":{"cmd":"git push origin main"}}\n'
+    )
+    if A.semantic_phase_from_events(shell_publish) != "publishing":
+        return fail("a structured publish command did not become the semantic Publishing role")
+    return 0
+
+
+def check_runtime_health_protocol() -> int:
+    """One scan stream must explain both rows and zero/error outcomes."""
+    A.EMITTED_COUNTS.clear()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        A.guard(
+            ("claude", "codex"),
+            lambda: A.emit(
+                "claude", "Health fixture", 0, 0, "", "", mtime_ms=int(time.time() * 1000)
+            ),
+        )
+    health = [line.split("\t") for line in out.getvalue().splitlines() if line.startswith("#health\t")]
+    states = {cols[1]: (cols[2], cols[4]) for cols in health}
+    if states != {"claude": ("observed", "1"), "codex": ("no_recent_data", "0")}:
+        return fail(f"runtime health did not distinguish rows from healthy zero-data: {states}")
+
+    def boom() -> None:
+        raise ValueError("private vendor path must not enter stdout")
+
+    out = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        A.guard("amp", boom)
+    line = next((x for x in out.getvalue().splitlines() if x.startswith("#health\t")), "")
+    if line.split("\t")[1:] != ["amp", "failed", "0", "0", "ValueError"]:
+        # Duration may be 1ms on a loaded runner; compare the privacy and state
+        # fields independently.
+        cols = line.split("\t")
+        if len(cols) != 6 or cols[1] != "amp" or cols[2] != "failed" or cols[4:] != ["0", "ValueError"]:
+            return fail(f"runtime failure health is malformed: {line!r}")
+    if "private vendor path" in out.getvalue():
+        return fail("runtime health leaked the collector exception message to stdout")
     return 0
 
 
@@ -630,6 +683,8 @@ def main() -> int:
         if rc := check_helper_contract(d):
             return rc
         if rc := check_tool_reading():
+            return rc
+        if rc := check_runtime_health_protocol():
             return rc
 
         home = d / "home"

@@ -140,7 +140,10 @@ enum HooksSupport {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("src/\(name)")
-        if fm.fileExists(atPath: repo.path) { return repo }
+        if Bundle.main.bundleURL.pathExtension != "app",
+           fm.fileExists(atPath: repo.path) {
+            return repo
+        }
         if let res = Bundle.main.resourceURL?.appendingPathComponent(name),
            fm.fileExists(atPath: res.path) {
             return res

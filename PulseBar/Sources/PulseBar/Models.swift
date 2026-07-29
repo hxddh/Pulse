@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.34.0"
+    static let semver = "0.35.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -595,6 +595,10 @@ enum TraySection: Int, CaseIterable, Hashable {
 /// as rich support when the vendor store is missing, unreadable, or changed.
 struct AgentSupportHealth: Identifiable, Equatable {
     var agent: AgentID
+    var collectorState: ActivityHarvest.CollectorState
+    var collectorDurationMs: Int
+    var collectorRows: Int
+    var collectorErrorKind: String
     var processDetected: Bool
     var evidence: ObservationSource?
     var lastSuccessfulReadMs: Int64

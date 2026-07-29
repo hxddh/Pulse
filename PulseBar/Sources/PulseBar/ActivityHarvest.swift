@@ -1,6 +1,28 @@
 import Foundation
 
 enum ActivityHarvest {
+    enum CollectorState: String, Equatable {
+        case observed
+        case noRecentData = "no_recent_data"
+        case failed
+        /// The process ended before this adapter reported a result.
+        case unscanned
+    }
+
+    struct CollectorHealth: Equatable {
+        var id: AgentID
+        var state: CollectorState
+        var durationMs: Int
+        var rowCount: Int
+        /// Exception type only; vendor paths and exception messages never
+        /// leave the diagnostic log.
+        var errorKind: String
+
+        static func unscanned(_ id: AgentID) -> CollectorHealth {
+            CollectorHealth(id: id, state: .unscanned, durationMs: 0, rowCount: 0, errorKind: "")
+        }
+    }
+
     struct Row {
         var id: AgentID
         var task: String
@@ -129,7 +151,7 @@ enum ActivityHarvest {
     ///
     /// A timeout no longer throws away what already arrived: harvest streams one
     /// complete line per agent, so partial output is still honest data.
-    static func scan() -> (rows: [Row], unreliable: Bool) {
+    static func scan() -> (rows: [Row], health: [CollectorHealth], unreliable: Bool) {
         // LSUIElement apps with no visible window are prime App Nap targets.
         // The Python child can finish in ~300 ms when scheduled yet scrape the
         // 3.5 s deadline when the parent is napped. Keep only this bounded scan
@@ -142,7 +164,7 @@ enum ActivityHarvest {
 
         guard let script = scriptURL() else {
             DebugLog.write("harvest scriptURL=nil")
-            return ([], true)
+            return ([], [], true)
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -170,7 +192,7 @@ enum ActivityHarvest {
             try task.run()
         } catch {
             DebugLog.write("harvest throw=\(error.localizedDescription) — keep prior")
-            return ([], true)
+            return ([], [], true)
         }
 
         drain(out.fileHandleForReading, into: outSink, done: outDone)
@@ -196,6 +218,7 @@ enum ActivityHarvest {
         _ = errDone.wait(timeout: .now() + 1.0)
 
         let rows = parse(outSink.text)
+        let health = parseHealth(outSink.text)
         let errText = errSink.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !errText.isEmpty {
             // Per-agent harvest failures arrive here as `# pulse: <agent> …` lines.
@@ -208,14 +231,14 @@ enum ActivityHarvest {
         if timedOut {
             DebugLog.write("harvest TIMEOUT \(harvestTimeoutSec)s partial=\(rows.count)")
             // Partial rows beat a frozen snapshot; only a truly empty run is unreliable.
-            return (rows, rows.isEmpty)
+            return (rows, health, rows.isEmpty)
         }
         if task.terminationStatus != 0 {
             DebugLog.write("harvest exit=\(task.terminationStatus) partial=\(rows.count)")
-            return (rows, rows.isEmpty)
+            return (rows, health, rows.isEmpty)
         }
         DebugLog.write("harvest parsed=\(rows.count)")
-        return (rows, false)
+        return (rows, health, false)
     }
 
     static func parse(_ text: String) -> [Row] {
@@ -265,6 +288,32 @@ enum ActivityHarvest {
         return out
     }
 
+    static func parseHealth(_ text: String) -> [CollectorHealth] {
+        var out: [CollectorHealth] = []
+        let complete: Substring
+        if let lastNewline = text.lastIndex(where: \.isNewline) {
+            complete = text[text.startIndex...lastNewline]
+        } else {
+            complete = ""
+        }
+        for line in complete.split(whereSeparator: \.isNewline) {
+            let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard cols.count >= 5,
+                  cols[0] == "#health",
+                  let id = mapAgent(cols[1]),
+                  let state = CollectorState(rawValue: cols[2])
+            else { continue }
+            out.append(CollectorHealth(
+                id: id,
+                state: state,
+                durationMs: max(0, Int(cols[3]) ?? 0),
+                rowCount: max(0, Int(cols[4]) ?? 0),
+                errorKind: cols.count > 5 ? cols[5] : ""
+            ))
+        }
+        return out
+    }
+
     /// Exposed for `--selftest`, which must check the same resolution the app
     /// actually uses rather than a re-implementation of it.
     static func selfTestScriptPath() -> String? { scriptURL()?.path }
@@ -278,7 +327,15 @@ enum ActivityHarvest {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("src/activity_scan.py")
-        if fm.fileExists(atPath: repo.path) { return repo }
+        // `#filePath` is compiled as an absolute source path. A packaged app
+        // built inside a checkout therefore kept reading that checkout on the
+        // developer's Mac, making package self-test and runtime behaviour
+        // disagree with every user's machine. Only an unbundled SwiftPM run
+        // may prefer source; a real .app must prove and use its own resources.
+        if Bundle.main.bundleURL.pathExtension != "app",
+           fm.fileExists(atPath: repo.path) {
+            return repo
+        }
         if let res = Bundle.main.resourceURL?.appendingPathComponent("activity_scan.py"),
            fm.fileExists(atPath: res.path) {
             return res
