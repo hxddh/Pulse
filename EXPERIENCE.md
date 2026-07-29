@@ -47,10 +47,10 @@ Prefs 只改开关与连接。
 既不携带信息，又和真正表达紧迫度的时长抢注意力。
 
 
-**主信号是图标语义**，不是靠读文字。灯标使用 template 渲染，由菜单栏自己的
-effective appearance 在绘制时决定前景；不得给 `NSStatusBarButton.contentTintColor`
-强塞颜色。菜单栏与应用窗口可能处在不同外观上下文，强制 tint 会同时染图标和标题，
-在深色菜单栏上退化成黑对黑。
+**主信号是图标语义**，不是靠读文字。灯标将红、绿、灰、橙状态色写入图标像素并使用
+非 template 图像；`NSStatusBarButton.contentTintColor` 必须保持 `nil`，让相邻标题由
+菜单栏自己的 effective appearance 保持对比度。不能用 content tint 同时染图标和文字，
+也不能退回只剩单色、看不出状态的 template 图标。
 **辅信号是短标题**，宽度紧张时只留图标。
 
 | 状态 | 灯 | 标题 | 触发 |
@@ -58,7 +58,7 @@ effective appearance 在绘制时决定前景；不得给 `NSStatusBarButton.con
 | Waiting | 暂停形 | `Claude…`，多个时用数量 | 有任意行在等你 |
 | Running | 实心灯 | 单名或数量 | 有 live 进程或 subagent |
 | Idle | 脉冲线 | **空** | 只有最近会话，或什么都没有 |
-| Error | 脉冲线 | `!` | probe 与 harvest 同时不可用 |
+| Stalled / Error | 橙色脉冲线 | 数量 / `!` | live 会话停滞，或 probe 与 harvest 同时不可用 |
 
 规则：
 

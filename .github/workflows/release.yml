@@ -159,7 +159,17 @@ jobs:
 
       - name: Release notes from CHANGELOG
         run: |
-          python3 scripts/changelog_section.py "${{ needs.decide.outputs.version }}" > /tmp/notes.md
+          VERSION="${{ needs.decide.outputs.version }}"
+          DMG="zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
+          python3 scripts/changelog_section.py "$VERSION" > /tmp/notes.md
+          {
+            echo
+            echo "### Download verification"
+            echo
+            echo '```text'
+            shasum -a 256 "$DMG"
+            echo '```'
+          } >> /tmp/notes.md
 
       - name: Publish
         uses: softprops/action-gh-release@v2

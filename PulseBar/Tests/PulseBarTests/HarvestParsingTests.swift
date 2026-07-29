@@ -95,6 +95,23 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(ActivityHarvest.parseHealth(text).map(\.id), [.claude])
     }
 
+    func testParsesActionableCollectorStatesAndSourcePresence() {
+        let text = """
+        #health\tamp\tsource_absent\t2\t0\t\t0
+        #health\tcodex\tno_sessions\t4\t0\t\t1
+        #health\tclaude\tpermission_denied\t5\t0\tPermissionError\t1
+        #health\tcursor\tschema_mismatch\t8\t0\tJSONDecodeError\t1
+
+        """
+        let health = ActivityHarvest.parseHealth(text)
+        XCTAssertEqual(health.map(\.state), [
+            .sourceAbsent, .noSessions, .permissionDenied, .schemaMismatch,
+        ])
+        XCTAssertEqual(health.map(\.sourcePresent), [false, true, true, true])
+        XCTAssertFalse(health[0].state.isIssue)
+        XCTAssertTrue(health[2].state.isIssue)
+    }
+
     func testSessionKeyIsStableAndElidesLongIds() {
         let long = String(repeating: "a", count: 40)
         let key = ActivityHarvest.sessionKey(id: .claude, sessionID: long, project: "", cwd: "")
@@ -136,6 +153,16 @@ final class HarvestParsingTests: XCTestCase {
 
         row.harvestMs = now - ActivityHarvest.freshWindowMs - 1
         XCTAssertFalse(ActivityHarvest.isFresh(row, nowMs: now))
+    }
+
+    func testCompletionClassificationUsesPhaseOrOutcome() {
+        var row = ActivityHarvest.Row(id: .codex, task: "", project: "", cwd: "", skill: "")
+        XCTAssertFalse(row.isCompleted)
+        row.phase = "turn_complete"
+        XCTAssertTrue(row.isCompleted)
+        row.phase = ""
+        row.outcome = "failed"
+        XCTAssertTrue(row.isCompleted)
     }
 
     func testAgentAliasMapping() {

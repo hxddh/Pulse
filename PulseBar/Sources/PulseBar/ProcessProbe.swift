@@ -20,6 +20,8 @@ enum ProcessProbe {
         /// context for CLI agents even when they expose no readable session
         /// store; it is not a focus handle and never creates an action.
         var cwd: String = ""
+        /// Rule class only; never retain or show the matched argv.
+        var evidence: ProcessEvidence = .executable
     }
 
     private struct Rule {
@@ -229,10 +231,12 @@ enum ProcessProbe {
         var acc: [AgentID: Hit] = [:]
         for p in procs {
             if p.args.contains("Warp.app") { continue }
-            guard let id = match(args: p.args) else { continue }
+            guard let match = matchEvidence(args: p.args) else { continue }
+            let id = match.id
             if id == .cursor { continue }
             var hit = acc[id] ?? Hit(id: id, count: 0, viaWarp: false)
             hit.count += 1
+            hit.evidence = match.evidence
             if underWarp(p.pid) { hit.viaWarp = true }
             if hit.pid == 0 {
                 hit.pid = p.pid
@@ -360,6 +364,16 @@ enum ProcessProbe {
     /// Match one `ps` argv. Internal so the complete supported-agent roster
     /// can be held to a detection contract in tests.
     static func match(args: String) -> AgentID? {
+        matchEvidence(args: args)?.id
+    }
+
+    struct Match: Equatable {
+        var id: AgentID
+        var evidence: ProcessEvidence
+    }
+
+    /// Match plus a privacy-safe explanation for support diagnostics.
+    static func matchEvidence(args: String) -> Match? {
         let exe = args.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? args
         let base = (exe as NSString).lastPathComponent
         for rule in rules {
@@ -368,14 +382,16 @@ enum ProcessProbe {
             // Prefer path needles; bare basename only when explicitly trusted,
             // pathNeedles are absent, or the name is naturally distinctive.
             let pathHit = rule.pathNeedles.contains { args.contains($0) }
-            if pathHit { return rule.id }
+            if pathHit { return Match(id: rule.id, evidence: .pathSignature) }
             if baseHit, !rule.pathNeedles.isEmpty {
                 if base.count <= 3 && !rule.allowBareBasename {
                     continue
                 }
-                return rule.id
+                return Match(id: rule.id, evidence: .executable)
             }
-            if baseHit, rule.pathNeedles.isEmpty { return rule.id }
+            if baseHit, rule.pathNeedles.isEmpty {
+                return Match(id: rule.id, evidence: .executable)
+            }
         }
         return nil
     }

@@ -32,6 +32,9 @@ final class StatusStore: ObservableObject {
     @Published private(set) var hotkeyRegistered = true
     @Published var updateCheckEnabled = true
     @Published var updateStatus: UpdateCheck.Status = .idle
+    @Published var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
+    @Published private(set) var installReport = InstallTruth.Report.empty
+    @Published private(set) var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
     @Published private(set) var notifyAuthorized: Bool?
     /// Waits that have already been resolved, newest first (P1-H).
@@ -67,6 +70,8 @@ final class StatusStore: ObservableObject {
     /// session row ages out so Settings can distinguish "not running" from
     /// "collector has never produced evidence".
     private var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
+    /// Deterministic event ages for visual fixtures only.
+    private var previewWaitingEventTimes: [AgentID: Int64]?
     private let powerMonitor = PowerMonitor()
     /// Tray panel is on screen — worth probing faster while the user reads it.
     private var trayOpen = false
@@ -144,11 +149,14 @@ final class StatusStore: ObservableObject {
         let collectorCounts = Dictionary(grouping: collector, by: \.collectorState).mapValues(\.count)
         lines.append(
             "collectors: observed=\(collectorCounts[.observed] ?? 0) "
-                + "noData=\(collectorCounts[.noRecentData] ?? 0) "
+                + "sourceAbsent=\(collectorCounts[.sourceAbsent] ?? 0) "
+                + "noSessions=\((collectorCounts[.noSessions] ?? 0) + (collectorCounts[.noRecentData] ?? 0)) "
+                + "permission=\(collectorCounts[.permissionDenied] ?? 0) "
+                + "schema=\(collectorCounts[.schemaMismatch] ?? 0) "
                 + "failed=\(collectorCounts[.failed] ?? 0) "
                 + "unscanned=\(collectorCounts[.unscanned] ?? 0)"
         )
-        let failedCollectors = collector.filter { $0.collectorState == .failed }
+        let failedCollectors = collector.filter { $0.collectorState.isIssue }
         if !failedCollectors.isEmpty {
             lines.append(
                 "collectorErrors: " + failedCollectors.map {
@@ -157,6 +165,8 @@ final class StatusStore: ObservableObject {
             )
         }
         if let err = snapshot.probeError { lines.append("probeError: \(err)") }
+        lines.append("runningBundle: \(installReport.runningURL.path)")
+        lines.append("installCopies: \(installReport.copies.count)")
         for row in cachedAll.prefix(8) {
             lines.append(
                 "  \(row.agent.rawValue) waiting=\(row.waiting) live=\(row.liveProcess) "
@@ -179,7 +189,8 @@ final class StatusStore: ObservableObject {
     }
 
     var supportHealth: [AgentSupportHealth] {
-        AgentID.priority.map { agent in
+        let waitingEvents = previewWaitingEventTimes ?? AttentionIO.latestEventTimes()
+        return AgentID.priority.map { agent in
             let rows = cachedAll.filter { $0.agent == agent }
             let strongest: ObservationSource? = {
                 if rows.contains(where: { $0.observationSource == .session }) { return .session }
@@ -192,13 +203,16 @@ final class StatusStore: ObservableObject {
                 collectorState: collectorHealthByAgent[agent]?.state ?? .unscanned,
                 collectorDurationMs: collectorHealthByAgent[agent]?.durationMs ?? 0,
                 collectorRows: collectorHealthByAgent[agent]?.rowCount ?? 0,
+                sourcePresent: collectorHealthByAgent[agent]?.sourcePresent ?? false,
                 collectorErrorKind: collectorHealthByAgent[agent]?.errorKind ?? "",
                 processDetected: rows.contains(where: \.liveProcess),
+                processEvidence: rows.compactMap(\.processEvidence).first,
                 evidence: strongest,
                 lastSuccessfulReadMs: max(
                     lastSuccessfulReadByAgent[agent] ?? 0,
                     rows.map(\.harvestMs).max() ?? 0
                 ),
+                lastWaitingSignalMs: waitingEvents[agent] ?? 0,
                 hasGoal: rows.contains { $0.usefulTask != nil },
                 hasWorkspace: rows.contains { !$0.displayPath.isEmpty },
                 hasProgress: rows.contains {
@@ -206,16 +220,35 @@ final class StatusStore: ObservableObject {
                         || $0.progressDone > 0 || $0.progressTotal > 0
                         || $0.tokensIn > 0 || $0.tokensOut > 0
                         || $0.records > 0 || $0.subTotal > 0
-                }
+                },
+                waitingSignalReady: waitingSignalReady(for: agent)
             )
+        }
+    }
+
+    private func waitingSignalReady(for agent: AgentID) -> Bool {
+        switch agent.waitingSource {
+        case .hooks:
+            return hooksStatus.isInstalled(for: agent)
+        case .harvestPending:
+            let state = collectorHealthByAgent[agent]?.state ?? .unscanned
+            return state != .sourceAbsent && state != .permissionDenied
+                && state != .schemaMismatch && state != .failed && state != .unscanned
+        case .none:
+            return false
         }
     }
 
     func supportEvidenceLabel(_ health: AgentSupportHealth) -> String {
         if health.collectorState == .failed { return tr(.supportCollectorFailed) }
         if health.collectorState == .unscanned { return tr(.supportCollectorUnscanned) }
-        if health.collectorState == .noRecentData, !health.isObserved {
-            return tr(.supportCollectorNoData)
+        if health.collectorState == .permissionDenied { return tr(.supportCollectorPermission) }
+        if health.collectorState == .schemaMismatch { return tr(.supportCollectorSchema) }
+        if health.collectorState == .sourceAbsent, !health.isObserved {
+            return tr(.supportCollectorSourceAbsent)
+        }
+        if [.noRecentData, .noSessions].contains(health.collectorState), !health.isObserved {
+            return tr(.supportCollectorNoSessions)
         }
         guard health.isObserved else { return tr(.supportNotDetected) }
         switch health.evidence {
@@ -228,6 +261,9 @@ final class StatusStore: ObservableObject {
 
     func supportHealthDetail(_ health: AgentSupportHealth) -> String {
         var facts: [String] = []
+        if health.agent == .cursorAgent {
+            facts.append(tr(.supportSharedCursor))
+        }
         switch health.collectorState {
         case .observed:
             facts.append(String(
@@ -235,11 +271,17 @@ final class StatusStore: ObservableObject {
                 health.collectorRows,
                 health.collectorDurationMs
             ))
-        case .noRecentData:
+        case .noRecentData, .noSessions:
             facts.append(String(
-                format: tr(.supportCollectorNoDataDetail),
+                format: tr(.supportCollectorNoSessionsDetail),
                 health.collectorDurationMs
             ))
+        case .sourceAbsent:
+            facts.append(tr(.supportCollectorSourceAbsentDetail))
+        case .permissionDenied:
+            facts.append(tr(.supportCollectorPermissionDetail))
+        case .schemaMismatch:
+            facts.append(tr(.supportCollectorSchemaDetail))
         case .failed:
             let kind = health.collectorErrorKind.isEmpty ? tr(.supportCollectorFailed) : health.collectorErrorKind
             facts.append(String(format: tr(.supportCollectorFailedDetail), kind))
@@ -250,8 +292,29 @@ final class StatusStore: ObservableObject {
             if health.hasGoal { facts.append(tr(.supportGoal)) }
             if health.hasWorkspace { facts.append(tr(.supportWorkspace)) }
             if health.hasProgress { facts.append(tr(.supportProgress)) }
+            facts.append(String(
+                format: tr(.supportFactCoverage),
+                health.observedFactCount,
+                4
+            ))
+        }
+        if health.processDetected {
+            let evidence = health.processEvidence == .pathSignature
+                ? tr(.supportDetectedPath)
+                : tr(.supportDetectedExecutable)
+            facts.append(evidence)
         }
         facts.append(supportWaitingLabel(health.agent))
+        if health.lastWaitingSignalMs > 0 {
+            let seconds = max(
+                0,
+                Date().timeIntervalSince1970 - Double(health.lastWaitingSignalMs) / 1000.0
+            )
+            facts.append(String(
+                format: tr(.supportLastSignal),
+                DurationFormat.label(seconds: seconds, lang: lang)
+            ))
+        }
         if health.lastSuccessfulReadMs > 0 {
             let seconds = max(
                 0,
@@ -291,6 +354,7 @@ final class StatusStore: ObservableObject {
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
         loadSettings()
+        refreshInstallTruth()
         applyHotkey()
         PulseNotify.registerCategories(lang: lang)
         PulseNotify.configure { [weak self] granted in
@@ -320,7 +384,7 @@ final class StatusStore: ObservableObject {
 
     /// Deterministic visual contract for compact/crowded tray QA.
     ///
-    /// This is command-line only (`--tray-fixture=compact|crowded`) and never
+    /// This is command-line only (`--tray-fixture=<fixture>`) and never
     /// reachable from product UI. It hosts the real TrayPanel and catches
     /// count, state, grouping, alignment and density regressions without
     /// depending on whichever Agents happen to be running on a test machine.
@@ -377,6 +441,111 @@ final class StatusStore: ObservableObject {
             return value
         }
 
+        if name == "coverage" {
+            var codex = row(
+                "coverage-codex",
+                .codex,
+                task: "Ship runtime observability",
+                cwd: "/Users/me/code/Pulse"
+            )
+            codex.phase = "testing"
+            codex.progressDone = 26
+            codex.progressTotal = 31
+            codex.processEvidence = .pathSignature
+
+            var amp = row(
+                "coverage-amp",
+                .amp,
+                task: "",
+                cwd: "",
+                source: .process
+            )
+            amp.harvestMs = 0
+            amp.records = 0
+            amp.processEvidence = .executable
+
+            var cursor = row(
+                "coverage-cursor",
+                .cursor,
+                task: "Refine adapter coverage",
+                cwd: "/Users/me/code/Client",
+                source: .cache,
+                live: false
+            )
+            cursor.phase = "completed"
+            cachedAll = [codex, amp, cursor]
+            hooksStatus = .installedBoth
+            previewWaitingEventTimes = [
+                .claude: now - 48_000,
+                .codex: now - 12_000,
+            ]
+            var health = Dictionary(
+                uniqueKeysWithValues: AgentID.allCases.map { agent in
+                    (
+                        agent,
+                        ActivityHarvest.CollectorHealth(
+                            id: agent,
+                            state: .sourceAbsent,
+                            durationMs: 1,
+                            rowCount: 0,
+                            sourcePresent: false,
+                            errorKind: ""
+                        )
+                    )
+                }
+            )
+            health[.codex] = .init(
+                    id: .codex,
+                    state: .observed,
+                    durationMs: 31,
+                    rowCount: 1,
+                    sourcePresent: true,
+                    errorKind: ""
+                )
+            health[.amp] = .init(
+                    id: .amp,
+                    state: .noSessions,
+                    durationMs: 4,
+                    rowCount: 0,
+                    sourcePresent: true,
+                    errorKind: ""
+                )
+            health[.cursor] = .init(
+                    id: .cursor,
+                    state: .schemaMismatch,
+                    durationMs: 18,
+                    rowCount: 0,
+                    sourcePresent: true,
+                    errorKind: "JSONDecodeError"
+                )
+            health[.claude] = .init(
+                    id: .claude,
+                    state: .permissionDenied,
+                    durationMs: 3,
+                    rowCount: 0,
+                    sourcePresent: true,
+                    errorKind: "PermissionError"
+                )
+            recordCollectorHealth(Array(health.values))
+            lastSuccessfulReadByAgent[.codex] = codex.harvestMs
+            lastSuccessfulReadByAgent[.cursor] = cursor.harvestMs
+            snapshot = PulseSnapshot(
+                glance: .running,
+                title: "2",
+                tooltip: "coverage",
+                accessibilityLabel: tr(.a11yRunning),
+                headerTitle: "2 running",
+                headerDetail: "",
+                header: "2 running",
+                rows: cachedAll,
+                sectionTotals: [.running: 2, .recent: 1],
+                projectCount: 2,
+                totalCount: cachedAll.count,
+                updatedAt: Date()
+            )
+            return
+        }
+
         var waiting = row("claude-preview", .claude, task: "Approve the release build")
         waiting.waiting = true
         waiting.waitKind = "Permission"
@@ -384,7 +553,7 @@ final class StatusStore: ObservableObject {
         waiting.waitSignal = .hooks
         waiting.waitSinceMs = now - 8 * 60 * 1000
 
-        var active = row("codex-preview", .codex, task: "Finish Pulse 0.35 observability")
+        var active = row("codex-preview", .codex, task: "Finish Pulse 0.36 observability")
         active.phase = "testing"
         active.progressDone = 18
         active.progressTotal = 31
@@ -485,6 +654,7 @@ final class StatusStore: ObservableObject {
     /// Tray panel appeared — probe faster while the user is looking at it.
     func trayDidAppear() {
         trayOpen = true
+        refreshInstallTruth()
         // Coming back to the tray, the first question is what was missed. The
         // panel only ever showed the present moment.
         if let closed = trayClosedAt {
@@ -569,6 +739,16 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    func runHookSelfTest() {
+        hookSelfTestResult = .running
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                HooksSupport.selfTest()
+            }.value
+            self?.hookSelfTestResult = result
+        }
+    }
+
     func uninstallHooks() {
         hooksStatus = .unknown
         Task { [weak self] in
@@ -596,21 +776,79 @@ final class StatusStore: ObservableObject {
         UpdateCheck.shared.check(store: self, force: true)
     }
 
+    func downloadAndVerifyUpdate() {
+        UpdateCheck.shared.downloadAndOpen(store: self)
+    }
+
     var updateStatusText: String {
         switch updateStatus {
         case .idle: return tr(.updateIdle)
         case .checking: return tr(.updateChecking)
         case .current: return tr(.updateCurrent)
-        case .available(let version, _): return String(format: tr(.updateAvailable), version)
+        case .available(let release): return String(format: tr(.updateAvailable), release.version)
         case .failed(let message): return "\(tr(.updateFailed)) · \(message)"
         }
     }
 
     var updateAvailableURL: URL? {
-        if case .available(_, let raw) = updateStatus, !raw.isEmpty {
-            return URL(string: raw)
+        if case .available(let release) = updateStatus, !release.pageURL.isEmpty {
+            return URL(string: release.pageURL)
         }
         return nil
+    }
+
+    var updateCanVerifyDownload: Bool {
+        if case .available(let release) = updateStatus {
+            return release.canVerifyDownload
+        }
+        return false
+    }
+
+    var updateDownloadStatusText: String? {
+        switch updateDownloadStatus {
+        case .idle: return nil
+        case .downloading: return tr(.updateDownloading)
+        case .verifying: return tr(.updateVerifying)
+        case .ready: return tr(.updateVerified)
+        case .failed(let message): return "\(tr(.updateVerifyFailed)) · \(message)"
+        }
+    }
+
+    var maintenanceNoticeText: String? {
+        if isVersionMismatch { return tr(.versionStale) }
+        if installReport.hasOtherRunningCopy { return tr(.duplicateAppRunning) }
+        if case .available = updateStatus { return updateStatusText }
+        return nil
+    }
+
+    func performMaintenanceNoticeAction() {
+        if case .available = updateStatus, updateCanVerifyDownload {
+            downloadAndVerifyUpdate()
+        } else {
+            openSettings()
+        }
+    }
+
+    func refreshInstallTruth() {
+        installReport = InstallTruth.inspect()
+    }
+
+    func recycleDuplicateApps() {
+        let candidates = installReport.removableDuplicates
+        InstallTruth.recycle(candidates) { [weak self] _ in
+            self?.refreshInstallTruth()
+        }
+    }
+
+    var hookSelfTestText: String {
+        switch hookSelfTestResult {
+        case .idle: return tr(.hookTestIdle)
+        case .running: return tr(.hookTestRunning)
+        case .passed(let date):
+            return "\(tr(.hookTestPassed)) · \(relative(date))"
+        case .failed(let message):
+            return "\(tr(.hookTestFailed)) · \(message)"
+        }
     }
 
     /// `Permission · waited 4 分 · Pulse` for the resolved-wait list.
@@ -741,6 +979,7 @@ final class StatusStore: ObservableObject {
                 state: cursor.state,
                 durationMs: cursor.durationMs,
                 rowCount: cursor.rowCount,
+                sourcePresent: cursor.sourcePresent,
                 errorKind: cursor.errorKind
             )
         }
@@ -1070,6 +1309,9 @@ final class StatusStore: ObservableObject {
     /// a "Now" label.
     func rowNowLine(_ row: AgentRow) -> String {
         guard !row.waiting else { return "" }
+        if let failure = readableFailure(row.outcome) {
+            return String(format: tr(.outcomeActivity), failure)
+        }
         if row.isRecentOnly {
             guard row.isCompletedPhase else { return "" }
             return String(format: tr(.outcomeActivity), tr(.phaseTurnComplete))

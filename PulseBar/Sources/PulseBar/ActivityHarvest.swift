@@ -3,10 +3,25 @@ import Foundation
 enum ActivityHarvest {
     enum CollectorState: String, Equatable {
         case observed
+        /// Legacy 0.35 wire value; retained so mixed-version fixture data can
+        /// still be diagnosed instead of discarded.
         case noRecentData = "no_recent_data"
+        case sourceAbsent = "source_absent"
+        case noSessions = "no_sessions"
+        case permissionDenied = "permission_denied"
+        case schemaMismatch = "schema_mismatch"
         case failed
         /// The process ended before this adapter reported a result.
         case unscanned
+
+        var isIssue: Bool {
+            switch self {
+            case .permissionDenied, .schemaMismatch, .failed, .unscanned:
+                return true
+            case .observed, .noRecentData, .sourceAbsent, .noSessions:
+                return false
+            }
+        }
     }
 
     struct CollectorHealth: Equatable {
@@ -14,12 +29,20 @@ enum ActivityHarvest {
         var state: CollectorState
         var durationMs: Int
         var rowCount: Int
+        var sourcePresent: Bool
         /// Exception type only; vendor paths and exception messages never
         /// leave the diagnostic log.
         var errorKind: String
 
         static func unscanned(_ id: AgentID) -> CollectorHealth {
-            CollectorHealth(id: id, state: .unscanned, durationMs: 0, rowCount: 0, errorKind: "")
+            CollectorHealth(
+                id: id,
+                state: .unscanned,
+                durationMs: 0,
+                rowCount: 0,
+                sourcePresent: false,
+                errorKind: ""
+            )
         }
     }
 
@@ -57,6 +80,18 @@ enum ActivityHarvest {
         var contextPercent: Int = 0
         var progressDone: Int = 0
         var progressTotal: Int = 0
+
+        var isCompleted: Bool {
+            let state = "\(phase) \(outcome)"
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return state.contains("turn_complete")
+                || state.contains("completed")
+                || state.contains("complete")
+                || state.contains("cancelled")
+                || state.contains("canceled")
+                || state.contains("failed")
+        }
     }
 
     /// Harvest-only rows older than this are dropped unless a live process exists.
@@ -308,6 +343,9 @@ enum ActivityHarvest {
                 state: state,
                 durationMs: max(0, Int(cols[3]) ?? 0),
                 rowCount: max(0, Int(cols[4]) ?? 0),
+                sourcePresent: cols.count > 6
+                    ? cols[6] == "1"
+                    : ![CollectorState.sourceAbsent, .unscanned].contains(state),
                 errorKind: cols.count > 5 ? cols[5] : ""
             ))
         }

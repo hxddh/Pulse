@@ -19,6 +19,23 @@ enum HooksSupport {
             case .failed(let m): return "\(L10n.t(.hooksFailed, lang)) · \(m)"
             }
         }
+
+        func isInstalled(for agent: AgentID) -> Bool {
+            switch (self, agent) {
+            case (.installedBoth, .claude), (.installedBoth, .codex),
+                 (.installedClaude, .claude), (.installedCodex, .codex):
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    enum SelfTestResult: Equatable {
+        case idle
+        case running
+        case passed(Date)
+        case failed(String)
     }
 
     static func supportDir() -> URL {
@@ -100,6 +117,53 @@ enum HooksSupport {
         if case .failure(let message) = result { return .failed(message) }
         let status = probeStatus()
         return status == .missing ? .missing : status
+    }
+
+    /// Exercise the shipped hook receiver end-to-end in an isolated temporary
+    /// Pulse home. This never writes a fake wait into the user's attention log
+    /// and never asks for Automation, Accessibility, or Screen Recording.
+    static func selfTest() -> SelfTestResult {
+        seedAssets()
+        let hook = supportDir().appendingPathComponent("pulse_hook.py")
+        guard FileManager.default.fileExists(atPath: hook.path) else {
+            return .failed("pulse_hook.py missing")
+        }
+        let fm = FileManager.default
+        let temp = fm.temporaryDirectory.appendingPathComponent(
+            "pulse-hook-selftest-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        do {
+            try fm.createDirectory(at: temp, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: temp) }
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            task.arguments = [hook.path, "codex", "request_user_input"]
+            var environment = ProcessInfo.processInfo.environment
+            environment["PULSE_HOME"] = temp.path
+            task.environment = environment
+            let input = Pipe()
+            task.standardInput = input
+            task.standardOutput = Pipe()
+            task.standardError = Pipe()
+            try task.run()
+            input.fileHandleForWriting.write(
+                Data(#"{"message":"Pulse self-test","session_id":"selftest"}"#.utf8)
+            )
+            try? input.fileHandleForWriting.close()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else {
+                return .failed("hook exit \(task.terminationStatus)")
+            }
+            let attention = temp.appendingPathComponent("attention.tsv")
+            let text = try String(contentsOf: attention, encoding: .utf8)
+            guard text.contains("codex\tidle_prompt\t"),
+                  text.contains("\tPulse self-test\tselftest\t")
+            else { return .failed("hook output mismatch") }
+            return .passed(Date())
+        } catch {
+            return .failed(error.localizedDescription)
+        }
     }
 
     private enum RunResult {

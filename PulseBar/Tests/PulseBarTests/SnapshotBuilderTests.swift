@@ -135,6 +135,30 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(result.snapshot.glance, .idle)
     }
 
+    func testOldCompletedSessionDoesNotRideForeverOnPersistentCLI() {
+        var source = harvest(
+            .codex,
+            task: "Old completed work",
+            session: "old",
+            ageMs: ActivityHarvest.freshWindowMs + 1
+        )
+        source.phase = "turn_complete"
+        source.outcome = "completed"
+
+        let result = build(procs: [hit(.codex)], harvest: [source])
+        XCTAssertEqual(result.rows.count, 1)
+        XCTAssertTrue(result.rows[0].isProcessOnly)
+        XCTAssertNotEqual(result.rows[0].sessionID, "old")
+        XCTAssertNil(result.rows[0].usefulTask)
+    }
+
+    func testLiveProcessCarriesPrivacySafeDetectionEvidence() {
+        var process = hit(.amp)
+        process.evidence = .pathSignature
+        let result = build(procs: [process])
+        XCTAssertEqual(result.rows.first?.processEvidence, .pathSignature)
+    }
+
     func testErrorOnlyWhenHarvestFailedAndNothingIsLive() {
         let r = build(unreliable: true)
         XCTAssertEqual(r.snapshot.glance, .error)

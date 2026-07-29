@@ -39,6 +39,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         present(win)
     }
 
+    func capture(store: StatusStore, to url: URL) {
+        show(store: store)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, let view = self.window?.contentView else { return }
+            view.layoutSubtreeIfNeeded()
+            let bounds = view.bounds
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+            view.cacheDisplay(in: bounds, to: bitmap)
+            guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
+            do {
+                try data.write(to: url, options: .atomic)
+                DebugLog.write("settings capture wrote \(url.path)")
+            } catch {
+                DebugLog.write("settings capture failed \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func present(_ window: NSWindow) {
         isOpen = true
         if !window.isVisible {

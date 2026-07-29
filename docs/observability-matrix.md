@@ -19,14 +19,19 @@ Static coverage and runtime health are different claims. The same bounded scan
 that reads session data emits one privacy-safe result per collector:
 
 - **Observed** — the collector emitted one or more valid rows.
-- **No recent data** — the collector completed normally but emitted no row.
-- **Failed** — the collector raised; Pulse shows only the exception type.
+- **Source absent** — no known local session source or Agent CLI exists.
+- **No usable session** — a source exists, but it currently contains no row
+  that satisfies the Agent's evidence contract.
+- **Permission denied** — the source exists but cannot be read.
+- **Data format changed** — the source exists but raised a recognized
+  decode/schema/database error.
+- **Failed** — another collector error occurred; Pulse shows only its type.
 - **Unscanned** — a timeout or hard failure ended the scan before it reported.
 
-Pulse does not run a second diagnostics crawl. Completed health records and
-rows survive a later timeout, and one failed collector cannot blank other
-Agents. Cursor Agent shares Cursor's collector because their rows are merged
-into one user-facing session identity.
+Source presence is a bounded existence check, not a second diagnostics crawl.
+Completed health records and rows survive a later timeout, and one failed
+collector cannot blank other Agents. Cursor Agent shares Cursor's collector
+because their rows are merged into one user-facing session identity.
 
 ## Coverage
 

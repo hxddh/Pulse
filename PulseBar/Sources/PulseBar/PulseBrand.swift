@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Pulse brand mark — lamp ring + pulse. Menu bar uses template PNGs.
+/// Pulse brand mark — lamp ring + pulse. Source art is template-compatible;
+/// the status item receives a full-colour, non-template rendering.
 enum PulseBrand {
     enum GlanceAsset {
         case idle, running, waiting, error

@@ -46,8 +46,76 @@ final class PulseVersionTests: XCTestCase {
     }
 
     func testInterpretFindsNewerRelease() {
-        let json = #"{"tag_name":"v99.0.0","html_url":"https://example.com/r"}"#
+        let sha = String(repeating: "a", count: 64)
+        let json = """
+        {
+          "tag_name":"v99.0.0",
+          "html_url":"https://example.com/r",
+          "body":"SHA-256: \(sha)",
+          "assets":[{
+            "name":"pulse-99.0.0.dmg",
+            "browser_download_url":"https://example.com/pulse.dmg",
+            "size":765
+          }]
+        }
+        """
         let status = UpdateCheck.interpret(data: Data(json.utf8), response: nil, error: nil)
-        XCTAssertEqual(status, .available(version: "99.0.0", url: "https://example.com/r"))
+        XCTAssertEqual(
+            status,
+            .available(.init(
+                version: "99.0.0",
+                pageURL: "https://example.com/r",
+                assetURL: "https://example.com/pulse.dmg",
+                assetName: "pulse-99.0.0.dmg",
+                assetBytes: 765,
+                sha256: sha
+            ))
+        )
+    }
+
+    func testDuplicateCleanupNeverRemovesRunningOrNewerCopy() {
+        let current = InstallTruth.Copy(
+            url: URL(fileURLWithPath: "/Applications/Pulse.app"),
+            version: "0.36.0",
+            commit: "abc",
+            isRunning: true,
+            isCurrent: true
+        )
+        let old = InstallTruth.Copy(
+            url: URL(fileURLWithPath: "/Applications/Pulse old.app"),
+            version: "0.35.1",
+            commit: "old",
+            isRunning: false,
+            isCurrent: false
+        )
+        let newer = InstallTruth.Copy(
+            url: URL(fileURLWithPath: "/Applications/Pulse preview.app"),
+            version: "0.37.0",
+            commit: "new",
+            isRunning: false,
+            isCurrent: false
+        )
+        let runningOld = InstallTruth.Copy(
+            url: URL(fileURLWithPath: "/Applications/Pulse running.app"),
+            version: "0.34.0",
+            commit: "run",
+            isRunning: true,
+            isCurrent: false
+        )
+        let report = InstallTruth.Report(
+            runningURL: current.url,
+            copies: [current, old, newer, runningOld],
+            inspectedAt: Date()
+        )
+        XCTAssertEqual(report.removableDuplicates.map(\.version), ["0.35.1"])
+        XCTAssertTrue(report.hasOtherRunningCopy)
+    }
+
+    func testHookStatusIsPerAgentNotGlobal() {
+        XCTAssertTrue(HooksSupport.Status.installedBoth.isInstalled(for: .claude))
+        XCTAssertTrue(HooksSupport.Status.installedBoth.isInstalled(for: .codex))
+        XCTAssertTrue(HooksSupport.Status.installedClaude.isInstalled(for: .claude))
+        XCTAssertFalse(HooksSupport.Status.installedClaude.isInstalled(for: .codex))
+        XCTAssertFalse(HooksSupport.Status.missing.isInstalled(for: .claude))
     }
 }

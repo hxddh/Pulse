@@ -294,16 +294,24 @@ def check_runtime_health_protocol() -> int:
     """One scan stream must explain both rows and zero/error outcomes."""
     A.EMITTED_COUNTS.clear()
     out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        A.guard(
-            ("claude", "codex"),
-            lambda: A.emit(
-                "claude", "Health fixture", 0, 0, "", "", mtime_ms=int(time.time() * 1000)
-            ),
-        )
+    original_source_probe = A.collector_source_present
+    A.collector_source_present = lambda agent: agent == "codex"
+    try:
+        with contextlib.redirect_stdout(out):
+            A.guard(
+                ("claude", "codex"),
+                lambda: A.emit(
+                    "claude", "Health fixture", 0, 0, "", "", mtime_ms=int(time.time() * 1000)
+                ),
+            )
+    finally:
+        A.collector_source_present = original_source_probe
     health = [line.split("\t") for line in out.getvalue().splitlines() if line.startswith("#health\t")]
-    states = {cols[1]: (cols[2], cols[4]) for cols in health}
-    if states != {"claude": ("observed", "1"), "codex": ("no_recent_data", "0")}:
+    states = {cols[1]: (cols[2], cols[4], cols[6]) for cols in health}
+    if states != {
+        "claude": ("observed", "1", "0"),
+        "codex": ("no_sessions", "0", "1"),
+    }:
         return fail(f"runtime health did not distinguish rows from healthy zero-data: {states}")
 
     def boom() -> None:
@@ -314,12 +322,17 @@ def check_runtime_health_protocol() -> int:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         A.guard("amp", boom)
     line = next((x for x in out.getvalue().splitlines() if x.startswith("#health\t")), "")
-    if line.split("\t")[1:] != ["amp", "failed", "0", "0", "ValueError"]:
-        # Duration may be 1ms on a loaded runner; compare the privacy and state
-        # fields independently.
-        cols = line.split("\t")
-        if len(cols) != 6 or cols[1] != "amp" or cols[2] != "failed" or cols[4:] != ["0", "ValueError"]:
-            return fail(f"runtime failure health is malformed: {line!r}")
+    # Duration and source-presence depend on the runner. The error class and
+    # privacy-safe state do not.
+    cols = line.split("\t")
+    if (
+        len(cols) != 7
+        or cols[1] != "amp"
+        or cols[2] != "schema_mismatch"
+        or cols[4:6] != ["0", "ValueError"]
+        or cols[6] not in ("0", "1")
+    ):
+        return fail(f"runtime failure health is malformed: {line!r}")
     if "private vendor path" in out.getvalue():
         return fail("runtime health leaked the collector exception message to stdout")
     return 0
@@ -730,6 +743,14 @@ def main() -> int:
         return fail("collector evidence contracts do not cover all 31 harvest agents")
     if set(A.OBSERVABILITY_CONTRACTS) != set(A.HARVEST_CONTRACTS):
         return fail("observability contracts do not cover the same 31 agents")
+    declared_sources = set(A.COLLECTOR_SOURCE_ROOTS) | set(A.COLLECTOR_COMMANDS)
+    if declared_sources != set(A.HARVEST_CONTRACTS):
+        missing = sorted(set(A.HARVEST_CONTRACTS) - declared_sources)
+        extra = sorted(declared_sources - set(A.HARVEST_CONTRACTS))
+        return fail(
+            "source-presence declarations do not cover the same 31 agents "
+            f"(missing={missing}, extra={extra})"
+        )
     baseline = {"goal", "workspace", "activity", "evidence"}
     thin = {
         agent: sorted(baseline - set(facts))

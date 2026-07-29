@@ -2,6 +2,52 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.36.0 — 支持不是“读不到”，而是能解释为什么
+
+这一版完成 0.35 后续的 P0、P1、P2：运行版本必须可信，适配器无数据必须可诊断，
+旧会话不能依附常驻进程无限存活；更新、Waiting 连接和 32 个 Agent 的本机支持情况
+都有可以操作和验证的结果。
+
+### 运行版本、安装副本与可验证更新
+
+- 关于页同时展示编译版本、构建指纹和**实际运行路径**；扫描 `/Applications`、
+  `~/Applications` 及同 bundle id 的运行进程，明确列出重复 Pulse.app 和仍在运行的旧副本。
+- 重复副本只在用户确认后移入废纸篓；当前运行应用和仍在运行的其他副本不会被删除，
+  打包、更新和安装流程也不再创建历史应用备份。
+- 更新检查读取 Release 的 DMG、字节数和 SHA-256；应用下载后先校验大小与哈希，
+  通过才打开安装包。未签名阶段仍不静默覆盖当前应用。
+- 托盘仅在版本不一致、另有运行副本或确有更新时显示一条可操作维护提示；
+  正常状态继续保持安静。Release workflow 自动把 DMG SHA-256 写进发布说明。
+
+### 每个 Agent 都有可解释的运行时健康
+
+- 31 个采集器将笼统的 `no recent data` 拆成 `source absent / no usable session /
+  permission denied / data format changed / failed / unscanned`；每项同时报告数据源是否存在、
+  读取耗时与有效行数，仍不暴露路径、命令行、会话内容或异常消息。
+- 进程探测只保留“可执行程序命中 / 路径特征命中”两种隐私安全证据；支持窗口展示
+  目标、工作区、活动、Waiting 四项核心信息完整度和最近一次读取/Waiting 信号时间。
+- 支持健康窗口新增“问题 / 运行中 / 已安装 / 无数据 / 全部”筛选并按问题优先排序；
+  红、绿、橙、灰小灯分别表达适配器异常、正在运行、数据源存在但信息不足、未发现来源。
+- Claude/Codex Waiting 增加隔离式连接自检：真实执行随包发布的 hook 并验证输出，
+  但写入临时目录，不制造假 Waiting，也不触发 Automation、Accessibility 或录屏权限。
+
+### 会话生命周期与观测语义
+
+- 已完成且超过近期窗口的会话不再因同 Agent CLI 常驻而永久留在 Recent；
+  过期完成记录被丢弃，仍活着的 CLI 诚实降级为仅进程行。
+- 同 Agent 多会话绑定 live 进程时优先未完成会话，再比较活动时间；旧完成会话不能
+  抢走当前进程证据。失败和取消作为 `Outcome` 展示，不伪装成当前阶段。
+- 原始 tool、MCP server、命令参数、skill/package/script 名继续留在诊断层；
+  默认行只展示由显式生命周期和未完成调用映射出的 Planning、Reading、Researching、
+  Editing、Testing、Building、Publishing、Responding、Waiting 和 Outcome。
+
+### 交互与质量门
+
+- 键盘选择继续使用自定义圆角行高亮并自动滚入可视区，保留无蓝色系统焦点框的修复；
+  覆盖窗口、设置页和托盘都增加无需系统权限的应用内截图入口用于视觉回归。
+- Harvest 门禁验证新的七列健康协议、数据源存在性、格式异常分类和全部 31 个
+  端到端 collector fixture；Swift 测试补充更新元数据、进程证据和陈旧完成会话回归。
+
 ## 0.35.1 — 键盘可用，不等于把焦点框画进面板
 
 - 保留托盘列表的方向键、空格与回车操作，但关闭 ScrollView 的系统 focus effect；

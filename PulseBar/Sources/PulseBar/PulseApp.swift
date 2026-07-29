@@ -75,6 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AppServices.store.openSettings()
             }
         }
+        if CommandLine.arguments.contains("--open-support-health") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                AppServices.store.openSupportHealth()
+            }
+        }
         // This opt-in QA surface hosts the exact TrayPanel view in a normal
         // window so layout and accessibility regressions are testable without
         // Screen Recording or UI automation permissions.
@@ -98,6 +103,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let path = String(capture.dropFirst("--capture-status-item=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 StatusPanelController.shared?.captureStatusItem(to: URL(fileURLWithPath: path))
+            }
+        }
+        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-support-health=") }) {
+            let path = String(capture.dropFirst("--capture-support-health=".count))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                SupportCoverageWindowController.shared.capture(
+                    store: AppServices.store,
+                    to: URL(fileURLWithPath: path)
+                )
+            }
+        }
+        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-settings=") }) {
+            let path = String(capture.dropFirst("--capture-settings=".count))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                SettingsWindowController.shared.capture(
+                    store: AppServices.store,
+                    to: URL(fileURLWithPath: path)
+                )
             }
         }
     }
@@ -358,6 +381,7 @@ struct TrayPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             missedNotice
+            maintenanceNotice
 
             if store.snapshot.rows.isEmpty {
                 emptyState
@@ -533,6 +557,31 @@ struct TrayPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var maintenanceNotice: some View {
+        if let notice = store.maintenanceNoticeText {
+            Button { store.performMaintenanceNoticeAction() } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(notice)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .opacity(0.55)
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, TrayChrome.padX)
+                .padding(.bottom, 9)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(store.tr(.settings))
         }
     }
 
@@ -1281,6 +1330,7 @@ private struct OptionalShortcut: ViewModifier {
 @MainActor
 struct SettingsView: View {
     @ObservedObject var store: StatusStore
+    @State private var confirmDuplicateRemoval = false
 
     var body: some View {
         Form {
@@ -1294,9 +1344,25 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(8)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             store.hooksStatus = HooksSupport.probeStatus()
+            store.refreshInstallTruth()
             PulseNotify.refreshAuthorization()
+        }
+        .alert(
+            store.tr(.removeDuplicateApps),
+            isPresented: $confirmDuplicateRemoval
+        ) {
+            Button(store.tr(.cancel), role: .cancel) {}
+            Button(store.tr(.moveToTrash), role: .destructive) {
+                store.recycleDuplicateApps()
+            }
+        } message: {
+            Text(String(
+                format: store.tr(.removeDuplicateAppsConfirm),
+                store.installReport.removableDuplicates.count
+            ))
         }
     }
 
@@ -1326,6 +1392,23 @@ struct SettingsView: View {
             .padding(.vertical, 2)
             Button(store.tr(.supportHealth)) {
                 store.openSupportHealth()
+            }
+            HStack {
+                Text(PulseVersion.about)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                Spacer(minLength: 4)
+                if !store.installReport.duplicates.isEmpty {
+                    Label(
+                        String(
+                            format: store.tr(.duplicateAppsFound),
+                            store.installReport.duplicates.count
+                        ),
+                        systemImage: "square.on.square"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                }
             }
         }
     }
@@ -1459,9 +1542,25 @@ struct SettingsView: View {
             Text(store.hooksStatus.label(lang: store.lang))
                 .font(.caption2)
                 .foregroundStyle(store.hooksInstalled ? Color.secondary : Color.orange)
+            HStack {
+                Button(store.tr(.testWaitingSignal)) { store.runHookSelfTest() }
+                    .disabled(!store.hooksInstalled || store.hookSelfTestResult == .running)
+                Text(store.hookSelfTestText)
+                    .font(.caption2)
+                    .foregroundStyle(hookTestColor)
+                    .lineLimit(1)
+            }
             Text(store.tr(.attentionBridgeHint))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var hookTestColor: Color {
+        switch store.hookSelfTestResult {
+        case .failed: return .red
+        case .passed: return GlanceKind.running.lampColor
+        case .idle, .running: return .secondary
         }
     }
 
@@ -1542,10 +1641,49 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
+            LabeledContent(store.tr(.runningFrom)) {
+                Text(store.installReport.runningURL.path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
             if store.isVersionMismatch, let bundle = PulseVersion.bundleVersion {
                 Text(String(format: store.tr(.versionMismatchHint), PulseVersion.semver, bundle))
                     .font(.caption2)
                     .foregroundStyle(GlanceKind.error.lampColor)
+            }
+            if !store.installReport.duplicates.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(
+                        String(
+                            format: store.tr(.duplicateAppsFound),
+                            store.installReport.duplicates.count
+                        ),
+                        systemImage: "square.on.square"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    ForEach(store.installReport.duplicates.prefix(3)) { copy in
+                        Text("\(copy.version) · \(copy.url.path)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if !store.installReport.removableDuplicates.isEmpty {
+                        Button(store.tr(.removeDuplicateApps)) {
+                            confirmDuplicateRemoval = true
+                        }
+                        .font(.caption)
+                    }
+                    if store.installReport.hasOtherRunningCopy {
+                        Text(store.tr(.duplicateAppRunning))
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
 
             Toggle(store.tr(.checkForUpdates), isOn: $store.updateCheckEnabled)
@@ -1556,12 +1694,36 @@ struct SettingsView: View {
                     .foregroundStyle(store.updateAvailableURL == nil ? .secondary : GlanceKind.running.lampColor)
                 Spacer(minLength: 4)
                 if let url = store.updateAvailableURL {
-                    Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
+                    if store.updateCanVerifyDownload {
+                        Button(store.tr(.downloadAndVerify)) {
+                            store.downloadAndVerifyUpdate()
+                        }
                         .font(.caption)
+                        .disabled(
+                            store.updateDownloadStatus == .downloading
+                                || store.updateDownloadStatus == .verifying
+                        )
+                    } else {
+                        Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
+                            .font(.caption)
+                    }
                 } else {
                     Button(store.tr(.checkNow)) { store.checkForUpdatesNow() }
                         .font(.caption)
                 }
+            }
+            if let download = store.updateDownloadStatusText {
+                Text(download)
+                    .font(.caption2)
+                    .foregroundStyle(
+                        {
+                            if case .failed = store.updateDownloadStatus { return Color.red }
+                            if case .ready = store.updateDownloadStatus {
+                                return GlanceKind.running.lampColor
+                            }
+                            return Color.secondary
+                        }()
+                    )
             }
 
             Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
@@ -1582,18 +1744,69 @@ struct SettingsView: View {
 struct SupportCoverageView: View {
     @ObservedObject var store: StatusStore
     @State private var query = ""
+    @State private var filter: SupportFilter = .issues
+
+    enum SupportFilter: String, CaseIterable, Identifiable {
+        case issues
+        case running
+        case installed
+        case noData
+        case all
+
+        var id: String { rawValue }
+    }
 
     private var filtered: [AgentSupportHealth] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return store.supportHealth }
-        return store.supportHealth.filter {
-            $0.agent.displayName.localizedCaseInsensitiveContains(text)
+        return store.supportHealth
+            .filter { item in
+                switch filter {
+                case .issues:
+                    return item.collectorState.isIssue
+                        || (item.isObserved && !item.missingCapabilities.isEmpty)
+                case .running:
+                    return item.processDetected
+                case .installed:
+                    return item.sourcePresent || item.isObserved
+                case .noData:
+                    return item.sourcePresent && !item.isObserved
+                case .all:
+                    return true
+                }
+            }
+            .filter {
+                text.isEmpty || $0.agent.displayName.localizedCaseInsensitiveContains(text)
+            }
+            .sorted {
+                let left = severity($0)
+                let right = severity($1)
+                if left != right { return left > right }
+                let lp = AgentID.priority.firstIndex(of: $0.agent) ?? 999
+                let rp = AgentID.priority.firstIndex(of: $1.agent) ?? 999
+                return lp < rp
+            }
+    }
+
+    private func severity(_ item: AgentSupportHealth) -> Int {
+        if item.collectorState.isIssue { return 3 }
+        if item.isObserved && !item.missingCapabilities.isEmpty { return 2 }
+        if item.processDetected { return 1 }
+        return 0
+    }
+
+    private func filterLabel(_ filter: SupportFilter) -> String {
+        switch filter {
+        case .issues: return store.tr(.supportFilterIssues)
+        case .running: return store.tr(.supportFilterRunning)
+        case .installed: return store.tr(.supportFilterInstalled)
+        case .noData: return store.tr(.supportFilterNoData)
+        case .all: return store.tr(.supportFilterAll)
         }
     }
 
     private var issueCount: Int {
         store.supportHealth.filter {
-            $0.collectorState == .failed || $0.collectorState == .unscanned
+            $0.collectorState.isIssue
         }.count
     }
 
@@ -1621,6 +1834,13 @@ struct SupportCoverageView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                Picker("", selection: $filter) {
+                    ForEach(SupportFilter.allCases) {
+                        Text(filterLabel($0)).tag($0)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
             .padding(20)
 
@@ -1638,8 +1858,17 @@ struct SupportCoverageView: View {
                     }
                 }
             }
+            .overlay {
+                if filtered.isEmpty {
+                    ContentUnavailableView(
+                        store.tr(.supportNoFilterResults),
+                        systemImage: "line.3.horizontal.decrease.circle"
+                    )
+                }
+            }
         }
         .frame(minWidth: 480, minHeight: 500)
+        .background(Color(nsColor: .windowBackgroundColor))
         .searchable(text: $query, prompt: store.tr(.supportSearch))
     }
 }
@@ -1651,6 +1880,11 @@ struct SupportHealthRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 7, height: 7)
+                .padding(.top, 6)
+                .accessibilityHidden(true)
             AgentIconView(id: item.agent, waiting: false)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
@@ -1659,11 +1893,7 @@ struct SupportHealthRow: View {
                         .font(.system(size: 12, weight: .medium))
                     Text(store.supportEvidenceLabel(item))
                         .font(.caption2)
-                        .foregroundStyle(
-                            item.isObserved
-                                ? Color.secondary
-                                : Color.secondary.opacity(0.6)
-                        )
+                        .foregroundStyle(statusLabelColor)
                 }
                 Text(store.supportHealthDetail(item))
                     .font(.caption2)
@@ -1676,11 +1906,20 @@ struct SupportHealthRow: View {
     }
 
     private var detailColor: Color {
-        if item.collectorState == .failed { return .red }
-        if item.collectorState == .unscanned || !item.missingCapabilities.isEmpty {
-            return .orange
-        }
         return .secondary
+    }
+
+    private var statusLabelColor: Color {
+        if item.collectorState.isIssue { return .red }
+        if item.processDetected && !item.missingCapabilities.isEmpty { return .orange }
+        return item.isObserved ? .secondary : .secondary.opacity(0.65)
+    }
+
+    private var statusColor: Color {
+        if item.collectorState.isIssue { return .red }
+        if item.processDetected { return GlanceKind.running.lampColor }
+        if item.sourcePresent { return .orange }
+        return .gray
     }
 }
 

@@ -1,3 +1,5 @@
+import AppKit
+import CryptoKit
 import Foundation
 
 /// Asks GitHub Releases whether a newer Pulse exists.
@@ -10,12 +12,33 @@ import Foundation
 final class UpdateCheck {
     static let shared = UpdateCheck()
 
+    struct ReleaseInfo: Equatable {
+        var version: String
+        var pageURL: String
+        var assetURL: String
+        var assetName: String
+        var assetBytes: Int
+        var sha256: String
+
+        var canVerifyDownload: Bool {
+            !assetURL.isEmpty && sha256.count == 64
+        }
+    }
+
     enum Status: Equatable {
         case idle
         case checking
         /// Running the newest published version.
         case current
-        case available(version: String, url: String)
+        case available(ReleaseInfo)
+        case failed(String)
+    }
+
+    enum DownloadStatus: Equatable {
+        case idle
+        case downloading
+        case verifying
+        case ready(URL)
         case failed(String)
     }
 
@@ -83,11 +106,89 @@ final class UpdateCheck {
         }
         let tag = (object["tag_name"] as? String) ?? ""
         let page = (object["html_url"] as? String) ?? ""
+        let body = (object["body"] as? String) ?? ""
         let latest = normalize(tag)
         guard !latest.isEmpty else { return .failed("no tag") }
-        return isNewer(latest, than: PulseVersion.semver)
-            ? .available(version: latest, url: page)
-            : .current
+        guard isNewer(latest, than: PulseVersion.semver) else { return .current }
+
+        let assets = (object["assets"] as? [[String: Any]]) ?? []
+        let dmg = assets.first { asset in
+            ((asset["name"] as? String) ?? "").lowercased().hasSuffix(".dmg")
+        }
+        let release = ReleaseInfo(
+            version: latest,
+            pageURL: page,
+            assetURL: (dmg?["browser_download_url"] as? String) ?? "",
+            assetName: (dmg?["name"] as? String) ?? "",
+            assetBytes: dmg?["size"] as? Int ?? 0,
+            sha256: sha256(in: body)
+        )
+        return .available(release)
+    }
+
+    /// Download the published DMG, verify its release-note SHA-256, then open
+    /// the installer. Pulse does not silently replace itself while releases are
+    /// ad-hoc signed; the user still owns the final installation decision.
+    func downloadAndOpen(store: StatusStore) {
+        guard case .available(let release) = store.updateStatus,
+              release.canVerifyDownload,
+              let url = URL(string: release.assetURL)
+        else {
+            store.updateDownloadStatus = .failed("release has no verifiable DMG")
+            return
+        }
+        store.updateDownloadStatus = .downloading
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 120
+        request.setValue("Pulse/\(PulseVersion.semver)", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.downloadTask(with: request) { tempURL, response, error in
+            guard let tempURL else {
+                Task { @MainActor in
+                    store.updateDownloadStatus = .failed(error?.localizedDescription ?? "download failed")
+                }
+                return
+            }
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                Task { @MainActor in
+                    store.updateDownloadStatus = .failed("HTTP \(http.statusCode)")
+                }
+                return
+            }
+            Task { @MainActor in store.updateDownloadStatus = .verifying }
+            do {
+                let data = try Data(contentsOf: tempURL)
+                if release.assetBytes > 0, data.count != release.assetBytes {
+                    throw DownloadError.size(expected: release.assetBytes, actual: data.count)
+                }
+                let digest = SHA256.hash(data: data)
+                    .map { String(format: "%02x", $0) }
+                    .joined()
+                guard digest.caseInsensitiveCompare(release.sha256) == .orderedSame else {
+                    throw DownloadError.digest
+                }
+                let downloads = FileManager.default.urls(
+                    for: .downloadsDirectory,
+                    in: .userDomainMask
+                ).first ?? FileManager.default.temporaryDirectory
+                let name = release.assetName.isEmpty
+                    ? "pulse-\(release.version)-macos.dmg"
+                    : release.assetName
+                let destination = downloads.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: tempURL, to: destination)
+                Task { @MainActor in
+                    store.updateDownloadStatus = .ready(destination)
+                    NSWorkspace.shared.open(destination)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: tempURL)
+                Task { @MainActor in
+                    store.updateDownloadStatus = .failed(error.localizedDescription)
+                }
+            }
+        }.resume()
     }
 
     /// `v0.22.0` / `0.22.0` → `0.22.0`.
@@ -113,5 +214,31 @@ final class UpdateCheck {
         // Drop any pre-release suffix: 0.22.0-beta.1 → 0.22.0
         let core = v.split(separator: "-", maxSplits: 1).first.map(String.init) ?? v
         return core.split(separator: ".").map { Int($0) ?? 0 }
+    }
+
+    private nonisolated static func sha256(in body: String) -> String {
+        let pattern = #"(?i)(?:sha[- ]?256[^0-9a-f]{0,24})?([0-9a-f]{64})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(
+                in: body,
+                range: NSRange(body.startIndex..., in: body)
+              ),
+              let range = Range(match.range(at: 1), in: body)
+        else { return "" }
+        return String(body[range]).lowercased()
+    }
+
+    private enum DownloadError: LocalizedError {
+        case size(expected: Int, actual: Int)
+        case digest
+
+        var errorDescription: String? {
+            switch self {
+            case .size(let expected, let actual):
+                return "download size mismatch (\(actual)/\(expected))"
+            case .digest:
+                return "SHA-256 verification failed"
+            }
+        }
     }
 }

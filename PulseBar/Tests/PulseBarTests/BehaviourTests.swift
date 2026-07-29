@@ -1,6 +1,26 @@
 import XCTest
 @testable import PulseBar
 
+final class StatusLampTests: XCTestCase {
+    func testStatusBarLampsKeepTheirStateColors() {
+        let states: [GlanceKind] = [.waiting, .running, .idle, .stalled]
+        for state in states {
+            XCTAssertFalse(
+                PulseBrand.statusBarIcon(for: state).isTemplate,
+                "\(state) must not be recolored by the menu bar"
+            )
+        }
+
+        let waiting = PulseBrand.statusColor(for: .waiting).usingColorSpace(.deviceRGB)!
+        let running = PulseBrand.statusColor(for: .running).usingColorSpace(.deviceRGB)!
+        let stalled = PulseBrand.statusColor(for: .stalled).usingColorSpace(.deviceRGB)!
+        XCTAssertGreaterThan(waiting.redComponent, waiting.greenComponent)
+        XCTAssertGreaterThan(running.greenComponent, running.redComponent)
+        XCTAssertGreaterThan(stalled.redComponent, stalled.blueComponent)
+        XCTAssertGreaterThan(stalled.greenComponent, stalled.blueComponent)
+    }
+}
+
 /// Cadence policy — the fix for "Pulse is using significant energy".
 final class ProbeScheduleTests: XCTestCase {
     private let awake = ProbeSchedule.Power()
@@ -215,6 +235,14 @@ final class ProcessProbeTests: XCTestCase {
         for (agent, argv) in samples {
             XCTAssertEqual(ProcessProbe.match(args: argv), agent, "\(agent.displayName): \(argv)")
         }
+    }
+
+    func testProcessMatchExplainsRuleWithoutKeepingArgv() {
+        XCTAssertEqual(
+            ProcessProbe.matchEvidence(args: "/Applications/Antigravity.app/Contents/MacOS/Antigravity")?.evidence,
+            .pathSignature
+        )
+        XCTAssertEqual(ProcessProbe.matchEvidence(args: "amp")?.evidence, .executable)
     }
 
     func testShortAgentNamesDoNotReintroduceKnownFalsePositives() {

@@ -24,6 +24,26 @@ enum AttentionIO {
         return result
     }
 
+    /// Last raw hook/bridge event per Agent, including done/stop. Runtime
+    /// support needs to answer "has this connection ever fired recently?"
+    /// without turning a completed event back into Waiting.
+    static func latestEventTimes() -> [AgentID: Int64] {
+        var latest: [AgentID: Int64] = [:]
+        for line in readText().split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("#") { continue }
+            let columns = line.split(
+                separator: "\t",
+                omittingEmptySubsequences: false
+            )
+            guard columns.count >= 3,
+                  let agent = ActivityHarvest.mapAgent(String(columns[0])),
+                  let ms = Int64(columns[2])
+            else { continue }
+            latest[agent] = max(latest[agent] ?? 0, ms)
+        }
+        return latest
+    }
+
     /// `read(2)` may return fewer bytes than asked for; the old single call
     /// silently truncated whenever it did.
     private static func readAll(_ fd: Int32, size: Int) -> Data {

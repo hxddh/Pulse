@@ -84,6 +84,11 @@ enum L10n {
         case .hooksHint:
             return "Install Claude/Codex hooks so Pulse can show permission, input waits, and subagent lifecycle."
         case .installHooks: return "Install hooks"
+        case .testWaitingSignal: return "Test connection"
+        case .hookTestIdle: return "Not tested"
+        case .hookTestRunning: return "Testing…"
+        case .hookTestPassed: return "Connection passed"
+        case .hookTestFailed: return "Connection failed"
         case .shortcuts: return "Shortcuts"
         case .hotkeyHint: return "Tap a notification to focus the waiting agent."
         case .agents: return "Agents"
@@ -134,12 +139,20 @@ enum L10n {
         case .about: return "About"
         case .tagline: return "Status lamp for coding agents"
         case .build: return "Build"
+        case .runningFrom: return "Running from"
         case .devBuild: return "dev build"
         case .copyDiagnostics: return "Copy diagnostics"
         case .copied: return "Copied"
         case .versionStale: return "stale bundle"
         case .versionMismatchHint:
             return "Binary reports %@ but the bundle says %@ — repackage with PulseBar/Scripts/package.sh."
+        case .duplicateAppsFound: return "%d other Pulse app(s) found"
+        case .duplicateAppRunning: return "Another copy is running; quit it before removal."
+        case .removeDuplicateApps: return "Remove older copies…"
+        case .removeDuplicateAppsConfirm:
+            return "Move %d non-running Pulse app(s) to the Trash? The currently running app is kept."
+        case .moveToTrash: return "Move to Trash"
+        case .cancel: return "Cancel"
         case .durNow: return "now"
         case .durSec: return "%ds"
         case .durMin: return "%dm"
@@ -161,6 +174,11 @@ enum L10n {
         case .checkForUpdates: return "Check for updates"
         case .checkNow: return "Check now"
         case .openRelease: return "Open release"
+        case .downloadAndVerify: return "Download & verify"
+        case .updateDownloading: return "Downloading installer…"
+        case .updateVerifying: return "Verifying SHA-256…"
+        case .updateVerified: return "Verified · installer opened"
+        case .updateVerifyFailed: return "Installer verification failed"
         case .updateIdle: return "Not checked"
         case .updateChecking: return "Checking…"
         case .updateCurrent: return "Up to date"
@@ -215,16 +233,35 @@ enum L10n {
         case .supportWaitingHooks: return "Waiting via hooks"
         case .supportWaitingHarvest: return "Waiting via session data"
         case .supportWaitingNone: return "Waiting unavailable"
+        case .supportSharedCursor: return "shares Cursor adapter"
+        case .supportLastSignal: return "signal %@ ago"
+        case .supportDetectedExecutable: return "detected by executable"
+        case .supportDetectedPath: return "detected by path signature"
+        case .supportFactCoverage: return "%d/%d core facts"
         case .supportCollectorObserved: return "adapter read %d row(s) in %d ms"
         case .supportCollectorNoData: return "No recent data"
         case .supportCollectorNoDataDetail: return "adapter healthy · %d ms"
+        case .supportCollectorSourceAbsent: return "Source not found"
+        case .supportCollectorSourceAbsentDetail: return "no local session source or CLI found"
+        case .supportCollectorNoSessions: return "No usable session"
+        case .supportCollectorNoSessionsDetail: return "source present · no usable session · %d ms"
+        case .supportCollectorPermission: return "Permission denied"
+        case .supportCollectorPermissionDetail: return "local source could not be read"
+        case .supportCollectorSchema: return "Data format changed"
+        case .supportCollectorSchemaDetail: return "local source exists but its format was not recognized"
         case .supportCollectorFailed: return "Adapter error"
         case .supportCollectorFailedDetail: return "adapter error: %@"
         case .supportCollectorUnscanned: return "Not scanned"
         case .supportCollectorUnscannedDetail: return "adapter did not finish in the latest scan"
         case .supportObservedCount: return "%d observed"
-        case .supportIssueCount: return "%d adapter issue(s)"
+        case .supportIssueCount: return "%d support issue(s)"
         case .supportSearch: return "Search Agents"
+        case .supportFilterIssues: return "Issues"
+        case .supportFilterRunning: return "Running"
+        case .supportFilterInstalled: return "Installed"
+        case .supportFilterNoData: return "No data"
+        case .supportFilterAll: return "All"
+        case .supportNoFilterResults: return "No Agents match this filter"
         case .snooze: return "Later"
         case .snoozed: return "snoozed"
         case .snoozedFor: return "Later · %@ left"
@@ -297,6 +334,11 @@ enum L10n {
         case .waitingSignals: return "等待信号"
         case .hooksHint: return "安装 Claude/Codex hooks 后，Pulse 才能显示权限、输入等待与 subagent 生命周期。"
         case .installHooks: return "安装连接"
+        case .testWaitingSignal: return "测试连接"
+        case .hookTestIdle: return "尚未测试"
+        case .hookTestRunning: return "测试中…"
+        case .hookTestPassed: return "连接测试通过"
+        case .hookTestFailed: return "连接测试失败"
         case .shortcuts: return "快捷键"
         case .hotkeyHint: return "点击通知即可聚焦等待中的 Agent。"
         case .agents: return "Agents"
@@ -347,11 +389,18 @@ enum L10n {
         case .about: return "关于"
         case .tagline: return "编码 Agent 状态灯"
         case .build: return "构建"
+        case .runningFrom: return "运行位置"
         case .devBuild: return "开发构建"
         case .copyDiagnostics: return "复制诊断信息"
         case .copied: return "已复制"
         case .versionStale: return "版本不一致"
         case .versionMismatchHint: return "程序版本为 %@，但 app 包标记为 %@ — 请用 PulseBar/Scripts/package.sh 重新打包。"
+        case .duplicateAppsFound: return "发现另外 %d 个 Pulse 应用"
+        case .duplicateAppRunning: return "另一个副本正在运行，退出后才能移除。"
+        case .removeDuplicateApps: return "移除旧副本…"
+        case .removeDuplicateAppsConfirm: return "将 %d 个未运行的 Pulse 应用移到废纸篓？当前正在运行的应用会保留。"
+        case .moveToTrash: return "移到废纸篓"
+        case .cancel: return "取消"
         case .durNow: return "刚刚"
         case .durSec: return "%d 秒"
         case .durMin: return "%d 分"
@@ -372,6 +421,11 @@ enum L10n {
         case .checkForUpdates: return "检查更新"
         case .checkNow: return "立即检查"
         case .openRelease: return "打开发布页"
+        case .downloadAndVerify: return "下载并校验"
+        case .updateDownloading: return "正在下载安装包…"
+        case .updateVerifying: return "正在校验 SHA-256…"
+        case .updateVerified: return "校验通过 · 已打开安装包"
+        case .updateVerifyFailed: return "安装包校验失败"
         case .updateIdle: return "未检查"
         case .updateChecking: return "检查中…"
         case .updateCurrent: return "已是最新"
@@ -425,16 +479,35 @@ enum L10n {
         case .supportWaitingHooks: return "等待：hooks"
         case .supportWaitingHarvest: return "等待：会话数据"
         case .supportWaitingNone: return "等待：不可用"
+        case .supportSharedCursor: return "与 Cursor 共用适配器"
+        case .supportLastSignal: return "%@前收到信号"
+        case .supportDetectedExecutable: return "通过可执行程序检测"
+        case .supportDetectedPath: return "通过路径特征检测"
+        case .supportFactCoverage: return "核心信息 %d/%d"
         case .supportCollectorObserved: return "适配器读取 %d 行 · %d 毫秒"
         case .supportCollectorNoData: return "暂无近期数据"
         case .supportCollectorNoDataDetail: return "适配器正常 · %d 毫秒"
+        case .supportCollectorSourceAbsent: return "未发现数据源"
+        case .supportCollectorSourceAbsentDetail: return "未发现本地会话数据或 CLI"
+        case .supportCollectorNoSessions: return "暂无可用会话"
+        case .supportCollectorNoSessionsDetail: return "数据源存在 · 暂无可用会话 · %d 毫秒"
+        case .supportCollectorPermission: return "无读取权限"
+        case .supportCollectorPermissionDetail: return "无法读取本地数据源"
+        case .supportCollectorSchema: return "数据格式已变化"
+        case .supportCollectorSchemaDetail: return "本地数据存在，但当前适配器无法识别其格式"
         case .supportCollectorFailed: return "适配器异常"
         case .supportCollectorFailedDetail: return "适配器异常：%@"
         case .supportCollectorUnscanned: return "未完成扫描"
         case .supportCollectorUnscannedDetail: return "最近一次扫描中适配器未执行完成"
         case .supportObservedCount: return "已观测 %d 个"
-        case .supportIssueCount: return "%d 个适配器异常"
+        case .supportIssueCount: return "%d 个支持问题"
         case .supportSearch: return "搜索 Agent"
+        case .supportFilterIssues: return "问题"
+        case .supportFilterRunning: return "运行中"
+        case .supportFilterInstalled: return "已安装"
+        case .supportFilterNoData: return "无数据"
+        case .supportFilterAll: return "全部"
+        case .supportNoFilterResults: return "当前筛选条件下没有 Agent"
         case .snooze: return "稍后"
         case .snoozed: return "已稍后"
         case .snoozedFor: return "已稍后 · 剩 %@"
@@ -476,7 +549,9 @@ enum L10n {
         case focusTerminal, focusTTY, focusWarp, dismissWait
         case general, liveUpdates, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
-        case waitingSignals, hooksHint, installHooks, attentionBridgeHint, shortcuts, hotkeyHint, a11yHint
+        case waitingSignals, hooksHint, installHooks, testWaitingSignal
+        case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
+        case attentionBridgeHint, shortcuts, hotkeyHint, a11yHint
         case agents, running, idleNotify, settingsTitle
         case hooksNudge, waitingSignalNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
@@ -489,14 +564,16 @@ enum L10n {
         case subagentsActive, subagentsObserved
         case actionPlanning, actionCommand, actionEditing, actionImage
         case actionResearch, actionReading, actionAutomation, setupWaitingSignals
-        case about, tagline, build, devBuild, copyDiagnostics, copied
-        case versionStale, versionMismatchHint
+        case about, tagline, build, runningFrom, devBuild, copyDiagnostics, copied
+        case versionStale, versionMismatchHint, duplicateAppsFound, duplicateAppRunning
+        case removeDuplicateApps, removeDuplicateAppsConfirm, moveToTrash, cancel
         case durNow, durSec, durMin, durHour
         case notificationsSection, notifyDenied, openNotificationSettings
         case muteAgents, muteHint, uninstallHooks
         case revealShortcut, hotkeyTaken
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint
-        case checkForUpdates, checkNow, openRelease
+        case checkForUpdates, checkNow, openRelease, downloadAndVerify
+        case updateDownloading, updateVerifying, updateVerified, updateVerifyFailed
         case updateIdle, updateChecking, updateCurrent, updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
@@ -511,11 +588,18 @@ enum L10n {
         case supportGoal, supportWorkspace, supportProgress, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingProgress, supportMissingWaiting
-        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone
+        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportSharedCursor
+        case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved, supportCollectorNoData, supportCollectorNoDataDetail
+        case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
+        case supportCollectorNoSessions, supportCollectorNoSessionsDetail
+        case supportCollectorPermission, supportCollectorPermissionDetail
+        case supportCollectorSchema, supportCollectorSchemaDetail
         case supportCollectorFailed, supportCollectorFailedDetail
         case supportCollectorUnscanned, supportCollectorUnscannedDetail
         case supportObservedCount, supportIssueCount, supportSearch
+        case supportFilterIssues, supportFilterRunning, supportFilterInstalled
+        case supportFilterNoData, supportFilterAll, supportNoFilterResults
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting

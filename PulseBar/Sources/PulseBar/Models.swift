@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.35.1"
+    static let semver = "0.36.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -189,6 +189,16 @@ enum ObservationSource: String, Equatable, Hashable {
     case process
 }
 
+/// Privacy-safe reason a process rule matched.
+///
+/// The support window needs to explain why Pulse believes an Agent is live,
+/// but the full command line can contain paths, prompts, tokens, and secrets.
+/// Keep only the rule class.
+enum ProcessEvidence: String, Equatable, Hashable {
+    case executable
+    case pathSignature = "path_signature"
+}
+
 /// How this row's Waiting was raised (shown as a short credibility tag).
 enum WaitSignalKind: String, Equatable {
     case hooks
@@ -276,6 +286,8 @@ struct AgentRow: Identifiable, Hashable {
     var observationSource: ObservationSource = .process
     /// When the matched OS process began, in ms. Never presented as session age.
     var processStartedMs: Int64 = 0
+    /// Why the process probe matched, without retaining argv.
+    var processEvidence: ProcessEvidence? = nil
 
     /// How long this session has been going, in seconds; 0 when unknown.
     ///
@@ -598,13 +610,17 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var collectorState: ActivityHarvest.CollectorState
     var collectorDurationMs: Int
     var collectorRows: Int
+    var sourcePresent: Bool
     var collectorErrorKind: String
     var processDetected: Bool
+    var processEvidence: ProcessEvidence?
     var evidence: ObservationSource?
     var lastSuccessfulReadMs: Int64
+    var lastWaitingSignalMs: Int64
     var hasGoal: Bool
     var hasWorkspace: Bool
     var hasProgress: Bool
+    var waitingSignalReady: Bool
 
     var id: AgentID { agent }
 
@@ -617,8 +633,12 @@ struct AgentSupportHealth: Identifiable, Equatable {
         if !hasGoal { missing.append(.goal) }
         if !hasWorkspace { missing.append(.workspace) }
         if !hasProgress { missing.append(.progress) }
-        if agent.waitingSource == .none { missing.append(.waitingSignal) }
+        if !waitingSignalReady { missing.append(.waitingSignal) }
         return missing
+    }
+
+    var observedFactCount: Int {
+        [hasGoal, hasWorkspace, hasProgress, waitingSignalReady].filter { $0 }.count
     }
 }
 

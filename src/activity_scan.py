@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -2756,6 +2757,107 @@ OBSERVABILITY_CONTRACTS = {
     "antigravity": _CACHE_RICH - frozenset(("wait",)),
 }
 
+# Cheap source presence checks for runtime health. These do not crawl, parse,
+# or expose vendor paths; they answer the question that "no recent data"
+# previously blurred: is there any local source for this adapter at all?
+#
+# Some agents keep sessions inside project folders (notably Aider), so their
+# executable also counts as an installed source even when no session file has
+# been found yet.
+COLLECTOR_SOURCE_ROOTS = {
+    "claude": (HOME / ".claude",),
+    "codex": (HOME / ".codex",),
+    "cursor": (HOME / "Library/Application Support/Cursor",),
+    "grok": (HOME / ".grok",),
+    "pi": (HOME / ".pi",),
+    "amp": (HOME / ".local/share/amp", HOME / ".amp"),
+    "gemini": (HOME / ".gemini",),
+    "opencode": (HOME / ".local/share/opencode",),
+    "aider": (HOME / ".aider",),
+    "goose": (
+        HOME / ".config/goose",
+        HOME / ".local/share/goose",
+        HOME / "Library/Application Support/Goose",
+    ),
+    "cline": (
+        HOME / "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev",
+        HOME / "Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev",
+    ),
+    "roo": (
+        HOME / "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline",
+        HOME / "Library/Application Support/Cursor/User/globalStorage/rooveterinaryinc.roo-cline",
+    ),
+    "continue": (HOME / ".continue",),
+    "copilot": (HOME / ".copilot", HOME / ".config/copilot"),
+    "amazon_q": (
+        HOME / ".aws/amazonq",
+        HOME / ".aws/amazon-q",
+        HOME / "Library/Application Support/Amazon Q",
+    ),
+    "cascade": (
+        HOME / ".codeium",
+        HOME / ".windsurf",
+        HOME / "Library/Application Support/Windsurf",
+    ),
+    "windsurf": (
+        HOME / ".windsurf",
+        HOME / "Library/Application Support/Windsurf",
+    ),
+    "augment": (HOME / ".augment", HOME / ".auggie"),
+    "zed_agent": (HOME / ".zed", HOME / ".config/zed"),
+    "trae": (HOME / ".trae", HOME / "Library/Application Support/Trae"),
+    "warp_agent": (
+        HOME / ".warp",
+        HOME / "Library/Application Support/dev.warp.Warp-Stable",
+    ),
+    "openhands": (HOME / ".openhands", HOME / ".openhands-state"),
+    "kilo": (
+        HOME / "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code",
+        HOME / "Library/Application Support/Cursor/User/globalStorage/kilocode.kilo-code",
+    ),
+    "devin": (HOME / ".devin", HOME / ".cognition"),
+    "kiro": (HOME / ".kiro", HOME / "Library/Application Support/Kiro"),
+    "junie": (
+        HOME / ".junie",
+        HOME / "Library/Application Support/JetBrains/Junie",
+    ),
+    "replit": (HOME / ".replit", HOME / ".config/replit"),
+    "droid": (HOME / ".factory",),
+    "command_code": (HOME / ".commandcode",),
+    "kimi": (HOME / ".kimi-code",),
+    "antigravity": (
+        HOME / ".antigravity",
+        HOME / "Library/Application Support/Antigravity",
+    ),
+}
+
+COLLECTOR_COMMANDS = {
+    "claude": ("claude",),
+    "codex": ("codex",),
+    "grok": ("grok",),
+    "pi": ("pi",),
+    "amp": ("amp",),
+    "gemini": ("gemini",),
+    "opencode": ("opencode",),
+    "aider": ("aider",),
+    "goose": ("goose",),
+    "copilot": ("copilot",),
+    "continue": ("continue", "continue-cli"),
+    "openhands": ("openhands",),
+    "devin": ("devin",),
+    "kiro": ("kiro",),
+    "junie": ("junie",),
+    "droid": ("droid",),
+    "command_code": ("cmd", "command-code"),
+    "kimi": ("kimi",),
+}
+
+
+def collector_source_present(agent: str) -> bool:
+    if any(path.exists() for path in COLLECTOR_SOURCE_ROOTS.get(agent, ())):
+        return True
+    return any(shutil.which(command) for command in COLLECTOR_COMMANDS.get(agent, ()))
+
 
 def useful_cache_task(agent: str, task: str) -> bool:
     """Whether a cache title is an observed user fact rather than our fallback."""
@@ -3100,12 +3202,28 @@ def guard(labels: str | tuple[str, ...], body) -> None:
         elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
         for agent in agent_labels:
             emitted = max(0, EMITTED_COUNTS.get(agent, 0) - before[agent])
-            status = "failed" if error_kind else ("observed" if emitted else "no_recent_data")
+            source_present = collector_source_present(agent)
+            if emitted:
+                status = "observed"
+            elif error_kind in ("PermissionError",):
+                status = "permission_denied"
+            elif error_kind in (
+                "JSONDecodeError", "KeyError", "TypeError", "ValueError",
+                "DatabaseError", "OperationalError",
+            ):
+                status = "schema_mismatch"
+            elif error_kind:
+                status = "failed"
+            elif source_present:
+                status = "no_sessions"
+            else:
+                status = "source_absent"
             # Runtime adapter health shares the existing scan stream. It does
             # not expose vendor paths or exception messages and does not cost a
             # second walk over 32 private stores.
             print(
-                f"#health\t{agent}\t{status}\t{elapsed_ms}\t{emitted}\t{error_kind}",
+                f"#health\t{agent}\t{status}\t{elapsed_ms}\t{emitted}\t{error_kind}\t"
+                f"{1 if source_present else 0}",
                 flush=True,
             )
         if trace:

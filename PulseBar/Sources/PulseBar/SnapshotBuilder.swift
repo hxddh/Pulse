@@ -137,7 +137,12 @@ enum SnapshotBuilder {
             if agentID == .cursorAgent { agentID = .cursor }
 
             let live = liveHits[agentID] != nil
-            if !live, !ActivityHarvest.isFresh(act, nowMs: context.nowMs), act.subRunning == 0 {
+            let fresh = ActivityHarvest.isFresh(act, nowMs: context.nowMs)
+            // A persistent CLI process is not proof that every old completed
+            // rollout still belongs in the current tray. This was how a 45-hour
+            // Codex turn survived forever: the CLI stayed open, so stale
+            // completion evidence bypassed the freshness gate.
+            if !fresh, act.subRunning == 0, (!live || act.isCompleted) {
                 result.debugNotes.append("drop stale harvest \(agentID.rawValue) hm=\(act.harvestMs)")
                 continue
             }
@@ -217,6 +222,7 @@ enum SnapshotBuilder {
                 row.viaWarp = hit.viaWarp
                 row.pid = hit.pid
                 row.tty = hit.tty
+                row.processEvidence = hit.evidence
                 row.cwd = hit.cwd
                 row.project = AgentRow.shortProject(hit.cwd)
                 if hit.elapsedSeconds > 0 {
@@ -228,6 +234,9 @@ enum SnapshotBuilder {
             let bestKey = keys.max { a, b in
                 let ra = rowsByKey[a]!, rb = rowsByKey[b]!
                 if ra.waiting != rb.waiting { return !ra.waiting && rb.waiting }
+                if ra.isCompletedPhase != rb.isCompletedPhase {
+                    return ra.isCompletedPhase && !rb.isCompletedPhase
+                }
                 if ra.harvestMs != rb.harvestMs { return ra.harvestMs < rb.harvestMs }
                 return a < b
             }!
@@ -239,6 +248,7 @@ enum SnapshotBuilder {
                     row.viaWarp = hit.viaWarp || row.viaWarp
                     if hit.pid != 0 { row.pid = hit.pid }
                     if !hit.tty.isEmpty { row.tty = hit.tty }
+                    row.processEvidence = hit.evidence
                     if row.cwd.isEmpty, !hit.cwd.isEmpty {
                         row.cwd = hit.cwd
                         row.project = AgentRow.shortProject(hit.cwd)
