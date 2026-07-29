@@ -2,6 +2,17 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.36.1 — 窗口只有一个形状
+
+- 关闭仍按矩形合成的 WindowServer borderless-window 阴影，改为在透明窗口内用与材质
+  完全相同的圆角路径绘制阴影；浅色桌面上不再出现四个矩形白色尖角。
+- 视觉回归截图从只截内部材质层改为包含 AppKit 窗口根视图，外层 frame 的裁剪异常
+  不会再被一张“内部正常”的截图掩盖。
+- Agent 任务标题中的 Markdown 链接只展示可读标签，保留其余句子和原始观测数据；
+  `[hxddh/Pulse](https://github.com/hxddh/Pulse)` 不再占用整行观测空间。
+- 超长 Codex rollout 改为有界反向寻找最近的实质用户目标；即使最近一次工具输出超过
+  旧的 4 MB tail，也不会重新显示数十小时前的会话开场任务。
+
 ## 0.36.0 — 支持不是“读不到”，而是能解释为什么
 
 这一版完成 0.35 后续的 P0、P1、P2：运行版本必须可信，适配器无数据必须可诊断，

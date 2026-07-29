@@ -18,6 +18,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private let store: StatusStore
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let panel: PulseStatusPanel
+    private let rootView = NSView()
+    private let shadowView = NSView()
     private let effectView = NSVisualEffectView()
     private let hosting: NSHostingController<TrayPanel>
     private var subscriptions = Set<AnyCancellable>()
@@ -29,7 +31,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         self.store = store
         hosting = NSHostingController(rootView: TrayPanel(store: store))
         panel = PulseStatusPanel(
-            contentRect: .init(x: 0, y: 0, width: 420, height: 180),
+            contentRect: .init(
+                x: 0,
+                y: 0,
+                width: 420 + StatusPanelChrome.shadowInset * 2,
+                height: 180 + StatusPanelChrome.shadowInset * 2
+            ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -72,6 +79,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         resizeToFit()
         positionPanel(below: buttonWindow.convertToScreen(button.frame))
         panel.makeKeyAndOrderFront(nil)
+        StatusPanelChrome.apply(
+            to: panel,
+            rootView: rootView,
+            shadowView: shadowView,
+            effectView: effectView
+        )
         installOutsideClickMonitors()
         store.trayDidAppear()
         scheduleResize()
@@ -91,13 +104,17 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             guard let self else { return }
             self.resizeToFit()
-            self.effectView.layoutSubtreeIfNeeded()
-            let bounds = self.effectView.bounds
-            guard let bitmap = self.effectView.bitmapImageRepForCachingDisplay(in: bounds) else {
+            // Capture the window root, not only the rounded material child.
+            // Capturing only `effectView` hid rectangular frame artefacts from
+            // visual QA even though they were visible on the real desktop.
+            let surface = self.rootView
+            surface.layoutSubtreeIfNeeded()
+            let bounds = surface.bounds
+            guard let bitmap = surface.bitmapImageRepForCachingDisplay(in: bounds) else {
                 DebugLog.write("tray capture failed — no bitmap")
                 return
             }
-            self.effectView.cacheDisplay(in: bounds, to: bitmap)
+            surface.cacheDisplay(in: bounds, to: bitmap)
             guard let data = bitmap.representation(using: .png, properties: [:]) else {
                 DebugLog.write("tray capture failed — no PNG representation")
                 return
@@ -154,7 +171,11 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         panel.level = .popUpMenu
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // WindowServer's borderless-window shadow remained rectangular even
+        // after invalidateShadow(), leaving four light points around a rounded
+        // material. A rounded in-window shadow is deterministic and matches
+        // the same path as the visible surface.
+        panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.transient, .moveToActiveSpace, .fullScreenAuxiliary]
@@ -163,10 +184,22 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         effectView.material = .popover
         effectView.blendingMode = .behindWindow
         effectView.state = .active
-        effectView.wantsLayer = true
-        effectView.layer?.cornerRadius = 12
-        effectView.layer?.cornerCurve = .continuous
-        effectView.layer?.masksToBounds = true
+
+        shadowView.translatesAutoresizingMaskIntoConstraints = false
+        effectView.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(shadowView)
+        rootView.addSubview(effectView)
+        let inset = StatusPanelChrome.shadowInset
+        NSLayoutConstraint.activate([
+            shadowView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: inset),
+            shadowView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -inset),
+            shadowView.topAnchor.constraint(equalTo: rootView.topAnchor, constant: inset),
+            shadowView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -inset),
+            effectView.leadingAnchor.constraint(equalTo: shadowView.leadingAnchor),
+            effectView.trailingAnchor.constraint(equalTo: shadowView.trailingAnchor),
+            effectView.topAnchor.constraint(equalTo: shadowView.topAnchor),
+            effectView.bottomAnchor.constraint(equalTo: shadowView.bottomAnchor),
+        ])
 
         let content = hosting.view
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -177,7 +210,13 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             content.topAnchor.constraint(equalTo: effectView.topAnchor),
             content.bottomAnchor.constraint(equalTo: effectView.bottomAnchor),
         ])
-        panel.contentView = effectView
+        panel.contentView = rootView
+        StatusPanelChrome.apply(
+            to: panel,
+            rootView: rootView,
+            shadowView: shadowView,
+            effectView: effectView
+        )
     }
 
     private func updateStatusItem(_ snapshot: PulseSnapshot) {
@@ -228,7 +267,11 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         hosting.view.layoutSubtreeIfNeeded()
         let fitting = hosting.view.fittingSize
         let height = min(650, max(96, fitting.height))
-        let target = NSSize(width: max(420, fitting.width), height: height)
+        let inset = StatusPanelChrome.shadowInset
+        let target = NSSize(
+            width: max(420, fitting.width) + inset * 2,
+            height: height + inset * 2
+        )
         guard abs(panel.frame.width - target.width) > 0.5
                 || abs(panel.frame.height - target.height) > 0.5 else { return }
 
@@ -237,6 +280,13 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         var frame = panel.frame
         frame.origin.y = oldTop - frame.height
         panel.setFrame(frame, display: true)
+        rootView.layoutSubtreeIfNeeded()
+        StatusPanelChrome.apply(
+            to: panel,
+            rootView: rootView,
+            shadowView: shadowView,
+            effectView: effectView
+        )
     }
 
     private func positionPanel(below anchor: NSRect) {
@@ -244,7 +294,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         let visible = screen?.visibleFrame ?? .zero
         var origin = NSPoint(
             x: anchor.midX - panel.frame.width / 2,
-            y: anchor.minY - panel.frame.height - 6
+            y: anchor.minY - panel.frame.height - 6 + StatusPanelChrome.shadowInset
         )
         origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - panel.frame.width - 8)
         origin.y = max(origin.y, visible.minY + 8)
@@ -289,4 +339,56 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 private final class PulseStatusPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+/// One owner for the panel's visible shape.
+///
+/// The material child was rounded in 0.36.0, but the AppKit frame view and its
+/// cached WindowServer shadow still described a rectangle. On a light desktop
+/// the clipped material exposed four white triangular corners. Disable that
+/// outer shadow and draw a bounded rounded shadow behind the material using
+/// the exact same path.
+@MainActor
+enum StatusPanelChrome {
+    static let cornerRadius: CGFloat = 12
+    static let shadowInset: CGFloat = 12
+
+    static func apply(
+        to panel: NSPanel,
+        rootView: NSView,
+        shadowView: NSView,
+        effectView: NSVisualEffectView
+    ) {
+        panel.hasShadow = false
+        rootView.wantsLayer = true
+        rootView.layer?.backgroundColor = NSColor.clear.cgColor
+        rootView.layer?.masksToBounds = false
+
+        shadowView.wantsLayer = true
+        shadowView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.01).cgColor
+        shadowView.layer?.cornerRadius = cornerRadius
+        shadowView.layer?.cornerCurve = .continuous
+        shadowView.layer?.masksToBounds = false
+        shadowView.layer?.shadowColor = NSColor.black.cgColor
+        shadowView.layer?.shadowOpacity = 0.24
+        shadowView.layer?.shadowRadius = 10
+        shadowView.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        shadowView.layer?.shadowPath = CGPath(
+            roundedRect: shadowView.bounds,
+            cornerWidth: cornerRadius,
+            cornerHeight: cornerRadius,
+            transform: nil
+        )
+
+        effectView.wantsLayer = true
+        effectView.layer?.cornerRadius = cornerRadius
+        effectView.layer?.cornerCurve = .continuous
+        effectView.layer?.masksToBounds = true
+
+        if let frameView = rootView.superview {
+            frameView.wantsLayer = true
+            frameView.layer?.backgroundColor = NSColor.clear.cgColor
+            frameView.layer?.masksToBounds = false
+        }
+    }
 }

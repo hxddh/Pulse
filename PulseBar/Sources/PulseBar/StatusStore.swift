@@ -553,7 +553,11 @@ final class StatusStore: ObservableObject {
         waiting.waitSignal = .hooks
         waiting.waitSinceMs = now - 8 * 60 * 1000
 
-        var active = row("codex-preview", .codex, task: "Finish Pulse 0.36 observability")
+        var active = row(
+            "codex-preview",
+            .codex,
+            task: "[hxddh/Pulse](https://github.com/hxddh/Pulse) Fix panel corners"
+        )
         active.phase = "testing"
         active.progressDone = 18
         active.progressTotal = 31

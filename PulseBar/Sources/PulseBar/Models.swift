@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.36.0"
+    static let semver = "0.36.1"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -343,7 +343,8 @@ struct AgentRow: Identifiable, Hashable {
 
     /// Drop placeholder harvest titles that aren't real session detail.
     var usefulTask: String? {
-        guard let t = taskLine else { return nil }
+        guard let raw = taskLine else { return nil }
+        let t = Self.displayTaskTitle(raw)
         let junk: Set<String> = [
             "-", "—", "Running", "Active", "none",
             "Agent session", "Chat", "Amp session", "Amp thread",
@@ -357,6 +358,22 @@ struct AgentRow: Identifiable, Hashable {
         if genericSuffixes.contains(where: { low == agent + $0 }) { return nil }
         if t.hasPrefix("/"), !t.contains(" ") { return nil }
         return t
+    }
+
+    /// Session titles are plain UI labels, not a Markdown renderer.
+    ///
+    /// Codex can preserve the user's `[label](URL)` prompt syntax as its task
+    /// title. Showing the transport syntax spends scarce tray width on an
+    /// address that is neither actionable nor easier to scan. Keep the label
+    /// and the surrounding sentence; keep the raw task untouched for matching
+    /// and diagnostics.
+    static func displayTaskTitle(_ raw: String) -> String {
+        raw.replacingOccurrences(
+            of: #"!?\[([^\]\n]{1,240})\]\((?:https?|file)://[^)\n]+\)"#,
+            with: "$1",
+            options: .regularExpression
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// First-class session detail for tray (task title). Tool-only falls back for live rows.

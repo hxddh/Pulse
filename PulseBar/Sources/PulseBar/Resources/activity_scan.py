@@ -628,10 +628,55 @@ def codex_user_title_from_file(path: Path, max_bytes: int = 8_000_000) -> str:
             return codex_user_title(path.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             return ""
-    # Preserve the initial prompt and the latest few MB of turns. If a long
-    # tool chain pushes the most recent user turn out of the tail, the first
-    # real request remains a stable, honest fallback.
-    return codex_user_title(head_tail_text(path, 512_000, 4_000_000))
+
+    # A long tool result can exceed the old fixed 4 MB tail by itself. The
+    # newest user request then vanished from the window and Pulse fell back to
+    # the session-opening prompt — exactly when the user most needed to know
+    # what a many-hour Agent was doing now. Walk bounded chunks backwards,
+    # parsing only user-message lines, and stop at the newest substantive goal.
+    newest_short = ""
+    carried = b""
+    position = size
+    remaining = min(size, 24_000_000)
+    try:
+        with path.open("rb") as handle:
+            while position > 0 and remaining > 0:
+                take = min(2_000_000, position, remaining)
+                position -= take
+                remaining -= take
+                handle.seek(position)
+                data = handle.read(take) + carried
+
+                # The first record starts in the previous (older) chunk.
+                # Carry that fragment back so a user event split exactly at a
+                # chunk boundary is reconstructed rather than silently lost.
+                if position > 0:
+                    newline = data.find(b"\n")
+                    if newline < 0:
+                        carried = data
+                        continue
+                    carried = data[:newline]
+                    data = data[newline + 1 :]
+
+                title = codex_user_title(data.decode("utf-8", errors="replace"))
+                if meaningful_prompt(title):
+                    return title
+                if title and not newest_short:
+                    newest_short = title
+    except OSError:
+        return ""
+
+    # No substantive prompt was found in the bounded reverse scan. Preserve
+    # the opening request as the honest stable fallback instead of promoting a
+    # one-word "continue" or "publish" command to the row hero.
+    try:
+        with path.open("rb") as handle:
+            opening = codex_user_title(
+                handle.read(512_000).decode("utf-8", errors="replace")
+            )
+    except OSError:
+        return ""
+    return opening or newest_short
 
 
 def codex_last_usage(text: str) -> tuple[int, int]:

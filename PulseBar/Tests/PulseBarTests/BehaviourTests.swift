@@ -1,5 +1,65 @@
 import XCTest
+import AppKit
 @testable import PulseBar
+
+@MainActor
+final class StatusPanelChromeTests: XCTestCase {
+    func testRoundedMaterialOwnsItsShadowInsideATransparentWindow() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 444, height: 204),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        let root = NSView(frame: panel.contentView?.bounds ?? .zero)
+        let shadow = NSView(frame: root.bounds.insetBy(
+            dx: StatusPanelChrome.shadowInset,
+            dy: StatusPanelChrome.shadowInset
+        ))
+        let effect = NSVisualEffectView(frame: shadow.frame)
+        root.addSubview(shadow)
+        root.addSubview(effect)
+        panel.contentView = root
+
+        StatusPanelChrome.apply(
+            to: panel,
+            rootView: root,
+            shadowView: shadow,
+            effectView: effect
+        )
+
+        XCTAssertFalse(panel.hasShadow, "WindowServer shadow is rectangular for this panel")
+        XCTAssertEqual(effect.layer?.cornerRadius, StatusPanelChrome.cornerRadius)
+        XCTAssertTrue(effect.layer?.masksToBounds == true)
+        XCTAssertEqual(shadow.layer?.cornerRadius, StatusPanelChrome.cornerRadius)
+        XCTAssertNotNil(shadow.layer?.shadowPath)
+        XCTAssertGreaterThan(shadow.layer?.shadowOpacity ?? 0, 0)
+        let background = root.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))
+        XCTAssertEqual(background?.alphaComponent, 0)
+
+        root.layoutSubtreeIfNeeded()
+        guard let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
+            return XCTFail("window root did not produce a visual regression bitmap")
+        }
+        root.cacheDisplay(in: root.bounds, to: bitmap)
+        let corners = [
+            (0, 0),
+            (bitmap.pixelsWide - 1, 0),
+            (0, bitmap.pixelsHigh - 1),
+            (bitmap.pixelsWide - 1, bitmap.pixelsHigh - 1),
+        ]
+        for (x, y) in corners {
+            XCTAssertLessThan(
+                bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 1,
+                0.01,
+                "the AppKit window root leaked an opaque square corner"
+            )
+        }
+    }
+}
 
 final class StatusLampTests: XCTestCase {
     func testStatusBarLampsKeepTheirStateColors() {
@@ -143,6 +203,20 @@ final class AgentRowTests: XCTestCase {
     func testBarePathIsNotASessionTitle() {
         XCTAssertNil(row { $0.task = "/Users/me/code" }.usefulTask)
         XCTAssertNotNil(row { $0.task = "/Users/me fix the parser" }.usefulTask)
+    }
+
+    func testMarkdownLinksBecomeReadablePlainTitles() {
+        let raw = "[hxddh/Pulse](https://github.com/hxddh/Pulse) 本地有安装最新版"
+        let r = row { $0.task = raw }
+        XCTAssertEqual(r.usefulTask, "hxddh/Pulse 本地有安装最新版")
+        XCTAssertEqual(r.task, raw, "presentation cleanup must not rewrite evidence")
+    }
+
+    func testMarkdownImageSyntaxDoesNotLeakIntoTheTray() {
+        XCTAssertEqual(
+            row { $0.task = "Inspect ![failure](file:///tmp/failure.png)" }.usefulTask,
+            "Inspect failure"
+        )
     }
 
     func testLiveRowWithToolButNoTaskFallsBackToTool() {

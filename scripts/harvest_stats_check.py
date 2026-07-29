@@ -203,6 +203,26 @@ def check_helper_contract(d: Path) -> int:
     # A helper path is not an invoked skill.
     if A.last_skill_name('{"path":"/tmp/skills/audit/scripts/preflight.py"}'):
         return fail("a skill helper path was exposed as an invoked skill")
+
+    # Long tool output after a recent prompt must not push that prompt out of
+    # a fixed tail window and resurrect the session-opening task.
+    rollout = d / "large-codex-rollout.jsonl"
+    opening = json.dumps({
+        "type": "event_msg",
+        "payload": {"type": "user_message", "message": "Initial setup request"},
+    })
+    latest = json.dumps({
+        "type": "event_msg",
+        "payload": {"type": "user_message", "message": "Fix the four panel corners"},
+    })
+    filler = '{"type":"response_item","payload":{"type":"tool_result","text":"x"}}\n'
+    rollout.write_text(
+        opening + "\n" + filler * 2_000 + latest + "\n" + filler * 3_000,
+        encoding="utf-8",
+    )
+    got = A.codex_user_title_from_file(rollout, max_bytes=32_000)
+    if got != "Fix the four panel corners":
+        return fail(f"large Codex rollout resurrected an old task: {got!r}")
     return 0
 
 
