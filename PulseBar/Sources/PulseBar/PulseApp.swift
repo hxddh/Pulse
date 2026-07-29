@@ -768,11 +768,16 @@ struct TrayPanel: View {
                         .accessibilityHidden(true)
                     }
                 }
-            // The panel is usually summoned by a shortcut, so the hand is
-            // already on the keyboard; finishing with the mouse is the awkward
-            // part. Arrow keys walk the visible rows, Return focuses the
-            // terminal, Escape gives up.
+                // The panel is usually summoned by a shortcut, so the hand is
+                // already on the keyboard; finishing with the mouse is the awkward
+                // part. Arrow keys walk the visible rows, Return focuses the
+                // terminal, Escape gives up.
                 .focusable()
+                // Keep arrow/Return navigation without drawing AppKit's blue
+                // focus ring around the ScrollView. The rounded panel clips
+                // that ring into a stray horizontal blue rule and two edge
+                // fragments, which looks like broken panel chrome.
+                .focusEffectDisabled()
                 .focused($listFocused)
                 .onAppear { listFocused = true }
                 .onKeyPress(.downArrow) { moveSelection(1, in: groups); return .handled }
@@ -780,14 +785,14 @@ struct TrayPanel: View {
                 .onKeyPress(.return) { activateSelection(groups); return .handled }
                 .onKeyPress(.escape) { selectedKey = nil; return .handled }
                 .onKeyPress(.space) {
-                // Space folds whichever group owns the selection — the fold
-                // control is a heading, and headings are not in the tab order.
-                guard let key = selectedKey,
-                      let group = groups.first(where: { g in
-                          g.foldable && g.rows.contains { $0.rowKey == key }
-                      })
-                else { return .ignored }
-                toggleFold(group.id)
+                    // Space folds whichever group owns the selection — the fold
+                    // control is a heading, and headings are not in the tab order.
+                    guard let key = selectedKey,
+                          let group = groups.first(where: { g in
+                              g.foldable && g.rows.contains { $0.rowKey == key }
+                          })
+                    else { return .ignored }
+                    toggleFold(group.id)
                     return .handled
                 }
                 .onChange(of: selectedKey) { _, key in

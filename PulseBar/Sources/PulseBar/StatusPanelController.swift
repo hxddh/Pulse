@@ -182,15 +182,14 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 
     private func updateStatusItem(_ snapshot: PulseSnapshot) {
         guard let button = statusItem.button else { return }
-        let image = PulseBrand.menuIcon(for: snapshot.glance).copy() as? NSImage
-        image?.isTemplate = true
-        image?.size = NSSize(width: 15, height: 15)
+        let image = PulseBrand.statusBarIcon(for: snapshot.glance)
+        image.size = NSSize(width: 15, height: 15)
         button.image = image
         // A status button's effective appearance belongs to the menu bar, not
         // necessarily to the app's Aqua/Dark Aqua appearance. A forced
-        // contentTintColor is applied to both the template image and title and
-        // can therefore resolve to black on a dark menu bar. `nil` asks AppKit
-        // to apply its standard menu-bar effects at draw time.
+        // The image owns its state colour. `contentTintColor` stays nil so
+        // AppKit keeps the adjacent title readable against the actual menu bar
+        // appearance instead of tinting both icon and text together.
         button.contentTintColor = nil
         button.title = snapshot.glance == .idle ? "" : snapshot.title
         button.toolTip = snapshot.tooltip

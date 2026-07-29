@@ -74,6 +74,18 @@ def main() -> int:
                     f"  · {rel}:{n}  forced status-item tint: {line.strip()}"
                 )
 
+    # The tray's keyboard target must not use the default blue focus ring. An
+    # NSPanel clips that ring at its rounded bounds, leaving what looks like a
+    # random blue divider below the Header. Keyboard navigation remains active;
+    # only the visual effect is suppressed.
+    tray = SOURCES / "PulseApp.swift"
+    tray_source = tray.read_text(encoding="utf-8")
+    if ".focusable()" in tray_source and ".focusEffectDisabled()" not in tray_source:
+        problems.append(
+            "  · PulseBar/Sources/PulseBar/PulseApp.swift  "
+            "focusable tray is missing .focusEffectDisabled()"
+        )
+
     if problems:
         print("appearance contract violation:", file=sys.stderr)
         for p in problems:

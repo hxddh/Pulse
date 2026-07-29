@@ -32,6 +32,44 @@ enum PulseBrand {
         return fallbackDrawn(asset)
     }
 
+    /// Full-colour status-bar icon.
+    ///
+    /// NSStatusBarButton renders a template image in the menu bar's own
+    /// foreground colour. That is excellent for contrast, but it also erases
+    /// the product's only glance signal: red / green / grey / orange. Forcing
+    /// `contentTintColor` is not an answer because AppKit applies it to the
+    /// title as well and it can resolve black-on-black against a dark menu bar.
+    /// Tint the image pixels instead; leave the button title system-adaptive.
+    static func statusBarIcon(for glance: GlanceKind) -> NSImage {
+        let source = menuIcon(for: glance)
+        let size = NSSize(width: 16, height: 16)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        source.draw(
+            in: NSRect(origin: .zero, size: size),
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1
+        )
+        statusColor(for: glance).setFill()
+        NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
+        image.unlockFocus()
+        image.isTemplate = false
+        image.size = size
+        return image
+    }
+
+    static func statusColor(for glance: GlanceKind) -> NSColor {
+        switch glance {
+        case .waiting: return .systemRed
+        case .running: return .systemGreen
+        case .stalled, .error: return .systemOrange
+        case .idle: return .systemGray
+        }
+    }
+
     /// Larger mark for tray empty / about (template).
     static func markImage(size: CGFloat = 28) -> NSImage {
         if let img = loadPNG("pulse-mark") {

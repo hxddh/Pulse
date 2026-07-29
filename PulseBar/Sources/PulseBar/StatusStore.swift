@@ -327,6 +327,33 @@ final class StatusStore: ObservableObject {
     func installPreviewFixture(_ name: String) {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
+        if name.hasPrefix("status-") {
+            var snap = PulseSnapshot()
+            switch name {
+            case "status-running":
+                snap.glance = .running
+                snap.title = "1"
+                snap.sectionTotals[.running] = 1
+            case "status-stalled":
+                snap.glance = .stalled
+                snap.title = "1"
+                snap.sectionTotals[.stalled] = 1
+            case "status-waiting":
+                snap.glance = .waiting
+                snap.title = "1"
+                snap.sectionTotals[.needsYou] = 1
+            default:
+                snap.glance = .idle
+            }
+            snap.headerTitle = name
+            snap.header = name
+            snap.tooltip = name
+            snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
+            snap.updatedAt = Date()
+            snapshot = snap
+            return
+        }
+
         func row(
             _ key: String,
             _ agent: AgentID,
