@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.36.2"
+    static let semver = "0.37.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -649,6 +649,7 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var lastWaitingSignalMs: Int64
     var hasGoal: Bool
     var hasWorkspace: Bool
+    var hasActivity: Bool
     var hasProgress: Bool
     var waitingSignalReady: Bool
 
@@ -659,16 +660,22 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var missingCapabilities: [SupportCapability] {
         guard isObserved else { return [.notDetected] }
         var missing: [SupportCapability] = []
-        if evidence == .process { missing.append(.activityFeed) }
+        if evidence == .process || !hasActivity { missing.append(.activityFeed) }
         if !hasGoal { missing.append(.goal) }
         if !hasWorkspace { missing.append(.workspace) }
-        if !hasProgress { missing.append(.progress) }
-        if !waitingSignalReady { missing.append(.waitingSignal) }
+        if agent.waitingSource != .none, !waitingSignalReady {
+            missing.append(.waitingSignal)
+        }
         return missing
     }
 
     var observedFactCount: Int {
-        [hasGoal, hasWorkspace, hasProgress, waitingSignalReady].filter { $0 }.count
+        [
+            hasGoal,
+            hasWorkspace,
+            hasActivity,
+            evidence != nil || processDetected,
+        ].filter { $0 }.count
     }
 }
 
@@ -677,7 +684,6 @@ enum SupportCapability: String, Equatable {
     case activityFeed
     case goal
     case workspace
-    case progress
     case waitingSignal
 }
 

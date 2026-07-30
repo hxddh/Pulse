@@ -813,10 +813,10 @@ def main() -> int:
         ROOT / "PulseBar" / "Sources" / "PulseBar" / "SnapshotBuilder.swift"
     ).read_text(encoding="utf-8")
     swift_cap = re.search(r"maxSessionsPerAgent\s*=\s*(\d+)", swift_builder)
-    if not swift_cap or int(swift_cap.group(1)) != A.MAX_SESSIONS_PER_AGENT:
+    if not swift_cap or A.MAX_SESSIONS_PER_AGENT <= int(swift_cap.group(1)):
         return fail(
-            "Python collectors and SnapshotBuilder disagree on the per-agent "
-            f"session budget ({A.MAX_SESSIONS_PER_AGENT} vs "
+            "the collector must emit beyond Swift's per-agent display budget "
+            f"({A.MAX_SESSIONS_PER_AGENT} vs "
             f"{swift_cap.group(1) if swift_cap else 'missing'})"
         )
     low_cap_patterns = {
@@ -849,6 +849,31 @@ def main() -> int:
             "ActivityHarvest must run Python unbuffered or timeout partial rows "
             "remain trapped in stdout"
         )
+
+    support_model = (
+        ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"
+    ).read_text(encoding="utf-8")
+    support_store = (
+        ROOT / "PulseBar" / "Sources" / "PulseBar" / "StatusStore.swift"
+    ).read_text(encoding="utf-8")
+    support_contract = {
+        "goal fact": "hasGoal,",
+        "workspace fact": "hasWorkspace,",
+        "activity fact": "hasActivity,",
+        "evidence fact": "evidence != nil || processDetected,",
+        "conditional Waiting": "agent.waitingSource != .none, !waitingSignalReady",
+    }
+    for label, fragment in support_contract.items():
+        if fragment not in support_model:
+            return fail(f"support health lost its {label} contract")
+    fact_sources = {
+        "goal": "hasGoal: rows.contains { $0.usefulTask != nil }",
+        "workspace": "hasWorkspace: rows.contains { !$0.displayPath.isEmpty }",
+        "activity": "$0.harvestMs > 0 && $0.observationSource != .process",
+    }
+    for label, fragment in fact_sources.items():
+        if fragment not in support_store:
+            return fail(f"support health no longer derives the {label} fact from runtime rows")
 
     if set(A.HARVEST_CONTRACTS) != {
         "claude", "codex", "cursor", "grok", "pi", "amp", "aider", "gemini",

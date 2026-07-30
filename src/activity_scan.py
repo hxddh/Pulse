@@ -24,7 +24,10 @@ HOME = Path.home()
 #
 # Keep candidate scans wider than the output budget so an archived, draft, or
 # malformed record does not prevent a later active session from being found.
-MAX_SESSIONS_PER_AGENT = 32
+# The collector deliberately emits more than the tray will render. Swift keeps
+# the newest 32 per Agent and counts the remainder, so "32 shown" never means
+# "Pulse stopped looking at 32". This is an ingestion safety budget, not UI.
+MAX_SESSIONS_PER_AGENT = 64
 SESSION_CANDIDATE_LIMIT = MAX_SESSIONS_PER_AGENT * 2
 
 # Bytes the whole scan may spend counting records, across every collector.

@@ -237,6 +237,16 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.rows.filter { $0.hiddenSessions > 0 }.count, 1, "badge appears once, not per sibling")
     }
 
+    func testCollectorCanReportMoreThanTheDefaultThirtyTwoSessionBudget() {
+        let rows = (1...40).map {
+            harvest(.cursor, task: "Cursor task \($0)", session: "cursor-\($0)")
+        }
+        let r = build(harvest: rows)
+        XCTAssertEqual(r.rows.count, SnapshotBuilder.maxSessionsPerAgent)
+        XCTAssertEqual(r.snapshot.cappedSessions, 8)
+        XCTAssertEqual(r.rows.filter { $0.hiddenSessions > 0 }.count, 1)
+    }
+
     func testSessionsWithoutIdsDoNotCollideIntoOneRow() {
         let r = build(harvest: [
             harvest(.codex, task: "A", project: "/a/Repo"),
@@ -255,11 +265,61 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.debugNotes.contains { $0.contains("drop stale harvest gemini") })
     }
 
-    func testStaleHarvestSurvivesWhenTheProcessIsLive() {
+    func testOneStaleHarvestSurvivesWhenItIsTheOnlyProcessContext() {
         let stale = harvest(.gemini, task: "old", ageMs: ActivityHarvest.freshWindowMs + 60_000)
         let r = build(procs: [.init(id: .gemini, count: 1, viaWarp: false, pid: 7)], harvest: [stale])
         XCTAssertEqual(r.rows.count, 1)
         XCTAssertTrue(r.rows[0].liveProcess)
+    }
+
+    func testFreshSessionPreventsStaleSiblingsRidingTheSameLiveProcess() {
+        var ancientWorking = harvest(
+            .codex,
+            task: "Ancient automation",
+            session: "ancient-working",
+            ageMs: 436 * 60 * 60 * 1000
+        )
+        ancientWorking.phase = "working"
+        let ancientUnknown = harvest(
+            .codex,
+            task: "Ancient unknown",
+            session: "ancient-unknown",
+            ageMs: 552 * 60 * 60 * 1000
+        )
+        let current = harvest(
+            .codex,
+            task: "Current work",
+            session: "current",
+            ageMs: 1_000
+        )
+
+        let r = build(
+            procs: [hit(.codex)],
+            harvest: [ancientWorking, ancientUnknown, current]
+        )
+        XCTAssertEqual(r.rows.map(\.sessionID), ["current"])
+        XCTAssertEqual(r.rows.filter(\.liveProcess).count, 1)
+        XCTAssertEqual(r.snapshot.sectionTotals[.stalled], 0)
+    }
+
+    func testOnlyNewestStaleUnfinishedSessionCanBackLiveProcess() {
+        let older = harvest(
+            .amp,
+            task: "Older known goal",
+            session: "older",
+            ageMs: ActivityHarvest.freshWindowMs + 120_000
+        )
+        let newer = harvest(
+            .amp,
+            task: "Newest known goal",
+            session: "newer",
+            ageMs: ActivityHarvest.freshWindowMs + 60_000
+        )
+
+        let r = build(procs: [hit(.amp)], harvest: [older, newer])
+        XCTAssertEqual(r.rows.count, 1)
+        XCTAssertEqual(r.rows.first?.sessionID, "newer")
+        XCTAssertTrue(r.rows.first?.liveProcess ?? false)
     }
 
     // MARK: Live-process attachment

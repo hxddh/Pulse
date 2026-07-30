@@ -13,6 +13,22 @@ current phase, progress/outcome, failures, changed files, model/context, and
 volume counters. Unknown is shown as unknown; Pulse never fills a gap by
 guessing from process count, CPU, a filename, or an arbitrary JSON `name`.
 
+The UI exposes the runtime quality rather than flattening all support into one
+claim:
+
+- **A · Structured session** — stable session identity plus direct lifecycle
+  records; goal, workspace and activity are expected when the Agent wrote them.
+- **B · Verified cache** — a vendor-owned local cache with a verified session
+  shape; only fields actually present are shown.
+- **C · Process only** — executable/path evidence, process age and focus
+  capability; activity detail is explicitly unavailable.
+
+Goal, workspace, activity and evidence are the four core facts in the support
+window. Progress, model, mode, counters, files and Waiting are valuable
+enhancements when the Agent exposes them, not fabricated universal
+requirements. An Agent whose contract has no Waiting route is therefore not
+reported as incomplete merely because Waiting is unavailable.
+
 ## Runtime adapter health
 
 Static coverage and runtime health are different claims. The same bounded scan
@@ -77,6 +93,11 @@ Every Agent still has a process fallback: real working directory, process age,
 TTY/focus capability, and an explicit “activity unavailable” statement. That
 fallback is detection, not rich session observability, and is never presented
 as equivalent to a session/cache row.
+
+Collector ingestion is bounded at 64 rows per Agent. The Swift model keeps 32
+and reports the exact number of rows held back; the tray's global eight-row
+fold is presentation only. This separation lets Pulse observe more than it
+shows without allowing unbounded vendor stores to consume memory.
 
 ## Tool and skill policy
 

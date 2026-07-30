@@ -222,13 +222,13 @@ enum L10n {
         case .supportDetected: return "Detected"
         case .supportGoal: return "goal"
         case .supportWorkspace: return "workspace"
-        case .supportProgress: return "activity"
+        case .supportActivity: return "activity"
+        case .supportProgress: return "progress"
         case .supportLastRead: return "read %@ ago"
         case .supportMissing: return "missing: %@"
         case .supportMissingFeed: return "activity feed"
         case .supportMissingGoal: return "goal"
         case .supportMissingWorkspace: return "workspace"
-        case .supportMissingProgress: return "progress"
         case .supportMissingWaiting: return "Waiting signal"
         case .supportWaitingHooks: return "Waiting via hooks"
         case .supportWaitingHarvest: return "Waiting via session data"
@@ -254,7 +254,10 @@ enum L10n {
         case .supportCollectorUnscanned: return "Not scanned"
         case .supportCollectorUnscannedDetail: return "adapter did not finish in the latest scan"
         case .supportObservedCount: return "%d observed"
-        case .supportIssueCount: return "%d support issue(s)"
+        case .supportIssueCount: return "%d issue(s)"
+        case .supportAdapterIssueCount: return "%d adapter issue(s)"
+        case .supportInformationGapCount: return "%d information gap(s)"
+        case .supportFilterIssuesCount: return "Issues · %d"
         case .supportSearch: return "Search Agents"
         case .supportFilterIssues: return "Issues"
         case .supportFilterRunning: return "Running"
@@ -468,13 +471,13 @@ enum L10n {
         case .supportDetected: return "已检测"
         case .supportGoal: return "目标"
         case .supportWorkspace: return "工作区"
-        case .supportProgress: return "活动"
+        case .supportActivity: return "活动"
+        case .supportProgress: return "进度"
         case .supportLastRead: return "%@前读取"
         case .supportMissing: return "缺少：%@"
         case .supportMissingFeed: return "活动数据"
         case .supportMissingGoal: return "目标"
         case .supportMissingWorkspace: return "工作区"
-        case .supportMissingProgress: return "进度"
         case .supportMissingWaiting: return "等待信号"
         case .supportWaitingHooks: return "等待：hooks"
         case .supportWaitingHarvest: return "等待：会话数据"
@@ -500,7 +503,10 @@ enum L10n {
         case .supportCollectorUnscanned: return "未完成扫描"
         case .supportCollectorUnscannedDetail: return "最近一次扫描中适配器未执行完成"
         case .supportObservedCount: return "已观测 %d 个"
-        case .supportIssueCount: return "%d 个支持问题"
+        case .supportIssueCount: return "%d 个问题"
+        case .supportAdapterIssueCount: return "%d 个适配器异常"
+        case .supportInformationGapCount: return "%d 个信息缺口"
+        case .supportFilterIssuesCount: return "问题 · %d"
         case .supportSearch: return "搜索 Agent"
         case .supportFilterIssues: return "问题"
         case .supportFilterRunning: return "运行中"
@@ -585,9 +591,9 @@ enum L10n {
         case noProject, stalled
         case supportHealth, supportHealthHint, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
-        case supportGoal, supportWorkspace, supportProgress, supportLastRead, supportMissing
+        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
-        case supportMissingProgress, supportMissingWaiting
+        case supportMissingWaiting
         case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportSharedCursor
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved, supportCollectorNoData, supportCollectorNoDataDetail
@@ -597,7 +603,8 @@ enum L10n {
         case supportCollectorSchema, supportCollectorSchemaDetail
         case supportCollectorFailed, supportCollectorFailedDetail
         case supportCollectorUnscanned, supportCollectorUnscannedDetail
-        case supportObservedCount, supportIssueCount, supportSearch
+        case supportObservedCount, supportIssueCount, supportAdapterIssueCount
+        case supportInformationGapCount, supportFilterIssuesCount, supportSearch
         case supportFilterIssues, supportFilterRunning, supportFilterInstalled
         case supportFilterNoData, supportFilterAll, supportNoFilterResults
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus

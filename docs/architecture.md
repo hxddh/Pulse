@@ -68,8 +68,10 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 它做的事：
 
 1. 进程按 agent 收敛，`cursor_agent` 并进 `cursor`
-2. harvest 行建会话行；key 冲突时唯一化；超过每 agent 上限的计数但不丢弃
-3. 陈旧 harvest 丢弃（除非有 live 进程或 subagent 在跑）
+2. harvest 行建会话行；key 冲突时唯一化；每 Agent 的 64 条采集输入保留 32 条，
+   第 33–64 条精确计入未显示数量
+3. 陈旧 harvest 丢弃；同 Agent 没有任何新鲜记录且进程仍在时，只允许一个未完成记录
+   按工作区匹配 / 最近活动降级为上下文；subagent 仍在运行的记录不视为陈旧
 4. `skill=pending` → Waiting，除非用户软忽略过
 5. live 进程**只挂到一行**，不在同 agent 的兄弟会话间涂抹
 6. attention 三级匹配：session id → cwd → 该 agent 最合适的行；都不中就新建一行

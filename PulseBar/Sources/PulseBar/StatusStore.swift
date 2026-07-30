@@ -215,6 +215,14 @@ final class StatusStore: ObservableObject {
                 lastWaitingSignalMs: waitingEvents[agent] ?? 0,
                 hasGoal: rows.contains { $0.usefulTask != nil },
                 hasWorkspace: rows.contains { !$0.displayPath.isEmpty },
+                // Process age is evidence that an executable exists, not an
+                // Agent activity feed. Keep the activity fact reserved for a
+                // session/cache timestamp so process-only rows cannot claim
+                // 4/4 core facts while simultaneously admitting the feed is
+                // unavailable.
+                hasActivity: rows.contains {
+                    $0.harvestMs > 0 && $0.observationSource != .process
+                },
                 hasProgress: rows.contains {
                     !$0.phase.isEmpty || !$0.tool.isEmpty || !$0.outcome.isEmpty
                         || $0.progressDone > 0 || $0.progressTotal > 0
@@ -260,6 +268,18 @@ final class StatusStore: ObservableObject {
     }
 
     func supportHealthDetail(_ health: AgentSupportHealth) -> String {
+        [
+            supportAdapterDetail(health),
+            supportCoverageDetail(health),
+            supportTimelineDetail(health),
+            supportMissingDetail(health),
+        ]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+        .joined(separator: " · ")
+    }
+
+    func supportAdapterDetail(_ health: AgentSupportHealth) -> String {
         var facts: [String] = []
         if health.agent == .cursorAgent {
             facts.append(tr(.supportSharedCursor))
@@ -288,9 +308,16 @@ final class StatusStore: ObservableObject {
         case .unscanned:
             facts.append(tr(.supportCollectorUnscannedDetail))
         }
+        return facts.joined(separator: " · ")
+    }
+
+    func supportCoverageDetail(_ health: AgentSupportHealth) -> String {
+        guard health.isObserved else { return "" }
+        var facts: [String] = []
         if health.isObserved {
             if health.hasGoal { facts.append(tr(.supportGoal)) }
             if health.hasWorkspace { facts.append(tr(.supportWorkspace)) }
+            if health.hasActivity { facts.append(tr(.supportActivity)) }
             if health.hasProgress { facts.append(tr(.supportProgress)) }
             facts.append(String(
                 format: tr(.supportFactCoverage),
@@ -298,6 +325,11 @@ final class StatusStore: ObservableObject {
                 4
             ))
         }
+        return facts.joined(separator: " · ")
+    }
+
+    func supportTimelineDetail(_ health: AgentSupportHealth) -> String {
+        var facts: [String] = []
         if health.processDetected {
             let evidence = health.processEvidence == .pathSignature
                 ? tr(.supportDetectedPath)
@@ -325,20 +357,23 @@ final class StatusStore: ObservableObject {
                 DurationFormat.label(seconds: seconds, lang: lang)
             ))
         }
+        return facts.joined(separator: " · ")
+    }
+
+    func supportMissingDetail(_ health: AgentSupportHealth) -> String? {
         let missing = health.missingCapabilities.map { capability -> String in
             switch capability {
             case .notDetected: return tr(.supportNotDetected)
             case .activityFeed: return tr(.supportMissingFeed)
             case .goal: return tr(.supportMissingGoal)
             case .workspace: return tr(.supportMissingWorkspace)
-            case .progress: return tr(.supportMissingProgress)
             case .waitingSignal: return tr(.supportMissingWaiting)
             }
         }
         if health.isObserved, !missing.isEmpty {
-            facts.append(String(format: tr(.supportMissing), missing.joined(separator: ", ")))
+            return String(format: tr(.supportMissing), missing.joined(separator: ", "))
         }
-        return facts.joined(separator: " · ")
+        return nil
     }
 
     private func supportWaitingLabel(_ agent: AgentID) -> String {

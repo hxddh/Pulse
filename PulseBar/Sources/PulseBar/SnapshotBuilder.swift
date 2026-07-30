@@ -133,17 +133,57 @@ enum SnapshotBuilder {
             liveHits.removeValue(forKey: .cursorAgent)
         }
 
+        func normalizedAgent(_ id: AgentID) -> AgentID {
+            id == .cursorAgent ? .cursor : id
+        }
+
+        // A live CLI may preserve one known goal when its session store has
+        // stopped updating, but it is not a blanket lease for every unfinished
+        // rollout that Agent ever wrote. Prefer fresh rows. Only when an Agent
+        // has no fresh/subagent row at all may one best stale, unfinished row
+        // inherit the live process.
+        var agentsWithFreshRows = Set<AgentID>()
         for act in input.harvest {
+            let agent = normalizedAgent(act.id)
+            if ActivityHarvest.isFresh(act, nowMs: context.nowMs) || act.subRunning > 0 {
+                agentsWithFreshRows.insert(agent)
+            }
+        }
+
+        var staleFallbackByAgent: [AgentID: Int] = [:]
+        for (index, act) in input.harvest.enumerated() {
+            let agent = normalizedAgent(act.id)
+            guard liveHits[agent] != nil,
+                  !agentsWithFreshRows.contains(agent),
+                  !ActivityHarvest.isFresh(act, nowMs: context.nowMs),
+                  act.subRunning == 0,
+                  !act.isCompleted,
+                  act.harvestMs > 0
+            else { continue }
+
+            guard let existingIndex = staleFallbackByAgent[agent] else {
+                staleFallbackByAgent[agent] = index
+                continue
+            }
+            let existing = input.harvest[existingIndex]
+            let processCwd = liveHits[agent]?.cwd ?? ""
+            let existingMatches = !processCwd.isEmpty && existing.cwd == processCwd
+            let candidateMatches = !processCwd.isEmpty && act.cwd == processCwd
+            if candidateMatches != existingMatches {
+                if candidateMatches { staleFallbackByAgent[agent] = index }
+            } else if act.harvestMs > existing.harvestMs {
+                staleFallbackByAgent[agent] = index
+            }
+        }
+        let staleFallbackIndices = Set(staleFallbackByAgent.values)
+
+        for (harvestIndex, act) in input.harvest.enumerated() {
             var agentID = act.id
             if agentID == .cursorAgent { agentID = .cursor }
 
-            let live = liveHits[agentID] != nil
             let fresh = ActivityHarvest.isFresh(act, nowMs: context.nowMs)
-            // A persistent CLI process is not proof that every old completed
-            // rollout still belongs in the current tray. This was how a 45-hour
-            // Codex turn survived forever: the CLI stayed open, so stale
-            // completion evidence bypassed the freshness gate.
-            if !fresh, act.subRunning == 0, (!live || act.isCompleted) {
+            let isStaleFallback = staleFallbackIndices.contains(harvestIndex)
+            if !fresh, act.subRunning == 0, !isStaleFallback {
                 result.debugNotes.append("drop stale harvest \(agentID.rawValue) hm=\(act.harvestMs)")
                 continue
             }

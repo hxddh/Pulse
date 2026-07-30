@@ -1,0 +1,59 @@
+import XCTest
+@testable import PulseBar
+
+final class SupportHealthTests: XCTestCase {
+    private func health(
+        agent: AgentID = .codex,
+        evidence: ObservationSource? = .session,
+        processDetected: Bool = false,
+        goal: Bool = true,
+        workspace: Bool = true,
+        activity: Bool = true,
+        progress: Bool = false,
+        waitingReady: Bool = true
+    ) -> AgentSupportHealth {
+        AgentSupportHealth(
+            agent: agent,
+            collectorState: .observed,
+            collectorDurationMs: 12,
+            collectorRows: 1,
+            sourcePresent: true,
+            collectorErrorKind: "",
+            processDetected: processDetected,
+            processEvidence: processDetected ? .executable : nil,
+            evidence: evidence,
+            lastSuccessfulReadMs: 1_700_000_000_000,
+            lastWaitingSignalMs: 0,
+            hasGoal: goal,
+            hasWorkspace: workspace,
+            hasActivity: activity,
+            hasProgress: progress,
+            waitingSignalReady: waitingReady
+        )
+    }
+
+    func testCoreCoverageIsGoalWorkspaceActivityAndEvidence() {
+        let item = health(progress: false, waitingReady: false)
+        XCTAssertEqual(item.observedFactCount, 4)
+        XCTAssertEqual(item.missingCapabilities, [.waitingSignal])
+    }
+
+    func testAgentWithoutWaitingContractIsNotPermanentlyIncomplete() {
+        let item = health(agent: .devin, waitingReady: false)
+        XCTAssertTrue(item.missingCapabilities.isEmpty)
+    }
+
+    func testProcessOnlyEvidenceAdmitsMissingActivityFeed() {
+        let item = health(
+            evidence: .process,
+            processDetected: true,
+            goal: false,
+            workspace: false,
+            activity: false
+        )
+        XCTAssertEqual(
+            item.missingCapabilities,
+            [.activityFeed, .goal, .workspace]
+        )
+    }
+}

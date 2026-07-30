@@ -55,6 +55,12 @@ struct PulseBarApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Visual QA captures must represent the first completed scan, not the
+    /// transient launch state where every adapter is still `unscanned`.
+    /// ActivityHarvest has a 3.5s hard deadline, so 4.2s covers either a
+    /// completed scan or its honest timeout result.
+    private static let captureDelay: TimeInterval = 4.2
+
     private var statusPanel: StatusPanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -95,19 +101,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-tray-panel=") }) {
             let path = String(capture.dropFirst("--capture-tray-panel=".count))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 StatusPanelController.shared?.capture(to: URL(fileURLWithPath: path))
             }
         }
         if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-status-item=") }) {
             let path = String(capture.dropFirst("--capture-status-item=".count))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 StatusPanelController.shared?.captureStatusItem(to: URL(fileURLWithPath: path))
             }
         }
         if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-support-health=") }) {
             let path = String(capture.dropFirst("--capture-support-health=".count))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 SupportCoverageWindowController.shared.capture(
                     store: AppServices.store,
                     to: URL(fileURLWithPath: path)
@@ -116,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-settings=") }) {
             let path = String(capture.dropFirst("--capture-settings=".count))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 SettingsWindowController.shared.capture(
                     store: AppServices.store,
                     to: URL(fileURLWithPath: path)
@@ -1334,7 +1340,6 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            statusSection
             generalSection
             notificationsSection
             waitingSignalsSection
@@ -1363,53 +1368,6 @@ struct SettingsView: View {
                 format: store.tr(.removeDuplicateAppsConfirm),
                 store.installReport.removableDuplicates.count
             ))
-        }
-    }
-
-    // MARK: Context
-
-    private var statusSection: some View {
-        Section {
-            HStack(spacing: 12) {
-                PulseMarkView(size: 28, tone: store.snapshot.glance.lampColor)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(store.snapshot.headerTitle.isEmpty
-                          ? store.snapshot.header
-                          : store.snapshot.headerTitle)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    if !store.snapshot.headerDetail.isEmpty {
-                        Text(store.snapshot.headerDetail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer(minLength: 4)
-                Text(store.probeIntervalDescription)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.vertical, 2)
-            Button(store.tr(.supportHealth)) {
-                store.openSupportHealth()
-            }
-            HStack {
-                Text(PulseVersion.about)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-                Spacer(minLength: 4)
-                if !store.installReport.duplicates.isEmpty {
-                    Label(
-                        String(
-                            format: store.tr(.duplicateAppsFound),
-                            store.installReport.duplicates.count
-                        ),
-                        systemImage: "square.on.square"
-                    )
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                }
-            }
         }
     }
 
@@ -1624,6 +1582,9 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section(store.tr(.about)) {
+            Button(store.tr(.supportHealth)) {
+                store.openSupportHealth()
+            }
             HStack(spacing: 10) {
                 PulseMarkView(size: 22, tone: .secondary)
                 VStack(alignment: .leading, spacing: 2) {
@@ -1796,7 +1757,8 @@ struct SupportCoverageView: View {
 
     private func filterLabel(_ filter: SupportFilter) -> String {
         switch filter {
-        case .issues: return store.tr(.supportFilterIssues)
+        case .issues:
+            return String(format: store.tr(.supportFilterIssuesCount), issueCount)
         case .running: return store.tr(.supportFilterRunning)
         case .installed: return store.tr(.supportFilterInstalled)
         case .noData: return store.tr(.supportFilterNoData)
@@ -1804,9 +1766,20 @@ struct SupportCoverageView: View {
         }
     }
 
+    private var adapterIssueCount: Int {
+        store.supportHealth.filter(\.collectorState.isIssue).count
+    }
+
+    private var informationGapCount: Int {
+        store.supportHealth.filter {
+            $0.isObserved && !$0.missingCapabilities.isEmpty
+        }.count
+    }
+
     private var issueCount: Int {
         store.supportHealth.filter {
             $0.collectorState.isIssue
+                || ($0.isObserved && !$0.missingCapabilities.isEmpty)
         }.count
     }
 
@@ -1819,7 +1792,7 @@ struct SupportCoverageView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 14) {
+                HStack(spacing: 12) {
                     Label(
                         String(
                             format: store.tr(.supportObservedCount),
@@ -1828,8 +1801,22 @@ struct SupportCoverageView: View {
                         systemImage: "waveform.path.ecg"
                     )
                     Label(
-                        String(format: store.tr(.supportIssueCount), issueCount),
-                        systemImage: issueCount == 0 ? "checkmark.circle" : "exclamationmark.triangle"
+                        String(
+                            format: store.tr(.supportAdapterIssueCount),
+                            adapterIssueCount
+                        ),
+                        systemImage: adapterIssueCount == 0
+                            ? "checkmark.circle"
+                            : "exclamationmark.triangle"
+                    )
+                    Label(
+                        String(
+                            format: store.tr(.supportInformationGapCount),
+                            informationGapCount
+                        ),
+                        systemImage: informationGapCount == 0
+                            ? "checkmark.circle"
+                            : "info.circle"
                     )
                 }
                 .font(.caption)
@@ -1851,7 +1838,7 @@ struct SupportCoverageView: View {
                     ForEach(filtered) { item in
                         SupportHealthRow(item: item, store: store)
                             .padding(.horizontal, 20)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 10)
                         if item.id != filtered.last?.id {
                             Divider().padding(.leading, 54)
                         }
@@ -1867,7 +1854,7 @@ struct SupportCoverageView: View {
                 }
             }
         }
-        .frame(minWidth: 480, minHeight: 500)
+        .frame(minWidth: 580, minHeight: 340)
         .background(Color(nsColor: .windowBackgroundColor))
         .searchable(text: $query, prompt: store.tr(.supportSearch))
     }
@@ -1879,7 +1866,7 @@ struct SupportHealthRow: View {
     @ObservedObject var store: StatusStore
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 9) {
             Circle()
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
@@ -1887,26 +1874,66 @@ struct SupportHealthRow: View {
                 .accessibilityHidden(true)
             AgentIconView(id: item.agent, waiting: false)
                 .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(item.agent.displayName)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 13, weight: .semibold))
                     Text(store.supportEvidenceLabel(item))
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(statusLabelColor)
                 }
-                Text(store.supportHealthDetail(item))
-                    .font(.caption2)
-                    .foregroundStyle(detailColor)
+
+                Text(store.supportAdapterDetail(item))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if item.isObserved {
+                    HStack(spacing: 6) {
+                        SupportFactPill(
+                            label: store.tr(.supportGoal),
+                            present: item.hasGoal
+                        )
+                        SupportFactPill(
+                            label: store.tr(.supportWorkspace),
+                            present: item.hasWorkspace
+                        )
+                        SupportFactPill(
+                            label: store.tr(.supportActivity),
+                            present: item.hasActivity
+                        )
+                        Text(String(
+                            format: store.tr(.supportFactCoverage),
+                            item.observedFactCount,
+                            4
+                        ))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                }
+
+                let timeline = store.supportTimelineDetail(item)
+                if !timeline.isEmpty {
+                    Text(timeline)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let missing = store.supportMissingDetail(item) {
+                    Label(missing, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer(minLength: 4)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private var detailColor: Color {
-        return .secondary
+        .accessibilityLabel(
+            "\(item.agent.displayName), \(store.supportEvidenceLabel(item)), "
+                + store.supportHealthDetail(item)
+        )
     }
 
     private var statusLabelColor: Color {
@@ -1918,8 +1945,23 @@ struct SupportHealthRow: View {
     private var statusColor: Color {
         if item.collectorState.isIssue { return .red }
         if item.processDetected { return GlanceKind.running.lampColor }
+        if item.isObserved { return .secondary }
         if item.sourcePresent { return .orange }
         return .gray
+    }
+}
+
+private struct SupportFactPill: View {
+    let label: String
+    let present: Bool
+
+    var body: some View {
+        Label(
+            label,
+            systemImage: present ? "checkmark.circle.fill" : "circle"
+        )
+        .foregroundStyle(present ? Color.secondary : Color.secondary.opacity(0.5))
+        .labelStyle(.titleAndIcon)
     }
 }
 

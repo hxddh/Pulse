@@ -86,6 +86,26 @@ def main() -> int:
             "focusable tray is missing .focusEffectDisabled()"
         )
 
+    # The menu-bar lamp is the product's fastest signal. It must remain a
+    # full-colour image, and all four user-facing states need an explicit
+    # colour mapping. XCTest renders these in light, dark and high-contrast
+    # appearances; this source gate still protects package builds on machines
+    # whose local XCTest overlay is unavailable.
+    brand = (SOURCES / "PulseBrand.swift").read_text(encoding="utf-8")
+    lamp_contract = [
+        "image.isTemplate = false",
+        "case .waiting: return .systemRed",
+        "case .running: return .systemGreen",
+        "case .stalled, .error: return .systemOrange",
+        "case .idle: return .systemGray",
+    ]
+    for fragment in lamp_contract:
+        if fragment not in brand:
+            problems.append(
+                "  · PulseBar/Sources/PulseBar/PulseBrand.swift  "
+                f"missing four-state lamp contract: {fragment}"
+            )
+
     if problems:
         print("appearance contract violation:", file=sys.stderr)
         for p in problems:
