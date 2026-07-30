@@ -42,6 +42,31 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(r.progressTotal, 5)
     }
 
+    func testRedactsSecretsAtHarvestBoundary() {
+        let fakeKey = "sk-proj-ExampleSecret123456789"
+        let text = line([
+            "codex", "Deploy with \(fakeKey)", "0", "0", "web_fetch", "",
+            "Pulse", "/Users/me/Pulse", "1700000000000", "0", "0", "sess-redact",
+        ]) + "\n"
+        let row = ActivityHarvest.parse(text)[0]
+        XCTAssertFalse(row.task.contains(fakeKey))
+        XCTAssertTrue(row.task.contains(ContentSanitizer.replacement))
+        XCTAssertEqual(row.project, "Pulse")
+    }
+
+    func testSanitizerKeepsOrdinaryTechnicalText() {
+        let safe = "Review token budget for sketch session 550e8400-e29b-41d4-a716-446655440000"
+        XCTAssertEqual(ContentSanitizer.redact(safe), safe)
+        XCTAssertEqual(
+            ContentSanitizer.redact("Authorization: Bearer fakeBearerValue123"),
+            "Authorization: Bearer ••••"
+        )
+        XCTAssertEqual(
+            ContentSanitizer.redact("password=hunterExample123"),
+            "password=••••"
+        )
+    }
+
     func testOldRowsDegradeToCacheEvidenceInsteadOfClaimingASession() {
         let text = line([
             "roo", "Refactor auth", "0", "0", "", "",

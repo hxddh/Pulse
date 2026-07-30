@@ -41,6 +41,7 @@ final class SupportHealthTests: XCTestCase {
     func testAgentWithoutWaitingContractIsNotPermanentlyIncomplete() {
         let item = health(agent: .devin, waitingReady: false)
         XCTAssertTrue(item.missingCapabilities.isEmpty)
+        XCTAssertEqual(item.disposition, .limited)
     }
 
     func testProcessOnlyEvidenceAdmitsMissingActivityFeed() {
@@ -55,5 +56,26 @@ final class SupportHealthTests: XCTestCase {
             item.missingCapabilities,
             [.activityFeed, .goal, .workspace]
         )
+        XCTAssertEqual(item.disposition, .limited)
+    }
+
+    func testHealthyRequiresAllFiveUsefulSignals() {
+        let item = health(progress: true, waitingReady: true)
+        XCTAssertEqual(item.usefulFactCount, 5)
+        XCTAssertEqual(item.disposition, .healthy)
+        XCTAssertEqual(item.repair, .none)
+    }
+
+    func testMissingHooksIsActionable() {
+        let item = health(agent: .codex, progress: true, waitingReady: false)
+        XCTAssertEqual(item.disposition, .needsAction)
+        XCTAssertEqual(item.repair, .installHooks)
+    }
+
+    func testAdapterFailureOffersRetry() {
+        var item = health(progress: true)
+        item.collectorState = .schemaMismatch
+        XCTAssertEqual(item.disposition, .needsAction)
+        XCTAssertEqual(item.repair, .retry)
     }
 }

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.37.0"
+    static let semver = "0.38.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -280,6 +280,10 @@ struct AgentRow: Identifiable, Hashable {
     var contextPercent: Int = 0
     var progressDone: Int = 0
     var progressTotal: Int = 0
+    /// A bounded, cross-scan change signal. Static counters answer "how much";
+    /// this answers the more useful operational question: "what just moved?"
+    var activityChange: AgentActivityChange? = nil
+    var activityChangedMs: Int64 = 0
     /// When the session began, in ms. 0 = unknown.
     var startedMs: Int64 = 0
     /// What this concrete row is backed by.
@@ -611,6 +615,16 @@ struct AgentRow: Identifiable, Hashable {
     }
 }
 
+enum AgentActivityChange: Hashable {
+    case errors(Int)
+    case files(Int)
+    case progress(done: Int, total: Int)
+    case modelCall
+    case completed
+    case failed
+    case cancelled
+}
+
 /// Tray rows are grouped under a heading rather than relying on sort order
 /// alone — five rows in one undifferentiated stack read as five equals.
 enum TraySection: Int, CaseIterable, Hashable {
@@ -677,6 +691,61 @@ struct AgentSupportHealth: Identifiable, Equatable {
             evidence != nil || processDetected,
         ].filter { $0 }.count
     }
+
+    /// User-value scorecard: goal, workspace, activity, progress, and a usable
+    /// Waiting route. Process detection is evidence, not useful content.
+    var usefulFactCount: Int {
+        [
+            hasGoal,
+            hasWorkspace,
+            hasActivity,
+            hasProgress,
+            waitingSignalReady,
+        ].filter { $0 }.count
+    }
+
+    var disposition: SupportDisposition {
+        if collectorState.isIssue { return .needsAction }
+        if isObserved,
+           agent.waitingSource == .hooks,
+           !waitingSignalReady {
+            return .needsAction
+        }
+        guard isObserved else { return .unavailable }
+        if evidence == .process
+            || !hasGoal
+            || !hasWorkspace
+            || !hasActivity
+            || !hasProgress
+            || agent.waitingSource == .none
+            || !waitingSignalReady {
+            return .limited
+        }
+        return .healthy
+    }
+
+    var repair: SupportRepair {
+        if disposition == .needsAction,
+           agent.waitingSource == .hooks,
+           !waitingSignalReady {
+            return .installHooks
+        }
+        if collectorState.isIssue { return .retry }
+        return .none
+    }
+}
+
+enum SupportDisposition: Int, Equatable {
+    case unavailable = 0
+    case healthy = 1
+    case limited = 2
+    case needsAction = 3
+}
+
+enum SupportRepair: Equatable {
+    case none
+    case installHooks
+    case retry
 }
 
 enum SupportCapability: String, Equatable {

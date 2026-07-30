@@ -299,13 +299,13 @@ enum ActivityHarvest {
             guard cols.count >= 2, let id = mapAgent(cols[0]) else { continue }
             out.append(Row(
                 id: id,
-                task: cols[1],
-                project: cols.count > 6 ? cols[6] : "",
-                cwd: cols.count > 7 ? cols[7] : "",
-                skill: cols.count > 5 ? cols[5] : "",
+                task: ContentSanitizer.redact(cols[1]),
+                project: cols.count > 6 ? ContentSanitizer.redact(cols[6]) : "",
+                cwd: cols.count > 7 ? ContentSanitizer.redact(cols[7]) : "",
+                skill: cols.count > 5 ? ContentSanitizer.redact(cols[5]) : "",
                 tokensIn: cols.count > 2 ? Int(cols[2]) ?? 0 : 0,
                 tokensOut: cols.count > 3 ? Int(cols[3]) ?? 0 : 0,
-                tool: cols.count > 4 ? cols[4] : "",
+                tool: cols.count > 4 ? ContentSanitizer.redact(cols[4]) : "",
                 harvestMs: cols.count > 8 ? Int64(cols[8]) ?? 0 : 0,
                 subRunning: cols.count > 9 ? Int(cols[9]) ?? 0 : 0,
                 subTotal: cols.count > 10 ? Int(cols[10]) ?? 0 : 0,
@@ -317,10 +317,10 @@ enum ActivityHarvest {
                 evidence: cols.count > 14
                     ? ObservationSource(rawValue: cols[14]) ?? .cache
                     : .cache,
-                phase: cols.count > 15 ? cols[15] : "",
-                outcome: cols.count > 16 ? cols[16] : "",
-                model: cols.count > 17 ? cols[17] : "",
-                mode: cols.count > 18 ? cols[18] : "",
+                phase: cols.count > 15 ? ContentSanitizer.redact(cols[15]) : "",
+                outcome: cols.count > 16 ? ContentSanitizer.redact(cols[16]) : "",
+                model: cols.count > 17 ? ContentSanitizer.redact(cols[17]) : "",
+                mode: cols.count > 18 ? ContentSanitizer.redact(cols[18]) : "",
                 errors: cols.count > 19 ? Int(cols[19]) ?? 0 : 0,
                 files: cols.count > 20 ? Int(cols[20]) ?? 0 : 0,
                 contextPercent: cols.count > 21 ? Int(cols[21]) ?? 0 : 0,
@@ -479,9 +479,9 @@ enum AttentionReader {
             guard cols.count >= 3, let id = ActivityHarvest.mapAgent(cols[0]) else { continue }
             let kind = Kind.parse(cols[1])
             let tsMs = Int64(cols[2]) ?? 0
-            let message = cols.count > 3 ? cols[3] : ""
+            let message = cols.count > 3 ? ContentSanitizer.redact(cols[3]) : ""
             let session = cols.count > 4 ? cols[4] : ""
-            let cwd = cols.count > 5 ? cols[5] : ""
+            let cwd = cols.count > 5 ? ContentSanitizer.redact(cols[5]) : ""
             let mapKey = session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
 
             if kind == .ignore { continue }

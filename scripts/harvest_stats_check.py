@@ -103,6 +103,34 @@ def check_helper_contract(d: Path) -> int:
     if A.session_stats(d / "nope.jsonl", per_session=True) != {}:
         return fail("a missing file must degrade, not raise")
 
+    fake_secret = "sk-proj-ExampleSecret123456789"
+    redacted = A.redact_sensitive(
+        f"Deploy {fake_secret}; Authorization: Bearer fakeBearerValue123"
+    )
+    if fake_secret in redacted or "fakeBearerValue123" in redacted:
+        return fail("credential-shaped content crossed the harvest boundary")
+    safe = "Review token budget for sketch session 550e8400-e29b-41d4-a716-446655440000"
+    if A.redact_sensitive(safe) != safe:
+        return fail("redaction changed ordinary technical text")
+
+    # Negative fixtures matter as much as rich happy paths: an arbitrary cache
+    # preference or an Agent-generated placeholder must never become a session.
+    generic = emit_to_line(
+        "antigravity",
+        ("Antigravity session", 0, 0, "", "", "extension-cache", "", int(time.time() * 1000)),
+        evidence=A.EVIDENCE_CACHE,
+    )
+    if generic:
+        return fail("generic cache placeholder was promoted to a session")
+    preference = {
+        "theme": "dark",
+        "model": "agent-model",
+        "status": "enabled",
+        "telemetry": True,
+    }
+    if A.observed_facts_from_json(preference):
+        return fail("unscoped cache preferences were promoted to session facts")
+
     # The extras sentinel is a dict precisely because this protocol dispatches
     # on tuple length; two more positional fields would make a 9-tuple mean
     # two different things and the wrong reading would be silent.
@@ -687,16 +715,51 @@ def check_collectors(home: Path) -> int:
     cases.append(("opencode", opencode_db, lambda: A.emit_all("opencode", A.opencode_activities())))
 
     saw_any = False
+    scored_agents: dict[str, set[str]] = {}
+
+    def observed_facts(row: list[str]) -> set[str]:
+        facts: set[str] = {"activity", "evidence"}
+        if row[COL_TASK]:
+            facts.add("goal")
+        if row[COL_CWD] or row[COL_PROJECT]:
+            facts.add("workspace")
+        if int(row[COL_TIN] or 0) or int(row[COL_TOUT] or 0):
+            facts.add("tokens")
+        if row[COL_TOOL]:
+            facts.add("last_action")
+        if row[5] == "pending":
+            facts.add("wait")
+        if int(row[COL_RECORDS] or 0):
+            facts.add("records")
+        if int(row[COL_STARTED] or 0):
+            facts.add("session_age")
+        if row[COL_PHASE]:
+            facts.add("phase")
+        if row[COL_OUTCOME]:
+            facts.add("outcome")
+        if row[COL_MODEL]:
+            facts.add("model")
+        if row[COL_MODE]:
+            facts.add("mode")
+        if int(row[COL_ERRORS] or 0):
+            facts.add("failures")
+        if int(row[COL_FILES] or 0):
+            facts.add("files")
+        if int(row[COL_CONTEXT] or 0):
+            facts.add("context")
+        if int(row[COL_PROGRESS_DONE] or 0) or int(row[COL_PROGRESS_TOTAL] or 0):
+            facts.update(("progress", "turns"))
+        if int(row[9] or 0) or int(row[10] or 0):
+            facts.add("subagents")
+        return facts
+
     for name, where, block in cases:
         try:
             rows = capture(block)
         except Exception as exc:  # a collector must never take the scan down
             return fail(f"{name} collector raised {type(exc).__name__}: {exc}")
         if not rows:
-            # Some collectors need shapes this gate cannot fake convincingly.
-            # Skipping is honest; claiming coverage would not be.
-            print(f"  · {name}: no row from {where} — not asserted", file=sys.stderr)
-            continue
+            return fail(f"{name}: source-shaped fixture produced no row from {where}")
         saw_any = True
         if name == "cursor":
             expected_cursor_rows = MULTI_SESSION_TEST_COUNT + 1
@@ -742,6 +805,17 @@ def check_collectors(home: Path) -> int:
             return fail(f"{name}: fixture produced neither a goal nor a workspace: {row}")
         if int(row[8] or 0) <= 0:
             return fail(f"{name}: fixture produced no activity timestamp: {row}")
+        facts = observed_facts(row)
+        scored_agents[name] = facts
+        declared_enhancements = set(A.OBSERVABILITY_CONTRACTS[name]) - {
+            "goal", "workspace", "activity", "evidence",
+        }
+        if not facts.intersection(declared_enhancements):
+            return fail(
+                f"{name}: fixture proved only baseline detection; "
+                f"none of its declared useful facts survived "
+                f"(declared={sorted(declared_enhancements)}, observed={sorted(facts)})"
+            )
         if name == "amp" and row[5] != "pending":
             return fail(
                 "amp fixture did not reach the pending branch, so the index "
@@ -772,6 +846,11 @@ def check_collectors(home: Path) -> int:
 
     if not saw_any:
         return fail("no collector produced a row; this gate is asserting nothing")
+    if set(scored_agents) != set(A.OBSERVABILITY_CONTRACTS):
+        return fail(
+            "quality scorecards did not execute for every adapter "
+            f"(missing={sorted(set(A.OBSERVABILITY_CONTRACTS) - set(scored_agents))})"
+        )
 
     # Cascade's own adapter, exercised as data rather than as a fixture: its
     # normaliser used to chop the tuple to nine and take the stats with it.
@@ -901,9 +980,16 @@ def main() -> int:
     }
     if thin:
         return fail(f"agents without the minimum useful observation: {thin}")
+    shallow = {
+        agent: sorted(set(facts) - baseline)
+        for agent, facts in A.OBSERVABILITY_CONTRACTS.items()
+        if len(set(facts) - baseline) < 2
+    }
+    if shallow:
+        return fail(f"agents without two adapter-specific useful facts: {shallow}")
     print(
         f"harvest stats OK — {COLUMNS} columns · 31 evidence contracts · "
-        "31 end-to-end collector fixtures"
+        "31 quality scorecards · 31 end-to-end collector fixtures"
     )
     return 0
 
