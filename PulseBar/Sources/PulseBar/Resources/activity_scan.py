@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,58 @@ SESSION_CANDIDATE_LIMIT = MAX_SESSIONS_PER_AGENT * 2
 # breaks "one agent's harvest must never blind the others".
 SCAN_READ_BUDGET_BYTES = 24_000_000
 _scan_bytes_spent = 0
+COLLECTOR_TIMEOUT_SEC = 0.8
+COLLECTOR_TIMEOUT_OVERRIDES = {
+    # These adapters perform bounded reverse transcript or SQLite reads. Their
+    # cold path is legitimately wider than a simple JSON/cache adapter.
+    "codex": 1.4,
+    "cursor": 1.2,
+    "aider": 1.0,
+}
+
+
+class CollectorTimeoutError(TimeoutError):
+    pass
+
+
+def _collector_timeout(_signum, _frame) -> None:
+    raise CollectorTimeoutError("adapter deadline exceeded")
+
+_SENSITIVE_RULES = (
+    (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bxox[a-z]-[A-Za-z0-9-]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "••••"),
+    (
+        re.compile(r"\b(Bearer\s+)[A-Za-z0-9._~+/\-=]{8,}", re.I),
+        r"\1••••",
+    ),
+    (
+        re.compile(
+            r"""\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|token)\s*[:=]\s*['"]?)[^\s'";,]{8,}""",
+            re.I,
+        ),
+        r"\1••••",
+    ),
+    (re.compile(r"(https?://[^/\s:@]+:)[^@\s/]+@", re.I), r"\1••••@"),
+    (re.compile(r"""(\b(?:ssh\s+)?-i\s+)(?:~|/)[^\s'"]+""", re.I), r"\1••••"),
+    (
+        re.compile(
+            r"-----BEGIN[ A-Z0-9_-]*PRIVATE KEY-----.*?-----END[ A-Z0-9_-]*PRIVATE KEY-----",
+            re.I | re.S,
+        ),
+        "••••",
+    ),
+)
+
+
+def redact_sensitive(value: str) -> str:
+    """Remove credential-shaped content before a value crosses the TSV wire."""
+    result = value or ""
+    for pattern, replacement in _SENSITIVE_RULES:
+        result = pattern.sub(replacement, result)
+    return result
 
 
 def _spend_scan_budget(size: int) -> bool:
@@ -2560,7 +2613,37 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS
             cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else short_project(path.stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(path), sid or path.stem[:80], session_stats(path, per_session=False)))
+        # A file under an explicitly session-like path is a concrete session,
+        # not merely a container cache. Preserve its age/record facts and
+        # structured lifecycle fields instead of flattening every generic
+        # adapter to title + path.
+        extra = session_stats(path, per_session=sessionish_path)
+        objects: list[object] = []
+        try:
+            objects.append(json.loads(text))
+        except Exception:
+            for line in text.splitlines()[-80:]:
+                try:
+                    objects.append(json.loads(line))
+                except Exception:
+                    continue
+        for obj in objects:
+            facts = observed_facts_from_json(obj)
+            for key, value in facts.items():
+                if key not in extra:
+                    extra[key] = value
+        out.append((
+            task[:160],
+            0,
+            0,
+            last_tool_name_strict(text),
+            skill,
+            project[:48],
+            (cwd or "")[:240],
+            file_mtime_ms(path),
+            sid or path.stem[:80],
+            extra,
+        ))
         if len(out) >= limit:
             break
     return out
@@ -3106,13 +3189,15 @@ HARVEST_CONTRACTS = {
 # more than process detection: goal + workspace + activity + evidence are the
 # minimum useful observation.
 _BASE = frozenset(("goal", "workspace", "activity", "evidence"))
-_CACHE_RICH = _BASE | frozenset(("phase", "model", "mode", "progress", "outcome", "wait"))
+_CACHE_RICH = _BASE | frozenset(
+    ("phase", "model", "mode", "progress", "outcome", "records", "session_age", "wait")
+)
 OBSERVABILITY_CONTRACTS = {
     "claude": _BASE | frozenset(("tokens", "last_action", "records", "session_age", "subagents", "wait")),
     "codex": _BASE | frozenset(("tokens", "last_action", "session_age", "subagents", "wait")),
     "cursor": _BASE | frozenset(("mode", "wait")),
     "grok": _BASE | frozenset(("phase", "model", "mode", "turns", "failures", "files", "context", "outcome", "wait")),
-    "pi": _BASE | frozenset(("tokens", "last_action", "wait")),
+    "pi": _BASE | frozenset(("tokens", "last_action", "records", "session_age", "wait")),
     "amp": _BASE | frozenset(("mode", "session_age", "records", "wait")),
     "aider": _BASE | frozenset(("last_action", "session_age", "records", "wait")),
     "gemini": _BASE | frozenset(("tokens", "last_action", "session_age", "records", "wait")),
@@ -3293,7 +3378,13 @@ def emit(
     progress_total: int = 0,
 ) -> None:
     def clean(s: str) -> str:
-        return (s or "").replace("\t", " ").replace("\n", " ").replace("\r", " ").strip()
+        return (
+            redact_sensitive(s)
+            .replace("\t", " ")
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .strip()
+        )
 
     # Do not pre-filter stale rows here. Swift owns the freshness policy and can
     # keep old session evidence when it matches a currently live process. The
@@ -3498,7 +3589,18 @@ def aider_activities() -> list[tuple]:
         skill = "pending" if pending else ""
         if not (task or project or pending):
             continue
-        out.append((task or "Aider session", 0, 0, last_tool_name_strict(text), skill, project[:48], cwd[:240], file_mtime_ms(Path(f)), Path(f).parent.name, session_stats(Path(f), per_session=False)))
+        out.append((
+            task or "Aider session",
+            0,
+            0,
+            last_tool_name_strict(text),
+            skill,
+            project[:48],
+            cwd[:240],
+            file_mtime_ms(Path(f)),
+            Path(f).parent.name,
+            session_stats(Path(f), per_session=True),
+        ))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -3575,6 +3677,13 @@ def guard(labels: str | tuple[str, ...], body) -> None:
     trace = os.environ.get("PULSE_HARVEST_TRACE") == "1"
     started = time.monotonic()
     error_kind = ""
+    previous_alarm = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _collector_timeout)
+    deadline = max(
+        COLLECTOR_TIMEOUT_OVERRIDES.get(agent, COLLECTOR_TIMEOUT_SEC)
+        for agent in agent_labels
+    )
+    signal.setitimer(signal.ITIMER_REAL, deadline)
     if trace:
         print(f"# pulse trace: begin {label}", file=sys.stderr, flush=True)
     try:
@@ -3583,6 +3692,8 @@ def guard(labels: str | tuple[str, ...], body) -> None:
         error_kind = type(exc).__name__
         print(f"# pulse: {label} harvest failed: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_alarm)
         elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
         for agent in agent_labels:
             emitted = max(0, EMITTED_COUNTS.get(agent, 0) - before[agent])

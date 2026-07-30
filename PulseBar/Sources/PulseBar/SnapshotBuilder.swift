@@ -342,6 +342,47 @@ enum SnapshotBuilder {
 
         var all = Array(rowsByKey.values).filter { $0.processCount > 0 || $0.waiting || $0.subRunning > 0 }
 
+        // Compare the same concrete session with the prior scan. Preserve a
+        // meaningful change briefly so a 5-second polling interval does not
+        // turn it into a one-frame flash.
+        let previousByKey = Dictionary(
+            uniqueKeysWithValues: previous.rows.map { ($0.rowKey, $0) }
+        )
+        let changeLifetimeMs: Int64 = 3 * 60 * 1000
+        for index in all.indices {
+            guard let old = previousByKey[all[index].rowKey] else { continue }
+            let current = all[index]
+            let changed: AgentActivityChange? = {
+                guard current.harvestMs > 0, current.harvestMs > old.harvestMs else { return nil }
+                let outcome = current.outcome.lowercased()
+                let oldOutcome = old.outcome.lowercased()
+                if outcome != oldOutcome {
+                    if outcome.contains("fail") || outcome.contains("error") { return .failed }
+                    if outcome.contains("cancel") || outcome.contains("abort") { return .cancelled }
+                    if outcome.contains("complete") { return .completed }
+                }
+                if current.errors > old.errors { return .errors(current.errors - old.errors) }
+                if current.progressTotal > 0,
+                   current.progressDone > old.progressDone {
+                    return .progress(done: current.progressDone, total: current.progressTotal)
+                }
+                if current.files > old.files { return .files(current.files - old.files) }
+                if current.tokensIn != old.tokensIn || current.tokensOut != old.tokensOut {
+                    return .modelCall
+                }
+                return nil
+            }()
+            if let changed {
+                all[index].activityChange = changed
+                all[index].activityChangedMs = context.nowMs
+            } else if let priorChange = old.activityChange,
+                      old.activityChangedMs > 0,
+                      context.nowMs - old.activityChangedMs <= changeLifetimeMs {
+                all[index].activityChange = priorChange
+                all[index].activityChangedMs = old.activityChangedMs
+            }
+        }
+
         // Resolve focus once per scan. Doing this per row inside the SwiftUI body
         // meant enumerating running apps and stat-ing the disk on every redraw.
         for i in all.indices {

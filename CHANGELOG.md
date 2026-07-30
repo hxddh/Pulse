@@ -2,6 +2,50 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.38.0 — 观测的是变化，不是缓存里碰巧存在的字段
+
+### 安全边界
+
+- Agent 标题、工作区、Waiting 消息与生命周期字段在 Python 输出和 Swift 输入两端脱敏；
+  菜单栏、托盘、通知、VoiceOver 与安全支持报告不会展示 credential-shaped 内容。API key、
+  Bearer token、GitHub/Slack/AWS 凭据、URL 用户信息、SSH identity path 与 PEM 私钥均有
+  正负例门禁，普通的 token budget、UUID 和技术文本不被误伤。
+- 支持窗口新增可预览、可复制的安全报告，只包含版本、系统、适配器状态、证据等级和能力
+  布尔值；不包含 prompt、完整路径、session id、命令行、tool payload 或 skill 包名。
+
+### 有效信息与会话语义
+
+- 默认行不再展示只重复运行状态的 `Now · Working`；`Local` 不再占一行当作 Cursor 的
+  有效信息。会话创建时间只在前 24 小时帮助定向，数百小时的历史时间不再伪装成运行时长；
+  进程年龄继续只用于诚实的 process-only 行。
+- 同一会话在相邻扫描之间比较 outcome、错误、任务进度、文件数与模型调用；真实变化会以
+  “刚刚变化”出现并保留三分钟，面板不再只是静态计数器。敏感内容同样经过可访问性边界。
+- 单一未知工作区不再额外占一行分组标题；所有标题、图标、状态 chip 和右上角操作继续使用
+  统一基线与固定命中区域。
+
+### 31 个 Agent 的支持质量
+
+- Agent 支持健康从“问题”混合桶拆为四种结果：需要处理（红）、信息受限（橙）、观测健康
+  （绿）、尚未观测（灰）。缺少 Claude/Codex hooks 可直接安装，适配器权限、格式或超时
+  问题可直接重试；不可由用户修复的数据缺口不再伪装成错误。
+- 每个 Agent 以目标、工作区、活动、进度、Waiting 路由五个有用信号计分；原始 adapter
+  行数和耗时收进诊断 disclosure，默认层先回答“能看到什么、缺什么、能否修复”。
+- 31 个 source-shaped 真实 collector fixture 全部必须产出基线之外的适配器专属信息；
+  任何 Agent 只剩 process detection 或 title/path 都会使 CI 失败。新增 cache 偏好与通用
+  placeholder 负例，防止配置文件冒充会话。
+- 通用 session 路径采集器现在保留结构化 phase/model/mode/progress、记录数和创建时间，
+  Aider 也把聊天历史作为真实会话统计；Pi 与 cache adapter 的契约和实际字段重新对齐。
+- 每个适配器增加独立校准的截止时间：普通缓存源 800 ms，Codex/Cursor/Aider 的有界
+  transcript、SQLite 与 Spotlight 冷路径使用更宽预算；一个私有数据库锁死或目录异常
+  不会吞掉后续 Agent，已完成的部分仍通过现有流式协议保留。
+
+### 界面与验证
+
+- 支持窗口默认按“需要处理 / 信息受限 / 观测健康 / 全部”筛选，窗口高度随有效内容收紧，
+  adapter 诊断按需展开；通知权限被拒绝时，禁用开关改用灰色而不是继续像蓝色已开启。
+- 新增变化保留、五信号健康分级、修复动作、敏感内容边界、31 份质量计分卡及适配器负例
+  回归；浅色/深色、中英文、紧凑/拥挤、支持健康和四态状态灯继续进入视觉验收矩阵。
+
 ## 0.37.0 — 活着的进程不再复活陈旧会话
 
 - 同一 Agent 的常驻进程不再给全部未完成历史会话续命：只要有新鲜会话，陈旧兄弟记录

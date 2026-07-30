@@ -120,6 +120,11 @@ enum L10n {
         case .appSession: return "Agent app running"
         case .activityUnavailable: return "Activity feed unavailable"
         case .processAge: return "Process started %@ ago"
+        case .activityChanged: return "Changed · %@"
+        case .newErrors: return "%d new errors"
+        case .newFiles: return "%d more files"
+        case .progressAdvanced: return "Progress moved to %d/%d"
+        case .modelCallChanged: return "New model call"
         case .terminalDetectedNoDetails: return "Terminal session running · activity feed unavailable"
         case .appDetectedNoDetails: return "Agent app running · session feed unavailable"
         case .lastAction: return "Last action: %@"
@@ -265,6 +270,18 @@ enum L10n {
         case .supportFilterNoData: return "No data"
         case .supportFilterAll: return "All"
         case .supportNoFilterResults: return "No Agents match this filter"
+        case .supportNeedsAction: return "Needs action"
+        case .supportLimited: return "Limited"
+        case .supportHealthy: return "Healthy"
+        case .supportUnavailable: return "Not observed"
+        case .supportNeedsActionCount: return "Action · %d"
+        case .supportLimitedCount: return "Limited · %d"
+        case .supportHealthyCount: return "Healthy · %d"
+        case .supportUsefulCoverage: return "%d/%d useful signals"
+        case .supportRetry: return "Retry scan"
+        case .supportAdapterDiagnostics: return "Adapter diagnostics"
+        case .supportSafeReport: return "Preview safe report"
+        case .supportCopySafeReport: return "Copy safe report"
         case .snooze: return "Later"
         case .snoozed: return "snoozed"
         case .snoozedFor: return "Later · %@ left"
@@ -302,11 +319,11 @@ enum L10n {
         case .noAgents: return "当前没有编码 Agent"
         case .noAgentsDetected: return "未检测到编码 Agent"
         case .needsYou: return "需要你处理"
-        case .waitingN: return "个等待中"
-        case .runningN: return "个运行中"
+        case .waitingN: return "待处理"
+        case .runningN: return "运行"
         case .running1: return "1 个运行中"
         case .recent1: return "1 个最近会话"
-        case .recentN: return "个最近会话"
+        case .recentN: return "最近"
         case .justNow: return "刚刚"
         case .notYet: return "尚未更新"
         case .cantRefresh: return "无法刷新"
@@ -373,6 +390,11 @@ enum L10n {
         case .appSession: return "Agent 应用正在运行"
         case .activityUnavailable: return "暂无活动数据"
         case .processAge: return "进程始于%@前"
+        case .activityChanged: return "刚刚变化 · %@"
+        case .newErrors: return "新增 %d 个错误"
+        case .newFiles: return "新增 %d 个文件"
+        case .progressAdvanced: return "进度推进至 %d/%d"
+        case .modelCallChanged: return "新的模型调用"
         case .terminalDetectedNoDetails: return "终端会话正在运行 · 暂无活动数据"
         case .appDetectedNoDetails: return "Agent 应用正在运行 · 暂无会话数据"
         case .lastAction: return "最近动作：%@"
@@ -514,6 +536,18 @@ enum L10n {
         case .supportFilterNoData: return "无数据"
         case .supportFilterAll: return "全部"
         case .supportNoFilterResults: return "当前筛选条件下没有 Agent"
+        case .supportNeedsAction: return "需要处理"
+        case .supportLimited: return "信息受限"
+        case .supportHealthy: return "观测健康"
+        case .supportUnavailable: return "尚未观测"
+        case .supportNeedsActionCount: return "待处理 · %d"
+        case .supportLimitedCount: return "受限 · %d"
+        case .supportHealthyCount: return "健康 · %d"
+        case .supportUsefulCoverage: return "有效信号 %d/%d"
+        case .supportRetry: return "重新扫描"
+        case .supportAdapterDiagnostics: return "适配器诊断"
+        case .supportSafeReport: return "预览安全报告"
+        case .supportCopySafeReport: return "复制安全报告"
         case .snooze: return "稍后"
         case .snoozed: return "已稍后"
         case .snoozedFor: return "已稍后 · 剩 %@"
@@ -565,6 +599,7 @@ enum L10n {
         case activityPrefix, signalHooks, signalPending
         case processDetected, processWord, processCount
         case limitedData, sessionEvidence, cacheEvidence, terminalSession, appSession, activityUnavailable, processAge
+        case activityChanged, newErrors, newFiles, progressAdvanced, modelCallChanged
         case terminalDetectedNoDetails, appDetectedNoDetails
         case lastAction, lastActive, latestCallTokens, reportedTokens
         case subagentsActive, subagentsObserved
@@ -607,6 +642,9 @@ enum L10n {
         case supportInformationGapCount, supportFilterIssuesCount, supportSearch
         case supportFilterIssues, supportFilterRunning, supportFilterInstalled
         case supportFilterNoData, supportFilterAll, supportNoFilterResults
+        case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable
+        case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUsefulCoverage
+        case supportRetry, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting

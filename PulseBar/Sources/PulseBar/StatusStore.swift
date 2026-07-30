@@ -72,6 +72,9 @@ final class StatusStore: ObservableObject {
     private var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
     /// Deterministic event ages for visual fixtures only.
     private var previewWaitingEventTimes: [AgentID: Int64]?
+    /// Prevent a preview panel opening from immediately replacing its fixture
+    /// with a live scan before the screenshot is taken.
+    private var previewFixtureActive = false
     private let powerMonitor = PowerMonitor()
     /// Tray panel is on screen — worth probing faster while the user reads it.
     private var trayOpen = false
@@ -182,6 +185,40 @@ final class StatusStore: ObservableObject {
         pb.setString(diagnosticsText(), forType: .string)
         didCopyDiagnostics = true
         DebugLog.write("diagnostics copied")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            self?.didCopyDiagnostics = false
+        }
+    }
+
+    /// A previewable, deliberately path-free support report. It contains
+    /// adapter health and capability booleans, never prompts, session IDs,
+    /// workspace paths, tool payloads, or command lines.
+    func safeSupportReport() -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        var lines = [
+            "Pulse safe support report",
+            PulseVersion.fingerprint,
+            "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+            "Agents: \(supportHealth.count)",
+        ]
+        for item in supportHealth {
+            lines.append(
+                "\(item.agent.rawValue): \(item.collectorState.rawValue) "
+                    + "disposition=\(item.disposition) evidence=\(item.evidence?.rawValue ?? "none") "
+                    + "goal=\(item.hasGoal) workspace=\(item.hasWorkspace) "
+                    + "activity=\(item.hasActivity) progress=\(item.hasProgress) "
+                    + "waiting=\(item.waitingSignalReady) score=\(item.usefulFactCount)/5"
+            )
+        }
+        return ContentSanitizer.redact(lines.joined(separator: "\n"))
+    }
+
+    func copySafeSupportReport() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(safeSupportReport(), forType: .string)
+        didCopyDiagnostics = true
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_600_000_000)
             self?.didCopyDiagnostics = false
@@ -424,6 +461,7 @@ final class StatusStore: ObservableObject {
     /// count, state, grouping, alignment and density regressions without
     /// depending on whichever Agents happen to be running on a test machine.
     func installPreviewFixture(_ name: String) {
+        previewFixtureActive = true
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
         if name.hasPrefix("status-") {
@@ -596,6 +634,8 @@ final class StatusStore: ObservableObject {
         active.phase = "testing"
         active.progressDone = 18
         active.progressTotal = 31
+        active.activityChange = .progress(done: 18, total: 31)
+        active.activityChangedMs = now - 15_000
         active.tool = "swift_test"
         active.tokensIn = 12_400
         active.tokensOut = 860
@@ -700,7 +740,9 @@ final class StatusStore: ObservableObject {
             missedWhileAway = waitHistory.filter { $0.resolvedAt > closed }.count
         }
         rescheduleTimer()
-        refresh(reason: "trayOpen")
+        if !previewFixtureActive {
+            refresh(reason: "trayOpen")
+        }
     }
 
     func trayDidDisappear() {
@@ -1328,7 +1370,10 @@ final class StatusStore: ObservableObject {
         let ago = lastActivityLabel(row)
         if !ago.isEmpty { bits.append(String(format: tr(.lastActive), ago)) }
         let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
-        if age >= 60 {
+        // Session creation is useful while orienting in a new session, but an
+        // ancient store timestamp is history—not runtime state. It previously
+        // produced labels such as "Started 1276h ago" beside a fresh activity.
+        if age >= 60, age <= 24 * 60 * 60 {
             bits.append(String(
                 format: tr(.sessionAge),
                 DurationFormat.label(seconds: age, lang: lang)
@@ -1357,6 +1402,28 @@ final class StatusStore: ObservableObject {
         }
         guard let phase = readablePhase(row.phase) else { return "" }
         return String(format: tr(.nowActivity), phase)
+    }
+
+    func rowActivityChange(_ row: AgentRow) -> String {
+        guard !row.waiting, let change = row.activityChange else { return "" }
+        let detail: String
+        switch change {
+        case .errors(let count):
+            detail = String(format: tr(.newErrors), count)
+        case .files(let count):
+            detail = String(format: tr(.newFiles), count)
+        case .progress(let done, let total):
+            detail = String(format: tr(.progressAdvanced), done, total)
+        case .modelCall:
+            detail = tr(.modelCallChanged)
+        case .completed:
+            detail = tr(.phaseTurnComplete)
+        case .failed:
+            detail = tr(.outcomeFailed)
+        case .cancelled:
+            detail = tr(.outcomeCancelled)
+        }
+        return String(format: tr(.activityChanged), detail)
     }
 
     /// The single strongest progress fact for this row.
@@ -1490,15 +1557,15 @@ final class StatusStore: ObservableObject {
         if low.contains("search") || low.contains("research") { return tr(.actionResearch) }
         if low.contains("read") { return tr(.actionReading) }
         if low.contains("edit") || low.contains("write") { return tr(.actionEditing) }
-        if low.contains("work") || low.contains("run") || low.contains("tool") {
-            return tr(.phaseWorking)
-        }
+        // "Working" / "Running" merely repeats the row's section and status
+        // lamp. Only recognisable workflow phases earn a default content line.
         return nil
     }
 
     private func readableMode(_ raw: String) -> String {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return "" }
+        if value.caseInsensitiveCompare("local") == .orderedSame { return "" }
         value = value
             .replacingOccurrences(of: "grok-", with: "", options: [.caseInsensitive, .anchored])
             .replacingOccurrences(of: "_", with: " ")

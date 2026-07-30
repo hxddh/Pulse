@@ -140,6 +140,40 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(result.snapshot.glance, .idle)
     }
 
+    func testCrossScanChangeSurfacesAndPersistsBriefly() {
+        var priorSource = harvest(
+            .codex,
+            task: "Ship release",
+            session: "codex-change",
+            cwd: "/Users/me/Pulse",
+            ageMs: 2_000
+        )
+        priorSource.progressDone = 1
+        priorSource.progressTotal = 4
+        let prior = build(harvest: [priorSource])
+
+        var current = priorSource
+        current.harvestMs = now - 1_000
+        current.progressDone = 3
+        let changed = build(
+            harvest: [current],
+            previous: .init(rows: prior.rows, waitingKeys: [])
+        )
+        XCTAssertEqual(
+            changed.rows.first?.activityChange,
+            .progress(done: 3, total: 4)
+        )
+
+        let stable = build(
+            harvest: [current],
+            previous: .init(rows: changed.rows, waitingKeys: [])
+        )
+        XCTAssertEqual(
+            stable.rows.first?.activityChange,
+            .progress(done: 3, total: 4)
+        )
+    }
+
     func testOldCompletedSessionDoesNotRideForeverOnPersistentCLI() {
         var source = harvest(
             .codex,

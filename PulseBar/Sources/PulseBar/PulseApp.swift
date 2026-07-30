@@ -65,6 +65,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if CommandLine.arguments.contains("--appearance=dark") {
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        } else if CommandLine.arguments.contains("--appearance=light") {
+            NSApp.appearance = NSAppearance(named: .aqua)
+        }
+        if CommandLine.arguments.contains("--language=zh") {
+            AppServices.store.language = .zh
+        } else if CommandLine.arguments.contains("--language=en") {
+            AppServices.store.language = .en
+        }
         let panel = StatusPanelController(store: AppServices.store)
         statusPanel = panel
         StatusPanelController.shared = panel
@@ -638,10 +648,7 @@ struct TrayPanel: View {
         // Grouping by project produced "~/Documents/Cursor 1" over exactly one
         // row whose own second line said "~/Documents/Cursor". Two lines, one
         // fact, and a whole row of height spent on it.
-        if group.statesPath && group.rows.count == 1 && !group.isBucket { return false }
-        // An unlocated bucket must keep its heading. Hiding it made the first
-        // unlocated Agent look as if it belonged to the preceding project,
-        // which is worse than spending one compact line on an honest unknown.
+        if group.rows.count == 1 { return false }
         return true
     }
 
@@ -1007,6 +1014,13 @@ private struct AgentRowButton: View {
                                     .lineLimit(1)
                             }
 
+                            if !activityChange.isEmpty {
+                                Text(activityChange)
+                                    .font(.system(size: 10.75, weight: .medium))
+                                    .foregroundStyle(TrayChrome.runAccent)
+                                    .lineLimit(1)
+                            }
+
                             if !contextLine.isEmpty {
                                 Text(contextLine)
                                     .font(.system(size: 10.75))
@@ -1128,6 +1142,7 @@ private struct AgentRowButton: View {
 
     private var metrics: String { store.rowMetrics(row) }
     private var nowLine: String { store.rowNowLine(row) }
+    private var activityChange: String { store.rowActivityChange(row) }
     private var observationLine: String { store.rowObservationLine(row) }
     private var sourceLabel: String? {
         switch row.observationSource {
@@ -1259,6 +1274,7 @@ private struct AgentRowButton: View {
         }
         parts.append(state)
         if !contextLine.isEmpty { parts.append(contextLine) }
+        if !activityChange.isEmpty { parts.append(activityChange) }
         if !metrics.isEmpty { parts.append(metrics) }
         if !observationLine.isEmpty { parts.append(observationLine) }
         if row.waiting {
@@ -1427,12 +1443,15 @@ struct SettingsView: View {
             }
             Toggle(store.tr(.notifications), isOn: $store.notifyOnIdle)
                 .onChange(of: store.notifyOnIdle) { _, _ in store.saveSettings() }
+                .tint(store.notifyAuthorized == false ? .gray : .accentColor)
                 .disabled(store.notifyAuthorized == false)
             Toggle(store.tr(.notifyWaiting), isOn: $store.notifyOnWaiting)
                 .onChange(of: store.notifyOnWaiting) { _, _ in store.saveSettings() }
+                .tint(store.notifyAuthorized == false ? .gray : .accentColor)
                 .disabled(store.notifyAuthorized == false)
             Toggle(store.tr(.playSound), isOn: $store.playSoundOnWaiting)
                 .onChange(of: store.playSoundOnWaiting) { _, _ in store.saveSettings() }
+                .tint(store.notifyAuthorized == false ? .gray : .accentColor)
                 .disabled(store.notifyAuthorized == false)
 
             Toggle(store.tr(.quietHours), isOn: $store.quietHoursEnabled)
@@ -1705,13 +1724,13 @@ struct SettingsView: View {
 struct SupportCoverageView: View {
     @ObservedObject var store: StatusStore
     @State private var query = ""
-    @State private var filter: SupportFilter = .issues
+    @State private var filter: SupportFilter = .needsAction
+    @State private var showSafeReport = false
 
     enum SupportFilter: String, CaseIterable, Identifiable {
-        case issues
-        case running
-        case installed
-        case noData
+        case needsAction
+        case limited
+        case healthy
         case all
 
         var id: String { rawValue }
@@ -1722,15 +1741,9 @@ struct SupportCoverageView: View {
         return store.supportHealth
             .filter { item in
                 switch filter {
-                case .issues:
-                    return item.collectorState.isIssue
-                        || (item.isObserved && !item.missingCapabilities.isEmpty)
-                case .running:
-                    return item.processDetected
-                case .installed:
-                    return item.sourcePresent || item.isObserved
-                case .noData:
-                    return item.sourcePresent && !item.isObserved
+                case .needsAction: return item.disposition == .needsAction
+                case .limited: return item.disposition == .limited
+                case .healthy: return item.disposition == .healthy
                 case .all:
                     return true
                 }
@@ -1739,8 +1752,8 @@ struct SupportCoverageView: View {
                 text.isEmpty || $0.agent.displayName.localizedCaseInsensitiveContains(text)
             }
             .sorted {
-                let left = severity($0)
-                let right = severity($1)
+                let left = $0.disposition.rawValue
+                let right = $1.disposition.rawValue
                 if left != right { return left > right }
                 let lp = AgentID.priority.firstIndex(of: $0.agent) ?? 999
                 let rp = AgentID.priority.firstIndex(of: $1.agent) ?? 999
@@ -1748,39 +1761,26 @@ struct SupportCoverageView: View {
             }
     }
 
-    private func severity(_ item: AgentSupportHealth) -> Int {
-        if item.collectorState.isIssue { return 3 }
-        if item.isObserved && !item.missingCapabilities.isEmpty { return 2 }
-        if item.processDetected { return 1 }
-        return 0
-    }
-
     private func filterLabel(_ filter: SupportFilter) -> String {
         switch filter {
-        case .issues:
-            return String(format: store.tr(.supportFilterIssuesCount), issueCount)
-        case .running: return store.tr(.supportFilterRunning)
-        case .installed: return store.tr(.supportFilterInstalled)
-        case .noData: return store.tr(.supportFilterNoData)
+        case .needsAction:
+            return String(format: store.tr(.supportNeedsActionCount), needsActionCount)
+        case .limited:
+            return String(format: store.tr(.supportLimitedCount), limitedCount)
+        case .healthy:
+            return String(format: store.tr(.supportHealthyCount), healthyCount)
         case .all: return store.tr(.supportFilterAll)
         }
     }
 
-    private var adapterIssueCount: Int {
-        store.supportHealth.filter(\.collectorState.isIssue).count
+    private var needsActionCount: Int {
+        store.supportHealth.filter { $0.disposition == .needsAction }.count
     }
-
-    private var informationGapCount: Int {
-        store.supportHealth.filter {
-            $0.isObserved && !$0.missingCapabilities.isEmpty
-        }.count
+    private var limitedCount: Int {
+        store.supportHealth.filter { $0.disposition == .limited }.count
     }
-
-    private var issueCount: Int {
-        store.supportHealth.filter {
-            $0.collectorState.isIssue
-                || ($0.isObserved && !$0.missingCapabilities.isEmpty)
-        }.count
+    private var healthyCount: Int {
+        store.supportHealth.filter { $0.disposition == .healthy }.count
     }
 
     var body: some View {
@@ -1794,30 +1794,20 @@ struct SupportCoverageView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 12) {
                     Label(
-                        String(
-                            format: store.tr(.supportObservedCount),
-                            store.supportHealth.filter(\.isObserved).count
-                        ),
-                        systemImage: "waveform.path.ecg"
+                        String(format: store.tr(.supportNeedsActionCount), needsActionCount),
+                        systemImage: "exclamationmark.triangle"
                     )
                     Label(
-                        String(
-                            format: store.tr(.supportAdapterIssueCount),
-                            adapterIssueCount
-                        ),
-                        systemImage: adapterIssueCount == 0
-                            ? "checkmark.circle"
-                            : "exclamationmark.triangle"
+                        String(format: store.tr(.supportLimitedCount), limitedCount),
+                        systemImage: "info.circle"
                     )
                     Label(
-                        String(
-                            format: store.tr(.supportInformationGapCount),
-                            informationGapCount
-                        ),
-                        systemImage: informationGapCount == 0
-                            ? "checkmark.circle"
-                            : "info.circle"
+                        String(format: store.tr(.supportHealthyCount), healthyCount),
+                        systemImage: "checkmark.circle"
                     )
+                    Spacer()
+                    Button(store.tr(.supportSafeReport)) { showSafeReport.toggle() }
+                        .buttonStyle(.borderless)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1828,6 +1818,27 @@ struct SupportCoverageView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                if showSafeReport {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        ScrollView {
+                            Text(store.safeSupportReport())
+                                .font(.system(size: 10, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 108)
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(Color.primary.opacity(0.045))
+                        )
+                        Button(
+                            store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.supportCopySafeReport)
+                        ) {
+                            store.copySafeSupportReport()
+                        }
+                    }
+                }
             }
             .padding(20)
 
@@ -1854,7 +1865,7 @@ struct SupportCoverageView: View {
                 }
             }
         }
-        .frame(minWidth: 580, minHeight: 340)
+        .frame(minWidth: 580, minHeight: 280)
         .background(Color(nsColor: .windowBackgroundColor))
         .searchable(text: $query, prompt: store.tr(.supportSearch))
     }
@@ -1878,15 +1889,13 @@ struct SupportHealthRow: View {
                 HStack(spacing: 6) {
                     Text(item.agent.displayName)
                         .font(.system(size: 13, weight: .semibold))
-                    Text(store.supportEvidenceLabel(item))
+                    Text(dispositionLabel)
                         .font(.caption)
                         .foregroundStyle(statusLabelColor)
+                    Text(store.supportEvidenceLabel(item))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
-
-                Text(store.supportAdapterDetail(item))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
 
                 if item.isObserved {
                     HStack(spacing: 6) {
@@ -1902,10 +1911,14 @@ struct SupportHealthRow: View {
                             label: store.tr(.supportActivity),
                             present: item.hasActivity
                         )
+                        SupportFactPill(
+                            label: store.tr(.supportProgress),
+                            present: item.hasProgress
+                        )
                         Text(String(
-                            format: store.tr(.supportFactCoverage),
-                            item.observedFactCount,
-                            4
+                            format: store.tr(.supportUsefulCoverage),
+                            item.usefulFactCount,
+                            5
                         ))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -1926,6 +1939,28 @@ struct SupportHealthRow: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+
+                if item.repair != .none {
+                    Button(repairLabel) {
+                        switch item.repair {
+                        case .installHooks: store.installHooks()
+                        case .retry: store.refresh(reason: "support-retry")
+                        case .none: break
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+
+                DisclosureGroup(store.tr(.supportAdapterDiagnostics)) {
+                    Text(store.supportAdapterDetail(item))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 3)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
         }
@@ -1937,17 +1972,38 @@ struct SupportHealthRow: View {
     }
 
     private var statusLabelColor: Color {
-        if item.collectorState.isIssue { return .red }
-        if item.processDetected && !item.missingCapabilities.isEmpty { return .orange }
-        return item.isObserved ? .secondary : .secondary.opacity(0.65)
+        switch item.disposition {
+        case .needsAction: return .red
+        case .limited: return .orange
+        case .healthy: return GlanceKind.running.lampColor
+        case .unavailable: return .secondary.opacity(0.65)
+        }
     }
 
     private var statusColor: Color {
-        if item.collectorState.isIssue { return .red }
-        if item.processDetected { return GlanceKind.running.lampColor }
-        if item.isObserved { return .secondary }
-        if item.sourcePresent { return .orange }
-        return .gray
+        switch item.disposition {
+        case .needsAction: return .red
+        case .limited: return .orange
+        case .healthy: return GlanceKind.running.lampColor
+        case .unavailable: return .gray
+        }
+    }
+
+    private var dispositionLabel: String {
+        switch item.disposition {
+        case .needsAction: return store.tr(.supportNeedsAction)
+        case .limited: return store.tr(.supportLimited)
+        case .healthy: return store.tr(.supportHealthy)
+        case .unavailable: return store.tr(.supportUnavailable)
+        }
+    }
+
+    private var repairLabel: String {
+        switch item.repair {
+        case .installHooks: return store.tr(.installHooks)
+        case .retry: return store.tr(.supportRetry)
+        case .none: return ""
+        }
     }
 }
 

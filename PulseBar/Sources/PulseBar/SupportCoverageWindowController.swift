@@ -25,8 +25,8 @@ final class SupportCoverageWindowController: NSObject, NSWindowDelegate {
         win.title = store.tr(.supportHealth)
         win.identifier = NSUserInterfaceItemIdentifier("pulse-support-coverage")
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        win.setContentSize(NSSize(width: 640, height: 460))
-        win.contentMinSize = NSSize(width: 580, height: 360)
+        win.setContentSize(NSSize(width: 660, height: 400))
+        win.contentMinSize = NSSize(width: 580, height: 300)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]

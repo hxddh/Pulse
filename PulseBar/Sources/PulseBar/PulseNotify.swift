@@ -142,8 +142,8 @@ enum PulseNotify {
         center.removeDeliveredNotifications(withIdentifiers: [id])
         center.removePendingNotificationRequests(withIdentifiers: [id])
         let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
+        content.title = ContentSanitizer.redact(title)
+        content.body = ContentSanitizer.redact(body)
         content.sound = .default
         // Only waiting banners carry actions; "everything went idle" has
         // nothing to focus and nothing to defer.
