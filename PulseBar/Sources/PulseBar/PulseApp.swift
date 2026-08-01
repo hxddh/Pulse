@@ -743,7 +743,12 @@ struct TrayPanel: View {
         // ("Recent 1" with no row), which reads like missing data rather than
         // scrollable content. 500 still fits a compact menu-bar panel while
         // keeping the first row of the fourth state visible.
-        let cap: CGFloat = store.showAllAgents ? 620 : 500
+        // The wait row is intentionally information-rich (reason, signal,
+        // age, and two actions), so a 500pt cap cut the next session in half
+        // even when only seven rows existed. Give the default glance enough
+        // room for complete rows; scrolling remains the guard for large
+        // workspaces.
+        let cap: CGFloat = store.showAllAgents ? 660 : 580
 
         let groups = groupedRows
         return VStack(spacing: 0) {
@@ -816,6 +821,7 @@ struct TrayPanel: View {
                     }
                 )
                 }
+                .scrollIndicators(.visible)
                 .frame(height: min(max(measuredHeight, 56), cap))
                 .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
                 .overlay(alignment: .bottom) {
@@ -1724,7 +1730,10 @@ struct SettingsView: View {
 struct SupportCoverageView: View {
     @ObservedObject var store: StatusStore
     @State private var query = ""
-    @State private var filter: SupportFilter = .needsAction
+    // Support coverage is an inspection surface, not an alert inbox. Starting
+    // on Issues hid every healthy adapter and made “all covered agents” look
+    // unsupported until the user discovered a segmented control.
+    @State private var filter: SupportFilter = .all
     @State private var showSafeReport = false
 
     enum SupportFilter: String, CaseIterable, Identifiable {
@@ -1924,6 +1933,13 @@ struct SupportHealthRow: View {
                         .foregroundStyle(.secondary)
                     }
                     .font(.caption)
+
+                    let observed = store.supportObservedDetail(item)
+                    Text(observed.isEmpty ? store.tr(.supportNoObservedSignals) : observed)
+                        .font(.caption)
+                        .foregroundStyle(observed.isEmpty ? .tertiary : .secondary)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
                 }
 
                 let timeline = store.supportTimelineDetail(item)

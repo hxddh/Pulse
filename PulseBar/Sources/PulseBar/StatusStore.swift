@@ -277,8 +277,11 @@ final class StatusStore: ObservableObject {
             return hooksStatus.isInstalled(for: agent)
         case .harvestPending:
             let state = collectorHealthByAgent[agent]?.state ?? .unscanned
-            return state != .sourceAbsent && state != .permissionDenied
-                && state != .schemaMismatch && state != .failed && state != .unscanned
+            // A source that exists but yielded no usable session cannot yet
+            // prove a pending signal. Counting `.noSessions` as ready made a
+            // process-only Amp row read “1/5 useful signals” despite having no
+            // activity feed or actionable Waiting route.
+            return state == .observed || state == .noRecentData
         case .none:
             return false
         }
@@ -363,6 +366,62 @@ final class StatusStore: ObservableObject {
             ))
         }
         return facts.joined(separator: " · ")
+    }
+
+    /// The score pills answer “how much can Pulse observe?”; this answers the
+    /// next question, “what did it actually observe?” Keeping one compact,
+    /// representative session per adapter makes the 31-agent matrix useful
+    /// without turning it into a transcript or exposing raw session IDs.
+    func supportObservedDetail(_ health: AgentSupportHealth) -> String {
+        let candidates = cachedAll.filter { $0.agent == health.agent }
+        guard let row = candidates.max(by: { lhs, rhs in
+            let left = (
+                lhs.waiting ? 4 : 0,
+                lhs.liveProcess ? 2 : 0,
+                lhs.harvestMs
+            )
+            let right = (
+                rhs.waiting ? 4 : 0,
+                rhs.liveProcess ? 2 : 0,
+                rhs.harvestMs
+            )
+            return left < right
+        }) else { return "" }
+
+        var facts: [String] = []
+        func nonEmpty(_ raw: String) -> String? {
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        }
+        if let task = row.usefulTask { facts.append(task) }
+        if !row.displayPath.isEmpty { facts.append(row.displayPath) }
+        if let phase = readablePhase(row.phase) { facts.append(phase) }
+        if let tool = nonEmpty(row.tool), row.liveProcess {
+            facts.append(String(format: tr(.lastAction), readableAction(tool)))
+        }
+        if let model = nonEmpty(row.model) {
+            facts.append(String(format: tr(.modelFact), readableModel(model)))
+        }
+        if let mode = nonEmpty(readableMode(row.mode)) { facts.append(mode) }
+        if row.progressTotal > 0 {
+            facts.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
+        } else if row.progressDone > 0 {
+            facts.append(String(format: tr(.turnsFact), row.progressDone))
+        }
+        if row.errors > 0 {
+            facts.append(row.errors == 1 ? tr(.errorFactOne) : String(format: tr(.errorsFact), row.errors))
+        }
+        if row.files > 0 { facts.append(String(format: tr(.filesFact), row.files)) }
+        if row.contextPercent > 0 { facts.append(String(format: tr(.contextFact), row.contextPercent)) }
+        if row.records > 0 { facts.append("\(row.records)\(tr(.recordsSuffix))") }
+        let input = AgentRow.compactToken(row.tokensIn)
+        let output = AgentRow.compactToken(row.tokensOut)
+        if !input.isEmpty || !output.isEmpty {
+            facts.append(String(format: tr(.reportedTokens), input.isEmpty ? "0" : input, output.isEmpty ? "0" : output))
+        }
+        guard !facts.isEmpty else { return "" }
+        let clipped = facts.prefix(4).joined(separator: " · ")
+        return String(format: tr(.supportObservedSignals), clipped)
     }
 
     func supportTimelineDetail(_ health: AgentSupportHealth) -> String {
@@ -1448,44 +1507,52 @@ final class StatusStore: ObservableObject {
         if row.isProcessOnly, row.processStartedMs > 0 {
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
             let age = max(0, Double(nowMs - row.processStartedMs) / 1000.0)
-            return String(
+            var process = String(
                 format: tr(.processAge),
                 DurationFormat.label(seconds: age, lang: lang)
             )
+            if row.processCount > 1 {
+                process += " · " + String(format: tr(.processCount), row.processCount)
+            }
+            return process
         }
+        // A single-priority metric made the row look empty for most adapters:
+        // progress hid tokens, files hid context, and a model call hid the
+        // only failure. Keep one line, but carry the two strongest independent
+        // signals so every supported agent has a useful default glance.
+        var facts: [String] = []
         if row.errors > 0 {
-            return row.errors == 1
+            facts.append(row.errors == 1
                 ? tr(.errorFactOne)
-                : String(format: tr(.errorsFact), row.errors)
+                : String(format: tr(.errorsFact), row.errors))
         }
-        if let outcome = readableFailure(row.outcome) { return outcome }
+        if let outcome = readableFailure(row.outcome) { facts.append(outcome) }
         if row.progressTotal > 0 {
-            return String(format: tr(.progressFact), row.progressDone, row.progressTotal)
-        }
-        if row.progressDone > 0 {
-            return String(format: tr(.turnsFact), row.progressDone)
+            facts.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
+        } else if row.progressDone > 0 {
+            facts.append(String(format: tr(.turnsFact), row.progressDone))
         }
         if row.subTotal > 0 {
-            return row.subRunning > 0
+            facts.append(row.subRunning > 0
                 ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
-                : String(format: tr(.subagentsObserved), row.subTotal)
+                : String(format: tr(.subagentsObserved), row.subTotal))
         }
-        if row.files > 0 { return String(format: tr(.filesFact), row.files) }
-        if row.contextPercent > 0 { return String(format: tr(.contextFact), row.contextPercent) }
+        if row.files > 0 { facts.append(String(format: tr(.filesFact), row.files)) }
+        if row.contextPercent > 0 { facts.append(String(format: tr(.contextFact), row.contextPercent)) }
         let input = AgentRow.compactToken(row.tokensIn)
         let output = AgentRow.compactToken(row.tokensOut)
         if !input.isEmpty || !output.isEmpty {
             let scope: L10n.Key = [.claude, .codex].contains(row.agent)
                 ? .latestCallTokens
                 : .reportedTokens
-            return String(
+            facts.append(String(
                 format: tr(scope),
                 input.isEmpty ? "0" : input,
                 output.isEmpty ? "0" : output
-            )
+            ))
         }
-        if row.records > 0 { return "\(row.records)\(tr(.recordsSuffix))" }
-        return ""
+        if row.records > 0 { facts.append("\(row.records)\(tr(.recordsSuffix))") }
+        return facts.prefix(2).joined(separator: " · ")
     }
 
     /// Stable, useful session evidence that should not require opening a
@@ -1504,6 +1571,8 @@ final class StatusStore: ObservableObject {
         if !mode.isEmpty { bits.append(mode) }
         let model = readableModel(row.model)
         if !model.isEmpty { bits.append(String(format: tr(.modelFact), model)) }
+        let skill = readableSkill(row.skill)
+        if !skill.isEmpty { bits.append(String(format: tr(.skillFact), skill)) }
         return bits.prefix(2).joined(separator: " · ")
     }
 
@@ -1578,6 +1647,21 @@ final class StatusStore: ObservableObject {
     private func readableModel(_ raw: String) -> String {
         raw.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "-", with: " ")
+    }
+
+    private func readableSkill(_ raw: String) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.lowercased() != "pending" else { return "" }
+        // Skill package names are implementation detail. Keep the leaf name
+        // and drop a long namespace so the row communicates capability, not a
+        // registry path.
+        let leaf = value.split(separator: ":").last.map(String.init) ?? value
+        return leaf
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
     }
 
     private func readableFailure(_ raw: String) -> String? {

@@ -25,8 +25,12 @@ final class SupportCoverageWindowController: NSObject, NSWindowDelegate {
         win.title = store.tr(.supportHealth)
         win.identifier = NSUserInterfaceItemIdentifier("pulse-support-coverage")
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        win.setContentSize(NSSize(width: 660, height: 400))
-        win.contentMinSize = NSSize(width: 580, height: 300)
+        // The support matrix is the place to inspect all covered agents, so a
+        // 400pt viewport clipped the first row as soon as its evidence summary
+        // gained a second line. Give the default view a calm, readable canvas;
+        // the list remains scrollable for the full 31-agent roster.
+        win.setContentSize(NSSize(width: 700, height: 560))
+        win.contentMinSize = NSSize(width: 600, height: 360)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]

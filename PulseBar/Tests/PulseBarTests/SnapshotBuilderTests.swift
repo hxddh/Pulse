@@ -174,6 +174,31 @@ final class SnapshotBuilderTests: XCTestCase {
         )
     }
 
+    func testActivityChangeDoesNotDependOnSubsecondMtime() {
+        var priorSource = harvest(
+            .codex,
+            task: "Fast update",
+            session: "same-mtime",
+            cwd: "/Users/me/Pulse",
+            ageMs: 2_000
+        )
+        priorSource.progressDone = 1
+        priorSource.progressTotal = 4
+        let prior = build(harvest: [priorSource])
+
+        var current = priorSource
+        // A SQLite/cache write can advance the facts before its mtime tick.
+        current.progressDone = 2
+        let changed = build(
+            harvest: [current],
+            previous: .init(rows: prior.rows, waitingKeys: [])
+        )
+        XCTAssertEqual(
+            changed.rows.first?.activityChange,
+            .progress(done: 2, total: 4)
+        )
+    }
+
     func testOldCompletedSessionDoesNotRideForeverOnPersistentCLI() {
         var source = harvest(
             .codex,

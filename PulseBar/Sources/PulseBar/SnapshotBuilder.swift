@@ -353,7 +353,26 @@ enum SnapshotBuilder {
             guard let old = previousByKey[all[index].rowKey] else { continue }
             let current = all[index]
             let changed: AgentActivityChange? = {
-                guard current.harvestMs > 0, current.harvestMs > old.harvestMs else { return nil }
+                // Filesystems and vendor stores often expose second-level
+                // mtimes. A session can therefore advance its progress or
+                // token counters without increasing `harvestMs`; requiring a
+                // strictly newer timestamp made the change banner silently
+                // miss exactly the fast updates users look for.
+                let signalMoved = current.outcome != old.outcome
+                    || current.errors != old.errors
+                    || current.progressDone != old.progressDone
+                    || current.progressTotal != old.progressTotal
+                    || current.files != old.files
+                    || current.tokensIn != old.tokensIn
+                    || current.tokensOut != old.tokensOut
+                    || current.model != old.model
+                    || current.mode != old.mode
+                    || current.records != old.records
+                    || current.subRunning != old.subRunning
+                    || current.subTotal != old.subTotal
+                guard current.harvestMs > 0,
+                      current.harvestMs > old.harvestMs || signalMoved
+                else { return nil }
                 let outcome = current.outcome.lowercased()
                 let oldOutcome = old.outcome.lowercased()
                 if outcome != oldOutcome {
@@ -367,7 +386,9 @@ enum SnapshotBuilder {
                     return .progress(done: current.progressDone, total: current.progressTotal)
                 }
                 if current.files > old.files { return .files(current.files - old.files) }
-                if current.tokensIn != old.tokensIn || current.tokensOut != old.tokensOut {
+                if current.tokensIn != old.tokensIn || current.tokensOut != old.tokensOut
+                    || current.model != old.model || current.mode != old.mode
+                    || current.records != old.records {
                     return .modelCall
                 }
                 return nil

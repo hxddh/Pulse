@@ -29,8 +29,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         win.styleMask = [.titled, .closable, .miniaturizable]
         // Spec width band is 420–460 (EXPERIENCE.md §5); the form grew a
         // notifications and a shortcuts section in 0.22.
-        win.setContentSize(NSSize(width: 440, height: 560))
-        win.contentMinSize = NSSize(width: 420, height: 420)
+        // Keep the quiet-hours and waiting-signal controls from ending as a
+        // half-visible row on first launch. The form still scrolls on smaller
+        // displays, but the normal canvas shows a complete section boundary.
+        win.setContentSize(NSSize(width: 460, height: 640))
+        win.contentMinSize = NSSize(width: 420, height: 440)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]

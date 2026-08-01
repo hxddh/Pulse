@@ -40,7 +40,14 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
 }
 
 enum PulseNotify {
-    private static let center = UNUserNotificationCenter.current()
+    /// `UNUserNotificationCenter.current()` throws an AppKit exception when a
+    /// SwiftPM debug executable is launched outside an `.app` bundle. That is
+    /// a normal developer/visual-QA path, not a reason for Pulse to crash;
+    /// packaged builds still use the real center.
+    private static var center: UNUserNotificationCenter? {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return nil }
+        return UNUserNotificationCenter.current()
+    }
     private static let delegate = PulseNotifyDelegate()
     private static var requested = false
 
@@ -57,6 +64,7 @@ enum PulseNotify {
     /// Registered in the resolved language and re-registered when it changes —
     /// a category is keyed by id, so re-adding replaces the old titles.
     static func registerCategories(lang: ResolvedLanguage) {
+        guard let center else { return }
         let focus = UNNotificationAction(
             identifier: focusActionID,
             title: L10n.t(.notifFocus, lang),
@@ -80,6 +88,10 @@ enum PulseNotify {
     /// result meant a denied prompt left both notification toggles reading
     /// "on" while nothing would ever fire.
     static func configure(onAuthorization: @escaping (Bool) -> Void) {
+        guard let center else {
+            onAuthorization(false)
+            return
+        }
         center.delegate = delegate
         authorizationHandler = onAuthorization
         requestAuthorizationIfNeeded()
@@ -90,6 +102,7 @@ enum PulseNotify {
 
     static func requestAuthorizationIfNeeded() {
         guard !requested else { return }
+        guard let center else { return }
         requested = true
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             authorizationHandler?(granted)
@@ -98,6 +111,7 @@ enum PulseNotify {
 
     /// Re-read the live setting — the user may have flipped it in System Settings.
     static func refreshAuthorization() {
+        guard let center else { return }
         center.getNotificationSettings { settings in
             let ok = settings.authorizationStatus == .authorized
                 || settings.authorizationStatus == .provisional
@@ -138,6 +152,7 @@ enum PulseNotify {
         session: String,
         rowKey: String
     ) {
+        guard let center else { return }
         requestAuthorizationIfNeeded()
         center.removeDeliveredNotifications(withIdentifiers: [id])
         center.removePendingNotificationRequests(withIdentifiers: [id])

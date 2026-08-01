@@ -266,7 +266,10 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private func resizeToFit() {
         hosting.view.layoutSubtreeIfNeeded()
         let fitting = hosting.view.fittingSize
-        let height = min(650, max(96, fitting.height))
+        // Keep the default seven-row glance intact. The list itself remains
+        // scrollable, but a panel that ends halfway through a row reads as a
+        // layout failure rather than an intentional viewport.
+        let height = min(720, max(96, fitting.height))
         let inset = StatusPanelChrome.shadowInset
         let target = NSSize(
             width: max(420, fitting.width) + inset * 2,
