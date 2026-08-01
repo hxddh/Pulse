@@ -401,41 +401,72 @@ def semantic_phase_from_events(text: str) -> str:
 
     def tool_phase(name: str, event: dict) -> str:
         low = (name or "").lower()
-        if any(x in low for x in ("plan", "todo")):
-            return "planning"
-        if any(x in low for x in ("read", "glob", "grep")):
-            return "reading"
-        if any(x in low for x in ("search", "web", "browser", "fetch")):
-            return "researching"
-        if any(x in low for x in ("edit", "patch", "write")):
-            return "editing"
-        if any(x in low for x in ("test", "verify", "check", "build")):
-            return "testing"
+
+        def name_has(*tokens: str) -> bool:
+            # Match tool-name components, not arbitrary substrings: `latest`
+            # must not become Testing, and `write_stdin` is terminal plumbing,
+            # not an Editing action. Underscores and dashes are intentional
+            # boundaries here.
+            return any(
+                low == token or re.search(rf"(?<![a-z]){re.escape(token)}(?![a-z])", low)
+                for token in tokens
+            )
+
         # Generic shell/exec tools carry no useful meaning by name. Structured
         # arguments can still yield a high-confidence *role* without exposing
         # the command, path, tool identifier, or skill name to the UI.
         try:
+            # Codex and a few desktop agents serialize the shell request inside
+            # a JSON string (`input: "...cmd:\\"rg ..."`). Looking only for a
+            # literal `"rg ` therefore degraded every such call to `working`.
+            # Normalize one escaping layer before matching command intent; the
+            # command itself is never emitted, only its high-confidence role.
             args = json.dumps(event, ensure_ascii=False).lower()
+            args = args.replace('\\\\"', '"').replace('\\n', ' ')
         except Exception:
             args = ""
-        if any(x in args for x in ("gh release", "git push", "npm publish", "cargo publish")):
+        if any(re.search(pattern, args) for pattern in (
+            r"\bgh\s+release\b", r"\bgit\s+push\b", r"\bnpm\s+publish\b",
+            r"\bcargo\s+publish\b",
+        )):
             return "publishing"
-        if any(x in args for x in (
-            "swift test", "pytest", "npm test", "pnpm test", "yarn test",
-            "xcodebuild test", "cargo test", "go test",
+        if any(re.search(pattern, args) for pattern in (
+            r"\bswift\s+test\b", r"\bpytest\b", r"\bnpm\s+test\b",
+            r"\bpnpm\s+test\b", r"\byarn\s+test\b", r"\bxcodebuild\s+test\b",
+            r"\bcargo\s+test\b", r"\bgo\s+test\b",
         )):
             return "testing"
-        if any(x in args for x in (
-            "swift build", "xcodebuild", "npm run build", "pnpm build",
-            "yarn build", "cargo build", "go build",
+        if any(re.search(pattern, args) for pattern in (
+            r"\bswift\s+build\b", r"\bxcodebuild\b", r"\bnpm\s+run\s+build\b",
+            r"\bpnpm\s+build\b", r"\byarn\s+build\b", r"\bcargo\s+build\b",
+            r"\bgo\s+build\b",
         )):
             return "building"
-        if any(x in args for x in ("apply_patch", "git apply", "perl -pi", "sed -i")):
-            return "editing"
-        if any(x in args for x in (
-            '"rg ', '"sed -n', '"git diff', '"git status', '"git show',
-            '"ls ', '"find ', '"head ', '"tail ',
+        if any(re.search(pattern, args) for pattern in (
+            r"\bapply_patch\b", r"\bgit\s+apply\b", r"\bperl\s+-pi\b", r"\bsed\s+-i\b",
         )):
+            return "editing"
+        if any(re.search(pattern, args) for pattern in (
+            r"\brg(?:\s|$)", r"\bgrep(?:\s|$)", r"\bfind(?:\s|$)",
+            r"\bls(?:\s|$)", r"\bsed\s+-n\b", r"\bgit\s+(?:diff|status|show)\b",
+            r"\bhead(?:\s|$)", r"\btail(?:\s|$)",
+        )):
+            return "reading"
+
+        # Only now use the tool name. This is a fallback for vendors that do
+        # not include structured arguments; a shell command above always wins
+        # over a generic wrapper such as `write_stdin` or `exec_command`.
+        if name_has("plan", "todo", "update_plan"):
+            return "planning"
+        if name_has("search", "web", "browser", "fetch"):
+            return "researching"
+        if name_has("test", "verify", "check"):
+            return "testing"
+        if name_has("build"):
+            return "building"
+        if name_has("edit", "patch", "apply_patch", "write_file", "write_text"):
+            return "editing"
+        if name_has("read", "glob", "grep", "view_image", "screenshot"):
             return "reading"
         return "working"
 
@@ -765,6 +796,62 @@ def codex_last_usage(text: str) -> tuple[int, int]:
     return latest
 
 
+def codex_runtime_facts(text: str) -> dict:
+    """Extract explicit Codex model/context facts without guessing.
+
+    Codex stores these in `turn_context` and `task_started`/`token_count`
+    events rather than beside the user prompt. They are high-value operational
+    signals: a model name explains what is running, while context usage warns
+    before a long rollout becomes constrained. Missing fields remain unknown.
+    """
+    facts: dict = {}
+    context_window = 0
+    input_tokens = 0
+    for obj in json_records(text):
+        if not isinstance(obj, dict):
+            continue
+        typ = str(obj.get("type") or "")
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if typ == "turn_context":
+            model = payload.get("model")
+            if isinstance(model, str) and model.strip():
+                facts["model"] = model.strip()[:64]
+            mode = payload.get("collaboration_mode_kind")
+            if isinstance(mode, str) and mode.strip() and mode.lower() != "default":
+                facts["mode"] = mode.strip()[:64]
+        elif typ == "session_meta":
+            # Some Codex builds put the selected model on session metadata.
+            model = payload.get("model") or payload.get("model_id")
+            if isinstance(model, str) and model.strip() and "model" not in facts:
+                facts["model"] = model.strip()[:64]
+
+        event_type = str(payload.get("type") or "")
+        if typ == "event_msg" and event_type == "task_started":
+            raw_window = payload.get("model_context_window")
+            if isinstance(raw_window, (int, float)) and raw_window > 0:
+                context_window = int(raw_window)
+        if typ == "event_msg" and event_type == "token_count":
+            info = obj.get("info")
+            if not isinstance(info, dict):
+                info = payload.get("info")
+            if isinstance(info, dict):
+                raw_window = info.get("model_context_window")
+                if isinstance(raw_window, (int, float)) and raw_window > 0:
+                    context_window = int(raw_window)
+                usage = info.get("last_token_usage")
+                if isinstance(usage, dict):
+                    raw_input = usage.get("input_tokens")
+                    if isinstance(raw_input, (int, float)) and raw_input > 0:
+                        input_tokens = int(raw_input)
+
+    if context_window > 0 and input_tokens > 0:
+        facts["context_pct"] = max(1, min(100, round(input_tokens * 100 / context_window)))
+    return facts
+
+
 FRESH_SEC = 45 * 60  # Claude session files older than this (and no live subs) are skipped
 # A `pending` guess is a Waiting claim — only trust it on a very recently
 # touched file, so a stale session can never sit lit as "needs you".
@@ -1038,7 +1125,11 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         # Stable metadata comes from the head; dynamic events from the tail.
         # The task has its own sparse reader below so we do not parse megabytes
         # of tool output on every probe.
-        text = head_tail_text(f, 96_000, 600_000)
+        # Codex desktop places the first `turn_context` (selected model and
+        # context window) just after the large session metadata record. Keep a
+        # little more head than the generic JSONL readers so that explicit
+        # model evidence does not fall outside the bounded window.
+        text = head_tail_text(f, 160_000, 600_000)
         # Never fall back to the generic title extractor here. MCP invocations
         # carry UI-only `title` strings ("Inspect settings") that are neither a
         # session title nor a user request.
@@ -1062,6 +1153,7 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             skill = "pending"
         if task or tin or tout or tool or skill or project:
             extra = session_stats(f, per_session=True)
+            extra.update(codex_runtime_facts(text))
             phase = semantic_phase_from_events(text)
             if phase:
                 extra["phase"] = phase

@@ -1927,7 +1927,7 @@ struct SupportHealthRow: View {
                         Text(String(
                             format: store.tr(.supportUsefulCoverage),
                             item.usefulFactCount,
-                            5
+                            item.usefulFactTotal
                         ))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)

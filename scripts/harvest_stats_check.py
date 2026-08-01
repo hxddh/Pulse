@@ -326,8 +326,8 @@ def check_tool_reading() -> int:
         '{"type":"response_item","payload":{"type":"function_call",'
         '"name":"view_image","call_id":"call-1"}}\n'
     )
-    if A.semantic_phase_from_events(unresolved) != "working":
-        return fail("an unresolved explicit tool call did not produce a semantic phase")
+    if A.semantic_phase_from_events(unresolved) != "reading":
+        return fail("an unresolved image inspection did not produce the semantic Reading role")
     resolved = unresolved + (
         '{"type":"response_item","payload":{"type":"function_call_output",'
         '"call_id":"call-1","output":"ok"}}\n'
@@ -340,6 +340,20 @@ def check_tool_reading() -> int:
     permission = '{"type":"permission_requested","message":"approve command"}\n'
     if A.semantic_phase_from_events(permission) != "waiting_permission":
         return fail("an explicit permission wait was not preserved")
+    # Codex Desktop wraps shell calls in a JavaScript tool envelope. The
+    # command is escaped inside `input`, so role detection must still expose
+    # the useful phase without leaking the command itself to the UI.
+    escaped_shell = json.dumps({
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call",
+            "name": "exec",
+            "call_id": "escaped-1",
+            "input": 'const r = await tools.exec_command({cmd:\"rg -n foo\"})',
+        },
+    })
+    if A.semantic_phase_from_events(escaped_shell) != "reading":
+        return fail("an escaped Codex rg command did not become the semantic Reading role")
     shell_test = (
         '{"type":"function_call","name":"exec_command","call_id":"test-1",'
         '"arguments":{"cmd":"swift test"}}\n'
@@ -358,6 +372,18 @@ def check_tool_reading() -> int:
     )
     if A.semantic_phase_from_events(shell_publish) != "publishing":
         return fail("a structured publish command did not become the semantic Publishing role")
+    if A.semantic_phase_from_events(
+        '{"type":"function_call","name":"write_stdin","call_id":"poll-1"}\n'
+    ) != "working":
+        return fail("terminal polling was mislabelled as Editing")
+    if A.semantic_phase_from_events(
+        '{"type":"function_call","name":"build","call_id":"build-2"}\n'
+    ) != "building":
+        return fail("a build tool was mislabelled as Testing")
+    if A.semantic_phase_from_events(
+        '{"type":"function_call","name":"latest","call_id":"latest-1"}\n'
+    ) != "working":
+        return fail("a tool with `test` as a substring was mislabelled as Testing")
     return 0
 
 
@@ -483,6 +509,10 @@ def check_collectors(home: Path) -> int:
     )
     codex_file.write_text(
         '{"type":"session_meta","payload":{"id":"codex-real","cwd":"/Users/me/code/Pulse"}}\n'
+        '{"type":"turn_context","payload":{"model":"fixture-model",'
+          '"collaboration_mode_kind":"default"}}\n'
+        '{"type":"event_msg","payload":{"type":"task_started",'
+          '"model_context_window":10000}}\n'
         + filler
         + '{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec",'
           '"arguments":"{\\"title\\":\\"Internal tool title\\"}"}}\n'
@@ -492,7 +522,8 @@ def check_collectors(home: Path) -> int:
           '\\n<image name=\\"Image #1\\">transport metadata</image>"}}\n'
         + '{"type":"event_msg","payload":{"type":"token_count","info":{'
           '"total_token_usage":{"input_tokens":9000000,"output_tokens":800000},'
-          '"last_token_usage":{"input_tokens":3210,"output_tokens":456}}}}\n'
+          '"last_token_usage":{"input_tokens":3210,"output_tokens":456},'
+          '"model_context_window":10000}}}\n'
         + '{"type":"event_msg","payload":{"type":"user_message","message":"进展如何"}}\n'
         + '{"type":"event_msg","payload":{"type":"user_message","message":"发布"}}\n'
         + '{"type":"response_item","payload":{"type":"function_call","name":"view_image"}}\n',
@@ -830,6 +861,10 @@ def check_collectors(home: Path) -> int:
                 return fail(f"codex missed its explicit function call: {row}")
             if row[COL_PROJECT] != "Pulse" or row[COL_CWD] != "/Users/me/code/Pulse":
                 return fail(f"codex lost head metadata on a long rollout: {row}")
+            if row[COL_MODEL] != "fixture-model":
+                return fail(f"codex dropped the selected model from runtime facts: {row}")
+            if row[COL_CONTEXT] != "32":
+                return fail(f"codex dropped context occupancy from runtime facts: {row}")
         if name == "grok":
             if row[COL_TASK] != "Fix multipart upload":
                 return fail(f"grok used tool output as its task: {row}")

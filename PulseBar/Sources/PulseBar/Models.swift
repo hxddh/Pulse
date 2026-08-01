@@ -693,15 +693,27 @@ struct AgentSupportHealth: Identifiable, Equatable {
     }
 
     /// User-value scorecard: goal, workspace, activity, progress, and a usable
-    /// Waiting route. Process detection is evidence, not useful content.
+    /// Waiting route when that Agent actually exposes one. Process detection is
+    /// evidence, not useful content; an Agent with no Waiting contract must not
+    /// lose a point for a capability it cannot provide.
     var usefulFactCount: Int {
-        [
+        var facts = [
             hasGoal,
             hasWorkspace,
             hasActivity,
             hasProgress,
-            waitingSignalReady,
-        ].filter { $0 }.count
+        ]
+        if agent.waitingSource != .none {
+            facts.append(waitingSignalReady)
+        }
+        return facts.filter { $0 }.count
+    }
+
+    /// Number of useful signals that are meaningful for this Agent's local
+    /// contract. This keeps the support UI honest for cloud/opaque agents that
+    /// do not expose a Waiting event at all.
+    var usefulFactTotal: Int {
+        agent.waitingSource == .none ? 4 : 5
     }
 
     var disposition: SupportDisposition {
@@ -717,8 +729,7 @@ struct AgentSupportHealth: Identifiable, Equatable {
             || !hasWorkspace
             || !hasActivity
             || !hasProgress
-            || agent.waitingSource == .none
-            || !waitingSignalReady {
+            || (agent.waitingSource != .none && !waitingSignalReady) {
             return .limited
         }
         return .healthy

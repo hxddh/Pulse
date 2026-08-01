@@ -39,9 +39,11 @@ final class SupportHealthTests: XCTestCase {
     }
 
     func testAgentWithoutWaitingContractIsNotPermanentlyIncomplete() {
-        let item = health(agent: .devin, waitingReady: false)
+        let item = health(agent: .devin, progress: true, waitingReady: false)
         XCTAssertTrue(item.missingCapabilities.isEmpty)
-        XCTAssertEqual(item.disposition, .limited)
+        XCTAssertEqual(item.usefulFactCount, 4)
+        XCTAssertEqual(item.usefulFactTotal, 4)
+        XCTAssertEqual(item.disposition, .healthy)
     }
 
     func testProcessOnlyEvidenceAdmitsMissingActivityFeed() {

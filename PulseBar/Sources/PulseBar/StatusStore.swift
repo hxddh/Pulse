@@ -203,12 +203,16 @@ final class StatusStore: ObservableObject {
             "Agents: \(supportHealth.count)",
         ]
         for item in supportHealth {
+            let waiting = item.agent.waitingSource == .none
+                ? "n/a"
+                : String(item.waitingSignalReady)
             lines.append(
                 "\(item.agent.rawValue): \(item.collectorState.rawValue) "
                     + "disposition=\(item.disposition) evidence=\(item.evidence?.rawValue ?? "none") "
                     + "goal=\(item.hasGoal) workspace=\(item.hasWorkspace) "
                     + "activity=\(item.hasActivity) progress=\(item.hasProgress) "
-                    + "waiting=\(item.waitingSignalReady) score=\(item.usefulFactCount)/5"
+                    + "waiting=\(waiting) "
+                    + "score=\(item.usefulFactCount)/\(item.usefulFactTotal)"
             )
         }
         return ContentSanitizer.redact(lines.joined(separator: "\n"))

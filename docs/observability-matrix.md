@@ -27,7 +27,8 @@ Goal, workspace, activity and evidence are the four core facts in the support
 window. Progress, model, mode, counters, files and Waiting are valuable
 enhancements when the Agent exposes them, not fabricated universal
 requirements. An Agent whose contract has no Waiting route is therefore not
-reported as incomplete merely because Waiting is unavailable.
+reported as incomplete merely because Waiting is unavailable; its useful-signal
+score is evaluated out of four rather than five.
 
 ## Runtime adapter health
 

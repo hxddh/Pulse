@@ -107,6 +107,6 @@ to users.
 
 ## Current state
 
-0.37.0 is the current source version. GitHub's latest public Release must be
+0.39.0 is the current source version. GitHub's latest public Release must be
 checked separately; a merged version is not proof that a signed/notarized DMG
 was published. See `CHANGELOG.md` for the complete contract.
