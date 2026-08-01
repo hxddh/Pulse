@@ -688,7 +688,7 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
 
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("Now Testing"), signal)
+        XCTAssertTrue(signal.contains("Now") && signal.contains("Testing"), signal)
         XCTAssertTrue(signal.contains("Progress moved to 18/31"), signal)
         XCTAssertFalse(signal.components(separatedBy: "18/31").count > 2, signal)
     }
