@@ -972,11 +972,16 @@ private struct AgentRowButton: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ConditionalRowButton(
-                actionable: row.canFocusTerminal,
-                action: { store.primaryAction(row) }
-            ) {
-                HStack(alignment: .top, spacing: 11) {
+            // Keep the row action and its overflow menu as sibling controls.
+            // Nesting Menu inside Button made a click on “…” bubble into the
+            // primary focus action on macOS, especially when the menu was
+            // revealed by keyboard focus rather than hover.
+            ZStack(alignment: .topTrailing) {
+                ConditionalRowButton(
+                    actionable: row.canFocusTerminal,
+                    action: { store.primaryAction(row) }
+                ) {
+                    HStack(alignment: .top, spacing: 11) {
                         AgentIconView(id: row.agent, waiting: row.waiting)
                             .padding(.top, 3)
 
@@ -995,9 +1000,6 @@ private struct AgentRowButton: View {
                                 }
                                 Spacer(minLength: 6)
                                 statusChip
-                                secondaryActionsMenu
-                                    .opacity(hovering || selected ? 1 : 0)
-                                    .accessibilityHidden(false)
                             }
 
                             // Encoding 3 of 3: a real session is semibold, a
@@ -1066,6 +1068,8 @@ private struct AgentRowButton: View {
                             }
                         }
                     }
+                    .padding(.trailing, TrayChrome.headerControlSize + 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 14)
                     .padding(.trailing, TrayChrome.padX)
                     .padding(.vertical, compact ? 6 : (row.isProcessOnly ? 7 : 9))
@@ -1079,11 +1083,19 @@ private struct AgentRowButton: View {
                             .padding(.leading, 6)
                             .padding(.vertical, 4)
                     }
-                .contentShape(Rectangle())
+                    .contentShape(Rectangle())
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(accessibilityText)
+                .accessibilityHint(row.canFocusTerminal ? store.primaryActionTitle(row) : "")
+
+                secondaryActionsMenu
+                    .opacity(hovering || selected ? 1 : 0)
+                    .allowsHitTesting(hovering || selected)
+                    .accessibilityHidden(false)
+                    .padding(.top, 6)
+                    .padding(.trailing, TrayChrome.padX)
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(accessibilityText)
-            .accessibilityHint(row.canFocusTerminal ? store.primaryActionTitle(row) : "")
 
             // Actions stay visible where they are urgent, and appear on hover
             // everywhere else. Showing them on every row cost ~28pt each and
