@@ -125,12 +125,20 @@ enum L10n {
         case .newFiles: return "%d more files"
         case .progressAdvanced: return "Progress moved to %d/%d"
         case .modelCallChanged: return "New model call"
+        case .signalProgress: return "Progress %d/%d"
+        case .signalErrors: return "+%d errors"
+        case .signalFiles: return "+%d files"
+        case .signalModel: return "Model call"
+        case .signalCompleted: return "Complete"
+        case .signalFailed: return "Failed"
+        case .signalCancelled: return "Cancelled"
         case .terminalDetectedNoDetails: return "Terminal session running · activity feed unavailable"
         case .appDetectedNoDetails: return "Agent app running · session feed unavailable"
         case .lastAction: return "Last action: %@"
         case .lastActive: return "Last active %@"
         case .latestCallTokens: return "Latest model call · %@ input · %@ output"
         case .reportedTokens: return "Agent reported · %@ input · %@ output"
+        case .compactTokens: return "↑%@ ↓%@"
         case .subagentsActive: return "%d of %d subagents active"
         case .subagentsObserved: return "%d subagents observed"
         case .actionPlanning: return "Planning"
@@ -398,12 +406,20 @@ enum L10n {
         case .newFiles: return "新增 %d 个文件"
         case .progressAdvanced: return "进度推进至 %d/%d"
         case .modelCallChanged: return "新的模型调用"
+        case .signalProgress: return "进度 %d/%d"
+        case .signalErrors: return "+%d 个错误"
+        case .signalFiles: return "+%d 个文件"
+        case .signalModel: return "模型调用"
+        case .signalCompleted: return "已完成"
+        case .signalFailed: return "失败"
+        case .signalCancelled: return "已取消"
         case .terminalDetectedNoDetails: return "终端会话正在运行 · 暂无活动数据"
         case .appDetectedNoDetails: return "Agent 应用正在运行 · 暂无会话数据"
         case .lastAction: return "最近动作：%@"
         case .lastActive: return "最近活动：%@"
         case .latestCallTokens: return "最近一次模型调用 · 输入 %@ · 输出 %@"
         case .reportedTokens: return "Agent 上报 · 输入 %@ · 输出 %@"
+        case .compactTokens: return "↑%@ ↓%@"
         case .subagentsActive: return "%d / %d 个 subagent 活跃"
         case .subagentsObserved: return "已观测 %d 个 subagent"
         case .actionPlanning: return "规划"
@@ -606,8 +622,9 @@ enum L10n {
         case processDetected, processWord, processCount
         case limitedData, sessionEvidence, cacheEvidence, terminalSession, appSession, activityUnavailable, processAge
         case activityChanged, newErrors, newFiles, progressAdvanced, modelCallChanged
+        case signalProgress, signalErrors, signalFiles, signalModel, signalCompleted, signalFailed, signalCancelled
         case terminalDetectedNoDetails, appDetectedNoDetails
-        case lastAction, lastActive, latestCallTokens, reportedTokens
+        case lastAction, lastActive, latestCallTokens, reportedTokens, compactTokens
         case subagentsActive, subagentsObserved
         case actionPlanning, actionCommand, actionEditing, actionImage
         case actionResearch, actionReading, actionAutomation, setupWaitingSignals

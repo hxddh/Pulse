@@ -136,6 +136,20 @@ def short_project(name: str) -> str:
     return base[:48]
 
 
+def bounded_sequence(value: list, limit: int = SESSION_CANDIDATE_LIMIT) -> list:
+    """Keep both ends of a large session list within the parse budget.
+
+    Vendors differ on ordering: some append the newest session, others place
+    it first. Taking only `value[:N]` made a large shared cache look idle when
+    its active records lived at the tail. A head/tail sample preserves both
+    conventions while keeping recursive JSON walks bounded.
+    """
+    if len(value) <= limit:
+        return value
+    half = max(1, limit // 2)
+    return list(value[:half]) + list(value[-half:])
+
+
 def decode_claude_project_dir(name: str) -> str:
     """Best-effort: -Users-me-code-Pulse → /Users/me/code/Pulse"""
     s = (name or "").strip()
@@ -1830,9 +1844,16 @@ def recent_files_under(root: Path, patterns: tuple[str, ...] = ("*.json", "*.jso
             paths.extend(str(p) for p in root.rglob(pat) if p.is_file())
     except OSError:
         return []
-    # Cap walk cost: newest() already sorts by mtime
-    if len(paths) > 200:
-        paths = paths[:200]
+    # Cap walk cost only after ranking by mtime. `rglob` order is not a
+    # recency order, so slicing first silently discarded newer sessions that
+    # happened to be visited later in a large cache tree.
+    candidate_limit = max(200, limit * 4)
+    if len(paths) > candidate_limit:
+        try:
+            paths.sort(key=lambda raw: Path(raw).stat().st_mtime, reverse=True)
+        except OSError:
+            pass
+        paths = paths[:candidate_limit]
     return newest(paths, limit)
 
 
@@ -1885,7 +1906,7 @@ def observed_session_from_json(obj) -> tuple[str, str, str]:
         if depth > 7:
             continue
         if isinstance(value, list):
-            for item in value[:200]:
+            for item in bounded_sequence(value):
                 stack.append((item, context, depth + 1))
             continue
         if not isinstance(value, dict):
@@ -1963,7 +1984,7 @@ def observed_sessions_from_json(obj, limit: int = MAX_SESSIONS_PER_AGENT) -> lis
         if depth > 7:
             continue
         if isinstance(value, list):
-            for item in value[:200]:
+            for item in bounded_sequence(value):
                 stack.append((item, context, depth + 1))
             continue
         if not isinstance(value, dict):
@@ -2134,7 +2155,7 @@ def observed_facts_from_json(obj) -> dict:
         if depth > 7:
             continue
         if isinstance(value, list):
-            for item in value[:200]:
+            for item in bounded_sequence(value):
                 stack.append((item, context, depth + 1))
             continue
         if not isinstance(value, dict):
@@ -2247,7 +2268,11 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
     out: list[tuple] = []
     seen_sessions: set[str] = set()
     for store in vscode_global_storage_dirs(*needles):
-        files = recent_files_under(store, ("*.json", "*.jsonl"), limit=10)
+        # The row budget is 64 per agent.  A smaller adapter-local cap made
+        # sessions 5+ disappear before SnapshotBuilder could apply its own
+        # visibility budget, which was especially noticeable in Cursor-like
+        # extensions with several active conversations.
+        files = recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT)
         for f in files:
             try:
                 age = time.time() - f.stat().st_mtime
@@ -2354,8 +2379,8 @@ def continue_activities() -> list[tuple]:
     for root in roots:
         if not root.is_dir():
             continue
-        files.extend(recent_files_under(root, ("*.json", "*.jsonl"), limit=10))
-    files = newest([str(f) for f in files], 8)
+        files.extend(recent_files_under(root, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT))
+    files = newest([str(f) for f in files], MAX_SESSIONS_PER_AGENT)
     for f in files:
         text = tail_bytes(f, 140_000)
         low = text.lower()
@@ -2408,7 +2433,7 @@ def copilot_activities() -> list[tuple]:
         return out
     sessions.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
 
-    for sdir in sessions[:6]:
+    for sdir in sessions[:MAX_SESSIONS_PER_AGENT]:
         events = sdir / "events.jsonl"
         ws = sdir / "workspace.yaml"
         plan = sdir / "plan.md"
@@ -2464,8 +2489,8 @@ def amazon_q_activities() -> list[tuple]:
     files: list[str] = []
     for root in roots:
         if root.is_dir():
-            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md", "*.txt"), limit=10))
-    for f in newest(files, 10):
+            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md", "*.txt"), limit=MAX_SESSIONS_PER_AGENT))
+    for f in newest(files, MAX_SESSIONS_PER_AGENT):
         text = tail_bytes(Path(f), 100_000)
         low = text.lower()
         if not any(x in low for x in ("chat", "message", "prompt", "agent", "tool", "q ")):
@@ -2507,7 +2532,7 @@ def zed_agent_activities() -> list[tuple]:
                 files.extend(str(p) for p in root.glob(pat) if p.is_file() and p.stat().st_size < 8_000_000)
             except OSError:
                 continue
-    for f in newest(files, 10):
+    for f in newest(files, MAX_SESSIONS_PER_AGENT):
         text = tail_bytes(Path(f), 120_000)
         low = text.lower()
         if not any(x in low for x in ("agent", "tool", "message", "thread", "assistant", "ask")):
@@ -2538,8 +2563,8 @@ def openhands_activities() -> list[tuple]:
     files: list[str] = []
     for root in roots:
         if root.is_dir():
-            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=12))
-    for f in newest(files, 10):
+            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=MAX_SESSIONS_PER_AGENT))
+    for f in newest(files, MAX_SESSIONS_PER_AGENT):
         text = tail_bytes(Path(f), 120_000)
         low = text.lower()
         if "trajectory" not in low and "event" not in low and "action" not in low and "message" not in low:
@@ -2598,7 +2623,7 @@ def roo_activities() -> list[tuple]:
     if len(out) >= MAX_SESSIONS_PER_AGENT and any(r[4] == "pending" for r in out):
         return out
     for store in vscode_global_storage_dirs("roo-cline", "roo-code", "rooveterinary", "RooCode"):
-        for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=8):
+        for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
             text = tail_bytes(f, 120_000)
             low = text.lower()
             pending = text_looks_pending(text) or any(
@@ -2628,7 +2653,7 @@ def kilo_activities() -> list[tuple]:
     if any(r[4] == "pending" for r in out):
         return out
     for store in vscode_global_storage_dirs("kilocode", "kilo-code", "kilo.code"):
-        for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=6):
+        for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
             text = tail_bytes(f, 100_000)
             pending = text_looks_pending(text)
             task = session_title_from_text(text) or "Kilo session"
@@ -2657,8 +2682,8 @@ def cascade_windsurf_activities() -> list[tuple]:
     files: list[str] = []
     for root in roots:
         if root.is_dir():
-            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl"), limit=10))
-    for f in newest(files, 8):
+            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT))
+    for f in newest(files, MAX_SESSIONS_PER_AGENT):
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
         text = tail_bytes(Path(f), 100_000)
@@ -2686,8 +2711,8 @@ def augment_activities() -> list[tuple]:
     files: list[str] = []
     for root in roots:
         if root.is_dir():
-            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl"), limit=8))
-    for f in newest(files, 6):
+            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT))
+    for f in newest(files, MAX_SESSIONS_PER_AGENT):
         text = tail_bytes(Path(f), 80_000)
         task = session_title_from_text(text) or "Augment session"
         cwd = extract_field(text, "cwd") or ""
@@ -2711,7 +2736,7 @@ def trae_activities() -> list[tuple]:
     for root in roots:
         if not root.is_dir():
             continue
-        for f in recent_files_under(root, ("*.json", "*.jsonl"), limit=8):
+        for f in recent_files_under(root, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
             text = tail_bytes(f, 100_000)
             low = text.lower()
             if "agent" not in low and "agent" not in str(f).lower() and "chat" not in low:
@@ -2746,7 +2771,7 @@ def warp_agent_activities() -> list[tuple]:
                 )
             except OSError:
                 continue
-    for f in newest(files, 10):
+    for f in newest(files, MAX_SESSIONS_PER_AGENT):
         text = tail_bytes(Path(f), 100_000)
         low = text.lower()
         if not any(x in low for x in ("agent", "warp ai", "tool_call", "approval", "ask", "permission")):
@@ -2768,8 +2793,8 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS
     files: list[str] = []
     for root in roots:
         if root.is_dir():
-            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=8))
-    for f in newest(files, 8):
+            files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=MAX_SESSIONS_PER_AGENT))
+    for f in newest(files, MAX_SESSIONS_PER_AGENT):
         path = Path(f)
         text = tail_bytes(path, 100_000)
         task, cwd, sid = observed_session_from_text(text)
@@ -2836,7 +2861,7 @@ def cline_activities() -> list[tuple]:
         "autoApproval",
     )
     for store in vscode_global_storage_dirs("saoudrizwan.claude-dev", "claude-dev", "cline"):
-        for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=8):
+        for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
             text = tail_bytes(f, 120_000)
             low = text.lower()
             pending = text_looks_pending(text) or any(n in low for n in extra_needles)
@@ -2866,7 +2891,7 @@ def droid_activities() -> list[tuple]:
     out: list[tuple] = []
     if not root.is_dir():
         return out
-    files = newest([str(p) for p in root.rglob("*.jsonl") if p.is_file()], 8)
+    files = newest([str(p) for p in root.rglob("*.jsonl") if p.is_file()], MAX_SESSIONS_PER_AGENT)
     for f in files:
         text = tail_bytes(f, 160_000)
         # First line often metadata
@@ -2903,7 +2928,7 @@ def command_code_activities() -> list[tuple]:
     out: list[tuple] = []
     if not root.is_dir():
         return out
-    metas = newest([str(p) for p in root.rglob("*.meta.json") if p.is_file()], 8)
+    metas = newest([str(p) for p in root.rglob("*.meta.json") if p.is_file()], MAX_SESSIONS_PER_AGENT)
     seen: set[str] = set()
     for meta_path in metas:
         mp = Path(meta_path)
@@ -2976,7 +3001,7 @@ def kimi_activities() -> list[tuple]:
                         p = home / p
                     if p.is_dir():
                         candidates.append(p)
-                if len(candidates) >= 6:
+                if len(candidates) >= MAX_SESSIONS_PER_AGENT:
                     break
         except OSError:
             pass
@@ -2986,7 +3011,7 @@ def kimi_activities() -> list[tuple]:
                 candidates.append(p.parent)
         except OSError:
             pass
-        candidates = sorted(candidates, key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)[:6]
+        candidates = sorted(candidates, key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)[:MAX_SESSIONS_PER_AGENT]
 
     for sdir in candidates:
         state = sdir / "state.json"
@@ -3121,7 +3146,7 @@ def gemini_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             pass
 
     paths = glob.glob(str(HOME / ".gemini" / "tmp" / "*" / "chats" / "session-*"))
-    files = newest(paths, 8)
+    files = newest(paths, MAX_SESSIONS_PER_AGENT)
     out: list[tuple[str, int, int, str, str, str, str]] = []
     seen: set[str] = set()
     for f in files:
@@ -3217,12 +3242,12 @@ def opencode_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.4)
         try:
             rows = con.execute(
-                """
+                f"""
                 SELECT id, title, directory, tokens_input, tokens_output, time_updated
                 FROM session
                 WHERE IFNULL(time_archived, 0) = 0
                 ORDER BY time_updated DESC
-                LIMIT 6
+                LIMIT {MAX_SESSIONS_PER_AGENT}
                 """
             ).fetchall()
         finally:
@@ -3262,6 +3287,7 @@ def opencode_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 project[:48],
                 cwd[:240],
                 ms,
+                str(sid)[:80],
             )
         )
         if len(out) >= MAX_SESSIONS_PER_AGENT:
@@ -3744,7 +3770,7 @@ def aider_activities() -> list[tuple]:
             value = raw.decode("utf-8", errors="replace")
             if value.startswith(home_prefix):
                 paths.append(Path(value))
-                if len(paths) >= 12:
+                if len(paths) >= MAX_SESSIONS_PER_AGENT:
                     break
     except (OSError, subprocess.SubprocessError):
         pass
@@ -3765,7 +3791,7 @@ def aider_activities() -> list[tuple]:
     seen_files: set[str] = set()
 
     def scan_root(root: Path, max_depth: int = 3) -> None:
-        if not root.is_dir() or len(paths) >= 6:
+        if not root.is_dir() or len(paths) >= MAX_SESSIONS_PER_AGENT:
             return
         root_depth = len(root.parts)
         try:
@@ -3792,16 +3818,16 @@ def aider_activities() -> list[tuple]:
                         continue
                     seen_files.add(sp)
                     paths.append(f)
-                    if len(paths) >= 6:
+                    if len(paths) >= MAX_SESSIONS_PER_AGENT:
                         return
         except OSError:
             return
 
     for root in roots:
         scan_root(root)
-        if len(paths) >= 6:
+        if len(paths) >= MAX_SESSIONS_PER_AGENT:
             break
-    files = newest([str(p) for p in paths], 4)
+    files = newest([str(p) for p in paths], MAX_SESSIONS_PER_AGENT)
     out: list[tuple] = []
     for f in files:
         text = ""
@@ -3868,7 +3894,7 @@ def goose_activities() -> list[tuple]:
                 files.extend(root.glob(pat))
             except OSError:
                 pass
-    files = [Path(p) for p in newest([str(f) for f in files if f.is_file()], 8)]
+    files = [Path(p) for p in newest([str(f) for f in files if f.is_file()], MAX_SESSIONS_PER_AGENT)]
     out: list[tuple] = []
     seen: set[str] = set()
     for f in files:

@@ -27,6 +27,7 @@ import contextlib
 import importlib
 import io
 import json
+import os
 import re
 import sys
 import tempfile
@@ -102,6 +103,21 @@ def check_helper_contract(d: Path) -> int:
         return fail("records must not be invented for a format we cannot count")
     if A.session_stats(d / "nope.jsonl", per_session=True) != {}:
         return fail("a missing file must degrade, not raise")
+
+    # A recursive cache walk can contain hundreds of unrelated files. The
+    # newest session must survive the bounded walk even when the filesystem
+    # enumerates it after the first page of entries.
+    many = d / "large-cache"
+    many.mkdir()
+    for i in range(205):
+        old = many / f"old-{i}.json"
+        old.write_text("{}", encoding="utf-8")
+        os.utime(old, (1_000 + i, 1_000 + i))
+    fresh = many / "fresh-session.json"
+    fresh.write_text("{}", encoding="utf-8")
+    os.utime(fresh, (time.time(), time.time()))
+    if fresh not in A.recent_files_under(many, ("*.json",), limit=1):
+        return fail("bounded recursive scan discarded the newest session")
 
     fake_secret = "sk-proj-ExampleSecret123456789"
     redacted = A.redact_sensitive(
@@ -206,6 +222,24 @@ def check_helper_contract(d: Path) -> int:
         )
     if len({row[2] for row in recovered}) != MULTI_SESSION_TEST_COUNT:
         return fail(f"shared extension sessions were not kept distinct: {recovered}")
+    long_nested = {
+        "state": {
+            "sessions": [
+                {"sessionId": f"old-{i}", "title": f"Old task {i}"}
+                for i in range(220)
+            ] + [
+                {
+                    "sessionId": f"tail-{i}",
+                    "title": f"Tail task {i}",
+                    "workspacePath": f"/Users/me/code/tail-{i}",
+                }
+                for i in range(1, MULTI_SESSION_TEST_COUNT + 1)
+            ]
+        }
+    }
+    tail_rows = A.observed_sessions_from_json(long_nested)
+    if len(tail_rows) < MULTI_SESSION_TEST_COUNT or not any(row[2] == "tail-6" for row in tail_rows):
+        return fail("large shared cache lost active tail sessions during bounded parsing")
     config = {
         "profile": {"name": "Default"},
         "model": {"name": "claude_sonnet"},
@@ -640,12 +674,15 @@ def check_collectors(home: Path) -> int:
         fn = extension_functions[name]
         cases.append((name, path, lambda name=name, fn=fn: A.emit_all(name, fn())))
 
-    aider = home / "code" / "Pulse" / ".aider.chat.history.md"
-    aider.parent.mkdir(parents=True, exist_ok=True)
-    aider.write_text(
-        "# aider chat\nObserve aider activity\n", encoding="utf-8"
-    )
-    cases.append(("aider", aider, lambda: A.emit_all("aider", A.aider_activities())))
+    aider_files: list[Path] = []
+    for i in range(1, MULTI_SESSION_TEST_COUNT + 1):
+        aider = home / "code" / f"Pulse-{i}" / ".aider.chat.history.md"
+        aider.parent.mkdir(parents=True, exist_ok=True)
+        aider.write_text(
+            f"# aider chat {i}\nObserve aider activity {i}\n", encoding="utf-8"
+        )
+        aider_files.append(aider)
+    cases.append(("aider", aider_files[0], lambda: A.emit_all("aider", A.aider_activities())))
 
     command_dir = home / ".commandcode" / "projects" / "pulse"
     command_meta = write_session(command_dir / "command-fixture.meta.json", "command_code")
@@ -744,10 +781,11 @@ def check_collectors(home: Path) -> int:
         "(id TEXT, title TEXT, directory TEXT, tokens_input INTEGER, "
         "tokens_output INTEGER, time_updated INTEGER, time_archived INTEGER)"
     )
-    con.execute(
-        "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, 0)",
-        ("opencode-fixture", "Observe OpenCode activity", "/Users/me/code/Pulse", 120, 30, now_ms),
-    )
+    for i in range(1, MULTI_SESSION_TEST_COUNT + 1):
+        con.execute(
+            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (f"opencode-fixture-{i}", f"Observe OpenCode activity {i}", "/Users/me/code/Pulse", 120 + i, 30 + i, now_ms - i),
+        )
     con.commit()
     con.close()
     cases.append(("opencode", opencode_db, lambda: A.emit_all("opencode", A.opencode_activities())))
@@ -825,6 +863,14 @@ def check_collectors(home: Path) -> int:
             ]
             if any(row[COL_MODE] != "local" for row in local_rows):
                 return fail(f"Cursor local session mode was not preserved: {local_rows}")
+        if name in {"aider", "opencode"}:
+            if len(rows) != MULTI_SESSION_TEST_COUNT:
+                return fail(
+                    f"{name} emitted {len(rows)} active sessions; "
+                    f"expected {MULTI_SESSION_TEST_COUNT}"
+                )
+            if len({row[COL_SESSION] for row in rows}) != MULTI_SESSION_TEST_COUNT:
+                return fail(f"{name} active sessions collapsed during emission: {rows}")
         row = rows[0]
         if len(row) != COLUMNS:
             return fail(f"{name} emitted {len(row)} columns: {row}")
@@ -952,6 +998,10 @@ def main() -> int:
                 f"{label} bypasses the product-wide "
                 f"{A.MAX_SESSIONS_PER_AGENT}-session budget"
             )
+    for line in source.splitlines():
+        if "recent_files_under(" in line and "def recent_files_under" not in line and "limit=" in line:
+            if "limit=MAX_SESSIONS_PER_AGENT" not in line:
+                return fail(f"adapter scan has a private session cap: {line.strip()}")
     # Named, not counted. "23 of 32 harvesters" was true and nearly worthless
     # while Claude, Codex and Gemini — the ones people leave open — were not
     # among them, and a threshold of ">= 15" could never have said so.

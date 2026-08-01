@@ -689,8 +689,24 @@ final class RowMetricsTests: XCTestCase {
 
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.contains("Now") && signal.contains("Testing"), signal)
-        XCTAssertTrue(signal.contains("Progress moved to 18/31"), signal)
+        XCTAssertTrue(signal.contains("18/31"), signal)
         XCTAssertFalse(signal.components(separatedBy: "18/31").count > 2, signal)
+    }
+
+    @MainActor
+    func testSignalLineKeepsCompactEvidenceWhenAChangeAndModelContextCompete() {
+        var r = row(inTok: 12_000, outTok: 3_000)
+        r.task = "Improve observability"
+        r.phase = "testing"
+        r.model = "gpt-5"
+        r.errors = 1
+        r.activityChange = .modelCall
+        r.liveProcess = true
+
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("Changed"), signal)
+        XCTAssertTrue(signal.contains("1 failure"), signal)
+        XCTAssertFalse(signal.contains("Latest model call"), "default signal should stay scan-friendly: \(signal)")
     }
 
     @MainActor

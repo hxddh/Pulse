@@ -1073,14 +1073,18 @@ final class StatusStore: ObservableObject {
                 "scan done #\(ticket) \(ms)ms harvest=\(why) procs=\(procs.count) " +
                 "att=\(attention.count) procIds=\(procs.map(\.id.rawValue).joined(separator: ","))"
             )
-            DispatchQueue.main.async {
+            // Capture the optional as a value before crossing queues. Swift 6
+            // diagnoses a mutable local captured by the main-queue closure,
+            // even though the scan queue has finished assigning it here.
+            let completedHarvestMs = harvestMs
+            DispatchQueue.main.async { [completedHarvestMs] in
                 AppServices.store.applyScan(
                     procs: procs,
                     harvest: outcome,
                     processSignature: signature,
                     attention: attention,
                     ticket: ticket,
-                    harvestMs: harvestMs,
+                    harvestMs: completedHarvestMs,
                     clearRefreshing: showSpinner
                 )
             }
@@ -1568,17 +1572,18 @@ final class StatusStore: ObservableObject {
     func rowSignalLine(_ row: AgentRow) -> String {
         guard !row.waiting else { return "" }
         let lifecycle = rowNowLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
-        let changed = rowActivityChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
-        let metrics = rowMetrics(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let changed = rowSignalChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let metrics = rowSignalMetric(row).trimmingCharacters(in: .whitespacesAndNewlines)
         let observation = rowObservationLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
         var bits: [String] = []
         if !lifecycle.isEmpty { bits.append(lifecycle) }
         if !changed.isEmpty {
             bits.append(changed)
-            // A changing progress/error signal is more useful next to stable
-            // model/mode context than beside a second copy of the same counter.
-            if !observation.isEmpty { bits.append(observation) }
-            else if !metrics.isEmpty { bits.append(metrics) }
+            // The stable metric is the strongest proof that work is happening.
+            // Prefer it over model/mode labels, which are useful context but do
+            // not answer "what changed?" and used to hide failures/tokens.
+            if !metrics.isEmpty { bits.append(metrics) }
+            else if !observation.isEmpty { bits.append(observation) }
         } else {
             if !metrics.isEmpty { bits.append(metrics) }
             if !observation.isEmpty { bits.append(observation) }
@@ -1587,6 +1592,70 @@ final class StatusStore: ObservableObject {
             bits.append(String(format: tr(.processCount), row.processCount))
         }
         return bits.prefix(3).joined(separator: " · ")
+    }
+
+    /// Compact counterpart to the full change sentence used by accessibility
+    /// and diagnostics. The default row has a single-line width budget, so a
+    /// terse phase/count label keeps the numeric evidence at the end visible.
+    private func rowSignalChange(_ row: AgentRow) -> String {
+        guard !row.waiting, let change = row.activityChange else { return "" }
+        switch change {
+        case .errors(let count):
+            return String(format: tr(.signalErrors), count)
+        case .files(let count):
+            return String(format: tr(.signalFiles), count)
+        case .progress(let done, let total):
+            return String(format: tr(.signalProgress), done, total)
+        case .modelCall:
+            return tr(.signalModel)
+        case .completed:
+            return tr(.signalCompleted)
+        case .failed:
+            return tr(.signalFailed)
+        case .cancelled:
+            return tr(.signalCancelled)
+        }
+    }
+
+    /// A compact, priority-ordered metric for the one-line live signal. The
+    /// full `rowMetrics` string remains available to accessibility and the
+    /// expanded detail surface; this version keeps the default tray glance
+    /// from truncating its only numeric evidence after a long change label.
+    private func rowSignalMetric(_ row: AgentRow) -> String {
+        guard !row.waiting else { return "" }
+        let change = row.activityChange
+        if row.errors > 0, !isErrorChange(change) {
+            return row.errors == 1
+                ? tr(.errorFactOne)
+                : String(format: tr(.errorsFact), row.errors)
+        }
+        if let outcome = readableFailure(row.outcome), !isFailureChange(change) {
+            return outcome
+        }
+        if row.progressTotal > 0, !isProgressChange(change) {
+            return String(format: tr(.progressFact), row.progressDone, row.progressTotal)
+        }
+        if row.progressDone > 0, !isProgressChange(change) {
+            return String(format: tr(.turnsFact), row.progressDone)
+        }
+        if row.subTotal > 0 {
+            return row.subRunning > 0
+                ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
+                : String(format: tr(.subagentsObserved), row.subTotal)
+        }
+        if row.files > 0, !isFilesChange(change) {
+            return String(format: tr(.filesFact), row.files)
+        }
+        if row.contextPercent > 0 {
+            return String(format: tr(.contextFact), row.contextPercent)
+        }
+        let input = AgentRow.compactToken(row.tokensIn)
+        let output = AgentRow.compactToken(row.tokensOut)
+        if !input.isEmpty || !output.isEmpty {
+            return String(format: tr(.compactTokens), input.isEmpty ? "0" : input, output.isEmpty ? "0" : output)
+        }
+        if row.records > 0 { return "\(row.records)\(tr(.recordsSuffix))" }
+        return ""
     }
 
     private func isErrorChange(_ change: AgentActivityChange?) -> Bool {
