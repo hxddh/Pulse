@@ -578,11 +578,11 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertEqual(store().rowObservationLine(loaded), "", "a waiting row carries no telemetry line")
     }
 
-    /// The same row, not waiting, keeps stable model context separate from one
-    /// strongest progress fact. Session age shares the context line instead of
-    /// creating another row.
+    /// The same row, not waiting, keeps stable model context separate from two
+    /// complementary execution facts. Session age shares the context line
+    /// instead of creating another row.
     @MainActor
-    func testTheSameRowNotWaitingPrioritisesOneProgressFact() {
+    func testTheSameRowNotWaitingKeepsComplementaryExecutionFacts() {
         var loaded = row(
             inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
             records: 34, startedAgo: 3 * 3600
@@ -594,7 +594,7 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(metrics.contains("2 of 5"), metrics)
         XCTAssertEqual(observation, "")
         XCTAssertTrue(context.contains("3h"), context)
-        XCTAssertFalse(metrics.contains("12k"), metrics)
+        XCTAssertTrue(metrics.contains("12k"), metrics)
         XCTAssertFalse(metrics.contains("34"), metrics)
     }
 
