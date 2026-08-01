@@ -2,6 +2,27 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.40.0 — 观测语义与交互可靠性修复
+
+### 可观测性
+
+- Codex rollout 现在读取真实模型与上下文窗口占用，托盘默认展示模型、Context 使用率和最近一轮 token，
+  不再把高价值运行事实留在诊断层。
+- Codex Desktop 的转义 shell 调用按 Reading、Testing、Building、Editing、Publishing 等语义阶段展示；
+  `write_stdin`、`latest` 等工具名不再因子串匹配被误判。
+- 31 个 Agent 的支持健康评分按实际能力计分；没有 Waiting 协议的 Agent 按 4 项适用信号评估，
+  不再因不存在的能力被降级。
+
+### 交互与精致度
+
+- 每行更多操作菜单与整行聚焦动作解耦，避免点击“…”误触主动作，并保持键盘与 VoiceOver 路径可用。
+- 保持单一圆角面板、无上下长条、默认展开和原始 tool/skill 名称不进入主界面的信息架构。
+
+### 验证
+
+- 31 个 collector fixture、32 个 Agent 图标、覆盖矩阵、外观门禁和打包资源自检全部通过。
+- 当前 macOS Command Line Tools 环境缺少 XCTest 模块，Swift 单元测试需在完整 Xcode runner 上执行。
+
 ## 0.39.0 — 每个 Agent 都有可解释的执行信号
 
 ### 可观测性
