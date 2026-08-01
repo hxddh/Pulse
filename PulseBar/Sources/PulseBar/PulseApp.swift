@@ -741,14 +741,12 @@ struct TrayPanel: View {
         // was no way to notice except by looking.
         // 420 pt regularly orphaned the next group heading at the bottom
         // ("Recent 1" with no row), which reads like missing data rather than
-        // scrollable content. 500 still fits a compact menu-bar panel while
-        // keeping the first row of the fourth state visible.
-        // The wait row is intentionally information-rich (reason, signal,
-        // age, and two actions), so a 500pt cap cut the next session in half
-        // even when only seven rows existed. Give the default glance enough
-        // room for complete rows; scrolling remains the guard for large
-        // workspaces.
-        let cap: CGFloat = store.showAllAgents ? 660 : 580
+        // scrollable content. The wait row is intentionally information-rich
+        // (reason, signal, age, and two actions), so a short cap cut the next
+        // session in half even when only seven rows existed. Keep the default
+        // glance tall enough for complete rows; scrolling remains the guard
+        // for large workspaces.
+        let cap: CGFloat = store.showAllAgents ? 700 : 660
 
         let groups = groupedRows
         return VStack(spacing: 0) {
@@ -1015,20 +1013,6 @@ private struct AgentRowButton: View {
                                 .lineLimit(compact || row.isProcessOnly ? 1 : 2)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            if !nowLine.isEmpty {
-                                Text(nowLine)
-                                    .font(.system(size: 10.75, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-
-                            if !activityChange.isEmpty {
-                                Text(activityChange)
-                                    .font(.system(size: 10.75, weight: .medium))
-                                    .foregroundStyle(TrayChrome.runAccent)
-                                    .lineLimit(1)
-                            }
-
                             if !contextLine.isEmpty {
                                 Text(contextLine)
                                     .font(.system(size: 10.75))
@@ -1037,12 +1021,13 @@ private struct AgentRowButton: View {
                                     .truncationMode(.middle)
                             }
 
-                            if !metrics.isEmpty {
-                                Text(metrics)
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(.tertiary)
+                            if !signalLine.isEmpty {
+                                Text(signalLine)
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                     .lineLimit(1)
+                                    .truncationMode(.tail)
                             }
 
                             // Waiting rows get a third line, because the actual
@@ -1054,18 +1039,6 @@ private struct AgentRowButton: View {
                                     .lineLimit(2)
                             }
 
-                            // Core observability is content, not a disclosure.
-                            // Token activity, subagent progress and record count
-                            // used to require hover + Details, making the tray
-                            // look static until the user interrogated it.
-                            if !observationLine.isEmpty && (!compact || metrics.isEmpty) {
-                                Text(observationLine)
-                                    .font(.system(size: 10.5, weight: .regular))
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
                         }
                     }
                     .padding(.trailing, TrayChrome.headerControlSize + 4)
@@ -1162,6 +1135,7 @@ private struct AgentRowButton: View {
     private var nowLine: String { store.rowNowLine(row) }
     private var activityChange: String { store.rowActivityChange(row) }
     private var observationLine: String { store.rowObservationLine(row) }
+    private var signalLine: String { store.rowSignalLine(row) }
     private var sourceLabel: String? {
         switch row.observationSource {
         // A real session is the normal case. Labelling every healthy row

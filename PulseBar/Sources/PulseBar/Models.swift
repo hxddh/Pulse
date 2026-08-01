@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.40.0"
+    static let semver = "0.41.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -358,6 +358,7 @@ struct AgentRow: Identifiable, Hashable {
         if junk.contains(t) { return nil }
         let low = t.lowercased()
         let agent = agent.displayName.lowercased()
+        if low == agent { return nil }
         let genericSuffixes = [" session", " thread", " chat", " task", " agent"]
         if genericSuffixes.contains(where: { low == agent + $0 }) { return nil }
         if t.hasPrefix("/"), !t.contains(" ") { return nil }

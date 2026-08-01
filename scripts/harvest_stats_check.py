@@ -122,6 +122,13 @@ def check_helper_contract(d: Path) -> int:
     )
     if generic:
         return fail("generic cache placeholder was promoted to a session")
+    structured_placeholder = emit_to_line(
+        "grok",
+        ("Grok session", 0, 0, "", "", "", "", int(time.time() * 1000), "grok-session"),
+        evidence=A.EVIDENCE_SESSION,
+    )
+    if structured_placeholder:
+        return fail("bare structured placeholder was promoted to a session")
     preference = {
         "theme": "dark",
         "model": "agent-model",

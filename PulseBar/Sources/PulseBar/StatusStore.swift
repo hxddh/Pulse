@@ -1525,15 +1525,16 @@ final class StatusStore: ObservableObject {
         // only failure. Keep one line, but carry the two strongest independent
         // signals so every supported agent has a useful default glance.
         var facts: [String] = []
-        if row.errors > 0 {
+        let change = row.activityChange
+        if row.errors > 0, !isErrorChange(change) {
             facts.append(row.errors == 1
                 ? tr(.errorFactOne)
                 : String(format: tr(.errorsFact), row.errors))
         }
-        if let outcome = readableFailure(row.outcome) { facts.append(outcome) }
-        if row.progressTotal > 0 {
+        if let outcome = readableFailure(row.outcome), !isFailureChange(change) { facts.append(outcome) }
+        if row.progressTotal > 0, !isProgressChange(change) {
             facts.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
-        } else if row.progressDone > 0 {
+        } else if row.progressDone > 0, !isProgressChange(change) {
             facts.append(String(format: tr(.turnsFact), row.progressDone))
         }
         if row.subTotal > 0 {
@@ -1541,7 +1542,7 @@ final class StatusStore: ObservableObject {
                 ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
                 : String(format: tr(.subagentsObserved), row.subTotal))
         }
-        if row.files > 0 { facts.append(String(format: tr(.filesFact), row.files)) }
+        if row.files > 0, !isFilesChange(change) { facts.append(String(format: tr(.filesFact), row.files)) }
         if row.contextPercent > 0 { facts.append(String(format: tr(.contextFact), row.contextPercent)) }
         let input = AgentRow.compactToken(row.tokensIn)
         let output = AgentRow.compactToken(row.tokensOut)
@@ -1557,6 +1558,55 @@ final class StatusStore: ObservableObject {
         }
         if row.records > 0 { facts.append("\(row.records)\(tr(.recordsSuffix))") }
         return facts.prefix(2).joined(separator: " · ")
+    }
+
+    /// One bounded execution signal line for the default row. The panel's
+    /// previous stack rendered lifecycle, change, metrics, and model context
+    /// as four separate blocks, so a multi-fact session pushed later rows below
+    /// the viewport. Keep the same evidence, but give it one scan target and
+    /// suppress facts already represented by the transient change label.
+    func rowSignalLine(_ row: AgentRow) -> String {
+        guard !row.waiting else { return "" }
+        let lifecycle = rowNowLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let changed = rowActivityChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let metrics = rowMetrics(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let observation = rowObservationLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        var bits: [String] = []
+        if !lifecycle.isEmpty { bits.append(lifecycle) }
+        if !changed.isEmpty {
+            bits.append(changed)
+            // A changing progress/error signal is more useful next to stable
+            // model/mode context than beside a second copy of the same counter.
+            if !observation.isEmpty { bits.append(observation) }
+            else if !metrics.isEmpty { bits.append(metrics) }
+        } else {
+            if !metrics.isEmpty { bits.append(metrics) }
+            if !observation.isEmpty { bits.append(observation) }
+        }
+        if row.liveProcess, !row.isProcessOnly, row.processCount > 1 {
+            bits.append(String(format: tr(.processCount), row.processCount))
+        }
+        return bits.prefix(3).joined(separator: " · ")
+    }
+
+    private func isErrorChange(_ change: AgentActivityChange?) -> Bool {
+        if case .errors = change { return true }
+        return false
+    }
+
+    private func isFilesChange(_ change: AgentActivityChange?) -> Bool {
+        if case .files = change { return true }
+        return false
+    }
+
+    private func isProgressChange(_ change: AgentActivityChange?) -> Bool {
+        if case .progress = change { return true }
+        return false
+    }
+
+    private func isFailureChange(_ change: AgentActivityChange?) -> Bool {
+        if case .failed = change { return true }
+        return false
     }
 
     /// Stable, useful session evidence that should not require opening a

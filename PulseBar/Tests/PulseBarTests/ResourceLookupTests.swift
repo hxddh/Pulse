@@ -140,6 +140,14 @@ final class RowRedundancyTests: XCTestCase {
             XCTAssertNil(r.usefulTask, "\(agent.displayName) placeholder escaped as a task")
         }
     }
+
+    func testEveryAgentDropsItsOwnBareDisplayName() {
+        for agent in AgentID.allCases {
+            var r = row(agent: agent, task: agent.displayName)
+            r.sessionID = "real-id"
+            XCTAssertNil(r.usefulTask, "\(agent.displayName) alone is identity, not a goal")
+        }
+    }
 }
 
 
@@ -666,6 +674,33 @@ final class RowMetricsTests: XCTestCase {
 
         r.errors = 0
         XCTAssertTrue(store().rowMetrics(r).contains("Context 27%"))
+    }
+
+    @MainActor
+    func testSignalLineCombinesChangingAndStableFactsWithoutProgressDuplication() {
+        var r = row(inTok: 12_000, outTok: 3_000)
+        r.task = "Improve observability"
+        r.phase = "testing"
+        r.progressDone = 18
+        r.progressTotal = 31
+        r.activityChange = .progress(done: 18, total: 31)
+        r.model = "gpt-5"
+        r.liveProcess = true
+
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("Now Testing"), signal)
+        XCTAssertTrue(signal.contains("Progress moved to 18/31"), signal)
+        XCTAssertFalse(signal.components(separatedBy: "18/31").count > 2, signal)
+    }
+
+    @MainActor
+    func testSignalLineShowsMultipleLiveProcessesOnlyForARealSessionRow() {
+        var r = row()
+        r.task = "Cursor work"
+        r.liveProcess = true
+        r.processCount = 4
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("4"), signal)
     }
 
     @MainActor

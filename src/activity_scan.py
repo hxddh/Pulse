@@ -276,6 +276,18 @@ def sum_int_fields(text: str, key: str) -> int:
     return total
 
 
+def token_usage_totals(text: str) -> tuple[int, int]:
+    """Best-effort token totals across common snake/camel-case schemas."""
+    input_keys = ("input_tokens", "prompt_tokens", "inputTokens", "promptTokens")
+    output_keys = ("output_tokens", "completion_tokens", "outputTokens", "completionTokens")
+
+    def total(keys: tuple[str, ...]) -> int:
+        pattern = "|".join(re.escape(key) for key in keys)
+        return sum(int(match.group(1)) for match in re.finditer(rf'"(?:{pattern})"\s*:\s*(\d+)', text))
+
+    return total(input_keys), total(output_keys)
+
+
 def last_tool_name(text: str) -> str:
     names = re.findall(r'"type"\s*:\s*"tool_use"[\s\S]{0,200}?"name"\s*:\s*"([^"]+)"', text)
     if names:
@@ -1555,6 +1567,8 @@ def pi_activities() -> list[tuple]:
         task = session_title_from_text(text) or extract_field(text, "text") or extract_field(text, "content") or ""
         tin = sum_int_fields(text, "input_tokens")
         tout = sum_int_fields(text, "output_tokens")
+        if tin == 0 and tout == 0:
+            tin, tout = token_usage_totals(text)
         tool = last_tool_name_strict(text)
         skill = "pending" if text_looks_pending(text) else ""
         cwd = extract_field(text, "cwd") or extract_field(text, "workingDirectory") or ""
@@ -1642,7 +1656,7 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 continue
             seen.add(key)
             skill = "pending" if (json_looks_pending(obj) or text_looks_pending(json.dumps(obj)[-8000:])) else ""
-            out.append((title[:160] or "Amp thread", 0, 0, "", skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), session_stats(f, per_session=True)))
+            out.append((title[:160] or "Amp thread", 0, 0, "", skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), enrich_session_stats(session_stats(f, per_session=True), json.dumps(obj))))
             if len(out) >= MAX_SESSIONS_PER_AGENT:
                 return out
 
@@ -1703,7 +1717,7 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         skill = ""
         if hist.is_file() and text_looks_pending(tail_bytes(hist, 8_000)):
             skill = "pending"
-        extra = {"mode": mode} if mode else {}
+        extra = enrich_session_stats({"mode": mode} if mode else {}, text if hist.is_file() else "")
         row = (
             title[:160] or "Amp session",
             0,
@@ -2135,10 +2149,15 @@ def observed_facts_from_json(obj) -> dict:
         )
         if context_is_session or has_title or has_sid or has_cwd:
             facts: dict = {}
-            for key in ("phase", "stage", "status", "state"):
+            for key in ("phase", "stage", "currentPhase", "status", "state"):
                 raw = value.get(key)
                 if isinstance(raw, str) and raw.strip():
                     facts["phase"] = raw.strip()[:64]
+                    break
+            for key in ("outcome", "result", "completion", "finalStatus"):
+                raw = value.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    facts["outcome"] = raw.strip()[:64]
                     break
             for key in ("model", "modelId", "model_id", "currentModel", "current_model"):
                 raw = value.get(key)
@@ -2177,6 +2196,50 @@ def observed_facts_from_json(obj) -> dict:
                 child_context = f"{context}.{key}" if context else str(key)
                 stack.append((child, child_context, depth + 1))
     return best[1]
+
+
+def observed_facts_from_text(text: str, limit: int = 120) -> dict:
+    """Merge lifecycle facts from a bounded JSON/JSONL text window.
+
+    A number of IDE adapters have a real session file but no stable top-level
+    schema. Reusing the same conservative fact walker keeps model, phase,
+    mode, progress and outcome extraction consistent without treating a
+    preference blob as a session. Unknown and conflicting values remain
+    unknown rather than being guessed.
+    """
+    if not text:
+        return {}
+    objects: list[object] = []
+    stripped = text.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            objects.append(json.loads(stripped))
+        except Exception:
+            pass
+    if not objects:
+        for line in text.splitlines()[-limit:]:
+            line = line.strip()
+            if not line.startswith(("{", "[")):
+                continue
+            try:
+                objects.append(json.loads(line))
+            except Exception:
+                continue
+    merged: dict = {}
+    for obj in objects:
+        facts = observed_facts_from_json(obj)
+        for key, value in facts.items():
+            if key not in merged:
+                merged[key] = value
+    return merged
+
+
+def enrich_session_stats(stats: dict | None, text: str) -> dict:
+    """Keep record counts and qualified lifecycle facts in one row payload."""
+    merged = dict(stats or {})
+    for key, value in observed_facts_from_text(text).items():
+        merged.setdefault(key, value)
+    return merged
 
 
 def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIONS_PER_AGENT) -> list[tuple]:
@@ -2254,6 +2317,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
                 sid = sid or text_sid
             if not pending:
                 pending = text_looks_pending(text)
+            extra = enrich_session_stats(extra, text)
             if not task:
                 task = session_title_from_text(text) or f"{agent} session"
             project = short_project(cwd) if cwd else short_project(store.name)
@@ -2318,7 +2382,9 @@ def continue_activities() -> list[tuple]:
             for x in ("awaiting_user", "needs_response", "tool_permission", "confirmation")
         )
         skill = "pending" if pending else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
+        extra = session_stats(f, per_session=True)
+        extra.update({k: v for k, v in observed_facts_from_text(text).items() if k not in extra})
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], extra))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -2377,6 +2443,7 @@ def copilot_activities() -> list[tuple]:
         skill = "pending" if pending else ""
         mtime = file_mtime_ms(events if events.is_file() else sdir)
         stats = session_stats(events if events.is_file() else sdir, per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sdir.name[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
@@ -2409,7 +2476,9 @@ def amazon_q_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
+        stats = session_stats(Path(f), per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -2447,7 +2516,9 @@ def zed_agent_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or extract_field(text, "project_path") or extract_field(text, "worktree") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
+        stats = session_stats(Path(f), per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -2483,7 +2554,9 @@ def openhands_activities() -> list[tuple]:
             or "confirmation" in low[-3000:]
             or '"action":"message"' in low[-2000:] and "wait" in low[-2000:]
         ) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
+        stats = session_stats(Path(f), per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -2537,7 +2610,10 @@ def roo_activities() -> list[tuple]:
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(store.name)
             skill = "pending" if pending else ""
-            row = (task[:160], 0, 0, "", skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80])
+            row = (
+                task[:160], 0, 0, "", skill, project[:48], (cwd or "")[:240],
+                file_mtime_ms(f), f.stem[:80], enrich_session_stats({}, text)
+            )
             if pending:
                 out = [row] + [r for r in out if (len(r) < 9 or r[8] != row[8])]
             elif not out:
@@ -2561,7 +2637,7 @@ def kilo_activities() -> list[tuple]:
             skill = "pending" if pending else ""
             if not (task or pending):
                 continue
-            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
+            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], enrich_session_stats(session_stats(f, per_session=True), text)))
             if len(out) >= MAX_SESSIONS_PER_AGENT:
                 return out[:MAX_SESSIONS_PER_AGENT]
     return out[:MAX_SESSIONS_PER_AGENT]
@@ -2598,7 +2674,7 @@ def cascade_windsurf_activities() -> list[tuple]:
         # lines later by `row[:9]`, which also took the stats dict with it —
         # so Cascade paid for the file scan every tick and shipped 0/0. The
         # agent name is chosen by `cascade_block` anyway.
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], enrich_session_stats(session_stats(Path(f), per_session=True), text)))
     return out[:MAX_SESSIONS_PER_AGENT]
 
 
@@ -2617,7 +2693,7 @@ def augment_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], enrich_session_stats(session_stats(Path(f), per_session=True), text)))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -2644,7 +2720,7 @@ def trae_activities() -> list[tuple]:
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(f.stem)
             skill = "pending" if text_looks_pending(text) else ""
-            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], session_stats(f, per_session=True)))
+            out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80], enrich_session_stats(session_stats(f, per_session=True), text)))
             if len(out) >= MAX_SESSIONS_PER_AGENT:
                 return out
     return out
@@ -2679,7 +2755,9 @@ def warp_agent_activities() -> list[tuple]:
         cwd = extract_field(text, "cwd") or extract_field(text, "working_directory") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], session_stats(Path(f), per_session=True)))
+        stats = session_stats(Path(f), per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -2768,7 +2846,10 @@ def cline_activities() -> list[tuple]:
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(store.name)
             skill = "pending" if pending else ""
-            row = (task[:160], 0, 0, "", skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), f.stem[:80])
+            row = (
+                task[:160], 0, 0, "", skill, project[:48], (cwd or "")[:240],
+                file_mtime_ms(f), f.stem[:80], enrich_session_stats({}, text)
+            )
             # Prefer pending rows
             if pending:
                 out = [row] + [r for r in out if r[8:] != row[8:]]
@@ -2808,7 +2889,9 @@ def droid_activities() -> list[tuple]:
             cwd = decode_claude_project_dir(enc) if enc.startswith("-") else ""
         project = short_project(cwd) if cwd else short_project(f.parent.name)
         skill = "pending" if text_looks_pending(text) else ""
-        out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), sid or f.stem[:80], session_stats(f, per_session=True)))
+        stats = session_stats(f, per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(f), sid or f.stem[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out
@@ -2860,6 +2943,7 @@ def command_code_activities() -> list[tuple]:
                 skill = "pending"
         mtime = file_mtime_ms(jl if jl.is_file() else mp)
         stats = session_stats(jl if jl.is_file() else mp, per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
         seen.add(sid)
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sid[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
@@ -2927,6 +3011,7 @@ def kimi_activities() -> list[tuple]:
             wire if wire.is_file() else (state if state.is_file() else sdir),
             per_session=True,
         )
+        stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sid or sdir.name[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
@@ -3100,6 +3185,8 @@ def gemini_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         seen.add(key)
         blob = "\n".join(lines[-120:]) if lines else ""
         skill = "pending" if gemini_has_unresolved_ask(blob) else ""
+        stats = session_stats(f, per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(blob).items() if k not in stats})
         out.append(
             (
                 task[:160],
@@ -3111,7 +3198,7 @@ def gemini_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 (cwd or "")[:240],
                 file_mtime_ms(f),
                 f.stem[:80],
-                session_stats(f, per_session=True),
+                stats,
             )
         )
         if len(out) >= MAX_SESSIONS_PER_AGENT:
@@ -3440,6 +3527,42 @@ def useful_cache_task(agent: str, task: str) -> bool:
     return low not in generic
 
 
+def generic_task_title(agent: str, task: str) -> bool:
+    """Whether a title is only an adapter fallback, not a user goal.
+
+    Structured collectors are allowed to emit a row without a title when they
+    have another useful fact (workspace, phase, tokens, model, or a live tool).
+    They must not promote a bare ``Codex session`` / ``Grok session`` into a
+    first-class task: that is indistinguishable from a random cache file and
+    makes the tray look populated while saying nothing actionable.
+    """
+    value = " ".join((task or "").strip().split()).lower()
+    if not value:
+        return True
+    agent_low = agent.strip().lower()
+    agent_label = re.sub(r"[_-]+", " ", agent_low).strip()
+    generic = {
+        agent_low,
+        agent_label,
+        "chat",
+        "new chat",
+        "new session",
+        "session",
+        "thread",
+        "task",
+        "untitled",
+    }
+    generic.update(
+        f"{agent_low} {suffix}"
+        for suffix in ("agent", "chat", "session", "task", "thread")
+    )
+    generic.update(
+        f"{agent_label} {suffix}"
+        for suffix in ("agent", "chat", "session", "task", "thread")
+    )
+    return value in generic
+
+
 EMITTED_COUNTS: dict[str, int] = {}
 
 
@@ -3491,6 +3614,37 @@ def emit(
     # extension folder names and "<agent> session" placeholders are dropped.
     if evidence == EVIDENCE_CACHE and not useful_cache_task(agent, task):
         if not (cwd or "").strip().startswith("/"):
+            return
+
+    # Structured stores can legitimately omit a title, but a bare fallback
+    # title is still not useful by itself. Keep the row only when another
+    # observed fact can answer what is happening (workspace, action, volume,
+    # lifecycle, model, or progress). This prevents every private session
+    # directory from becoming a meaningless "Agent session" row.
+    if generic_task_title(agent, task):
+        has_signal = any(
+            (
+                (cwd or "").strip().startswith("/"),
+                bool(tool or skill),
+                tin > 0,
+                tout > 0,
+                sub_run > 0,
+                sub_total > 0,
+                records > 0,
+                bool(
+                    phase
+                    or outcome
+                    or model
+                    or (mode and mode.strip().lower() not in {"local", "default", "unknown"})
+                ),
+                errors > 0,
+                files > 0,
+                context_pct > 0,
+                progress_done > 0,
+                progress_total > 0,
+            )
+        )
+        if not has_signal:
             return
 
     EMITTED_COUNTS[agent] = EMITTED_COUNTS.get(agent, 0) + 1
@@ -3748,7 +3902,9 @@ def goose_activities() -> list[tuple]:
         seen.add(sid)
         project = short_project(cwd)
         skill = "pending" if pending else ""
-        out.append((title[:160] or "Goose session", 0, 0, "", skill, project[:48], cwd[:240], file_mtime_ms(f), sid[:80], session_stats(f, per_session=True)))
+        stats = session_stats(f, per_session=True)
+        stats.update({k: v for k, v in observed_facts_from_text(json.dumps(obj)).items() if k not in stats})
+        out.append((title[:160] or "Goose session", 0, 0, "", skill, project[:48], cwd[:240], file_mtime_ms(f), sid[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
     return out

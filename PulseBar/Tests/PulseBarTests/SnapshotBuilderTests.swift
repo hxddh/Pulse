@@ -248,6 +248,16 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.rows.first(where: { $0.agent == .codex })?.observationSource, .session)
     }
 
+    func testHarvestOnlySessionDoesNotInventAProcessCount() {
+        let r = build(harvest: [
+            harvest(.codex, task: "Review telemetry", session: "s1", cwd: "/work/Pulse")
+        ])
+        let row = try! XCTUnwrap(r.rows.first)
+        XCTAssertFalse(row.liveProcess)
+        XCTAssertEqual(row.processCount, 0, "process count must come only from ProcessProbe")
+        XCTAssertEqual(row.observationSource, .session)
+    }
+
     // MARK: Multi-session
 
     func testEachSessionBecomesItsOwnRow() {
@@ -393,6 +403,7 @@ final class SnapshotBuilderTests: XCTestCase {
         )
         XCTAssertEqual(r.rows.filter(\.liveProcess).count, 1, "must not smear across sessions")
         XCTAssertEqual(r.rows.filter { $0.processCount > 1 }.count, 1, "×N must not be inherited")
+        XCTAssertEqual(r.rows.filter { !$0.liveProcess && $0.processCount > 0 }.count, 0, "siblings are harvest-only")
     }
 
     func testLiveProcessWithNoHarvestStillProducesARow() {

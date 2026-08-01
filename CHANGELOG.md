@@ -2,6 +2,26 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.41.0 — 全 Agent 可观测性与托盘密度优化
+
+### 可观测性与稳定性
+
+- harvest-only 会话不再伪造进程数；同一 Agent 的其他会话也不再继承不属于它们的进程计数。
+- Gemini JSONL 读取完整记录；Continue、Copilot、Amazon Q、Zed、OpenHands、Warp、Droid、Command Code、Kimi、Goose 等适配器统一补充可确认的阶段、模型、模式、错误、文件与进度事实。
+- 裸的 Agent 名称、`Agent session`、`Command Code` 等适配器占位标题不再冒充用户任务；没有稳定本地会话协议的 Agent 继续明确标注为有限数据。
+- 新增结构化 outcome 与跨 snake/camel case token 字段解析，并保持未知数据不猜测。
+
+### 交互与精致度
+
+- 默认行将 Now、变化、指标和模型/模式上下文收敛为一条 bounded signal line，去除重复进度并提升扫描效率。
+- 默认托盘视口扩大，等待、运行、停滞和 Recent 混合场景不再把最后一行截断；仍保留滚动与“显示更多”路径。
+- 裸 Agent 名称不再作为会话标题显示；浅色/深色主题继续使用单一圆角面板，无上下长条或蓝色焦点线。
+
+### 验证
+
+- 31 个 Agent 采集门禁、24 列协议、31 个端到端 fixture、覆盖矩阵、图标和外观门禁全部通过。
+- Debug / Release Swift build 通过；本地 Command Line Tools 缺少 XCTest 模块，单元测试需在完整 Xcode runner 执行。
+
 ## 0.40.0 — 观测语义与交互可靠性修复
 
 ### 可观测性

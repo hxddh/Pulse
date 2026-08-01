@@ -233,7 +233,6 @@ enum SnapshotBuilder {
             if act.progressDone > 0 { row.progressDone = act.progressDone }
             if act.progressTotal > 0 { row.progressTotal = act.progressTotal }
             row.observationSource = act.evidence
-            row.processCount = max(row.processCount, 1)
 
             // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.
             if act.skill == "pending", ActivityHarvest.isFresh(act, nowMs: context.nowMs) {
@@ -299,8 +298,9 @@ enum SnapshotBuilder {
                     }
                 } else {
                     row.liveProcess = false
-                    // Don't inherit ×N on sibling sessions.
-                    row.processCount = max(row.processCount, 1)
+                    // Do not inherit any process count on sibling sessions.
+                    // A single ProcessProbe hit is attached to one best row;
+                    // the other rows remain harvest-only observations.
                 }
                 rowsByKey[key] = row
             }
@@ -340,7 +340,32 @@ enum SnapshotBuilder {
             rowsByKey[key] = row
         }
 
-        var all = Array(rowsByKey.values).filter { $0.processCount > 0 || $0.waiting || $0.subRunning > 0 }
+        // A harvest row is still useful without a matching process: a session
+        // store can outlive its CLI process and should remain observable. Do
+        // not manufacture a process count merely to keep it in the tray; the
+        // count is reserved for ProcessProbe evidence.
+        func hasHarvestEvidence(_ row: AgentRow) -> Bool {
+            guard row.observationSource != .process else { return false }
+            return row.harvestMs > 0
+                || row.startedMs > 0
+                || !row.task.isEmpty
+                || !row.cwd.isEmpty
+                || !row.sessionID.isEmpty
+                || !row.model.isEmpty
+                || !row.phase.isEmpty
+                || !row.outcome.isEmpty
+                || row.tokensIn > 0
+                || row.tokensOut > 0
+                || row.records > 0
+                || row.files > 0
+                || row.errors > 0
+                || row.contextPercent > 0
+                || row.progressDone > 0
+                || row.progressTotal > 0
+        }
+        var all = Array(rowsByKey.values).filter {
+            $0.liveProcess || $0.waiting || $0.subRunning > 0 || hasHarvestEvidence($0)
+        }
 
         // Compare the same concrete session with the prior scan. Preserve a
         // meaningful change briefly so a 5-second polling interval does not

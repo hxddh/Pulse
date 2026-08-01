@@ -269,7 +269,10 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         // Keep the default seven-row glance intact. The list itself remains
         // scrollable, but a panel that ends halfway through a row reads as a
         // layout failure rather than an intentional viewport.
-        let height = min(720, max(96, fitting.height))
+        // Keep the default information-rich glance intact. The SwiftUI list
+        // already scrolls when there are many sessions, but capping the host
+        // at 720pt clipped the final row in the common seven-row case.
+        let height = min(780, max(96, fitting.height))
         let inset = StatusPanelChrome.shadowInset
         let target = NSSize(
             width: max(420, fitting.width) + inset * 2,
