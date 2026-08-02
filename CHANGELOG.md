@@ -2,6 +2,21 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.44.1 — Command Code 进程与会话采集修复
+
+### 可观测性与稳定性
+
+- 修复 Node agent 改写进程标题后无法被检测的问题；Command Code 的 `⌘ Command Code` 标题现在与可执行文件路径共同参与识别。
+- Command Code 会话改为头尾有界读取，保留首条用户目标和最新运行事实，不再把 `web_fetch` 等工具结果误当作任务标题。
+- 过滤 `role=user` 中的工具结果，并将真实用户请求、最近动作、模型和工作区信息接入默认展示。
+- 将同类 JSONL agent 采集器统一为头尾读取与用户目标降级策略，避免长会话只剩工具名或空白占位。
+
+### 验证与发布
+
+- 31 个 Agent collector、支持矩阵、图标、外观和 24 列 harvest 协议门禁通过。
+- Swift release build、应用资源 selftest、未签名 DMG 打包和真实托盘截图回归通过。
+- 本版本使用未签名、未公证 macOS DMG；需要在其他 Mac 上运行时可能触发 Gatekeeper。
+
 ## 0.44.0 — 首屏 Agent 目标与运行事实优化
 
 ### 可观测性与交互效率

@@ -733,6 +733,75 @@ def session_title_from_text(text: str) -> str:
     return found[-1] if found else ""
 
 
+def _user_message_text(value) -> str:
+    """Extract visible text from a user message, excluding tool envelopes.
+
+    Command Code stores tool results as ``role=user`` messages. Treating every
+    user-role record as a prompt therefore promoted search output and fetched
+    page text into the session hero, while the actual request was lost. Only
+    text parts are user intent; tool results are transport records.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                kind = str(item.get("type") or "").replace("-", "_").lower()
+                if kind in TOOL_RESULT_TYPES or kind in TOOL_CALL_TYPES:
+                    continue
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+                elif kind in {"input_text", "output_text", "text"}:
+                    content = item.get("content")
+                    if isinstance(content, str):
+                        parts.append(content)
+            elif isinstance(item, str):
+                parts.append(item)
+        return " ".join(parts)
+    if isinstance(value, dict):
+        kind = str(value.get("type") or "").replace("-", "_").lower()
+        if kind in TOOL_RESULT_TYPES or kind in TOOL_CALL_TYPES:
+            return ""
+        text = value.get("text")
+        if isinstance(text, str):
+            return text
+        content = value.get("content")
+        return content if isinstance(content, str) else ""
+    return ""
+
+
+def latest_user_prompt(text: str) -> str:
+    """Latest substantive user request from common message envelopes.
+
+    This is intentionally separate from ``session_title_from_text``: explicit
+    titles are useful metadata, but many agents keep a generic title while the
+    real work is only present in a user message. Walking backwards keeps a
+    recent goal visible without letting tool-result payloads impersonate it.
+    """
+    candidates: list[str] = []
+    for obj in json_records(text):
+        if not isinstance(obj, dict):
+            continue
+        message = obj.get("message")
+        if isinstance(message, dict):
+            role = str(message.get("role") or "").lower()
+            if role == "user":
+                candidate = clean_session_title(_user_message_text(message.get("content")))
+                if candidate:
+                    candidates.append(candidate)
+            continue
+        if str(obj.get("role") or "").lower() == "user":
+            candidate = clean_session_title(_user_message_text(obj.get("content")))
+            if candidate:
+                candidates.append(candidate)
+    for candidate in reversed(candidates):
+        if meaningful_prompt(candidate):
+            return candidate
+    return candidates[-1] if candidates else ""
+
+
 def pi_user_title(text: str) -> str:
     """Return Pi's latest substantive user goal, not a transport command.
 
@@ -1208,7 +1277,7 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
         # Keep fresh sessions, or anything with live-looking subagents
         if age > FRESH_SEC and sub_run == 0:
             continue
-        text = tail_bytes(f)
+        text = head_tail_text(Path(f), 96_000, 400_000)
         project = short_project(f.parent.name)
         cwd = extract_field(text, "cwd") or extract_field(text, "projectDir") or ""
         if cwd:
@@ -1219,7 +1288,7 @@ def claude_activities() -> list[tuple[str, int, int, str, str, str, str, int, in
         if key in seen:
             continue
         seen.add(key)
-        task = session_title_from_text(text) or (task_hint or "")
+        task = latest_user_prompt(text) or session_title_from_text(text) or (task_hint or "")
         # Prefer last usage snapshot (context size now) — never sum every turn.
         tin, tout = last_usage_tokens(text)
         tool = last_tool_name_strict(text)
@@ -1699,7 +1768,7 @@ def pi_activities() -> list[tuple]:
     files = newest(paths, SESSION_CANDIDATE_LIMIT)
     out: list[tuple] = []
     for f in files:
-        text = tail_bytes(f)
+        text = head_tail_text(Path(f), 96_000, 400_000)
         task = normalize_pi_task(
             pi_user_title(text)
             or session_title_from_text(text)
@@ -2410,7 +2479,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
             text = ""
             try:
                 if f.suffix == ".jsonl":
-                    text = tail_bytes(f, 120_000)
+                    text = head_tail_text(f, 64_000, 120_000)
                     # last JSON line
                     last = ""
                     for ln in reversed(text.splitlines()):
@@ -2423,7 +2492,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
                     obj = json.loads(text) if text.lstrip().startswith("{") or text.lstrip().startswith("[") else {}
             except Exception:
                 obj = {}
-                text = tail_bytes(f, 80_000)
+                text = head_tail_text(f, 48_000, 80_000)
             shared_sessions = (
                 observed_sessions_from_json(obj, limit=limit - len(out))
                 if isinstance(obj, (dict, list))
@@ -2471,7 +2540,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
                 pending = text_looks_pending(text)
             extra = enrich_session_stats(extra, text)
             if not task:
-                task = session_title_from_text(text) or f"{agent} session"
+                task = latest_user_prompt(text) or session_title_from_text(text) or f"{agent} session"
             project = short_project(cwd) if cwd else short_project(store.name)
             skill = "pending" if pending else ""
             if not (task or pending or cwd):
@@ -2509,14 +2578,15 @@ def continue_activities() -> list[tuple]:
         files.extend(recent_files_under(root, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT))
     files = newest([str(f) for f in files], MAX_SESSIONS_PER_AGENT)
     for f in files:
-        text = tail_bytes(f, 140_000)
+        text = head_tail_text(f, 64_000, 140_000)
         low = text.lower()
         # Skip pure config/index blobs
         if "models.json" in str(f) or "config.json" in str(f):
             if "session" not in low and "message" not in low:
                 continue
         task = (
-            session_title_from_text(text)
+            latest_user_prompt(text)
+            or session_title_from_text(text)
             or extract_field(text, "title")
             or extract_field(text, "prompt")
             or extract_field(text, "content")
@@ -2564,7 +2634,7 @@ def copilot_activities() -> list[tuple]:
         events = sdir / "events.jsonl"
         ws = sdir / "workspace.yaml"
         plan = sdir / "plan.md"
-        text = tail_bytes(events, 120_000) if events.is_file() else ""
+        text = head_tail_text(events, 64_000, 120_000) if events.is_file() else ""
         title = cwd = ""
         if ws.is_file():
             try:
@@ -2586,7 +2656,7 @@ def copilot_activities() -> list[tuple]:
             except OSError:
                 pass
         if not title:
-            title = session_title_from_text(text) or extract_field(text, "prompt") or "Copilot session"
+            title = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "prompt") or "Copilot session"
         project = short_project(cwd) if cwd else short_project(sdir.name)
         pending = text_looks_pending(text) or any(
             x in text.lower()[-5000:]
@@ -2621,13 +2691,13 @@ def amazon_q_activities() -> list[tuple]:
         if root.is_dir():
             files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md", "*.txt"), limit=MAX_SESSIONS_PER_AGENT))
     for f in newest(files, MAX_SESSIONS_PER_AGENT):
-        text = tail_bytes(Path(f), 100_000)
+        text = head_tail_text(Path(f), 48_000, 100_000)
         low = text.lower()
         if not any(x in low for x in ("chat", "message", "prompt", "agent", "tool", "q ")):
             # still accept amazonq path files
             if "amazon" not in str(f).lower() and "amazonq" not in str(f).lower():
                 continue
-        task = session_title_from_text(text) or extract_field(text, "title") or extract_field(text, "prompt") or "Amazon Q chat"
+        task = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "title") or extract_field(text, "prompt") or "Amazon Q chat"
         cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
@@ -2666,11 +2736,11 @@ def zed_agent_activities() -> list[tuple]:
             except OSError:
                 continue
     for f in newest(files, MAX_SESSIONS_PER_AGENT):
-        text = tail_bytes(Path(f), 120_000)
+        text = head_tail_text(Path(f), 64_000, 120_000)
         low = text.lower()
         if not any(x in low for x in ("agent", "tool", "message", "thread", "assistant", "ask")):
             continue
-        task = session_title_from_text(text) or extract_field(text, "title") or "Zed Agent"
+        task = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "title") or "Zed Agent"
         cwd = extract_field(text, "cwd") or extract_field(text, "project_path") or extract_field(text, "worktree") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
@@ -2698,12 +2768,12 @@ def openhands_activities() -> list[tuple]:
         if root.is_dir():
             files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=MAX_SESSIONS_PER_AGENT))
     for f in newest(files, MAX_SESSIONS_PER_AGENT):
-        text = tail_bytes(Path(f), 120_000)
+        text = head_tail_text(Path(f), 64_000, 120_000)
         low = text.lower()
         if "trajectory" not in low and "event" not in low and "action" not in low and "message" not in low:
             if "session" not in str(f).lower():
                 continue
-        task = session_title_from_text(text) or extract_field(text, "title") or extract_field(text, "message") or "OpenHands"
+        task = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "title") or extract_field(text, "message") or "OpenHands"
         cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or extract_field(text, "workdir") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if (
@@ -2763,14 +2833,14 @@ def roo_activities() -> list[tuple]:
         return out
     for store in vscode_global_storage_dirs("roo-cline", "roo-code", "rooveterinary", "RooCode"):
         for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
-            text = tail_bytes(f, 120_000)
+            text = head_tail_text(f, 64_000, 120_000)
             low = text.lower()
             pending = text_looks_pending(text) or any(
                 n in low for n in ("ask_followup", "needs_approval", "waiting_for_response", "ask_user")
             )
             if not pending and "task" not in low and "message" not in low:
                 continue
-            task = session_title_from_text(text) or extract_field(text, "task") or "Roo task"
+            task = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "task") or "Roo task"
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(store.name)
             skill = "pending" if pending else ""
@@ -2793,9 +2863,9 @@ def kilo_activities() -> list[tuple]:
         return out
     for store in vscode_global_storage_dirs("kilocode", "kilo-code", "kilo.code"):
         for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
-            text = tail_bytes(f, 100_000)
+            text = head_tail_text(f, 48_000, 100_000)
             pending = text_looks_pending(text)
-            task = session_title_from_text(text) or "Kilo session"
+            task = latest_user_prompt(text) or session_title_from_text(text) or "Kilo session"
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(store.name)
             skill = "pending" if pending else ""
@@ -2830,7 +2900,7 @@ def cascade_windsurf_activities() -> list[tuple]:
             # still accept recent agent-ish blobs under these roots
             if not any(x in text.lower() for x in ("agent", "tool", "chat", "plan")):
                 continue
-        task = session_title_from_text(text) or extract_field(text, "title") or "Cascade session"
+        task = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "title") or "Cascade session"
         cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
@@ -2853,7 +2923,7 @@ def augment_activities() -> list[tuple]:
             files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT))
     for f in newest(files, MAX_SESSIONS_PER_AGENT):
         text = tail_bytes(Path(f), 80_000)
-        task = session_title_from_text(text) or "Augment session"
+        task = latest_user_prompt(text) or session_title_from_text(text) or "Augment session"
         cwd = extract_field(text, "cwd") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
@@ -2876,11 +2946,11 @@ def trae_activities() -> list[tuple]:
         if not root.is_dir():
             continue
         for f in recent_files_under(root, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
-            text = tail_bytes(f, 100_000)
+            text = head_tail_text(f, 48_000, 100_000)
             low = text.lower()
             if "agent" not in low and "agent" not in str(f).lower() and "chat" not in low:
                 continue
-            task = session_title_from_text(text) or "Trae Agent"
+            task = latest_user_prompt(text) or session_title_from_text(text) or "Trae Agent"
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(f.stem)
             skill = "pending" if text_looks_pending(text) else ""
@@ -2911,11 +2981,11 @@ def warp_agent_activities() -> list[tuple]:
             except OSError:
                 continue
     for f in newest(files, MAX_SESSIONS_PER_AGENT):
-        text = tail_bytes(Path(f), 100_000)
+        text = head_tail_text(Path(f), 48_000, 100_000)
         low = text.lower()
         if not any(x in low for x in ("agent", "warp ai", "tool_call", "approval", "ask", "permission")):
             continue
-        task = session_title_from_text(text) or "Warp Agent"
+        task = latest_user_prompt(text) or session_title_from_text(text) or "Warp Agent"
         cwd = extract_field(text, "cwd") or extract_field(text, "working_directory") or ""
         project = short_project(cwd) if cwd else short_project(Path(f).stem)
         skill = "pending" if text_looks_pending(text) else ""
@@ -2935,7 +3005,7 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS
             files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=MAX_SESSIONS_PER_AGENT))
     for f in newest(files, MAX_SESSIONS_PER_AGENT):
         path = Path(f)
-        text = tail_bytes(path, 100_000)
+        text = head_tail_text(path, 48_000, 100_000)
         task, cwd, sid = observed_session_from_text(text)
         sessionish_path = any(
             word in str(path).lower()
@@ -2948,7 +3018,7 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS
         if not sessionish_path and not sid:
             continue
         if not task and sessionish_path:
-            task = session_title_from_text(text) or extract_field(text, "title") or ""
+            task = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "title") or ""
         if not cwd:
             cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
         project = short_project(cwd) if cwd else ""
@@ -3009,12 +3079,12 @@ def cline_activities() -> list[tuple]:
     )
     for store in vscode_global_storage_dirs("saoudrizwan.claude-dev", "claude-dev", "cline"):
         for f in recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT):
-            text = tail_bytes(f, 120_000)
+            text = head_tail_text(f, 64_000, 120_000)
             low = text.lower()
             pending = text_looks_pending(text) or any(n in low for n in extra_needles)
             if not pending and "task" not in low and "conversation" not in low:
                 continue
-            task = session_title_from_text(text) or extract_field(text, "task") or "Cline task"
+            task = latest_user_prompt(text) or session_title_from_text(text) or extract_field(text, "task") or "Cline task"
             cwd = extract_field(text, "cwd") or extract_field(text, "workspacePath") or ""
             project = short_project(cwd) if cwd else short_project(store.name)
             skill = "pending" if pending else ""
@@ -3040,7 +3110,7 @@ def droid_activities() -> list[tuple]:
         return out
     files = newest([str(p) for p in root.rglob("*.jsonl") if p.is_file()], MAX_SESSIONS_PER_AGENT)
     for f in files:
-        text = tail_bytes(f, 160_000)
+        text = head_tail_text(f, 80_000, 160_000)
         # First line often metadata
         title = cwd = sid = ""
         try:
@@ -3054,7 +3124,7 @@ def droid_activities() -> list[tuple]:
         except Exception:
             pass
         if not title:
-            title = session_title_from_text(text) or "Droid session"
+            title = latest_user_prompt(text) or session_title_from_text(text) or "Droid session"
         if not cwd:
             # Decode parent dir: -Users-me-code-Pulse → path-ish short_project
             enc = f.parent.name
@@ -3090,8 +3160,21 @@ def command_code_activities() -> list[tuple]:
         except Exception:
             pass
         jl = mp.with_name(f"{sid}.jsonl")
-        text = tail_bytes(jl, 120_000) if jl.is_file() else ""
-        if not title:
+        # Keep the opening prompt as well as the live tail. Command Code
+        # transcripts grow quickly because tool results are verbose; a
+        # tail-only read silently dropped the only user request and left the
+        # row with a generic metadata title or the last tool name.
+        text = head_tail_text(jl, 96_000, 160_000) if jl.is_file() else ""
+        # Command Code's metadata title is often a generic generated label
+        # (or absent while a session is active). Its transcript puts real
+        # prompts inside `message.content`, alongside role=user tool-result
+        # envelopes. Prefer the latest substantive prompt so a running session
+        # is represented by the work the user asked for, not `web_fetch` output
+        # or the fallback `Command Code` label.
+        prompt = latest_user_prompt(text)
+        if prompt:
+            title = prompt
+        elif not title:
             title = session_title_from_text(text) or "Command Code"
         # Project key from path: projects/users-<name>/... → cwd unknown; use folder
         project = short_project(mp.parent.name)
@@ -3116,6 +3199,10 @@ def command_code_activities() -> list[tuple]:
         mtime = file_mtime_ms(jl if jl.is_file() else mp)
         stats = session_stats(jl if jl.is_file() else mp, per_session=True)
         stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        if text:
+            model = last_model_name(text)
+            if model:
+                stats.setdefault("model", model)
         seen.add(sid)
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sid[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
@@ -3173,9 +3260,9 @@ def kimi_activities() -> list[tuple]:
                     sid = str(obj.get("sessionId") or obj.get("id") or sdir.name)[:80]
             except Exception:
                 pass
-        text = tail_bytes(wire, 120_000) if wire.is_file() else ""
+        text = head_tail_text(wire, 64_000, 120_000) if wire.is_file() else ""
         if not title:
-            title = session_title_from_text(text) or "Kimi session"
+            title = latest_user_prompt(text) or session_title_from_text(text) or "Kimi session"
         project = short_project(cwd) if cwd else short_project(sdir.parent.name)
         skill = "pending" if text_looks_pending(text) else ""
         mtime = file_mtime_ms(wire if wire.is_file() else (state if state.is_file() else sdir))

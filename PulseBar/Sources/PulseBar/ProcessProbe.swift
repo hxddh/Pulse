@@ -150,6 +150,8 @@ enum ProcessProbe {
             pathNeedles: [
                 "command-code",
                 "commandcode",
+                "Command Code",
+                "⌘ Command Code",
                 "/.commandcode/",
                 "@command-code",
                 "node_modules/command-code",
@@ -180,6 +182,13 @@ enum ProcessProbe {
 
     static func scan() -> [Hit] {
         let output = shell("/bin/ps", ["-axo", "pid=,ppid=,tty=,etime=,args="]) ?? ""
+        // Node-based agents are allowed to rewrite argv[0] for a polished
+        // terminal title. Command Code, for example, appears in `args` as
+        // `⌘ Command Code · <user>` while the executable is still Node. Keep
+        // the existing argv scan, but join the process `comm` name as a
+        // second evidence source so those sessions cannot disappear merely
+        // because their runtime changed the title.
+        let commOutput = shell("/bin/ps", ["-axo", "pid=,comm="]) ?? ""
         if output.isEmpty {
             DebugLog.write("probe ps output EMPTY")
         }
@@ -200,10 +209,24 @@ enum ProcessProbe {
             ))
         }
 
+        var commByPid: [Int: String] = [:]
+        for line in commOutput.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            let parts = trimmed.split(maxSplits: 1, whereSeparator: { $0.isWhitespace || $0 == "\t" })
+            guard parts.count == 2, let pid = Int(parts[0]) else { continue }
+            commByPid[pid] = String(parts[1])
+        }
+
         var byPid: [Int: Int] = [:]
         for p in procs { byPid[p.pid] = p.ppid }
         var argsByPid: [Int: String] = [:]
-        for p in procs { argsByPid[p.pid] = p.args }
+        for p in procs {
+            let comm = commByPid[p.pid] ?? ""
+            argsByPid[p.pid] = [comm, p.args]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
         var ttyByPid: [Int: String] = [:]
         for p in procs { ttyByPid[p.pid] = p.tty }
 
@@ -231,7 +254,8 @@ enum ProcessProbe {
         var acc: [AgentID: Hit] = [:]
         for p in procs {
             if p.args.contains("Warp.app") { continue }
-            guard let match = matchEvidence(args: p.args) else { continue }
+            let evidenceArgs = argsByPid[p.pid] ?? p.args
+            guard let match = matchEvidence(args: evidenceArgs) else { continue }
             let id = match.id
             if id == .cursor { continue }
             var hit = acc[id] ?? Hit(id: id, count: 0, viaWarp: false)
