@@ -2,6 +2,18 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.8 — 托盘去除 hooks 安装提示
+
+### 交互与可用性
+
+- 下拉弹窗不再显示“安装 hooks”提示、入口或空状态安装按钮，避免把可选能力误读成使用前置条件。
+- 无 hooks 模式继续展示本地会话、进程和 Waiting 相关事实；hooks 配置仍可在 Settings / Support Health 中按需查看。
+
+### 验证
+
+- Debug / Release build、托盘截图和打包 selftest 通过。
+- 本版本仍为未签名、未公证 macOS DMG；其他 Mac 可能触发 Gatekeeper。
+
 ## 0.47.7 — 无 hooks 观测增强
 
 ### 可观测性与隐私
