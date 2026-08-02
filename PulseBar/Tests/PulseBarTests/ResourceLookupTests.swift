@@ -745,6 +745,7 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Improve observability"
         r.phase = "testing"
         r.model = "gpt-5"
+        r.contextPercent = 42
         r.errors = 1
         r.activityChange = .modelCall
         r.liveProcess = true
@@ -752,7 +753,39 @@ final class RowMetricsTests: XCTestCase {
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.contains("Model call"), signal)
         XCTAssertTrue(signal.contains("1 failure"), signal)
+        XCTAssertTrue(signal.contains("Model gpt 5"), signal)
+        XCTAssertTrue(signal.contains("Context 42%"), signal)
         XCTAssertFalse(signal.contains("Latest model call"), "default signal should stay scan-friendly: \(signal)")
+    }
+
+    @MainActor
+    func testDefaultSignalPrioritizesAgentContextOverRawEventCount() {
+        var r = row(inTok: 12_000, outTok: 3_000, records: 126)
+        r.task = "Run collector fixtures"
+        r.phase = "testing"
+        r.model = "claude-sonnet-4"
+        r.contextPercent = 68
+        r.liveProcess = true
+
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("Testing"), signal)
+        XCTAssertTrue(signal.contains("Model claude sonnet 4"), signal)
+        XCTAssertTrue(signal.contains("Context 68%"), signal)
+        XCTAssertFalse(signal.contains("126 events"), "raw record count should yield to model/context: \(signal)")
+    }
+
+    @MainActor
+    func testStableAgentFactsRemainVisibleWhenThereIsNoDynamicMetric() {
+        var r = row(records: 126)
+        r.task = "Inspect adapter"
+        r.model = "gpt-5"
+        r.contextPercent = 31
+        r.liveProcess = true
+
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("Model gpt 5"), signal)
+        XCTAssertTrue(signal.contains("Context 31%"), signal)
+        XCTAssertFalse(signal.contains("126 events"), "rich stable facts should hide diagnostic-only records: \(signal)")
     }
 
     @MainActor

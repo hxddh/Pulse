@@ -790,6 +790,8 @@ final class StatusStore: ObservableObject {
         active.activityChange = .progress(done: 18, total: 31)
         active.activityChangedMs = now - 15_000
         active.tool = "swift_test"
+        active.model = "gpt-5"
+        active.contextPercent = 42
         active.tokensIn = 12_400
         active.tokensOut = 860
 
@@ -844,6 +846,8 @@ final class StatusStore: ObservableObject {
             )
             sub.subRunning = 2
             sub.subTotal = 3
+            sub.model = "claude-sonnet-4"
+            sub.contextPercent = 68
             rows += [cache, process, sub]
         }
         trayGrouping = name == "project" ? .project : .status
@@ -1758,19 +1762,24 @@ final class StatusStore: ObservableObject {
         let lifecycle = rowNowLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
         let changed = rowSignalChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
         let metrics = rowSignalMetric(row).trimmingCharacters(in: .whitespacesAndNewlines)
-        let observation = rowObservationLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let stableFacts = rowStableFacts(row)
         var bits: [String] = []
         if !lifecycle.isEmpty { bits.append(lifecycle) }
         if !changed.isEmpty {
             bits.append(changed)
-            // The stable metric is the strongest proof that work is happening.
-            // Prefer it over model/mode labels, which are useful context but do
-            // not answer "what changed?" and used to hide failures/tokens.
-            if !metrics.isEmpty { bits.append(metrics) }
-            else if !observation.isEmpty { bits.append(observation) }
+            // A change is already the strongest dynamic fact. Use the remaining
+            // line for the durable context that makes the change actionable:
+            // model/context first, then tokens/files/errors as available. The
+            // old branch spent this slot on tokens and silently dropped the
+            // model and context, leaving the row's meaning ambiguous.
+            let evidence = compactSignalEvidence(metrics: metrics, stableFacts: stableFacts)
+            if !evidence.isEmpty { bits.append(evidence) }
         } else {
             if !metrics.isEmpty { bits.append(metrics) }
-            if !observation.isEmpty { bits.append(observation) }
+            if !stableFacts.isEmpty {
+                let stable = stableFacts.prefix(2).joined(separator: " · ")
+                if !stable.isEmpty { bits.append(stable) }
+            }
         }
         // Generic shell wrappers are still useful as a historical activity
         // fact when they are the only action a vendor exposes. Keep the claim
@@ -1793,6 +1802,43 @@ final class StatusStore: ObservableObject {
             bits.append(tr(.noProgressSignal))
         }
         return bits.prefix(3).joined(separator: " · ")
+    }
+
+    /// Stable execution context that makes a numeric signal meaningful. Model
+    /// and context are deliberately first: they answer which runtime is doing
+    /// the work and how close it is to its input budget. Mode/skill follows as
+    /// workflow context. Record count is only a last-resort observation
+    /// boundary; it must never displace a real progress, outcome, or token
+    /// signal.
+    private func rowStableFacts(_ row: AgentRow) -> [String] {
+        guard !row.waiting, !row.isProcessOnly else { return [] }
+        var facts: [String] = []
+        let model = readableModel(row.model)
+        if !model.isEmpty { facts.append(String(format: tr(.modelFact), model)) }
+        if row.contextPercent > 0 {
+            facts.append(String(format: tr(.contextFact), row.contextPercent))
+        }
+        let mode = readableMode(row.mode)
+        if !mode.isEmpty { facts.append(mode) }
+        let skill = readableSkill(row.skill)
+        if !skill.isEmpty { facts.append(skill) }
+        if facts.isEmpty, row.records > 0 {
+            facts.append(String(row.records) + tr(.recordsSuffix))
+        }
+        return facts
+    }
+
+    /// Fit the most useful dynamic and stable facts into the one remaining
+    /// signal slot when a row has a lifecycle + change label. Stable facts are
+    /// placed first so model/context remain visible even when SwiftUI clips a
+    /// long line at the trailing edge.
+    private func compactSignalEvidence(metrics: String, stableFacts: [String]) -> String {
+        var facts: [String] = []
+        for fact in stableFacts.prefix(2) where !fact.isEmpty {
+            if !facts.contains(fact) { facts.append(fact) }
+        }
+        if !metrics.isEmpty, !facts.contains(metrics) { facts.append(metrics) }
+        return facts.joined(separator: " · ")
     }
 
     /// Compact counterpart to the full change sentence used by accessibility
@@ -1909,19 +1955,10 @@ final class StatusStore: ObservableObject {
         // making "Process only" look like a real session feed. A process row
         // now keeps only its explicit process evidence/age line.
         guard !row.waiting, !row.isProcessOnly else { return "" }
-        var bits: [String] = []
-        // Progress already has a dedicated line. This line carries stable
-        // execution context, not four competing counters.
-        let mode = readableMode(row.mode)
-        if !mode.isEmpty { bits.append(mode) }
-        let model = readableModel(row.model)
-        if !model.isEmpty { bits.append(String(format: tr(.modelFact), model)) }
-        let skill = readableSkill(row.skill)
-        if !skill.isEmpty { bits.append(String(format: tr(.skillFact), skill)) }
-        if row.records > 0 {
-            bits.append(String(row.records) + tr(.recordsSuffix))
-        }
-        return bits.prefix(2).joined(separator: " · ")
+        // Keep this public detail line in lockstep with the default signal
+        // priority. It is also used by accessibility, so exposing the same
+        // model/context facts here avoids a different meaning behind the row.
+        return rowStableFacts(row).prefix(3).joined(separator: " · ")
     }
 
     /// The most recent tool a live row recorded — not necessarily one still
