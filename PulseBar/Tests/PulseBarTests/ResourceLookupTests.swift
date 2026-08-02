@@ -562,6 +562,20 @@ final class RowMetricsTests: XCTestCase {
         let line = store().rowMetrics(r)
         XCTAssertTrue(line.contains("Process started"), line)
         XCTAssertTrue(line.contains("1h"), line)
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("Process started"), signal)
+        XCTAssertFalse(signal.contains("events"), signal)
+    }
+
+    @MainActor
+    func testStalledRowExposesHowLongItHasBeenQuiet() {
+        var r = row(startedAgo: 54 * 60)
+        r.task = "Check the process detector"
+        r.isStalled = true
+        r.harvestMs = Int64((Date().timeIntervalSince1970 - 32 * 60) * 1000)
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("No activity for"), signal)
+        XCTAssertTrue(signal.contains("32m"), signal)
     }
 
     @MainActor
@@ -635,6 +649,16 @@ final class RowMetricsTests: XCTestCase {
         let line = store().rowContextLine(r)
         XCTAssertTrue(line.contains("Last action: Planning"), line)
         XCTAssertFalse(line.contains("update_plan"), line)
+    }
+
+    @MainActor
+    func testRecentSessionKeepsLastMeaningfulActionVisible() {
+        var r = row()
+        r.task = "Review release"
+        r.tool = "view_image"
+        r.liveProcess = false
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.contains("Last action: Reviewing image"), line)
     }
 
     @MainActor
@@ -717,6 +741,15 @@ final class RowMetricsTests: XCTestCase {
         r.processCount = 4
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.contains("4"), signal)
+    }
+
+    @MainActor
+    func testSessionWithoutDynamicFactsStatesTheInformationBoundary() {
+        var r = row()
+        r.task = "A session with no telemetry"
+        r.liveProcess = true
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("No progress signal yet"), signal)
     }
 
     @MainActor

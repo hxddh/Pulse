@@ -68,6 +68,12 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(item.repair, .none)
     }
 
+    func testTranscriptRecordCountDoesNotPretendToBeExecutionProgress() {
+        let item = health(progress: false, waitingReady: true)
+        XCTAssertFalse(item.hasProgress)
+        XCTAssertEqual(item.usefulFactCount, 4)
+    }
+
     func testMissingHooksIsActionable() {
         let item = health(agent: .codex, progress: true, waitingReady: false)
         XCTAssertEqual(item.disposition, .needsAction)
@@ -79,5 +85,27 @@ final class SupportHealthTests: XCTestCase {
         item.collectorState = .schemaMismatch
         XCTAssertEqual(item.disposition, .needsAction)
         XCTAssertEqual(item.repair, .retry)
+    }
+
+    @MainActor
+    func testCursorAgentAliasDoesNotCreateDuplicateSupportEntry() {
+        let store = StatusStore()
+        store.installPreviewFixture("coverage")
+        let agents = Set(store.supportHealth.map(\.agent))
+        XCTAssertTrue(agents.contains(.cursor))
+        XCTAssertFalse(agents.contains(.cursorAgent))
+    }
+
+    @MainActor
+    func testObservedSupportLinePrioritizesMeaningfulFactsOverRecordCount() {
+        let store = StatusStore()
+        store.installPreviewFixture("coverage")
+        guard let item = store.supportHealth.first(where: { $0.agent == .cursor }) else {
+            return XCTFail("coverage fixture should include Cursor")
+        }
+        let observed = store.supportObservedDetail(item)
+        XCTAssertTrue(observed.contains("Refine adapter coverage"), observed)
+        XCTAssertTrue(observed.contains("Turn complete"), observed)
+        XCTAssertFalse(observed.localizedCaseInsensitiveContains("events"), observed)
     }
 }

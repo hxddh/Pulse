@@ -231,8 +231,17 @@ final class StatusStore: ObservableObject {
 
     var supportHealth: [AgentSupportHealth] {
         let waitingEvents = previewWaitingEventTimes ?? AttentionIO.latestEventTimes()
-        return AgentID.priority.map { agent in
-            let rows = cachedAll.filter { $0.agent == agent }
+        // Cursor Agent is a transport identity, not a second product. Its
+        // process/session rows are normalized into Cursor by SnapshotBuilder;
+        // listing it again here made the coverage screen claim two adapters
+        // and split the same health result into duplicate entries.
+        let displayAgents = AgentID.priority.filter { $0 != .cursorAgent }
+        return displayAgents.map { agent in
+            let rows = cachedAll.filter {
+                $0.agent == agent || (agent == .cursor && $0.agent == .cursorAgent)
+            }
+            let health = collectorHealthByAgent[agent]
+                ?? (agent == .cursor ? collectorHealthByAgent[.cursorAgent] : nil)
             let strongest: ObservationSource? = {
                 if rows.contains(where: { $0.observationSource == .session }) { return .session }
                 if rows.contains(where: { $0.observationSource == .cache }) { return .cache }
@@ -241,11 +250,11 @@ final class StatusStore: ObservableObject {
             }()
             return AgentSupportHealth(
                 agent: agent,
-                collectorState: collectorHealthByAgent[agent]?.state ?? .unscanned,
-                collectorDurationMs: collectorHealthByAgent[agent]?.durationMs ?? 0,
-                collectorRows: collectorHealthByAgent[agent]?.rowCount ?? 0,
-                sourcePresent: collectorHealthByAgent[agent]?.sourcePresent ?? false,
-                collectorErrorKind: collectorHealthByAgent[agent]?.errorKind ?? "",
+                collectorState: health?.state ?? .unscanned,
+                collectorDurationMs: health?.durationMs ?? 0,
+                collectorRows: health?.rowCount ?? 0,
+                sourcePresent: health?.sourcePresent ?? false,
+                collectorErrorKind: health?.errorKind ?? "",
                 processDetected: rows.contains(where: \.liveProcess),
                 processEvidence: rows.compactMap(\.processEvidence).first,
                 evidence: strongest,
@@ -268,7 +277,8 @@ final class StatusStore: ObservableObject {
                     !$0.phase.isEmpty || !$0.tool.isEmpty || !$0.outcome.isEmpty
                         || $0.progressDone > 0 || $0.progressTotal > 0
                         || $0.tokensIn > 0 || $0.tokensOut > 0
-                        || $0.records > 0 || $0.subTotal > 0
+                        || $0.subTotal > 0 || $0.errors > 0 || $0.files > 0
+                        || $0.contextPercent > 0 || !$0.model.isEmpty || !$0.mode.isEmpty
                 },
                 waitingSignalReady: waitingSignalReady(for: agent)
             )
@@ -280,7 +290,9 @@ final class StatusStore: ObservableObject {
         case .hooks:
             return hooksStatus.isInstalled(for: agent)
         case .harvestPending:
-            let state = collectorHealthByAgent[agent]?.state ?? .unscanned
+            let state = collectorHealthByAgent[agent]?.state
+                ?? (agent == .cursor ? collectorHealthByAgent[.cursorAgent]?.state : nil)
+                ?? .unscanned
             // A source that exists but yielded no usable session cannot yet
             // prove a pending signal. Counting `.noSessions` as ready made a
             // process-only Amp row read “1/5 useful signals” despite having no
@@ -325,7 +337,7 @@ final class StatusStore: ObservableObject {
 
     func supportAdapterDetail(_ health: AgentSupportHealth) -> String {
         var facts: [String] = []
-        if health.agent == .cursorAgent {
+        if health.agent == .cursor {
             facts.append(tr(.supportSharedCursor))
         }
         switch health.collectorState {
@@ -377,7 +389,13 @@ final class StatusStore: ObservableObject {
     /// representative session per adapter makes the 31-agent matrix useful
     /// without turning it into a transcript or exposing raw session IDs.
     func supportObservedDetail(_ health: AgentSupportHealth) -> String {
-        let candidates = cachedAll.filter { $0.agent == health.agent }
+        // Cursor Agent is normalized into Cursor for the user-facing support
+        // row. Keep the evidence lookup normalized too; otherwise a Cursor
+        // Agent-only session can score correctly above and still render as
+        // "no usable session signals" below it.
+        let candidates = cachedAll.filter {
+            $0.agent == health.agent || (health.agent == .cursor && $0.agent == .cursorAgent)
+        }
         guard let row = candidates.max(by: { lhs, rhs in
             let left = (
                 lhs.waiting ? 4 : 0,
@@ -400,7 +418,7 @@ final class StatusStore: ObservableObject {
         if let task = row.usefulTask { facts.append(task) }
         if !row.displayPath.isEmpty { facts.append(row.displayPath) }
         if let phase = readablePhase(row.phase) { facts.append(phase) }
-        if let tool = nonEmpty(row.tool), row.liveProcess {
+        if let tool = nonEmpty(row.tool), usefulAction(tool) {
             facts.append(String(format: tr(.lastAction), readableAction(tool)))
         }
         if let model = nonEmpty(row.model) {
@@ -417,12 +435,15 @@ final class StatusStore: ObservableObject {
         }
         if row.files > 0 { facts.append(String(format: tr(.filesFact), row.files)) }
         if row.contextPercent > 0 { facts.append(String(format: tr(.contextFact), row.contextPercent)) }
-        if row.records > 0 { facts.append("\(row.records)\(tr(.recordsSuffix))") }
         let input = AgentRow.compactToken(row.tokensIn)
         let output = AgentRow.compactToken(row.tokensOut)
         if !input.isEmpty || !output.isEmpty {
             facts.append(String(format: tr(.reportedTokens), input.isEmpty ? "0" : input, output.isEmpty ? "0" : output))
         }
+        // Record count is a collector diagnostic, not execution progress. It
+        // belongs in Adapter diagnostics; letting it occupy the observed-fact
+        // line made a session with only a transcript look more informative than
+        // one with a real action, outcome, or token signal.
         guard !facts.isEmpty else { return "" }
         let clipped = facts.prefix(4).joined(separator: " · ")
         return String(format: tr(.supportObservedSignals), clipped)
@@ -1431,7 +1452,12 @@ final class StatusStore: ObservableObject {
         var bits: [String] = []
         let path = row.displayPath
         if !path.isEmpty, !omitPath { bits.append(path) }
-        if let tool = liveTool(row), usefulAction(tool) {
+        // A completed/recent session still benefits from the last meaningful
+        // action. It is explicitly labelled as history, never presented as
+        // something currently running. This is often the only useful signal
+        // for adapters that do not expose a lifecycle phase.
+        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        if row.usefulTask != nil, !tool.isEmpty, usefulAction(tool) {
             bits.append(String(format: tr(.lastAction), readableAction(tool)))
         }
         let ago = lastActivityLabel(row)
@@ -1591,6 +1617,14 @@ final class StatusStore: ObservableObject {
         if row.liveProcess, !row.isProcessOnly, row.processCount > 1 {
             bits.append(String(format: tr(.processCount), row.processCount))
         }
+        // A structured/cache row can still be real while exposing no phase,
+        // action, model, progress, token, or outcome. Do not leave the third
+        // line blank: that looks like a Pulse rendering bug and hides the
+        // adapter's actual information boundary. Process-only and stalled rows
+        // have more precise fallbacks above.
+        if bits.isEmpty, row.observationSource != .process {
+            bits.append(tr(.noProgressSignal))
+        }
         return bits.prefix(3).joined(separator: " · ")
     }
 
@@ -1623,6 +1657,25 @@ final class StatusStore: ObservableObject {
     /// from truncating its only numeric evidence after a long change label.
     private func rowSignalMetric(_ row: AgentRow) -> String {
         guard !row.waiting else { return "" }
+        if row.isProcessOnly, row.processStartedMs > 0 {
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let age = max(0, Double(nowMs - row.processStartedMs) / 1000.0)
+            var process = String(
+                format: tr(.processAge),
+                DurationFormat.label(seconds: age, lang: lang)
+            )
+            if row.processCount > 1 {
+                process += " · " + String(format: tr(.processCount), row.processCount)
+            }
+            return process
+        }
+        if row.isStalled {
+            let seconds = row.lastActivitySeconds
+            if seconds > 0 {
+                return String(format: tr(.stalledFor), durationLabel(seconds: seconds))
+            }
+            return tr(.noActivityYet)
+        }
         let change = row.activityChange
         if row.errors > 0, !isErrorChange(change) {
             return row.errors == 1
@@ -1654,7 +1707,6 @@ final class StatusStore: ObservableObject {
         if !input.isEmpty || !output.isEmpty {
             return String(format: tr(.compactTokens), input.isEmpty ? "0" : input, output.isEmpty ? "0" : output)
         }
-        if row.records > 0 { return "\(row.records)\(tr(.recordsSuffix))" }
         return ""
     }
 

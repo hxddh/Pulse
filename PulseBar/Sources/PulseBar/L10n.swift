@@ -223,6 +223,8 @@ enum L10n {
         case .noActivityYet: return "no activity yet"
         case .noProject: return "Workspace unknown"
         case .stalled: return "Stalled"
+        case .stalledFor: return "No activity for %@"
+        case .noProgressSignal: return "No progress signal yet"
         case .supportHealth: return "Agent support health"
         case .supportHealthHint:
             return "Observed runtime evidence, not marketing coverage. Missing facts stay explicit."
@@ -249,7 +251,7 @@ enum L10n {
         case .supportWaitingHooks: return "Waiting via hooks"
         case .supportWaitingHarvest: return "Waiting via session data"
         case .supportWaitingNone: return "Waiting unavailable"
-        case .supportSharedCursor: return "shares Cursor adapter"
+        case .supportSharedCursor: return "Cursor Agent shares this adapter"
         case .supportLastSignal: return "signal %@ ago"
         case .supportDetectedExecutable: return "detected by executable"
         case .supportDetectedPath: return "detected by path signature"
@@ -501,6 +503,8 @@ enum L10n {
         case .noActivityYet: return "暂无动静"
         case .noProject: return "工作区未知"
         case .stalled: return "停滞"
+        case .stalledFor: return "已 %@ 无活动"
+        case .noProgressSignal: return "暂无执行进展信号"
         case .supportHealth: return "Agent 支持健康度"
         case .supportHealthHint: return "展示本机实际观测证据，而非静态支持名单；缺失信息会明确标出。"
         case .supportNoneObserved: return "最近一次扫描未观测到 Agent 证据。"
@@ -526,7 +530,7 @@ enum L10n {
         case .supportWaitingHooks: return "等待：hooks"
         case .supportWaitingHarvest: return "等待：会话数据"
         case .supportWaitingNone: return "等待：不可用"
-        case .supportSharedCursor: return "与 Cursor 共用适配器"
+        case .supportSharedCursor: return "Cursor Agent 与此适配器共用"
         case .supportLastSignal: return "%@前收到信号"
         case .supportDetectedExecutable: return "通过可执行程序检测"
         case .supportDetectedPath: return "通过路径特征检测"
@@ -646,7 +650,7 @@ enum L10n {
         case jumpToOldest, interruptionsToday, playSound
         case waitedLongest, moreActions
         case acrossProjects, agoFormat, whileAway, noActivityYet
-        case noProject, stalled
+        case noProject, stalled, stalledFor, noProgressSignal
         case supportHealth, supportHealthHint, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
         case supportGoal, supportWorkspace, supportActivity, supportProgress, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
