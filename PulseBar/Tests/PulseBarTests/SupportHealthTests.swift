@@ -108,12 +108,13 @@ final class SupportHealthTests: XCTestCase {
     }
 
     @MainActor
-    func testTrayMakesMissingHooksVisibleOutsideTheMoreMenu() {
+    func testTrayDoesNotPromptForMissingHooks() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
 
         XCTAssertTrue(store.needsHooksNudge)
-        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.hooksNudge))
+        XCTAssertNil(store.maintenanceNoticeText)
+        XCTAssertFalse(store.tr(.emptyHint).localizedCaseInsensitiveContains("install hooks"))
     }
 
     @MainActor

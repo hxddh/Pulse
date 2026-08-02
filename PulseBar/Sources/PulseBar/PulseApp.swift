@@ -483,7 +483,7 @@ struct TrayPanel: View {
                     .disabled(store.isRefreshing)
 
                     Menu {
-                        if store.needsHooksNudge || store.needsWaitingSignalNudge {
+                        if store.needsWaitingSignalNudge {
                             Button(store.tr(.setupWaitingSignals)) { store.openSettings() }
                             Divider()
                         }
@@ -632,11 +632,6 @@ struct TrayPanel: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            if !store.hooksInstalled {
-                Button(store.tr(.installHooks)) { store.installHooks() }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 11, weight: .medium))
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 26)

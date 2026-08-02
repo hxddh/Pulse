@@ -190,7 +190,7 @@ enum L10n {
         case .waitedFor: return "waited %@"
         case .cappedSessions: return "%d more session(s) not shown"
         case .emptyHint:
-            return "Pulse lights up when a coding agent is running or needs you. Install hooks so Claude/Codex can report Waiting."
+            return "Pulse reads local session and process evidence. Hooks are optional and only add a richer Waiting signal."
         case .checkForUpdates: return "Check for updates"
         case .checkNow: return "Check now"
         case .openRelease: return "Open release"
@@ -485,7 +485,7 @@ enum L10n {
         case .clearHistory: return "清空记录"
         case .waitedFor: return "等待 %@"
         case .cappedSessions: return "另有 %d 个会话未显示"
-        case .emptyHint: return "有编码 Agent 在跑或在等你时，Pulse 才会亮。安装 hooks 后 Claude/Codex 才能上报「需要你」。"
+        case .emptyHint: return "Pulse 会读取本地会话和进程证据。hooks 不是必需项，只会额外增强 Waiting 信号。"
         case .checkForUpdates: return "检查更新"
         case .checkNow: return "立即检查"
         case .openRelease: return "打开发布页"
