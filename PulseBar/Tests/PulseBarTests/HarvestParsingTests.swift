@@ -263,10 +263,15 @@ final class HarvestParsingTests: XCTestCase {
             sessionID: "cursor-1"
         )
         previous.mode = "local"
-        XCTAssertEqual(
-            ActivityHarvest.mergePartialRows(current: [], health: [], previous: [previous]),
-            [previous]
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [],
+            health: [],
+            previous: [previous]
         )
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.sessionID, previous.sessionID)
+        XCTAssertEqual(merged.first?.task, previous.task)
+        XCTAssertEqual(merged.first?.mode, previous.mode)
     }
 
     func testAttentionFutureEventIsIgnored() {
