@@ -2,6 +2,21 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.43.0 — Codex / OpenCode 运行事实与缓存误报修复
+
+### 可观测性与稳定性
+
+- Codex 复用已解析的 rollout 记录，并限制阶段回放窗口，避免会话增长后超过采集保护阈值而整类消失。
+- Antigravity 不再把 VS Code schema、walkthrough 和索引缓存当作 Agent 会话；无真实会话时明确显示无会话。
+- OpenCode 补充模型、最近工具、阶段、结果和 part 记录数，并兼容旧版 SQLite schema。
+- 端到端 fixture 新增 OpenCode 运行事实断言，避免能力只存在于本地实现而没有协议保障。
+
+### 验证
+
+- 31 个 Agent 接线、支持矩阵、图标、外观和 24 列 harvest 协议门禁通过。
+- Release build、打包资源 selftest、真实采集和托盘/支持健康页视觉回归通过。
+- 本版本继续使用未签名、未公证 macOS DMG。
+
 ## 0.42.0 — 全 Agent 观测信号与采集稳定性
 
 ### 可观测性与稳定性
