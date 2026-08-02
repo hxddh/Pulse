@@ -751,7 +751,52 @@ def check_collectors(home: Path) -> int:
 
     command_dir = home / ".commandcode" / "projects" / "pulse"
     command_meta = write_session(command_dir / "command-fixture.meta.json", "command_code")
-    write_session(command_dir / "command-fixture.jsonl", "command_code")
+    command_transcript = command_dir / "command-fixture.jsonl"
+    command_transcript.parent.mkdir(parents=True, exist_ok=True)
+    command_lines = [json.dumps({
+            "type": "message",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "Inspect Command Code session telemetry"}],
+            },
+        })]
+    # Make the fixture exceed the old tail-only read. The real Command Code
+    # transcript has large tool results between the opening request and the
+    # current tool call; a short fixture would let that regression pass.
+    command_lines.extend(
+        json.dumps({
+            "type": "message",
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "content": [{"type": "text", "text": "tool output " + ("x" * 10_000)}],
+                }],
+            },
+        })
+        for _ in range(30)
+    )
+    command_lines.extend([
+        json.dumps({
+            "type": "message",
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "content": [{"type": "text", "text": "internal tool output"}],
+                }],
+            },
+        }) + "\n"
+        + json.dumps({
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "name": "read_file"}],
+            },
+            "model": "command-fixture-model",
+        }),
+    ])
+    command_transcript.write_text("\n".join(command_lines) + "\n", encoding="utf-8")
     (command_dir / "settings.json").write_text(
         '{"cwd":"/Users/me/code/Pulse"}', encoding="utf-8"
     )
@@ -1032,6 +1077,14 @@ def check_collectors(home: Path) -> int:
             )
             if got != expected_facts:
                 return fail(f"grok rich facts shifted or disappeared: {got}")
+        if name == "command_code":
+            if row[COL_TASK] != "Inspect Command Code session telemetry":
+                return fail(
+                    "Command Code promoted metadata/tool output instead of the user goal: "
+                    f"{row}"
+                )
+            if row[COL_TOOL] != "read_file" or row[COL_MODEL] != "command-fixture-model":
+                return fail(f"Command Code runtime facts were not surfaced: {row}")
 
     if not saw_any:
         return fail("no collector produced a row; this gate is asserting nothing")

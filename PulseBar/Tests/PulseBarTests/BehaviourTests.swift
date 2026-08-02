@@ -317,6 +317,11 @@ final class ProcessProbeTests: XCTestCase {
             .pathSignature
         )
         XCTAssertEqual(ProcessProbe.matchEvidence(args: "amp")?.evidence, .executable)
+        XCTAssertEqual(
+            ProcessProbe.match(args: "⌘ Command Code · rustji COLORTERM=truecolor"),
+            .commandCode,
+            "process titles rewritten by Node must still identify Command Code"
+        )
     }
 
     func testShortAgentNamesDoNotReintroduceKnownFalsePositives() {
