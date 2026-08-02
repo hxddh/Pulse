@@ -293,6 +293,7 @@ enum L10n {
         case .supportNeedsActionCount: return "Action · %d"
         case .supportLimitedCount: return "Limited · %d"
         case .supportHealthyCount: return "Healthy · %d"
+        case .supportUnavailableCount: return "Not observed · %d"
         case .supportUsefulCoverage: return "%d/%d useful signals"
         case .supportRetry: return "Retry scan"
         case .supportAdapterDiagnostics: return "Adapter diagnostics"
@@ -575,6 +576,7 @@ enum L10n {
         case .supportNeedsActionCount: return "待处理 · %d"
         case .supportLimitedCount: return "受限 · %d"
         case .supportHealthyCount: return "健康 · %d"
+        case .supportUnavailableCount: return "尚未观测 · %d"
         case .supportUsefulCoverage: return "有效信号 %d/%d"
         case .supportRetry: return "重新扫描"
         case .supportAdapterDiagnostics: return "适配器诊断"
@@ -676,7 +678,7 @@ enum L10n {
         case supportFilterIssues, supportFilterRunning, supportFilterInstalled
         case supportFilterNoData, supportFilterAll, supportNoFilterResults
         case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable
-        case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUsefulCoverage
+        case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportUsefulCoverage
         case supportRetry, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge
