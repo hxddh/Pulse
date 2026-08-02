@@ -6,6 +6,12 @@ enum ProcessProbe {
     /// the 2 s Waiting cadence would turn one useful fallback fact into a
     /// permanent energy cost.
     private static var cwdCache: [Int: (path: String, observedAt: TimeInterval)] = [:]
+    /// A denied/empty `lsof` result must not become a prompt loop. macOS can
+    /// surface the cross-app privacy dialog from this lookup, and retrying it
+    /// on every probe cadence is both noisy and wasteful. Keep the negative
+    /// result for a bounded period; a later explicit refresh can try again.
+    private static var cwdLookupBackoffUntil: TimeInterval = 0
+    private static let cwdLookupBackoffSeconds: TimeInterval = 5 * 60
 
     struct Hit: Hashable {
         var id: AgentID
@@ -374,14 +380,34 @@ enum ProcessProbe {
             }
         }
         if !unresolved.isEmpty {
-            let list = unresolved.map(String.init).joined(separator: ",")
-            let output = shell(
-                "/usr/sbin/lsof",
-                ["-Fpn", "-a", "-d", "cwd", "-p", list]
-            ) ?? ""
-            for (pid, path) in parseWorkingDirectories(output) {
-                cwdCache[pid] = (path, now)
-                result[pid] = path
+            if now < cwdLookupBackoffUntil {
+                // Cache a negative observation too. Otherwise the same PIDs
+                // would stay unresolved and re-enter this branch on every
+                // probe even while the privacy backoff is active.
+                for pid in unresolved {
+                    cwdCache[pid] = ("", now)
+                }
+            } else {
+                let list = unresolved.map(String.init).joined(separator: ",")
+                let output = shell(
+                    "/usr/sbin/lsof",
+                    ["-Fpn", "-a", "-d", "cwd", "-p", list]
+                )
+                let paths = output.map(parseWorkingDirectories) ?? [:]
+                if paths.isEmpty {
+                    cwdLookupBackoffUntil = now + cwdLookupBackoffSeconds
+                    DebugLog.write(
+                        "cwd lookup unavailable; retry in \(Int(cwdLookupBackoffSeconds))s"
+                    )
+                }
+                for pid in unresolved {
+                    let path = paths[pid] ?? ""
+                    // Empty paths are intentional negative cache entries. They
+                    // prevent a denied or unavailable lsof from becoming a
+                    // recurring cross-app permission prompt.
+                    cwdCache[pid] = (path, now)
+                    if !path.isEmpty { result[pid] = path }
+                }
             }
         }
         cwdCache = cwdCache.filter { unique.contains($0.key) && now - $0.value.observedAt < 300 }

@@ -16,9 +16,9 @@ enum ActivityHarvest {
 
         var isIssue: Bool {
             switch self {
-            case .permissionDenied, .schemaMismatch, .failed, .unscanned:
+            case .permissionDenied, .schemaMismatch, .failed:
                 return true
-            case .observed, .noRecentData, .sourceAbsent, .noSessions:
+            case .observed, .noRecentData, .sourceAbsent, .noSessions, .unscanned:
                 return false
             }
         }
@@ -110,6 +110,20 @@ enum ActivityHarvest {
     /// first honest result to land.
     static let harvestTimeoutSec: Double = 3.5
 
+    /// The Python stream reports one health line for every user-facing adapter.
+    /// Cursor Agent is intentionally merged into Cursor, so it has no separate
+    /// collector line. This set lets the app distinguish a complete scan from
+    /// a partial stream without relying on row count (which may legitimately be
+    /// zero for an installed but idle Agent).
+    static let expectedCollectorIDs: Set<AgentID> = Set(
+        AgentID.allCases.filter { $0 != .cursorAgent }
+    )
+
+    static func isCompleteHealth(_ health: [CollectorHealth]) -> Bool {
+        let reported = Set(health.map(\.id)).subtracting([.cursorAgent])
+        return expectedCollectorIDs.isSubset(of: reported)
+    }
+
     static func mapAgent(_ raw: String) -> AgentID? {
         if let id = AgentID(rawValue: raw) { return id }
         switch raw {
@@ -155,7 +169,11 @@ enum ActivityHarvest {
         let window = row.id == .cursor && row.mode == "local"
             ? cursorLocalWindowMs
             : freshWindowMs
-        return nowMs - row.harvestMs <= window
+        let age = nowMs - row.harvestMs
+        // A vendor clock can be a little ahead of the host, but an arbitrarily
+        // future timestamp is not evidence of a live session. Without the
+        // lower bound, a corrupted/future mtime stayed fresh forever.
+        return age >= -5 * 60 * 1000 && age <= window
     }
 
     /// Thread-safe sink for a child process pipe.
@@ -195,7 +213,12 @@ enum ActivityHarvest {
     ///
     /// A timeout no longer throws away what already arrived: harvest streams one
     /// complete line per agent, so partial output is still honest data.
-    static func scan() -> (rows: [Row], health: [CollectorHealth], unreliable: Bool) {
+    static func scan() -> (
+        rows: [Row],
+        health: [CollectorHealth],
+        unreliable: Bool,
+        complete: Bool
+    ) {
         // LSUIElement apps with no visible window are prime App Nap targets.
         // The Python child can finish in ~300 ms when scheduled yet scrape the
         // 3.5 s deadline when the parent is napped. Keep only this bounded scan
@@ -208,7 +231,7 @@ enum ActivityHarvest {
 
         guard let script = scriptURL() else {
             DebugLog.write("harvest scriptURL=nil")
-            return ([], [], true)
+            return ([], [], true, false)
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -236,7 +259,7 @@ enum ActivityHarvest {
             try task.run()
         } catch {
             DebugLog.write("harvest throw=\(error.localizedDescription) — keep prior")
-            return ([], [], true)
+            return ([], [], true, false)
         }
 
         drain(out.fileHandleForReading, into: outSink, done: outDone)
@@ -275,14 +298,14 @@ enum ActivityHarvest {
         if timedOut {
             DebugLog.write("harvest TIMEOUT \(harvestTimeoutSec)s partial=\(rows.count)")
             // Partial rows beat a frozen snapshot; only a truly empty run is unreliable.
-            return (rows, health, rows.isEmpty)
+            return (rows, health, rows.isEmpty, false)
         }
         if task.terminationStatus != 0 {
             DebugLog.write("harvest exit=\(task.terminationStatus) partial=\(rows.count)")
-            return (rows, health, rows.isEmpty)
+            return (rows, health, rows.isEmpty, false)
         }
         DebugLog.write("harvest parsed=\(rows.count)")
-        return (rows, health, false)
+        return (rows, health, false, isCompleteHealth(health))
     }
 
     static func parse(_ text: String) -> [Row] {

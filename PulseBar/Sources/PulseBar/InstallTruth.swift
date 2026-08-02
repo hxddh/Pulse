@@ -107,9 +107,13 @@ enum InstallTruth {
         task.standardError = FileHandle.nullDevice
         do {
             try task.run()
+            // Drain the pipe before waiting. `ps` can emit enough argv data to
+            // fill the pipe buffer; waiting first then blocks both processes
+            // indefinitely on a large process list, freezing the tray when it
+            // calls the duplicate-install diagnostic.
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
             task.waitUntilExit()
             guard task.terminationStatus == 0 else { return [] }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let text = String(data: data, encoding: .utf8) ?? ""
             var paths = Set<String>()
             for line in text.split(whereSeparator: \.isNewline) {
