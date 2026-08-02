@@ -2,6 +2,20 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.6 — Waiting 信号可见性修复
+
+### 可观测性与交互
+
+- Claude / Codex 运行但缺少 hooks 时，主托盘直接显示橙色提示，不再只藏在“…”菜单或 Support Health 中。
+- hooks 已就绪但 Agent 没有 Waiting 信号时，明确显示“仅 Running”，避免把未覆盖误读成完整观测。
+- Waiting 信号提示点击后只进入 Settings，不会误触发更新下载，也不会再次索要权限。
+
+### 验证
+
+- 31 个 Agent collector、支持矩阵、图标、外观和 harvest 协议门禁通过。
+- Debug / Release build、资源 selftest、完整 harvest 测试和 ad-hoc 签名验证通过。
+- 本版本仍为未签名、未公证 macOS DMG；其他 Mac 可能触发 Gatekeeper。
+
 ## 0.47.5 — 通知设置状态一致性修复
 
 ### 交互与可用性

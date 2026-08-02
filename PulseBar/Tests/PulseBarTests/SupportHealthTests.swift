@@ -107,6 +107,26 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(item.repair, .installHooks)
     }
 
+    @MainActor
+    func testTrayMakesMissingHooksVisibleOutsideTheMoreMenu() {
+        let store = StatusStore()
+        store.installPreviewFixture("waiting")
+
+        XCTAssertTrue(store.needsHooksNudge)
+        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.hooksNudge))
+    }
+
+    @MainActor
+    func testTrayNudgesOpaqueLiveAgentWhenHooksAreReady() {
+        let store = StatusStore()
+        store.installPreviewFixture("waiting")
+        store.hooksStatus = .installedBoth
+
+        XCTAssertFalse(store.needsHooksNudge)
+        XCTAssertTrue(store.needsWaitingSignalNudge)
+        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.waitingSignalNudge))
+    }
+
     func testAdapterFailureOffersRetry() {
         var item = health(progress: true)
         item.collectorState = .schemaMismatch

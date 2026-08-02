@@ -1052,11 +1052,27 @@ final class StatusStore: ObservableObject {
     var maintenanceNoticeText: String? {
         if isVersionMismatch { return tr(.versionStale) }
         if installReport.hasOtherRunningCopy { return tr(.duplicateAppRunning) }
+        // Waiting is Pulse's core action. A missing Claude/Codex hook used to
+        // be discoverable only from the ellipsis menu or Support Health, so a
+        // live session looked fully observed while its most important signal
+        // path was unavailable. Keep the notice in the same single-line
+        // maintenance slot so it is visible without adding a dashboard row;
+        // tapping it opens Settings, never a permission prompt.
+        if needsHooksNudge { return tr(.hooksNudge) }
+        if needsWaitingSignalNudge { return tr(.waitingSignalNudge) }
         if case .available = updateStatus { return updateStatusText }
         return nil
     }
 
     func performMaintenanceNoticeAction() {
+        // The notice text can be a Waiting-signal nudge even when an update is
+        // also available. Dispatch from the same condition that produced the
+        // visible copy; otherwise tapping "Install hooks" could unexpectedly
+        // start an installer download.
+        if needsHooksNudge || needsWaitingSignalNudge {
+            openSettings()
+            return
+        }
         if case .available = updateStatus, updateCanVerifyDownload {
             downloadAndVerifyUpdate()
         } else {
