@@ -1042,14 +1042,14 @@ final class StatusStore: ObservableObject {
         installTruthRefreshInFlight = true
         installTruthGeneration += 1
         let generation = installTruthGeneration
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let report = InstallTruth.inspect()
-            Task { @MainActor in
-                guard let self, self.installTruthGeneration == generation else { return }
-                self.installReport = report
-                self.installTruthRefreshedAt = Date()
-                self.installTruthRefreshInFlight = false
-            }
+        Task { @MainActor [weak self] in
+            let report = await Task.detached(priority: .utility) {
+                InstallTruth.inspect()
+            }.value
+            guard let self, self.installTruthGeneration == generation else { return }
+            self.installReport = report
+            self.installTruthRefreshedAt = Date()
+            self.installTruthRefreshInFlight = false
         }
     }
 
