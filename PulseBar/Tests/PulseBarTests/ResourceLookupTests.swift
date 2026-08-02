@@ -615,7 +615,7 @@ final class RowMetricsTests: XCTestCase {
         let observation = store().rowObservationLine(loaded)
         let context = store().rowContextLine(loaded)
         XCTAssertTrue(metrics.contains("2 of 5"), metrics)
-        XCTAssertEqual(observation, "")
+        XCTAssertTrue(observation.contains("34 events"), observation)
         XCTAssertTrue(context.contains("3h"), context)
         XCTAssertTrue(metrics.contains("12k"), metrics)
         XCTAssertFalse(metrics.contains("34"), metrics)
