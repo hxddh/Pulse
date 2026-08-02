@@ -2,6 +2,20 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.9 — 受隐私限制时补齐 Agent 可观测性
+
+### 可观测性与交互
+
+- 托盘默认行优先展示可验证的模型、上下文和最近动作等稳定事实；有这些信息时不再用原始事件数占位，降低信息含义歧义。
+- Cursor 在未授权读取受保护 App 数据时不再从列表中消失，明确显示为“Privacy-limited / 隐私受限”，同时保留进程启动时间和检测来源。
+- 过滤 Cursor 的 Electron helper 进程，避免把辅助进程误报为多个会话；主 Cursor 会话仍可被检测。
+
+### 验证
+
+- Cursor 隐私受限回退、helper 过滤、稳定事实优先级均新增回归测试。
+- Debug / Release build、31 个 Agent collector、覆盖矩阵、图标、外观、harvest 和打包 selftest 通过。
+- 本版本仍为未签名、未公证 macOS DMG；其他 Mac 可能触发 Gatekeeper。
+
 ## 0.47.8 — 托盘去除 hooks 安装提示
 
 ### 交互与可用性
