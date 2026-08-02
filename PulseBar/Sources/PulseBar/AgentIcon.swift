@@ -240,23 +240,13 @@ enum AgentIcon {
 
 struct AgentIconView: View {
     let id: AgentID
-    var waiting: Bool = false
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Image(nsImage: AgentIcon.image(for: id))
-                .resizable()
-                .renderingMode(.template)
-                .frame(width: 16, height: 16)
-            if waiting {
-                Circle()
-                    .strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5)
-                    .background(Circle().fill(Color.orange))
-                    .frame(width: 7, height: 7)
-                    .offset(x: 3, y: 3)
-            }
-        }
-        .frame(width: 18, height: 18)
-        .accessibilityLabel(id.displayName)
+        Image(nsImage: AgentIcon.image(for: id))
+            .resizable()
+            .renderingMode(.template)
+            .frame(width: 16, height: 16)
+            .frame(width: 18, height: 18)
+            .accessibilityLabel(id.displayName)
     }
 }

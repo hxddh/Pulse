@@ -62,6 +62,21 @@ final class StatusPanelChromeTests: XCTestCase {
 }
 
 final class StatusLampTests: XCTestCase {
+    func testTrayIdentityGridKeepsSectionLampAndRowLampOnOneColumn() {
+        XCTAssertEqual(
+            TrayChrome.sectionAccentPrefix + TrayChrome.padX,
+            TrayChrome.rowIdentityStart,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            TrayChrome.rowIdentityStart
+                + TrayChrome.identityLampSize
+                + TrayChrome.identityLampToNameGap,
+            TrayChrome.rowNameStart,
+            accuracy: 0.001
+        )
+    }
+
     func testStatusBarLampsKeepTheirStateColors() {
         let states: [GlanceKind] = [.waiting, .running, .idle, .stalled]
         for state in states {

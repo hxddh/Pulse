@@ -221,7 +221,7 @@ struct MenuBarLabel: View {
 
 // MARK: - Tray chrome
 
-private enum TrayChrome {
+enum TrayChrome {
     /// 360 lost the end of most session titles: after the 12pt accent gutter,
     /// the 18pt icon, and the status chip, a row title had ~230pt — roughly
     /// thirty characters, where a real task name is fifty. A menu-bar panel at
@@ -229,6 +229,22 @@ private enum TrayChrome {
     /// already run, and it is forty characters instead of thirty.
     static let width: CGFloat = 420
     static let padX: CGFloat = 16
+    /// Shared identity grid for rows and project/status headings. Keeping the
+    /// columns explicit prevents a section marker from drifting away from the
+    /// lamp it explains when the grouping mode changes.
+    static let rowLeadingInset: CGFloat = 14
+    static let iconColumnWidth: CGFloat = 18
+    static let iconToIdentityGap: CGFloat = 11
+    static let identityLampSize: CGFloat = 6
+    static let identityLampToNameGap: CGFloat = 6
+    static let rowIdentityStart: CGFloat =
+        rowLeadingInset + iconColumnWidth + iconToIdentityGap
+    static let rowNameStart: CGFloat =
+        rowIdentityStart + identityLampSize + identityLampToNameGap
+    /// Section headers keep their title on the same column as Agent names.
+    /// The accent marker starts where a row's lamp starts, not in the old
+    /// disclosure-column centre.
+    static let sectionAccentPrefix: CGFloat = rowIdentityStart - padX
     /// One hit target for every compact header action. SF Symbols have
     /// different intrinsic boxes; the shared frame aligns their visible
     /// centres and keeps the title on the same row.
@@ -304,26 +320,39 @@ private struct SectionHeader: View {
 
     var body: some View {
         let line = HStack(spacing: 9) {
-            Group {
-                if let collapsed {
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .opacity(0.6)
-                } else if accent {
+            if collapsed == nil, accent {
+                // Project headings with a waiting row use the same lamp column
+                // as their child rows. The title still starts at the shared
+                // rowNameStart, so the marker is no longer stranded at x=85.
+                ZStack(alignment: .leading) {
+                    Color.clear
                     Circle()
                         .fill(TrayChrome.waitAccent)
-                        .frame(width: 5, height: 5)
-                } else {
-                    Color.clear
+                        .frame(
+                            width: TrayChrome.identityLampSize,
+                            height: TrayChrome.identityLampSize
+                        )
+                        .offset(x: TrayChrome.sectionAccentPrefix)
                 }
+                .frame(width: 30, height: 14, alignment: .center)
+            } else {
+                Group {
+                    if let collapsed {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .opacity(0.6)
+                    } else {
+                        Color.clear
+                    }
+                }
+                // Reserve the disclosure column even for a non-foldable group.
+                // The row identity now has an icon, a status lamp, and two small
+                // gaps before its name. Match that optical start here so section
+                // headings do not appear to drift left of every agent name.
+                // 30 pt column + 9 pt gap keeps the heading on the same baseline
+                // column as the row identity text.
+                .frame(width: 30, height: 14, alignment: .center)
             }
-            // Reserve the disclosure column even for a non-foldable group.
-            // The row identity now has an icon, a status lamp, and two small
-            // gaps before its name. Match that optical start here so section
-            // headings do not appear to drift left of every agent name.
-            // 30 pt column + 9 pt gap keeps the heading on the same baseline
-            // column as the row identity text.
-            .frame(width: 30, height: 14, alignment: .center)
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
@@ -991,21 +1020,33 @@ private struct AgentRowButton: View {
                     actionable: row.canFocusTerminal,
                     action: { store.primaryAction(row) }
                 ) {
-                    HStack(alignment: .top, spacing: 11) {
-                        AgentIconView(id: row.agent, waiting: row.waiting)
-                            .padding(.top, 3)
+                    HStack(
+                        alignment: .top,
+                        spacing: TrayChrome.iconToIdentityGap
+                    ) {
+                        // The icon and identity line share the same top edge.
+                        // A former 3pt optical nudge made the icon visibly sink
+                        // below the lamp/name line, especially in CJK mode.
+                        AgentIconView(id: row.agent)
 
                         VStack(alignment: .leading, spacing: 3) {
                             // Agent identity is text, not an icon-recognition
                             // quiz. With 32 marks (ten of them Pulse-made), an
                             // icon alone cannot answer "which agent?".
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            HStack(
+                                alignment: .center,
+                                spacing: TrayChrome.identityLampToNameGap
+                            ) {
                                 Circle()
                                     .fill(statusIndicatorColor)
-                                    .frame(width: 6, height: 6)
-                                    .alignmentGuide(.firstTextBaseline) { d in
-                                        d[VerticalAlignment.center]
-                                    }
+                                    .frame(
+                                        width: TrayChrome.identityLampSize,
+                                        height: TrayChrome.identityLampSize
+                                    )
+                                    // Reserve a stable identity-line slot so
+                                    // the lamp stays optically centred while
+                                    // the Agent/source labels vary in font.
+                                    .frame(width: TrayChrome.identityLampSize, height: 18)
                                     .accessibilityHidden(true)
                                 Text(row.agent.displayName)
                                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
@@ -1013,7 +1054,11 @@ private struct AgentRowButton: View {
                                 if let sourceLabel {
                                     Text(sourceLabel)
                                         .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.tertiary)
+                                        // Evidence labels are important state,
+                                        // not decorative metadata. Tertiary
+                                        // contrast made Privacy-limited and
+                                        // Local cache disappear in light mode.
+                                        .foregroundStyle(.secondary.opacity(0.78))
                                 }
                                 Spacer(minLength: 6)
                                 statusChip
@@ -1062,7 +1107,7 @@ private struct AgentRowButton: View {
                     }
                     .padding(.trailing, TrayChrome.headerControlSize + 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 14)
+                    .padding(.leading, TrayChrome.rowLeadingInset)
                     .padding(.trailing, TrayChrome.padX)
                     .padding(.vertical, compact ? 6 : (row.isProcessOnly ? 7 : 9))
                     // The wait gutter overlays its own inset and never
@@ -1557,7 +1602,7 @@ struct SettingsView: View {
                             set: { _ in store.toggleMute(agent) }
                         )) {
                             HStack(spacing: 6) {
-                                AgentIconView(id: agent, waiting: false)
+                                AgentIconView(id: agent)
                                 Text(agent.displayName)
                             }
                         }
@@ -1688,7 +1733,7 @@ struct SettingsView: View {
             }
             ForEach(store.waitHistory) { entry in
                 HStack(alignment: .top, spacing: 8) {
-                    AgentIconView(id: entry.agent, waiting: false)
+                    AgentIconView(id: entry.agent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.title.isEmpty ? entry.agent.displayName : entry.title)
                             .font(.system(size: 12.5, weight: .medium))
@@ -2037,7 +2082,7 @@ struct SupportHealthRow: View {
                 .frame(width: 7, height: 7)
                 .padding(.top, 6)
                 .accessibilityHidden(true)
-            AgentIconView(id: item.agent, waiting: false)
+            AgentIconView(id: item.agent)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
