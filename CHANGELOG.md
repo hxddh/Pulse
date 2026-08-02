@@ -2,6 +2,21 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.44.0 — 首屏 Agent 目标与运行事实优化
+
+### 可观测性与交互效率
+
+- Pi 从嵌套 `message.content` 提取最新用户目标，避免长期显示 `pi update` 等无意义命令；维护类命令改为可扫描的目标描述。
+- Codex 等 Agent 的新鲜 `reading` / `working` 阶段进入默认行，首屏同时保留当前阶段、上下文占用和模型事实。
+- 当 Agent 只提供通用 shell 工具时，默认行明确显示 `Last action: Terminal command`，并与模型、token、事件数量按优先级组合。
+- 有结构化事件记录但缺少模型或阶段的 Agent，默认行补充事件量；没有数据的字段仍明确保持未知，不伪造事实。
+
+### 验证与发布
+
+- 31 个 Agent collector、支持矩阵、图标、外观和 24 列 harvest 协议门禁通过。
+- Swift release build、应用资源 selftest、未签名 DMG 打包和真实托盘截图回归通过。
+- 本版本使用未签名、未公证 macOS DMG；需要在其他 Mac 上运行时可能触发 Gatekeeper。
+
 ## 0.43.0 — Codex / OpenCode 运行事实与缓存误报修复
 
 ### 可观测性与稳定性
