@@ -340,6 +340,10 @@ final class ProcessProbeTests: XCTestCase {
             ProcessProbe.match(args: "/Users/me/.local/bin/cursor-agent worker start --worker-dir /Users/me/code/Pulse"),
             "Cursor's persistent worker is infrastructure until a composer session provides activity"
         )
+        XCTAssertNil(
+            ProcessProbe.match(args: "Cursor --type=renderer --app-path=/Applications/Cursor.app/Contents/Resources/app"),
+            "Cursor helper processes must not inflate the GUI fallback count"
+        )
     }
 
     func testParsesProcessElapsedTimeWithoutCallingItSessionAge() {

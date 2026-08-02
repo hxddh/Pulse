@@ -447,6 +447,11 @@ enum ProcessProbe {
             // pathNeedles are absent, or the name is naturally distinctive.
             let pathHit = rule.pathNeedles.contains { args.contains($0) }
             if pathHit { return Match(id: rule.id, evidence: .pathSignature) }
+            // Electron gives many Cursor helper processes the same `Cursor`
+            // comm name as the GUI. They do not contain the app's main
+            // executable path, so treating the basename as a hit inflated one
+            // app into a misleading "15 processes" row.
+            if rule.id == .cursor, baseHit { continue }
             if baseHit, !rule.pathNeedles.isEmpty {
                 if base.count <= 3 && !rule.allowBareBasename {
                     continue
