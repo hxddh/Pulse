@@ -166,6 +166,34 @@ def check_helper_contract(d: Path) -> int:
     }
     if A.observed_facts_from_json(preference):
         return fail("unscoped cache preferences were promoted to session facts")
+    explicit_facts = A.observed_facts_from_json(
+        {
+            "sessionId": "s-explicit",
+            "cwd": "/Users/me/code/Pulse",
+            "status": "running",
+            "currentTool": "apply_patch",
+            "contextWindowUsage": "62%",
+            "inputTokens": "12000",
+            "outputTokens": 860,
+        }
+    )
+    if explicit_facts.get("tool") != "apply_patch":
+        return fail(f"metadata action was not recovered: {explicit_facts}")
+    if explicit_facts.get("context_pct") != 62:
+        return fail(f"explicit context percentage was not normalized: {explicit_facts}")
+    if (explicit_facts.get("tokens_in"), explicit_facts.get("tokens_out")) != (12000, 860):
+        return fail(f"metadata token usage was not recovered: {explicit_facts}")
+    metadata_row = emit_to_line(
+        "droid",
+        (
+            "Metadata session", 0, 0, "", "", "Pulse", "/Users/me/code/Pulse",
+            int(time.time() * 1000), "metadata-session", explicit_facts,
+        ),
+    )
+    if metadata_row[COL_TOOL] != "apply_patch":
+        return fail(f"metadata action did not reach the wire: {metadata_row}")
+    if (metadata_row[COL_TIN], metadata_row[COL_TOUT]) != ("12000", "860"):
+        return fail(f"metadata tokens did not reach the wire: {metadata_row}")
 
     # The extras sentinel is a dict precisely because this protocol dispatches
     # on tuple length; two more positional fields would make a 9-tuple mean

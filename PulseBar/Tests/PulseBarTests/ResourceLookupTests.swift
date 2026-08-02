@@ -797,6 +797,26 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testProcessOnlyRowExplainsItsDetectionEvidence() {
+        var r = row()
+        r.liveProcess = true
+        r.processEvidence = .pathSignature
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.localizedCaseInsensitiveContains("detected by path signature"), line)
+        XCTAssertTrue(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
+    }
+
+    @MainActor
+    func testProcessOnlyRowDoesNotPromoteStaleSessionRecords() {
+        var r = row(records: 126)
+        r.liveProcess = true
+        r.processStartedMs = Int64((Date().timeIntervalSince1970 - 3_600) * 1000)
+        let line = store().rowSignalLine(r)
+        XCTAssertTrue(line.localizedCaseInsensitiveContains("process started"), line)
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("events"), line)
+    }
+
+    @MainActor
     func testProcessOnlyTerminalStatesItsActionableEvidence() {
         var r = row()
         r.liveProcess = true

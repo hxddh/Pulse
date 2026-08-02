@@ -2,6 +2,20 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.7 — 无 hooks 观测增强
+
+### 可观测性与隐私
+
+- 不安装 hooks 也能从本地会话元数据读取最近动作、模型、上下文占用、输入/输出 token、文件数和进度；仅使用明确存在的字段，不根据日志长度猜测。
+- 兼容不同 Agent 对上下文占用和计数的格式（比例、百分比、字符串），并修复元数据动作写入错误 wire 字段导致 token 丢失的问题。
+- Process-only 行显示可验证的检测来源，并隐藏未匹配会话流的历史事件数，避免把进程证据误读成完整活动流。
+
+### 验证
+
+- 31 个 Agent collector、支持矩阵、图标、外观和 harvest 协议门禁通过。
+- Release build、打包 selftest、完整 harvest 测试和 31 个 adapter fixture 验证通过。
+- 本版本仍为未签名、未公证 macOS DMG；其他 Mac 可能触发 Gatekeeper。
+
 ## 0.47.6 — Waiting 信号可见性修复
 
 ### 可观测性与交互

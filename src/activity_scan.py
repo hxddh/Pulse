@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import re
 import signal
@@ -1590,10 +1591,12 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             extra: dict = {"mode": "local"}
             context_pct = meta.get("contextUsagePercent")
             files_changed = meta.get("filesChangedCount")
-            if isinstance(context_pct, (int, float)) and context_pct > 0:
-                extra["context_pct"] = int(context_pct)
-            if isinstance(files_changed, (int, float)) and files_changed > 0:
-                extra["files"] = int(files_changed)
+            normalized_context = context_percent_value(context_pct)
+            if normalized_context > 0:
+                extra["context_pct"] = normalized_context
+            normalized_files = positive_integer_value(files_changed)
+            if normalized_files > 0:
+                extra["files"] = normalized_files
             candidates.append(
                 (
                     task,
@@ -1726,7 +1729,9 @@ def grok_session_activity(active: Path, session: dict) -> tuple | None:
                     int(sig.get("toolFailureCount") or 0),
                 )
                 extra["files"] = int(sig.get("totalFilesTouched") or 0)
-                extra["context_pct"] = int(sig.get("contextWindowUsage") or 0)
+                normalized_context = context_percent_value(sig.get("contextWindowUsage"))
+                if normalized_context > 0:
+                    extra["context_pct"] = normalized_context
                 extra["progress_done"] = int(sig.get("turnCount") or 0)
                 if not extra.get("model"):
                     extra["model"] = str(sig.get("modelName") or sig.get("modelId") or "")[:64]
@@ -2499,18 +2504,43 @@ def observed_facts_from_json(obj) -> dict:
                 if isinstance(raw, str) and raw.strip():
                     facts["mode"] = raw.strip()[:64]
                     break
+            # Several IDE/session stores expose the last action as metadata
+            # rather than a typed tool-call event. It is still valuable
+            # evidence without hooks, but keep it in the existing `tool`
+            # column so the UI labels it as a historical action rather than
+            # claiming that the tool is currently running.
+            for key in (
+                "currentTool", "current_tool", "lastTool", "last_tool",
+                "lastAction", "last_action", "toolName", "tool_name", "tool",
+            ):
+                raw = value.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    facts["tool"] = raw.strip()[:48]
+                    break
             number_keys = {
                 "errors": ("errorCount", "errors", "toolFailureCount"),
                 "files": ("filesChanged", "totalFilesTouched", "filesTouched"),
                 "context_pct": ("contextWindowUsage", "contextUsagePercent", "contextPercent"),
+                "tokens_in": (
+                    "inputTokens", "input_tokens", "promptTokens", "prompt_tokens",
+                    "inputTokenCount", "input_token_count", "promptTokenCount",
+                ),
+                "tokens_out": (
+                    "outputTokens", "output_tokens", "completionTokens", "completion_tokens",
+                    "outputTokenCount", "output_token_count", "completionTokenCount",
+                ),
                 "progress_done": ("completedTasks", "completed", "doneCount"),
                 "progress_total": ("totalTasks", "total", "taskCount"),
             }
             for fact, keys in number_keys.items():
                 for key in keys:
                     raw = value.get(key)
-                    if isinstance(raw, (int, float)) and raw > 0:
-                        facts[fact] = int(raw)
+                    if fact == "context_pct":
+                        parsed = context_percent_value(raw)
+                    else:
+                        parsed = positive_integer_value(raw)
+                    if parsed > 0:
+                        facts[fact] = parsed
                         break
             score = (
                 len(facts) * 3
@@ -2526,6 +2556,43 @@ def observed_facts_from_json(obj) -> dict:
                 child_context = f"{context}.{key}" if context else str(key)
                 stack.append((child, child_context, depth + 1))
     return best[1]
+
+
+def context_percent_value(raw: object) -> int:
+    """Normalize an explicit context-usage value to a bounded percentage.
+
+    Vendors disagree on whether context usage is emitted as ``0.62``, ``62``
+    or ``"62%"``. This only normalizes an explicitly named field; it never
+    estimates usage from transcript length or token counts.
+    """
+    if isinstance(raw, bool):
+        return 0
+    try:
+        value = float(str(raw).strip().rstrip("%"))
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(value):
+        return 0
+    if 0 < value <= 1:
+        value *= 100
+    if value <= 0:
+        return 0
+    return max(1, min(100, round(value)))
+
+
+def positive_integer_value(raw: object) -> int:
+    """Parse an explicitly named non-negative counter without estimating it."""
+    if isinstance(raw, bool):
+        return 0
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(value):
+        return 0
+    if value <= 0:
+        return 0
+    return min(2_147_483_647, int(value))
 
 
 def observed_facts_from_text(text: str, limit: int = 120) -> dict:
@@ -2635,7 +2702,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
                             display_task[:160],
                             0,
                             0,
-                            last_tool_name_strict(text),
+                            str(extra.get("tool") or "").strip() or last_tool_name_strict(text),
                             "pending" if pending else "",
                             project[:48],
                             cwd[:240],
@@ -2673,7 +2740,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
                 task[:160],
                 0,
                 0,
-                last_tool_name_strict(text),
+                str(extra.get("tool") or "").strip() or last_tool_name_strict(text),
                 skill,
                 project[:48],
                 cwd[:240],
@@ -4318,6 +4385,25 @@ def emit_row(
     row_evidence = str(extra.get("evidence") or evidence or HARVEST_CONTRACTS.get(agent, EVIDENCE_CACHE))
 
     def emit_x(*args) -> None:
+        args = list(args)
+        # Generic adapters can discover an explicit metadata action even when
+        # their transcript has no typed tool-call record. Reuse the wire's
+        # existing tool field so Swift can present it as "Last action".
+        # `args[0]` is the agent id, so the existing wire tool field is index
+        # 4 (index 3 is output tokens). Do not overwrite token telemetry while
+        # filling a missing metadata action.
+        if len(args) >= 5 and not str(args[4] or "").strip():
+            fallback_tool = str(extra.get("tool") or "").strip()
+            if fallback_tool:
+                args[4] = fallback_tool[:48]
+        if len(args) >= 4:
+            # Structured stores sometimes expose token usage only in the
+            # session metadata object. Preserve adapter-provided values and
+            # fill only an unknown side from that explicit metadata.
+            if not positive_integer_value(args[2]):
+                args[2] = positive_integer_value(extra.get("tokens_in"))
+            if not positive_integer_value(args[3]):
+                args[3] = positive_integer_value(extra.get("tokens_out"))
         emit(
             *args,
             records=records,

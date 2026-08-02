@@ -833,7 +833,9 @@ final class StatusStore: ObservableObject {
                 ageMinutes: 0
             )
             process.harvestMs = 0
+            process.records = 0
             process.processStartedMs = now - 70 * 60 * 1000
+            process.processEvidence = .executable
             var sub = row(
                 "claude-sub-preview",
                 .claude,
@@ -1587,6 +1589,17 @@ final class StatusStore: ObservableObject {
             var bits: [String] = []
             let path = row.displayPath
             if !path.isEmpty, !omitPath { bits.append(path) }
+            // Process-only is still useful liveness evidence. Explain how the
+            // row was found instead of collapsing every limited observation
+            // into the opaque "activity unavailable" label. The command line
+            // itself is deliberately never retained or displayed.
+            if let evidence = row.processEvidence {
+                bits.append(
+                    evidence == .pathSignature
+                        ? tr(.supportDetectedPath)
+                        : tr(.supportDetectedExecutable)
+                )
+            }
             bits.append(tr(.activityUnavailable))
             return bits.joined(separator: " · ")
         }
@@ -1893,11 +1906,14 @@ final class StatusStore: ObservableObject {
     /// disclosure. This is deliberately bounded to four facts and excludes
     /// diagnostic-only values such as the full cwd and session identifier.
     func rowObservationLine(_ row: AgentRow) -> String {
-        // A process-only row can still carry real subagent progress, tokens or
-        // records. Suppressing the whole line by presentation category hid the
-        // only useful facts on exactly those rows. A bare process naturally
-        // returns an empty line because none of the checks below add anything.
-        guard !row.waiting else { return "" }
+        // Process-only rows can retain stale session fields after a merge, but
+        // those fields are not trustworthy without a matched session feed.
+        // Suppressing the whole line by presentation category used to hide the
+        // only useful facts on real session rows. That policy was too loose:
+        // a stale merge could carry transcript counts onto a process-only row,
+        // making "Process only" look like a real session feed. A process row
+        // now keeps only its explicit process evidence/age line.
+        guard !row.waiting, !row.isProcessOnly else { return "" }
         var bits: [String] = []
         // Progress already has a dedicated line. This line carries stable
         // execution context, not four competing counters.
