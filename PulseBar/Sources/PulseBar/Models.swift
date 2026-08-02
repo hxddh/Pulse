@@ -672,6 +672,13 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var hasActivity: Bool
     var hasProgress: Bool
     var waitingSignalReady: Bool
+    /// Optional operational facts shown separately from the four core facts.
+    /// These are inventory signals, not quality gates: an Agent may not expose
+    /// a model or resource counter in its local store, but that absence must be
+    /// visible instead of silently making every adapter look equivalent.
+    var hasActionSignal: Bool = false
+    var hasModelSignal: Bool = false
+    var hasResourceSignal: Bool = false
 
     var id: AgentID { agent }
 

@@ -26,6 +26,11 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var lastAnnouncedState: String?
+    /// The QA renderer owns the same panel as the user. Suspend resize
+    /// callbacks while it snapshots the view; AppKit can otherwise invalidate
+    /// SwiftUI safe-area constraints in the middle of `cacheDisplay` and
+    /// terminate the process with an exception.
+    private var captureInProgress = false
 
     init(store: StatusStore) {
         self.store = store
@@ -100,16 +105,36 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     /// Render this process's own panel for visual QA without Screen Recording,
     /// Accessibility, Apple Events, or UI automation permissions.
     func capture(to url: URL) {
-        show()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+        captureInProgress = true
+        // `--open-tray-panel` is commonly paired with capture. Calling
+        // `show()` again in that case resizes an already-visible SwiftUI host
+        // while AppKit is in its display cycle — the exact macOS 26 path that
+        // raises `_postWindowNeedsUpdateConstraints`. Reuse the settled panel
+        // instead of starting a second layout transaction.
+        if panel.isVisible {
+            panel.makeKeyAndOrderFront(nil)
+        } else {
+            show()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
             guard let self else { return }
-            self.resizeToFit()
+            defer {
+                self.captureInProgress = false
+                self.close()
+            }
             // Capture the window root, not only the rounded material child.
             // Capturing only `effectView` hid rectangular frame artefacts from
             // visual QA even though they were visible on the real desktop.
             let surface = self.rootView
-            surface.layoutSubtreeIfNeeded()
+            // `show()` has already sized and laid out the panel. A display pass
+            // is enough to flush the layer tree without asking SwiftUI to
+            // invalidate its constraints recursively during the snapshot.
+            surface.displayIfNeeded()
             let bounds = surface.bounds
+            guard bounds.width > 0, bounds.height > 0 else {
+                DebugLog.write("tray capture failed — empty surface")
+                return
+            }
             guard let bitmap = surface.bitmapImageRepForCachingDisplay(in: bounds) else {
                 DebugLog.write("tray capture failed — no bitmap")
                 return
@@ -125,7 +150,6 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             } catch {
                 DebugLog.write("tray capture failed \(error.localizedDescription)")
             }
-            self.close()
         }
     }
 
@@ -256,7 +280,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     }
 
     private func scheduleResize() {
-        guard panel.isVisible else { return }
+        guard panel.isVisible, !captureInProgress else { return }
         DispatchQueue.main.async { [weak self] in self?.resizeToFit() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             self?.resizeToFit()

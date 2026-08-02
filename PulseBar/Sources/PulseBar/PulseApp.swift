@@ -1920,6 +1920,22 @@ struct SupportHealthRow: View {
                     }
                     .font(.caption)
 
+                    HStack(spacing: 6) {
+                        SupportFactPill(
+                            label: store.tr(.supportAction),
+                            present: item.hasActionSignal
+                        )
+                        SupportFactPill(
+                            label: store.tr(.supportModel),
+                            present: item.hasModelSignal
+                        )
+                        SupportFactPill(
+                            label: store.tr(.supportResources),
+                            present: item.hasResourceSignal
+                        )
+                    }
+                    .font(.caption)
+
                     let observed = store.supportObservedDetail(item)
                     Text(observed.isEmpty ? store.tr(.supportNoObservedSignals) : observed)
                         .font(.caption)

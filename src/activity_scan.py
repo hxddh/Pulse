@@ -271,8 +271,8 @@ def last_usage_tokens(text: str) -> tuple[int, int]:
     tin = tout = 0
     for m in re.finditer(r'"usage"\s*:\s*\{([^}]{0,500})\}', text):
         block = m.group(1)
-        im = re.search(r'"input_tokens"\s*:\s*(\d+)', block)
-        om = re.search(r'"output_tokens"\s*:\s*(\d+)', block)
+        im = re.search(r'"(?:input_tokens|input)"\s*:\s*(\d+)', block)
+        om = re.search(r'"(?:output_tokens|output)"\s*:\s*(\d+)', block)
         cm = re.search(r'"cache_read_input_tokens"\s*:\s*(\d+)', block)
         if im:
             tin = int(im.group(1))
@@ -281,6 +281,15 @@ def last_usage_tokens(text: str) -> tuple[int, int]:
         if om:
             tout = int(om.group(1))
     return tin, tout
+
+
+def last_model_name(text: str) -> str:
+    """Read the latest explicit model field from a known session transcript."""
+    names = re.findall(
+        r'"(?:model|modelId|model_id|currentModel|current_model)"\s*:\s*"([^"\n]{1,96})"',
+        text or "",
+    )
+    return redact_sensitive(names[-1].strip()) if names else ""
 
 
 def sum_int_fields(text: str, key: str) -> int:
@@ -599,6 +608,43 @@ def iso_time_ms(value) -> int:
         return int(datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp() * 1000)
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def normalize_time_ms(value) -> int:
+    """Normalize vendor timestamps without treating a read time as activity.
+
+    Agent stores are inconsistent: SQLite-backed IDEs have shipped epoch
+    seconds, milliseconds, microseconds, and ISO strings for the same field.
+    A direct ``int(value)`` turns one string into a collector-wide exception,
+    which is especially damaging for Cursor because all composer rows are
+    discarded by its outer safety guard. Unknown or malformed values remain
+    unknown (0); callers decide whether a row is still useful without a time.
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        try:
+            raw = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        if raw <= 0:
+            return 0
+        # Seconds, milliseconds, microseconds, then nanoseconds. Keep the
+        # thresholds deliberately broad for vendor-specific future formats.
+        while raw < 10_000_000_000:
+            raw *= 1000
+        while raw > 100_000_000_000_000:
+            raw //= 1000
+        return raw
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return 0
+        try:
+            return normalize_time_ms(float(text))
+        except (TypeError, ValueError, OverflowError):
+            return iso_time_ms(text)
+    return 0
 
 
 def meaningful_prompt(value) -> str:
@@ -1294,7 +1340,9 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                 continue
             pending = bool(meta.get("hasBlockingPendingActions") or meta.get("hasPendingPlan"))
             is_sel = bool(selected and cid == selected)
-            age_ok = bool(lu and (now_ms - int(lu)) <= local_visible_window_ms)
+            hm = normalize_time_ms(lu)
+            age = now_ms - hm if hm else 0
+            age_ok = bool(hm and 0 <= age <= local_visible_window_ms)
             if not (is_sel or pending or age_ok):
                 continue
             mode = meta.get("unifiedMode") or ""
@@ -1317,7 +1365,11 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             # No lastUpdatedAt → don't stamp "now" (false Running freshness).
             if not lu:
                 continue
-            hm = int(lu)
+            # `lastUpdatedAt` can be ISO text on older Cursor builds. The
+            # normalized value is also the evidence timestamp shown by Pulse;
+            # never substitute the collector read time for missing activity.
+            if not hm:
+                continue
             extra: dict = {"mode": "local"}
             context_pct = meta.get("contextUsagePercent")
             files_changed = meta.get("filesChangedCount")
@@ -1360,14 +1412,11 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                     status = int(meta.get("status"))
                 except (TypeError, ValueError):
                     status = -1
-                try:
-                    updated_ms = int(meta.get("updatedAt") or 0)
-                except (TypeError, ValueError):
-                    updated_ms = 0
+                updated_ms = normalize_time_ms(meta.get("updatedAt"))
                 selected_cloud = bool(selected and sid == selected)
                 unread = bool(meta.get("isUnread"))
                 recent_cloud = bool(
-                    updated_ms and now_ms - updated_ms <= cloud_recent_window_ms
+                    updated_ms and 0 <= now_ms - updated_ms <= cloud_recent_window_ms
                 )
                 running_cloud = status == 1
                 if not (running_cloud or selected_cloud or unread or recent_cloud):
@@ -1583,6 +1632,8 @@ def pi_activities() -> list[tuple]:
         tout = sum_int_fields(text, "output_tokens")
         if tin == 0 and tout == 0:
             tin, tout = token_usage_totals(text)
+        if tin == 0 and tout == 0:
+            tin, tout = last_usage_tokens(text)
         tool = last_tool_name_strict(text)
         skill = "pending" if text_looks_pending(text) else ""
         cwd = extract_field(text, "cwd") or extract_field(text, "workingDirectory") or ""
@@ -1592,6 +1643,9 @@ def pi_activities() -> list[tuple]:
         phase = semantic_phase_from_events(text)
         if phase:
             extra["phase"] = phase
+        model = last_model_name(text)
+        if model:
+            extra["model"] = model
         out.append(
             (
                 task[:160],
@@ -1664,7 +1718,7 @@ def amp_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                                     break
                             if title:
                                 break
-            project = short_project(cwd) if cwd else short_project(f.stem)
+            project = short_project(cwd) if cwd else ""
             key = f"{project}|{title[:40]}"
             if key in seen:
                 continue
@@ -2035,15 +2089,9 @@ def observed_sessions_from_json(obj, limit: int = MAX_SESSIONS_PER_AGENT) -> lis
             updated_ms = 0
             for key in time_keys:
                 raw = value.get(key)
-                if isinstance(raw, (int, float)) and raw > 0:
-                    updated_ms = int(raw)
-                    if updated_ms < 10_000_000_000:
-                        updated_ms *= 1000
+                updated_ms = normalize_time_ms(raw)
+                if updated_ms:
                     break
-                if isinstance(raw, str) and raw.strip():
-                    updated_ms = iso_time_ms(raw)
-                    if updated_ms:
-                        break
             score = (
                 (8 if task else 0)
                 + (6 if cwd else 0)
@@ -2469,6 +2517,9 @@ def copilot_activities() -> list[tuple]:
         mtime = file_mtime_ms(events if events.is_file() else sdir)
         stats = session_stats(events if events.is_file() else sdir, per_session=True)
         stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        model = last_model_name(text)
+        if model and "model" not in stats:
+            stats["model"] = model
         out.append((title[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], mtime, sdir.name[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
@@ -2503,6 +2554,9 @@ def amazon_q_activities() -> list[tuple]:
         skill = "pending" if text_looks_pending(text) else ""
         stats = session_stats(Path(f), per_session=True)
         stats.update({k: v for k, v in observed_facts_from_text(text).items() if k not in stats})
+        model = last_model_name(text)
+        if model and "model" not in stats:
+            stats["model"] = model
         out.append((task[:160], 0, 0, last_tool_name_strict(text), skill, project[:48], (cwd or "")[:240], file_mtime_ms(Path(f)), Path(f).stem[:80], stats))
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
@@ -2802,11 +2856,17 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS
             word in str(path).lower()
             for word in ("session", "thread", "conversation", "chat", "task", "composer")
         )
+        # A generic settings/index file can contain a title, workspace, or
+        # model-shaped keys without representing a conversation. Requiring a
+        # session-like path or a real session identity prevents those files
+        # from becoming misleading rows such as “Default / project”.
+        if not sessionish_path and not sid:
+            continue
         if not task and sessionish_path:
             task = session_title_from_text(text) or extract_field(text, "title") or ""
         if not cwd:
             cwd = extract_field(text, "cwd") or extract_field(text, "workspace") or ""
-        project = short_project(cwd) if cwd else short_project(path.stem)
+        project = short_project(cwd) if cwd else ""
         skill = "pending" if text_looks_pending(text) else ""
         # A file under an explicitly session-like path is a concrete session,
         # not merely a container cache. Preserve its age/record facts and
@@ -2827,6 +2887,8 @@ def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS
             for key, value in facts.items():
                 if key not in extra:
                     extra[key] = value
+        if not task and not cwd and not sid:
+            continue
         out.append((
             task[:160],
             0,
@@ -3164,7 +3226,7 @@ def gemini_activities() -> list[tuple[str, int, int, str, str, str, str]]:
                         cwd = ""
                     if cwd:
                         break
-        project = short_project(cwd) if cwd else short_project(slug)
+        project = short_project(cwd) if cwd else ""
         key = f.name  # session file — allow multi-session same project
         if key in seen:
             continue
@@ -3212,6 +3274,9 @@ def gemini_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         skill = "pending" if gemini_has_unresolved_ask(blob) else ""
         stats = session_stats(f, per_session=True)
         stats.update({k: v for k, v in observed_facts_from_text(blob).items() if k not in stats})
+        model = last_model_name(blob)
+        if model and "model" not in stats:
+            stats["model"] = model
         out.append(
             (
                 task[:160],
