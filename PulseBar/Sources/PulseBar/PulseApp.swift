@@ -1172,7 +1172,15 @@ private struct AgentRowButton: View {
         // "Session" adds no distinction; only degraded evidence needs a tag.
         case .session: return nil
         case .cache: return store.tr(.cacheEvidence)
-        case .process: return store.tr(.limitedData)
+        case .process:
+            // A protected-store Agent can still be detected by its executable
+            // when deep app-data reads are off. Name that boundary directly in
+            // the row; "Process only" hid the actionable reason the session
+            // title and activity were unavailable.
+            if !store.allowAppData, row.agent.requiresAppDataOptIn {
+                return store.tr(.supportCollectorPrivacyLimited)
+            }
+            return store.tr(.limitedData)
         }
     }
 

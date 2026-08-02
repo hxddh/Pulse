@@ -414,6 +414,23 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.rows[0].isProcessOnly)
     }
 
+    func testCursorAppProcessCreatesAnHonestFallbackRowWithoutAppData() {
+        let r = build(procs: [
+            .init(
+                id: .cursor,
+                count: 1,
+                viaWarp: false,
+                pid: 91,
+                evidence: .pathSignature
+            )
+        ])
+        XCTAssertEqual(r.rows.count, 1)
+        XCTAssertEqual(r.rows[0].agent, .cursor)
+        XCTAssertTrue(r.rows[0].liveProcess)
+        XCTAssertTrue(r.rows[0].isProcessOnly)
+        XCTAssertEqual(r.rows[0].processEvidence, .pathSignature)
+    }
+
     func testCursorAgentProcessCountsAsCursor() {
         let r = build(procs: [.init(id: .cursorAgent, count: 1, viaWarp: false, pid: 5)])
         XCTAssertEqual(r.rows.map(\.agent), [.cursor], "cursor_agent merges into Cursor")

@@ -266,7 +266,14 @@ enum ProcessProbe {
             let evidenceArgs = argsByPid[p.pid] ?? p.args
             guard let match = matchEvidence(args: evidenceArgs) else { continue }
             let id = match.id
-            if id == .cursor { continue }
+            // The Cursor GUI is itself useful liveness evidence when the
+            // protected composer store is unavailable. Previously this was
+            // dropped unconditionally, so a user with an active Cursor
+            // session saw no Cursor row at all unless they enabled the
+            // privacy-sensitive app-data scan. Keep the persistent
+            // `cursor-agent worker start --worker-dir` daemon filtered by its
+            // rule above, but surface the actual Cursor app as an honest
+            // process-only fallback.
             var hit = acc[id] ?? Hit(id: id, count: 0, viaWarp: false)
             hit.count += 1
             hit.evidence = match.evidence
