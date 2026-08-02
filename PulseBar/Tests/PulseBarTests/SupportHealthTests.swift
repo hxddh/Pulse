@@ -89,6 +89,18 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertFalse(AgentID.pi.requiresAppDataOptIn)
     }
 
+    @MainActor
+    func testSupportCopyExplainsPrivacyLimitedCursorEvidence() {
+        let store = StatusStore()
+        var item = health(agent: .cursor, evidence: nil, goal: false, workspace: false, activity: false)
+        item.collectorState = .sourceAbsent
+        item.privacyLimited = true
+        XCTAssertEqual(store.supportEvidenceLabel(item), store.tr(.supportCollectorPrivacyLimited))
+        XCTAssertTrue(
+            store.supportAdapterDetail(item).contains(store.tr(.supportCollectorPrivacyLimitedDetail))
+        )
+    }
+
     func testMissingHooksIsActionable() {
         let item = health(agent: .codex, progress: true, waitingReady: false)
         XCTAssertEqual(item.disposition, .needsAction)
