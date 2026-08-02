@@ -88,7 +88,7 @@ final class SupportHealthTests: XCTestCase {
     }
 
     func testUnscannedAdapterIsNotReportedAsAnAdapterFailure() {
-        var item = health(progress: false)
+        var item = health(evidence: nil, progress: false)
         item.collectorState = .unscanned
         XCTAssertEqual(item.disposition, .unavailable)
 
