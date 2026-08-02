@@ -2,6 +2,26 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.4 — 采集连续性与权限提示修复
+
+### 可观测性与稳定性
+
+- 部分采集超时不再清空尚未完成的 Agent；已返回的 Agent 更新，未到达的 Agent 保留上一份有效观测，避免 Command Code、Cursor、Amp 等会话短暂消失。
+- 忽略异常的未来时间戳，避免错误的 hook 事件把 Waiting 状态永久挂起。
+- 修复状态摘要为空时产生多余分隔符的问题。
+
+### 隐私与权限
+
+- 通知权限改为仅在用户点击“启用通知”后请求，启动、后台扫描和发送通知不会再触发权限弹窗。
+- hook 写入磁盘前对 Token、密码、私钥、认证 URL、路径和 TSV 控制字符做清洗与长度限制。
+- 移除内容脱敏规则的强制正则崩溃风险。
+
+### 验证
+
+- 31 个 Agent collector、支持矩阵、32 条进程规则、图标、外观和 harvest 协议门禁通过。
+- Release build、打包资源 selftest、完整 harvest 测试和 ad-hoc 签名验证通过。
+- 本版本仍为未签名、未公证 macOS DMG；其他 Mac 可能触发 Gatekeeper。
+
 ## 0.47.3 — 观测入口与能力信号修复
 
 ### 可观测性与交互
