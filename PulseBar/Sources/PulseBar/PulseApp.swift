@@ -1726,6 +1726,7 @@ struct SupportCoverageView: View {
         case needsAction
         case limited
         case healthy
+        case unavailable
         case all
 
         var id: String { rawValue }
@@ -1739,6 +1740,7 @@ struct SupportCoverageView: View {
                 case .needsAction: return item.disposition == .needsAction
                 case .limited: return item.disposition == .limited
                 case .healthy: return item.disposition == .healthy
+                case .unavailable: return item.disposition == .unavailable
                 case .all:
                     return true
                 }
@@ -1764,6 +1766,8 @@ struct SupportCoverageView: View {
             return String(format: store.tr(.supportLimitedCount), limitedCount)
         case .healthy:
             return String(format: store.tr(.supportHealthyCount), healthyCount)
+        case .unavailable:
+            return String(format: store.tr(.supportUnavailableCount), unavailableCount)
         case .all: return store.tr(.supportFilterAll)
         }
     }
@@ -1776,6 +1780,9 @@ struct SupportCoverageView: View {
     }
     private var healthyCount: Int {
         store.supportHealth.filter { $0.disposition == .healthy }.count
+    }
+    private var unavailableCount: Int {
+        store.supportHealth.filter { $0.disposition == .unavailable }.count
     }
 
     var body: some View {
@@ -1799,6 +1806,10 @@ struct SupportCoverageView: View {
                     Label(
                         String(format: store.tr(.supportHealthyCount), healthyCount),
                         systemImage: "checkmark.circle"
+                    )
+                    Label(
+                        String(format: store.tr(.supportUnavailableCount), unavailableCount),
+                        systemImage: "minus.circle"
                     )
                     Spacer()
                     Button(store.tr(.supportSafeReport)) { showSafeReport.toggle() }
