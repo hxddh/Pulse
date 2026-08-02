@@ -1812,7 +1812,8 @@ final class StatusStore: ObservableObject {
             || row.tokensIn > 0 || row.tokensOut > 0
             || row.subTotal > 0 || row.errors > 0 || row.files > 0
             || row.contextPercent > 0 || !row.model.isEmpty || !row.mode.isEmpty
-            || !row.skill.isEmpty || row.activityChange != nil || row.isStalled
+            || !row.skill.isEmpty || row.activityChange != nil
+            || row.isStalled || row.section == .stalled
     }
 
     private func readablePhase(_ raw: String) -> String? {
