@@ -46,7 +46,22 @@ def safe_roots(roots: list[Path] | tuple[Path, ...]) -> list[Path]:
     """Filter protected roots unless the user explicitly enabled deep data."""
     if ALLOW_APP_DATA:
         return list(roots)
-    return [root for root in roots if not is_protected_app_data(root)]
+    safe: list[Path] = []
+    for root in roots:
+        if is_protected_app_data(root):
+            continue
+        # A vendor may symlink an apparently safe dot-directory into an App
+        # Group or Application Support store. Check the link target without
+        # replacing the original path used by the collector. This closes a
+        # privacy bypass while keeping the fast lexical check above first.
+        try:
+            resolved = root.expanduser().resolve(strict=False)
+        except OSError:
+            resolved = root.expanduser()
+        if is_protected_app_data(resolved):
+            continue
+        safe.append(root)
+    return safe
 
 # One product-wide safety budget. It is deliberately much larger than the
 # tray's eight-row default fold: visual density is not a detection limit.
