@@ -376,7 +376,7 @@ def _tool_use_names(value) -> list[str]:
     return found
 
 
-def last_tool_name_strict(text: str) -> str:
+def last_tool_name_strict(text: str, records: list[object] | None = None) -> str:
     """The tool a transcript last recorded, read rather than pattern-matched.
 
     This existed to stop the loose extractor guessing, and then guessed anyway.
@@ -400,7 +400,7 @@ def last_tool_name_strict(text: str) -> str:
     if not text:
         return ""
 
-    for obj in reversed(json_records(text)):
+    for obj in reversed(records if records is not None else json_records(text)):
         names = _tool_use_names(obj)
         if names:
             return names[-1][:40]
@@ -422,7 +422,9 @@ def last_tool_name_strict(text: str) -> str:
     return ""
 
 
-def semantic_phase_from_events(text: str) -> str:
+def semantic_phase_from_events(
+    text: str, records: list[object] | None = None
+) -> str:
     """Read an explicit current phase from ordered lifecycle events.
 
     A last tool name is historical evidence, not proof that the tool is still
@@ -570,14 +572,18 @@ def semantic_phase_from_events(text: str) -> str:
             if isinstance(child, (dict, list)):
                 walk(child)
 
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith(("{", "[")):
-            continue
-        try:
-            walk(json.loads(line))
-        except Exception:
-            continue
+    if records is None:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith(("{", "[")):
+                continue
+            try:
+                walk(json.loads(line))
+            except Exception:
+                continue
+    else:
+        for record in records:
+            walk(record)
     if pending:
         return list(pending.values())[-1]
     if unkeyed_tool:
@@ -846,10 +852,12 @@ def codex_user_title_from_file(path: Path, max_bytes: int = 8_000_000) -> str:
     return opening or newest_short
 
 
-def codex_last_usage(text: str) -> tuple[int, int]:
+def codex_last_usage(
+    text: str, records: list[object] | None = None
+) -> tuple[int, int]:
     """Token usage for the latest model turn, not the whole rollout."""
     latest = (0, 0)
-    for obj in json_records(text):
+    for obj in records if records is not None else json_records(text):
         if not isinstance(obj, dict) or obj.get("type") != "event_msg":
             continue
         payload = obj.get("payload")
@@ -868,7 +876,9 @@ def codex_last_usage(text: str) -> tuple[int, int]:
     return latest
 
 
-def codex_runtime_facts(text: str) -> dict:
+def codex_runtime_facts(
+    text: str, records: list[object] | None = None
+) -> dict:
     """Extract explicit Codex model/context facts without guessing.
 
     Codex stores these in `turn_context` and `task_started`/`token_count`
@@ -879,7 +889,7 @@ def codex_runtime_facts(text: str) -> dict:
     facts: dict = {}
     context_window = 0
     input_tokens = 0
-    for obj in json_records(text):
+    for obj in records if records is not None else json_records(text):
         if not isinstance(obj, dict):
             continue
         typ = str(obj.get("type") or "")
@@ -1205,9 +1215,10 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
         # Never fall back to the generic title extractor here. MCP invocations
         # carry UI-only `title` strings ("Inspect settings") that are neither a
         # session title nor a user request.
+        records = json_records(text)
         task = codex_user_title_from_file(f)
-        tin, tout = codex_last_usage(text)
-        tool = last_tool_name_strict(text)
+        tin, tout = codex_last_usage(text, records)
+        tool = last_tool_name_strict(text, records)
         skill = ""
         cwd = extract_field(text, "cwd") or extract_field(text, "workdir") or ""
         project = short_project(cwd) if cwd else ""
@@ -1225,8 +1236,11 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             skill = "pending"
         if task or tin or tout or tool or skill or project:
             extra = session_stats(f, per_session=True)
-            extra.update(codex_runtime_facts(text))
-            phase = semantic_phase_from_events(text)
+            extra.update(codex_runtime_facts(text, records))
+            # A rollout can contain hundreds of nested tool-result records.
+            # Phase is a live signal, so the newest bounded slice is both more
+            # useful and far cheaper than replaying the whole transcript.
+            phase = semantic_phase_from_events(text, records[-80:])
             if phase:
                 extra["phase"] = phase
             out.append(
@@ -2668,7 +2682,13 @@ def antigravity_activities() -> list[tuple]:
         blob = " ".join(str(x) for x in row).lower()
         if any(x in blob for x in ("agent", "chat", "thread", "task", "pending", "antigravity")):
             filtered.append(row)
-    return (out + (filtered or more))[:MAX_SESSIONS_PER_AGENT]
+    # Do not fall back to arbitrary files from the app's cache. Antigravity
+    # ships VS Code schemas, walkthrough metadata and extension indexes in
+    # the same tree; those rows look recent but cannot answer what the agent
+    # is doing. An honest ``no sessions`` health state is more useful than a
+    # tray full of plausible-looking cache titles. Real session-shaped files
+    # still pass when they contain agent/chat/task evidence or a workspace.
+    return (out + filtered)[:MAX_SESSIONS_PER_AGENT]
 
 
 def roo_activities() -> list[tuple]:
@@ -3306,15 +3326,32 @@ def opencode_activities() -> list[tuple[str, int, int, str, str, str, str]]:
 
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.4)
         try:
-            rows = con.execute(
-                f"""
-                SELECT id, title, directory, tokens_input, tokens_output, time_updated
-                FROM session
-                WHERE IFNULL(time_archived, 0) = 0
-                ORDER BY time_updated DESC
-                LIMIT {MAX_SESSIONS_PER_AGENT}
-                """
-            ).fetchall()
+            try:
+                rows = con.execute(
+                    f"""
+                    SELECT id, title, directory, tokens_input, tokens_output,
+                           time_updated, model
+                    FROM session
+                    WHERE IFNULL(time_archived, 0) = 0
+                    ORDER BY time_updated DESC
+                    LIMIT {MAX_SESSIONS_PER_AGENT}
+                    """
+                ).fetchall()
+            except sqlite3.Error:
+                # Older OpenCode databases predate the session.model column;
+                # keep their titles/tokens observable instead of dropping the
+                # entire collector on a harmless schema difference.
+                legacy_rows = con.execute(
+                    f"""
+                    SELECT id, title, directory, tokens_input, tokens_output,
+                           time_updated
+                    FROM session
+                    WHERE IFNULL(time_archived, 0) = 0
+                    ORDER BY time_updated DESC
+                    LIMIT {MAX_SESSIONS_PER_AGENT}
+                    """
+                ).fetchall()
+                rows = [tuple(row) + ("",) for row in legacy_rows]
         finally:
             con.close()
     except Exception:
@@ -3323,7 +3360,11 @@ def opencode_activities() -> list[tuple[str, int, int, str, str, str, str]]:
     out: list[tuple] = []
     seen: set[str] = set()
     pending_skill = opencode_pending_skill()
-    for sid, title, directory, tin, tout, tupd in rows:
+    try:
+        detail_con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.4)
+    except Exception:
+        detail_con = None
+    for sid, title, directory, tin, tout, tupd, model_raw in rows:
         title_s = str(title or "").strip()
         cwd = str(directory or "").strip()
         project = short_project(cwd)
@@ -3342,21 +3383,78 @@ def opencode_activities() -> list[tuple[str, int, int, str, str, str, str]]:
             ms *= 1000
         if ms <= 0:
             ms = file_mtime_ms(db)
+
+        # OpenCode keeps the high-value runtime facts in the session row and
+        # its part stream rather than in the title. Surface those facts so an
+        # otherwise opaque SQLite session still answers “what is it doing?”
+        # without exposing prompts or tool arguments.
+        extra: dict = {}
+        if isinstance(model_raw, str) and model_raw.strip():
+            try:
+                model_obj = json.loads(model_raw)
+                if isinstance(model_obj, dict):
+                    model = str(model_obj.get("id") or model_obj.get("model") or "").strip()
+                else:
+                    model = ""
+            except Exception:
+                model = model_raw.strip()
+            if model:
+                extra["model"] = model[:64]
+        try:
+            if detail_con is None:
+                raise sqlite3.Error("details unavailable")
+            part_rows = detail_con.execute(
+                "SELECT data FROM part WHERE session_id = ? "
+                "ORDER BY time_updated DESC LIMIT 80",
+                (sid,),
+            ).fetchall()
+            part_count = detail_con.execute(
+                "SELECT COUNT(*) FROM part WHERE session_id = ?", (sid,)
+            ).fetchone()
+            if part_count and int(part_count[0] or 0) > 0:
+                extra["records"] = int(part_count[0])
+            for (raw_part,) in part_rows:
+                try:
+                    part = json.loads(raw_part)
+                except Exception:
+                    continue
+                if not isinstance(part, dict):
+                    continue
+                part_type = str(part.get("type") or "").lower()
+                if part_type == "tool" and not extra.get("tool"):
+                    tool = str(part.get("tool") or "").strip()
+                    if tool:
+                        extra["tool"] = tool[:48]
+                    state = part.get("state")
+                    if isinstance(state, dict) and str(state.get("status") or "").lower() in {
+                        "pending", "running", "waiting"
+                    }:
+                        extra["phase"] = "working"
+                elif part_type in {"step-finish", "step_finish"}:
+                    extra.setdefault("phase", "turn_complete")
+                    reason = str(part.get("reason") or "").strip().lower()
+                    if reason in {"stop", "complete", "completed"}:
+                        extra.setdefault("outcome", "completed")
+        except sqlite3.Error:
+            pass
         out.append(
             (
                 title_s[:160],
                 int(tin or 0),
                 int(tout or 0),
-                "",
+                str(extra.pop("tool", "")),
                 pending_skill if len(out) == 0 else "",  # attach wait to newest session only
                 project[:48],
                 cwd[:240],
                 ms,
                 str(sid)[:80],
+                extra,
             )
         )
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
+    if detail_con is not None:
+        detail_con.close()
     return out
 
 
