@@ -1514,18 +1514,18 @@ struct SettingsView: View {
                     store.openSystemNotificationSettings()
                 }
             }
-            Toggle(store.tr(.notifications), isOn: $store.notifyOnIdle)
-                .onChange(of: store.notifyOnIdle) { _, _ in store.saveSettings() }
-                .tint(store.notifyAuthorized == false ? .gray : .accentColor)
-                .disabled(store.notifyAuthorized == false)
-            Toggle(store.tr(.notifyWaiting), isOn: $store.notifyOnWaiting)
-                .onChange(of: store.notifyOnWaiting) { _, _ in store.saveSettings() }
-                .tint(store.notifyAuthorized == false ? .gray : .accentColor)
-                .disabled(store.notifyAuthorized == false)
-            Toggle(store.tr(.playSound), isOn: $store.playSoundOnWaiting)
-                .onChange(of: store.playSoundOnWaiting) { _, _ in store.saveSettings() }
-                .tint(store.notifyAuthorized == false ? .gray : .accentColor)
-                .disabled(store.notifyAuthorized == false)
+            notificationToggle(
+                store.tr(.notifications),
+                preference: \StatusStore.notifyOnIdle
+            )
+            notificationToggle(
+                store.tr(.notifyWaiting),
+                preference: \StatusStore.notifyOnWaiting
+            )
+            notificationToggle(
+                store.tr(.playSound),
+                preference: \StatusStore.playSoundOnWaiting
+            )
 
             Toggle(store.tr(.quietHours), isOn: $store.quietHoursEnabled)
                 .onChange(of: store.quietHoursEnabled) { _, _ in store.saveSettings() }
@@ -1562,6 +1562,27 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    /// The stored preference can remain enabled while macOS has denied or not
+    /// configured notification access. Showing that raw value as an enabled
+    /// switch is misleading: the user sees "on" beside copy saying it cannot
+    /// fire. Render the effective value instead; once permission is granted,
+    /// the saved preference comes back without being silently discarded.
+    private func notificationToggle(
+        _ title: String,
+        preference: ReferenceWritableKeyPath<StatusStore, Bool>
+    ) -> some View {
+        Toggle(title, isOn: Binding(
+            get: { store.notifyAuthorized == true && store[keyPath: preference] },
+            set: { enabled in
+                guard store.notifyAuthorized == true else { return }
+                store[keyPath: preference] = enabled
+                store.saveSettings()
+            }
+        ))
+        .tint(store.notifyAuthorized == true ? .accentColor : .gray)
+        .disabled(store.notifyAuthorized != true)
     }
 
     /// Agents worth offering a mute for: whatever Pulse has actually seen,
