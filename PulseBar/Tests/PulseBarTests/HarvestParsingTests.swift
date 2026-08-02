@@ -211,6 +211,7 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(ActivityHarvest.mapAgent("auggie"), .augment)
         XCTAssertEqual(ActivityHarvest.mapAgent("factory-droid"), .droid)
         XCTAssertEqual(ActivityHarvest.mapAgent("cursor_agent"), .cursorAgent)
+        XCTAssertEqual(ActivityHarvest.mapAgent("agy"), .antigravity)
         XCTAssertNil(ActivityHarvest.mapAgent("definitely-not-an-agent"))
     }
 }

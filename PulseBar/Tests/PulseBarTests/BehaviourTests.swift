@@ -274,6 +274,7 @@ final class ProcessProbeTests: XCTestCase {
             (.codex, "/opt/homebrew/bin/codex app-server"),
             (.cursor, "/Applications/Cursor.app/Contents/MacOS/Cursor"),
             (.cursorAgent, "/Users/me/.local/bin/cursor-agent"),
+            (.antigravity, "/Users/me/.local/bin/agy"),
             (.grok, "/Users/me/.grok/bin/grok"),
             (.pi, "pi"),
             (.amp, "amp"),
@@ -300,7 +301,6 @@ final class ProcessProbeTests: XCTestCase {
             (.replit, "replit"),
             (.droid, "droid"),
             (.commandCode, "cmd"),
-            (.antigravity, "/Applications/Antigravity.app/Contents/MacOS/Antigravity"),
             (.kimi, "kimi"),
         ]
 
@@ -336,6 +336,10 @@ final class ProcessProbeTests: XCTestCase {
         for argv in falsePositives {
             XCTAssertNil(ProcessProbe.match(args: argv), argv)
         }
+        XCTAssertNil(
+            ProcessProbe.match(args: "/Users/me/.local/bin/cursor-agent worker start --worker-dir /Users/me/code/Pulse"),
+            "Cursor's persistent worker is infrastructure until a composer session provides activity"
+        )
     }
 
     func testParsesProcessElapsedTimeWithoutCallingItSessionAge() {

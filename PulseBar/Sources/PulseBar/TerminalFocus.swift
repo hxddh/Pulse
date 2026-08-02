@@ -13,7 +13,13 @@ enum TerminalFocus {
 
         static func current() -> Environment {
             Environment(
-                warpRunning: isRunning(bundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"], names: ["Warp"]),
+                // Do not enumerate another app here. On current macOS
+                // that cross-app inspection can trigger the privacy prompt
+                // "Pulse would like to access data from other apps" on every
+                // refresh. ProcessProbe already reads a bounded `ps` snapshot;
+                // use the same non-TCC evidence for the optional Warp focus
+                // tier.
+                warpRunning: processSnapshotContainsWarp(),
                 // Selecting a Terminal/iTerm tab requires Apple Events and
                 // causes macOS Automation permission dialogs. Pulse never asks
                 // for that permission implicitly, so TTY focus is unavailable.
@@ -54,31 +60,38 @@ enum TerminalFocus {
     }
 
     private static func activateWarp() -> Bool {
-        activate(bundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"], names: ["Warp"])
+        let fm = FileManager.default
+        let candidates = [
+            URL(fileURLWithPath: "/Applications/Warp.app"),
+            fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Warp.app"),
+        ]
+        guard let app = candidates.first(where: { fm.fileExists(atPath: $0.path) }) else {
+            return false
+        }
+        // This is an explicit user action, and launching an app via
+        // NSWorkspace does not require Apple Events access.
+        return NSWorkspace.shared.open(app)
     }
 
-    private static func isRunning(bundleIDs: [String], names: [String]) -> Bool {
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
-            if let bid = app.bundleIdentifier, bundleIDs.contains(bid) { return true }
-            if let name = app.localizedName,
-               names.contains(where: { name.localizedCaseInsensitiveContains($0) }) {
-                return true
+    private static func processSnapshotContainsWarp() -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-axo", "args="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else { return false }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            return text.split(whereSeparator: \.isNewline).contains {
+                String($0).localizedCaseInsensitiveContains("Warp.app")
             }
+        } catch {
+            return false
         }
-        return false
-    }
-
-    private static func activate(bundleIDs: [String], names: [String]) -> Bool {
-        for app in NSWorkspace.shared.runningApplications {
-            if let bid = app.bundleIdentifier, bundleIDs.contains(bid) {
-                return app.activate()
-            }
-            if let name = app.localizedName,
-               names.contains(where: { name.localizedCaseInsensitiveContains($0) }) {
-                return app.activate()
-            }
-        }
-        return false
     }
 
 }

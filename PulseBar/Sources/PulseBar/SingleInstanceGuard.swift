@@ -1,4 +1,3 @@
-import AppKit
 import Darwin
 import Foundation
 
@@ -64,12 +63,9 @@ final class SingleInstanceGuard {
 
     @MainActor
     static func activateExistingCopy() {
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let candidates = NSRunningApplication.runningApplications(
-            withBundleIdentifier: "com.pulse.app"
-        )
-        if let owner = candidates.first(where: { $0.processIdentifier != ownPID }) {
-            owner.activate()
-        }
+        // The caller already knows another copy owns the lock. Do not inspect
+        // or activate another application: NSRunningApplication can trigger a
+        // macOS cross-app privacy prompt. The existing owner remains the only
+        // visible Pulse instance, which is the safe fallback.
     }
 }

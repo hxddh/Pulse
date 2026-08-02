@@ -31,7 +31,10 @@ HOME = Path.home()
 MAX_SESSIONS_PER_AGENT = 64
 SESSION_CANDIDATE_LIMIT = MAX_SESSIONS_PER_AGENT * 2
 
-# Bytes the whole scan may spend counting records, across every collector.
+# Bytes one collector may spend counting records. The budget is reset at each
+# guarded adapter boundary. A single large Codex/VS Code transcript must not
+# starve adapters that run later in the scan (Command Code, Warp, Antigravity,
+# and the rest of the supported roster).
 #
 # The per-file cap alone was not a bound: nineteen call sites, several looping
 # over eight or ten files each, could in principle read hundreds of megabytes
@@ -96,7 +99,7 @@ def redact_sensitive(value: str) -> str:
 
 
 def _spend_scan_budget(size: int) -> bool:
-    """Reserve `size` bytes of the scan-wide read budget."""
+    """Reserve `size` bytes of the current collector's read budget."""
     global _scan_bytes_spent
     if _scan_bytes_spent + size > SCAN_READ_BUDGET_BYTES:
         return False
@@ -603,6 +606,31 @@ def last_skill_name(text: str) -> str:
     m = re.findall(r'"name"\s*:\s*"Skill"[\s\S]{0,300}?"name"\s*:\s*"([^"]+)"', text)
     if m:
         return m[-1]
+    return ""
+
+
+def semantic_skill_phase(text: str) -> str:
+    """Turn an explicit skill invocation into a useful lifecycle phase.
+
+    Skill package names are implementation details and are intentionally not
+    shown verbatim. When a transcript explicitly invokes one, however, its
+    broad intent is valuable evidence (review/read/build/test/publish). Keep
+    only that semantic category so the default row can say what the agent is
+    doing without leaking a registry path or package identifier.
+    """
+    skill = last_skill_name(text).strip().lower()
+    if not skill:
+        return ""
+    if any(word in skill for word in ("publish", "release", "deploy", "ship")):
+        return "publishing"
+    if any(word in skill for word in ("test", "verify", "check", "debug")):
+        return "testing"
+    if any(word in skill for word in ("build", "implement", "create", "develop", "code")):
+        return "building"
+    if any(word in skill for word in ("edit", "write", "refactor", "fix", "patch")):
+        return "editing"
+    if any(word in skill for word in ("read", "review", "audit", "research", "search", "browser")):
+        return "researching"
     return ""
 
 
@@ -1733,12 +1761,12 @@ def grok_session_activity(active: Path, session: dict) -> tuple | None:
 
 def grok_activities() -> list[tuple]:
     active = HOME / ".grok" / "active_sessions.json"
-    if not active.is_file():
-        return []
-    try:
-        raw = json.loads(active.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    raw = []
+    if active.is_file():
+        try:
+            raw = json.loads(active.read_text(encoding="utf-8"))
+        except Exception:
+            raw = []
     sessions = raw if isinstance(raw, list) else raw.get("sessions", []) if isinstance(raw, dict) else []
     out: list[tuple] = []
     seen: set[str] = set()
@@ -1754,6 +1782,42 @@ def grok_activities() -> list[tuple]:
             out.append(row)
         if len(out) >= MAX_SESSIONS_PER_AGENT:
             break
+    # Grok can flush the session directory before its active-session index.
+    # Recover only genuinely fresh summaries; stale completed history remains
+    # hidden so this never turns an old cache into a fake Running row.
+    session_root = HOME / ".grok" / "sessions"
+    if len(out) < MAX_SESSIONS_PER_AGENT and session_root.is_dir():
+        now_ms = int(time.time() * 1000)
+        summary_paths: list[Path] = []
+        try:
+            summary_paths = [p for p in session_root.glob("**/summary.json") if p.is_file()]
+            summary_paths.sort(key=file_mtime_ms, reverse=True)
+        except OSError:
+            summary_paths = []
+        for summary_path in summary_paths[:SESSION_CANDIDATE_LIMIT]:
+            try:
+                obj = json.loads(summary_path.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            updated_ms = iso_time_ms(obj.get("updated_at")) or file_mtime_ms(summary_path)
+            if not updated_ms or now_ms - updated_ms > FRESH_SEC * 1000:
+                continue
+            sid = summary_path.parent.name
+            if not sid or sid in seen:
+                continue
+            session = {
+                "session_id": sid,
+                "cwd": obj.get("cwd") or obj.get("workspace") or obj.get("path") or "",
+            }
+            row = grok_session_activity(summary_path, session)
+            if row is None:
+                continue
+            seen.add(sid)
+            out.append(row)
+            if len(out) >= MAX_SESSIONS_PER_AGENT:
+                break
     return out
 
 
@@ -2448,6 +2512,17 @@ def observed_facts_from_text(text: str, limit: int = 120) -> dict:
         for key, value in facts.items():
             if key not in merged:
                 merged[key] = value
+    # Some adapters record tool/skill calls but no explicit phase event. Keep
+    # the action semantic and user-facing; never expose the raw skill package.
+    if "phase" not in merged:
+        phase = semantic_phase_from_events(text)
+        if phase:
+            merged["phase"] = phase
+    skill_phase = semantic_skill_phase(text)
+    # A generic `Skill` tool only yields the fallback "working" phase. Prefer
+    # the explicit semantic category when it can tell the user more.
+    if skill_phase and merged.get("phase") in (None, "", "working"):
+        merged["phase"] = skill_phase
     return merged
 
 
@@ -2961,12 +3036,177 @@ def trae_activities() -> list[tuple]:
 
 
 def warp_agent_activities() -> list[tuple]:
+    """Harvest Warp Agent from its embedded SQLite store.
+
+    Warp keeps the useful agent history in an App Group container rather than
+    the visible ``Application Support`` directory. The old JSON-only scan
+    therefore reported ``no_sessions`` even though the app had authoritative
+    conversation, model, cwd, status and task data. Read the database in
+    read-only mode and keep the JSON fallback for older Warp builds.
+    """
     roots = [
         HOME / "Library" / "Application Support" / "dev.warp.Warp-Stable",
         HOME / "Library" / "Application Support" / "dev.warp.Warp",
         HOME / ".warp",
     ]
     out: list[tuple] = []
+
+    db_paths: list[Path] = []
+    group_root = HOME / "Library" / "Group Containers"
+    if group_root.is_dir():
+        try:
+            db_paths.extend(
+                p for p in group_root.glob("*/Library/Application Support/dev.warp.Warp-*/warp.sqlite")
+                if p.is_file()
+            )
+        except OSError:
+            pass
+    # A few Warp versions place the database directly under the legacy roots.
+    db_paths.extend(root / "warp.sqlite" for root in roots if (root / "warp.sqlite").is_file())
+    seen_db: set[str] = set()
+    for db in db_paths:
+        if str(db) in seen_db:
+            continue
+        seen_db.add(str(db))
+        try:
+            import sqlite3
+
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            try:
+                conversations = con.execute(
+                    "SELECT conversation_id, last_modified_at, summary, conversation_data "
+                    "FROM agent_conversations ORDER BY last_modified_at DESC LIMIT ?",
+                    (MAX_SESSIONS_PER_AGENT,),
+                ).fetchall()
+                task_counts = {
+                    str(cid): int(count or 0)
+                    for cid, count in con.execute(
+                        "SELECT conversation_id, COUNT(*) FROM agent_tasks GROUP BY conversation_id"
+                    ).fetchall()
+                }
+                query_rows = con.execute(
+                    "SELECT conversation_id, start_ts, working_directory, output_status, model_id, input "
+                    "FROM ai_queries ORDER BY start_ts DESC LIMIT 512"
+                ).fetchall()
+            finally:
+                con.close()
+        except Exception:
+            continue
+
+        latest: dict[str, tuple] = {}
+        query_counts: dict[str, int] = {}
+        for cid, start_ts, cwd, status, model_id, raw_input in query_rows:
+            key = str(cid or "")
+            if not key:
+                continue
+            query_counts[key] = query_counts.get(key, 0) + 1
+            latest.setdefault(key, (start_ts, cwd, status, model_id, raw_input))
+
+        def query_text(raw: object) -> str:
+            try:
+                obj = json.loads(raw) if isinstance(raw, str) else raw
+            except Exception:
+                return ""
+            found: list[str] = []
+            stack = [obj]
+            while stack and len(found) < 8:
+                value = stack.pop()
+                if isinstance(value, dict):
+                    for key in ("text", "query", "prompt", "initial_query"):
+                        item = value.get(key)
+                        if isinstance(item, str) and item.strip():
+                            found.append(item.strip())
+                    stack.extend(v for v in value.values() if isinstance(v, (dict, list)))
+                elif isinstance(value, list):
+                    stack.extend(value[-32:])
+            return found[-1][:160] if found else ""
+
+        def action_from_input(raw: object, conversation_json: str) -> str:
+            try:
+                obj = json.loads(raw) if isinstance(raw, str) else raw
+                names = _tool_use_names(obj)
+                if names:
+                    return names[-1][:40]
+            except Exception:
+                pass
+            try:
+                obj = json.loads(conversation_json) if conversation_json else {}
+                usage = obj.get("conversation_usage_metadata", {}).get("tool_usage_metadata", {})
+                if isinstance(usage, dict):
+                    aliases = (
+                        ("run_command_stats", "run_command"),
+                        ("read_shell_command_output_stats", "read_file"),
+                        ("read_files_stats", "read_file"),
+                        ("grep_stats", "grep"),
+                        ("file_glob_stats", "glob"),
+                        ("apply_file_diff_stats", "apply_patch"),
+                        ("call_mcp_tool_stats", "mcp_tool"),
+                    )
+                    for key, label in aliases:
+                        count = usage.get(key, {}).get("count", 0) if isinstance(usage.get(key), dict) else 0
+                        if int(count or 0) > 0:
+                            return label
+            except Exception:
+                pass
+            return ""
+
+        for conversation_id, modified, summary_raw, conversation_data in conversations:
+            sid = str(conversation_id or "")
+            if not sid:
+                continue
+            try:
+                summary = json.loads(summary_raw or "{}")
+            except Exception:
+                summary = {}
+            if not isinstance(summary, dict):
+                summary = {}
+            latest_row = latest.get(sid)
+            start_ts, query_cwd, status, model_id, raw_input = latest_row if latest_row else ("", "", "", "", "")
+            cwd = str(summary.get("initial_working_directory") or query_cwd or "")
+            title = str(summary.get("title") or summary.get("initial_query") or "")
+            latest_prompt = query_text(raw_input)
+            if latest_prompt and not title:
+                title = latest_prompt
+            if not title:
+                title = latest_prompt or "Warp Agent"
+            status_low = str(status or "").strip().strip('"').lower()
+            phase = ""
+            outcome = ""
+            if any(x in status_low for x in ("progress", "running", "started", "stream")):
+                phase = "working"
+            elif any(x in status_low for x in ("complete", "success", "done")):
+                phase, outcome = "turn_complete", "completed"
+            elif any(x in status_low for x in ("fail", "error")):
+                phase, outcome = "turn_complete", "failed"
+            elif any(x in status_low for x in ("cancel", "abort")):
+                phase, outcome = "turn_complete", "cancelled"
+            stats: dict = {
+                "mode": "Warp Agent",
+                "records": query_counts.get(sid, 0),
+            }
+            if task_counts.get(sid, 0) > 0:
+                stats["progress_total"] = task_counts[sid]
+            if phase:
+                stats["phase"] = phase
+            if outcome:
+                stats["outcome"] = outcome
+            model = str(model_id or "").strip()
+            if model:
+                stats["model"] = model[:64]
+            mtime = normalize_time_ms(start_ts) or normalize_time_ms(modified) or file_mtime_ms(db)
+            out.append(
+                (
+                    title[:160], 0, 0,
+                    action_from_input(raw_input, str(conversation_data or "")),
+                    "pending" if status_low in {"pending", "waiting", "needs_input"} else "",
+                    short_project(cwd)[:48], cwd[:240], mtime, sid[:80], stats,
+                )
+            )
+            if len(out) >= MAX_SESSIONS_PER_AGENT:
+                break
+        if out:
+            return out[:MAX_SESSIONS_PER_AGENT]
+
     files: list[str] = []
     for root in roots:
         if not root.is_dir():
@@ -3176,12 +3416,15 @@ def command_code_activities() -> list[tuple]:
             title = prompt
         elif not title:
             title = session_title_from_text(text) or "Command Code"
-        # Project key from path: projects/users-<name>/... → cwd unknown; use folder
+        # The project directory is only a storage key (for example
+        # ``users-rustjia``), not the workspace the user is working in. The
+        # transcript's root record is authoritative on current Command Code
+        # builds; settings.json is a compatibility fallback for older builds.
         project = short_project(mp.parent.name)
-        cwd = ""
+        cwd = extract_field(text, "cwd") or extract_field(text, "workingDirectory") or extract_field(text, "workdir") or ""
         # settings.json sibling sometimes has cwd
         settings = mp.parent / "settings.json"
-        if settings.is_file():
+        if not cwd and settings.is_file():
             try:
                 s = json.loads(settings.read_text(encoding="utf-8", errors="replace"))
                 if isinstance(s, dict):
@@ -3798,6 +4041,7 @@ COLLECTOR_SOURCE_ROOTS = {
     "warp_agent": (
         HOME / ".warp",
         HOME / "Library/Application Support/dev.warp.Warp-Stable",
+        HOME / "Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp-Stable",
     ),
     "openhands": (HOME / ".openhands", HOME / ".openhands-state"),
     "kilo": (
@@ -3839,6 +4083,7 @@ COLLECTOR_COMMANDS = {
     "droid": ("droid",),
     "command_code": ("cmd", "command-code"),
     "kimi": ("kimi",),
+    "antigravity": ("agy", "antigravity"),
 }
 
 
@@ -4265,6 +4510,11 @@ def guard(labels: str | tuple[str, ...], body) -> None:
     trace = os.environ.get("PULSE_HARVEST_TRACE") == "1"
     started = time.monotonic()
     error_kind = ""
+    # Reset the record-count budget for this adapter. Keeping this boundary
+    # explicit prevents a large early transcript from silently turning every
+    # later agent's `records` field into an unknown zero.
+    global _scan_bytes_spent
+    _scan_bytes_spent = 0
     previous_alarm = signal.getsignal(signal.SIGALRM)
     signal.signal(signal.SIGALRM, _collector_timeout)
     deadline = max(

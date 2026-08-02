@@ -2,6 +2,29 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.45.0 — 全 Agent 采集与工具语义修复
+
+### 可观测性与稳定性
+
+- 修复 `agy` / Antigravity 进程识别，并补齐别名映射与回归保护。
+- Command Code 优先读取 transcript 的真实工作目录；不再把存储目录名当成项目。
+- 将记录扫描预算隔离到每个 Agent，避免大体量 Codex 日志耗尽预算后静默丢失后续 Agent 数据。
+- Warp 接入 App Group SQLite，补齐会话目标、工作目录、模型、工具、状态和任务事实。
+- Grok 在 active-session 索引滞后时，从近期 session summary 安全恢复；过期记录仍不会冒充运行中。
+- 移除启动和刷新路径中的跨应用进程枚举，Warp 状态改用 `ps` 证据，避免 macOS 反复弹出 Apple Events /“访问其他 App 数据”权限提示。
+
+### Tool / Skill 语义
+
+- 将明确的 tool / skill 调用转换为 Research、Build、Test、Edit、Publish 等可读阶段。
+- 保留工具调用的历史语义，不把内部 skill 包名或工具名误报成当前正在执行的动作。
+- 新增 Command Code、Warp、Grok、agy、skill 语义和 Cursor worker 的回归门禁。
+
+### 验证与发布
+
+- 31 个 Agent collector、支持矩阵、图标、外观和 24 列 harvest 协议门禁通过。
+- Swift release build、应用资源 selftest、ad-hoc 签名和 DMG 打包通过。
+- 本版本使用未签名、未公证 macOS DMG；其他 Mac 可能触发 Gatekeeper。
+
 ## 0.44.1 — Command Code 进程与会话采集修复
 
 ### 可观测性与稳定性
