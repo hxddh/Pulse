@@ -239,6 +239,9 @@ enum L10n {
         case .supportWorkspace: return "workspace"
         case .supportActivity: return "activity"
         case .supportProgress: return "execution signal"
+        case .supportAction: return "last action"
+        case .supportModel: return "model"
+        case .supportResources: return "resources"
         case .supportObservedSignals: return "Observed: %@"
         case .supportNoObservedSignals: return "No usable session signals yet"
         case .skillFact: return "Skill %@"
@@ -518,6 +521,9 @@ enum L10n {
         case .supportWorkspace: return "工作区"
         case .supportActivity: return "活动"
         case .supportProgress: return "执行信号"
+        case .supportAction: return "最近动作"
+        case .supportModel: return "模型"
+        case .supportResources: return "资源"
         case .supportObservedSignals: return "已观测：%@"
         case .supportNoObservedSignals: return "尚未观测到可用会话信号"
         case .skillFact: return "技能 %@"
@@ -653,7 +659,7 @@ enum L10n {
         case noProject, stalled, stalledFor, noProgressSignal
         case supportHealth, supportHealthHint, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
-        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
+        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, supportResources, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingWaiting
         case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportSharedCursor

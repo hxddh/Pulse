@@ -286,7 +286,13 @@ final class StatusStore: ObservableObject {
                         || $0.subTotal > 0 || $0.errors > 0 || $0.files > 0
                         || $0.contextPercent > 0 || !$0.model.isEmpty || !$0.mode.isEmpty
                 },
-                waitingSignalReady: waitingSignalReady(for: agent)
+                waitingSignalReady: waitingSignalReady(for: agent),
+                hasActionSignal: rows.contains { !$0.tool.isEmpty },
+                hasModelSignal: rows.contains { !$0.model.isEmpty },
+                hasResourceSignal: rows.contains {
+                    $0.tokensIn > 0 || $0.tokensOut > 0 || $0.records > 0
+                        || $0.errors > 0 || $0.files > 0 || $0.contextPercent > 0
+                }
             )
         }
     }
@@ -1202,10 +1208,17 @@ final class StatusStore: ObservableObject {
             acts = rows
             lastGoodHarvest = rows
             recordCollectorHealth(health)
-            for row in rows where row.harvestMs > 0 {
-                lastSuccessfulReadByAgent[row.id] = max(
-                    lastSuccessfulReadByAgent[row.id] ?? 0,
-                    row.harvestMs
+            // `row.harvestMs` is the vendor session's last activity time, not
+            // when Pulse successfully read that adapter. Using it as "last
+            // read" made a healthy but idle collector look months stale, and
+            // made a newly-read old session look like a failed adapter. Keep
+            // the two clocks separate: this timestamp records the completed
+            // collector read, while row.harvestMs remains session activity.
+            let collectorReadAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+            for item in health where !item.state.isIssue {
+                lastSuccessfulReadByAgent[item.id] = max(
+                    lastSuccessfulReadByAgent[item.id] ?? 0,
+                    collectorReadAtMs
                 )
             }
             ticksSinceHarvest = 0

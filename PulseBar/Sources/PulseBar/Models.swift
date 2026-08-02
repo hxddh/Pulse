@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.41.2"
+    static let semver = "0.42.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -672,6 +672,13 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var hasActivity: Bool
     var hasProgress: Bool
     var waitingSignalReady: Bool
+    /// Optional operational facts shown separately from the four core facts.
+    /// These are inventory signals, not quality gates: an Agent may not expose
+    /// a model or resource counter in its local store, but that absence must be
+    /// visible instead of silently making every adapter look equivalent.
+    var hasActionSignal: Bool = false
+    var hasModelSignal: Bool = false
+    var hasResourceSignal: Bool = false
 
     var id: AgentID { agent }
 

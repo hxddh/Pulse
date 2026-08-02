@@ -258,6 +258,51 @@ def check_helper_contract(d: Path) -> int:
         return fail("configuration names were guessed as a session")
     if A.observed_facts_from_json(config) != {}:
         return fail("configuration values were guessed as session telemetry")
+    # Cursor has emitted all of seconds, milliseconds, microseconds, and ISO
+    # text for `lastUpdatedAt` across client builds. One malformed timestamp
+    # must not make the collector discard every concurrent session.
+    expected_ms = 1_754_000_000_000
+    if A.normalize_time_ms(expected_ms // 1000) != expected_ms:
+        return fail("epoch-second timestamp was not normalized to milliseconds")
+    if A.normalize_time_ms(str(expected_ms)) != expected_ms:
+        return fail("numeric timestamp string was not normalized")
+    if A.normalize_time_ms(expected_ms * 1000) != expected_ms:
+        return fail("microsecond timestamp was not normalized")
+    iso = "2026-07-28T10:00:00Z"
+    if A.normalize_time_ms(iso) != A.iso_time_ms(iso):
+        return fail("ISO timestamp was not normalized")
+    if A.normalize_time_ms("not-a-time") != 0:
+        return fail("malformed timestamp was treated as activity")
+    usage_blob = '{"usage":{"input":1200,"output":37,"cacheRead":90}}'
+    if A.last_usage_tokens(usage_blob) != (1200, 37):
+        return fail("provider usage input/output fields were not recovered")
+    if A.last_model_name('{"model":"provider-model"}') != "provider-model":
+        return fail("explicit provider model was not recovered")
+
+    # Generic IDE adapters must ignore a settings/index file even if it has a
+    # title and workspace-shaped values. An explicitly session-like path is
+    # still accepted, preserving the useful fallback contract.
+    generic_root = d / "generic-cache"
+    generic_root.mkdir()
+    (generic_root / "settings.json").write_text(
+        json.dumps({"title": "Dark", "cwd": "/Users/me/code/Pulse", "model": "x"}),
+        encoding="utf-8",
+    )
+    if A.home_dir_activities("roo", [generic_root]):
+        return fail("generic settings file escaped the session admission filter")
+    session_root = d / "sessions" / "thread-1"
+    session_root.mkdir(parents=True)
+    (session_root / "state.json").write_text(
+        json.dumps({
+            "title": "Refactor authentication",
+            "cwd": "/Users/me/code/Pulse",
+            "sessionId": "thread-1",
+            "phase": "testing",
+        }),
+        encoding="utf-8",
+    )
+    if not A.home_dir_activities("roo", [d / "sessions"]):
+        return fail("explicit session-shaped cache file was discarded")
     rich_nested = {
         "state": {
             "sessions": [{
