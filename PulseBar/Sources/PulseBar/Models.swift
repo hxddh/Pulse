@@ -746,6 +746,12 @@ struct AgentSupportHealth: Identifiable, Equatable {
     }
 
     var disposition: SupportDisposition {
+        // A scan that ended before this adapter reported is an observation
+        // gap, not an adapter failure. The support window shows the global
+        // partial-scan banner and preserves the previous per-agent result.
+        if collectorState == .unscanned {
+            return isObserved ? .limited : .unavailable
+        }
         if collectorState.isIssue { return .needsAction }
         if isObserved,
            agent.waitingSource == .hooks,

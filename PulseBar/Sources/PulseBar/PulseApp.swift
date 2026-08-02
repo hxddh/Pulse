@@ -21,6 +21,7 @@ enum PulseBarMain {
             print(
                 "harvest rows=\(result.rows.count) adapters=\(result.health.count) "
                     + "unreliable=\(result.unreliable) "
+                    + "complete=\(result.complete) "
                     + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
             )
             exit(result.unreliable ? 1 : 0)
@@ -302,11 +303,12 @@ private struct SectionHeader: View {
                 }
             }
             // Reserve the disclosure column even for a non-foldable group.
-            // Otherwise neighbouring section titles start at two different
-            // x positions depending on whether they happen to be collapsible.
-            // 18 pt column + 9 pt gap aligns the heading text with the Agent
-            // identity text below: 16 + 18 + 9 = 43 pt.
-            .frame(width: 18, height: 14, alignment: .center)
+            // The row identity now has an icon, a status lamp, and two small
+            // gaps before its name. Match that optical start here so section
+            // headings do not appear to drift left of every agent name.
+            // 30 pt column + 9 pt gap keeps the heading on the same baseline
+            // column as the row identity text.
+            .frame(width: 30, height: 14, alignment: .center)
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
@@ -988,6 +990,13 @@ private struct AgentRowButton: View {
                             // quiz. With 32 marks (ten of them Pulse-made), an
                             // icon alone cannot answer "which agent?".
                             HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Circle()
+                                    .fill(statusIndicatorColor)
+                                    .frame(width: 6, height: 6)
+                                    .alignmentGuide(.firstTextBaseline) { d in
+                                        d[VerticalAlignment.center]
+                                    }
+                                    .accessibilityHidden(true)
                                 Text(row.agent.displayName)
                                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                                     .foregroundStyle(.secondary)
@@ -1150,10 +1159,27 @@ private struct AgentRowButton: View {
         row.waiting || hovering
     }
 
+    /// A compact per-session lamp makes the state of every visible Agent
+    /// scannable without opening Support Health. It is deliberately derived
+    /// only from facts already present on the row: red = waiting, orange =
+    /// stalled/error, green = live, gray = recent/unknown.
+    private var statusIndicatorColor: Color {
+        if row.waiting { return GlanceKind.waiting.lampColor }
+        let outcome = row.outcome.lowercased()
+        if row.isStalled || row.errors > 0
+            || outcome.contains("fail") || outcome.contains("cancel") {
+            return GlanceKind.error.lampColor
+        }
+        if row.liveProcess || row.isExplicitlyRunningPhase || row.subRunning > 0 {
+            return GlanceKind.running.lampColor
+        }
+        return GlanceKind.idle.lampColor
+    }
+
     /// Always-present action access for keyboard and VoiceOver users.
     ///
     /// Hover actions remain a fast pointer path, but are no longer the only
-    /// route to focus, folder and details.
+    /// route to focus or waiting controls.
     private var secondaryActionsMenu: some View {
         Menu {
             secondaryActionItems
@@ -1794,6 +1820,18 @@ struct SupportCoverageView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if store.collectorScanIncomplete {
+                    HStack(spacing: 8) {
+                        Label(store.tr(.supportScanIncomplete), systemImage: "clock.badge.exclamationmark")
+                            .foregroundStyle(.orange)
+                        Spacer(minLength: 8)
+                        Button(store.tr(.supportRetry)) {
+                            store.refresh(reason: "support-retry")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .font(.caption)
+                }
                 HStack(spacing: 12) {
                     Label(
                         String(format: store.tr(.supportNeedsActionCount), needsActionCount),

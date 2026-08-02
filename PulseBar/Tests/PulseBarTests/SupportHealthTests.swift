@@ -87,6 +87,15 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(item.repair, .retry)
     }
 
+    func testUnscannedAdapterIsNotReportedAsAnAdapterFailure() {
+        var item = health(progress: false)
+        item.collectorState = .unscanned
+        XCTAssertEqual(item.disposition, .unavailable)
+
+        item.processDetected = true
+        XCTAssertEqual(item.disposition, .limited)
+    }
+
     @MainActor
     func testCursorAgentAliasDoesNotCreateDuplicateSupportEntry() {
         let store = StatusStore()

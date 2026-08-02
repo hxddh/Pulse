@@ -37,12 +37,21 @@ final class StatusStore: ObservableObject {
     @Published private(set) var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
     @Published private(set) var notifyAuthorized: Bool?
+    /// True when the latest harvest stopped before every adapter reported.
+    /// Existing per-agent health is retained in that case; the banner exposes
+    /// the scan gap without turning every unvisited adapter into an error.
+    @Published private(set) var collectorScanIncomplete = false
     /// Waits that have already been resolved, newest first (P1-H).
     @Published private(set) var waitHistory: [ResolvedWait] = []
     /// Waits that ended while the tray was closed — "what did I miss?".
     @Published private(set) var missedWhileAway = 0
     /// When the tray was last dismissed, for the missed-wait count.
     private var trayClosedAt: Date?
+    /// Install-copy discovery is diagnostic-only. Keep it off the main thread
+    /// and avoid re-running a process/filesystem scan on every tray open.
+    private var installTruthRefreshInFlight = false
+    private var installTruthRefreshedAt: Date?
+    private var installTruthGeneration = 0
 
     /// A Waiting row that is no longer waiting — "did I miss something?".
     struct ResolvedWait: Identifiable, Equatable {
@@ -150,6 +159,7 @@ final class StatusStore: ObservableObject {
         ]
         let collector = supportHealth
         let collectorCounts = Dictionary(grouping: collector, by: \.collectorState).mapValues(\.count)
+        lines.append("collectorScan: \(collectorScanIncomplete ? "partial" : "complete")")
         lines.append(
             "collectors: observed=\(collectorCounts[.observed] ?? 0) "
                 + "sourceAbsent=\(collectorCounts[.sourceAbsent] ?? 0) "
@@ -201,6 +211,7 @@ final class StatusStore: ObservableObject {
             PulseVersion.fingerprint,
             "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "Agents: \(supportHealth.count)",
+            "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
         ]
         for item in supportHealth {
             let waiting = item.agent.waitingSource == .none
@@ -1021,14 +1032,31 @@ final class StatusStore: ObservableObject {
         }
     }
 
-    func refreshInstallTruth() {
-        installReport = InstallTruth.inspect()
+    func refreshInstallTruth(force: Bool = false) {
+        let now = Date()
+        if !force,
+           installTruthRefreshInFlight
+                || (installTruthRefreshedAt.map { now.timeIntervalSince($0) < 30 } ?? false) {
+            return
+        }
+        installTruthRefreshInFlight = true
+        installTruthGeneration += 1
+        let generation = installTruthGeneration
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let report = InstallTruth.inspect()
+            Task { @MainActor in
+                guard let self, self.installTruthGeneration == generation else { return }
+                self.installReport = report
+                self.installTruthRefreshedAt = Date()
+                self.installTruthRefreshInFlight = false
+            }
+        }
     }
 
     func recycleDuplicateApps() {
         let candidates = installReport.removableDuplicates
         InstallTruth.recycle(candidates) { [weak self] _ in
-            self?.refreshInstallTruth()
+            self?.refreshInstallTruth(force: true)
         }
     }
 
@@ -1111,8 +1139,8 @@ final class StatusStore: ObservableObject {
                 let result = ActivityHarvest.scan()
                 harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
                 outcome = result.unreliable
-                    ? .failed(result.health)
-                    : .fresh(result.rows, result.health)
+                    ? .failed(result.health, result.complete)
+                    : .fresh(result.rows, result.health, result.complete)
             }
 
             let attention = AttentionReader.load()
@@ -1150,26 +1178,40 @@ final class StatusStore: ObservableObject {
     /// What the background scan managed to get from `activity_scan.py`.
     enum HarvestOutcome {
         /// Ran and produced rows (possibly partial after a timeout).
-        case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth])
+        case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth], Bool)
         /// Deliberately not run this tick — cached rows are still current.
         case skipped
         /// Ran and failed; cached rows may be stale.
-        case failed([ActivityHarvest.CollectorHealth])
+        case failed([ActivityHarvest.CollectorHealth], Bool)
     }
 
-    private func recordCollectorHealth(_ health: [ActivityHarvest.CollectorHealth]) {
-        var next = Dictionary(
-            uniqueKeysWithValues: AgentID.allCases.map {
-                ($0, ActivityHarvest.CollectorHealth.unscanned($0))
-            }
-        )
+    private func recordCollectorHealth(
+        _ health: [ActivityHarvest.CollectorHealth],
+        complete: Bool = true
+    ) {
+        // A partial stream must not erase the last known result for adapters
+        // that have not been reached yet. Only a complete health report resets
+        // the map to the explicit unscanned baseline before applying results.
+        var next = complete && !health.isEmpty
+            ? Dictionary(
+                uniqueKeysWithValues: AgentID.allCases.map {
+                    ($0, ActivityHarvest.CollectorHealth.unscanned($0))
+                }
+            )
+            : (collectorHealthByAgent.isEmpty
+                ? Dictionary(
+                    uniqueKeysWithValues: AgentID.allCases.map {
+                        ($0, ActivityHarvest.CollectorHealth.unscanned($0))
+                    }
+                )
+                : collectorHealthByAgent)
         for item in health {
             next[item.id] = item
         }
         // Cursor Agent sessions are merged into Cursor rows by SnapshotBuilder
         // to avoid duplicate IDE/CLI entries. They share Cursor's local-store
         // collector, so the runtime health must share that result too.
-        if let cursor = next[.cursor], cursor.state != .unscanned {
+        if let cursor = next[.cursor] {
             next[.cursorAgent] = ActivityHarvest.CollectorHealth(
                 id: .cursorAgent,
                 state: cursor.state,
@@ -1180,6 +1222,7 @@ final class StatusStore: ObservableObject {
             )
         }
         collectorHealthByAgent = next
+        collectorScanIncomplete = !complete
     }
 
     fileprivate func applyScan(
@@ -1204,10 +1247,10 @@ final class StatusStore: ObservableObject {
         // Resolve which harvest rows this scan should use, and remember them.
         let acts: [ActivityHarvest.Row]
         switch harvest {
-        case .fresh(let rows, let health):
+        case .fresh(let rows, let health, let complete):
             acts = rows
             lastGoodHarvest = rows
-            recordCollectorHealth(health)
+            recordCollectorHealth(health, complete: complete)
             // `row.harvestMs` is the vendor session's last activity time, not
             // when Pulse successfully read that adapter. Using it as "last
             // read" made a healthy but idle collector look months stale, and
@@ -1227,8 +1270,8 @@ final class StatusStore: ObservableObject {
             // pending included, or Waiting would flicker off between harvests.
             acts = lastGoodHarvest
             ticksSinceHarvest = ticksSinceHarvest == Int.max ? 1 : ticksSinceHarvest + 1
-        case .failed(let health):
-            recordCollectorHealth(health)
+        case .failed(let health, let complete):
+            recordCollectorHealth(health, complete: complete)
             // Keep last good shape, but never freeze Needs-you on stale pending.
             acts = lastGoodHarvest.map { row in
                 guard row.skill == "pending" else { return row }
@@ -1569,7 +1612,7 @@ final class StatusStore: ObservableObject {
     /// two lines. That rule over-corrected: rows ended up carrying two facts,
     /// both of them static — a session title fixed for the session's life, and
     /// a path. Everything that moves while work happens was one hover and one
-    /// "Details" click away, so the panel was only observable on demand.
+    /// action-menu click away, so the panel was only observable on demand.
     ///
     /// These ride on the right of the context line, in the space that line was
     /// already wasting, so density costs no height.

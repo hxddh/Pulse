@@ -180,6 +180,13 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertFalse(ActivityHarvest.isFresh(row, nowMs: now))
     }
 
+    func testFarFutureActivityTimestampIsNotFresh() {
+        let now: Int64 = 1_700_000_000_000
+        var row = ActivityHarvest.Row(id: .codex, task: "t", project: "", cwd: "", skill: "")
+        row.harvestMs = now + 5 * 60 * 1000 + 1
+        XCTAssertFalse(ActivityHarvest.isFresh(row, nowMs: now))
+    }
+
     func testCursorLocalSessionsUseBoundedWorkWindow() {
         let now: Int64 = 1_700_000_000_000
         var cursor = ActivityHarvest.Row(id: .cursor, task: "Local task", project: "", cwd: "", skill: "")
@@ -194,6 +201,12 @@ final class HarvestParsingTests: XCTestCase {
         generic.id = .gemini
         generic.harvestMs = now - ActivityHarvest.freshWindowMs - 1
         XCTAssertFalse(ActivityHarvest.isFresh(generic, nowMs: now))
+    }
+
+    func testHealthCompletenessRequiresEveryUserFacingCollector() {
+        let complete = ActivityHarvest.expectedCollectorIDs.map { ActivityHarvest.CollectorHealth.unscanned($0) }
+        XCTAssertTrue(ActivityHarvest.isCompleteHealth(complete))
+        XCTAssertFalse(ActivityHarvest.isCompleteHealth(Array(complete.dropLast())))
     }
 
     func testCompletionClassificationUsesPhaseOrOutcome() {

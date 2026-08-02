@@ -228,6 +228,8 @@ enum L10n {
         case .supportHealth: return "Agent support health"
         case .supportHealthHint:
             return "Observed runtime evidence, not marketing coverage. Missing facts stay explicit."
+        case .supportScanIncomplete:
+            return "Scan incomplete · previous adapter results retained"
         case .supportNoneObserved: return "No Agent evidence observed in the latest scan."
         case .supportAllAgents: return "Other %d supported Agents"
         case .supportNotDetected: return "Not detected"
@@ -511,6 +513,7 @@ enum L10n {
         case .noProgressSignal: return "暂无执行进展信号"
         case .supportHealth: return "Agent 支持健康度"
         case .supportHealthHint: return "展示本机实际观测证据，而非静态支持名单；缺失信息会明确标出。"
+        case .supportScanIncomplete: return "扫描未完成 · 已保留上一次适配器结果"
         case .supportNoneObserved: return "最近一次扫描未观测到 Agent 证据。"
         case .supportAllAgents: return "其他 %d 个已支持 Agent"
         case .supportNotDetected: return "未检测到"
@@ -659,7 +662,7 @@ enum L10n {
         case waitedLongest, moreActions
         case acrossProjects, agoFormat, whileAway, noActivityYet
         case noProject, stalled, stalledFor, noProgressSignal
-        case supportHealth, supportHealthHint, supportNoneObserved, supportAllAgents
+        case supportHealth, supportHealthHint, supportScanIncomplete, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
         case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, supportResources, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace

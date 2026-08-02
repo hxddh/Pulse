@@ -205,8 +205,13 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.transient, .moveToActiveSpace, .fullScreenAuxiliary]
         panel.animationBehavior = .utilityWindow
 
-        effectView.material = .popover
-        effectView.blendingMode = .behindWindow
+        // A `.popover` material blended behind a borderless panel produced a
+        // flat mid-gray surface (and a different gray in each capture mode),
+        // because there is no system popover host behind this app-owned window.
+        // `.menu` with within-window blending is the native menu-bar surface:
+        // adaptive in light/dark mode, readable, and deterministic in QA.
+        effectView.material = .menu
+        effectView.blendingMode = .withinWindow
         effectView.state = .active
 
         shadowView.translatesAutoresizingMaskIntoConstraints = false
