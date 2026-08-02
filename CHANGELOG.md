@@ -2,6 +2,20 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.41.2 — 动作语义与进程观测优化
+
+### 可观测性与稳定性
+
+- 将 test、build、deploy、publish 等工具调用映射为可读的最近动作，避免只显示宽泛阶段。
+- Process-only 支持详情显示进程运行时长与数量；停滞/动态会话不再重复低价值的开始时间。
+- 仅有 transcript 事件数量的泛化会话不再被当作有效会话，减少无意义行。
+- 31 个 Agent 的结构化会话、缓存降级和进程 fallback 继续保持明确的证据边界。
+
+### 验证
+
+- 31 个 Agent 采集门禁、24 列协议、31 个端到端 fixture、覆盖矩阵、图标和外观门禁通过。
+- Release build、打包资源 selftest 通过；本版本为未签名、未公证 macOS DMG。
+
 ## 0.41.1 — 信息信号与 Agent 支持度修复
 
 ### 可观测性与稳定性
