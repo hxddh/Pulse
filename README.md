@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.47.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.47.2`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -85,6 +85,7 @@ Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、
 [`docs/observability-matrix.md`](docs/observability-matrix.md)。默认界面不会直接展示
 `exec`、`run_terminal_command` 或内部 skill/script 名；这类实现细节只有在能可靠转换为
 「正在规划 / 编辑 / 响应 / 等待权限 / 本轮完成」等用户可理解的阶段时才有可观测价值。
+未知 skill 保留在诊断层，只有明确映射到用户可理解工作流角色的调用才会进入默认行。
 
 这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.harvestSource` 和
 `AgentID.waitingSource` 校验，

@@ -1762,15 +1762,16 @@ struct SupportCoverageView: View {
     @ObservedObject var store: StatusStore
     @State private var query = ""
     // Support coverage is an inspection surface, not an alert inbox. Starting
-    // on Issues hid every healthy adapter and made “all covered agents” look
-    // unsupported until the user discovered a segmented control.
-    @State private var filter: SupportFilter = .all
+    // on Observed keeps the first scan useful while “All” remains the explicit
+    // path for auditing every covered adapter, including missing local sources.
+    @State private var filter: SupportFilter = .observed
     @State private var showSafeReport = false
 
     enum SupportFilter: String, CaseIterable, Identifiable {
         case needsAction
         case limited
         case healthy
+        case observed
         case unavailable
         case all
 
@@ -1785,6 +1786,7 @@ struct SupportCoverageView: View {
                 case .needsAction: return item.disposition == .needsAction
                 case .limited: return item.disposition == .limited
                 case .healthy: return item.disposition == .healthy
+                case .observed: return item.isObserved
                 case .unavailable: return item.disposition == .unavailable
                 case .all:
                     return true
@@ -1811,6 +1813,8 @@ struct SupportCoverageView: View {
             return String(format: store.tr(.supportLimitedCount), limitedCount)
         case .healthy:
             return String(format: store.tr(.supportHealthyCount), healthyCount)
+        case .observed:
+            return String(format: store.tr(.supportObservedCount), observedCount)
         case .unavailable:
             return String(format: store.tr(.supportUnavailableCount), unavailableCount)
         case .all: return store.tr(.supportFilterAll)
@@ -1826,6 +1830,9 @@ struct SupportCoverageView: View {
     private var healthyCount: Int {
         store.supportHealth.filter { $0.disposition == .healthy }.count
     }
+    private var observedCount: Int {
+        store.supportHealth.filter(\.isObserved).count
+    }
     private var unavailableCount: Int {
         store.supportHealth.filter { $0.disposition == .unavailable }.count
     }
@@ -1839,6 +1846,19 @@ struct SupportCoverageView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !store.allowAppData {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Label(
+                            store.tr(.supportCollectorPrivacyLimitedDetail),
+                            systemImage: "lock"
+                        )
+                        .foregroundStyle(.orange)
+                        Spacer(minLength: 8)
+                        Button(store.tr(.settings)) { store.openSettings() }
+                            .buttonStyle(.borderless)
+                    }
+                    .font(.caption)
+                }
                 if store.collectorScanIncomplete {
                     HStack(spacing: 8) {
                         Label(store.tr(.supportScanIncomplete), systemImage: "clock.badge.exclamationmark")

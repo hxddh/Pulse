@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.47.1"
+    static let semver = "0.47.2"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -154,6 +154,22 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
              .augment, .zedAgent, .trae, .warpAgent, .kilo, .devin, .kiro,
              .junie, .replit, .antigravity:
             return .bestEffortCache
+        }
+    }
+
+    /// Some adapters keep their only useful session/cache evidence inside
+    /// macOS-protected Application Support, App Group, or VS Code stores. The
+    /// default scanner deliberately skips those locations; the support window
+    /// uses this bit to explain that an unavailable row may be privacy-limited,
+    /// not unsupported.
+    var requiresAppDataOptIn: Bool {
+        switch self {
+        case .cursor, .cursorAgent, .amazonQ, .cline, .roo, .cascade, .windsurf,
+             .zedAgent, .trae, .warpAgent, .kilo, .kiro, .junie, .replit,
+             .antigravity:
+            return true
+        default:
+            return false
         }
     }
 
@@ -688,6 +704,10 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var hasActivity: Bool
     var hasProgress: Bool
     var waitingSignalReady: Bool
+    /// True when the latest result may be incomplete because the user keeps
+    /// protected app-data reads disabled. This is explanatory UI state, not a
+    /// claim that the Agent is installed.
+    var privacyLimited: Bool = false
     /// Optional operational facts shown separately from the four core facts.
     /// These are inventory signals, not quality gates: an Agent may not expose
     /// a model or resource counter in its local store, but that absence must be

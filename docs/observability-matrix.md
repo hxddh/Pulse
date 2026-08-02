@@ -119,6 +119,7 @@ user-facing phase vocabulary such as **Planning**, **Reading**, **Researching**,
 progress and outcome outrank the raw tool name.
 
 Raw skill names do not appear in the default row. A path containing `skills/`,
-a package name, or an internal preflight script is diagnostic data. A future
-skill presentation must first map an explicit invocation to a
-user-recognisable workflow role; until then, Pulse keeps it out of the UI.
+a package name, or an internal preflight script is diagnostic data. An explicit
+skill invocation may appear only after it maps to a user-recognisable workflow
+role such as Planning, Researching, Testing, Building, Editing, or Publishing;
+unknown skill names stay in diagnostics.

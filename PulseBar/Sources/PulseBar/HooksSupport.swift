@@ -144,8 +144,11 @@ enum HooksSupport {
             task.environment = environment
             let input = Pipe()
             task.standardInput = input
-            task.standardOutput = Pipe()
-            task.standardError = Pipe()
+            // The self-test only validates the hook file, not its console
+            // output. Null devices avoid creating unread pipes that could
+            // block if a future hook adds diagnostic output.
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
             try task.run()
             input.fileHandleForWriting.write(
                 Data(#"{"message":"Pulse self-test","session_id":"selftest"}"#.utf8)
@@ -172,27 +175,22 @@ enum HooksSupport {
     }
 
     private static func run(script: URL, arguments: [String]) -> RunResult {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = [script.path] + arguments
-        let out = Pipe()
-        let err = Pipe()
-        task.standardOutput = out
-        task.standardError = err
-        do {
-            try task.run()
-            _ = out.fileHandleForReading.readDataToEndOfFile()
-            let errData = err.fileHandleForReading.readDataToEndOfFile()
-            task.waitUntilExit()
-            if task.terminationStatus != 0 {
-                let msg = String(data: errData, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return .failure(msg.isEmpty ? "exit \(task.terminationStatus)" : msg)
-            }
-            return .success
-        } catch {
-            return .failure(error.localizedDescription)
+        guard let result = ProcessIO.run(
+            executable: "/usr/bin/python3",
+            arguments: [script.path] + arguments,
+            timeout: 4.0
+        ) else {
+            return .failure("could not start hook installer")
         }
+        if result.timedOut {
+            return .failure("hook installer timed out")
+        }
+        if result.status != 0 {
+            let msg = String(data: result.stderr, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .failure(msg.isEmpty ? "exit \(result.status)" : msg)
+        }
+        return .success
     }
 
     private static func resourceURL(named name: String) -> URL? {

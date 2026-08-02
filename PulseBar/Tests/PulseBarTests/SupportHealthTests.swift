@@ -74,6 +74,21 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(item.usefulFactCount, 4)
     }
 
+    func testPrivacyLimitedStateIsExplicitAndDoesNotChangeDisposition() {
+        var item = health(agent: .cursor, evidence: nil, goal: false, workspace: false, activity: false)
+        item.collectorState = .sourceAbsent
+        item.privacyLimited = true
+        XCTAssertTrue(item.privacyLimited)
+        XCTAssertEqual(item.disposition, .unavailable)
+    }
+
+    func testOnlyProtectedStoreAdaptersRequireTheOptIn() {
+        XCTAssertTrue(AgentID.cursor.requiresAppDataOptIn)
+        XCTAssertTrue(AgentID.warpAgent.requiresAppDataOptIn)
+        XCTAssertFalse(AgentID.codex.requiresAppDataOptIn)
+        XCTAssertFalse(AgentID.pi.requiresAppDataOptIn)
+    }
+
     func testMissingHooksIsActionable() {
         let item = health(agent: .codex, progress: true, waitingReady: false)
         XCTAssertEqual(item.disposition, .needsAction)

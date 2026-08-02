@@ -251,15 +251,15 @@ enum L10n {
         case .supportResources: return "resources"
         case .supportObservedSignals: return "Observed: %@"
         case .supportNoObservedSignals: return "No usable session signals yet"
-        case .skillFact: return "Skill %@"
+        case .skillFact: return "Workflow %@"
         case .supportLastRead: return "read %@ ago"
         case .supportMissing: return "missing: %@"
         case .supportMissingFeed: return "activity feed"
         case .supportMissingGoal: return "goal"
         case .supportMissingWorkspace: return "workspace"
-        case .supportMissingWaiting: return "Waiting signal"
-        case .supportWaitingHooks: return "Waiting via hooks"
-        case .supportWaitingHarvest: return "Waiting via session data"
+        case .supportMissingWaiting: return "Waiting hook not ready"
+        case .supportWaitingHooks: return "Waiting route: hooks"
+        case .supportWaitingHarvest: return "Waiting route: session data"
         case .supportWaitingNone: return "Waiting unavailable"
         case .supportSharedCursor: return "Cursor Agent shares this adapter"
         case .supportLastSignal: return "signal %@ ago"
@@ -271,6 +271,9 @@ enum L10n {
         case .supportCollectorNoDataDetail: return "adapter healthy · %d ms"
         case .supportCollectorSourceAbsent: return "Source not found"
         case .supportCollectorSourceAbsentDetail: return "no local session source or CLI found"
+        case .supportCollectorPrivacyLimited: return "Privacy-limited"
+        case .supportCollectorPrivacyLimitedDetail:
+            return "deep app-data scan is off; enable it in Settings for richer details"
         case .supportCollectorNoSessions: return "No usable session"
         case .supportCollectorNoSessionsDetail: return "source present · no usable session · %d ms"
         case .supportCollectorPermission: return "Permission denied"
@@ -281,7 +284,7 @@ enum L10n {
         case .supportCollectorFailedDetail: return "adapter error: %@"
         case .supportCollectorUnscanned: return "Not scanned"
         case .supportCollectorUnscannedDetail: return "adapter did not finish in the latest scan"
-        case .supportObservedCount: return "%d observed"
+        case .supportObservedCount: return "Observed · %d"
         case .supportIssueCount: return "%d issue(s)"
         case .supportAdapterIssueCount: return "%d adapter issue(s)"
         case .supportInformationGapCount: return "%d information gap(s)"
@@ -545,9 +548,9 @@ enum L10n {
         case .supportMissingFeed: return "活动数据"
         case .supportMissingGoal: return "目标"
         case .supportMissingWorkspace: return "工作区"
-        case .supportMissingWaiting: return "等待信号"
-        case .supportWaitingHooks: return "等待：hooks"
-        case .supportWaitingHarvest: return "等待：会话数据"
+        case .supportMissingWaiting: return "等待 hook 尚未就绪"
+        case .supportWaitingHooks: return "等待通路：hooks"
+        case .supportWaitingHarvest: return "等待通路：会话数据"
         case .supportWaitingNone: return "等待：不可用"
         case .supportSharedCursor: return "Cursor Agent 与此适配器共用"
         case .supportLastSignal: return "%@前收到信号"
@@ -559,6 +562,9 @@ enum L10n {
         case .supportCollectorNoDataDetail: return "适配器正常 · %d 毫秒"
         case .supportCollectorSourceAbsent: return "未发现数据源"
         case .supportCollectorSourceAbsentDetail: return "未发现本地会话数据或 CLI"
+        case .supportCollectorPrivacyLimited: return "隐私受限"
+        case .supportCollectorPrivacyLimitedDetail:
+            return "深度应用数据扫描已关闭；可在设置中开启以获取更多详情"
         case .supportCollectorNoSessions: return "暂无可用会话"
         case .supportCollectorNoSessionsDetail: return "数据源存在 · 暂无可用会话 · %d 毫秒"
         case .supportCollectorPermission: return "无读取权限"
@@ -569,7 +575,7 @@ enum L10n {
         case .supportCollectorFailedDetail: return "适配器异常：%@"
         case .supportCollectorUnscanned: return "未完成扫描"
         case .supportCollectorUnscannedDetail: return "最近一次扫描中适配器未执行完成"
-        case .supportObservedCount: return "已观测 %d 个"
+        case .supportObservedCount: return "已观测 · %d"
         case .supportIssueCount: return "%d 个问题"
         case .supportAdapterIssueCount: return "%d 个适配器异常"
         case .supportInformationGapCount: return "%d 个信息缺口"
@@ -680,6 +686,7 @@ enum L10n {
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved, supportCollectorNoData, supportCollectorNoDataDetail
         case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
+        case supportCollectorPrivacyLimited, supportCollectorPrivacyLimitedDetail
         case supportCollectorNoSessions, supportCollectorNoSessionsDetail
         case supportCollectorPermission, supportCollectorPermissionDetail
         case supportCollectorSchema, supportCollectorSchemaDetail

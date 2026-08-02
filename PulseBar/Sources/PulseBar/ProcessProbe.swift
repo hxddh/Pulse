@@ -454,21 +454,14 @@ enum ProcessProbe {
     }
 
     private static func shell(_ launchPath: String, _ arguments: [String]) -> String? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: launchPath)
-        task.arguments = arguments
-        let out = Pipe()
-        let err = Pipe()
-        task.standardOutput = out
-        task.standardError = err
-        do {
-            try task.run()
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            _ = err.fileHandleForReading.readDataToEndOfFile()
-            task.waitUntilExit()
-            return String(data: data, encoding: .utf8)
-        } catch {
+        guard let result = ProcessIO.run(
+            executable: launchPath,
+            arguments: arguments,
+            timeout: 1.5
+        ), !result.timedOut, result.status == 0 else {
+            DebugLog.write("probe shell failed (URL(fileURLWithPath: launchPath).lastPathComponent)")
             return nil
         }
+        return String(data: result.stdout, encoding: .utf8)
     }
 }

@@ -216,6 +216,7 @@ final class StatusStore: ObservableObject {
             PulseVersion.fingerprint,
             "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "Agents: \(supportHealth.count)",
+            "appDataScan: \(allowAppData ? "enabled" : "disabled")",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
         ]
         for item in supportHealth {
@@ -228,7 +229,8 @@ final class StatusStore: ObservableObject {
                     + "goal=\(item.hasGoal) workspace=\(item.hasWorkspace) "
                     + "activity=\(item.hasActivity) progress=\(item.hasProgress) "
                     + "waiting=\(waiting) "
-                    + "score=\(item.usefulFactCount)/\(item.usefulFactTotal)"
+                    + "score=\(item.usefulFactCount)/\(item.usefulFactTotal) "
+                    + "privacyLimited=\(item.privacyLimited)"
             )
         }
         return ContentSanitizer.redact(lines.joined(separator: "\n"))
@@ -303,6 +305,7 @@ final class StatusStore: ObservableObject {
                         || $0.contextPercent > 0 || !$0.model.isEmpty || !$0.mode.isEmpty
                 },
                 waitingSignalReady: waitingSignalReady(for: agent),
+                privacyLimited: !allowAppData && agent.requiresAppDataOptIn,
                 hasActionSignal: rows.contains { !$0.tool.isEmpty },
                 hasModelSignal: rows.contains { !$0.model.isEmpty },
                 hasResourceSignal: rows.contains {
@@ -336,6 +339,9 @@ final class StatusStore: ObservableObject {
         if health.collectorState == .unscanned { return tr(.supportCollectorUnscanned) }
         if health.collectorState == .permissionDenied { return tr(.supportCollectorPermission) }
         if health.collectorState == .schemaMismatch { return tr(.supportCollectorSchema) }
+        if health.privacyLimited, !health.isObserved {
+            return tr(.supportCollectorPrivacyLimited)
+        }
         if health.collectorState == .sourceAbsent, !health.isObserved {
             return tr(.supportCollectorSourceAbsent)
         }
@@ -380,8 +386,15 @@ final class StatusStore: ObservableObject {
                 format: tr(.supportCollectorNoSessionsDetail),
                 health.collectorDurationMs
             ))
+            if health.privacyLimited {
+                facts.append(tr(.supportCollectorPrivacyLimitedDetail))
+            }
         case .sourceAbsent:
-            facts.append(tr(.supportCollectorSourceAbsentDetail))
+            facts.append(
+                health.privacyLimited
+                    ? tr(.supportCollectorPrivacyLimitedDetail)
+                    : tr(.supportCollectorSourceAbsentDetail)
+            )
         case .permissionDenied:
             facts.append(tr(.supportCollectorPermissionDetail))
         case .schemaMismatch:
@@ -1946,16 +1959,34 @@ final class StatusStore: ObservableObject {
     private func readableSkill(_ raw: String) -> String {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, value.lowercased() != "pending" else { return "" }
-        // Skill package names are implementation detail. Keep the leaf name
-        // and drop a long namespace so the row communicates capability, not a
-        // registry path.
-        let leaf = value.split(separator: ":").last.map(String.init) ?? value
-        return leaf
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .split(separator: " ")
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
+        // Package names and registry namespaces are implementation detail. A
+        // skill earns default-row space only when its explicit invocation maps
+        // to a user-recognisable workflow role; everything else stays in
+        // diagnostics so `product-design:audit` never becomes a mysterious
+        // "Skill audit" badge.
+        let low = value.lowercased()
+        if low.contains("plan") || low.contains("todo") {
+            return tr(.actionPlanning)
+        }
+        if low.contains("research") || low.contains("browser") || low.contains("web") {
+            return tr(.actionResearch)
+        }
+        if low.contains("test") || low.contains("verify") || low.contains("check") {
+            return tr(.phaseTesting)
+        }
+        if low.contains("build") || low.contains("compile") || low.contains("package") {
+            return tr(.phaseBuilding)
+        }
+        if low.contains("edit") || low.contains("patch") || low.contains("write") {
+            return tr(.actionEditing)
+        }
+        if low.contains("publish") || low.contains("release") || low.contains("deploy") {
+            return tr(.phasePublishing)
+        }
+        if low.contains("image") || low.contains("screenshot") {
+            return tr(.actionImage)
+        }
+        return ""
     }
 
     private func readableFailure(_ raw: String) -> String? {
@@ -2368,21 +2399,13 @@ enum LoginItem {
     }
 
     private static func shell(_ path: String, _ args: [String]) -> Int32 {
-        let t = Process()
-        t.executableURL = URL(fileURLWithPath: path)
-        t.arguments = args
-        let out = Pipe()
-        let err = Pipe()
-        t.standardOutput = out
-        t.standardError = err
-        do {
-            try t.run()
-            _ = out.fileHandleForReading.readDataToEndOfFile()
-            _ = err.fileHandleForReading.readDataToEndOfFile()
-            t.waitUntilExit()
-            return t.terminationStatus
-        } catch {
+        guard let result = ProcessIO.run(
+            executable: path,
+            arguments: args,
+            timeout: 4.0
+        ), !result.timedOut else {
             return -1
         }
+        return result.status
     }
 }
