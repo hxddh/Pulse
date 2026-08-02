@@ -833,12 +833,41 @@ def check_collectors(home: Path) -> int:
     con.execute(
         "CREATE TABLE session "
         "(id TEXT, title TEXT, directory TEXT, tokens_input INTEGER, "
-        "tokens_output INTEGER, time_updated INTEGER, time_archived INTEGER)"
+        "tokens_output INTEGER, time_updated INTEGER, time_archived INTEGER, "
+        "model TEXT)"
+    )
+    con.execute(
+        "CREATE TABLE part "
+        "(session_id TEXT, time_updated INTEGER, data TEXT)"
     )
     for i in range(1, MULTI_SESSION_TEST_COUNT + 1):
         con.execute(
-            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, 0)",
-            (f"opencode-fixture-{i}", f"Observe OpenCode activity {i}", "/Users/me/code/Pulse", 120 + i, 30 + i, now_ms - i),
+            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+            (
+                f"opencode-fixture-{i}",
+                f"Observe OpenCode activity {i}",
+                "/Users/me/code/Pulse",
+                120 + i,
+                30 + i,
+                now_ms - i,
+                '{"id":"fixture-model","providerID":"fixture"}',
+            ),
+        )
+        con.execute(
+            "INSERT INTO part VALUES (?, ?, ?)",
+            (
+                f"opencode-fixture-{i}",
+                now_ms - i,
+                json.dumps({"type": "tool", "tool": "read_file", "state": {"status": "completed"}}),
+            ),
+        )
+        con.execute(
+            "INSERT INTO part VALUES (?, ?, ?)",
+            (
+                f"opencode-fixture-{i}",
+                now_ms - i + 1,
+                json.dumps({"type": "step-finish", "reason": "stop"}),
+            ),
         )
     con.commit()
     con.close()
@@ -925,6 +954,13 @@ def check_collectors(home: Path) -> int:
                 )
             if len({row[COL_SESSION] for row in rows}) != MULTI_SESSION_TEST_COUNT:
                 return fail(f"{name} active sessions collapsed during emission: {rows}")
+        if name == "opencode":
+            if any(row[COL_MODEL] != "fixture-model" for row in rows):
+                return fail(f"OpenCode model facts were not surfaced: {rows}")
+            if any(row[COL_TOOL] != "read_file" for row in rows):
+                return fail(f"OpenCode last-action facts were not surfaced: {rows}")
+            if any(row[COL_PHASE] != "turn_complete" or row[COL_OUTCOME] != "completed" for row in rows):
+                return fail(f"OpenCode lifecycle facts were not surfaced: {rows}")
         row = rows[0]
         if len(row) != COLUMNS:
             return fail(f"{name} emitted {len(row)} columns: {row}")
