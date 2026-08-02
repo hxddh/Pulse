@@ -257,6 +257,12 @@ final class StatusStore: ObservableObject {
                 collectorErrorKind: health?.errorKind ?? "",
                 processDetected: rows.contains(where: \.liveProcess),
                 processEvidence: rows.compactMap(\.processEvidence).first,
+                processStartedMs: rows
+                    .filter(\.liveProcess)
+                    .map(\.processStartedMs)
+                    .filter { $0 > 0 }
+                    .min() ?? 0,
+                processCount: rows.map(\.processCount).max() ?? 0,
                 evidence: strongest,
                 lastSuccessfulReadMs: max(
                     lastSuccessfulReadByAgent[agent] ?? 0,
@@ -456,6 +462,19 @@ final class StatusStore: ObservableObject {
                 ? tr(.supportDetectedPath)
                 : tr(.supportDetectedExecutable)
             facts.append(evidence)
+            if health.processStartedMs > 0 {
+                let seconds = max(
+                    0,
+                    Date().timeIntervalSince1970 - Double(health.processStartedMs) / 1000.0
+                )
+                facts.append(String(
+                    format: tr(.processAge),
+                    DurationFormat.label(seconds: seconds, lang: lang)
+                ))
+            }
+            if health.processCount > 1 {
+                facts.append(String(format: tr(.processCount), health.processCount))
+            }
         }
         facts.append(supportWaitingLabel(health.agent))
         if health.lastWaitingSignalMs > 0 {
@@ -619,6 +638,8 @@ final class StatusStore: ObservableObject {
             )
             amp.harvestMs = 0
             amp.records = 0
+            amp.processStartedMs = now - 60 * 60 * 1000
+            amp.processCount = 2
             amp.processEvidence = .executable
 
             var cursor = row(
@@ -1466,7 +1487,8 @@ final class StatusStore: ObservableObject {
         // Session creation is useful while orienting in a new session, but an
         // ancient store timestamp is history—not runtime state. It previously
         // produced labels such as "Started 1276h ago" beside a fresh activity.
-        if age >= 60, age <= 24 * 60 * 60 {
+        if age >= 60, age <= 24 * 60 * 60,
+           row.waiting || age >= 2 * 60 * 60 || !rowHasDynamicEvidence(row) {
             bits.append(String(
                 format: tr(.sessionAge),
                 DurationFormat.label(seconds: age, lang: lang)
@@ -1777,7 +1799,20 @@ final class StatusStore: ObservableObject {
         return [
             "plan", "todo", "patch", "edit", "write", "image", "screenshot",
             "search", "web", "browser", "read", "glob", "grep", "automation", "computer",
+            "test", "verify", "check", "build", "compile", "package", "publish", "release", "deploy",
         ].contains { low.contains($0) }
+    }
+
+    /// Dynamic evidence makes a session's start time secondary. Keep the
+    /// duration for long-running sessions and waits, but do not repeat
+    /// `Started 54m ago` beside a live action, progress, or token signal.
+    private func rowHasDynamicEvidence(_ row: AgentRow) -> Bool {
+        usefulAction(row.tool) || !row.phase.isEmpty || !row.outcome.isEmpty
+            || row.progressDone > 0 || row.progressTotal > 0
+            || row.tokensIn > 0 || row.tokensOut > 0
+            || row.subTotal > 0 || row.errors > 0 || row.files > 0
+            || row.contextPercent > 0 || !row.model.isEmpty || !row.mode.isEmpty
+            || !row.skill.isEmpty || row.activityChange != nil || row.isStalled
     }
 
     private func readablePhase(_ raw: String) -> String? {
@@ -1864,6 +1899,15 @@ final class StatusStore: ObservableObject {
         }
         if low.contains("read") || low.contains("glob") || low.contains("grep") {
             return tr(.actionReading)
+        }
+        if low.contains("test") || low.contains("verify") || low.contains("check") {
+            return tr(.phaseTesting)
+        }
+        if low.contains("build") || low.contains("compile") || low.contains("package") {
+            return tr(.phaseBuilding)
+        }
+        if low.contains("publish") || low.contains("release") || low.contains("deploy") {
+            return tr(.phasePublishing)
         }
         if low == "exec" || low.contains("command") || low == "bash" || low == "shell" {
             return tr(.actionCommand)

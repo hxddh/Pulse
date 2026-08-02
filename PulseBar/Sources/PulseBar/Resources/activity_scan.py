@@ -3656,7 +3656,6 @@ def emit(
                 tout > 0,
                 sub_run > 0,
                 sub_total > 0,
-                records > 0,
                 bool(
                     phase
                     or outcome

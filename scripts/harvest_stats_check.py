@@ -145,6 +145,15 @@ def check_helper_contract(d: Path) -> int:
     )
     if structured_placeholder:
         return fail("bare structured placeholder was promoted to a session")
+    records_only_placeholder = emit_to_line(
+        "grok",
+        ("Grok session", 0, 0, "", "", "", "", int(time.time() * 1000), "grok-records", {
+            "records": RECORDS,
+        }),
+        evidence=A.EVIDENCE_SESSION,
+    )
+    if records_only_placeholder:
+        return fail("record count alone was promoted to a generic session")
     preference = {
         "theme": "dark",
         "model": "agent-model",

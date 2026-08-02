@@ -659,6 +659,11 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var collectorErrorKind: String
     var processDetected: Bool
     var processEvidence: ProcessEvidence?
+    /// Earliest matched process start for this Agent, when the probe provided
+    /// it. This is process evidence, not session age.
+    var processStartedMs: Int64 = 0
+    /// Number of matching processes represented by the support row.
+    var processCount: Int = 0
     var evidence: ObservationSource?
     var lastSuccessfulReadMs: Int64
     var lastWaitingSignalMs: Int64

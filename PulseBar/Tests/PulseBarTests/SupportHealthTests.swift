@@ -108,4 +108,23 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(observed.contains("Turn complete"), observed)
         XCTAssertFalse(observed.localizedCaseInsensitiveContains("events"), observed)
     }
+
+    @MainActor
+    func testProcessSupportTimelineIncludesProcessAge() {
+        let store = StatusStore()
+        var item = health(
+            agent: .amp,
+            evidence: .process,
+            processDetected: true,
+            goal: false,
+            workspace: false,
+            activity: false
+        )
+        item.processStartedMs = Int64((Date().timeIntervalSince1970 - 3_600) * 1000)
+        item.processCount = 2
+        let timeline = store.supportTimelineDetail(item)
+        XCTAssertTrue(timeline.contains("Process started"), timeline)
+        XCTAssertTrue(timeline.contains("1h"), timeline)
+        XCTAssertTrue(timeline.contains("2 processes"), timeline)
+    }
 }

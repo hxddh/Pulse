@@ -576,6 +576,7 @@ final class RowMetricsTests: XCTestCase {
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.contains("No activity for"), signal)
         XCTAssertTrue(signal.contains("32m"), signal)
+        XCTAssertFalse(store().rowContextLine(r).contains("Started"))
     }
 
     @MainActor
@@ -649,6 +650,27 @@ final class RowMetricsTests: XCTestCase {
         let line = store().rowContextLine(r)
         XCTAssertTrue(line.contains("Last action: Planning"), line)
         XCTAssertFalse(line.contains("update_plan"), line)
+    }
+
+    @MainActor
+    func testTestingToolReadsAsAUsefulLastAction() {
+        var r = row()
+        r.task = "Run checks"
+        r.tool = "swift_test"
+        r.liveProcess = true
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.contains("Last action: Testing"), line)
+    }
+
+    @MainActor
+    func testRecentDynamicRowDoesNotSpendSpaceRepeatingStartAge() {
+        var r = row(startedAgo: 54 * 60)
+        r.task = "Run checks"
+        r.tool = "swift_test"
+        r.liveProcess = true
+        let line = store().rowContextLine(r)
+        XCTAssertFalse(line.contains("Started"), line)
+        XCTAssertTrue(line.contains("Last action: Testing"), line)
     }
 
     @MainActor
