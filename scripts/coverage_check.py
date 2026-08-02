@@ -131,6 +131,15 @@ def main() -> int:
             "fails quietly and Terminal/iTerm focus is not advertised"
         )
         return 1
+    for label, path in {
+        "TerminalFocus": ROOT / "PulseBar/Sources/PulseBar/TerminalFocus.swift",
+        "InstallTruth": ROOT / "PulseBar/Sources/PulseBar/InstallTruth.swift",
+        "SingleInstanceGuard": ROOT / "PulseBar/Sources/PulseBar/SingleInstanceGuard.swift",
+    }.items():
+        source = path.read_text(encoding="utf-8")
+        if "runningApplications" in source:
+            print(f"{label} must not enumerate other apps during normal runtime")
+            return 1
     print("OK — all expected harvest emitters present")
     return 0
 

@@ -51,12 +51,12 @@ enum InstallTruth {
     static func inspect() -> Report {
         let fm = FileManager.default
         let current = Bundle.main.bundleURL.resolvingSymlinksInPath()
-        let runningPaths = Set(
-            NSWorkspace.shared.runningApplications
-                .filter { $0.bundleIdentifier == bundleIdentifier }
-                .compactMap(\.bundleURL)
-                .map { $0.resolvingSymlinksInPath().path }
-        )
+        // Avoid cross-app process enumeration here. New macOS releases can
+        // treat cross-app enumeration as protected data and repeatedly ask for
+        // Automation access. The process list is enough for this diagnostic;
+        // SingleInstanceGuard already guarantees only one Pulse copy owns the
+        // runtime lock.
+        let runningPaths = runningPulsePaths()
         let roots = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
             fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true),
@@ -82,11 +82,6 @@ enum InstallTruth {
                 include(child)
             }
         }
-        for app in NSWorkspace.shared.runningApplications
-            where app.bundleIdentifier == bundleIdentifier {
-            if let url = app.bundleURL { include(url) }
-        }
-
         let copies = urls.map { url in
             let info = infoDictionary(at: url)
             return Copy(
@@ -101,6 +96,41 @@ enum InstallTruth {
             return $0.url.path.localizedStandardCompare($1.url.path) == .orderedAscending
         }
         return Report(runningURL: current, copies: copies, inspectedAt: Date())
+    }
+
+    private static func runningPulsePaths() -> Set<String> {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-axo", "args="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else { return [] }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            var paths = Set<String>()
+            for line in text.split(whereSeparator: \.isNewline) {
+                guard let token = line.split(whereSeparator: \.isWhitespace)
+                    .first(where: { $0.contains("/Contents/MacOS/PulseBar") }) else {
+                    continue
+                }
+                let executable = String(token).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                let bundle = URL(fileURLWithPath: executable)
+                    .deletingLastPathComponent()
+                    .deletingLastPathComponent()
+                    .deletingLastPathComponent()
+                    .resolvingSymlinksInPath()
+                if bundle.pathExtension.lowercased() == "app" {
+                    paths.insert(bundle.path)
+                }
+            }
+            return paths
+        } catch {
+            return []
+        }
     }
 
     @MainActor

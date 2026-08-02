@@ -163,14 +163,17 @@ enum ProcessProbe {
         ),
         .init(
             id: .antigravity,
-            basenames: ["Antigravity", "antigravity", "Antigravity IDE"],
+            basenames: ["Antigravity", "antigravity", "Antigravity IDE", "agy"],
             pathNeedles: [
                 "Antigravity.app/Contents/MacOS/Antigravity",
                 "Antigravity IDE.app",
                 "/bin/antigravity",
+                "/.local/bin/agy",
+                "/bin/agy",
                 "google.antigravity",
             ],
-            denyNeedles: ["crashpad", "Antigravity Helper", "AntigravityUI"]
+            denyNeedles: ["crashpad", "Antigravity Helper", "AntigravityUI"],
+            allowBareBasename: true
         ),
         .init(
             id: .kimi,

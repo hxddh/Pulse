@@ -129,6 +129,7 @@ enum ActivityHarvest {
         case "factory", "factory-droid": return .droid
         case "kimi-code", "kimi_code": return .kimi
         case "antigravity-ide", "antigravity_ide": return .antigravity
+        case "agy": return .antigravity
         default: return nil
         }
     }

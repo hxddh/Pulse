@@ -349,6 +349,12 @@ def check_helper_contract(d: Path) -> int:
     # A helper path is not an invoked skill.
     if A.last_skill_name('{"path":"/tmp/skills/audit/scripts/preflight.py"}'):
         return fail("a skill helper path was exposed as an invoked skill")
+    skill_blob = (
+        '{"type":"tool_use","name":"Skill","skill":"product-design:audit"}\n'
+    )
+    facts = A.observed_facts_from_text(skill_blob)
+    if facts.get("phase") != "researching":
+        return fail(f"explicit skill invocation lost its semantic phase: {facts}")
 
     # Long tool output after a recent prompt must not push that prompt out of
     # a fixed tail window and resurrect the session-opening task.
@@ -664,6 +670,9 @@ def check_collectors(home: Path) -> int:
         encoding="utf-8",
     )
     cases.append(("grok", grok_session, lambda: A.emit_all("grok", [A.grok_activity()])))
+    # The active index can lag its just-written session directory. Exercise the
+    # summary fallback rather than only the happy-path index.
+    (grok / "active_sessions.json").write_text("[]", encoding="utf-8")
 
     # Every remaining adapter gets a source-shaped disk fixture and is run
     # through its real collector plus emit_row. Shared helpers are deliberately
@@ -753,7 +762,7 @@ def check_collectors(home: Path) -> int:
     command_meta = write_session(command_dir / "command-fixture.meta.json", "command_code")
     command_transcript = command_dir / "command-fixture.jsonl"
     command_transcript.parent.mkdir(parents=True, exist_ok=True)
-    command_lines = [json.dumps({
+    command_lines = [json.dumps({"cwd": "/Users/me/code/Pulse"}), json.dumps({
             "type": "message",
             "message": {
                 "role": "user",
@@ -798,7 +807,7 @@ def check_collectors(home: Path) -> int:
     ])
     command_transcript.write_text("\n".join(command_lines) + "\n", encoding="utf-8")
     (command_dir / "settings.json").write_text(
-        '{"cwd":"/Users/me/code/Pulse"}', encoding="utf-8"
+        '{"cwd":"/Users/me/legacy-command-code"}', encoding="utf-8"
     )
     cases.append((
         "command_code",
@@ -824,6 +833,64 @@ def check_collectors(home: Path) -> int:
     cases.append(("gemini", gemini, lambda: A.emit_all("gemini", A.gemini_activities())))
 
     import sqlite3
+
+    # Warp stores Agent conversations in an App Group SQLite database. Keep a
+    # small real schema fixture so the collector cannot regress to its old
+    # JSON-only fallback without this gate noticing.
+    warp_db = (
+        home / "Library" / "Group Containers" / "2BBY89MBSN.dev.warp"
+        / "Library" / "Application Support" / "dev.warp.Warp-Stable" / "warp.sqlite"
+    )
+    warp_db.parent.mkdir(parents=True, exist_ok=True)
+    wcon = sqlite3.connect(warp_db)
+    wcon.executescript(
+        """
+        CREATE TABLE agent_conversations (
+            id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL,
+            conversation_data TEXT NOT NULL, last_modified_at TIMESTAMP NOT NULL,
+            summary TEXT
+        );
+        CREATE TABLE agent_tasks (
+            id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL,
+            task_id TEXT NOT NULL, task BLOB NOT NULL, last_modified_at TIMESTAMP NOT NULL
+        );
+        CREATE TABLE ai_queries (
+            id INTEGER PRIMARY KEY, exchange_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL, start_ts DATETIME NOT NULL,
+            input TEXT NOT NULL, working_directory TEXT, output_status TEXT NOT NULL,
+            model_id TEXT NOT NULL, planning_model_id TEXT NOT NULL, coding_model_id TEXT NOT NULL
+        );
+        """
+    )
+    warp_now = "2026-07-28 12:00:00"
+    warp_summary = json.dumps({
+        "title": "Inspect Warp Agent telemetry",
+        "initial_query": "Inspect Warp Agent telemetry",
+        "initial_working_directory": "/Users/me/code/Pulse",
+    })
+    warp_conversation_data = json.dumps({
+        "conversation_usage_metadata": {
+            "tool_usage_metadata": {"run_command_stats": {"count": 3}}
+        }
+    })
+    wcon.execute(
+        "INSERT INTO agent_conversations VALUES (1, ?, ?, ?, ?)",
+        ("warp-fixture", warp_conversation_data, warp_now, warp_summary),
+    )
+    wcon.execute(
+        "INSERT INTO agent_tasks VALUES (1, ?, ?, ?, ?)",
+        ("warp-fixture", "task-1", b"task", warp_now),
+    )
+    wcon.execute(
+        "INSERT INTO ai_queries VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "exchange-1", "warp-fixture", warp_now,
+            json.dumps({"Query": {"text": "Inspect Warp Agent telemetry"}}),
+            "/Users/me/code/Pulse", '"Completed"', "warp-fixture-model", "", "",
+        ),
+    )
+    wcon.commit()
+    wcon.close()
 
     cursor_db = home / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
     cursor_db.parent.mkdir(parents=True, exist_ok=True)
@@ -976,6 +1043,7 @@ def check_collectors(home: Path) -> int:
         if not rows:
             return fail(f"{name}: source-shaped fixture produced no row from {where}")
         saw_any = True
+        row = rows[0]
         if name == "cursor":
             expected_cursor_rows = MULTI_SESSION_TEST_COUNT + 1
             if len(rows) != expected_cursor_rows:
@@ -1017,7 +1085,15 @@ def check_collectors(home: Path) -> int:
                 return fail(f"OpenCode last-action facts were not surfaced: {rows}")
             if any(row[COL_PHASE] != "turn_complete" or row[COL_OUTCOME] != "completed" for row in rows):
                 return fail(f"OpenCode lifecycle facts were not surfaced: {rows}")
-        row = rows[0]
+        if name == "warp_agent":
+            if row[COL_TASK] != "Inspect Warp Agent telemetry":
+                return fail(f"Warp SQLite conversation title was not surfaced: {row}")
+            if row[COL_CWD] != "/Users/me/code/Pulse" or row[COL_PROJECT] != "Pulse":
+                return fail(f"Warp SQLite workspace was not surfaced: {row}")
+            if row[COL_TOOL] != "run_command" or row[COL_MODEL] != "warp-fixture-model":
+                return fail(f"Warp tool/model evidence was not surfaced: {row}")
+            if row[COL_PHASE] != "turn_complete" or row[COL_OUTCOME] != "completed":
+                return fail(f"Warp lifecycle facts were not surfaced: {row}")
         if len(row) != COLUMNS:
             return fail(f"{name} emitted {len(row)} columns: {row}")
         if row[COL_EVIDENCE] != A.HARVEST_CONTRACTS[name]:
@@ -1085,6 +1161,8 @@ def check_collectors(home: Path) -> int:
                 )
             if row[COL_TOOL] != "read_file" or row[COL_MODEL] != "command-fixture-model":
                 return fail(f"Command Code runtime facts were not surfaced: {row}")
+            if row[COL_CWD] != "/Users/me/code/Pulse" or row[COL_PROJECT] != "Pulse":
+                return fail(f"Command Code transcript cwd did not override storage metadata: {row}")
 
     if not saw_any:
         return fail("no collector produced a row; this gate is asserting nothing")
