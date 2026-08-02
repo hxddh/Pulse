@@ -2,6 +2,19 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.5 — 通知设置状态一致性修复
+
+### 交互与可用性
+
+- macOS 通知权限未授权或被拒绝时，通知与等待开关现在明确显示为关闭且不可操作，不再出现“开关显示开启但实际无法触发”的歧义。
+- 权限恢复后自动恢复用户原先保存的通知偏好，不丢失设置。
+
+### 验证
+
+- 31 个 Agent collector、支持矩阵、32 条进程规则、图标、外观和 harvest 协议门禁通过。
+- Debug / Release build、资源 selftest、完整 harvest 测试和 ad-hoc 签名验证通过。
+- 本版本仍为未签名、未公证 macOS DMG；其他 Mac 可能触发 Gatekeeper。
+
 ## 0.47.4 — 采集连续性与权限提示修复
 
 ### 可观测性与稳定性
