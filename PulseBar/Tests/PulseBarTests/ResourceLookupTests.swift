@@ -728,7 +728,7 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
 
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("Changed"), signal)
+        XCTAssertTrue(signal.contains("Model call"), signal)
         XCTAssertTrue(signal.contains("1 failure"), signal)
         XCTAssertFalse(signal.contains("Latest model call"), "default signal should stay scan-friendly: \(signal)")
     }
@@ -748,6 +748,7 @@ final class RowMetricsTests: XCTestCase {
         var r = row()
         r.task = "A session with no telemetry"
         r.liveProcess = true
+        r.observationSource = .session
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.contains("No progress signal yet"), signal)
     }
