@@ -112,6 +112,7 @@ jobs:
         working-directory: PulseBar
 
       - name: Prepare Developer ID and notarization credentials
+        id: signing
         env:
           PULSE_CERTIFICATE_P12: ${{ secrets.PULSE_CERTIFICATE_P12 }}
           PULSE_CERTIFICATE_PASSWORD: ${{ secrets.PULSE_CERTIFICATE_PASSWORD }}
@@ -121,13 +122,26 @@ jobs:
           PULSE_NOTARY_ISSUER_ID: ${{ secrets.PULSE_NOTARY_ISSUER_ID }}
         run: |
           set -euo pipefail
+          # A public release is still useful before the project has an Apple
+          # Developer account. Fall back to the package script's explicit
+          # ad-hoc signature and leave notarization disabled; the release page
+          # and package output already state that Gatekeeper will block it on
+          # other Macs. Once all six secrets exist, keep the signed/notarized
+          # path unchanged.
+          missing=""
           for name in PULSE_CERTIFICATE_P12 PULSE_CERTIFICATE_PASSWORD PULSE_SIGN_IDENTITY \
                       PULSE_NOTARY_KEY_P8 PULSE_NOTARY_KEY_ID PULSE_NOTARY_ISSUER_ID; do
             if [[ -z "${!name:-}" ]]; then
-              echo "::error::missing required release secret: $name"
-              exit 1
+              missing+=" $name"
             fi
           done
+
+          if [[ -n "$missing" ]]; then
+            echo "::warning::Apple signing/notarization secrets are unavailable:$missing — publishing an ad-hoc, unnotarized DMG"
+            echo "sign_identity=-" >> "$GITHUB_OUTPUT"
+            echo "notary_profile=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           KEYCHAIN="$RUNNER_TEMP/pulse-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
@@ -150,11 +164,13 @@ jobs:
             --key "$NOTARY_KEY" \
             --key-id "$PULSE_NOTARY_KEY_ID" \
             --issuer "$PULSE_NOTARY_ISSUER_ID"
+          echo "sign_identity=$PULSE_SIGN_IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "notary_profile=pulse-release" >> "$GITHUB_OUTPUT"
 
       - name: Package
         env:
-          PULSE_SIGN_IDENTITY: ${{ secrets.PULSE_SIGN_IDENTITY }}
-          PULSE_NOTARY_PROFILE: pulse-release
+          PULSE_SIGN_IDENTITY: ${{ steps.signing.outputs.sign_identity }}
+          PULSE_NOTARY_PROFILE: ${{ steps.signing.outputs.notary_profile }}
         run: ./PulseBar/Scripts/package.sh
 
       - name: Release notes from CHANGELOG
