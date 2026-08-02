@@ -142,7 +142,7 @@ enum L10n {
         case .subagentsActive: return "%d of %d subagents active"
         case .subagentsObserved: return "%d subagents observed"
         case .actionPlanning: return "Planning"
-        case .actionCommand: return "Command"
+        case .actionCommand: return "Terminal command"
         case .actionEditing: return "Editing files"
         case .actionImage: return "Reviewing image"
         case .actionResearch: return "Research"

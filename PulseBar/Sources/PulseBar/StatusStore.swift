@@ -1525,8 +1525,16 @@ final class StatusStore: ObservableObject {
             return String(format: tr(.outcomeActivity), failure)
         }
         if row.isRecentOnly {
-            guard row.isCompletedPhase else { return "" }
-            return String(format: tr(.outcomeActivity), tr(.phaseTurnComplete))
+            if row.isCompletedPhase {
+                return String(format: tr(.outcomeActivity), tr(.phaseTurnComplete))
+            }
+            // A collector can expose a concrete phase without a matching
+            // local process. Show it only while the row is genuinely fresh;
+            // otherwise an old "reading" event would look like work happening
+            // now after the session has gone quiet.
+            guard row.lastActivitySeconds <= 30 * 60,
+                  let phase = readablePhase(row.phase) else { return "" }
+            return String(format: tr(.nowActivity), phase)
         }
         guard let phase = readablePhase(row.phase) else { return "" }
         return String(format: tr(.nowActivity), phase)
@@ -1648,6 +1656,15 @@ final class StatusStore: ObservableObject {
         } else {
             if !metrics.isEmpty { bits.append(metrics) }
             if !observation.isEmpty { bits.append(observation) }
+        }
+        // Generic shell wrappers are still useful as a historical activity
+        // fact when they are the only action a vendor exposes. Keep the claim
+        // explicit ("last", never "running") and place it ahead of low-value
+        // observation metadata so it is not clipped from the scan line.
+        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        if lifecycle.isEmpty, changed.isEmpty,
+           !tool.isEmpty, row.usefulTask != nil, !usefulAction(tool) {
+            bits.insert(String(format: tr(.lastAction), readableAction(tool)), at: min(1, bits.count))
         }
         if row.liveProcess, !row.isProcessOnly, row.processCount > 1 {
             bits.append(String(format: tr(.processCount), row.processCount))
@@ -1783,6 +1800,9 @@ final class StatusStore: ObservableObject {
         if !model.isEmpty { bits.append(String(format: tr(.modelFact), model)) }
         let skill = readableSkill(row.skill)
         if !skill.isEmpty { bits.append(String(format: tr(.skillFact), skill)) }
+        if row.records > 0 {
+            bits.append(String(row.records) + tr(.recordsSuffix))
+        }
         return bits.prefix(2).joined(separator: " · ")
     }
 
@@ -1850,8 +1870,11 @@ final class StatusStore: ObservableObject {
         if low.contains("search") || low.contains("research") { return tr(.actionResearch) }
         if low.contains("read") { return tr(.actionReading) }
         if low.contains("edit") || low.contains("write") { return tr(.actionEditing) }
-        // "Working" / "Running" merely repeats the row's section and status
-        // lamp. Only recognisable workflow phases earn a default content line.
+        if low == "working" || low == "running" || low.contains("execut") {
+            return tr(.phaseWorking)
+        }
+        // Unknown vendor phases remain hidden rather than leaking raw
+        // implementation labels into the default row.
         return nil
     }
 
@@ -1923,7 +1946,8 @@ final class StatusStore: ObservableObject {
         if low.contains("publish") || low.contains("release") || low.contains("deploy") {
             return tr(.phasePublishing)
         }
-        if low == "exec" || low.contains("command") || low == "bash" || low == "shell" {
+        if low == "exec" || low.contains("command") || low == "bash" || low == "shell"
+            || low.contains("batch_execute") {
             return tr(.actionCommand)
         }
         if low == "js" || low.contains("automation") || low.contains("computer") {

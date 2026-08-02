@@ -733,6 +733,65 @@ def session_title_from_text(text: str) -> str:
     return found[-1] if found else ""
 
 
+def pi_user_title(text: str) -> str:
+    """Return Pi's latest substantive user goal, not a transport command.
+
+    Pi stores prompts inside ``message.content`` rather than a top-level
+    ``title`` field.  The old fallback searched the first JSON ``text`` key,
+    which made a long-lived session keep showing the opening ``pi update``
+    forever even after later turns had a real goal.  Keep the extraction
+    schema-specific and walk backwards so a tool result or thinking block can
+    never become the row hero.
+    """
+    candidates: list[str] = []
+
+    def content_text(content) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    parts.append(part["text"])
+            return " ".join(parts)
+        return ""
+
+    for obj in json_records(text):
+        if not isinstance(obj, dict) or obj.get("type") != "message":
+            continue
+        message = obj.get("message")
+        if not isinstance(message, dict) or str(message.get("role") or "").lower() != "user":
+            continue
+        title = clean_session_title(content_text(message.get("content")))
+        if title:
+            candidates.append(title)
+
+    for candidate in reversed(candidates):
+        if meaningful_prompt(candidate):
+            return candidate
+    return candidates[-1] if candidates else ""
+
+
+def normalize_pi_task(task: str) -> str:
+    """Make Pi's exact maintenance commands scan as a useful goal.
+
+    These are not invented session summaries: they are stable labels for
+    commands whose literal text is a product/CLI instruction, not a goal a
+    person can orient on in a tray row.  Other prompts remain untouched.
+    """
+    value = clean_session_title(task)
+    low = re.sub(r"[\s.!！。?？]+", "", value.lower())
+    if low in {"piupdate", "updatepi", "upgradepi"}:
+        return "Update Pi and extensions"
+    if low in {"pilist", "listpi"}:
+        return "List Pi agents"
+    if low in {"update", "upgrade"}:
+        return "Update agent packages"
+    if low == "resume":
+        return "Resume agent session"
+    return value
+
+
 def codex_user_title(text: str) -> str:
     """Latest substantive user request from a Codex rollout."""
     found: list[str] = []
@@ -1641,7 +1700,13 @@ def pi_activities() -> list[tuple]:
     out: list[tuple] = []
     for f in files:
         text = tail_bytes(f)
-        task = session_title_from_text(text) or extract_field(text, "text") or extract_field(text, "content") or ""
+        task = normalize_pi_task(
+            pi_user_title(text)
+            or session_title_from_text(text)
+            or extract_field(text, "text")
+            or extract_field(text, "content")
+            or "",
+        )
         tin = sum_int_fields(text, "input_tokens")
         tout = sum_int_fields(text, "output_tokens")
         if tin == 0 and tout == 0:

@@ -373,12 +373,28 @@ struct AgentRow: Identifiable, Hashable {
     /// and the surrounding sentence; keep the raw task untouched for matching
     /// and diagnostics.
     static func displayTaskTitle(_ raw: String) -> String {
-        raw.replacingOccurrences(
+        let cleaned = raw.replacingOccurrences(
             of: #"!?\[([^\]\n]{1,240})\]\((?:https?|file)://[^)\n]+\)"#,
             with: "$1",
             options: .regularExpression
         )
         .trimmingCharacters(in: .whitespacesAndNewlines)
+        let compact = cleaned
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "·", with: "")
+        switch compact {
+        case "piupdate", "updatepi", "upgradepi":
+            return "Update Pi and extensions"
+        case "pilist", "listpi":
+            return "List Pi agents"
+        case "update", "upgrade":
+            return "Update agent packages"
+        case "resume":
+            return "Resume agent session"
+        default:
+            return cleaned
+        }
     }
 
     /// First-class session detail for tray (task title). Tool-only falls back for live rows.

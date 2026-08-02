@@ -416,6 +416,17 @@ def check_tool_reading() -> int:
     )
     if A.session_title_from_text(fake_title) != "Human session title":
         return fail("generic title extractor accepted a title embedded in a tool call")
+    pi_prompt = (
+        '{"type":"session","id":"pi-fixture"}\n'
+        '{"type":"message","message":{"role":"user","content":'
+        '[{"type":"text","text":"pi update"}]}}\n'
+        '{"type":"message","message":{"role":"assistant","content":'
+        '[{"type":"text","text":"All packages are current"}]}}\n'
+    )
+    if A.pi_user_title(pi_prompt) != "pi update":
+        return fail("Pi user prompt was not extracted from message.content")
+    if A.normalize_pi_task("pi update") != "Update Pi and extensions":
+        return fail("Pi maintenance prompt stayed as an opaque CLI command")
 
     unresolved = (
         '{"type":"response_item","payload":{"type":"function_call",'
