@@ -64,6 +64,9 @@ enum L10n {
         case .focusTerminal: return "Focus terminal"
         case .general: return "General"
         case .liveUpdates: return "Live updates"
+        case .agentDataAccess: return "Read app data for richer details"
+        case .agentDataAccessHint:
+            return "Off by default. Enables deeper Cursor/VS Code/Warp scans and may ask macOS for cross-app data access."
         case .notifications: return "Notify when idle"
         case .notifyWaiting: return "Notify on new Waiting"
         case .quietHours: return "Quiet hours (idle only)"
@@ -90,6 +93,8 @@ enum L10n {
         case .hookTestPassed: return "Connection passed"
         case .hookTestFailed: return "Connection failed"
         case .shortcuts: return "Shortcuts"
+        case .globalShortcut: return "Enable global shortcut"
+        case .globalShortcutHint: return "Off by default. Enabling it registers a system-wide key and may require macOS Automation access on unsigned builds."
         case .hotkeyHint: return "Tap a notification to focus the waiting agent."
         case .agents: return "Agents"
         case .running: return "Running"
@@ -356,6 +361,8 @@ enum L10n {
         case .focusTerminal: return "聚焦终端"
         case .general: return "通用"
         case .liveUpdates: return "实时更新"
+        case .agentDataAccess: return "读取应用数据以展示更多详情"
+        case .agentDataAccessHint: return "默认关闭。开启后会深入扫描 Cursor / VS Code / Warp，macOS 可能会请求访问其他应用的数据。"
         case .notifications: return "全部空闲时通知"
         case .notifyWaiting: return "新的「需要你」时通知"
         case .quietHours: return "安静时段（仅抑制空闲通知）"
@@ -379,6 +386,8 @@ enum L10n {
         case .hookTestPassed: return "连接测试通过"
         case .hookTestFailed: return "连接测试失败"
         case .shortcuts: return "快捷键"
+        case .globalShortcut: return "启用全局快捷键"
+        case .globalShortcutHint: return "默认关闭。启用后会注册系统级快捷键，未签名版本可能触发 macOS 自动化权限请求。"
         case .hotkeyHint: return "点击通知即可聚焦等待中的 Agent。"
         case .agents: return "Agents"
         case .running: return "运行中"
@@ -624,11 +633,11 @@ enum L10n {
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
         case focusTerminal, focusTTY, focusWarp, dismissWait
-        case general, liveUpdates, notifications, notifyWaiting, launchAtLogin, language
+        case general, liveUpdates, agentDataAccess, agentDataAccessHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
-        case attentionBridgeHint, shortcuts, hotkeyHint, a11yHint
+        case attentionBridgeHint, shortcuts, hotkeyHint, globalShortcut, globalShortcutHint, a11yHint
         case agents, running, idleNotify, settingsTitle
         case hooksNudge, waitingSignalNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed

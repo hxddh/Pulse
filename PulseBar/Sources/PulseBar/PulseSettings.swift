@@ -32,7 +32,14 @@ struct PulseSettings: Equatable {
     var launchAtLogin = false
     var language: AppLanguage = .auto
     var updateCheckEnabled = true
+    /// Deep app-data reads are protected by macOS TCC. Keep them opt-in so a
+    /// new ad-hoc build never interrupts the tray with a cross-app prompt.
+    var allowAppData = false
     var hotkey: HotkeyChoice = .commandShiftP
+    /// Carbon global-hotkey registration can trigger an Apple Events privacy
+    /// request on unsigned builds. Keep it opt-in; choosing a shortcut in the
+    /// settings UI enables it explicitly.
+    var hotkeyEnabled = false
     /// Muted agents still appear in the tray; they just stop notifying.
     var mutedAgents: Set<AgentID> = []
     /// How the tray groups rows. Status is the default because "who needs me"
@@ -86,7 +93,9 @@ struct PulseSettings: Equatable {
                 if let v = Int(raw) { s.quietEndMinute = v; sawMinuteKeys = true }
             case "login": s.launchAtLogin = on
             case "updates": s.updateCheckEnabled = on
+            case "appData": s.allowAppData = on
             case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .commandShiftP
+            case "hotkeyEnabled": s.hotkeyEnabled = on
             case "mute":
                 s.mutedAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
             case "lang": s.language = AppLanguage(rawValue: raw) ?? .auto
@@ -120,7 +129,9 @@ struct PulseSettings: Equatable {
             lang=\(language.rawValue)
             login=\(launchAtLogin ? 1 : 0)
             updates=\(updateCheckEnabled ? 1 : 0)
+            appData=\(allowAppData ? 1 : 0)
             hotkey=\(hotkey.rawValue)
+            hotkeyEnabled=\(hotkeyEnabled ? 1 : 0)
             grouping=\(trayGrouping.rawValue)
             waitSound=\(playSoundOnWaiting ? 1 : 0)
             stallMin=\(stallMinutes)
@@ -149,7 +160,8 @@ struct PulseSettings: Equatable {
         "auto=\(autoProbe) notifyIdle=\(notifyOnIdle) notifyWait=\(notifyOnWaiting) "
             + "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) "
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
-            + "hotkey=\(hotkey.rawValue) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
+            + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
+            + "appData=\(allowAppData) "
             + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
             + "stall=\(stallMinutes) snooze=\(snoozeMinutes)"
     }

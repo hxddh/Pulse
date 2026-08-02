@@ -213,12 +213,13 @@ enum ActivityHarvest {
     ///
     /// A timeout no longer throws away what already arrived: harvest streams one
     /// complete line per agent, so partial output is still honest data.
-    static func scan() -> (
+    static func scan(allowAppData: Bool = false) -> (
         rows: [Row],
         health: [CollectorHealth],
         unreliable: Bool,
         complete: Bool
     ) {
+        DebugLog.write("harvest policy appData=\(allowAppData)")
         // LSUIElement apps with no visible window are prime App Nap targets.
         // The Python child can finish in ~300 ms when scheduled yet scrape the
         // 3.5 s deadline when the parent is napped. Keep only this bounded scan
@@ -240,11 +241,14 @@ enum ActivityHarvest {
         // the parent saw partial=0 even after early collectors had finished;
         // one slow late adapter blinded every agent before it.
         task.arguments = ["-u", script.path]
+        var environment = ProcessInfo.processInfo.environment
+        // Keep the privacy policy explicit for every child. In particular, do
+        // not inherit a developer shell's opt-in into the packaged tray app.
+        environment["PULSE_ALLOW_APP_DATA"] = allowAppData ? "1" : "0"
         if CommandLine.arguments.contains("--trace-harvest") {
-            var environment = ProcessInfo.processInfo.environment
             environment["PULSE_HARVEST_TRACE"] = "1"
-            task.environment = environment
         }
+        task.environment = environment
         let out = Pipe()
         let err = Pipe()
         task.standardOutput = out

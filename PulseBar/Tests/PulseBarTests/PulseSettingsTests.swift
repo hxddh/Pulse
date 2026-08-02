@@ -75,6 +75,19 @@ final class PulseSettingsTests: XCTestCase {
         XCTAssertEqual(PulseSettings.parse(d.serialized()), d)
     }
 
+    func testGlobalShortcutIsOptInForLegacyAndNewFiles() {
+        let legacy = PulseSettings.parse("hotkey=cmd_shift_p")
+        XCTAssertEqual(legacy.hotkey, .commandShiftP)
+        XCTAssertFalse(legacy.hotkeyEnabled, "old defaults must not register a system shortcut")
+
+        var enabled = PulseSettings()
+        enabled.hotkey = .commandShiftU
+        enabled.hotkeyEnabled = true
+        let reparsed = PulseSettings.parse(enabled.serialized())
+        XCTAssertEqual(reparsed.hotkey, .commandShiftU)
+        XCTAssertTrue(reparsed.hotkeyEnabled)
+    }
+
     func testMuteListSurvivesAndIgnoresUnknownAgents() {
         let s = PulseSettings.parse("mute=claude,not_an_agent,codex")
         XCTAssertEqual(s.mutedAgents, [.claude, .codex])

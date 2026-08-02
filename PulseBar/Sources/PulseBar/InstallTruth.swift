@@ -51,12 +51,14 @@ enum InstallTruth {
     static func inspect() -> Report {
         let fm = FileManager.default
         let current = Bundle.main.bundleURL.resolvingSymlinksInPath()
-        // Avoid cross-app process enumeration here. New macOS releases can
-        // treat cross-app enumeration as protected data and repeatedly ask for
-        // Automation access. The process list is enough for this diagnostic;
-        // SingleInstanceGuard already guarantees only one Pulse copy owns the
-        // runtime lock.
-        let runningPaths = runningPulsePaths()
+        // Ask LaunchServices only for Pulse's own bundle identifier. This is
+        // narrower than enumerating every process, avoids the protected app
+        // data path that caused the privacy prompt, and still keeps duplicate
+        // cleanup safe when another copy is actually running.
+        let runningPaths = Set(
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+                .compactMap { $0.bundleURL?.resolvingSymlinksInPath().path }
+        ).union([current.path])
         let roots = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
             fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true),
@@ -96,45 +98,6 @@ enum InstallTruth {
             return $0.url.path.localizedStandardCompare($1.url.path) == .orderedAscending
         }
         return Report(runningURL: current, copies: copies, inspectedAt: Date())
-    }
-
-    private static func runningPulsePaths() -> Set<String> {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-axo", "args="]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            // Drain the pipe before waiting. `ps` can emit enough argv data to
-            // fill the pipe buffer; waiting first then blocks both processes
-            // indefinitely on a large process list, freezing the tray when it
-            // calls the duplicate-install diagnostic.
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            task.waitUntilExit()
-            guard task.terminationStatus == 0 else { return [] }
-            let text = String(data: data, encoding: .utf8) ?? ""
-            var paths = Set<String>()
-            for line in text.split(whereSeparator: \.isNewline) {
-                guard let token = line.split(whereSeparator: \.isWhitespace)
-                    .first(where: { $0.contains("/Contents/MacOS/PulseBar") }) else {
-                    continue
-                }
-                let executable = String(token).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                let bundle = URL(fileURLWithPath: executable)
-                    .deletingLastPathComponent()
-                    .deletingLastPathComponent()
-                    .deletingLastPathComponent()
-                    .resolvingSymlinksInPath()
-                if bundle.pathExtension.lowercased() == "app" {
-                    paths.insert(bundle.path)
-                }
-            }
-            return paths
-        } catch {
-            return []
-        }
     }
 
     @MainActor

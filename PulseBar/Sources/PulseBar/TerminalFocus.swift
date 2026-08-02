@@ -11,15 +11,15 @@ enum TerminalFocus {
         var warpRunning = false
         var ttyHostRunning = false
 
-        static func current() -> Environment {
-            Environment(
-                // Do not enumerate another app here. On current macOS
-                // that cross-app inspection can trigger the privacy prompt
-                // "Pulse would like to access data from other apps" on every
-                // refresh. ProcessProbe already reads a bounded `ps` snapshot;
-                // use the same non-TCC evidence for the optional Warp focus
-                // tier.
-                warpRunning: processSnapshotContainsWarp(),
+    static func current() -> Environment {
+        Environment(
+            // `viaWarp` is already attached to each ProcessProbe hit by the
+            // same bounded process snapshot used for detection. The global
+            // environment therefore needs no second `ps` subprocess. The old
+            // implementation waited for that child on the main actor (before
+            // draining its pipe), which could freeze the tray and make the
+            // dropdown appear dead when the process list was large.
+            warpRunning: true,
                 // Selecting a Terminal/iTerm tab requires Apple Events and
                 // causes macOS Automation permission dialogs. Pulse never asks
                 // for that permission implicitly, so TTY focus is unavailable.
@@ -71,27 +71,6 @@ enum TerminalFocus {
         // This is an explicit user action, and launching an app via
         // NSWorkspace does not require Apple Events access.
         return NSWorkspace.shared.open(app)
-    }
-
-    private static func processSnapshotContainsWarp() -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-axo", "args="]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-            guard task.terminationStatus == 0 else { return false }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let text = String(data: data, encoding: .utf8) ?? ""
-            return text.split(whereSeparator: \.isNewline).contains {
-                String($0).localizedCaseInsensitiveContains("Warp.app")
-            }
-        } catch {
-            return false
-        }
     }
 
 }

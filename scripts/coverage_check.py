@@ -137,7 +137,14 @@ def main() -> int:
         "SingleInstanceGuard": ROOT / "PulseBar/Sources/PulseBar/SingleInstanceGuard.swift",
     }.items():
         source = path.read_text(encoding="utf-8")
-        if "runningApplications" in source:
+        # A LaunchServices lookup scoped to Pulse's own bundle is safe and is
+        # required to avoid moving a second running copy to the Trash. Keep
+        # rejecting broad cross-app enumeration and the old ps/Apple Events
+        # paths, but allow this exact self-only query.
+        if "runningApplications" in source and not re.search(
+            r"runningApplications\s*\(withBundleIdentifier:\s*bundleIdentifier\)",
+            source,
+        ):
             print(f"{label} must not enumerate other apps during normal runtime")
             return 1
     print("OK — all expected harvest emitters present")

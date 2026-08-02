@@ -1411,6 +1411,14 @@ struct SettingsView: View {
         Section(store.tr(.general)) {
             Toggle(store.tr(.liveUpdates), isOn: $store.autoProbe)
                 .onChange(of: store.autoProbe) { _, _ in store.saveSettings() }
+            Toggle(store.tr(.agentDataAccess), isOn: $store.allowAppData)
+                .onChange(of: store.allowAppData) { _, _ in
+                    store.saveSettings()
+                    store.refresh(reason: "agent-data-policy")
+                }
+            Text(store.tr(.agentDataAccessHint))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Toggle(store.tr(.launchAtLogin), isOn: $store.launchAtLogin)
                 .onChange(of: store.launchAtLogin) { _, _ in store.saveSettings() }
             Picker(store.tr(.language), selection: $store.language) {
@@ -1568,8 +1576,19 @@ struct SettingsView: View {
                     Text(choice.label).tag(choice)
                 }
             }
-            .onChange(of: store.hotkey) { _, _ in store.saveSettings() }
-            if store.hotkey != .off, !store.hotkeyRegistered {
+            .disabled(!store.hotkeyEnabled)
+            .onChange(of: store.hotkey) { _, choice in
+                store.hotkeyEnabled = choice != .off
+                store.saveSettings()
+            }
+            Toggle(store.tr(.globalShortcut), isOn: $store.hotkeyEnabled)
+                .onChange(of: store.hotkeyEnabled) { _, _ in
+                    store.saveSettings()
+                }
+            Text(store.tr(.globalShortcutHint))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            if store.hotkeyEnabled, store.hotkey != .off, !store.hotkeyRegistered {
                 // Previously this failure was invisible and the hint blamed
                 // Accessibility, which was usually the wrong culprit.
                 Label(store.tr(.hotkeyTaken), systemImage: "exclamationmark.triangle")

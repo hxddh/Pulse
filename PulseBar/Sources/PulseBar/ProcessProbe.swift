@@ -189,7 +189,7 @@ enum ProcessProbe {
         ),
     ]
 
-    static func scan() -> [Hit] {
+    static func scan(allowAppData: Bool = false) -> [Hit] {
         let output = shell("/bin/ps", ["-axo", "pid=,ppid=,tty=,etime=,args="]) ?? ""
         // Node-based agents are allowed to rewrite argv[0] for a polished
         // terminal title. Command Code, for example, appears in `args` as
@@ -285,9 +285,13 @@ enum ProcessProbe {
             }
             acc[id] = hit
         }
-        let workingDirectories = currentWorkingDirectories(
-            pids: acc.values.map(\.pid).filter { $0 > 0 }
-        )
+        // `lsof` asks the kernel for another process's open cwd and can be
+        // classified as cross-app data by macOS. Activity rows already carry
+        // their workspace from the agent store; keep this enrichment behind
+        // the same explicit privacy switch as deep app-data harvest.
+        let workingDirectories = allowAppData
+            ? currentWorkingDirectories(pids: acc.values.map(\.pid).filter { $0 > 0 })
+            : [:]
         for id in acc.keys {
             guard var hit = acc[id], let cwd = workingDirectories[hit.pid] else { continue }
             hit.cwd = usefulWorkingDirectory(cwd)

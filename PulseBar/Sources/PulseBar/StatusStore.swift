@@ -22,6 +22,7 @@ final class StatusStore: ObservableObject {
     /// Agents the user muted — no notifications, still shown in the tray.
     @Published var mutedAgents: Set<AgentID> = []
     @Published var hotkey: HotkeyChoice = .commandShiftP
+    @Published var hotkeyEnabled = false
     @Published var trayGrouping: TrayGrouping = .status
     @Published var playSoundOnWaiting = false
     /// Minutes of silence before a live row reads as stalled; 0 turns it off.
@@ -31,6 +32,10 @@ final class StatusStore: ObservableObject {
     /// False when the system refused the shortcut (another app owns it).
     @Published private(set) var hotkeyRegistered = true
     @Published var updateCheckEnabled = true
+    /// Opt-in only: reading vendor Application Support/App Group data can
+    /// trigger macOS's cross-app privacy prompt. The default scan remains
+    /// useful through hooks, dot-directory sessions, and process evidence.
+    @Published var allowAppData = false
     @Published var updateStatus: UpdateCheck.Status = .idle
     @Published var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
     @Published private(set) var installReport = InstallTruth.Report.empty
@@ -546,7 +551,6 @@ final class StatusStore: ObservableObject {
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
         loadSettings()
-        refreshInstallTruth()
         applyHotkey()
         PulseNotify.registerCategories(lang: lang)
         PulseNotify.configure { [weak self] granted in
@@ -855,7 +859,6 @@ final class StatusStore: ObservableObject {
     /// Tray panel appeared — probe faster while the user is looking at it.
     func trayDidAppear() {
         trayOpen = true
-        refreshInstallTruth()
         // Coming back to the tray, the first question is what was missed. The
         // panel only ever showed the present moment.
         if let closed = trayClosedAt {
@@ -1113,10 +1116,11 @@ final class StatusStore: ObservableObject {
         let priorSignature = lastProcessSignature
         let ticks = ticksSinceHarvest
         let everyN = ProbeSchedule.harvestEveryNTicks(activity: activity, trayOpen: trayOpen)
+        let appDataPolicy = allowAppData
 
         scanQueue.async {
             let t0 = Date()
-            let procs = ProcessProbe.scan()
+            let procs = ProcessProbe.scan(allowAppData: appDataPolicy)
             let signature = ProcessProbe.signature(procs)
 
             let why: String
@@ -1136,7 +1140,7 @@ final class StatusStore: ObservableObject {
                 outcome = .skipped
             } else {
                 let h0 = Date()
-                let result = ActivityHarvest.scan()
+                let result = ActivityHarvest.scan(allowAppData: appDataPolicy)
                 harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
                 outcome = result.unreliable
                     ? .failed(result.health, result.complete)
@@ -2180,7 +2184,9 @@ final class StatusStore: ObservableObject {
             launchAtLogin: launchAtLogin,
             language: language,
             updateCheckEnabled: updateCheckEnabled,
+            allowAppData: allowAppData,
             hotkey: hotkey,
+            hotkeyEnabled: hotkeyEnabled,
             mutedAgents: mutedAgents,
             trayGrouping: trayGrouping,
             playSoundOnWaiting: playSoundOnWaiting,
@@ -2199,7 +2205,9 @@ final class StatusStore: ObservableObject {
         launchAtLogin = s.launchAtLogin
         language = s.language
         updateCheckEnabled = s.updateCheckEnabled
+        allowAppData = s.allowAppData
         hotkey = s.hotkey
+        hotkeyEnabled = s.hotkeyEnabled
         mutedAgents = s.mutedAgents
         trayGrouping = s.trayGrouping
         playSoundOnWaiting = s.playSoundOnWaiting
@@ -2238,8 +2246,9 @@ final class StatusStore: ObservableObject {
     /// Re-register the global shortcut and report honestly when the system
     /// refuses (another app already owns the combination).
     func applyHotkey() {
-        hotkeyRegistered = GlobalHotKey.install(choice: hotkey)
-        if hotkey != .off, !hotkeyRegistered {
+        let choice = hotkeyEnabled ? hotkey : .off
+        hotkeyRegistered = GlobalHotKey.install(choice: choice)
+        if choice != .off, !hotkeyRegistered {
             DebugLog.write("hotkey \(hotkey.rawValue) registration FAILED — likely taken")
         }
     }

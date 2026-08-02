@@ -37,6 +37,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+# Synthetic fixtures intentionally exercise the protected Cursor/Warp paths.
+# Production defaults to the privacy-safe profile; the gate opts in only for
+# its isolated temporary home so adapter coverage remains testable.
+os.environ.setdefault("PULSE_ALLOW_APP_DATA", "1")
 import activity_scan as A  # noqa: E402
 
 COLUMNS = 24

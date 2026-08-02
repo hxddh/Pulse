@@ -20,6 +20,34 @@ from pathlib import Path
 
 HOME = Path.home()
 
+# Reading another app's `~/Library/Application Support`, App Group, or log
+# store is protected by macOS's SystemPolicyAppData service. A background tray
+# refresh must never trigger that dialog: it steals focus from the panel and
+# is especially disruptive for an ad-hoc build whose code identity changes on
+# every update. Deep app-data adapters are therefore opt-in from Pulse
+# Settings. The default still covers dot-directory sessions, hooks, process
+# evidence, and every adapter that has a non-protected source.
+ALLOW_APP_DATA = os.environ.get("PULSE_ALLOW_APP_DATA") == "1"
+_PROTECTED_LIBRARY_DIRS = frozenset(("Application Support", "Group Containers", "Containers", "Logs"))
+
+
+def is_protected_app_data(path: Path) -> bool:
+    """Whether *path* is one of macOS's cross-app data locations."""
+    try:
+        # Keep this lexical. Resolving a protected path would itself perform a
+        # filesystem lookup before the filter gets a chance to reject it.
+        relative = path.expanduser().relative_to(HOME)
+    except (OSError, ValueError):
+        return False
+    return len(relative.parts) >= 2 and relative.parts[0] == "Library" and relative.parts[1] in _PROTECTED_LIBRARY_DIRS
+
+
+def safe_roots(roots: list[Path] | tuple[Path, ...]) -> list[Path]:
+    """Filter protected roots unless the user explicitly enabled deep data."""
+    if ALLOW_APP_DATA:
+        return list(roots)
+    return [root for root in roots if not is_protected_app_data(root)]
+
 # One product-wide safety budget. It is deliberately much larger than the
 # tray's eight-row default fold: visual density is not a detection limit.
 #
@@ -1421,6 +1449,8 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
 def workspace_cwd(workspace_id: str) -> str:
     if not workspace_id or workspace_id in ("empty-window",):
         return ""
+    if not ALLOW_APP_DATA:
+        return ""
     wj = HOME / "Library/Application Support/Cursor/User/workspaceStorage" / workspace_id / "workspace.json"
     if not wj.is_file():
         return ""
@@ -1471,6 +1501,8 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
     import sqlite3
     import time
 
+    if not ALLOW_APP_DATA:
+        return []
     db = HOME / "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
     if not db.is_file():
         return []
@@ -2064,6 +2096,8 @@ def json_looks_pending(obj) -> bool:
 
 
 def vscode_user_roots() -> list[Path]:
+    if not ALLOW_APP_DATA:
+        return []
     support = HOME / "Library" / "Application Support"
     names = (
         "Code",
@@ -2751,7 +2785,7 @@ def copilot_activities() -> list[tuple]:
 
 
 def amazon_q_activities() -> list[tuple]:
-    roots = [
+    roots = safe_roots([
         HOME / ".aws" / "amazonq",
         HOME / ".aws" / "amazon-q",
         HOME / ".aws" / "q",
@@ -2759,7 +2793,7 @@ def amazon_q_activities() -> list[tuple]:
         HOME / "Library" / "Application Support" / "Amazon Q",
         HOME / "Library" / "Application Support" / "AmazonQ",
         HOME / ".local" / "share" / "amazon-q",
-    ]
+    ])
     out: list[tuple] = []
     files: list[str] = []
     for root in roots:
@@ -2788,11 +2822,11 @@ def amazon_q_activities() -> list[tuple]:
 
 
 def zed_agent_activities() -> list[tuple]:
-    roots = [
+    roots = safe_roots([
         HOME / "Library" / "Application Support" / "Zed",
         HOME / ".zed",
         HOME / ".config" / "zed",
-    ]
+    ])
     out: list[tuple] = []
     files: list[str] = []
     for root in roots:
@@ -2869,20 +2903,21 @@ def antigravity_activities() -> list[tuple]:
     """Antigravity IDE/2.0 — B 尽力；Waiting 通常 none。"""
     out = harvest_extension_storage("antigravity", "antigravity", "google.antigravity", limit=MAX_SESSIONS_PER_AGENT)
     support = HOME / "Library" / "Application Support"
-    roots = [
+    roots = safe_roots([
         HOME / ".antigravity",
         support / "Antigravity",
         support / "Antigravity IDE",
         support / "Google" / "Antigravity",
         support / "Antigravity" / "User" / "globalStorage",
         support / "Antigravity IDE" / "User" / "globalStorage",
-    ]
+    ])
     # Also scan VS Code-style User under those app folders
-    for name in ("Antigravity", "Antigravity IDE"):
-        user = support / name / "User"
-        if user.is_dir():
-            roots.append(user / "globalStorage")
-            roots.append(user / "workspaceStorage")
+    if ALLOW_APP_DATA:
+        for name in ("Antigravity", "Antigravity IDE"):
+            user = support / name / "User"
+            if user.is_dir():
+                roots.append(user / "globalStorage")
+                roots.append(user / "workspaceStorage")
     if len(out) >= MAX_SESSIONS_PER_AGENT:
         return out
     more = home_dir_activities("antigravity", roots, limit=MAX_SESSIONS_PER_AGENT - len(out))
@@ -2955,12 +2990,12 @@ def kilo_activities() -> list[tuple]:
 def cascade_windsurf_activities() -> list[tuple]:
     """Cascade agent sessions; also Windsurf/Codeium local state."""
     out: list[tuple] = []
-    roots = [
+    roots = safe_roots([
         HOME / ".codeium",
         HOME / ".windsurf",
         HOME / "Library" / "Application Support" / "Windsurf",
         HOME / "Library" / "Application Support" / "Codeium",
-    ]
+    ])
     # Extension storage
     out.extend(harvest_extension_storage("cascade", "codeium.cascade", "codeium", "windsurf", limit=MAX_SESSIONS_PER_AGENT))
     files: list[str] = []
@@ -2989,7 +3024,7 @@ def cascade_windsurf_activities() -> list[tuple]:
 
 def augment_activities() -> list[tuple]:
     out = harvest_extension_storage("augment", "augment", "auggie", limit=MAX_SESSIONS_PER_AGENT)
-    roots = [HOME / ".augment", HOME / ".auggie", HOME / "Library" / "Application Support" / "Augment"]
+    roots = safe_roots([HOME / ".augment", HOME / ".auggie", HOME / "Library" / "Application Support" / "Augment"])
     if len(out) >= MAX_SESSIONS_PER_AGENT:
         return out
     files: list[str] = []
@@ -3010,11 +3045,11 @@ def augment_activities() -> list[tuple]:
 
 def trae_activities() -> list[tuple]:
     out = harvest_extension_storage("trae", "trae", "bytedance.trae", limit=MAX_SESSIONS_PER_AGENT)
-    roots = [
+    roots = safe_roots([
         HOME / "Library" / "Application Support" / "Trae",
         HOME / "Library" / "Application Support" / "Trae" / "User" / "globalStorage",
         HOME / ".trae",
-    ]
+    ])
     if len(out) >= MAX_SESSIONS_PER_AGENT:
         return out
     for root in roots:
@@ -3044,16 +3079,16 @@ def warp_agent_activities() -> list[tuple]:
     conversation, model, cwd, status and task data. Read the database in
     read-only mode and keep the JSON fallback for older Warp builds.
     """
-    roots = [
+    roots = safe_roots([
         HOME / "Library" / "Application Support" / "dev.warp.Warp-Stable",
         HOME / "Library" / "Application Support" / "dev.warp.Warp",
         HOME / ".warp",
-    ]
+    ])
     out: list[tuple] = []
 
     db_paths: list[Path] = []
     group_root = HOME / "Library" / "Group Containers"
-    if group_root.is_dir():
+    if ALLOW_APP_DATA and group_root.is_dir():
         try:
             db_paths.extend(
                 p for p in group_root.glob("*/Library/Application Support/dev.warp.Warp-*/warp.sqlite")
@@ -3240,7 +3275,7 @@ def warp_agent_activities() -> list[tuple]:
 def home_dir_activities(agent: str, roots: list[Path], limit: int = MAX_SESSIONS_PER_AGENT) -> list[tuple]:
     out: list[tuple] = []
     files: list[str] = []
-    for root in roots:
+    for root in safe_roots(roots):
         if root.is_dir():
             files.extend(str(p) for p in recent_files_under(root, ("*.json", "*.jsonl", "*.md"), limit=MAX_SESSIONS_PER_AGENT))
     for f in newest(files, MAX_SESSIONS_PER_AGENT):
@@ -3523,12 +3558,12 @@ def kimi_activities() -> list[tuple]:
 def devin_activities() -> list[tuple]:
     return home_dir_activities(
         "devin",
-        [
+        safe_roots([
             HOME / ".devin",
             HOME / ".cognition",
             HOME / "Library" / "Application Support" / "Devin",
             HOME / "Library" / "Application Support" / "Cognition",
-        ],
+        ]),
     )
 
 
@@ -3538,10 +3573,10 @@ def kiro_activities() -> list[tuple]:
         out.extend(
             home_dir_activities(
                 "kiro",
-                [
+                safe_roots([
                     HOME / ".kiro",
                     HOME / "Library" / "Application Support" / "Kiro",
-                ],
+                ]),
                 limit=MAX_SESSIONS_PER_AGENT - len(out),
             )
         )
@@ -3551,11 +3586,11 @@ def kiro_activities() -> list[tuple]:
 def junie_activities() -> list[tuple]:
     return home_dir_activities(
         "junie",
-        [
+        safe_roots([
             HOME / ".junie",
             HOME / "Library" / "Application Support" / "JetBrains" / "Junie",
             HOME / "Library" / "Application Support" / "Junie",
-        ],
+        ]),
     )
 
 
@@ -3563,30 +3598,30 @@ def replit_activities() -> list[tuple]:
     # Local signal is weak; harvest quietly if any cache exists.
     return home_dir_activities(
         "replit",
-        [
+        safe_roots([
             HOME / ".replit",
             HOME / ".config" / "replit",
             HOME / "Library" / "Application Support" / "Replit",
-        ],
+        ]),
     )
 
 
 def windsurf_shell_activities() -> list[tuple]:
     """Windsurf IDE shell recent workspace — only if no cascade rows will cover it."""
-    roots = [
+    roots = safe_roots([
         HOME / "Library" / "Application Support" / "Windsurf" / "User" / "workspaceStorage",
         HOME / ".windsurf",
-    ]
+    ])
     return home_dir_activities("windsurf", roots, limit=MAX_SESSIONS_PER_AGENT)
 
 
 def amp_pending_from_logs() -> tuple[str, str, int]:
     """Return (skill, session, mtime) if latest Amp thread log looks blocked on user."""
-    log_dirs = [
+    log_dirs = safe_roots([
         HOME / ".local/share" / "amp" / "logs",
         HOME / ".amp" / "logs",
         HOME / "Library" / "Logs" / "amp",
-    ]
+    ])
     files: list[Path] = []
     for d in log_dirs:
         if d.is_dir():
@@ -4088,7 +4123,8 @@ COLLECTOR_COMMANDS = {
 
 
 def collector_source_present(agent: str) -> bool:
-    if any(path.exists() for path in COLLECTOR_SOURCE_ROOTS.get(agent, ())):
+    roots = safe_roots(COLLECTOR_SOURCE_ROOTS.get(agent, ()))
+    if any(path.exists() for path in roots):
         return True
     return any(shutil.which(command) for command in COLLECTOR_COMMANDS.get(agent, ()))
 
@@ -4310,30 +4346,11 @@ def emit_row(
 def aider_activities() -> list[tuple]:
     """Aider: recent .aider.chat.history.md — ask/confirm at tail → pending."""
     paths: list[Path] = []
-    # The old adapter recursively walked ~/Documents and ~/Desktop to depth 3.
-    # On a real iCloud/large Documents tree that one collector consumed the
-    # entire harvest deadline, so every adapter after Aider disappeared. Ask
-    # Spotlight for the exact filename first; it is indexed, bounded, and does
-    # not enumerate unrelated user files.
-    try:
-        found = subprocess.run(
-            ["/usr/bin/mdfind", "-0", 'kMDItemFSName == ".aider.chat.history.md"'],
-            capture_output=True,
-            timeout=0.45,
-            check=False,
-        ).stdout
-        home_prefix = str(HOME) + os.sep
-        for raw in found.split(b"\0"):
-            if not raw:
-                continue
-            value = raw.decode("utf-8", errors="replace")
-            if value.startswith(home_prefix):
-                paths.append(Path(value))
-                if len(paths) >= MAX_SESSIONS_PER_AGENT:
-                    break
-    except (OSError, subprocess.SubprocessError):
-        pass
-
+    # Do not ask Spotlight to search the whole home directory. On current
+    # macOS, mdfind runs metadata queries on behalf of the caller and can
+    # surface unrelated Address Book/Calendar prompts. Aider's bounded project
+    # roots below are enough for the same useful session evidence without any
+    # cross-app privacy request.
     roots = [
         HOME / "code",
         HOME / "src",
@@ -4439,11 +4456,11 @@ def aider_activities() -> list[tuple]:
 
 def goose_activities() -> list[tuple]:
     """Goose: session JSON under ~/.config/goose or ~/.local/share/goose."""
-    roots = [
+    roots = safe_roots([
         HOME / ".config" / "goose",
         HOME / ".local" / "share" / "goose",
         HOME / "Library" / "Application Support" / "Goose",
-    ]
+    ])
     files: list[Path] = []
     for root in roots:
         if not root.is_dir():
