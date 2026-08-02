@@ -776,6 +776,15 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testUnknownSkillKeepsASafeWorkflowCapabilityLabel() {
+        var r = row()
+        r.skill = "openai-developers:agents-sdk"
+        let observation = store().rowObservationLine(r)
+        XCTAssertTrue(observation.contains("Workflow Agents Sdk"), observation)
+        XCTAssertFalse(observation.contains("openai-developers:"), observation)
+    }
+
+    @MainActor
     func testProcessOnlyAppStatesTheVisibilityLimit() {
         var r = row()
         r.liveProcess = true

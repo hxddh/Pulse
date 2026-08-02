@@ -118,8 +118,10 @@ user-facing phase vocabulary such as **Planning**, **Reading**, **Researching**,
 `Now` phase. Generic command execution is hidden. Concrete failure count, file count,
 progress and outcome outrank the raw tool name.
 
-Raw skill names do not appear in the default row. A path containing `skills/`,
-a package name, or an internal preflight script is diagnostic data. An explicit
-skill invocation may appear only after it maps to a user-recognisable workflow
-role such as Planning, Researching, Testing, Building, Editing, or Publishing;
-unknown skill names stay in diagnostics.
+Raw skill names do not appear verbatim in the default row. A path containing
+`skills/`, a package namespace, or an internal preflight script is diagnostic
+data. An explicit skill invocation appears as a user-recognisable workflow
+role such as Planning, Researching, Testing, Building, Editing, or Publishing
+when it maps cleanly; an otherwise unknown name keeps only its safe leaf as a
+bounded `Workflow <name>` label. This preserves useful capability evidence
+without exposing namespaces, paths, URLs, or arbitrary implementation text.

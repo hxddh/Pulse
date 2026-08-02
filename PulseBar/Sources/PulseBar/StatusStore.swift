@@ -419,7 +419,7 @@ final class StatusStore: ObservableObject {
             facts.append(String(
                 format: tr(.supportFactCoverage),
                 health.observedFactCount,
-                4
+                health.usefulFactTotal
             ))
         }
         return facts.joined(separator: " · ")
@@ -459,8 +459,17 @@ final class StatusStore: ObservableObject {
         if let task = row.usefulTask { facts.append(task) }
         if !row.displayPath.isEmpty { facts.append(row.displayPath) }
         if let phase = readablePhase(row.phase) { facts.append(phase) }
-        if let tool = nonEmpty(row.tool), usefulAction(tool) {
-            facts.append(String(format: tr(.lastAction), readableAction(tool)))
+        if let tool = nonEmpty(row.tool) {
+            let action = readableAction(tool)
+            // Support diagnostics have more room than the tray's default row.
+            // Keep generic and previously unknown tools visible as a safe,
+            // human-readable last action instead of dropping the only
+            // capability signal an adapter emitted. Avoid saying "Testing"
+            // twice when the structured phase already supplied that fact.
+            if !action.isEmpty,
+               !facts.contains(where: { $0.caseInsensitiveCompare(action) == .orderedSame }) {
+                facts.append(String(format: tr(.lastAction), action))
+            }
         }
         if let model = nonEmpty(row.model) {
             facts.append(String(format: tr(.modelFact), readableModel(model)))
@@ -1986,7 +1995,14 @@ final class StatusStore: ObservableObject {
         if low.contains("image") || low.contains("screenshot") {
             return tr(.actionImage)
         }
-        return ""
+        // An unknown skill can still be the only capability evidence for a
+        // vendor adapter. Keep the namespace/path and implementation noise
+        // out of the row, but expose a safe leaf such as "Workflow Audit" or
+        // "Workflow Agents SDK" rather than silently losing the signal.
+        let ignored = Set(["skill", "skills", "default", "unknown", "none", "server", "tool"])
+        let label = safeIdentifier(value)
+        guard !label.isEmpty, !ignored.contains(label.lowercased()) else { return "" }
+        return String(format: tr(.skillFact), label)
     }
 
     private func readableFailure(_ raw: String) -> String? {
@@ -2031,12 +2047,33 @@ final class StatusStore: ObservableObject {
         if low == "js" || low.contains("automation") || low.contains("computer") {
             return tr(.actionAutomation)
         }
-        let spaced = tool
+        return safeIdentifier(tool)
+    }
+
+    /// Turn an unrecognised vendor identifier into a bounded, safe label.
+    /// Namespaces and paths are implementation detail; the leaf still carries
+    /// useful capability information, while filtering prevents raw URLs,
+    /// private paths, or arbitrary punctuation from entering the default UI.
+    private func safeIdentifier(_ raw: String, maxLength: Int = 32) -> String {
+        let leaf = raw
+            .split(whereSeparator: { $0 == ":" || $0 == "/" || $0 == "\\" || $0 == "." })
+            .last
+            .map(String.init) ?? raw
+        let normalized = leaf
             .replacingOccurrences(of: "__", with: " ")
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "-", with: " ")
-        guard let first = spaced.first else { return tool }
-        return String(first).uppercased() + spaced.dropFirst()
+        let filtered = String(normalized.map { character in
+            character.isLetter || character.isNumber || character.isWhitespace ? character : " "
+        })
+        let words = filtered.split(whereSeparator: { $0.isWhitespace })
+        guard !words.isEmpty else { return "" }
+        let title = words.map { word -> String in
+            guard let first = word.first else { return "" }
+            return String(first).uppercased() + word.dropFirst()
+        }.joined(separator: " ")
+        guard !title.isEmpty else { return "" }
+        return String(title.prefix(maxLength))
     }
 
     /// Human wait age in the resolved language (`2 分` / `2m`).

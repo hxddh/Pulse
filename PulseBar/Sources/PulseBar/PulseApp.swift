@@ -1069,14 +1069,20 @@ private struct AgentRowButton: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(accessibilityText)
-                .accessibilityHint(row.canFocusTerminal ? store.primaryActionTitle(row) : "")
+                .accessibilityHint(
+                    row.isProcessOnly
+                        ? store.tr(.supportHealth)
+                        : (row.canFocusTerminal ? store.primaryActionTitle(row) : "")
+                )
 
-                secondaryActionsMenu
-                    .opacity(hovering || selected ? 1 : 0)
-                    .allowsHitTesting(hovering || selected)
-                    .accessibilityHidden(false)
-                    .padding(.top, 6)
-                    .padding(.trailing, TrayChrome.padX)
+                if hasSecondaryActions {
+                    secondaryActionsMenu
+                        .opacity(hovering || selected ? 1 : 0)
+                        .allowsHitTesting(hovering || selected)
+                        .accessibilityHidden(false)
+                        .padding(.top, 6)
+                        .padding(.trailing, TrayChrome.padX)
+                }
             }
 
             // Actions stay visible where they are urgent, and appear on hover
@@ -1098,6 +1104,11 @@ private struct AgentRowButton: View {
                     }
                     if row.canFocusTerminal {
                         Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    if row.isProcessOnly {
+                        Button(store.tr(.supportHealth)) { store.openSupportHealth() }
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
                     }
@@ -1159,10 +1170,15 @@ private struct AgentRowButton: View {
         row.waiting || hovering
     }
 
+    private var hasSecondaryActions: Bool {
+        row.waiting || row.canFocusTerminal || row.isProcessOnly
+    }
+
     /// A compact per-session lamp makes the state of every visible Agent
     /// scannable without opening Support Health. It is deliberately derived
-    /// only from facts already present on the row: red = waiting, orange =
-    /// stalled/error, green = live, gray = recent/unknown.
+    /// only from facts already present on the row: red = waiting/error, orange
+    /// = limited or stalled, green = live with session evidence, gray = recent
+    /// or unknown.
     private var statusIndicatorColor: Color {
         if row.waiting { return GlanceKind.waiting.lampColor }
         let outcome = row.outcome.lowercased()
@@ -1170,6 +1186,10 @@ private struct AgentRowButton: View {
             || outcome.contains("fail") || outcome.contains("cancel") {
             return GlanceKind.error.lampColor
         }
+        // A process is liveness evidence, not a session feed. Keep its lamp
+        // orange so the tray agrees with Support Health's Limited disposition
+        // instead of visually claiming that the row is fully observed.
+        if row.isProcessOnly { return .orange }
         if row.liveProcess || row.isExplicitlyRunningPhase || row.subRunning > 0 {
             return GlanceKind.running.lampColor
         }
@@ -1210,6 +1230,9 @@ private struct AgentRowButton: View {
         }
         if row.canFocusTerminal {
             Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
+        }
+        if row.isProcessOnly {
+            Button(store.tr(.supportHealth)) { store.openSupportHealth() }
         }
     }
 
@@ -1283,6 +1306,8 @@ private struct AgentRowButton: View {
         let state: String
         if row.waiting {
             state = row.waitKind.isEmpty ? store.tr(.needsYou) : store.localizedWaitKind(row.waitKind)
+        } else if row.isProcessOnly {
+            state = store.tr(.limitedData)
         } else if row.isStalled {
             state = store.tr(.stalled)
         } else if row.isRecentOnly {

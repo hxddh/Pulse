@@ -2,6 +2,15 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.3 — 观测入口与能力信号修复
+
+### 可观测性与交互
+
+- Process-only 行改用橙色 Limited 状态灯，避免把“检测到进程”误读为“会话数据完整”。
+- Process-only 行增加支持健康度入口；不再出现悬停后打开空操作菜单的情况。
+- 未知 tool / skill 不再静默丢失：默认行只展示经过清洗的安全叶子名称，避免暴露路径、namespace 或敏感文本。
+- VoiceOver 的支持覆盖统计改用与视觉界面一致的有效信号分母。
+
 ## 0.47.2 — 观测语义与发布一致性修复
 
 ### 可观测性与交互
