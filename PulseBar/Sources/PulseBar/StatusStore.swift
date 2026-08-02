@@ -578,7 +578,7 @@ final class StatusStore: ObservableObject {
         PulseNotify.configure { [weak self] granted in
             Task { @MainActor in
                 self?.notifyAuthorized = granted
-                DebugLog.write("notify authorization granted=\(granted)")
+                DebugLog.write("notify authorization granted=\(String(describing: granted))")
             }
         }
         refresh(reason: "start")
@@ -1000,6 +1000,13 @@ final class StatusStore: ObservableObject {
         if let url { NSWorkspace.shared.open(url) }
     }
 
+    /// Notification permission is requested only from an explicit Settings
+    /// action. Launching Pulse or scanning an Agent must remain interruption-
+    /// free, especially for unsigned builds whose identity can change.
+    func requestNotificationAuthorization() {
+        PulseNotify.requestAuthorizationAfterUserAction()
+    }
+
     func checkForUpdatesNow() {
         UpdateCheck.shared.check(store: self, force: true)
     }
@@ -1274,8 +1281,18 @@ final class StatusStore: ObservableObject {
         let acts: [ActivityHarvest.Row]
         switch harvest {
         case .fresh(let rows, let health, let complete):
-            acts = rows
-            lastGoodHarvest = rows
+            // A timed-out child can still emit a valid prefix of the stream.
+            // Replace only adapters that reported; keep the previous rows for
+            // adapters the child never reached so one slow collector cannot
+            // make unrelated live sessions disappear from the tray.
+            acts = complete
+                ? rows
+                : ActivityHarvest.mergePartialRows(
+                    current: rows,
+                    health: health,
+                    previous: lastGoodHarvest
+                )
+            lastGoodHarvest = acts
             recordCollectorHealth(health, complete: complete)
             // `row.harvestMs` is the vendor session's last activity time, not
             // when Pulse successfully read that adapter. Using it as "last
@@ -1362,12 +1379,12 @@ final class StatusStore: ObservableObject {
 
         // Notification policy lives here; the builder only reports the edges.
         let quiet = isInQuietHours()
-        if notifyAuthorized != false, notifyOnIdle, !quiet, result.wentIdle {
+        if notifyAuthorized == true, notifyOnIdle, !quiet, result.wentIdle {
             PulseNotify.postIdle(title: "Pulse", body: tr(.idleNotify))
         }
         // Waiting edges stay available even during quiet hours (when enabled).
         // Skip the first scan so launch doesn't flood for already-waiting rows.
-        if notifyAuthorized != false, notifyOnWaiting, waitingNotifySeeded,
+        if notifyAuthorized == true, notifyOnWaiting, waitingNotifySeeded,
            let waiting = result.newlyWaiting.first(where: { !mutedAgents.contains($0.agent) }) {
             PulseNotify.postWaiting(
                 title: notificationTitle(waiting),

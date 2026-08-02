@@ -124,6 +124,32 @@ enum ActivityHarvest {
         return expectedCollectorIDs.isSubset(of: reported)
     }
 
+    /// Keep the last known rows for adapters that a timed-out harvest never
+    /// reached. A partial stream is useful evidence, but treating it as a
+    /// complete snapshot makes every late adapter disappear for one or more
+    /// probe cycles (and can make an active session look process-only). Health
+    /// lines are the adapter boundary: a reported `no_sessions` result clears
+    /// that adapter's old rows, while an unreported adapter retains them until
+    /// the next complete scan.
+    static func mergePartialRows(
+        current: [Row],
+        health: [CollectorHealth],
+        previous: [Row]
+    ) -> [Row] {
+        let normalize: (AgentID) -> AgentID = { id in
+            id == .cursorAgent ? .cursor : id
+        }
+        var reported = Set(health.map { normalize($0.id) })
+        // A legacy or third-party script may emit a row before its health line.
+        // Treat that row's adapter as reached rather than retaining a stale
+        // duplicate beside the fresh evidence.
+        reported.formUnion(current.map { normalize($0.id) })
+        guard !reported.isEmpty else { return previous }
+
+        let retained = previous.filter { !reported.contains(normalize($0.id)) }
+        return current + retained
+    }
+
     static func mapAgent(_ raw: String) -> AgentID? {
         if let id = AgentID(rawValue: raw) { return id }
         switch raw {
@@ -545,7 +571,10 @@ enum AttentionReader {
                 continue
             }
 
-            if tsMs <= 0 { continue }
+            // A clock-skewed or malformed hook event must not become a
+            // permanent Waiting row. Activity rows use the same small future
+            // tolerance; keep it consistent here.
+            if tsMs <= 0 || tsMs > nowMs + 5 * 60 * 1000 { continue }
             if nowMs - tsMs > ttlMs { continue }
             byKey[mapKey] = Entry(
                 id: id,

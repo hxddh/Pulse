@@ -609,7 +609,9 @@ enum SnapshotBuilder {
                 snap.headerTitle = stateSummary()
             }
             snap.headerDetail = aggregate()
-            snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
+            snap.header = snap.headerDetail.isEmpty
+                ? snap.headerTitle
+                : "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if liveRunning > 0 || stalledCount > 0 {
             snap.glance = liveRunning > 0 ? .running : .stalled
             let liveRows = all.filter { $0.section == .running }
@@ -628,7 +630,9 @@ enum SnapshotBuilder {
             }
             snap.headerTitle = stateSummary()
             snap.headerDetail = aggregate()
-            snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
+            snap.header = snap.headerDetail.isEmpty
+                ? snap.headerTitle
+                : "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if recentOnly > 0 {
             snap.glance = .idle
             snap.title = ""
@@ -637,7 +641,9 @@ enum SnapshotBuilder {
                 ? t(.recent1, lang)
                 : "\(recentOnly) \(t(.recentN, lang))"
             snap.headerDetail = aggregate()
-            snap.header = "\(snap.headerTitle) · \(snap.headerDetail)"
+            snap.header = snap.headerDetail.isEmpty
+                ? snap.headerTitle
+                : "\(snap.headerTitle) · \(snap.headerDetail)"
         } else {
             snap.glance = .idle
             snap.title = ""

@@ -11,11 +11,12 @@ enum ContentSanitizer {
         let expression: NSRegularExpression
         let replacement: String
 
-        init(_ pattern: String, replacement: String = ContentSanitizer.replacement) {
-            expression = try! NSRegularExpression(
+        init?(_ pattern: String, replacement: String = ContentSanitizer.replacement) {
+            guard let expression = try? NSRegularExpression(
                 pattern: pattern,
                 options: [.caseInsensitive]
-            )
+            ) else { return nil }
+            self.expression = expression
             self.replacement = replacement
         }
     }
@@ -42,7 +43,7 @@ enum ContentSanitizer {
         Rule(
             #"-----BEGIN[ A-Z0-9_-]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z0-9_-]*PRIVATE KEY-----"#
         ),
-    ]
+    ].compactMap { $0 }
 
     static func redact(_ raw: String) -> String {
         guard !raw.isEmpty else { return raw }

@@ -49,7 +49,6 @@ enum PulseNotify {
         return UNUserNotificationCenter.current()
     }
     private static let delegate = PulseNotifyDelegate()
-    private static var requested = false
 
     static let focusActionID = "pulse.focus"
     static let snoozeActionID = "pulse.snooze"
@@ -87,25 +86,30 @@ enum PulseNotify {
     /// Reports whether the user actually granted permission. Dropping this
     /// result meant a denied prompt left both notification toggles reading
     /// "on" while nothing would ever fire.
-    static func configure(onAuthorization: @escaping (Bool) -> Void) {
+    static func configure(onAuthorization: @escaping (Bool?) -> Void) {
         guard let center else {
             onAuthorization(false)
             return
         }
         center.delegate = delegate
         authorizationHandler = onAuthorization
-        requestAuthorizationIfNeeded()
         refreshAuthorization()
     }
 
-    private static var authorizationHandler: ((Bool) -> Void)?
+    private static var authorizationHandler: ((Bool?) -> Void)?
 
-    static func requestAuthorizationIfNeeded() {
-        guard !requested else { return }
+    /// Ask only after an explicit user action. Startup and background scans
+    /// must never create a permission interruption on their own.
+    static func requestAuthorizationAfterUserAction() {
         guard let center else { return }
-        requested = true
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            authorizationHandler?(granted)
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .notDetermined else {
+                refreshAuthorization()
+                return
+            }
+            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                authorizationHandler?(granted)
+            }
         }
     }
 
@@ -113,9 +117,16 @@ enum PulseNotify {
     static func refreshAuthorization() {
         guard let center else { return }
         center.getNotificationSettings { settings in
-            let ok = settings.authorizationStatus == .authorized
-                || settings.authorizationStatus == .provisional
-            authorizationHandler?(ok)
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                authorizationHandler?(true)
+            case .denied:
+                authorizationHandler?(false)
+            case .notDetermined:
+                authorizationHandler?(nil)
+            @unknown default:
+                authorizationHandler?(false)
+            }
         }
     }
 
@@ -153,7 +164,6 @@ enum PulseNotify {
         rowKey: String
     ) {
         guard let center else { return }
-        requestAuthorizationIfNeeded()
         center.removeDeliveredNotifications(withIdentifiers: [id])
         center.removePendingNotificationRequests(withIdentifiers: [id])
         let content = UNMutableNotificationContent()

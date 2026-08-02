@@ -209,6 +209,72 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertFalse(ActivityHarvest.isCompleteHealth(Array(complete.dropLast())))
     }
 
+    func testPartialHarvestKeepsAdaptersTheChildNeverReached() {
+        let oldCodex = ActivityHarvest.Row(
+            id: .codex,
+            task: "Keep this session visible",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "codex-old"
+        )
+        let oldPi = ActivityHarvest.Row(
+            id: .pi,
+            task: "Replace after Pi reports",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "pi-old"
+        )
+        var freshCodex = oldCodex
+        freshCodex.task = "Fresh Codex evidence"
+        freshCodex.sessionID = "codex-new"
+        let health = [
+            ActivityHarvest.CollectorHealth(
+                id: .codex,
+                state: .observed,
+                durationMs: 10,
+                rowCount: 1,
+                sourcePresent: true,
+                errorKind: ""
+            )
+        ]
+
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [freshCodex],
+            health: health,
+            previous: [oldCodex, oldPi]
+        )
+
+        XCTAssertEqual(merged.map(\.sessionID), ["codex-new", "pi-old"])
+        XCTAssertFalse(merged.contains { $0.sessionID == "codex-old" })
+    }
+
+    func testPartialHarvestWithNoAdapterBoundaryDoesNotEraseSnapshot() {
+        var previous = ActivityHarvest.Row(
+            id: .cursor,
+            task: "Cursor task",
+            project: "Client",
+            cwd: "/Users/me/Client",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "cursor-1"
+        )
+        previous.mode = "local"
+        XCTAssertEqual(
+            ActivityHarvest.mergePartialRows(current: [], health: [], previous: [previous]),
+            [previous]
+        )
+    }
+
+    func testAttentionFutureEventIsIgnored() {
+        let now: Int64 = 1_700_000_000_000
+        let text = "codex\tpermission\t\(now + 6 * 60 * 1000)\tApprove\tsession-1\t/Users/me/Pulse\n"
+        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+    }
+
     func testCompletionClassificationUsesPhaseOrOutcome() {
         var row = ActivityHarvest.Row(id: .codex, task: "", project: "", cwd: "", skill: "")
         XCTAssertFalse(row.isCompleted)

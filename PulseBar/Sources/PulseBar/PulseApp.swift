@@ -63,9 +63,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let captureDelay: TimeInterval = 4.2
 
     private var statusPanel: StatusPanelController?
+    private var activationObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // Notification authorization can be changed in System Settings while
+        // Pulse remains alive. Refresh on return so the toggles and policy do
+        // not stay stuck at the pre-settings value.
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { _ in
+            PulseNotify.refreshAuthorization()
+        }
         if CommandLine.arguments.contains("--appearance=dark") {
             NSApp.appearance = NSAppearance(named: .darkAqua)
         } else if CommandLine.arguments.contains("--appearance=light") {
@@ -147,6 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
+            self.activationObserver = nil
+        }
         GlobalHotKey.uninstall()
         statusPanel?.uninstall()
     }
@@ -1482,7 +1497,14 @@ struct SettingsView: View {
 
     private var notificationsSection: some View {
         Section(store.tr(.notificationsSection)) {
-            if store.notifyAuthorized == false {
+            if store.notifyAuthorized == nil {
+                Label(store.tr(.notifyNotConfigured), systemImage: "bell.badge")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button(store.tr(.enableNotifications)) {
+                    store.requestNotificationAuthorization()
+                }
+            } else if store.notifyAuthorized == false {
                 // A denied prompt used to leave these toggles reading "on"
                 // while nothing could ever fire.
                 Label(store.tr(.notifyDenied), systemImage: "bell.slash")

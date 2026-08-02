@@ -176,6 +176,8 @@ enum L10n {
         case .durMin: return "%dm"
         case .durHour: return "%dh"
         case .notificationsSection: return "Notifications"
+        case .notifyNotConfigured: return "Notifications are not enabled yet. Pulse will not ask until you choose Enable."
+        case .enableNotifications: return "Enable notifications"
         case .notifyDenied: return "Notifications are turned off for Pulse — these switches cannot fire."
         case .openNotificationSettings: return "Open System Settings"
         case .muteAgents: return "Mute agents"
@@ -470,6 +472,8 @@ enum L10n {
         case .durMin: return "%d 分"
         case .durHour: return "%d 小时"
         case .notificationsSection: return "通知"
+        case .notifyNotConfigured: return "通知尚未启用。点击“启用通知”后 Pulse 才会请求权限。"
+        case .enableNotifications: return "启用通知"
         case .notifyDenied: return "系统已关闭 Pulse 的通知权限，下面的开关不会生效。"
         case .openNotificationSettings: return "打开系统设置"
         case .muteAgents: return "静音 Agent"
@@ -662,7 +666,7 @@ enum L10n {
         case versionStale, versionMismatchHint, duplicateAppsFound, duplicateAppRunning
         case removeDuplicateApps, removeDuplicateAppsConfirm, moveToTrash, cancel
         case durNow, durSec, durMin, durHour
-        case notificationsSection, notifyDenied, openNotificationSettings
+        case notificationsSection, notifyNotConfigured, enableNotifications, notifyDenied, openNotificationSettings
         case muteAgents, muteHint, uninstallHooks
         case revealShortcut, hotkeyTaken
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint

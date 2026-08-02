@@ -15,11 +15,59 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
 
 MAX_LINES = 80
+
+# Hooks receive untrusted agent payloads. Redacting only in Swift would leave
+# the same credential in attention.tsv on disk and in any copied diagnostics.
+# Keep this small and dependency-free because the hook runs inside vendor
+# processes and must never block them on importing Pulse's UI code.
+_SENSITIVE_RULES = (
+    (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bxox[a-z]-[A-Za-z0-9-]{12,}\b", re.I), "••••"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "••••"),
+    (re.compile(r"\b(Bearer\s+)[A-Za-z0-9._~+/\-=]{8,}", re.I), r"\1••••"),
+    (
+        re.compile(
+            r"\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|token)\s*[:=]\s*['\"]?)[^\s'\";,]{8,}",
+            re.I,
+        ),
+        r"\1••••",
+    ),
+    (re.compile(r"(https?://[^/\s:@]+:)[^@\s/]+@", re.I), r"\1••••@"),
+    (re.compile(r"(\b(?:ssh\s+)?-i\s+)(?:~|/)[^\s'\"]+", re.I), r"\1••••"),
+    (
+        re.compile(
+            r"-----BEGIN[ A-Z0-9_-]*PRIVATE KEY-----.*?-----END[ A-Z0-9_-]*PRIVATE KEY-----",
+            re.I | re.S,
+        ),
+        "••••",
+    ),
+)
+
+
+def redact_sensitive(value: str) -> str:
+    result = value or ""
+    for pattern, replacement in _SENSITIVE_RULES:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def clean_field(value: object, limit: int) -> str:
+    """Bound and sanitize one TSV field before it is persisted."""
+    return (
+        redact_sensitive(str(value or ""))
+        .replace("\t", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+        .strip()[:limit]
+    )
 
 
 def pulse_dir() -> Path:
@@ -133,7 +181,16 @@ def append_event(agent: str, kind: str, message: str, session: str = "", cwd: st
     path.parent.mkdir(parents=True, exist_ok=True)
     ts = int(time.time() * 1000)
     # agent \t kind \t ms \t message \t session \t cwd
-    line = f"{agent}\t{kind}\t{ts}\t{message}\t{session}\t{cwd}"
+    line = "\t".join(
+        (
+            clean_field(agent, 48),
+            clean_field(kind, 64),
+            str(ts),
+            clean_field(message, 200),
+            clean_field(session, 80),
+            clean_field(cwd, 240),
+        )
+    )
     with path.open("a+", encoding="utf-8") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
