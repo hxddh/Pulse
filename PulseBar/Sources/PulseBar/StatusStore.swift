@@ -146,6 +146,11 @@ final class StatusStore: ObservableObject {
     /// Packaged bundle version disagrees with the compiled semver — usually a
     /// stale `Pulse.app` next to a fresh build. Worth saying out loud.
     var isVersionMismatch: Bool {
+        // XCTest and deterministic tray fixtures run from a host bundle whose
+        // version is unrelated to Pulse. Do not let that harness detail hide
+        // the fixture's observable Waiting signal or affect its screenshots;
+        // real packaged launches still keep stale-bundle diagnosis first.
+        if previewFixtureActive { return false }
         if case .mismatch = PulseVersion.channel { return true }
         return false
     }
