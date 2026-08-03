@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.47.10`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.47.11`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -34,11 +34,18 @@ Pulse 把这件事变成余光可见：
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/Pulse.app
 > ```
-> 配置了 Developer ID 之后这一步就不需要了，见[发布](#发布)。
+> 也可以在「系统设置 → 隐私与安全性」里对 Pulse 点「仍要打开」。不要全局关闭
+> Gatekeeper；配置 Developer ID + 公证之后这一步才不需要，见[发布](#发布)。DMG
+> 内也附有中英文首次启动说明。
 
-装好后打开 **偏好设置 → 等待信号 → 安装连接**。
-这一步把 hook 写进 Claude Code 与 Codex 的配置，Pulse 才能点亮「需要你」——
-不装也能用，只是红灯永远不会亮。
+装好后可直接使用，不需要安装 hooks。Pulse 默认读取本地会话与进程证据；Claude/Codex
+的 hooks 只是额外增强权限/输入等待和 subagent 生命周期的 Waiting 信号，按需在设置里
+启用即可。没有 hooks 时，能从会话数据确认的 `pending` 仍会点亮红灯；无法确认的路径
+会诚实标为仅运行中，不伪造 Waiting。
+
+新的 Waiting 会话会逐一发出系统通知（仅在你明确启用通知后），并让状态栏红灯短促脉冲
+三次；红灯持续亮起表示仍有待处理确认。通知未启用或被系统关闭时，托盘会显示可点击的
+提示，不会在后台反复索要权限。
 
 ---
 

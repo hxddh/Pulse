@@ -2,6 +2,25 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.47.11 — 等待提醒与首次启动路径
+
+### 可观测与提醒
+
+- 同一轮扫描发现多个需要确认的会话时，每个 Waiting 会话都生成独立、可聚焦的通知，不再只提醒排序后的第一行。
+- 通知权限异步返回期间不会丢失 Waiting 边沿；权限恢复后仅补发仍在等待的会话，避免过期提醒。
+- 通知尚未启用或被系统关闭时，托盘在 Needs you 列表上方给出可点击的明确提示；后台扫描不会自动申请权限。
+- 新 Waiting 进入时状态栏红灯短促脉冲三次，红灯持续亮起表示仍有未处理确认，不使用持续动画打扰。
+
+### 安装与发布
+
+- DMG 随附中英文首次启动说明，明确 ad-hoc/未公证包的 Gatekeeper 放行路径，不建议全局关闭 Gatekeeper。
+- 保留 macOS 14+、Apple silicon（arm64）要求，并在诊断中记录通知授权状态与待补发数量。
+
+### 验证
+
+- Swift Release build、31 个 Agent collector、覆盖矩阵、图标、外观、harvest、资源 selftest 和 DMG 内容检查通过。
+- 当前仍无 Apple Developer ID / notarization 凭据；跨 Mac 首次启动仍需用户明确放行。
+
 ## 0.47.10 — 托盘状态灯与布局对齐
 
 ### 界面与交互

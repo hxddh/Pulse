@@ -177,8 +177,10 @@ enum L10n {
         case .durHour: return "%dh"
         case .notificationsSection: return "Notifications"
         case .notifyNotConfigured: return "Notifications are not enabled yet. Pulse will not ask until you choose Enable."
+        case .waitingNotifyNotConfigured: return "Waiting alert is off — enable notifications"
         case .enableNotifications: return "Enable notifications"
         case .notifyDenied: return "Notifications are turned off for Pulse — these switches cannot fire."
+        case .waitingNotifyDenied: return "Waiting alerts are blocked — open System Settings"
         case .openNotificationSettings: return "Open System Settings"
         case .muteAgents: return "Mute agents"
         case .muteHint: return "Muted agents still appear in the tray; they just stop sending notifications."
@@ -473,8 +475,10 @@ enum L10n {
         case .durHour: return "%d 小时"
         case .notificationsSection: return "通知"
         case .notifyNotConfigured: return "通知尚未启用。点击“启用通知”后 Pulse 才会请求权限。"
+        case .waitingNotifyNotConfigured: return "需要你处理 · 通知未启用"
         case .enableNotifications: return "启用通知"
         case .notifyDenied: return "系统已关闭 Pulse 的通知权限，下面的开关不会生效。"
+        case .waitingNotifyDenied: return "需要你处理 · 通知已被系统关闭"
         case .openNotificationSettings: return "打开系统设置"
         case .muteAgents: return "静音 Agent"
         case .muteHint: return "被静音的 Agent 仍会出现在列表中，只是不再发送通知。"
@@ -666,7 +670,8 @@ enum L10n {
         case versionStale, versionMismatchHint, duplicateAppsFound, duplicateAppRunning
         case removeDuplicateApps, removeDuplicateAppsConfirm, moveToTrash, cancel
         case durNow, durSec, durMin, durHour
-        case notificationsSection, notifyNotConfigured, enableNotifications, notifyDenied, openNotificationSettings
+        case notificationsSection, notifyNotConfigured, waitingNotifyNotConfigured
+        case enableNotifications, notifyDenied, waitingNotifyDenied, openNotificationSettings
         case muteAgents, muteHint, uninstallHooks
         case revealShortcut, hotkeyTaken
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint

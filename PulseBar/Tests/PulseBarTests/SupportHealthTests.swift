@@ -113,7 +113,10 @@ final class SupportHealthTests: XCTestCase {
         store.installPreviewFixture("waiting")
 
         XCTAssertTrue(store.needsHooksNudge)
-        XCTAssertNil(store.maintenanceNoticeText)
+        // Hooks remain optional, but a visible Waiting row without notification
+        // authorization must explain how to receive the interruption while the
+        // tray is closed.
+        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.waitingNotifyNotConfigured))
         XCTAssertFalse(store.tr(.emptyHint).localizedCaseInsensitiveContains("install hooks"))
     }
 
@@ -125,7 +128,7 @@ final class SupportHealthTests: XCTestCase {
 
         XCTAssertFalse(store.needsHooksNudge)
         XCTAssertTrue(store.needsWaitingSignalNudge)
-        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.waitingSignalNudge))
+        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.waitingNotifyNotConfigured))
     }
 
     func testAdapterFailureOffersRetry() {

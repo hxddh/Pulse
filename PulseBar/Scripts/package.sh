@@ -178,7 +178,38 @@ fi
 
 DMG="$ROOT/zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
 rm -f "$DMG"
-hdiutil create -volname "Pulse ${VERSION}" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
+# Keep the first-launch explanation next to the app in the DMG. An ad-hoc
+# signature cannot satisfy Gatekeeper on a different Mac, and hiding the only
+# recovery path in a release-page paragraph is why users reasonably conclude
+# that the app is broken. Do not suggest disabling Gatekeeper globally.
+GUIDE="$ROOT/zig-out/package/Pulse-${VERSION}-首次打开.txt"
+cat > "$GUIDE" <<TXT
+Pulse ${VERSION} · 首次打开 / First launch
+
+当前版本为未签名、未公证构建。macOS 首次打开可能拦截它，这是 Gatekeeper 的信任策略，
+不是 Pulse 运行时崩溃。请只对 Pulse 做一次明确放行：
+
+1. 将 Pulse.app 拖入“应用程序”。
+2. 在 Finder 的“应用程序”中按住 Control 点 Pulse.app，选择“打开”，再点“打开”。
+3. 若仍被拦截：系统设置 → 隐私与安全性 → 安全性，点“仍要打开”。
+
+也可以在确认路径正确后，仅移除 Pulse 自己的下载隔离标记：
+  xattr -dr com.apple.quarantine /Applications/Pulse.app
+
+不要关闭“允许从以下位置下载的 App”或全局禁用 Gatekeeper。
+需要 macOS 14 或更高版本；当前构建面向 Apple silicon（arm64）。
+
+English: this DMG is ad-hoc signed and not notarized. Control-click Pulse.app → Open
+once, or use the xattr command above. A Developer ID + notarization account removes
+this step in a future release.
+TXT
+STAGE="$ROOT/zig-out/package/.pulse-dmg-staging"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/Pulse.app"
+cp "$GUIDE" "$STAGE/"
+hdiutil create -volname "Pulse ${VERSION}" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGE"
 
 if [[ -n "$NOTARY_PROFILE" ]]; then
   echo "notarizing ${DMG}..."

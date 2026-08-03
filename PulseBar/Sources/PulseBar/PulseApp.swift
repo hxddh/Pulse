@@ -627,7 +627,9 @@ struct TrayPanel: View {
         if let notice = store.maintenanceNoticeText {
             Button { store.performMaintenanceNoticeAction() } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: "exclamationmark.circle")
+                    Image(systemName: store.waitingNotificationNeedsSetup
+                        ? "bell.badge"
+                        : "exclamationmark.circle")
                         .font(.system(size: 11, weight: .medium))
                     Text(notice)
                         .lineLimit(1)
@@ -637,7 +639,7 @@ struct TrayPanel: View {
                         .opacity(0.55)
                 }
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.orange)
+                .foregroundStyle(store.waitingNotificationNeedsSetup ? .red : .orange)
                 .padding(.horizontal, TrayChrome.padX)
                 .padding(.bottom, 9)
                 .contentShape(Rectangle())
