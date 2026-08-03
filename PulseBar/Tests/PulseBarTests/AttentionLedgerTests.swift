@@ -6,8 +6,8 @@ final class AttentionLedgerTests: XCTestCase {
         AgentRow(
             rowKey: key,
             agent: agent,
-            task: "Approve release",
             project: "Pulse",
+            task: "Approve release",
             waiting: true,
             waitKind: "Permission"
         )
