@@ -43,7 +43,7 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(item.missingCapabilities.isEmpty)
         XCTAssertEqual(item.usefulFactCount, 4)
         XCTAssertEqual(item.usefulFactTotal, 4)
-        XCTAssertEqual(item.disposition, .healthy)
+        XCTAssertEqual(item.disposition, .available)
     }
 
     func testProcessOnlyEvidenceAdmitsMissingActivityFeed() {
@@ -64,7 +64,7 @@ final class SupportHealthTests: XCTestCase {
     func testHealthyRequiresAllFiveUsefulSignals() {
         let item = health(progress: true, waitingReady: true)
         XCTAssertEqual(item.usefulFactCount, 5)
-        XCTAssertEqual(item.disposition, .healthy)
+        XCTAssertEqual(item.disposition, .available)
         XCTAssertEqual(item.repair, .none)
     }
 
@@ -79,7 +79,7 @@ final class SupportHealthTests: XCTestCase {
         item.collectorState = .sourceAbsent
         item.privacyLimited = true
         XCTAssertTrue(item.privacyLimited)
-        XCTAssertEqual(item.disposition, .unavailable)
+        XCTAssertEqual(item.disposition, .permissionDenied)
     }
 
     func testOnlyProtectedStoreAdaptersRequireTheOptIn() {
@@ -141,7 +141,7 @@ final class SupportHealthTests: XCTestCase {
     func testUnscannedAdapterIsNotReportedAsAnAdapterFailure() {
         var item = health(evidence: nil, progress: false)
         item.collectorState = .unscanned
-        XCTAssertEqual(item.disposition, .unavailable)
+        XCTAssertEqual(item.disposition, .unscanned)
 
         item.processDetected = true
         XCTAssertEqual(item.disposition, .limited)

@@ -20,6 +20,7 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let agent = info["agent"] as? String ?? ""
         let session = info["session"] as? String ?? ""
         let rowKey = info["rowKey"] as? String ?? ""
+        let summaryRowKeys = info["rowKeys"] as? [String] ?? []
         let action = response.actionIdentifier
         DispatchQueue.main.async {
             // "Later" from the banner is the same snooze as the row's button.
@@ -29,7 +30,9 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
                 AppServices.store.snooze(rowKey: rowKey)
                 return
             }
-            if !agent.isEmpty || !rowKey.isEmpty {
+            if !summaryRowKeys.isEmpty {
+                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: summaryRowKeys[0])
+            } else if !agent.isEmpty || !rowKey.isEmpty {
                 AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
             } else {
                 AppServices.store.focusFirstWaiting()
@@ -139,9 +142,16 @@ enum PulseNotify {
         body: String,
         agent: String,
         session: String = "",
-        rowKey: String = ""
+        rowKey: String = "",
+        eventID: String = ""
     ) {
         let id: String = {
+            if !eventID.isEmpty {
+                let safe = eventID
+                    .replacingOccurrences(of: "|", with: "-")
+                    .replacingOccurrences(of: "/", with: "-")
+                return "pulse-waiting-event-\(safe)"
+            }
             if !rowKey.isEmpty {
                 let safe = rowKey
                     .replacingOccurrences(of: "|", with: "-")
@@ -152,7 +162,33 @@ enum PulseNotify {
             if !agent.isEmpty { return "pulse-waiting-\(agent)" }
             return "pulse-waiting"
         }()
-        post(id: id, title: title, body: body, agent: agent, session: session, rowKey: rowKey)
+        post(id: id, title: title, body: body, agent: agent, session: session, rowKey: rowKey, eventID: eventID)
+    }
+
+    /// A single, actionable summary for a burst of approvals. Each event ID
+    /// remains in the ledger; the summary only reduces interruption count.
+    static func postWaitingSummary(
+        title: String,
+        body: String,
+        agent: String,
+        session: String,
+        rowKeys: [String],
+        eventIDs: [String]
+    ) {
+        let seed = (eventIDs + rowKeys).joined(separator: "|")
+        let safe = String(seed.unicodeScalars.map { scalar in
+            CharacterSet.alphanumerics.contains(scalar) ? String(scalar) : "-"
+        }.joined().prefix(96))
+        post(
+            id: "pulse-waiting-summary-\(safe)",
+            title: title,
+            body: body,
+            agent: agent,
+            session: session,
+            rowKey: rowKeys.first ?? "",
+            eventID: eventIDs.joined(separator: ","),
+            rowKeys: rowKeys
+        )
     }
 
     private static func post(
@@ -161,7 +197,9 @@ enum PulseNotify {
         body: String,
         agent: String,
         session: String,
-        rowKey: String
+        rowKey: String,
+        eventID: String = "",
+        rowKeys: [String] = []
     ) {
         guard let center else { return }
         center.removeDeliveredNotifications(withIdentifiers: [id])
@@ -182,10 +220,12 @@ enum PulseNotify {
         if !rowKey.isEmpty || !agent.isEmpty {
             content.categoryIdentifier = waitingCategoryID
         }
-        var info: [String: String] = [:]
+        var info: [String: Any] = [:]
         if !agent.isEmpty { info["agent"] = agent }
         if !session.isEmpty { info["session"] = session }
         if !rowKey.isEmpty { info["rowKey"] = rowKey }
+        if !eventID.isEmpty { info["eventID"] = eventID }
+        if !rowKeys.isEmpty { info["rowKeys"] = rowKeys }
         content.userInfo = info
         let req = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         center.add(req) { error in

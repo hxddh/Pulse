@@ -130,6 +130,7 @@ struct AgentDetailView: View {
             Text(store.tr(.supportHealth))
                 .font(.headline)
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                fact(store.tr(.detailPhase), value: store.detailPhase(row))
                 fact(store.tr(.lastActive), value: store.lastActivityLabel(row))
                 fact(store.tr(.lastAction), value: row.tool.isEmpty ? "—" : store.detailLastAction(row))
                 fact(store.tr(.supportModel), value: row.model.isEmpty ? "—" : row.model)

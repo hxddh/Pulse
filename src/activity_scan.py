@@ -4295,7 +4295,11 @@ def generic_task_title(agent: str, task: str) -> bool:
 
 
 EMITTED_COUNTS: dict[str, int] = {}
-WIRE_PROTOCOL = os.environ.get("PULSE_HARVEST_PROTOCOL", "1").strip()
+# JSON is the only product protocol. Positional TSV is an explicit fixture
+# compatibility mode, never an implicit fallback when a field is added.
+WIRE_PROTOCOL = os.environ.get("PULSE_HARVEST_PROTOCOL", "2").strip()
+if os.environ.get("PULSE_LEGACY_TSV", "0") != "1" and WIRE_PROTOCOL not in {"2", "json"}:
+    WIRE_PROTOCOL = "2"
 
 
 def emit_schema_header() -> None:

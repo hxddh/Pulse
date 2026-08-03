@@ -47,6 +47,7 @@ final class UpdateCheck {
         case downloading
         case verifying
         case ready(URL)
+        case installing
         case failed(String)
     }
 
@@ -204,6 +205,10 @@ final class UpdateCheck {
                 guard digest.caseInsensitiveCompare(release.sha256) == .orderedSame else {
                     throw DownloadError.digest
                 }
+                try UpdateInstaller.preflight(
+                    dmgURL: tempURL,
+                    targetApp: Bundle.main.bundleURL
+                )
                 let downloads = FileManager.default.urls(
                     for: .downloadsDirectory,
                     in: .userDomainMask
@@ -226,6 +231,35 @@ final class UpdateCheck {
                 }
             }
         }.resume()
+    }
+
+    /// Replace the running app through the same executable in helper mode. The
+    /// helper waits for this process to exit, mounts the already verified DMG,
+    /// and commits a recoverable transaction.
+    func installVerifiedUpdate(store: StatusStore) {
+        guard case .ready(let dmg) = store.updateDownloadStatus,
+              Bundle.main.bundleURL.pathExtension == "app",
+              let executable = Bundle.main.executableURL else {
+            store.updateDownloadStatus = .failed("download a verified DMG first")
+            return
+        }
+        let target = Bundle.main.bundleURL
+        let helper = Process()
+        helper.executableURL = executable
+        helper.arguments = [
+            "--install-update=\(dmg.path)",
+            "--install-target=\(target.path)",
+            "--install-parent-pid=\(ProcessInfo.processInfo.processIdentifier)",
+        ]
+        do {
+            try helper.run()
+            store.updateDownloadStatus = .installing
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                NSApp.terminate(nil)
+            }
+        } catch {
+            store.updateDownloadStatus = .failed(error.localizedDescription)
+        }
     }
 
     /// Never delete a previously downloaded installer behind the user's back.

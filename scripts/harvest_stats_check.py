@@ -1276,6 +1276,9 @@ def check_collectors(home: Path) -> int:
 
 def main() -> int:
     importlib.reload(A)
+    # The product defaults to named JSON. These legacy helper-contract tests
+    # intentionally exercise the explicit positional compatibility path.
+    A.WIRE_PROTOCOL = "1"
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         if rc := check_helper_contract(d):
@@ -1294,6 +1297,7 @@ def main() -> int:
             A.HOME = home
             importlib.reload(A)  # module-level paths are built from HOME
             A.HOME = home
+            A.WIRE_PROTOCOL = "1"  # explicit legacy TSV assertions below
             if rc := check_collectors(home):
                 return rc
         finally:

@@ -14,7 +14,7 @@ final class HarvestParsingTests: XCTestCase {
             "testing", "completed", "agent-4", "build",
             "2", "7", "41", "3", "5",
         ]) + "\n"
-        let rows = ActivityHarvest.parse(text)
+        let rows = ActivityHarvest.parseLegacyTSV(text)
         XCTAssertEqual(rows.count, 1)
         let r = rows[0]
         XCTAssertEqual(r.id, .claude)
@@ -58,7 +58,7 @@ final class HarvestParsingTests: XCTestCase {
             "codex", "Deploy with \(fakeKey)", "0", "0", "web_fetch", "",
             "Pulse", "/Users/me/Pulse", "1700000000000", "0", "0", "sess-redact",
         ]) + "\n"
-        let row = ActivityHarvest.parse(text)[0]
+        let row = ActivityHarvest.parseLegacyTSV(text)[0]
         XCTAssertFalse(row.task.contains(fakeKey))
         XCTAssertTrue(row.task.contains(ContentSanitizer.replacement))
         XCTAssertEqual(row.project, "Pulse")
@@ -82,7 +82,7 @@ final class HarvestParsingTests: XCTestCase {
             "roo", "Refactor auth", "0", "0", "", "",
             "App", "/Users/me/App", "1700000000000", "0", "0", "state",
         ]) + "\n"
-        XCTAssertEqual(ActivityHarvest.parse(text).first?.evidence, .cache)
+        XCTAssertEqual(ActivityHarvest.parseLegacyTSV(text).first?.evidence, .cache)
     }
 
     /// A harvest killed on timeout leaves a half-written final line. Parsing it
@@ -90,7 +90,7 @@ final class HarvestParsingTests: XCTestCase {
     func testDropsIncompleteTrailingLine() {
         let complete = line(["claude", "Task A", "0", "0", "", "", "P", "/p", "1700000000000", "0", "0", "s1"])
         let truncated = "codex\tTask B\t0\t0"
-        let rows = ActivityHarvest.parse(complete + "\n" + truncated)
+        let rows = ActivityHarvest.parseLegacyTSV(complete + "\n" + truncated)
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].id, .claude)
     }
@@ -102,7 +102,7 @@ final class HarvestParsingTests: XCTestCase {
         claude\tReal\t0\t0\t\t\tP\t/p\t1700000000000\t0\t0\ts1
 
         """
-        let rows = ActivityHarvest.parse(text)
+        let rows = ActivityHarvest.parseLegacyTSV(text)
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].task, "Real")
     }
@@ -114,8 +114,8 @@ final class HarvestParsingTests: XCTestCase {
         #health\tcodex\tfailed\t21\t0\tJSONDecodeError
 
         """
-        XCTAssertTrue(ActivityHarvest.parse(text).isEmpty)
-        let health = ActivityHarvest.parseHealth(text)
+        XCTAssertTrue(ActivityHarvest.parseLegacyTSV(text).isEmpty)
+        let health = ActivityHarvest.parseHealthLegacyTSV(text)
         XCTAssertEqual(health.count, 3)
         XCTAssertEqual(health[0].id, .claude)
         XCTAssertEqual(health[0].state, .observed)
@@ -128,7 +128,7 @@ final class HarvestParsingTests: XCTestCase {
     func testParsesVersionedJSONCollectorHealth() {
         let text = "{\"schema\":2,\"type\":\"health\",\"agent\":\"cursor\",\"state\":\"observed\",\"durationMs\":42,\"rowCount\":4,\"sourcePresent\":true,\"errorKind\":\"\"}\n"
         XCTAssertTrue(ActivityHarvest.parse(text).isEmpty)
-        let health = ActivityHarvest.parseHealth(text)
+        let health = ActivityHarvest.parseHealthLegacyTSV(text)
         XCTAssertEqual(health.count, 1)
         XCTAssertEqual(health[0].id, .cursor)
         XCTAssertEqual(health[0].state, .observed)
@@ -145,7 +145,7 @@ final class HarvestParsingTests: XCTestCase {
 
     func testDropsIncompleteTrailingCollectorHealth() {
         let text = "#health\tclaude\tobserved\t12\t1\t\n#health\tcodex\tfailed"
-        XCTAssertEqual(ActivityHarvest.parseHealth(text).map(\.id), [.claude])
+        XCTAssertEqual(ActivityHarvest.parseHealthLegacyTSV(text).map(\.id), [.claude])
     }
 
     func testParsesActionableCollectorStatesAndSourcePresence() {
@@ -156,7 +156,7 @@ final class HarvestParsingTests: XCTestCase {
         #health\tcursor\tschema_mismatch\t8\t0\tJSONDecodeError\t1
 
         """
-        let health = ActivityHarvest.parseHealth(text)
+        let health = ActivityHarvest.parseHealthLegacyTSV(text)
         XCTAssertEqual(health.map(\.state), [
             .sourceAbsent, .noSessions, .permissionDenied, .schemaMismatch,
         ])

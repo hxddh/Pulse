@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.48.0"
+    static let semver = "0.49.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -32,6 +32,10 @@ enum PulseVersion {
 
     /// ISO date stamped at package time (empty when unpackaged).
     static var buildDate: String { plist("PulseBuildDate") ?? "" }
+
+    static var distributionChannel: String {
+        plist("PulseDistributionChannel") ?? (bundleVersion == nil ? "dev" : "preview")
+    }
 
     static var channel: Channel {
         guard let bundle = bundleVersion else { return .dev }
@@ -778,21 +782,29 @@ struct AgentSupportHealth: Identifiable, Equatable {
         // gap, not an adapter failure. The support window shows the global
         // partial-scan banner and preserves the previous per-agent result.
         if collectorState == .unscanned {
-            return isObserved ? .limited : .unavailable
+            return isObserved ? .limited : .unscanned
         }
         if collectorState.isIssue {
             // A bounded timeout that already returned rows is actionable for
             // diagnostics, but the partial rows are still usable. Keep them
             // visible as limited rather than hiding them behind an error state.
             if collectorState == .failed, collectorRows > 0 { return .limited }
+            if collectorState == .permissionDenied { return .permissionDenied }
             return .needsAction
         }
+        if privacyLimited && !isObserved { return .permissionDenied }
         if isObserved,
            agent.waitingSource == .hooks,
            !waitingSignalReady {
             return .needsAction
         }
-        guard isObserved else { return .unavailable }
+        guard isObserved else {
+            if collectorState == .sourceAbsent { return .notInstalled }
+            return .noRecentSession
+        }
+        if collectorState == .noSessions || collectorState == .noRecentData {
+            return .noRecentSession
+        }
         if evidence == .process
             || !hasGoal
             || !hasWorkspace
@@ -801,7 +813,7 @@ struct AgentSupportHealth: Identifiable, Equatable {
             || (agent.waitingSource != .none && !waitingSignalReady) {
             return .limited
         }
-        return .healthy
+        return .available
     }
 
     var repair: SupportRepair {
@@ -810,22 +822,28 @@ struct AgentSupportHealth: Identifiable, Equatable {
            !waitingSignalReady {
             return .installHooks
         }
+        if disposition == .permissionDenied { return .openSettings }
         if collectorState.isIssue { return .retry }
         return .none
     }
 }
 
 enum SupportDisposition: Int, Equatable {
-    case unavailable = 0
-    case healthy = 1
+    case available = 0
+    case needsAction = 1
     case limited = 2
-    case needsAction = 3
+    case notInstalled = 3
+    case noRecentSession = 4
+    case permissionDenied = 5
+    case unscanned = 6
 }
 
 enum SupportRepair: Equatable {
     case none
     case installHooks
     case retry
+    case openSettings
+    case runAgent
 }
 
 enum SupportCapability: String, Equatable {

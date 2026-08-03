@@ -12,6 +12,22 @@ enum PulseBarMain {
     private static var instanceGuard: SingleInstanceGuard?
 
     static func main() {
+        if let dmg = CommandLine.arguments.first(where: { $0.hasPrefix("--install-update=") }),
+           let target = CommandLine.arguments.first(where: { $0.hasPrefix("--install-target=") }),
+           let parent = CommandLine.arguments.first(where: { $0.hasPrefix("--install-parent-pid=") }),
+           let pid = pid_t(String(parent.dropFirst("--install-parent-pid=".count))) {
+            do {
+                try UpdateInstaller.runHelper(
+                    dmgURL: URL(fileURLWithPath: String(dmg.dropFirst("--install-update=".count))),
+                    targetApp: URL(fileURLWithPath: String(target.dropFirst("--install-target=".count))),
+                    parentPID: pid
+                )
+                exit(0)
+            } catch {
+                fputs("Pulse update failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
         if CommandLine.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
@@ -43,6 +59,9 @@ enum PulseBarMain {
         }
         if CommandLine.arguments.contains("--native-fixture-test") {
             exit(NativeHarvestSelfTest.run() ? 0 : 1)
+        }
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            _ = UpdateInstaller.recoverIfNeeded(at: Bundle.main.bundleURL)
         }
         let guardLock = SingleInstanceGuard()
         guard guardLock.acquire() else {
@@ -182,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         GlobalHotKey.uninstall()
         statusPanel?.uninstall()
+        AppServices.store.markCleanShutdown()
     }
 }
 
@@ -420,6 +440,8 @@ struct TrayPanel: View {
     /// Folding is opt-in and per-panel. A fresh glance shows every row; the
     /// header must never claim five sessions while the list silently shows one.
     @State fileprivate var folded: Set<String> = []
+    @State fileprivate var query = ""
+    @State fileprivate var searchActive = false
 
     /// Row key the keyboard has selected, if any.
     @State fileprivate var selectedKey: String?
@@ -466,11 +488,24 @@ struct TrayPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if searchActive || !query.isEmpty {
+                TextField(store.tr(.searchSessions), text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .padding(.horizontal, TrayChrome.padX)
+                    .padding(.bottom, 8)
+            }
             missedNotice
             maintenanceNotice
 
-            if store.snapshot.rows.isEmpty {
-                emptyState
+            if filteredRows.isEmpty {
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    emptyState
+                } else {
+                    ContentUnavailableView(store.tr(.searchNoResults), systemImage: "magnifyingglass")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 26)
+                }
             } else {
                 agentList
             }
@@ -545,6 +580,11 @@ struct TrayPanel: View {
                             Button(store.tr(.clearWaiting)) { store.clearWaiting() }
                             Divider()
                         }
+                        Button(store.tr(.searchSessions)) { searchActive = true }
+                            .keyboardShortcut("f", modifiers: .command)
+                        if !query.isEmpty {
+                            Button(store.tr(.clearSearch)) { query = "" }
+                        }
                         Button(store.tr(.supportHealth)) { store.openSupportHealth() }
                         Button(store.tr(.settings)) { store.openSettings() }
                             .keyboardShortcut(",", modifiers: .command)
@@ -601,8 +641,20 @@ struct TrayPanel: View {
 
     private var headerStates: [(TraySection, Int)] {
         TraySection.allCases.compactMap { section in
-            let count = store.snapshot.sectionTotals[section] ?? 0
+            let count = filteredRows.filter { $0.section == section }.count
             return count > 0 ? (section, count) : nil
+        }
+    }
+
+    private var filteredRows: [AgentRow] {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return store.snapshot.rows }
+        return store.allRowsForDisplay.filter { row in
+            [
+                row.agent.displayName, row.agent.rawValue, row.task, row.project,
+                row.cwd, row.sessionID, row.tool, row.skill, row.phase,
+                row.outcome, row.model, row.mode,
+            ].contains { $0.localizedCaseInsensitiveContains(text) }
         }
     }
 
@@ -733,7 +785,7 @@ struct TrayPanel: View {
     /// at once; a project containing a wait sorts first, so the urgent case
     /// still surfaces without reading every heading.
     fileprivate var groupedRows: [RowGroup] {
-        let rows = store.snapshot.rows
+        let rows = filteredRows
         switch store.trayGrouping {
         case .status:
             let present = TraySection.allCases.filter { s in rows.contains { $0.section == s } }
@@ -742,7 +794,7 @@ struct TrayPanel: View {
                 return RowGroup(
                     id: "s\(section.rawValue)",
                     title: store.tr(section.titleKey),
-                    count: store.snapshot.sectionTotals[section] ?? group.count,
+                    count: group.count,
                     accent: section == .needsYou,
                     rows: group,
                     foldable: TrayFold.foldable(
@@ -846,7 +898,7 @@ struct TrayPanel: View {
                                         store: store,
                                         pathInHeading: group.statesPath && showHeading(group, of: groups),
                                         selected: selectedKey == row.rowKey,
-                                        compact: store.snapshot.rows.count >= TrayFold.crowdedFrom
+                                        compact: filteredRows.count >= TrayFold.crowdedFrom
                                     )
                                     .id(row.rowKey)
                                     .transition(.opacity)
@@ -930,7 +982,9 @@ struct TrayPanel: View {
                 }
             }
 
-            if store.snapshot.hiddenCount > 0 {
+            if !query.isEmpty {
+                EmptyView()
+            } else if store.snapshot.hiddenCount > 0 {
                 overflowButton(
                     String(format: store.tr(.andMore), store.snapshot.hiddenCount)
                 ) { store.toggleShowAllAgents() }
@@ -940,7 +994,7 @@ struct TrayPanel: View {
 
             // Sessions beyond the per-agent cap: say so rather than pretend
             // they do not exist.
-            if store.snapshot.cappedSessions > 0 {
+            if query.isEmpty, store.snapshot.cappedSessions > 0 {
                 Text(String(format: store.tr(.cappedSessions), store.snapshot.cappedSessions))
                     .font(.system(size: 10.5))
                     .foregroundStyle(.tertiary)
@@ -1532,6 +1586,9 @@ struct SettingsView: View {
                 Text(store.tr(.agentDataAccessScopeHint))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                Text(store.tr(.agentDataAccessSkipHint))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 ForEach(store.protectedAppDataAgents, id: \.self) { agent in
                     Toggle(isOn: Binding(
                         get: { store.allowAppData || store.appDataAgents.contains(agent) },
@@ -1539,7 +1596,13 @@ struct SettingsView: View {
                     )) {
                         HStack(spacing: 6) {
                             AgentIconView(id: agent)
-                            Text(agent.displayName)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(agent.displayName)
+                                Text(String(format: store.tr(.agentDataAccessAgentDetail), agent.displayName, store.appDataScopeDescription(for: agent)))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     .disabled(store.allowAppData)
@@ -1803,6 +1866,11 @@ struct SettingsView: View {
                     Text(store.tr(.tagline))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                    if PulseVersion.distributionChannel == "preview" {
+                        Text(store.tr(.updatePreview))
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
                 }
                 Spacer(minLength: 4)
             }
@@ -1873,6 +1941,7 @@ struct SettingsView: View {
                         .disabled(
                             store.updateDownloadStatus == .downloading
                                 || store.updateDownloadStatus == .verifying
+                                || store.updateDownloadStatus == .installing
                         )
                     } else {
                         Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
@@ -1895,6 +1964,10 @@ struct SettingsView: View {
                             return Color.secondary
                         }()
                     )
+            }
+            if case .ready = store.updateDownloadStatus {
+                Button(store.tr(.installUpdate)) { store.installVerifiedUpdate() }
+                    .font(.caption)
             }
 
             Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
@@ -1927,9 +2000,11 @@ struct SupportCoverageView: View {
     enum SupportFilter: String, CaseIterable, Identifiable {
         case needsAction
         case limited
-        case healthy
-        case observed
-        case unavailable
+        case available
+        case notInstalled
+        case noRecentSession
+        case permissionDenied
+        case unscanned
         case all
 
         var id: String { rawValue }
@@ -1942,24 +2017,41 @@ struct SupportCoverageView: View {
                 switch filter {
                 case .needsAction: return item.disposition == .needsAction
                 case .limited: return item.disposition == .limited
-                case .healthy: return item.disposition == .healthy
-                case .observed: return item.isObserved
-                case .unavailable: return item.disposition == .unavailable
+                case .available: return item.disposition == .available
+                case .notInstalled: return item.disposition == .notInstalled
+                case .noRecentSession: return item.disposition == .noRecentSession
+                case .permissionDenied: return item.disposition == .permissionDenied
+                case .unscanned: return item.disposition == .unscanned
                 case .all:
                     return true
                 }
             }
             .filter {
-                text.isEmpty || $0.agent.displayName.localizedCaseInsensitiveContains(text)
+                text.isEmpty
+                    || $0.agent.displayName.localizedCaseInsensitiveContains(text)
+                    || store.supportEvidenceLabel($0).localizedCaseInsensitiveContains(text)
+                    || store.supportHealthDetail($0).localizedCaseInsensitiveContains(text)
             }
             .sorted {
-                let left = $0.disposition.rawValue
-                let right = $1.disposition.rawValue
+                let left = severity($0.disposition)
+                let right = severity($1.disposition)
                 if left != right { return left > right }
                 let lp = AgentID.priority.firstIndex(of: $0.agent) ?? 999
                 let rp = AgentID.priority.firstIndex(of: $1.agent) ?? 999
                 return lp < rp
             }
+    }
+
+    private func severity(_ disposition: SupportDisposition) -> Int {
+        switch disposition {
+        case .needsAction: return 7
+        case .permissionDenied: return 6
+        case .limited: return 5
+        case .unscanned: return 4
+        case .noRecentSession: return 3
+        case .notInstalled: return 2
+        case .available: return 1
+        }
     }
 
     private func filterLabel(_ filter: SupportFilter) -> String {
@@ -1968,12 +2060,16 @@ struct SupportCoverageView: View {
             return String(format: store.tr(.supportNeedsActionCount), needsActionCount)
         case .limited:
             return String(format: store.tr(.supportLimitedCount), limitedCount)
-        case .healthy:
-            return String(format: store.tr(.supportHealthyCount), healthyCount)
-        case .observed:
-            return String(format: store.tr(.supportObservedCount), observedCount)
-        case .unavailable:
-            return String(format: store.tr(.supportUnavailableCount), unavailableCount)
+        case .available:
+            return String(format: store.tr(.supportAvailableCount), availableCount)
+        case .notInstalled:
+            return String(format: store.tr(.supportNotInstalledCount), notInstalledCount)
+        case .noRecentSession:
+            return String(format: store.tr(.supportNoRecentCount), noRecentCount)
+        case .permissionDenied:
+            return String(format: store.tr(.supportPermissionDeniedCount), permissionDeniedCount)
+        case .unscanned:
+            return String(format: store.tr(.supportUnscannedCount), unscannedCount)
         case .all: return store.tr(.supportFilterAll)
         }
     }
@@ -1984,14 +2080,20 @@ struct SupportCoverageView: View {
     private var limitedCount: Int {
         store.supportHealth.filter { $0.disposition == .limited }.count
     }
-    private var healthyCount: Int {
-        store.supportHealth.filter { $0.disposition == .healthy }.count
+    private var availableCount: Int {
+        store.supportHealth.filter { $0.disposition == .available }.count
     }
-    private var observedCount: Int {
-        store.supportHealth.filter(\.isObserved).count
+    private var notInstalledCount: Int {
+        store.supportHealth.filter { $0.disposition == .notInstalled }.count
     }
-    private var unavailableCount: Int {
-        store.supportHealth.filter { $0.disposition == .unavailable }.count
+    private var noRecentCount: Int {
+        store.supportHealth.filter { $0.disposition == .noRecentSession }.count
+    }
+    private var permissionDeniedCount: Int {
+        store.supportHealth.filter { $0.disposition == .permissionDenied }.count
+    }
+    private var unscannedCount: Int {
+        store.supportHealth.filter { $0.disposition == .unscanned }.count
     }
 
     var body: some View {
@@ -2038,12 +2140,16 @@ struct SupportCoverageView: View {
                         systemImage: "info.circle"
                     )
                     Label(
-                        String(format: store.tr(.supportHealthyCount), healthyCount),
+                        String(format: store.tr(.supportAvailableCount), availableCount),
                         systemImage: "checkmark.circle"
                     )
                     Label(
-                        String(format: store.tr(.supportUnavailableCount), unavailableCount),
-                        systemImage: "minus.circle"
+                        String(format: store.tr(.supportNotInstalledCount), notInstalledCount),
+                        systemImage: "square.dashed"
+                    )
+                    Label(
+                        String(format: store.tr(.supportPermissionDeniedCount), permissionDeniedCount),
+                        systemImage: "lock"
                     )
                     Spacer()
                     Button(store.tr(.supportSafeReport)) { showSafeReport.toggle() }
@@ -2060,7 +2166,8 @@ struct SupportCoverageView: View {
                         Text(filterLabel($0)).tag($0)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
+                .frame(maxWidth: 240, alignment: .leading)
                 .labelsHidden()
                 if showSafeReport {
                     VStack(alignment: .trailing, spacing: 6) {
@@ -2076,10 +2183,11 @@ struct SupportCoverageView: View {
                             RoundedRectangle(cornerRadius: 7)
                                 .fill(Color.primary.opacity(0.045))
                         )
-                        Button(
-                            store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.supportCopySafeReport)
-                        ) {
-                            store.copySafeSupportReport()
+                        HStack(spacing: 10) {
+                            Button(store.tr(.exportSafeReport)) { store.exportSafeSupportReport() }
+                            Button(
+                                store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.supportCopySafeReport)
+                            ) { store.copySafeSupportReport() }
                         }
                     }
                 }
@@ -2115,13 +2223,12 @@ struct SupportCoverageView: View {
     }
 
     private var summaryLine: String {
-        let actionable = needsActionCount + limitedCount
-        let usable = observedCount - actionable
+        let usable = availableCount
         switch store.lang {
         case .zh:
-            return "可用 \(max(0, usable)) · 需要处理 \(needsActionCount) · 信息受限 \(limitedCount) · 暂无本机证据 \(unavailableCount)"
+            return "可用 \(usable) · 需要处理 \(needsActionCount) · 信息受限 \(limitedCount) · 未安装 \(notInstalledCount) · 无近期会话 \(noRecentCount) · 权限不足 \(permissionDeniedCount) · 未扫描 \(unscannedCount)"
         case .en:
-            return "Usable \(max(0, usable)) · Needs action \(needsActionCount) · Limited \(limitedCount) · No local evidence \(unavailableCount)"
+            return "Available \(usable) · Needs action \(needsActionCount) · Limited \(limitedCount) · Not installed \(notInstalledCount) · No recent session \(noRecentCount) · Permission denied \(permissionDeniedCount) · Unscanned \(unscannedCount)"
         }
     }
 }
@@ -2130,6 +2237,7 @@ struct SupportCoverageView: View {
 struct SupportHealthRow: View {
     let item: AgentSupportHealth
     @ObservedObject var store: StatusStore
+    @State private var diagnosticsExpanded = true
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -2223,6 +2331,8 @@ struct SupportHealthRow: View {
                         switch item.repair {
                         case .installHooks: store.installHooks()
                         case .retry: store.refresh(reason: "support-retry")
+                        case .openSettings: store.openSettings()
+                        case .runAgent: store.focusAgent(idRaw: item.agent.rawValue)
                         case .none: break
                         }
                     }
@@ -2246,12 +2356,14 @@ struct SupportHealthRow: View {
                     }
                 }
 
-                DisclosureGroup(store.tr(.supportAdapterDiagnostics)) {
+                DisclosureGroup(isExpanded: $diagnosticsExpanded) {
                     Text(store.supportAdapterDetail(item))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 3)
+                } label: {
+                    Text(store.tr(.supportAdapterDiagnostics))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -2269,8 +2381,9 @@ struct SupportHealthRow: View {
         switch item.disposition {
         case .needsAction: return .red
         case .limited: return .orange
-        case .healthy: return GlanceKind.running.lampColor
-        case .unavailable: return .secondary.opacity(0.65)
+        case .available: return GlanceKind.running.lampColor
+        case .notInstalled, .noRecentSession, .unscanned: return .secondary.opacity(0.65)
+        case .permissionDenied: return .purple
         }
     }
 
@@ -2278,8 +2391,9 @@ struct SupportHealthRow: View {
         switch item.disposition {
         case .needsAction: return .red
         case .limited: return .orange
-        case .healthy: return GlanceKind.running.lampColor
-        case .unavailable: return .gray
+        case .available: return GlanceKind.running.lampColor
+        case .notInstalled, .noRecentSession, .unscanned: return .gray
+        case .permissionDenied: return .purple
         }
     }
 
@@ -2287,8 +2401,11 @@ struct SupportHealthRow: View {
         switch item.disposition {
         case .needsAction: return store.tr(.supportNeedsAction)
         case .limited: return store.tr(.supportLimited)
-        case .healthy: return store.tr(.supportHealthy)
-        case .unavailable: return store.tr(.supportUnavailable)
+        case .available: return store.tr(.supportAvailable)
+        case .notInstalled: return store.tr(.supportNotInstalled)
+        case .noRecentSession: return store.tr(.supportNoRecentSession)
+        case .permissionDenied: return store.tr(.supportPermissionDenied)
+        case .unscanned: return store.tr(.supportUnscanned)
         }
     }
 
@@ -2296,6 +2413,8 @@ struct SupportHealthRow: View {
         switch item.repair {
         case .installHooks: return store.tr(.installHooks)
         case .retry: return store.tr(.supportRetry)
+        case .openSettings: return store.tr(.supportEnableData)
+        case .runAgent: return store.tr(.supportRunAgent)
         case .none: return ""
         }
     }
@@ -2303,8 +2422,10 @@ struct SupportHealthRow: View {
     private var nextActionLabel: String? {
         if item.privacyLimited { return store.tr(.supportEnableData) }
         switch item.collectorState {
-        case .failed, .permissionDenied, .schemaMismatch, .unscanned:
+        case .failed, .schemaMismatch, .unscanned:
             return store.tr(.supportRetry)
+        case .permissionDenied:
+            return store.tr(.supportEnableData)
         case .sourceAbsent, .noSessions, .noRecentData:
             return item.isObserved ? nil : store.tr(.supportRunAgent)
         case .observed:

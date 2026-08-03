@@ -92,4 +92,20 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.files, 3)
         XCTAssertEqual(row.skill, "pending")
     }
+
+    func testCorruptStoreDoesNotHideOtherAdapterAndFilterIsIsolated() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-corrupt-\(UUID().uuidString)")
+        let codex = home.appendingPathComponent(".codex/sessions/2026/08/03/ok.jsonl")
+        let amp = home.appendingPathComponent(".amp/threads/bad.json")
+        try fm.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: amp.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"session_id":"ok","cwd":"/Users/me/Pulse","title":"Codex survives"}"#.write(to: codex, atomically: true, encoding: .utf8)
+        try "{not-json".write(to: amp, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex, .amp])
+        XCTAssertTrue(result.rows.contains { $0.id == .codex })
+        XCTAssertTrue(result.health.contains { $0.id == .amp })
+        XCTAssertTrue(result.health.contains { $0.id == .codex })
+    }
 }

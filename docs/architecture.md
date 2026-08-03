@@ -5,7 +5,7 @@
 ```
   ┌─ ProcessProbe ──┐   ps -axo，进程 → AgentID，解析 TTY 与 Warp 父进程
   │                 │
-  ├─ ActivityHarvest┤   Swift 原生 bounded reader；可选 legacy activity_scan.py → schema 2
+  ├─ ActivityHarvest┤   Swift 原生 bounded reader；可选 legacy activity_scan.py → named JSON schema 2
   │                 │
   └─ AttentionReader┘   读 attention.tsv（hooks 写的）
            │
@@ -60,6 +60,9 @@ JSON……每个 Agent 一个 bounded adapter，直接生成 Swift `Row` 和 `Co
 legacy 超时不再丢弃已有结果：完整的行留下，被截断的最后一行丢掉；native adapter
 按自己的时间预算直接返回已解析事实。
 
+`HarvestSupervisor` 在 `StatusStore` 外围为每个 Agent 保存独立的失败次数、下次重试、熔断截止和最后错误；
+一次 partial scan 只更新已到达的 adapter，下一次只探测已到期的 Agent，全部退避时做一个半开探测。
+
 ### AttentionReader（事件驱动）
 
 `~/Library/Application Support/Pulse/attention.tsv`，由 `pulse_hook.py` 写入
@@ -99,7 +102,7 @@ legacy 超时不再丢弃已有结果：完整的行留下，被截断的最后�
 ## Attention ledger 与 StatusStore（外壳）
 
 AttentionReader 仍读取 agent-owned 的 attention.tsv，但 Waiting 边沿、通知时间、稍后截止
-时间和已解决历史由 Pulse-owned 的 attention-ledger.json 原子写入
+时间、排队、确认、稳定事件 ID 和已解决历史由 Pulse-owned 的 attention-ledger.json 原子写入
 Library/Application Support/Pulse。账本只保留 row key、Agent、会话短标识、项目尾部和
 时间戳，不保存提示内容或 tool 参数；首次可信扫描播种 baseline，崩溃/重启不会重复通知，
 清空历史只删除已解决事件。
@@ -131,9 +134,13 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.48.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.48.0-dev` |
-| `mismatch` | 两者不一致 | `0.48.0≠0.47.11` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.49.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.49.0-dev` |
+| `mismatch` | 两者不一致 | `0.49.0≠0.48.0` + 橙色警告 |
+
+`PulseDistributionChannel` 另标记 `preview`（ad-hoc / 未公证）或 `stable`（Developer ID / 公证）。
+更新器在下载校验后先挂载预检，再由同一可执行文件的 helper 等待父进程退出，事务式移动旧 App 到
+`~/Library/Application Support/Pulse/rollback`；`current.json` 让下一次启动可以恢复未完成替换。
 
 `mismatch` 针对的是菜单栏应用的高频陷阱：装了新版，旧的还在跑。
 

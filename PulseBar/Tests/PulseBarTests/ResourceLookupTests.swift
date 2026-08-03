@@ -929,7 +929,7 @@ final class HarvestWireFormatTests: XCTestCase {
     private func line(_ cols: [String]) -> String { cols.joined(separator: "\t") }
 
     func testTheNewColumnsAreRead() {
-        let rows = ActivityHarvest.parse(line([
+        let rows = ActivityHarvest.parseLegacyTSV(line([
             "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
             "1700000000000", "0", "0", "sess-1", "34", "1699999000000",
         ]) + "\n")
@@ -941,7 +941,7 @@ final class HarvestWireFormatTests: XCTestCase {
     /// A DMG whose bundled script predates 0.28 emits twelve columns. That has
     /// to keep working and read as "unknown", not as a parse failure.
     func testATwelveColumnLineStillParses() {
-        let rows = ActivityHarvest.parse(line([
+        let rows = ActivityHarvest.parseLegacyTSV(line([
             "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
             "1700000000000", "0", "0", "sess-1",
         ]) + "\n")
@@ -952,7 +952,7 @@ final class HarvestWireFormatTests: XCTestCase {
     }
 
     func testGarbageInTheNewColumnsIsUnknownNotACrash() {
-        let rows = ActivityHarvest.parse(line([
+        let rows = ActivityHarvest.parseLegacyTSV(line([
             "claude", "t", "0", "0", "", "", "", "", "0", "0", "0", "s", "abc", "xyz",
         ]) + "\n")
         XCTAssertEqual(rows.first?.records, 0)

@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.48.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.49.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -43,7 +43,7 @@ Pulse 把这件事变成余光可见：
 启用即可。没有 hooks 时，能从会话数据确认的 `pending` 仍会点亮红灯；无法确认的路径
 会诚实标为仅运行中，不伪造 Waiting。
 
-0.48.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
+0.49.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
 observed、no_sessions、source_absent、permission_denied、schema_mismatch 或 failed，
 不会再把“没有看到”混成“没有运行”。旧版 JSON collector 仅在显式设置
 `PULSE_LEGACY_PYTHON_HARVEST=1` 时运行，不是安装或启动前置条件。Waiting 边沿写入 Pulse 自己的原子事件账本，重启后
@@ -55,7 +55,7 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 进度、资源、证据来源和原始 tool/skill（原始实现标识默认收起）；支持健康度窗口默认展示
 全部 31 个用户可见 Agent，逐项给出证据、缺口和下一步动作。
 
-升级到 0.48.0 不会继承旧版的全局 App Data 授权；需要时请在设置中对具体 Agent 重新选择，
+升级到 0.49.0 不会继承旧版的全局 App Data 授权；需要时请在设置中对具体 Agent 重新选择，
 这样不会因 ad-hoc 签名变化在后台反复触发 macOS 权限弹窗。
 
 新的 Waiting 会话会逐一发出系统通知（仅在你明确启用通知后），并让状态栏红灯短促脉冲

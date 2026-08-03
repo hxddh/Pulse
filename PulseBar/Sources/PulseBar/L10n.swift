@@ -70,6 +70,8 @@ enum L10n {
             return "Off by default. Enables deeper Cursor/VS Code/Warp scans and may ask macOS for cross-app data access."
         case .agentDataAccessScopes: return "Choose data sources"
         case .agentDataAccessScopeHint: return "Only selected agents receive deeper app-data reads. Pulse never asks on launch."
+        case .agentDataAccessAgentDetail: return "%@ reads %@ for task, model, workspace, progress and Waiting details."
+        case .agentDataAccessSkipHint: return "If skipped, Pulse still reads process and unprotected session evidence; no prompt is shown."
         case .notifications: return "Notify when idle"
         case .notifyWaiting: return "Notify on new Waiting"
         case .quietHours: return "Quiet hours (idle only)"
@@ -317,10 +319,20 @@ enum L10n {
         case .supportLimited: return "Limited"
         case .supportHealthy: return "Healthy"
         case .supportUnavailable: return "Not observed"
+        case .supportAvailable: return "Available"
+        case .supportNotInstalled: return "Not installed"
+        case .supportNoRecentSession: return "No recent session"
+        case .supportPermissionDenied: return "Permission denied"
+        case .supportUnscanned: return "Unscanned"
         case .supportNeedsActionCount: return "Action · %d"
         case .supportLimitedCount: return "Limited · %d"
         case .supportHealthyCount: return "Healthy · %d"
         case .supportUnavailableCount: return "Not observed · %d"
+        case .supportAvailableCount: return "Available · %d"
+        case .supportNotInstalledCount: return "Not installed · %d"
+        case .supportNoRecentCount: return "No recent · %d"
+        case .supportPermissionDeniedCount: return "Permission · %d"
+        case .supportUnscannedCount: return "Unscanned · %d"
         case .supportUsefulCoverage: return "%d/%d useful signals"
         case .supportRetry: return "Retry scan"
         case .supportRunAgent: return "Run this agent once"
@@ -328,6 +340,7 @@ enum L10n {
         case .supportAdapterDiagnostics: return "Adapter diagnostics"
         case .supportSafeReport: return "Preview safe report"
         case .supportCopySafeReport: return "Copy safe report"
+        case .exportSafeReport: return "Export safe report…"
         case .snooze: return "Later"
         case .snoozed: return "snoozed"
         case .snoozedFor: return "Later · %@ left"
@@ -335,6 +348,16 @@ enum L10n {
         case .stallOff: return "Never"
         case .minutesShort: return "%d min"
         case .notifFocus: return "Focus"
+        case .waitingSummaryTitle: return "%d agents need your attention"
+        case .waitingSummaryBody: return "Open Pulse to review all waiting sessions."
+        case .searchSessions: return "Search sessions, projects, agents"
+        case .searchNoResults: return "No sessions match this search"
+        case .clearSearch: return "Clear search"
+        case .installUpdate: return "Install verified update"
+        case .updateInstalling: return "Installing update…"
+        case .updateInstallFailed: return "Update install failed"
+        case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
+        case .recoveredAfterCrash: return "Pulse recovered after an unclean exit"
         case .recordsSuffix: return " events"
         case .sessionAge: return "Started %@ ago"
         case .phaseResponding: return "Responding"
@@ -388,6 +411,8 @@ enum L10n {
         case .agentDataAccessHint: return "默认关闭。开启后会深入扫描 Cursor / VS Code / Warp，macOS 可能会请求访问其他应用的数据。"
         case .agentDataAccessScopes: return "选择数据来源"
         case .agentDataAccessScopeHint: return "只有选中的 Agent 会读取更深层的应用数据。Pulse 不会在启动时索要权限。"
+        case .agentDataAccessAgentDetail: return "%@ 会读取 %@，用于展示任务、模型、工作区、进度和 Waiting 详情。"
+        case .agentDataAccessSkipHint: return "跳过后仍会读取进程和未受保护的会话证据；不会弹出权限请求。"
         case .notifications: return "全部空闲时通知"
         case .notifyWaiting: return "新的「需要你」时通知"
         case .quietHours: return "安静时段（仅抑制空闲通知）"
@@ -627,10 +652,20 @@ enum L10n {
         case .supportLimited: return "信息受限"
         case .supportHealthy: return "观测健康"
         case .supportUnavailable: return "尚未观测"
+        case .supportAvailable: return "可用"
+        case .supportNotInstalled: return "未安装"
+        case .supportNoRecentSession: return "无近期会话"
+        case .supportPermissionDenied: return "权限不足"
+        case .supportUnscanned: return "未扫描"
         case .supportNeedsActionCount: return "待处理 · %d"
         case .supportLimitedCount: return "受限 · %d"
         case .supportHealthyCount: return "健康 · %d"
         case .supportUnavailableCount: return "尚未观测 · %d"
+        case .supportAvailableCount: return "可用 · %d"
+        case .supportNotInstalledCount: return "未安装 · %d"
+        case .supportNoRecentCount: return "无近期 · %d"
+        case .supportPermissionDeniedCount: return "权限 · %d"
+        case .supportUnscannedCount: return "未扫描 · %d"
         case .supportUsefulCoverage: return "有效信号 %d/%d"
         case .supportRetry: return "重新扫描"
         case .supportRunAgent: return "先运行一次这个 Agent"
@@ -638,6 +673,7 @@ enum L10n {
         case .supportAdapterDiagnostics: return "适配器诊断"
         case .supportSafeReport: return "预览安全报告"
         case .supportCopySafeReport: return "复制安全报告"
+        case .exportSafeReport: return "导出安全报告…"
         case .snooze: return "稍后"
         case .snoozed: return "已稍后"
         case .snoozedFor: return "已稍后 · 剩 %@"
@@ -645,6 +681,16 @@ enum L10n {
         case .stallOff: return "不判定"
         case .minutesShort: return "%d 分钟"
         case .notifFocus: return "去看看"
+        case .waitingSummaryTitle: return "%d 个 Agent 需要你处理"
+        case .waitingSummaryBody: return "打开 Pulse 查看全部等待中的会话。"
+        case .searchSessions: return "搜索会话、项目或 Agent"
+        case .searchNoResults: return "没有匹配的会话"
+        case .clearSearch: return "清除搜索"
+        case .installUpdate: return "安装已校验更新"
+        case .updateInstalling: return "正在安装更新…"
+        case .updateInstallFailed: return "更新安装失败"
+        case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
+        case .recoveredAfterCrash: return "Pulse 已从上次异常退出中恢复"
         case .recordsSuffix: return " 条事件"
         case .sessionAge: return "始于%@前"
         case .phaseResponding: return "正在响应"
@@ -677,7 +723,7 @@ enum L10n {
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
         case focusTerminal, focusTTY, focusWarp, dismissWait, details
-        case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, notifications, notifyWaiting, launchAtLogin, language
+        case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, agentDataAccessAgentDetail, agentDataAccessSkipHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
@@ -737,11 +783,12 @@ enum L10n {
         case supportInformationGapCount, supportFilterIssuesCount, supportSearch
         case supportFilterIssues, supportFilterRunning, supportFilterInstalled
         case supportFilterNoData, supportFilterAll, supportNoFilterResults
-        case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable
-        case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportUsefulCoverage
-        case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport
+        case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable, supportAvailable, supportNotInstalled, supportNoRecentSession, supportPermissionDenied, supportUnscanned
+        case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportAvailableCount, supportNotInstalledCount, supportNoRecentCount, supportPermissionDeniedCount, supportUnscannedCount, supportUsefulCoverage
+        case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
-        case recordsSuffix, sessionAge
+        case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
+        case installUpdate, updateInstalling, updateInstallFailed, updatePreview, recoveredAfterCrash
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting
         case phaseBuilding, phasePublishing
         case nowActivity, outcomeActivity

@@ -159,10 +159,18 @@ enum NativeActivityHarvest {
         appDataAgents: Set<AgentID> = [],
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         agentDeadlineSeconds: TimeInterval? = nil,
-        totalDeadlineSeconds: TimeInterval? = nil
+        totalDeadlineSeconds: TimeInterval? = nil,
+        agentFilter: Set<AgentID>? = nil
     ) -> Result {
         let fm = FileManager.default
-        let descriptors = descriptors(home: home)
+        let allDescriptors = descriptors(home: home)
+        let descriptors: [Descriptor]
+        if let agentFilter {
+            let allowed = Set(agentFilter.map(\.surfaceID))
+            descriptors = allDescriptors.filter { allowed.contains($0.id.surfaceID) }
+        } else {
+            descriptors = allDescriptors
+        }
         let budget = ScanBudget(
             deadline: Date().addingTimeInterval(totalDeadlineSeconds ?? 5.8)
         )

@@ -2,6 +2,32 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.49.0 — 完整观测闭环与可恢复发布
+
+### P0 · 采集与 Waiting
+
+- 每个 Agent 采集由 supervisor 独立调度：超时、重试退避、连续失败熔断和半开恢复互不影响；锁定或损坏的数据源不会拖垮其他 Agent。
+- Waiting 账本持久化事件 ID、排队、通知、确认、稍后和解决状态；通知按事件去重、限流，四个以上并发等待合并为可聚焦摘要，重启后继续闭环。
+- 运行时只接受命名 JSON schema 2；旧 positional TSV 只在显式兼容测试/诊断入口启用，字段变化不再静默错位。
+- 31 个 Agent 的原生/合成 fixture 继续作为发布门禁，覆盖行、健康、损坏源和 partial scan。
+
+### P1 · 可观测性与交互
+
+- Support Health 改为七种明确状态：可用、需要处理、信息受限、未安装、无近期会话、权限不足、未扫描；每个 Agent 只给一个原因和下一步。
+- 托盘搜索覆盖最多 128 条已采集会话，可按 Agent、任务、项目、工作区、会话、动作、阶段、模型和结果检索；不再被默认 12 行隐藏。
+- 详情检查器把阶段提升为首要事实；原始 tool/skill 仍在诊断层保留。支持健康度默认展开诊断，权限设置逐 Agent 说明读取范围、收益和跳过后的行为。
+- Waiting 记录导出为脱敏安全报告；状态颜色、行列、搜索和操作保持单一面板、长中文、深浅色、键盘和 VoiceOver 友好。
+
+### P2 · 安装、恢复与发布
+
+- 更新安装前执行 macOS、arm64、DMG 挂载、bundle ID、可执行文件和目录权限预检；下载校验后通过 helper 事务替换，旧 App 先进入回滚库，失败可恢复且不会先删除。
+- 启动标记记录异常退出并在下次启动提示恢复；支持报告包含 supervisor、账本队列和恢复状态，不泄露路径或 payload。
+- 无 Apple Developer 账户时明确产出 preview / ad-hoc / 未公证包并标记 GitHub prerelease；未来 Developer ID + notarization 自动切换 stable。
+
+### 验证
+
+- Swift release build、31 个 fixture、协议/矩阵/图标/外观/harvest gates、原生 selftest、事务替换与崩溃恢复测试全部纳入发布流程。
+
 ## 0.48.0 — Reliable observability
 
 ### P0 · 采集、提醒与权限稳定性

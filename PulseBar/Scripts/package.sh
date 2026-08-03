@@ -38,6 +38,11 @@ if ! git -C "$ROOT" diff --quiet HEAD 2>/dev/null; then
   GIT_COMMIT="${GIT_COMMIT}+"
 fi
 BUILD_DATE="$(date -u +%Y-%m-%d)"
+if [[ "${PULSE_SIGN_IDENTITY:--}" == "-" ]]; then
+  DISTRIBUTION_CHANNEL="preview"
+else
+  DISTRIBUTION_CHANNEL="stable"
+fi
 
 echo "building PulseBar ${VERSION}..."
 swift build -c release
@@ -125,6 +130,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>PulseGitCommit</key><string>${GIT_COMMIT}</string>
   <key>PulseBuildDate</key><string>${BUILD_DATE}</string>
+  <key>PulseDistributionChannel</key><string>${DISTRIBUTION_CHANNEL}</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>

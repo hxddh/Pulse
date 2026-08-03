@@ -22,6 +22,14 @@ struct AttentionLedger: Codable {
         var observedAtMs: Int64
         var lastSeenAtMs: Int64
         var notifiedAtMs: Int64 = 0
+        /// The user explicitly acknowledged/dismissed this Waiting event.
+        /// This is separate from resolution: the Agent may still report the
+        /// same wait for a short time after the user acted.
+        var acknowledgedAtMs: Int64 = 0
+        /// The event is waiting for a rate-limit window or notification
+        /// authorization. Keeping this in the ledger prevents a relaunch from
+        /// silently losing an edge that never reached Notification Center.
+        var queuedAtMs: Int64 = 0
         var snoozedUntilMs: Int64 = 0
         var resolvedAtMs: Int64 = 0
 
@@ -30,6 +38,10 @@ struct AttentionLedger: Codable {
 
     var schema: Int = AttentionLedger.schemaVersion
     var baselineEstablished = false
+    /// Last notification delivery across all Waiting events. This is the
+    /// persisted global rate-limit anchor, not a replacement for per-event
+    /// `notifiedAtMs`.
+    var lastNotificationAtMs: Int64 = 0
     var events: [Event] = []
 
     static var fileURL: URL {
@@ -48,6 +60,22 @@ struct AttentionLedger: Codable {
 
     var activeKeys: Set<String> {
         Set(events.filter(\.isActive).map(\.rowKey))
+    }
+
+    var queuedKeys: Set<String> {
+        Set(events.filter { $0.isActive && $0.queuedAtMs > 0 }.map(\.rowKey))
+    }
+
+    func eventID(for rowKey: String) -> String? {
+        events.last(where: { $0.rowKey == rowKey && $0.isActive })?.id
+    }
+
+    func isAcknowledged(rowKey: String) -> Bool {
+        (events.last(where: { $0.rowKey == rowKey && $0.isActive })?.acknowledgedAtMs ?? 0) > 0
+    }
+
+    func canDeliver(nowMs: Int64, minimumIntervalMs: Int64) -> Bool {
+        lastNotificationAtMs == 0 || nowMs - lastNotificationAtMs >= minimumIntervalMs
     }
 
     var snoozedUntil: [String: Date] {
@@ -111,6 +139,24 @@ struct AttentionLedger: Codable {
     mutating func markNotified(rowKey: String, nowMs: Int64) {
         guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }) else { return }
         events[index].notifiedAtMs = nowMs
+        events[index].queuedAtMs = 0
+        lastNotificationAtMs = nowMs
+    }
+
+    mutating func markQueued(rowKey: String, nowMs: Int64) {
+        guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }) else { return }
+        if events[index].queuedAtMs == 0 { events[index].queuedAtMs = nowMs }
+    }
+
+    mutating func acknowledge(rowKey: String, nowMs: Int64) {
+        guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }) else { return }
+        events[index].acknowledgedAtMs = nowMs
+        events[index].queuedAtMs = 0
+    }
+
+    mutating func clearQueued(rowKey: String) {
+        guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }) else { return }
+        events[index].queuedAtMs = 0
     }
 
     mutating func snooze(rowKey: String, untilMs: Int64) {

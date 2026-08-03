@@ -74,9 +74,10 @@ open zig-out/package/Pulse.app
 ```
 
 Local packaging uses `PULSE_SIGN_IDENTITY` plus `PULSE_NOTARY_PROFILE` for a
-distributable build. Release CI additionally requires the base64 Developer ID
-certificate/password and App Store Connect API key secrets documented in the
-README; it refuses to publish an ad-hoc or unnotarized build.
+distributable build. Release CI uses the base64 Developer ID certificate,
+password and App Store Connect API key secrets when available. Without an
+Apple Developer account it publishes an explicitly marked `preview` / ad-hoc /
+unnotarized prerelease; that artifact must never be labeled stable.
 
 ## Release
 
@@ -109,6 +110,6 @@ to users.
 
 ## Current state
 
-0.48.0 is the current source version. GitHub's latest public Release must be
+0.49.0 is the current source version. GitHub's latest public Release must be
 checked separately; a merged version is not proof that a signed/notarized DMG
 was published. See `CHANGELOG.md` for the complete contract.

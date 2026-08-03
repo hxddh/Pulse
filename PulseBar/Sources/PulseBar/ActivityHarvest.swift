@@ -336,7 +336,8 @@ enum ActivityHarvest {
     /// complete line per agent, so partial output is still honest data.
     static func scan(
         allowAppData: Bool = false,
-        appDataAgents: Set<AgentID> = []
+        appDataAgents: Set<AgentID> = [],
+        agentFilter: Set<AgentID>? = nil
     ) -> (
         rows: [Row],
         health: [CollectorHealth],
@@ -350,7 +351,8 @@ enum ActivityHarvest {
         // tray scan.
         let native = NativeActivityHarvest.scan(
             allowAppData: allowAppData,
-            appDataAgents: appDataAgents
+            appDataAgents: appDataAgents,
+            agentFilter: agentFilter
         )
         DebugLog.write(
             "native harvest rows=\(native.rows.count) adapters=\(native.health.count) "
@@ -492,6 +494,17 @@ enum ActivityHarvest {
     }
 
     static func parse(_ text: String) -> [Row] {
+        parse(text, allowLegacyTSV: false)
+    }
+
+    /// Test/diagnostic-only reader for pre-0.48 positional output. The
+    /// product parser never falls back to it: a malformed or shifted TSV line
+    /// must be rejected rather than interpreted as a different field layout.
+    static func parseLegacyTSV(_ text: String) -> [Row] {
+        parse(text, allowLegacyTSV: true)
+    }
+
+    private static func parse(_ text: String, allowLegacyTSV: Bool) -> [Row] {
         var out: [Row] = []
         // `emit` always terminates a row with a newline, so anything after the
         // last one is a line we killed mid-write on timeout — never parse it.
@@ -537,6 +550,7 @@ enum ActivityHarvest {
                 }
                 continue
             }
+            guard allowLegacyTSV else { continue }
             let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard cols.count >= 2, let id = mapAgent(cols[0]) else { continue }
             out.append(Row(
@@ -574,6 +588,14 @@ enum ActivityHarvest {
     }
 
     static func parseHealth(_ text: String) -> [CollectorHealth] {
+        parseHealth(text, allowLegacyTSV: false)
+    }
+
+    static func parseHealthLegacyTSV(_ text: String) -> [CollectorHealth] {
+        parseHealth(text, allowLegacyTSV: true)
+    }
+
+    private static func parseHealth(_ text: String, allowLegacyTSV: Bool) -> [CollectorHealth] {
         var out: [CollectorHealth] = []
         let complete: Substring
         if let lastNewline = text.lastIndex(where: \.isNewline) {
@@ -600,6 +622,7 @@ enum ActivityHarvest {
                 }
                 continue
             }
+            guard allowLegacyTSV else { continue }
             let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard cols.count >= 5,
                   cols[0] == "#health",
