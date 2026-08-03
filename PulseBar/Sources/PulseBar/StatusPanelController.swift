@@ -26,6 +26,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var lastAnnouncedState: String?
+    /// One-shot status-lamp pulse for a newly observed Waiting edge. The red
+    /// colour remains steady until the wait is resolved; only the transition
+    /// gets motion, so the menu bar can remind without becoming a permanent
+    /// animation or requiring notification permission.
+    private var lampAttentionTask: Task<Void, Never>?
+    private var lastWaitingCount: Int?
     /// The QA renderer owns the same panel as the user. Suspend resize
     /// callbacks while it snapshots the view; AppKit can otherwise invalidate
     /// SwiftUI safe-area constraints in the middle of `cacheDisplay` and
@@ -71,6 +77,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 
     func uninstall() {
         close()
+        lampAttentionTask?.cancel()
+        lampAttentionTask = nil
         subscriptions.removeAll()
         NSStatusBar.system.removeStatusItem(statusItem)
     }
@@ -263,6 +271,15 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         button.toolTip = snapshot.tooltip
         button.setAccessibilityLabel(snapshot.accessibilityLabel)
 
+        let waitingCount = snapshot.sectionTotals[.needsYou] ?? 0
+        if snapshot.updatedAt != .distantPast {
+            if let previousWaitingCount = lastWaitingCount,
+               waitingCount > previousWaitingCount {
+                pulseStatusLamp(button)
+            }
+            lastWaitingCount = waitingCount
+        }
+
         let state = TraySection.allCases
             .map { "\(String(describing: $0))=\(snapshot.sectionTotals[$0] ?? 0)" }
             .joined(separator: ",")
@@ -281,6 +298,23 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
                 )
             }
             lastAnnouncedState = state
+        }
+    }
+
+    private func pulseStatusLamp(_ button: NSStatusBarButton) {
+        lampAttentionTask?.cancel()
+        lampAttentionTask = Task { @MainActor [weak self, weak button] in
+            guard let self else { return }
+            for _ in 0..<3 {
+                guard !Task.isCancelled else { break }
+                button?.alphaValue = 0.28
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard !Task.isCancelled else { break }
+                button?.alphaValue = 1
+                try? await Task.sleep(nanoseconds: 230_000_000)
+            }
+            button?.alphaValue = 1
+            self.lampAttentionTask = nil
         }
     }
 

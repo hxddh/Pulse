@@ -107,6 +107,11 @@ final class StatusStore: ObservableObject {
     private var knownWaitingKeys: Set<String> = []
     /// First apply seeds waiting keys without firing edge notifications.
     private var waitingNotifySeeded = false
+    /// Waiting edges observed while macOS notification authorization is still
+    /// resolving. Keep one row per session so a delayed permission callback
+    /// cannot make an approval disappear without either a banner or a tray
+    /// prompt.
+    private var pendingWaitingNotifications: [String: AgentRow] = [:]
     /// Soft-dismissed Cursor harvest pending until skill clears.
     private var dismissedPendingKeys: Set<String> = []
     /// Row key → when its "remind me later" runs out.
@@ -178,6 +183,11 @@ final class StatusStore: ObservableObject {
                 + "schema=\(collectorCounts[.schemaMismatch] ?? 0) "
                 + "failed=\(collectorCounts[.failed] ?? 0) "
                 + "unscanned=\(collectorCounts[.unscanned] ?? 0)"
+            )
+        let notificationAuthorization = notifyAuthorized.map { String($0) } ?? "unknown"
+        lines.append(
+            "notifications: authorization=\(notificationAuthorization) "
+                + "notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)"
         )
         let failedCollectors = collector.filter { $0.collectorState.isIssue }
         if !failedCollectors.isEmpty {
@@ -583,6 +593,7 @@ final class StatusStore: ObservableObject {
         PulseNotify.configure { [weak self] granted in
             Task { @MainActor in
                 self?.notifyAuthorized = granted
+                self?.deliverPendingWaitingNotificationsIfPossible()
                 DebugLog.write("notify authorization granted=\(String(describing: granted))")
             }
         }
@@ -1063,6 +1074,15 @@ final class StatusStore: ObservableObject {
     var maintenanceNoticeText: String? {
         if isVersionMismatch { return tr(.versionStale) }
         if installReport.hasOtherRunningCopy { return tr(.duplicateAppRunning) }
+        // A Waiting row is already visible in the tray, but without a system
+        // notification the user has no interruption when the panel is closed.
+        // Make the missing permission explicit and give the notice a direct
+        // action; never request permission implicitly from a background scan.
+        if waitingNotificationNeedsSetup {
+            return notifyAuthorized == false
+                ? tr(.waitingNotifyDenied)
+                : tr(.waitingNotifyNotConfigured)
+        }
         // The tray is an observation surface, not a hook installer. Missing
         // Claude/Codex hooks remain visible in Support Health and Settings,
         // but must not displace the session facts or imply that hooks are a
@@ -1073,6 +1093,14 @@ final class StatusStore: ObservableObject {
     }
 
     func performMaintenanceNoticeAction() {
+        if waitingNotificationNeedsSetup {
+            if notifyAuthorized == false {
+                openSystemNotificationSettings()
+            } else {
+                openSettings()
+            }
+            return
+        }
         // The tray notice is reserved for actionable non-hook maintenance or
         // an already-configured Waiting route. Hook setup stays in Settings.
         if needsWaitingSignalNudge {
@@ -1084,6 +1112,14 @@ final class StatusStore: ObservableObject {
         } else {
             openSettings()
         }
+    }
+
+    /// A live Waiting row with the user's Waiting-notification preference on,
+    /// but no usable macOS authorization. This is intentionally level-based:
+    /// the in-tray prompt remains until the user fixes the route or turns the
+    /// preference off, so an approval cannot be missed between scans.
+    var waitingNotificationNeedsSetup: Bool {
+        notifyOnWaiting && notifyAuthorized != true && cachedAll.contains(where: \.waiting)
     }
 
     func refreshInstallTruth(force: Bool = false) {
@@ -1406,19 +1442,18 @@ final class StatusStore: ObservableObject {
         }
         // Waiting edges stay available even during quiet hours (when enabled).
         // Skip the first scan so launch doesn't flood for already-waiting rows.
-        if notifyAuthorized == true, notifyOnWaiting, waitingNotifySeeded,
-           let waiting = result.newlyWaiting.first(where: { !mutedAgents.contains($0.agent) }) {
-            PulseNotify.postWaiting(
-                title: notificationTitle(waiting),
-                body: notificationBody(waiting),
-                agent: waiting.agent.rawValue,
-                session: waiting.sessionID,
-                rowKey: waiting.rowKey
-            )
-            // Opt-in, and deliberately quiet: Tink, not an alert tone. Muting an
-            // agent silences this too, same as the banner.
-            if playSoundOnWaiting {
-                NSSound(named: NSSound.Name("Tink"))?.play()
+        if notifyOnWaiting, waitingNotifySeeded {
+            let waitingEdges = result.newlyWaiting.filter { !mutedAgents.contains($0.agent) }
+            if notifyAuthorized == true {
+                postWaitingNotifications(waitingEdges)
+            } else if notifyAuthorized != true {
+                // Permission resolution is asynchronous, and a previously
+                // denied permission may be enabled later in System Settings.
+                // Preserve every edge until the callback arrives instead of
+                // dropping the only interruption for a just-started session.
+                for waiting in waitingEdges {
+                    pendingWaitingNotifications[waiting.rowKey] = waiting
+                }
             }
         }
         if !waitingNotifySeeded {
@@ -1443,6 +1478,48 @@ final class StatusStore: ObservableObject {
             "activity=\(activity) wait=\(result.waitingKeys.count) " +
             "every=\(currentInterval.map { String(Int($0)) } ?? "parked")"
         )
+    }
+
+    /// Deliver one actionable notification per Waiting session. A previous
+    /// implementation used `first(where:)`, so a scan that found Codex and
+    /// Cursor approvals notified only whichever row happened to sort first.
+    private func postWaitingNotifications(_ rows: [AgentRow]) {
+        guard notifyAuthorized == true, notifyOnWaiting else { return }
+        var posted = false
+        for waiting in rows where !mutedAgents.contains(waiting.agent) {
+            PulseNotify.postWaiting(
+                title: notificationTitle(waiting),
+                body: notificationBody(waiting),
+                agent: waiting.agent.rawValue,
+                session: waiting.sessionID,
+                rowKey: waiting.rowKey
+            )
+            posted = true
+        }
+        // Opt-in, and deliberately quiet: Tink, not an alert tone. Muting an
+        // agent silences this too, same as the banner. Play once per scan even
+        // when several sessions crossed into Waiting together.
+        if posted, playSoundOnWaiting {
+            NSSound(named: NSSound.Name("Tink"))?.play()
+        }
+    }
+
+    /// Authorization may become known after the scan that observed a new
+    /// Waiting edge. Flush only rows that are still waiting; a resolved prompt
+    /// should not reappear as a stale notification when the user returns from
+    /// System Settings.
+    private func deliverPendingWaitingNotificationsIfPossible() {
+        guard notifyAuthorized == true, notifyOnWaiting, !pendingWaitingNotifications.isEmpty else {
+            if !notifyOnWaiting { pendingWaitingNotifications.removeAll() }
+            return
+        }
+        let current = Dictionary(uniqueKeysWithValues: cachedAll.map { ($0.rowKey, $0) })
+        let rows = pendingWaitingNotifications.values.compactMap { pending -> AgentRow? in
+            guard let row = current[pending.rowKey], row.waiting else { return nil }
+            return row
+        }
+        pendingWaitingNotifications.removeAll()
+        postWaitingNotifications(rows)
     }
 
     private func applyRowWindow() {

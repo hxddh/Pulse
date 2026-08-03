@@ -170,6 +170,13 @@ enum PulseNotify {
         content.title = ContentSanitizer.redact(title)
         content.body = ContentSanitizer.redact(body)
         content.sound = .default
+        // Keep all Waiting interruptions together in Notification Centre while
+        // retaining one actionable request per session. A single scan can
+        // surface several approvals; collapsing them into one notification
+        // would hide which Agent needs the user's answer.
+        if !rowKey.isEmpty || !agent.isEmpty {
+            content.threadIdentifier = "pulse.waiting"
+        }
         // Only waiting banners carry actions; "everything went idle" has
         // nothing to focus and nothing to defer.
         if !rowKey.isEmpty || !agent.isEmpty {
@@ -181,7 +188,15 @@ enum PulseNotify {
         if !rowKey.isEmpty { info["rowKey"] = rowKey }
         content.userInfo = info
         let req = UNNotificationRequest(identifier: id, content: content, trigger: nil)
-        center.add(req, withCompletionHandler: nil)
+        center.add(req) { error in
+            if let error {
+                // A notification request can still fail after authorization
+                // (for example while the app's identity is being reinstalled).
+                // Keep that fact in diagnostics instead of silently promising
+                // an interruption that never arrived.
+                DebugLog.write("notification add failed id=\(id) error=\(error.localizedDescription)")
+            }
+        }
     }
 }
 
