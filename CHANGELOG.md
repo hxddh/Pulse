@@ -2,6 +2,21 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.49.1 — P0/P1/P2 验收收口
+
+### 修复
+
+- Notification Center 的异步失败现在会回写 Waiting 账本并重新排队；只有系统真正接受通知后才标记已通知，重启或服务短暂异常不会吞掉确认提醒。
+- Support Health 每个 Agent 只保留一个主操作，隐私受限、重试和 hooks 路径不再重复渲染同一动作。
+- supervisor 有意延后的 adapter 会被识别为 bounded partial scan：已完成的 Agent 仍可及时完成 Waiting 闭环，真正的超时、损坏和 schema 错误继续保持不可靠保护。
+- Waiting 活跃事件不再被 256 条历史上限驱逐；只限制已解决历史，批量并发 Waiting 可全部恢复、确认和通知。
+- 同步当前版本文档和预览版下载链接，避免 `latest` 指向旧的稳定 Release。
+
+### 验证
+
+- Swift Debug/Release build、原生 31-agent fixture、协议/矩阵/图标/外观/harvest/package gates 和 packaged selftest 通过。
+- OperationalClosure 覆盖异步交付所依赖的 durable queue、supervisor partial、崩溃恢复、事务替换和 300 条活跃 Waiting 保留；CI 继续执行完整 XCTest。
+
 ## 0.49.0 — 完整观测闭环与可恢复发布
 
 ### P0 · 采集与 Waiting

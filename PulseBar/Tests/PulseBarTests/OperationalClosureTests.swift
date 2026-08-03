@@ -28,6 +28,18 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertTrue(restored.events.contains { $0.notifiedAtMs == 200 })
     }
 
+    func testAttentionLedgerNeverEvictsActiveWaitingEvents() {
+        var ledger = AttentionLedger()
+        let rows = (0..<300).map { index in
+            waitingRow("codex|session-\(index)")
+        }
+        ledger.reconcile(activeRows: rows, nowMs: 100)
+        ledger.prune(nowMs: 100)
+
+        XCTAssertEqual(ledger.activeKeys.count, 300)
+        XCTAssertEqual(ledger.events.count, 300)
+    }
+
     func testSupervisorBacksOffOnlyFailedAdapterAndRecovers() {
         var supervisor = HarvestSupervisor()
         let now: Int64 = 1_000
@@ -57,6 +69,38 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertTrue(blocked.attempted.contains(.codex))
         let probe = supervisor.plan(nowMs: 60_001, agents: [.amp])
         XCTAssertTrue(probe.attempted.contains(.amp))
+    }
+
+    func testSupervisorDeferralDoesNotMakeHealthyPartialScanUnreliable() {
+        var supervisor = HarvestSupervisor()
+        let failure = ActivityHarvest.CollectorHealth(
+            id: .amp, state: .failed, durationMs: 10, rowCount: 0,
+            sourcePresent: true, errorKind: "locked"
+        )
+        supervisor.record([failure], nowMs: 1_000)
+        let plan = supervisor.plan(nowMs: 1_100, agents: [.amp, .codex])
+        let healthyCodex = ActivityHarvest.CollectorHealth(
+            id: .codex, state: .observed, durationMs: 10, rowCount: 1,
+            sourcePresent: true, errorKind: ""
+        )
+
+        XCTAssertTrue(
+            StatusStore.isIntentionalSupervisorPartial(
+                health: [healthyCodex],
+                plan: plan
+            )
+        )
+
+        let failedCodex = ActivityHarvest.CollectorHealth(
+            id: .codex, state: .failed, durationMs: 10, rowCount: 0,
+            sourcePresent: true, errorKind: "timeout"
+        )
+        XCTAssertFalse(
+            StatusStore.isIntentionalSupervisorPartial(
+                health: [failedCodex],
+                plan: plan
+            )
+        )
     }
 
     func testLaunchRecoveryMarksUncleanThenClean() {

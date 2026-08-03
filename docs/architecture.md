@@ -134,8 +134,8 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.49.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.49.0-dev` |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.49.1` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.49.1-dev` |
 | `mismatch` | 两者不一致 | `0.49.0≠0.48.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记 `preview`（ad-hoc / 未公证）或 `stable`（Developer ID / 公证）。

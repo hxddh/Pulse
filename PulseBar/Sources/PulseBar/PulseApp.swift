@@ -2340,7 +2340,12 @@ struct SupportHealthRow: View {
                     .font(.caption)
                 }
 
-                if let action = nextActionLabel {
+                // `repair` is the actionable primary path. Privacy-limited and
+                // retryable rows used to render the same action a second time
+                // through `nextActionLabel`, which made Support Health read as
+                // duplicated and visually noisy. Keep one action per row; the
+                // detail/diagnostics disclosure still carries the full reason.
+                if item.repair == .none, let action = nextActionLabel {
                     if item.privacyLimited {
                         Button(action) { store.openSettings() }
                             .buttonStyle(.link)

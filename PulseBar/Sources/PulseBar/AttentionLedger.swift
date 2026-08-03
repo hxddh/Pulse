@@ -187,12 +187,17 @@ struct AttentionLedger: Codable {
             event.isActive || event.resolvedAtMs <= 0 || nowMs - event.resolvedAtMs <= retentionMs
         }
         if events.count > 256 {
-            events.sort { lhs, rhs in
-                let l = lhs.isActive ? Int64.max : lhs.resolvedAtMs
-                let r = rhs.isActive ? Int64.max : rhs.resolvedAtMs
-                return l > r
-            }
-            events = Array(events.prefix(256))
+            // Active Waiting events are live product state, not history. A
+            // burst of concurrent sessions must never evict the 257th active
+            // event merely because the resolved-history retention target is
+            // 256. Bound only the resolved trail and preserve every active
+            // row for notification, acknowledgement and restart recovery.
+            let active = events.filter(\.isActive)
+            let resolved = events
+                .filter { !$0.isActive }
+                .sorted { $0.resolvedAtMs > $1.resolvedAtMs }
+            let resolvedLimit = max(0, 256 - active.count)
+            events = active + Array(resolved.prefix(resolvedLimit))
         }
     }
 

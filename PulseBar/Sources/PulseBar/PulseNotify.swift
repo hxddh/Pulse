@@ -143,7 +143,8 @@ enum PulseNotify {
         agent: String,
         session: String = "",
         rowKey: String = "",
-        eventID: String = ""
+        eventID: String = "",
+        completion: @escaping (Bool) -> Void = { _ in }
     ) {
         let id: String = {
             if !eventID.isEmpty {
@@ -162,7 +163,16 @@ enum PulseNotify {
             if !agent.isEmpty { return "pulse-waiting-\(agent)" }
             return "pulse-waiting"
         }()
-        post(id: id, title: title, body: body, agent: agent, session: session, rowKey: rowKey, eventID: eventID)
+        post(
+            id: id,
+            title: title,
+            body: body,
+            agent: agent,
+            session: session,
+            rowKey: rowKey,
+            eventID: eventID,
+            completion: completion
+        )
     }
 
     /// A single, actionable summary for a burst of approvals. Each event ID
@@ -173,7 +183,8 @@ enum PulseNotify {
         agent: String,
         session: String,
         rowKeys: [String],
-        eventIDs: [String]
+        eventIDs: [String],
+        completion: @escaping (Bool) -> Void = { _ in }
     ) {
         let seed = (eventIDs + rowKeys).joined(separator: "|")
         let safe = String(seed.unicodeScalars.map { scalar in
@@ -187,7 +198,8 @@ enum PulseNotify {
             session: session,
             rowKey: rowKeys.first ?? "",
             eventID: eventIDs.joined(separator: ","),
-            rowKeys: rowKeys
+            rowKeys: rowKeys,
+            completion: completion
         )
     }
 
@@ -199,9 +211,17 @@ enum PulseNotify {
         session: String,
         rowKey: String,
         eventID: String = "",
-        rowKeys: [String] = []
+        rowKeys: [String] = [],
+        completion: @escaping (Bool) -> Void = { _ in }
     ) {
-        guard let center else { return }
+        // Delivery is asynchronous. The caller owns the durable ledger and
+        // must not mark an event as notified until Notification Center accepts
+        // the request; otherwise a transient add failure loses the only
+        // interruption until the agent emits a brand-new Waiting edge.
+        guard let center else {
+            completion(false)
+            return
+        }
         center.removeDeliveredNotifications(withIdentifiers: [id])
         center.removePendingNotificationRequests(withIdentifiers: [id])
         let content = UNMutableNotificationContent()
@@ -235,6 +255,9 @@ enum PulseNotify {
                 // Keep that fact in diagnostics instead of silently promising
                 // an interruption that never arrived.
                 DebugLog.write("notification add failed id=\(id) error=\(error.localizedDescription)")
+            }
+            DispatchQueue.main.async {
+                completion(error == nil)
             }
         }
     }

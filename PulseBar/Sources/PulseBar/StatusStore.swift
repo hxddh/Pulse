@@ -125,6 +125,14 @@ final class StatusStore: ObservableObject {
     /// useful without turning Notification Center into a stream of duplicates.
     private static let waitingNotificationMinimumIntervalMs: Int64 = 3_000
     private var waitingDeliveryTask: Task<Void, Never>?
+    /// Notification Center accepts requests asynchronously. Keep the event
+    /// in-flight until its callback arrives so a fast follow-up scan cannot
+    /// post a duplicate or mark a failed request as delivered.
+    private var waitingDeliveryInFlight: Set<String> = []
+    /// Keep the optional sound as one cue per delivery window, not one cue per
+    /// session when a batch is accepted as separate Notification Center
+    /// requests.
+    private var waitingDeliverySounded = false
     /// Cross-launch Waiting/delivery state. This is deliberately separate from
     /// the agent-owned attention.tsv bridge so a restart cannot lose the only
     /// human-confirmation edge or emit it twice.
@@ -1408,9 +1416,13 @@ final class StatusStore: ObservableObject {
                     agentFilter: supervisorPlan.attempted
                 )
                 harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
+                let intentionalPartial = Self.isIntentionalSupervisorPartial(
+                    health: result.health,
+                    plan: supervisorPlan
+                )
                 outcome = result.unreliable
-                    ? .failed(result.health, result.complete)
-                    : .fresh(result.rows, result.health, result.complete)
+                    ? .failed(result.health, result.complete, intentionalPartial)
+                    : .fresh(result.rows, result.health, result.complete, intentionalPartial)
             }
 
             let attention = AttentionReader.load()
@@ -1425,7 +1437,7 @@ final class StatusStore: ObservableObject {
             let completedHarvestMs = harvestMs
             DispatchQueue.main.async { [completedHarvestMs] in
                 switch outcome {
-                case .fresh(_, let health, _), .failed(let health, _):
+                case .fresh(_, let health, _, _), .failed(let health, _, _):
                     AppServices.store.harvestSupervisor.record(
                         health,
                         nowMs: Int64(Date().timeIntervalSince1970 * 1000)
@@ -1457,11 +1469,39 @@ final class StatusStore: ObservableObject {
     /// What the background scan managed to get from the native collector.
     enum HarvestOutcome {
         /// Ran and produced rows (possibly partial after a timeout).
-        case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth], Bool)
+        case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth], Bool, Bool)
         /// Deliberately not run this tick — cached rows are still current.
         case skipped
         /// Ran and failed; cached rows may be stale.
-        case failed([ActivityHarvest.CollectorHealth], Bool)
+        case failed([ActivityHarvest.CollectorHealth], Bool, Bool)
+    }
+
+    /// A supervisor plan can intentionally omit adapters that are backing off
+    /// or inside a circuit. That is a bounded, known partial scan: the rows
+    /// from those adapters remain in `mergePartialRows`, while the adapters
+    /// that did run are a trustworthy snapshot for Waiting reconciliation.
+    /// Distinguish this from a global deadline or a failed adapter, otherwise
+    /// one broken source would delay notifications and resolution for all the
+    /// healthy agents on every subsequent tick.
+    nonisolated static func isIntentionalSupervisorPartial(
+        health: [ActivityHarvest.CollectorHealth],
+        plan: HarvestSupervisor.Plan
+    ) -> Bool {
+        guard !plan.deferred.isEmpty else { return false }
+        let attempted = Set(plan.attempted.map(\.surfaceID))
+        guard !attempted.isEmpty else { return false }
+        let reported = Set(health.map { $0.id.surfaceID })
+        guard attempted.isSubset(of: reported) else { return false }
+        return health
+            .filter { attempted.contains($0.id.surfaceID) }
+            .allSatisfy { item in
+                switch item.state {
+                case .failed, .schemaMismatch, .unscanned:
+                    return false
+                case .observed, .noRecentData, .sourceAbsent, .noSessions, .permissionDenied:
+                    return true
+                }
+            }
     }
 
     private func recordCollectorHealth(
@@ -1528,7 +1568,7 @@ final class StatusStore: ObservableObject {
         // Resolve which harvest rows this scan should use, and remember them.
         let acts: [ActivityHarvest.Row]
         switch harvest {
-        case .fresh(let rows, let health, let complete):
+        case .fresh(let rows, let health, let complete, _):
             // A timed-out child can still emit a valid prefix of the stream.
             // Replace only adapters that reported; keep the previous rows for
             // adapters the child never reached so one slow collector cannot
@@ -1562,7 +1602,7 @@ final class StatusStore: ObservableObject {
             // pending included, or Waiting would flicker off between harvests.
             acts = lastGoodHarvest
             ticksSinceHarvest = ticksSinceHarvest == Int.max ? 1 : ticksSinceHarvest + 1
-        case .failed(let health, let complete):
+        case .failed(let health, let complete, _):
             recordCollectorHealth(health, complete: complete)
             // Keep last good shape, but never freeze Needs-you on stale pending.
             acts = lastGoodHarvest.map { row in
@@ -1576,14 +1616,14 @@ final class StatusStore: ObservableObject {
         }
         let harvestUnreliable: Bool = {
             switch harvest {
-            case .failed:
-                return true
-            case .fresh(_, _, let complete):
+            case .failed(_, _, let intentionalPartial):
+                return !intentionalPartial
+            case .fresh(_, _, let complete, let intentionalPartial):
                 // A timed-out stream may contain useful rows, but it is not a
                 // complete baseline. Treat it as unreliable for attention
                 // edge reconciliation so an adapter that was never reached
                 // cannot silently resolve a real Waiting event.
-                return !complete
+                return !complete && !intentionalPartial
             case .skipped:
                 return false
             }
@@ -1730,7 +1770,8 @@ final class StatusStore: ObservableObject {
             Dictionary(uniqueKeysWithValues: rows.compactMap { row -> (String, AgentRow)? in
                 guard row.waiting,
                       !mutedAgents.contains(row.agent),
-                      !attentionLedger.isAcknowledged(rowKey: row.rowKey)
+                      !attentionLedger.isAcknowledged(rowKey: row.rowKey),
+                      !waitingDeliveryInFlight.contains(row.rowKey)
                 else { return nil }
                 return (row.rowKey, row)
             }).values
@@ -1753,6 +1794,28 @@ final class StatusStore: ObservableObject {
             return
         }
 
+        let wasIdleBeforeDelivery = waitingDeliveryInFlight.isEmpty
+        let deliveryKeys = candidates.map(\.rowKey)
+        if wasIdleBeforeDelivery { waitingDeliverySounded = false }
+        for waiting in candidates {
+            pendingWaitingNotifications[waiting.rowKey] = waiting
+            waitingDeliveryInFlight.insert(waiting.rowKey)
+            attentionLedger.markQueued(rowKey: waiting.rowKey, nowMs: nowMs)
+        }
+        // Persist before asking Notification Center to accept the request. A
+        // crash between those two operations leaves a durable queued edge,
+        // which the next launch can rehydrate and deliver exactly once.
+        attentionLedger.save()
+
+        let batchCompletion: (Bool) -> Void = { [weak self] success in
+            guard let self else { return }
+            self.finishWaitingDelivery(
+                keys: deliveryKeys,
+                rows: candidates,
+                success: success
+            )
+        }
+
         if candidates.count > 3 {
             let eventIDs = candidates.compactMap { attentionLedger.eventID(for: $0.rowKey) }
             let title = String(format: tr(.waitingSummaryTitle), candidates.count)
@@ -1765,7 +1828,8 @@ final class StatusStore: ObservableObject {
                 agent: first.agent.rawValue,
                 session: first.sessionID,
                 rowKeys: candidates.map(\.rowKey),
-                eventIDs: eventIDs
+                eventIDs: eventIDs,
+                completion: batchCompletion
             )
         } else {
             for waiting in candidates {
@@ -1775,21 +1839,56 @@ final class StatusStore: ObservableObject {
                     agent: waiting.agent.rawValue,
                     session: waiting.sessionID,
                     rowKey: waiting.rowKey,
-                    eventID: attentionLedger.eventID(for: waiting.rowKey) ?? ""
+                    eventID: attentionLedger.eventID(for: waiting.rowKey) ?? "",
+                    completion: { success in
+                        // Each individual request owns one event; commit that
+                        // event independently so one rejected request never
+                        // hides the other accepted Waiting notifications.
+                        self.finishWaitingDelivery(
+                            keys: [waiting.rowKey],
+                            rows: [waiting],
+                            success: success
+                        )
+                    }
                 )
             }
         }
-        for waiting in candidates {
-            attentionLedger.markNotified(rowKey: waiting.rowKey, nowMs: nowMs)
-            pendingWaitingNotifications.removeValue(forKey: waiting.rowKey)
+    }
+
+    /// Commit or requeue the durable event only after Notification Center has
+    /// reported whether the request was accepted. This closes the rare but
+    /// important gap where an app reinstall, identity transition, or system
+    /// service error rejects an otherwise valid request.
+    private func finishWaitingDelivery(
+        keys: [String],
+        rows: [AgentRow],
+        success: Bool
+    ) {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        for key in keys {
+            waitingDeliveryInFlight.remove(key)
         }
-        attentionLedger.save()
-        let posted = true
-        // Opt-in, and deliberately quiet: Tink, not an alert tone. Muting an
-        // agent silences this too, same as the banner. Play once per scan even
-        // when several sessions crossed into Waiting together.
-        if posted, playSoundOnWaiting {
-            NSSound(named: NSSound.Name("Tink"))?.play()
+        if success {
+            for row in rows {
+                attentionLedger.markNotified(rowKey: row.rowKey, nowMs: nowMs)
+                pendingWaitingNotifications.removeValue(forKey: row.rowKey)
+            }
+            attentionLedger.save()
+            // Opt-in, and deliberately quiet: Tink, not an alert tone. A
+            // successful batch produces one cue even when several sessions
+            // crossed into Waiting together.
+            if playSoundOnWaiting, !waitingDeliverySounded {
+                NSSound(named: NSSound.Name("Tink"))?.play()
+                waitingDeliverySounded = true
+            }
+        } else {
+            for row in rows where row.waiting {
+                pendingWaitingNotifications[row.rowKey] = row
+                attentionLedger.markQueued(rowKey: row.rowKey, nowMs: nowMs)
+            }
+            attentionLedger.save()
+            DebugLog.write("waiting notification requeued keys=\(keys.joined(separator: ","))")
+            scheduleWaitingDelivery(afterMs: Self.waitingNotificationMinimumIntervalMs)
         }
     }
 
