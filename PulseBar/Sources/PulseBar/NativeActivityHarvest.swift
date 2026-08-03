@@ -277,6 +277,11 @@ enum NativeActivityHarvest {
             d(.cursor, [
                 "Library/Application Support/Cursor/User/globalStorage",
                 "Library/Application Support/Cursor/User/workspaceStorage",
+                // A few Cursor builds keep a compact session summary directly
+                // under User rather than in globalStorage. It is still a
+                // protected store, so this root is visited only after the
+                // user's explicit Cursor app-data opt-in.
+                "Library/Application Support/Cursor/User",
             ], ["Cursor"]),
             d(.grok, [".grok/sessions"], ["grok"]),
             // Pi's JSONL transcripts are the richest source; context-mode's
@@ -1147,7 +1152,16 @@ enum NativeActivityHarvest {
                 let workspaceID = sqliteString(statement, column: 1)
                 let updated = sqlite3_column_int64(statement, 2)
                 let value = sqliteString(statement, column: 3)
-                var parsed = parseFacts(value, structured: true, path: url.path)
+                // Composer headers are compact metadata objects without a
+                // session-shaped filename. Give the parser an explicit
+                // session context so usage/pending/file fields survive the
+                // conservative identity gate instead of falling back to a
+                // title-only Fact.
+                var parsed = parseFacts(
+                    value,
+                    structured: true,
+                    path: url.path + "/composer"
+                )
                 if parsed.isEmpty { parsed = [Fact()] }
                 for index in parsed.indices {
                     parsed[index].sessionID = sessionID
@@ -1324,6 +1338,14 @@ enum NativeActivityHarvest {
             else { continue }
             latestTimestamp = max(latestTimestamp, normalizeTimestamp(object["timestamp"]))
             let type = firstString(object, keys: ["type"]).lowercased()
+            // Older/local Codex rollout fixtures (and a few compatibility
+            // exports) put session facts at the top level instead of inside a
+            // typed payload. Merge those fields before handling the richer
+            // event envelope so cwd/title/tool/token evidence is not lost.
+            if type.isEmpty {
+                let generic = fact(from: object, context: "codex.rollout", structured: true, path: path)
+                if generic.hasUsefulSignal { merge(&f, generic) }
+            }
             let payload = object["payload"] as? [String: Any] ?? [:]
             let payloadType = firstString(payload, keys: ["type"]).lowercased()
             if payloadType == "session_meta" || type == "session_meta" {
@@ -1516,7 +1538,10 @@ enum NativeActivityHarvest {
             "outputTokenCount", "output_token_count", "completionTokenCount",
         ])
         f.errors = firstNumber(dict, keys: ["errorCount", "errors", "toolFailureCount", "tool_failures"])
-        f.files = firstNumber(dict, keys: ["filesChanged", "totalFilesTouched", "filesTouched", "fileCount"])
+        f.files = firstNumber(dict, keys: [
+            "filesChanged", "filesChangedCount", "totalFilesTouched",
+            "filesTouched", "fileCount",
+        ])
         f.contextPercent = contextPercent(firstValue(dict, keys: [
             "contextWindowUsage", "contextUsagePercent", "contextPercent", "context_percent",
         ]))
