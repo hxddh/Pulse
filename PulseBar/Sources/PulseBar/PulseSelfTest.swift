@@ -16,7 +16,6 @@ import Foundation
 enum PulseSelfTest {
     /// Resources the app cannot do its job without.
     private static let required: [(name: String, ext: String, dir: String?)] = [
-        ("activity_scan", "py", nil),
         ("pulse_hook", "py", nil),
         ("install_hooks", "py", nil),
         ("pulse-mark", "png", "Brand"),
@@ -47,30 +46,27 @@ enum PulseSelfTest {
             }
         }
 
-        // A packaged app must resolve its own script even when the build
-        // checkout still exists on the same Mac. Otherwise this self-test
-        // validates source, not the artifact users download.
+        // The Python collector is now optional legacy compatibility. If it is
+        // bundled, prove the path is inside the artifact; its absence is not a
+        // launch or native-harvest failure.
         let appRoot = Bundle.main.bundleURL.path
         if let script = ActivityHarvest.selfTestScriptPath() {
             if script.hasPrefix(appRoot + "/") {
-                print("  ok      harvest script → \(script)")
+                print("  ok      optional legacy harvest → \(script)")
             } else {
-                print("  MISSING packaged harvest resolution → \(script)")
-                ok = false
+                print("  note    optional legacy harvest outside bundle → \(script)")
             }
         } else {
-            print("  MISSING harvest script")
-            ok = false
+            print("  ok      native Swift harvest (no external runtime)")
         }
 
-        // Also check the direct Contents/Resources fallback explicitly.
+        // Also report the direct legacy fallback explicitly when present.
         if Bundle.main.bundleURL.pathExtension == "app" {
             let inApp = Bundle.main.resourceURL?.appendingPathComponent("activity_scan.py")
             if let inApp, FileManager.default.fileExists(atPath: inApp.path) {
-                print("  ok      activity_scan.py in Contents/Resources")
+                print("  ok      optional activity_scan.py in Contents/Resources")
             } else {
-                print("  MISSING activity_scan.py in Contents/Resources — harvest would fail on a user machine")
-                ok = false
+                print("  ok      no Python harvest resource required")
             }
         }
 

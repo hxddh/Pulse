@@ -45,7 +45,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             contentRect: .init(
                 x: 0,
                 y: 0,
-                width: 420 + StatusPanelChrome.shadowInset * 2,
+                width: 448 + StatusPanelChrome.shadowInset * 2,
                 height: 180 + StatusPanelChrome.shadowInset * 2
             ),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -338,7 +338,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         let height = min(780, max(96, fitting.height))
         let inset = StatusPanelChrome.shadowInset
         let target = NSSize(
-            width: max(420, fitting.width) + inset * 2,
+            width: max(448, fitting.width) + inset * 2,
             height: height + inset * 2
         )
         guard abs(panel.frame.width - target.width) > 0.5

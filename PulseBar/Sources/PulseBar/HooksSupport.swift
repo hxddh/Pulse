@@ -137,7 +137,10 @@ enum HooksSupport {
             try fm.createDirectory(at: temp, withIntermediateDirectories: true)
             defer { try? fm.removeItem(at: temp) }
             let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            guard let python = RuntimeResolver.python3() else {
+                return .failed("optional Python runtime unavailable")
+            }
+            task.executableURL = python
             task.arguments = [hook.path, "codex", "request_user_input"]
             var environment = ProcessInfo.processInfo.environment
             environment["PULSE_HOME"] = temp.path
@@ -175,8 +178,11 @@ enum HooksSupport {
     }
 
     private static func run(script: URL, arguments: [String]) -> RunResult {
+        guard let python = RuntimeResolver.python3() else {
+            return .failure("optional Python runtime unavailable")
+        }
         guard let result = ProcessIO.run(
-            executable: "/usr/bin/python3",
+            executable: python.path,
             arguments: [script.path] + arguments,
             timeout: 4.0
         ) else {

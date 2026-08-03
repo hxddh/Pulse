@@ -42,6 +42,16 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(r.progressTotal, 5)
     }
 
+    func testParsesVersionedJSONRowEnvelope() {
+        let text = "{\"schema\":2,\"type\":\"row\",\"agent\":\"command_code\",\"task\":\"Run tests\",\"tokensIn\":12,\"tokensOut\":3,\"tool\":\"swift_test\",\"skill\":\"\",\"project\":\"Pulse\",\"cwd\":\"/Users/me/Pulse\",\"harvestMs\":1700000000000,\"subRunning\":0,\"subTotal\":0,\"sessionID\":\"cmd-1\",\"records\":9,\"startedMs\":1699999000000,\"evidence\":\"session\",\"phase\":\"testing\",\"outcome\":\"\",\"model\":\"gpt-5\",\"mode\":\"\",\"errors\":0,\"files\":2,\"contextPercent\":31,\"progressDone\":4,\"progressTotal\":8}\n"
+        let rows = ActivityHarvest.parse(text)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].id, .commandCode)
+        XCTAssertEqual(rows[0].phase, "testing")
+        XCTAssertEqual(rows[0].progressTotal, 8)
+        XCTAssertEqual(rows[0].evidence, .session)
+    }
+
     func testRedactsSecretsAtHarvestBoundary() {
         let fakeKey = "sk-proj-ExampleSecret123456789"
         let text = line([
@@ -113,6 +123,24 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(health[1].state, .noRecentData)
         XCTAssertEqual(health[2].state, .failed)
         XCTAssertEqual(health[2].errorKind, "JSONDecodeError")
+    }
+
+    func testParsesVersionedJSONCollectorHealth() {
+        let text = "{\"schema\":2,\"type\":\"health\",\"agent\":\"cursor\",\"state\":\"observed\",\"durationMs\":42,\"rowCount\":4,\"sourcePresent\":true,\"errorKind\":\"\"}\n"
+        XCTAssertTrue(ActivityHarvest.parse(text).isEmpty)
+        let health = ActivityHarvest.parseHealth(text)
+        XCTAssertEqual(health.count, 1)
+        XCTAssertEqual(health[0].id, .cursor)
+        XCTAssertEqual(health[0].state, .observed)
+        XCTAssertEqual(health[0].durationMs, 42)
+        XCTAssertEqual(health[0].rowCount, 4)
+        XCTAssertTrue(health[0].sourcePresent)
+    }
+
+    func testCollectorPreflightFailureProducesActionableHealthForEveryAdapter() {
+        let health = ActivityHarvest.unavailableHealth("native_unavailable")
+        XCTAssertEqual(Set(health.map(\.id)), ActivityHarvest.expectedCollectorIDs)
+        XCTAssertTrue(health.allSatisfy { $0.state == .failed && $0.errorKind == "native_unavailable" })
     }
 
     func testDropsIncompleteTrailingCollectorHealth() {
@@ -204,9 +232,24 @@ final class HarvestParsingTests: XCTestCase {
     }
 
     func testHealthCompletenessRequiresEveryUserFacingCollector() {
-        let complete = ActivityHarvest.expectedCollectorIDs.map { ActivityHarvest.CollectorHealth.unscanned($0) }
+        let unscanned = ActivityHarvest.expectedCollectorIDs.map { ActivityHarvest.CollectorHealth.unscanned($0) }
+        XCTAssertFalse(ActivityHarvest.isCompleteHealth(unscanned), "unscanned is an incomplete bounded scan")
+        let complete = unscanned.map {
+            ActivityHarvest.CollectorHealth(
+                id: $0.id,
+                state: .sourceAbsent,
+                durationMs: 1,
+                rowCount: 0,
+                sourcePresent: false,
+                errorKind: ""
+            )
+        }
         XCTAssertTrue(ActivityHarvest.isCompleteHealth(complete))
         XCTAssertFalse(ActivityHarvest.isCompleteHealth(Array(complete.dropLast())))
+
+        var cursorAlias = complete.filter { $0.id != .cursor }
+        cursorAlias.append(.unscanned(.cursorAgent))
+        XCTAssertTrue(ActivityHarvest.isCompleteHealth(cursorAlias), "Cursor Agent is the same user-facing collector")
     }
 
     func testPartialHarvestKeepsAdaptersTheChildNeverReached() {
@@ -272,6 +315,72 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertEqual(merged.first?.sessionID, previous.sessionID)
         XCTAssertEqual(merged.first?.task, previous.task)
         XCTAssertEqual(merged.first?.mode, previous.mode)
+    }
+
+    func testFailedEmptyAdapterRetainsLastGoodRowsUntilRetry() {
+        let previous = ActivityHarvest.Row(
+            id: .commandCode,
+            task: "Keep command session visible",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "command-old"
+        )
+        let health = [
+            ActivityHarvest.CollectorHealth(
+                id: .commandCode,
+                state: .failed,
+                durationMs: 750,
+                rowCount: 0,
+                sourcePresent: true,
+                errorKind: "native_timeout"
+            )
+        ]
+
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [],
+            health: health,
+            previous: [previous]
+        )
+
+        XCTAssertEqual(merged.map(\.sessionID), ["command-old"])
+    }
+
+    func testEmptyPartialIssueBoundariesRetainLastGoodRows() {
+        let previous = ActivityHarvest.Row(
+            id: .cursor,
+            task: "Keep Cursor session visible",
+            project: "Client",
+            cwd: "/Users/me/Client",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "cursor-old"
+        )
+        let states: [ActivityHarvest.CollectorState] = [
+            .permissionDenied, .schemaMismatch, .unscanned,
+        ]
+
+        for state in states {
+            let health = [ActivityHarvest.CollectorHealth(
+                id: .cursor,
+                state: state,
+                durationMs: 10,
+                rowCount: 0,
+                sourcePresent: true,
+                errorKind: "boundary"
+            )]
+            let merged = ActivityHarvest.mergePartialRows(
+                current: [],
+                health: health,
+                previous: [previous]
+            )
+            XCTAssertEqual(
+                merged.map(\.sessionID),
+                ["cursor-old"],
+                "empty \(state.rawValue) must not erase prior evidence"
+            )
+        }
     }
 
     func testAttentionFutureEventIsIgnored() {

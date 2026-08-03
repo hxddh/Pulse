@@ -5,7 +5,7 @@
 ```
   ┌─ ProcessProbe ──┐   ps -axo，进程 → AgentID，解析 TTY 与 Warp 父进程
   │                 │
-  ├─ ActivityHarvest┤   fork activity_scan.py，读各 Agent 的会话文件 → TSV
+  ├─ ActivityHarvest┤   Swift 原生 bounded reader；可选 legacy activity_scan.py → schema 2
   │                 │
   └─ AttentionReader┘   读 attention.tsv（hooks 写的）
            │
@@ -35,18 +35,30 @@
 
 ### ActivityHarvest（昂贵，按需）
 
-fork `src/activity_scan.py`，它读各 Agent 自己的私有文件——
-Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
-`state.vscdb`、OpenCode 的 sqlite……每个 agent 一个采集器，输出一行 TSV。
+`NativeActivityHarvest` 用 Foundation 读取各 Agent 自己的本地文件——Claude 的
+`~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的 session/cache、OpenCode 的
+JSON……每个 Agent 一个 bounded adapter，直接生成 Swift `Row` 和 `CollectorHealth`。
+不稳定的 SQLite/私有 schema 只标为 cache，不猜成结构化会话。
+
+旧版 `src/activity_scan.py` 仍随源码保留，只有设置
+`PULSE_LEGACY_PYTHON_HARVEST=1` 时才作为显式兼容诊断路径；没有 Python 时 native harvest
+仍完整运行，应用启动、自检和正常刷新都不依赖它。
 
 两条硬约束，都是踩过坑之后加的：
 
-- **逐 agent 隔离**（`guard()`）。任一采集器抛异常只影响它自己，写 stderr，
-  其余照常输出。此前一个坏采集器会让脚本非零退出，Pulse 丢掉全部 32 个 agent 的结果。
-- **边跑边读**。Swift 侧用独立线程排空 stdout/stderr。此前是等子进程退出后才读，
-  输出一超过 64KB 管道缓冲就死锁到超时——越忙越没数据。
+- **逐 agent 隔离**。native reader 对每个 Agent 单独计时、限制深度/文件/行数；损坏文件只影响
+  自身，其余 30 个用户可见 Agent 仍返回健康结果。
+- **边跑边读**。native reader 不启动外部解释器；显式 legacy 模式仍由 Swift 独立线程排空
+  stdout/stderr，并对每个 collector 设置 1.2–2.0 秒硬上限。超时保留已完成的 JSON 行，
+  未到达的 adapter 继续沿用上一份有效事实，并在健康度窗口标为扫描未完成。
 
-超时不再丢弃已有结果：完整的行留下，被截断的最后一行丢掉。
+  Native row 不经过外部 wire；字段在 `ActivityHarvest.Row` 内按类型校验和敏感信息清洗。
+  显式 legacy 模式才启用 schema 2 JSON，未知 schema 直接进入 failed health，不会把错位字段
+  渲染成有效内容。读取受保护的 App Support/App Group 需要按 Agent 明确授权；native reader
+  在访问前做 lexical TCC gate，ProcessProbe 的 lsof 也只接收已授权 Agent 的 PID。
+
+legacy 超时不再丢弃已有结果：完整的行留下，被截断的最后一行丢掉；native adapter
+按自己的时间预算直接返回已解析事实。
 
 ### AttentionReader（事件驱动）
 
@@ -68,8 +80,8 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 它做的事：
 
 1. 进程按 agent 收敛，`cursor_agent` 并进 `cursor`
-2. harvest 行建会话行；key 冲突时唯一化；每 Agent 的 64 条采集输入保留 32 条，
-   第 33–64 条精确计入未显示数量
+2. harvest 行建会话行；key 冲突时唯一化；每 Agent 的 256 条采集输入保留 128 条，
+   第 129–256 条精确计入未显示数量
 3. 陈旧 harvest 丢弃；同 Agent 没有任何新鲜记录且进程仍在时，只允许一个未完成记录
    按工作区匹配 / 最近活动降级为上下文；subagent 仍在运行的记录不视为陈旧
 4. `skill=pending` → Waiting，除非用户软忽略过
@@ -82,9 +94,15 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 
 **它不做任何有副作用的事。** 时钟、终端环境、路径存在性判断都从 `Context` 注入；
 想让外界做的事——发通知、写日志、清除某个 key——全部作为数据返回。
-这就是为什么它能被 34 个测试覆盖。
+这就是为什么它能被专门的纯逻辑回归测试覆盖，并可在完整 XCTest 环境中独立验证。
 
-## StatusStore（外壳）
+## Attention ledger 与 StatusStore（外壳）
+
+AttentionReader 仍读取 agent-owned 的 attention.tsv，但 Waiting 边沿、通知时间、稍后截止
+时间和已解决历史由 Pulse-owned 的 attention-ledger.json 原子写入
+Library/Application Support/Pulse。账本只保留 row key、Agent、会话短标识、项目尾部和
+时间戳，不保存提示内容或 tool 参数；首次可信扫描播种 baseline，崩溃/重启不会重复通知，
+清空历史只删除已解决事件。
 
 拥有 builder 刻意不碰的东西：
 
@@ -93,7 +111,8 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 - **通知策略**。builder 报告边沿，store 决定要不要发：安静时段、按 agent 静音、
   开关、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）。
 - **设置**。`PulseSettings` 负责解析和序列化，store 只做桥接和落盘。
-- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息。
+- **权限边界**。0.48 的 `appDataPolicyVersion` 不继承旧版全局授权；旧文件先回到关闭，用户在逐 Agent 选择后才重新启用，避免升级后的 ad-hoc 身份触发后台 TCC 弹窗。
+- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息、打开 Agent 详情审视器。
 
 ## 视图
 
@@ -112,18 +131,20 @@ Claude 的 `~/.claude/projects/*/*.jsonl`、Codex 的 rollout、Cursor 的
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.28.1` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.28.1-dev` |
-| `mismatch` | 两者不一致 | `0.28.1≠0.28.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.48.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.48.0-dev` |
+| `mismatch` | 两者不一致 | `0.48.0≠0.47.11` + 橙色警告 |
 
 `mismatch` 针对的是菜单栏应用的高频陷阱：装了新版，旧的还在跑。
 
-## Python 是真源
+## Native 是运行时真源
 
-`src/*.py` 是唯一真源，`PulseBar/Sources/PulseBar/Resources/` 里的是
-`package.sh` 同步出的副本。两份都在版本控制里，CI 比对，不一致就红。
+`NativeActivityHarvest.swift` 是正常运行时的采集真源，所有 31 个用户可见 Agent 都有
+Swift descriptor、权限边界、bounded file walk 和健康结果。`src/activity_scan.py` 只保留为
+可选 legacy adapter / fixture source；它不会在默认启动或刷新路径被 fork，也不能使自检失败。
 
-改采集逻辑改 `src/`，然后跑一次 `package.sh`。
+hooks 仍可按用户选择安装。它们使用 `RuntimeResolver` 查找可选 Python，而不是假定某个
+系统路径；缺少 Python 只会让 hook 操作返回可行动的失败，不影响 native harvest。
 
 ## 门禁
 

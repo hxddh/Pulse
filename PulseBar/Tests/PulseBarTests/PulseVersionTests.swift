@@ -73,6 +73,22 @@ final class PulseVersionTests: XCTestCase {
         )
     }
 
+    func testUpdateInstallerDestinationNeverOverwritesExistingFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-update-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let base = directory.appendingPathComponent("pulse-0.48.0.dmg")
+        FileManager.default.createFile(atPath: base.path, contents: Data("existing".utf8))
+        let first = UpdateCheck.nonDestructiveDestination(base: base)
+        XCTAssertEqual(first.lastPathComponent, "pulse-0.48.0 (1).dmg")
+        FileManager.default.createFile(atPath: first.path, contents: Data("existing-1".utf8))
+        let second = UpdateCheck.nonDestructiveDestination(base: base)
+        XCTAssertEqual(second.lastPathComponent, "pulse-0.48.0 (2).dmg")
+        XCTAssertEqual(try Data(contentsOf: base), Data("existing".utf8))
+    }
+
     func testDuplicateCleanupNeverRemovesRunningOrNewerCopy() {
         let current = InstallTruth.Copy(
             url: URL(fileURLWithPath: "/Applications/Pulse.app"),

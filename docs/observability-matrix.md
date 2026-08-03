@@ -35,6 +35,12 @@ score is evaluated out of four rather than five.
 Static coverage and runtime health are different claims. The same bounded scan
 that reads session data emits one privacy-safe result per collector:
 
+Since 0.48 the normal scan is `NativeActivityHarvest.swift`: all 31 surfaces
+have a Swift descriptor and typed row/health output. Cursor's composer database
+is read through the macOS SQLite3 module when the user grants that Agent's
+protected store. The old Python adapters remain an explicit legacy diagnostic
+path only; they are not required for any row or health result.
+
 - **Observed** — the collector emitted one or more valid rows.
 - **Source absent** — no known local session source or Agent CLI exists.
 - **No usable session** — a source exists, but it currently contains no row
@@ -95,10 +101,10 @@ TTY/focus capability, and an explicit “activity unavailable” statement. That
 fallback is detection, not rich session observability, and is never presented
 as equivalent to a session/cache row.
 
-Collector ingestion is bounded at 64 rows per Agent. The Swift model keeps 32
-and reports the exact number of rows held back; the tray's global eight-row
-fold is presentation only. This separation lets Pulse observe more than it
-shows without allowing unbounded vendor stores to consume memory.
+Collector ingestion is bounded at 256 rows per Agent. The Swift model keeps
+128 and reports the exact number of rows held back; the tray's global
+twelve-row fold is presentation only. This separation lets Pulse observe more
+than it shows without allowing unbounded vendor stores to consume memory.
 
 ## Tool and skill policy
 

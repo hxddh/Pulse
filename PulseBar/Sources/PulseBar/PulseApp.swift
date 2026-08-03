@@ -24,7 +24,25 @@ enum PulseBarMain {
                     + "complete=\(result.complete) "
                     + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
             )
+            if CommandLine.arguments.contains("--harvest-dump") {
+                for health in result.health.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
+                    print("  health \(health.id.rawValue)=\(health.state.rawValue) rows=\(health.rowCount) source=\(health.sourcePresent) duration_ms=\(health.durationMs) error=\(health.errorKind)")
+                    if let row = result.rows.first(where: { $0.id == health.id }) {
+                        let title = row.task.isEmpty ? "<no title>" : row.task
+                        let action = row.tool.isEmpty ? "-" : row.tool
+                        print("    sample \(title) · \(row.cwd) · action=\(action) · evidence=\(row.evidence.rawValue)")
+                    }
+                }
+                if CommandLine.arguments.contains("--harvest-dump-all") {
+                    for row in result.rows {
+                        print("    row \(row.id.rawValue) sid=\(row.sessionID) task=\(row.task) cwd=\(row.cwd) tool=\(row.tool) model=\(row.model) phase=\(row.phase) outcome=\(row.outcome) tokens=\(row.tokensIn)/\(row.tokensOut) files=\(row.files) errors=\(row.errors) context=\(row.contextPercent) progress=\(row.progressDone)/\(row.progressTotal) records=\(row.records) evidence=\(row.evidence.rawValue)")
+                    }
+                }
+            }
             exit(result.unreliable ? 1 : 0)
+        }
+        if CommandLine.arguments.contains("--native-fixture-test") {
+            exit(NativeHarvestSelfTest.run() ? 0 : 1)
         }
         let guardLock = SingleInstanceGuard()
         guard guardLock.acquire() else {
@@ -58,9 +76,9 @@ struct PulseBarApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Visual QA captures must represent the first completed scan, not the
     /// transient launch state where every adapter is still `unscanned`.
-    /// ActivityHarvest has a 3.5s hard deadline, so 4.2s covers either a
+    /// ActivityHarvest has a 6s hard deadline, so 6.8s covers either a
     /// completed scan or its honest timeout result.
-    private static let captureDelay: TimeInterval = 4.2
+    private static let captureDelay: TimeInterval = 6.8
 
     private var statusPanel: StatusPanelController?
     private var activationObserver: NSObjectProtocol?
@@ -227,7 +245,7 @@ enum TrayChrome {
     /// thirty characters, where a real task name is fifty. A menu-bar panel at
     /// 400 is still narrow next to the calendar and reminder popovers people
     /// already run, and it is forty characters instead of thirty.
-    static let width: CGFloat = 420
+    static let width: CGFloat = 448
     static let padX: CGFloat = 16
     /// Shared identity grid for rows and project/status headings. Keeping the
     /// columns explicit prevents a section marker from drifting away from the
@@ -245,6 +263,12 @@ enum TrayChrome {
     /// The accent marker starts where a row's lamp starts, not in the old
     /// disclosure-column centre.
     static let sectionAccentPrefix: CGFloat = rowIdentityStart - padX
+    /// The heading's first item plus its 9pt inter-item gap must land on the
+    /// same name column as a row (icon → lamp → name). Derive it from the
+    /// actual row grid instead of letting a future icon-size tweak drift the
+    /// heading independently.
+    static let sectionHeaderLeadWidth: CGFloat =
+        rowNameStart - padX - 9
     /// One hit target for every compact header action. SF Symbols have
     /// different intrinsic boxes; the shared frame aligns their visible
     /// centres and keeps the title on the same row.
@@ -334,7 +358,7 @@ private struct SectionHeader: View {
                         )
                         .offset(x: TrayChrome.sectionAccentPrefix)
                 }
-                .frame(width: 30, height: 14, alignment: .center)
+                .frame(width: TrayChrome.sectionHeaderLeadWidth, height: 14, alignment: .center)
             } else {
                 Group {
                     if let collapsed {
@@ -349,9 +373,9 @@ private struct SectionHeader: View {
                 // The row identity now has an icon, a status lamp, and two small
                 // gaps before its name. Match that optical start here so section
                 // headings do not appear to drift left of every agent name.
-                // 30 pt column + 9 pt gap keeps the heading on the same baseline
-                // column as the row identity text.
-                .frame(width: 30, height: 14, alignment: .center)
+                // The lead width plus the 9pt gap keeps the heading on the
+                // exact same baseline column as the row identity text.
+                .frame(width: TrayChrome.sectionHeaderLeadWidth, height: 14, alignment: .center)
             }
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -804,7 +828,7 @@ struct TrayPanel: View {
                 // panel that caps at a handful of rows gains nothing from
                 // sticky headings, and un-pinning removes the band by
                 // construction rather than by picking a better shade.
-                // At most eight rows are visible. A LazyVStack inside a
+                // At most twelve rows are visible. A LazyVStack inside a
                 // ScrollView reports the viewport proposal rather than its
                 // materialised content height on some macOS builds, pinning
                 // the list to the 420 pt cap and leaving a large empty tail.
@@ -865,18 +889,12 @@ struct TrayPanel: View {
                 .scrollIndicators(.visible)
                 .frame(height: min(max(measuredHeight, 56), cap))
                 .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
-                .overlay(alignment: .bottom) {
-                    if measuredHeight > cap + 1 {
-                        LinearGradient(
-                            colors: [.clear, Color.primary.opacity(0.055)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 18)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                    }
-                }
+                // Do not paint a bottom fade over the material. It reads as a
+                // second horizontal chrome band on a short popover and was the
+                // same visual failure as the old system container bars. The
+                // native scroll indicator already communicates overflow without
+                // introducing another surface or stealing contrast from the
+                // final row.
                 // The panel is usually summoned by a shortcut, so the hand is
                 // already on the keyboard; finishing with the mouse is the awkward
                 // part. Arrow keys walk the visible rows, Return focuses the
@@ -1033,7 +1051,8 @@ private struct AgentRowButton: View {
 
                         VStack(alignment: .leading, spacing: 3) {
                             // Agent identity is text, not an icon-recognition
-                            // quiz. With 32 marks (ten of them Pulse-made), an
+                            // quiz. With the full 33-agent roster (ten of them
+                            // Pulse-made), an
                             // icon alone cannot answer "which agent?".
                             HStack(
                                 alignment: .center,
@@ -1224,7 +1243,7 @@ private struct AgentRowButton: View {
             // when deep app-data reads are off. Name that boundary directly in
             // the row; "Process only" hid the actionable reason the session
             // title and activity were unavailable.
-            if !store.allowAppData, row.agent.requiresAppDataOptIn {
+            if row.agent.requiresAppDataOptIn && !store.isAppDataAllowed(for: row.agent) {
                 return store.tr(.supportCollectorPrivacyLimited)
             }
             return store.tr(.limitedData)
@@ -1287,6 +1306,7 @@ private struct AgentRowButton: View {
 
     @ViewBuilder
     private var secondaryActionItems: some View {
+        Button(store.tr(.details)) { store.openAgentDetail(row) }
         if row.waiting {
             Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
             Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
@@ -1501,14 +1521,30 @@ struct SettingsView: View {
         Section(store.tr(.general)) {
             Toggle(store.tr(.liveUpdates), isOn: $store.autoProbe)
                 .onChange(of: store.autoProbe) { _, _ in store.saveSettings() }
-            Toggle(store.tr(.agentDataAccess), isOn: $store.allowAppData)
-                .onChange(of: store.allowAppData) { _, _ in
-                    store.saveSettings()
-                    store.refresh(reason: "agent-data-policy")
-                }
+            Toggle(store.tr(.agentDataAccess), isOn: Binding(
+                get: { store.allowAppData },
+                set: { store.setAllAppDataAccess($0) }
+            ))
             Text(store.tr(.agentDataAccessHint))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            DisclosureGroup(store.tr(.agentDataAccessScopes)) {
+                Text(store.tr(.agentDataAccessScopeHint))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                ForEach(store.protectedAppDataAgents, id: \.self) { agent in
+                    Toggle(isOn: Binding(
+                        get: { store.allowAppData || store.appDataAgents.contains(agent) },
+                        set: { enabled in store.setAppDataAccess(for: agent, enabled: enabled) }
+                    )) {
+                        HStack(spacing: 6) {
+                            AgentIconView(id: agent)
+                            Text(agent.displayName)
+                        }
+                    }
+                    .disabled(store.allowAppData)
+                }
+            }
             Toggle(store.tr(.launchAtLogin), isOn: $store.launchAtLogin)
                 .onChange(of: store.launchAtLogin) { _, _ in store.saveSettings() }
             Picker(store.tr(.language), selection: $store.language) {
@@ -1882,7 +1918,10 @@ struct SupportCoverageView: View {
     // Support coverage is an inspection surface, not an alert inbox. Starting
     // on Observed keeps the first scan useful while “All” remains the explicit
     // path for auditing every covered adapter, including missing local sources.
-    @State private var filter: SupportFilter = .observed
+    // The full roster is the product contract. Start on All so an adapter
+    // without local evidence is visible with a concrete reason instead of
+    // disappearing behind an Observed-only filter.
+    @State private var filter: SupportFilter = .all
     @State private var showSafeReport = false
 
     enum SupportFilter: String, CaseIterable, Identifiable {
@@ -1964,7 +2003,7 @@ struct SupportCoverageView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if !store.allowAppData {
+                if store.supportHealth.contains(where: \.privacyLimited) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Label(
                             store.tr(.supportCollectorPrivacyLimitedDetail),
@@ -2012,6 +2051,10 @@ struct SupportCoverageView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                Text(summaryLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Picker("", selection: $filter) {
                     ForEach(SupportFilter.allCases) {
                         Text(filterLabel($0)).tag($0)
@@ -2069,6 +2112,17 @@ struct SupportCoverageView: View {
         .frame(minWidth: 580, minHeight: 280)
         .background(Color(nsColor: .windowBackgroundColor))
         .searchable(text: $query, prompt: store.tr(.supportSearch))
+    }
+
+    private var summaryLine: String {
+        let actionable = needsActionCount + limitedCount
+        let usable = observedCount - actionable
+        switch store.lang {
+        case .zh:
+            return "可用 \(max(0, usable)) · 需要处理 \(needsActionCount) · 信息受限 \(limitedCount) · 暂无本机证据 \(unavailableCount)"
+        case .en:
+            return "Usable \(max(0, usable)) · Needs action \(needsActionCount) · Limited \(limitedCount) · No local evidence \(unavailableCount)"
+        }
     }
 }
 
@@ -2176,6 +2230,22 @@ struct SupportHealthRow: View {
                     .font(.caption)
                 }
 
+                if let action = nextActionLabel {
+                    if item.privacyLimited {
+                        Button(action) { store.openSettings() }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    } else if [.failed, .permissionDenied, .schemaMismatch, .unscanned].contains(item.collectorState) {
+                        Button(action) { store.refresh(reason: "support-retry-\(item.agent.rawValue)") }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    } else {
+                        Label(action, systemImage: "arrow.right.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 DisclosureGroup(store.tr(.supportAdapterDiagnostics)) {
                     Text(store.supportAdapterDetail(item))
                         .font(.caption)
@@ -2227,6 +2297,18 @@ struct SupportHealthRow: View {
         case .installHooks: return store.tr(.installHooks)
         case .retry: return store.tr(.supportRetry)
         case .none: return ""
+        }
+    }
+
+    private var nextActionLabel: String? {
+        if item.privacyLimited { return store.tr(.supportEnableData) }
+        switch item.collectorState {
+        case .failed, .permissionDenied, .schemaMismatch, .unscanned:
+            return store.tr(.supportRetry)
+        case .sourceAbsent, .noSessions, .noRecentData:
+            return item.isObserved ? nil : store.tr(.supportRunAgent)
+        case .observed:
+            return nil
         }
     }
 }

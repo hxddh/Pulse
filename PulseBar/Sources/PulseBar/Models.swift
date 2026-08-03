@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.47.11"
+    static let semver = "0.48.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -76,6 +76,14 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
     case droid, commandCode = "command_code", antigravity, kimi
 
     var id: String { rawValue }
+
+    /// User-facing identity used when several vendor processes share one
+    /// surface. Cursor's `cursor-agent` worker is observed separately by the
+    /// collectors, but it is deliberately one Cursor row in the tray,
+    /// support matrix, and attention ledger.
+    var surfaceID: AgentID {
+        self == .cursorAgent ? .cursor : self
+    }
 
     var displayName: String {
         switch self {
@@ -772,7 +780,13 @@ struct AgentSupportHealth: Identifiable, Equatable {
         if collectorState == .unscanned {
             return isObserved ? .limited : .unavailable
         }
-        if collectorState.isIssue { return .needsAction }
+        if collectorState.isIssue {
+            // A bounded timeout that already returned rows is actionable for
+            // diagnostics, but the partial rows are still usable. Keep them
+            // visible as limited rather than hiding them behind an error state.
+            if collectorState == .failed, collectorRows > 0 { return .limited }
+            return .needsAction
+        }
         if isObserved,
            agent.waitingSource == .hooks,
            !waitingSignalReady {

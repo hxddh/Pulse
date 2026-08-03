@@ -13,8 +13,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/plan-0.27.md`](docs/plan-0.27.md) | The most recent written plan |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
-Everything is Swift under `PulseBar/`, plus three Python scripts in `src/`
-(harvest and hooks). The old Vercel Native SDK shell was deleted in 0.22 —
+Everything is Swift under `PulseBar/`; `src/` retains optional legacy harvest
+and hook scripts. The old Vercel Native SDK shell was deleted in 0.22 —
 recover from git history if you ever need it.
 
 ## Invariants
@@ -27,8 +27,9 @@ compiles and ships.
 - **No quota, cost, or reset HUD.** That is a different product.
 - **No approve/deny in the tray.** Pulse tells you to go look; it does not act
   for you.
-- **A harvest failure must not blank the scan.** Per-agent `guard()` in
-  `activity_scan.py`; one broken collector cannot blind the other 31.
+- **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
+  per-agent bounded adapter; the optional legacy `guard()` path has the same
+  isolation. One broken collector cannot blind the other 31.
 - **No fixed probe interval.** Cadence follows `ProbeSchedule` — a resident
   menu-bar app flagged for energy use is a dead product.
 - **The builder stays pure.** `SnapshotBuilder` takes the world through
@@ -55,9 +56,10 @@ python3 scripts/harvest_stats_check.py       # harvest emits facts that move, an
 python3 scripts/package_check.py    # reads the built .app
 ```
 
-`src/*.py` is the source of truth; `PulseBar/Sources/PulseBar/Resources/*.py`
-are copies `package.sh` syncs. CI fails if they diverge — run `package.sh`
-after editing harvest or hooks.
+`NativeActivityHarvest.swift` is the runtime source of truth. The Python files
+are optional legacy/hook assets; `package.sh` may sync them for explicit
+compatibility diagnostics, but a missing Python runtime must never block the
+app, native harvest, or self-test.
 
 **Version truth:** `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`.
 CHANGELOG's newest heading and the README badge follow it.
@@ -107,6 +109,6 @@ to users.
 
 ## Current state
 
-0.45.0 is the current source version. GitHub's latest public Release must be
+0.48.0 is the current source version. GitHub's latest public Release must be
 checked separately; a merged version is not proof that a signed/notarized DMG
 was published. See `CHANGELOG.md` for the complete contract.

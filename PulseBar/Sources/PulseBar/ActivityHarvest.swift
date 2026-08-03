@@ -1,10 +1,55 @@
 import Foundation
 
 enum ActivityHarvest {
+    /// Versioned row wire retained for the explicit legacy collector and
+    /// fixture parser. Normal harvest constructs typed rows in Swift, so a
+    /// new field cannot silently shift a positional column in the app.
+    static let wireSchemaVersion = 2
+
+    private struct RowEnvelope: Decodable {
+        var schema: Int
+        var type: String
+        var agent: String
+        var task: String = ""
+        var tokensIn: Int = 0
+        var tokensOut: Int = 0
+        var tool: String = ""
+        var skill: String = ""
+        var project: String = ""
+        var cwd: String = ""
+        var harvestMs: Int64 = 0
+        var subRunning: Int = 0
+        var subTotal: Int = 0
+        var sessionID: String = ""
+        var records: Int = 0
+        var startedMs: Int64 = 0
+        var evidence: String = "cache"
+        var phase: String = ""
+        var outcome: String = ""
+        var model: String = ""
+        var mode: String = ""
+        var errors: Int = 0
+        var files: Int = 0
+        var contextPercent: Int = 0
+        var progressDone: Int = 0
+        var progressTotal: Int = 0
+    }
+
+    private struct HealthEnvelope: Decodable {
+        var schema: Int
+        var type: String
+        var agent: String
+        var state: String
+        var durationMs: Int = 0
+        var rowCount: Int = 0
+        var sourcePresent: Bool = false
+        var errorKind: String = ""
+    }
+
     enum CollectorState: String, Equatable {
         case observed
-        /// Legacy 0.35 wire value; retained so mixed-version fixture data can
-        /// still be diagnosed instead of discarded.
+        /// Fixture-only state kept so an isolated legacy fixture can still be
+        /// diagnosed instead of discarded. Packaged scans emit schema 2.
         case noRecentData = "no_recent_data"
         case sourceAbsent = "source_absent"
         case noSessions = "no_sessions"
@@ -101,27 +146,62 @@ enum ActivityHarvest {
     /// Keep named, non-draft local sessions visible for a bounded work window
     /// without treating the Cursor application itself as running evidence.
     static let cursorLocalWindowMs: Int64 = 6 * 60 * 60 * 1000
-    /// Kill hung activity_scan.py so Refresh cannot stick forever.
+    /// Kill a hung legacy activity_scan.py so an explicit diagnostic cannot
+    /// stick Refresh forever. Native harvest is bounded in-process.
     ///
-    /// A cold Python/SQLite start under App Nap can take just over 2.5 s even
+    /// A cold legacy runtime/SQLite start under App Nap can take just over 2.5 s even
     /// though warm scans finish below one second. The old deadline therefore
     /// guaranteed a process-only first snapshot and hid useful activity until
     /// the next 15-second harvest cadence. Keep the bound tight, but allow the
     /// first honest result to land.
-    static let harvestTimeoutSec: Double = 3.5
+    static let harvestTimeoutSec: Double = 6.0
 
-    /// The Python stream reports one health line for every user-facing adapter.
-    /// Cursor Agent is intentionally merged into Cursor, so it has no separate
-    /// collector line. This set lets the app distinguish a complete scan from
-    /// a partial stream without relying on row count (which may legitimately be
-    /// zero for an installed but idle Agent).
+    /// Native and legacy scans report one health result for every user-facing
+    /// adapter. Cursor Agent is intentionally merged into Cursor, so it has no
+    /// separate collector line. This set lets the app distinguish a complete
+    /// scan from a partial result without relying on row count (which may
+    /// legitimately be zero for an installed but idle Agent).
     static let expectedCollectorIDs: Set<AgentID> = Set(
         AgentID.allCases.filter { $0 != .cursorAgent }
     )
 
     static func isCompleteHealth(_ health: [CollectorHealth]) -> Bool {
-        let reported = Set(health.map(\.id)).subtracting([.cursorAgent])
-        return expectedCollectorIDs.isSubset(of: reported)
+        let reported = Set(health.map { $0.id.surfaceID })
+        // A full list of IDs is not enough: the native scanner intentionally
+        // emits an explicit `.unscanned` line when its global budget/deadline
+        // expires. Treat that result as partial so SnapshotBuilder can retain
+        // the previous evidence for the adapters it never reached.
+        let hasIncomplete = health.contains { item in
+            // Cursor Agent is a transport alias of Cursor, not an additional
+            // public collector. A legacy stream may append an alias health
+            // line after the real Cursor result; it must not make an otherwise
+            // complete surface scan look partial.
+            guard item.id.surfaceID == item.id else { return false }
+            switch item.state {
+            case .failed, .schemaMismatch, .unscanned:
+                return true
+            case .observed, .noRecentData, .sourceAbsent, .noSessions, .permissionDenied:
+                return false
+            }
+        }
+        return expectedCollectorIDs.isSubset(of: reported) && !hasIncomplete
+    }
+
+    /// A collector launch/preflight failure must be visible as an actionable
+    /// health result, not as thirty-one silent “unscanned” adapters. The
+    /// synthetic rows carry only a stable reason class; the prior good rows
+    /// remain available to SnapshotBuilder and are never replaced by emptiness.
+    static func unavailableHealth(_ errorKind: String) -> [CollectorHealth] {
+        expectedCollectorIDs.sorted { $0.rawValue < $1.rawValue }.map {
+            CollectorHealth(
+                id: $0,
+                state: .failed,
+                durationMs: 0,
+                rowCount: 0,
+                sourcePresent: false,
+                errorKind: errorKind
+            )
+        }
     }
 
     /// Keep the last known rows for adapters that a timed-out harvest never
@@ -136,10 +216,25 @@ enum ActivityHarvest {
         health: [CollectorHealth],
         previous: [Row]
     ) -> [Row] {
-        let normalize: (AgentID) -> AgentID = { id in
-            id == .cursorAgent ? .cursor : id
-        }
-        var reported = Set(health.map { normalize($0.id) })
+        let normalize: (AgentID) -> AgentID = { $0.surfaceID }
+        // An adapter that explicitly failed without yielding a row did not
+        // produce a trustworthy replacement. Keep its last good rows until
+        // the next successful/empty result, while still replacing an adapter
+        // when it returned a partial row set alongside the failure.
+        var reported = Set(health.compactMap { item -> AgentID? in
+            // An empty issue result is not a trustworthy replacement. This
+            // covers a per-agent timeout/lock/corrupt source, an explicit
+            // permission or schema failure, and adapters the global deadline
+            // never reached. Keeping the last good rows is what makes a
+            // partial scan non-destructive; only a valid empty result such as
+            // source_absent/no_sessions is allowed to clear that adapter.
+            switch item.state {
+            case .failed, .permissionDenied, .schemaMismatch, .unscanned:
+                return item.rowCount > 0 ? normalize(item.id) : nil
+            case .observed, .noRecentData, .sourceAbsent, .noSessions:
+                return normalize(item.id)
+            }
+        })
         // A legacy or third-party script may emit a row before its health line.
         // Treat that row's adapter as reached rather than retaining a stale
         // duplicate beside the fresh evidence.
@@ -192,7 +287,7 @@ enum ActivityHarvest {
         if row.subRunning > 0 { return true }
         // Missing mtime is not trustworthy as a standalone running signal.
         guard row.harvestMs > 0 else { return false }
-        let window = row.id == .cursor && row.mode == "local"
+        let window = row.id.surfaceID == .cursor && row.mode == "local"
             ? cursorLocalWindowMs
             : freshWindowMs
         let age = nowMs - row.harvestMs
@@ -239,16 +334,62 @@ enum ActivityHarvest {
     ///
     /// A timeout no longer throws away what already arrived: harvest streams one
     /// complete line per agent, so partial output is still honest data.
-    static func scan(allowAppData: Bool = false) -> (
+    static func scan(
+        allowAppData: Bool = false,
+        appDataAgents: Set<AgentID> = []
+    ) -> (
         rows: [Row],
         health: [CollectorHealth],
         unreliable: Bool,
         complete: Bool
     ) {
-        DebugLog.write("harvest policy appData=\(allowAppData)")
+        // Swift is the product path. It has no external runtime, no child
+        // process deadline, and no Python/TCC prompt side effect. The legacy
+        // adapter can still be requested explicitly for vendor-specific
+        // diagnostics, but a missing interpreter can never affect the normal
+        // tray scan.
+        let native = NativeActivityHarvest.scan(
+            allowAppData: allowAppData,
+            appDataAgents: appDataAgents
+        )
+        DebugLog.write(
+            "native harvest rows=\(native.rows.count) adapters=\(native.health.count) "
+                + "complete=\(native.complete) appData=\(allowAppData)"
+        )
+        guard legacyPythonRequested else {
+            return (native.rows, native.health, false, native.complete)
+        }
+        let legacy = legacyPythonScan(
+            allowAppData: allowAppData,
+            appDataAgents: appDataAgents
+        )
+        // A compatibility parser is allowed to enrich a diagnostic run, but
+        // it must not replace a healthy native result with an empty/partial
+        // scan. Normal users never enter this branch.
+        if !legacy.rows.isEmpty && legacy.complete {
+            return legacy
+        }
+        return (native.rows, native.health, false, native.complete)
+    }
+
+    private static var legacyPythonRequested: Bool {
+        ProcessInfo.processInfo.environment["PULSE_LEGACY_PYTHON_HARVEST"] == "1"
+            || CommandLine.arguments.contains("--legacy-python-harvest")
+    }
+
+    private static func legacyPythonScan(
+        allowAppData: Bool,
+        appDataAgents: Set<AgentID>
+    ) -> (
+        rows: [Row],
+        health: [CollectorHealth],
+        unreliable: Bool,
+        complete: Bool
+    ) {
+        DebugLog.write("legacy Python harvest requested appData=\(allowAppData)")
         // LSUIElement apps with no visible window are prime App Nap targets.
-        // The Python child can finish in ~300 ms when scheduled yet scrape the
-        // 3.5 s deadline when the parent is napped. Keep only this bounded scan
+        // The optional child can finish in ~300 ms when scheduled yet scrape
+        // the deadline when the parent is napped. Keep only this bounded scan
         // responsive; allow system sleep and end the activity immediately.
         let activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep],
@@ -258,10 +399,15 @@ enum ActivityHarvest {
 
         guard let script = scriptURL() else {
             DebugLog.write("harvest scriptURL=nil")
-            return ([], [], true, false)
+            return ([], unavailableHealth("script_unavailable"), true, false)
         }
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        guard let python = RuntimeResolver.python3() else {
+            DebugLog.write("legacy harvest runtime unavailable — native result kept")
+            return ([], unavailableHealth("legacy_runtime_unavailable"), true, false)
+        }
+        DebugLog.write("legacy harvest runtime=\(python.path) protocol=\(wireSchemaVersion)")
+        task.executableURL = python
         // `scan()` promises that a timeout keeps every complete row already
         // emitted. Python buffers stdout when it is a pipe, so without `-u`
         // the parent saw partial=0 even after early collectors had finished;
@@ -271,6 +417,13 @@ enum ActivityHarvest {
         // Keep the privacy policy explicit for every child. In particular, do
         // not inherit a developer shell's opt-in into the packaged tray app.
         environment["PULSE_ALLOW_APP_DATA"] = allowAppData ? "1" : "0"
+        environment["PULSE_ALLOW_APP_DATA_AGENTS"] = appDataAgents
+            .map(\.rawValue)
+            .sorted()
+            .joined(separator: ",")
+        // The typed protocol is opt-in at the process boundary so a user can
+        // still run the source script manually and inspect its legacy TSV.
+        environment["PULSE_HARVEST_PROTOCOL"] = "2"
         if CommandLine.arguments.contains("--trace-harvest") {
             environment["PULSE_HARVEST_TRACE"] = "1"
         }
@@ -289,7 +442,7 @@ enum ActivityHarvest {
             try task.run()
         } catch {
             DebugLog.write("harvest throw=\(error.localizedDescription) — keep prior")
-            return ([], [], true, false)
+            return ([], unavailableHealth("process_launch_failed"), true, false)
         }
 
         drain(out.fileHandleForReading, into: outSink, done: outDone)
@@ -349,6 +502,41 @@ enum ActivityHarvest {
             complete = ""
         }
         for line in complete.split(whereSeparator: \.isNewline) {
+            if line.first == "{" {
+                if let data = line.data(using: .utf8),
+                   let envelope = try? JSONDecoder().decode(RowEnvelope.self, from: data),
+                   envelope.schema == wireSchemaVersion,
+                   envelope.type == "row",
+                   let id = mapAgent(envelope.agent) {
+                    out.append(Row(
+                        id: id,
+                        task: ContentSanitizer.redact(envelope.task),
+                        project: ContentSanitizer.redact(envelope.project),
+                        cwd: ContentSanitizer.redact(envelope.cwd),
+                        skill: ContentSanitizer.redact(envelope.skill),
+                        tokensIn: max(0, envelope.tokensIn),
+                        tokensOut: max(0, envelope.tokensOut),
+                        tool: ContentSanitizer.redact(envelope.tool),
+                        harvestMs: envelope.harvestMs,
+                        subRunning: max(0, envelope.subRunning),
+                        subTotal: max(0, envelope.subTotal),
+                        sessionID: envelope.sessionID,
+                        records: max(0, envelope.records),
+                        startedMs: envelope.startedMs,
+                        evidence: ObservationSource(rawValue: envelope.evidence) ?? .cache,
+                        phase: ContentSanitizer.redact(envelope.phase),
+                        outcome: ContentSanitizer.redact(envelope.outcome),
+                        model: ContentSanitizer.redact(envelope.model),
+                        mode: ContentSanitizer.redact(envelope.mode),
+                        errors: max(0, envelope.errors),
+                        files: max(0, envelope.files),
+                        contextPercent: max(0, min(100, envelope.contextPercent)),
+                        progressDone: max(0, envelope.progressDone),
+                        progressTotal: max(0, envelope.progressTotal)
+                    ))
+                }
+                continue
+            }
             let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard cols.count >= 2, let id = mapAgent(cols[0]) else { continue }
             out.append(Row(
@@ -394,6 +582,24 @@ enum ActivityHarvest {
             complete = ""
         }
         for line in complete.split(whereSeparator: \.isNewline) {
+            if line.first == "{" {
+                if let data = line.data(using: .utf8),
+                   let envelope = try? JSONDecoder().decode(HealthEnvelope.self, from: data),
+                   envelope.schema == wireSchemaVersion,
+                   envelope.type == "health",
+                   let id = mapAgent(envelope.agent),
+                   let state = CollectorState(rawValue: envelope.state) {
+                    out.append(CollectorHealth(
+                        id: id,
+                        state: state,
+                        durationMs: max(0, envelope.durationMs),
+                        rowCount: max(0, envelope.rowCount),
+                        sourcePresent: envelope.sourcePresent,
+                        errorKind: ContentSanitizer.redact(envelope.errorKind)
+                    ))
+                }
+                continue
+            }
             let cols = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard cols.count >= 5,
                   cols[0] == "#health",
@@ -417,6 +623,12 @@ enum ActivityHarvest {
     /// Exposed for `--selftest`, which must check the same resolution the app
     /// actually uses rather than a re-implementation of it.
     static func selfTestScriptPath() -> String? { scriptURL()?.path }
+
+    /// Optional compatibility runtime. The native collector never calls this;
+    /// it exists only for an explicitly requested legacy diagnostic scan.
+    static func pythonURL() -> URL? {
+        RuntimeResolver.python3()
+    }
 
     private static func scriptURL() -> URL? {
         let fm = FileManager.default
@@ -476,7 +688,8 @@ enum AttentionReader {
 
         /// Stable key for last-event-wins map.
         var mapKey: String {
-            session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
+            let surfaceID = id.surfaceID
+            return session.isEmpty ? surfaceID.rawValue : "\(surfaceID.rawValue)|\(session)"
         }
     }
 
@@ -530,7 +743,9 @@ enum AttentionReader {
             let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if raw.isEmpty || raw.hasPrefix("#") { continue }
             let cols = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard cols.count >= 3, let id = ActivityHarvest.mapAgent(cols[0]) else { continue }
+            guard cols.count >= 3,
+                  let parsedID = ActivityHarvest.mapAgent(cols[0]) else { continue }
+            let id = parsedID.surfaceID
             let kind = Kind.parse(cols[1])
             let tsMs = Int64(cols[2]) ?? 0
             let message = cols.count > 3 ? ContentSanitizer.redact(cols[3]) : ""

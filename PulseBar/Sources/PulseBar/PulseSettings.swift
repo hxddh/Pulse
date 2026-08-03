@@ -22,6 +22,13 @@ enum TrayGrouping: String, CaseIterable, Identifiable {
 /// minutes migration that runs once on every upgrade — are testable without
 /// touching `~/Library/Application Support`.
 struct PulseSettings: Equatable {
+    /// Deep app-data grants are intentionally versioned. A pre-0.48 settings
+    /// file may contain `appData=1` from the old all-or-nothing switch; carrying
+    /// that grant into the scoped policy can immediately trigger a new TCC
+    /// prompt after an ad-hoc update. The user must opt in again under the
+    /// current, per-agent policy.
+    static let appDataPolicyVersion = 2
+
     var autoProbe = true
     var notifyOnIdle = true
     var notifyOnWaiting = true
@@ -35,6 +42,9 @@ struct PulseSettings: Equatable {
     /// Deep app-data reads are protected by macOS TCC. Keep them opt-in so a
     /// new ad-hoc build never interrupts the tray with a cross-app prompt.
     var allowAppData = false
+    /// Per-agent scope for the deep scan. An empty set means no protected
+    /// source is enabled; `allowAppData` is the explicit "all" switch.
+    var appDataAgents: Set<AgentID> = []
     var hotkey: HotkeyChoice = .commandShiftP
     /// Carbon global-hotkey registration can trigger an Apple Events privacy
     /// request on unsigned builds. Keep it opt-in; choosing a shortcut in the
@@ -72,6 +82,7 @@ struct PulseSettings: Equatable {
         var legacyStartHour: Int?
         var legacyEndHour: Int?
         var sawMinuteKeys = false
+        var sawCurrentAppDataPolicy = false
 
         for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
@@ -94,6 +105,10 @@ struct PulseSettings: Equatable {
             case "login": s.launchAtLogin = on
             case "updates": s.updateCheckEnabled = on
             case "appData": s.allowAppData = on
+            case "appDataAgents":
+                s.appDataAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
+            case "appDataPolicyVersion":
+                sawCurrentAppDataPolicy = Int(raw) == Self.appDataPolicyVersion
             case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .commandShiftP
             case "hotkeyEnabled": s.hotkeyEnabled = on
             case "mute":
@@ -112,6 +127,13 @@ struct PulseSettings: Equatable {
             if let h = legacyStartHour { s.quietStartMinute = h * 60 }
             if let h = legacyEndHour { s.quietEndMinute = h * 60 }
         }
+        if !sawCurrentAppDataPolicy {
+            // Do not silently replay an old broad TCC grant. The next explicit
+            // toggle writes the scoped policy marker and makes the choice
+            // durable without reintroducing a background permission request.
+            s.allowAppData = false
+            s.appDataAgents.removeAll()
+        }
         s.quietStartMinute = clampMinute(s.quietStartMinute)
         s.quietEndMinute = clampMinute(s.quietEndMinute)
         return s
@@ -119,6 +141,7 @@ struct PulseSettings: Equatable {
 
     func serialized() -> String {
         let muted = mutedAgents.map(\.rawValue).sorted().joined(separator: ",")
+        let appData = appDataAgents.map(\.rawValue).sorted().joined(separator: ",")
         return """
             auto=\(autoProbe ? 1 : 0)
             notify=\(notifyOnIdle ? 1 : 0)
@@ -130,6 +153,8 @@ struct PulseSettings: Equatable {
             login=\(launchAtLogin ? 1 : 0)
             updates=\(updateCheckEnabled ? 1 : 0)
             appData=\(allowAppData ? 1 : 0)
+            appDataAgents=\(appData)
+            appDataPolicyVersion=\(Self.appDataPolicyVersion)
             hotkey=\(hotkey.rawValue)
             hotkeyEnabled=\(hotkeyEnabled ? 1 : 0)
             grouping=\(trayGrouping.rawValue)
@@ -162,6 +187,7 @@ struct PulseSettings: Equatable {
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
             + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
             + "appData=\(allowAppData) "
+            + "appDataAgents=\(appDataAgents.count) "
             + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
             + "stall=\(stallMinutes) snooze=\(snoozeMinutes)"
     }

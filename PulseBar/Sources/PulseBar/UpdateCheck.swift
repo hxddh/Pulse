@@ -21,7 +21,15 @@ final class UpdateCheck {
         var sha256: String
 
         var canVerifyDownload: Bool {
-            !assetURL.isEmpty && sha256.count == 64
+            !assetURL.isEmpty
+                && assetBytes > 0
+                && sha256.count == 64
+                && sha256.unicodeScalars.allSatisfy {
+                    let value = $0.value
+                    return (48...57).contains(value)
+                        || (65...70).contains(value)
+                        || (97...102).contains(value)
+                }
         }
     }
 
@@ -137,6 +145,18 @@ final class UpdateCheck {
             store.updateDownloadStatus = .failed("release has no verifiable DMG")
             return
         }
+        guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 14 else {
+            store.updateDownloadStatus = .failed("requires macOS 14 or newer")
+            return
+        }
+        #if arch(arm64)
+        // Current Pulse distributions are intentionally Apple-silicon builds.
+        // Refuse an ambiguous install path instead of downloading an artifact
+        // that cannot launch on the current machine.
+        #else
+        store.updateDownloadStatus = .failed("this release targets Apple silicon")
+        return
+        #endif
         store.updateDownloadStatus = .downloading
         var request = URLRequest(url: url)
         request.timeoutInterval = 120
@@ -149,8 +169,26 @@ final class UpdateCheck {
                 return
             }
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                try? FileManager.default.removeItem(at: tempURL)
                 Task { @MainActor in
                     store.updateDownloadStatus = .failed("HTTP \(http.statusCode)")
+                }
+                return
+            }
+            if let http = response as? HTTPURLResponse {
+                guard let contentType = http.value(forHTTPHeaderField: "Content-Type"),
+                      contentType.lowercased().contains("octet-stream")
+                        || contentType.lowercased().contains("diskimage") else {
+                    try? FileManager.default.removeItem(at: tempURL)
+                    Task { @MainActor in
+                        store.updateDownloadStatus = .failed("missing or unexpected installer content type")
+                    }
+                    return
+                }
+            } else {
+                try? FileManager.default.removeItem(at: tempURL)
+                Task { @MainActor in
+                    store.updateDownloadStatus = .failed("missing installer response headers")
                 }
                 return
             }
@@ -173,10 +211,9 @@ final class UpdateCheck {
                 let name = release.assetName.isEmpty
                     ? "pulse-\(release.version)-macos.dmg"
                     : release.assetName
-                let destination = downloads.appendingPathComponent(name)
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
+                let destination = Self.nonDestructiveDestination(
+                    base: downloads.appendingPathComponent(name)
+                )
                 try FileManager.default.moveItem(at: tempURL, to: destination)
                 Task { @MainActor in
                     store.updateDownloadStatus = .ready(destination)
@@ -189,6 +226,22 @@ final class UpdateCheck {
                 }
             }
         }.resume()
+    }
+
+    /// Never delete a previously downloaded installer behind the user's back.
+    /// A suffix also makes concurrent update attempts recoverable instead of
+    /// racing over the same destination path.
+    nonisolated static func nonDestructiveDestination(base: URL) -> URL {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: base.path) else { return base }
+        let stem = base.deletingPathExtension().lastPathComponent
+        let ext = base.pathExtension
+        for index in 1...99 {
+            let name = "\(stem) (\(index)).\(ext)"
+            let candidate = base.deletingLastPathComponent().appendingPathComponent(name)
+            if !fm.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return base.deletingLastPathComponent().appendingPathComponent("\(stem)-\(Int(Date().timeIntervalSince1970)).\(ext)")
     }
 
     /// `v0.22.0` / `0.22.0` → `0.22.0`.

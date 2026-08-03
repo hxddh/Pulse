@@ -60,6 +60,7 @@ enum L10n {
         case .refreshing: return "Refreshing…"
         case .clearWaiting: return "Clear waiting"
         case .settings: return "Settings…"
+        case .details: return "Details"
         case .quit: return "Quit Pulse"
         case .focusTerminal: return "Focus terminal"
         case .general: return "General"
@@ -67,6 +68,8 @@ enum L10n {
         case .agentDataAccess: return "Read app data for richer details"
         case .agentDataAccessHint:
             return "Off by default. Enables deeper Cursor/VS Code/Warp scans and may ask macOS for cross-app data access."
+        case .agentDataAccessScopes: return "Choose data sources"
+        case .agentDataAccessScopeHint: return "Only selected agents receive deeper app-data reads. Pulse never asks on launch."
         case .notifications: return "Notify when idle"
         case .notifyWaiting: return "Notify on new Waiting"
         case .quietHours: return "Quiet hours (idle only)"
@@ -252,6 +255,16 @@ enum L10n {
         case .supportProgress: return "execution signal"
         case .supportAction: return "last action"
         case .supportModel: return "model"
+        case .supportEvidence: return "evidence"
+        case .session: return "session"
+        case .detailTool: return "tool"
+        case .detailSkill: return "skill"
+        case .detailPhase: return "phase"
+        case .detailOutcome: return "outcome"
+        case .detailEvidence: return "evidence"
+        case .detailFiles: return "files"
+        case .detailErrors: return "errors"
+        case .detailContext: return "context"
         case .supportResources: return "resources"
         case .supportObservedSignals: return "Observed: %@"
         case .supportNoObservedSignals: return "No usable session signals yet"
@@ -310,6 +323,8 @@ enum L10n {
         case .supportUnavailableCount: return "Not observed · %d"
         case .supportUsefulCoverage: return "%d/%d useful signals"
         case .supportRetry: return "Retry scan"
+        case .supportRunAgent: return "Run this agent once"
+        case .supportEnableData: return "Choose its data source"
         case .supportAdapterDiagnostics: return "Adapter diagnostics"
         case .supportSafeReport: return "Preview safe report"
         case .supportCopySafeReport: return "Copy safe report"
@@ -364,12 +379,15 @@ enum L10n {
         case .refreshing: return "刷新中…"
         case .clearWaiting: return "清除等待"
         case .settings: return "偏好设置…"
+        case .details: return "详情"
         case .quit: return "退出 Pulse"
         case .focusTerminal: return "聚焦终端"
         case .general: return "通用"
         case .liveUpdates: return "实时更新"
         case .agentDataAccess: return "读取应用数据以展示更多详情"
         case .agentDataAccessHint: return "默认关闭。开启后会深入扫描 Cursor / VS Code / Warp，macOS 可能会请求访问其他应用的数据。"
+        case .agentDataAccessScopes: return "选择数据来源"
+        case .agentDataAccessScopeHint: return "只有选中的 Agent 会读取更深层的应用数据。Pulse 不会在启动时索要权限。"
         case .notifications: return "全部空闲时通知"
         case .notifyWaiting: return "新的「需要你」时通知"
         case .quietHours: return "安静时段（仅抑制空闲通知）"
@@ -547,6 +565,16 @@ enum L10n {
         case .supportProgress: return "执行信号"
         case .supportAction: return "最近动作"
         case .supportModel: return "模型"
+        case .supportEvidence: return "证据"
+        case .session: return "会话"
+        case .detailTool: return "工具"
+        case .detailSkill: return "技能"
+        case .detailPhase: return "阶段"
+        case .detailOutcome: return "结果"
+        case .detailEvidence: return "证据"
+        case .detailFiles: return "文件"
+        case .detailErrors: return "错误"
+        case .detailContext: return "上下文"
         case .supportResources: return "资源"
         case .supportObservedSignals: return "已观测：%@"
         case .supportNoObservedSignals: return "尚未观测到可用会话信号"
@@ -605,6 +633,8 @@ enum L10n {
         case .supportUnavailableCount: return "尚未观测 · %d"
         case .supportUsefulCoverage: return "有效信号 %d/%d"
         case .supportRetry: return "重新扫描"
+        case .supportRunAgent: return "先运行一次这个 Agent"
+        case .supportEnableData: return "选择它的数据来源"
         case .supportAdapterDiagnostics: return "适配器诊断"
         case .supportSafeReport: return "预览安全报告"
         case .supportCopySafeReport: return "复制安全报告"
@@ -646,8 +676,8 @@ enum L10n {
         case recent1, recentN, recent, idleWord
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
-        case focusTerminal, focusTTY, focusWarp, dismissWait
-        case general, liveUpdates, agentDataAccess, agentDataAccessHint, notifications, notifyWaiting, launchAtLogin, language
+        case focusTerminal, focusTTY, focusWarp, dismissWait, details
+        case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
@@ -688,7 +718,9 @@ enum L10n {
         case noProject, stalled, stalledFor, noProgressSignal
         case supportHealth, supportHealthHint, supportScanIncomplete, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
-        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, supportResources, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
+        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, supportEvidence, session
+        case detailTool, detailSkill, detailPhase, detailOutcome, detailEvidence, detailFiles, detailErrors, detailContext
+        case supportResources, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingWaiting
         case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportSharedCursor
@@ -707,7 +739,7 @@ enum L10n {
         case supportFilterNoData, supportFilterAll, supportNoFilterResults
         case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable
         case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportUsefulCoverage
-        case supportRetry, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport
+        case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting

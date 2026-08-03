@@ -36,6 +36,10 @@ final class StatusStore: ObservableObject {
     /// trigger macOS's cross-app privacy prompt. The default scan remains
     /// useful through hooks, dot-directory sessions, and process evidence.
     @Published var allowAppData = false
+    /// Protected app-data access is scoped to the agents the user actually
+    /// wants richer details for. The all-agents switch remains available, but
+    /// a single TCC decision must never silently widen the scan to every app.
+    @Published var appDataAgents: Set<AgentID> = []
     @Published var updateStatus: UpdateCheck.Status = .idle
     @Published var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
     @Published private(set) var installReport = InstallTruth.Report.empty
@@ -112,6 +116,10 @@ final class StatusStore: ObservableObject {
     /// cannot make an approval disappear without either a banner or a tray
     /// prompt.
     private var pendingWaitingNotifications: [String: AgentRow] = [:]
+    /// Cross-launch Waiting/delivery state. This is deliberately separate from
+    /// the agent-owned attention.tsv bridge so a restart cannot lose the only
+    /// human-confirmation edge or emit it twice.
+    private var attentionLedger = AttentionLedger.load()
     /// Soft-dismissed Cursor harvest pending until skill clears.
     private var dismissedPendingKeys: Set<String> = []
     /// Row key → when its "remind me later" runs out.
@@ -130,7 +138,72 @@ final class StatusStore: ObservableObject {
 
     var lang: ResolvedLanguage { language.resolved }
 
+    var protectedAppDataAgents: [AgentID] {
+        // `cursorAgent` is merged into Cursor in the tray and shares the same
+        // local store. Showing both aliases as separate switches makes a
+        // single permission look like two independent promises. Keep the
+        // policy aliases internal while exposing one switch per user-facing
+        // data source.
+        AgentID.allCases.filter { $0.requiresAppDataOptIn && $0 != .cursorAgent }
+    }
+
+    /// The Python collector groups a few vendor identities behind one local
+    /// store. Selecting either public identity must unlock that store, but the
+    /// policy never widens to unrelated agents.
+    private var harvestAppDataAgents: Set<AgentID> {
+        var result = appDataAgents
+        if result.contains(.cursor) || result.contains(.cursorAgent) {
+            result.insert(.cursor)
+            result.insert(.cursorAgent)
+        }
+        if result.contains(.cascade) || result.contains(.windsurf) {
+            result.insert(.cascade)
+            result.insert(.windsurf)
+        }
+        return result
+    }
+
+    func isAppDataAllowed(for agent: AgentID) -> Bool {
+        allowAppData || harvestAppDataAgents.contains(agent)
+    }
+
+    private var appDataScanDescription: String {
+        if allowAppData { return "all" }
+        let scoped = appDataAgents.map(\.rawValue).sorted()
+        return scoped.isEmpty ? "disabled" : "scoped:\(scoped.joined(separator: ","))"
+    }
+
+    func setAppDataAccess(for agent: AgentID, enabled: Bool) {
+        if enabled {
+            appDataAgents.insert(agent)
+        } else {
+            appDataAgents.remove(agent)
+        }
+        saveSettings()
+    }
+
+    func setAllAppDataAccess(_ enabled: Bool) {
+        allowAppData = enabled
+        if enabled {
+            appDataAgents.formUnion(protectedAppDataAgents)
+        } else {
+            appDataAgents.removeAll()
+        }
+        saveSettings()
+    }
+
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+
+    /// User-facing last action for the detail inspector. The raw identifier is
+    /// still available under Diagnostics; the primary fact uses the same
+    /// phase vocabulary as the tray so `exec`, `apply_patch`, and vendor
+    /// aliases do not appear as unexplained implementation jargon.
+    func detailLastAction(_ row: AgentRow) -> String {
+        guard !row.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return tr(.noActivityYet)
+        }
+        return readableAction(row.tool)
+    }
 
     /// Claude/Codex live but hooks not wired — tray nudge only.
     var needsHooksNudge: Bool {
@@ -168,6 +241,9 @@ final class StatusStore: ObservableObject {
             "channel: \(isVersionMismatch ? "mismatch" : (PulseVersion.bundleVersion == nil ? "dev" : "release"))",
             "macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "lang: \(language.rawValue) · autoProbe: \(autoProbe)",
+            "appDataScan: \(appDataScanDescription)",
+            "harvestProtocol: native-1 (legacy-json-\(ActivityHarvest.wireSchemaVersion) opt-in)",
+            "helperStatus: harvest=native legacyPython=\(ActivityHarvest.pythonURL() == nil ? "optional-unavailable" : "optional-ready")",
             "hooks: \(hooksStatus.label(lang: lang))",
             "glance: \(snapshot.glance) · rows: \(snapshot.rows.count)/\(snapshot.totalCount)",
             "cadence: \(probeIntervalDescription) · \(probeStats.summary(now: Date()))",
@@ -188,6 +264,10 @@ final class StatusStore: ObservableObject {
         lines.append(
             "notifications: authorization=\(notificationAuthorization) "
                 + "notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)"
+        )
+        lines.append(
+            "attentionLedger: active=\(attentionLedger.activeKeys.count) "
+                + "events=\(attentionLedger.events.count) baseline=\(attentionLedger.baselineEstablished)"
         )
         let failedCollectors = collector.filter { $0.collectorState.isIssue }
         if !failedCollectors.isEmpty {
@@ -231,8 +311,11 @@ final class StatusStore: ObservableObject {
             PulseVersion.fingerprint,
             "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "Agents: \(supportHealth.count)",
-            "appDataScan: \(allowAppData ? "enabled" : "disabled")",
+            "appDataScan: \(appDataScanDescription)",
+            "harvestProtocol: native-1 (legacy-json-\(ActivityHarvest.wireSchemaVersion) opt-in)",
+            "helperStatus: harvest=native legacyPython=\(ActivityHarvest.pythonURL() == nil ? "optional-unavailable" : "optional-ready")",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
+            "attentionLedger: active=\(attentionLedger.activeKeys.count) events=\(attentionLedger.events.count) baseline=\(attentionLedger.baselineEstablished)",
         ]
         for item in supportHealth {
             let waiting = item.agent.waitingSource == .none
@@ -297,10 +380,10 @@ final class StatusStore: ObservableObject {
                     .min() ?? 0,
                 processCount: rows.map(\.processCount).max() ?? 0,
                 evidence: strongest,
-                lastSuccessfulReadMs: max(
-                    lastSuccessfulReadByAgent[agent] ?? 0,
-                    rows.map(\.harvestMs).max() ?? 0
-                ),
+                // This clock is when Pulse successfully read the adapter, not
+                // when the vendor session last changed. Reusing row.harvestMs
+                // here made a healthy idle collector look months stale.
+                lastSuccessfulReadMs: lastSuccessfulReadByAgent[agent] ?? 0,
                 lastWaitingSignalMs: waitingEvents[agent] ?? 0,
                 hasGoal: rows.contains { $0.usefulTask != nil },
                 hasWorkspace: rows.contains { !$0.displayPath.isEmpty },
@@ -320,7 +403,7 @@ final class StatusStore: ObservableObject {
                         || $0.contextPercent > 0 || !$0.model.isEmpty || !$0.mode.isEmpty
                 },
                 waitingSignalReady: waitingSignalReady(for: agent),
-                privacyLimited: !allowAppData && agent.requiresAppDataOptIn,
+                privacyLimited: agent.requiresAppDataOptIn && !isAppDataAllowed(for: agent),
                 hasActionSignal: rows.contains { !$0.tool.isEmpty },
                 hasModelSignal: rows.contains { !$0.model.isEmpty },
                 hasResourceSignal: rows.contains {
@@ -350,6 +433,12 @@ final class StatusStore: ObservableObject {
     }
 
     func supportEvidenceLabel(_ health: AgentSupportHealth) -> String {
+        // A bounded timeout that already returned rows is a partial read, not
+        // an empty adapter failure. Keep the error detail in the inspector,
+        // but classify the row as limited so useful evidence remains primary.
+        if health.collectorState == .failed, health.collectorRows > 0 {
+            return tr(.supportLimited)
+        }
         if health.collectorState == .failed { return tr(.supportCollectorFailed) }
         if health.collectorState == .unscanned { return tr(.supportCollectorUnscanned) }
         if health.collectorState == .permissionDenied { return tr(.supportCollectorPermission) }
@@ -585,6 +674,14 @@ final class StatusStore: ObservableObject {
 
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
+        // Restore only Pulse-owned attention state. Agent-owned hooks remain
+        // the source of truth for the current row; the ledger supplies the
+        // cross-launch baseline, snooze timers and delivery dedupe.
+        attentionLedger = AttentionLedger.load()
+        snoozedUntil = attentionLedger.snoozedUntil
+        knownWaitingKeys = attentionLedger.activeKeys
+        waitingNotifySeeded = attentionLedger.baselineEstablished
+        restoreAttentionHistory()
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
         loadSettings()
@@ -980,7 +1077,7 @@ final class StatusStore: ObservableObject {
     func installHooks() {
         hooksStatus = .unknown
         // `Task` inherits this class's main-actor isolation, so the assignment
-        // lands on main while the blocking Python run stays off it.
+        // lands on main while the optional hook installer stays off it.
         Task { [weak self] in
             let status = await Task.detached(priority: .userInitiated) {
                 HooksSupport.install()
@@ -1197,17 +1294,21 @@ final class StatusStore: ObservableObject {
         }
         DebugLog.write("refresh enqueue #\(ticket) reason=\(reason)")
 
-        // Harvest is a Python fork walking dozens of trees; probe is one `ps`.
-        // Only pay for harvest when something plausibly changed.
+        // Native harvest walks bounded vendor roots; probe is one `ps` call.
+        // Only pay for the richer scan when something plausibly changed.
         let forceHarvest = reason != "timer"
         let priorSignature = lastProcessSignature
         let ticks = ticksSinceHarvest
         let everyN = ProbeSchedule.harvestEveryNTicks(activity: activity, trayOpen: trayOpen)
-        let appDataPolicy = allowAppData
+        let allowAllAppData = allowAppData
+        let appDataAgentPolicy = harvestAppDataAgents
 
         scanQueue.async {
             let t0 = Date()
-            let procs = ProcessProbe.scan(allowAppData: appDataPolicy)
+            let procs = ProcessProbe.scan(
+                allowAppData: allowAllAppData,
+                appDataAgents: appDataAgentPolicy
+            )
             let signature = ProcessProbe.signature(procs)
 
             let why: String
@@ -1227,7 +1328,10 @@ final class StatusStore: ObservableObject {
                 outcome = .skipped
             } else {
                 let h0 = Date()
-                let result = ActivityHarvest.scan(allowAppData: appDataPolicy)
+                let result = ActivityHarvest.scan(
+                    allowAppData: allowAllAppData,
+                    appDataAgents: appDataAgentPolicy
+                )
                 harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
                 outcome = result.unreliable
                     ? .failed(result.health, result.complete)
@@ -1266,7 +1370,7 @@ final class StatusStore: ObservableObject {
         }
     }
 
-    /// What the background scan managed to get from `activity_scan.py`.
+    /// What the background scan managed to get from the native collector.
     enum HarvestOutcome {
         /// Ran and produced rows (possibly partial after a timeout).
         case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth], Bool)
@@ -1297,7 +1401,9 @@ final class StatusStore: ObservableObject {
                 )
                 : collectorHealthByAgent)
         for item in health {
-            next[item.id] = item
+            var normalized = item
+            normalized.id = item.id.surfaceID
+            next[normalized.id] = normalized
         }
         // Cursor Agent sessions are merged into Cursor rows by SnapshotBuilder
         // to avoid duplicate IDE/CLI entries. They share Cursor's local-store
@@ -1360,8 +1466,9 @@ final class StatusStore: ObservableObject {
             // collector read, while row.harvestMs remains session activity.
             let collectorReadAtMs = Int64(Date().timeIntervalSince1970 * 1000)
             for item in health where !item.state.isIssue {
-                lastSuccessfulReadByAgent[item.id] = max(
-                    lastSuccessfulReadByAgent[item.id] ?? 0,
+                let agent = item.id.surfaceID
+                lastSuccessfulReadByAgent[agent] = max(
+                    lastSuccessfulReadByAgent[agent] ?? 0,
                     collectorReadAtMs
                 )
             }
@@ -1384,8 +1491,18 @@ final class StatusStore: ObservableObject {
             DebugLog.write("harvest unreliable → reuse \(acts.count) cached rows (pending stripped)")
         }
         let harvestUnreliable: Bool = {
-            if case .failed = harvest { return true }
-            return false
+            switch harvest {
+            case .failed:
+                return true
+            case .fresh(_, _, let complete):
+                // A timed-out stream may contain useful rows, but it is not a
+                // complete baseline. Treat it as unreliable for attention
+                // edge reconciliation so an adapter that was never reached
+                // cannot silently resolve a real Waiting event.
+                return !complete
+            case .skipped:
+                return false
+            }
         }()
 
         let now = Date()
@@ -1400,6 +1517,7 @@ final class StatusStore: ObservableObject {
         var waitingKeysForEdges = knownWaitingKeys
         for (key, deadline) in snoozedUntil where deadline <= now {
             snoozedUntil.removeValue(forKey: key)
+            attentionLedger.unsnooze(rowKey: key)
             waitingKeysForEdges.remove(key)
             DebugLog.write("snooze expired \(key)")
         }
@@ -1432,6 +1550,27 @@ final class StatusStore: ObservableObject {
         // wait on the same row would start life already silenced.
         snoozedUntil = snoozedUntil.filter { result.waitingKeys.contains($0.key) }
 
+        // Reconcile before delivery so a restart can distinguish an already
+        // known wait from a newly crossed edge. An unreliable first scan is
+        // not a trustworthy baseline: seeding it would suppress the first
+        // real notification after the collector recovers. The ledger is
+        // written atomically; a crash during this scan leaves the previous
+        // complete state intact.
+        let attentionBaselineValid = !harvestUnreliable
+            || result.rows.contains(where: \.waiting)
+            || !attention.isEmpty
+        if attentionBaselineValid {
+            let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+            attentionLedger.reconcile(
+                activeRows: result.rows.filter(\.waiting),
+                nowMs: nowMs
+            )
+            attentionLedger.markBaseline()
+            attentionLedger.save()
+        } else {
+            DebugLog.write("attention ledger baseline deferred: harvest unreliable and no wait evidence")
+        }
+
         var snap = result.snapshot
         snap.updatedAt = now
 
@@ -1456,7 +1595,7 @@ final class StatusStore: ObservableObject {
                 }
             }
         }
-        if !waitingNotifySeeded {
+        if !waitingNotifySeeded, attentionBaselineValid {
             waitingNotifySeeded = true
         }
 
@@ -1486,6 +1625,7 @@ final class StatusStore: ObservableObject {
     private func postWaitingNotifications(_ rows: [AgentRow]) {
         guard notifyAuthorized == true, notifyOnWaiting else { return }
         var posted = false
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         for waiting in rows where !mutedAgents.contains(waiting.agent) {
             PulseNotify.postWaiting(
                 title: notificationTitle(waiting),
@@ -1494,8 +1634,10 @@ final class StatusStore: ObservableObject {
                 session: waiting.sessionID,
                 rowKey: waiting.rowKey
             )
+            attentionLedger.markNotified(rowKey: waiting.rowKey, nowMs: nowMs)
             posted = true
         }
+        if posted { attentionLedger.save() }
         // Opt-in, and deliberately quiet: Tink, not an alert tone. Muting an
         // agent silences this too, same as the banner. Play once per scan even
         // when several sessions crossed into Waiting together.
@@ -1556,6 +1698,27 @@ final class StatusStore: ObservableObject {
         return bits.joined(separator: " · ")
     }
 
+    /// Rehydrate the small resolved-wait trail from the durable ledger. The
+    /// current rows still come exclusively from the live scan; only completed
+    /// attention edges are restored here so a relaunch can answer “what did I
+    /// miss?” without retaining prompts or raw agent payloads.
+    private func restoreAttentionHistory() {
+        waitHistory = attentionLedger.recentResolved.prefix(Self.maxWaitHistory).compactMap { event in
+            guard let agent = AgentID(rawValue: event.agent), event.resolvedAtMs > 0 else { return nil }
+            let resolved = Date(timeIntervalSince1970: Double(event.resolvedAtMs) / 1000)
+            let observed = Date(timeIntervalSince1970: Double(event.observedAtMs) / 1000)
+            return ResolvedWait(
+                rowKey: event.rowKey,
+                agent: agent,
+                title: event.title,
+                kind: event.kind,
+                project: event.project,
+                resolvedAt: resolved,
+                waitedSeconds: max(0, resolved.timeIntervalSince(observed))
+            )
+        }
+    }
+
     /// Keep a short trail of waits that already cleared, so "I think something
     /// pinged me while I was away" has an answer. The builder decides *which*
     /// waits resolved; this only records them.
@@ -1582,6 +1745,8 @@ final class StatusStore: ObservableObject {
 
     func clearWaitHistory() {
         waitHistory = []
+        attentionLedger.clearResolved()
+        attentionLedger.save()
     }
 
     func clearWaiting() {
@@ -2300,7 +2465,13 @@ final class StatusStore: ObservableObject {
     /// it forever. The most common real one was neither, and fell back on the
     /// user's memory — the thing this app was built to replace.
     func snooze(_ row: AgentRow) {
-        snoozedUntil[row.rowKey] = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
+        let deadline = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
+        snoozedUntil[row.rowKey] = deadline
+        attentionLedger.snooze(
+            rowKey: row.rowKey,
+            untilMs: Int64(deadline.timeIntervalSince1970 * 1000)
+        )
+        attentionLedger.save()
         DebugLog.write("snooze \(row.rowKey) for \(snoozeMinutes)m")
         refresh(reason: "snooze")
     }
@@ -2309,6 +2480,8 @@ final class StatusStore: ObservableObject {
     /// is a worse deal than no countdown.
     func unsnooze(_ row: AgentRow) {
         guard snoozedUntil.removeValue(forKey: row.rowKey) != nil else { return }
+        attentionLedger.unsnooze(rowKey: row.rowKey)
+        attentionLedger.save()
         DebugLog.write("unsnooze \(row.rowKey)")
         refresh(reason: "unsnooze")
     }
@@ -2316,7 +2489,13 @@ final class StatusStore: ObservableObject {
     /// Snooze by row key — the notification banner has a key, not a row.
     func snooze(rowKey: String) {
         guard !rowKey.isEmpty else { return }
-        snoozedUntil[rowKey] = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
+        let deadline = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
+        snoozedUntil[rowKey] = deadline
+        attentionLedger.snooze(
+            rowKey: rowKey,
+            untilMs: Int64(deadline.timeIntervalSince1970 * 1000)
+        )
+        attentionLedger.save()
         DebugLog.write("snooze(notif) \(rowKey) for \(snoozeMinutes)m")
         refresh(reason: "snoozeNotification")
     }
@@ -2384,6 +2563,10 @@ final class StatusStore: ObservableObject {
         SupportCoverageWindowController.shared.show(store: self)
     }
 
+    func openAgentDetail(_ row: AgentRow) {
+        AgentDetailWindowController.shared.show(store: self, row: row)
+    }
+
     func quit() {
         attentionWatcher.stop()
         GlobalHotKey.uninstall()
@@ -2416,6 +2599,7 @@ final class StatusStore: ObservableObject {
             language: language,
             updateCheckEnabled: updateCheckEnabled,
             allowAppData: allowAppData,
+            appDataAgents: appDataAgents,
             hotkey: hotkey,
             hotkeyEnabled: hotkeyEnabled,
             mutedAgents: mutedAgents,
@@ -2437,6 +2621,7 @@ final class StatusStore: ObservableObject {
         language = s.language
         updateCheckEnabled = s.updateCheckEnabled
         allowAppData = s.allowAppData
+        appDataAgents = s.appDataAgents
         hotkey = s.hotkey
         hotkeyEnabled = s.hotkeyEnabled
         mutedAgents = s.mutedAgents

@@ -2,6 +2,40 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.48.0 — Reliable observability
+
+### P0 · 采集、提醒与权限稳定性
+
+- Activity harvest now runs through the Swift-native bounded reader; the old
+  Python collector is an explicit compatibility diagnostic only. A missing
+  Python runtime no longer prevents launch, refresh, self-test, or packaging.
+- 保留版本化 JSON 观测协议（schema 2）作为显式 legacy 诊断通道，字段按名称传输，避免新增 Agent 字段造成 positional TSV 错位；默认运行时改用 Swift 原生类型，不再依赖该 wire。
+- 采集器增加运行时 helper 预检、Apple silicon 路径校验、每 Agent 隔离超时、48 MB 读取预算和 6 秒总截止时间；部分结果继续保留，单个损坏或锁定的数据源不会清空其他 Agent。
+- 独立损坏 JSON 会被标为该 Agent 的可重试 partial；空的失败/超时结果保留该 Agent 上一次有效会话，避免“暂时读不到”被误报成“没有会话”。
+- 超大 Codex/Claude rollout 只读取有界头尾窗口（Codex compacted context 使用独立 8 MiB 上限，仍受总预算约束），支持最新用户任务；UTF-8 截断、旧 transcript 和空占位不会再让当前会话消失或污染列表。
+- 新增持久化 attention ledger：Waiting 事件、通知去重、稍后、解决和跨重启基线均原子写入，避免丢提醒或重复提醒。
+- 深度 App Data 改为按 Agent 授权范围；默认不请求权限，权限说明明确到具体 Agent 和数据收益。
+- 不继承旧版“一键读取全部 App Data”的授权状态；升级后必须由用户在新的逐 Agent 设置中再次明确选择，避免 ad-hoc 身份变化触发反复权限弹窗。
+
+### P1 · 产品力与可观测性
+
+- Support Health 默认展示完整 31 Agent 名单，状态改为可行动的“需要处理 / 信息受限 / 健康 / 暂无本机证据”，每行提供下一步操作。
+- 新增 Agent Details 检查器：展示任务、工作区、阶段、模型、进度、资源、证据等级和 Waiting 原因；原始 tool/skill 仅在诊断折叠区展示。
+- 每 Agent 会话采集预算提升至 256、Swift 保留 128；托盘默认可见行提升至 12，并保留精确的隐藏计数。
+- 256 条是 adapter 级硬上限（SQLite、JSON、云端数组和通用解析均在追加点截断），仅包含可展示事实，避免空 Composer/metadata 记录挤掉真实会话。
+- 继续以 Planning、Reading、Testing、Building、Publishing 等人类语义展示 tool/skill，不将原始实现名当作当前动作。
+
+### P2 · 发布、诊断与体验
+
+- 更新下载改为 OS/架构预检、内容类型/大小/SHA-256 校验和非破坏性落盘，不再删除已有安装包。
+- 支持报告加入采集协议、权限范围、attention ledger 和 helper 状态；敏感路径与 payload 仍脱敏。
+- 统一详情窗口、支持健康度和托盘的间距、状态颜色、VoiceOver 文案和键盘动作；默认不折叠核心内容。
+
+### 验证门槛
+
+- 31 个 Agent 运行态 fixture、100 会话压力、10 个并发 Waiting、权限拒绝、helper 缺失、锁库、损坏 JSON、超时、睡眠唤醒、重启恢复和 DMG 内容校验必须全部通过；Python 仅为可选 legacy/源码门禁，不是打包或运行时前置条件。
+- 本版本仍需 Apple Developer ID 与 notarization 凭据后才能消除其他 Mac 的 Gatekeeper 放行步骤。
+
 ## 0.47.11 — 等待提醒与首次启动路径
 
 ### 可观测与提醒

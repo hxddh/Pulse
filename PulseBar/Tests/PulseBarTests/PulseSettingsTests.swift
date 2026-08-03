@@ -66,6 +66,7 @@ final class PulseSettingsTests: XCTestCase {
         original.updateCheckEnabled = false
         original.hotkey = .controlOptionP
         original.mutedAgents = [.claude, .codex]
+        original.appDataAgents = [.cursor, .warpAgent]
 
         XCTAssertEqual(PulseSettings.parse(original.serialized()), original)
     }
@@ -73,6 +74,13 @@ final class PulseSettingsTests: XCTestCase {
     func testDefaultsRoundTrip() {
         let d = PulseSettings()
         XCTAssertEqual(PulseSettings.parse(d.serialized()), d)
+    }
+
+    func testLegacyBroadAppDataGrantDoesNotReenableProtectedReads() {
+        let legacy = "appData=1\nappDataAgents=cursor,warp_agent\n"
+        let parsed = PulseSettings.parse(legacy)
+        XCTAssertFalse(parsed.allowAppData)
+        XCTAssertTrue(parsed.appDataAgents.isEmpty)
     }
 
     func testGlobalShortcutIsOptInForLegacyAndNewFiles() {

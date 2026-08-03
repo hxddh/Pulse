@@ -306,14 +306,37 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.rows.filter { $0.hiddenSessions > 0 }.count, 1, "badge appears once, not per sibling")
     }
 
-    func testCollectorCanReportMoreThanTheDefaultThirtyTwoSessionBudget() {
-        let rows = (1...40).map {
+    func testCollectorCanReportMoreThanTheDefaultSessionBudget() {
+        let rows = (1...140).map {
             harvest(.cursor, task: "Cursor task \($0)", session: "cursor-\($0)")
         }
         let r = build(harvest: rows)
         XCTAssertEqual(r.rows.count, SnapshotBuilder.maxSessionsPerAgent)
-        XCTAssertEqual(r.snapshot.cappedSessions, 8)
+        XCTAssertEqual(r.snapshot.cappedSessions, 12)
         XCTAssertEqual(r.rows.filter { $0.hiddenSessions > 0 }.count, 1)
+    }
+
+    func testTenConcurrentWaitingSessionsRemainIndependentAndVisible() {
+        let agents = Array(AgentID.priority.prefix(10))
+        let result = build(
+            procs: agents.enumerated().map { index, agent in
+                hit(agent, pid: 400 + index)
+            },
+            attention: agents.enumerated().map { index, agent in
+                attention(
+                    agent,
+                    kind: index.isMultiple(of: 2) ? "Permission" : "Input",
+                    message: "Approve session \(index + 1)",
+                    session: "waiting-\(index + 1)",
+                    ageMs: Int64((index + 1) * 1_000)
+                )
+            }
+        )
+        XCTAssertEqual(result.rows.filter(\.waiting).count, 10)
+        XCTAssertEqual(result.newlyWaiting.count, 10)
+        XCTAssertEqual(result.snapshot.sectionTotals[.needsYou], 10)
+        XCTAssertEqual(result.snapshot.hiddenCount, 0, "ten waits fit within the twelve-row glance")
+        XCTAssertEqual(Set(result.rows.filter(\.waiting).map(\.rowKey)).count, 10)
     }
 
     func testSessionsWithoutIdsDoNotCollideIntoOneRow() {
@@ -483,6 +506,18 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(waiting.count, 1)
         XCTAssertEqual(waiting[0].sessionID, "sess-bbb", "must not light up the wrong session")
         XCTAssertEqual(waiting[0].waitSignal, .hooks)
+    }
+
+    func testCursorAgentAttentionUsesTheSingleCursorSurfaceRow() {
+        let r = build(
+            procs: [.init(id: .cursor, count: 1, viaWarp: false, pid: 77)],
+            harvest: [harvest(.cursor, task: "Compose", session: "cursor-session")],
+            attention: [attention(.cursorAgent, message: "approve", session: "cursor-session")]
+        )
+        XCTAssertEqual(r.rows.count, 1, "Cursor Agent is one user-facing Cursor session")
+        XCTAssertEqual(r.rows.first?.agent, .cursor)
+        XCTAssertTrue(r.rows.first?.waiting == true)
+        XCTAssertEqual(r.rows.first?.waitSignal, .hooks)
     }
 
     func testAttentionFallsBackToCwdWhenSessionIsUnknown() {

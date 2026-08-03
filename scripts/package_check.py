@@ -29,7 +29,6 @@ BUNDLE_NAME = "PulseBar_PulseBar.bundle"
 # Resources the app asks Bundle.module for by name. Paths are relative to the
 # resource bundle root, which is where a flat SwiftPM bundle keeps them.
 REQUIRED_IN_BUNDLE = [
-    "activity_scan.py",
     "pulse_hook.py",
     "install_hooks.py",
     "Brand/pulse-mark.png",
@@ -43,7 +42,6 @@ REQUIRED_IN_BUNDLE = [
 # Resources reached through Bundle.main.resourceURL — the fallback path that
 # does not involve CFBundle at all.
 REQUIRED_IN_APP = [
-    "activity_scan.py",
     "pulse_hook.py",
     "install_hooks.py",
     "Brand/pulse-mark.png",

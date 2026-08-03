@@ -2,7 +2,7 @@ import Foundation
 
 /// Rolling one-hour record of how hard Pulse actually worked.
 ///
-/// 0.22 claimed the energy rework cut Python forks from ~28,800/day to
+/// 0.22 claimed the energy rework cut expensive harvests from ~28,800/day to
 /// ~2,880/day. That number was arithmetic, not measurement — nobody could check
 /// it, including the person who wrote it into a public release note. These
 /// counters put the answer in the diagnostics text, so anyone can paste back
@@ -10,7 +10,7 @@ import Foundation
 struct ProbeStats: Equatable {
     struct Sample: Equatable {
         var at: Date
-        /// Whether this tick paid for the Python harvest, or only ran `ps`.
+        /// Whether this tick paid for the activity harvest, or only ran `ps`.
         var harvested: Bool
         var harvestMs: Int?
     }

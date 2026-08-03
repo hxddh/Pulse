@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.47.11`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
+**版本：`0.48.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/latest) · macOS 14+
 
 ---
 
@@ -43,6 +43,21 @@ Pulse 把这件事变成余光可见：
 启用即可。没有 hooks 时，能从会话数据确认的 `pending` 仍会点亮红灯；无法确认的路径
 会诚实标为仅运行中，不伪造 Waiting。
 
+0.48.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
+observed、no_sessions、source_absent、permission_denied、schema_mismatch 或 failed，
+不会再把“没有看到”混成“没有运行”。旧版 JSON collector 仅在显式设置
+`PULSE_LEGACY_PYTHON_HARVEST=1` 时运行，不是安装或启动前置条件。Waiting 边沿写入 Pulse 自己的原子事件账本，重启后
+仍能去重通知、恢复稍后处理和最近等待历史。首次扫描失败不会播种基线，也不会清空上一
+次有效内容。
+
+需要读取受 macOS 保护的 App Support / App Group 时，设置页可以按 Agent 单独授权；默认不
+访问这些目录、不制造跨应用权限弹窗。通过行的更多操作打开“详情”可查看任务、工作区、最近动作、模型、
+进度、资源、证据来源和原始 tool/skill（原始实现标识默认收起）；支持健康度窗口默认展示
+全部 31 个用户可见 Agent，逐项给出证据、缺口和下一步动作。
+
+升级到 0.48.0 不会继承旧版的全局 App Data 授权；需要时请在设置中对具体 Agent 重新选择，
+这样不会因 ad-hoc 签名变化在后台反复触发 macOS 权限弹窗。
+
 新的 Waiting 会话会逐一发出系统通知（仅在你明确启用通知后），并让状态栏红灯短促脉冲
 三次；红灯持续亮起表示仍有待处理确认。通知未启用或被系统关闭时，托盘会显示可点击的
 提示，不会在后台反复索要权限。
@@ -56,7 +71,7 @@ Pulse 把这件事变成余光可见：
 | 层 | 手段 | 能回答 |
 | --- | --- | --- |
 | **A · Probe** | `ps` 扫进程 | 有没有人在跑 |
-| **B · Harvest** | 读各 Agent 自己的会话文件 / sqlite / 可验证缓存 | 有结构化数据时回答任务、项目、会话与最近活动 |
+| **B · Harvest** | Swift 原生读取各 Agent 会话文件 / 可验证缓存（受限目录按 Agent 授权） | 有结构化数据时回答任务、项目、会话与最近活动 |
 | **C · Waiting** | hooks，或 harvest 里的 `pending` 标记 | 是不是在等你 |
 
 **诚实规则**（写死的产品约束，见 [`AGENTS.md`](AGENTS.md)）：
@@ -106,7 +121,7 @@ Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、
 
 想让名单外的工具点亮 Waiting，走 [`docs/attention-bridge.md`](docs/attention-bridge.md)。
 
-**图标**：22 个来自 [Simple Icons](https://simpleicons.org)（CC0，商标归各自所有者）；
+**图标**：23 个来自 [Simple Icons](https://simpleicons.org)（CC0，商标归各自所有者）；
 其余 10 个没有现成品牌图标，由 [`scripts/make_agent_icons.py`](scripts/make_agent_icons.py)
 画成几何标记——**那是 Pulse 自己的图形，不是厂商的商标**。
 `--check` 是门禁：新增 Agent 若没有图标，CI 就红，不会悄悄退回字母标。
@@ -117,7 +132,8 @@ Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、
 
 偏好设置分区，全部即时生效：
 
-- **通用** —— 实时更新、登录时启动、语言（跟随系统 / English / 中文）、分组方式、停滞判定阈值、稍后时长
+- **通用** —— 实时更新、登录时启动、语言（跟随系统 / English / 中文）、分组方式、停滞判定阈值、稍后时长；
+  受保护 App 数据可全局授权，也可只授权选中的 Agent
 - **通知** —— 空闲通知、新 Waiting 通知、安静时段（精确到分钟、可跨午夜）、按 Agent 静音
 - **等待信号** —— 安装 / 移除 hooks、当前状态，以及不会制造假 Waiting 的连接自检
 - **快捷键** —— 唤出面板的组合键（⌘⇧P / ⌘⇧U / ⌘⌥P / ⌃⌥P / 关闭）

@@ -17,6 +17,9 @@ let package = Package(
                 .copy("Resources/install_hooks.py"),
                 .copy("Resources/AgentIcons"),
                 .copy("Resources/Brand"),
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
             ]
         ),
         // The merge logic in StatusStore is the most regression-prone part of
@@ -24,7 +27,10 @@ let package = Package(
         .testTarget(
             name: "PulseBarTests",
             dependencies: ["PulseBar"],
-            path: "Tests/PulseBarTests"
+            path: "Tests/PulseBarTests",
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+            ]
         ),
     ]
 )

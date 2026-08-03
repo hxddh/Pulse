@@ -2,7 +2,7 @@ import Foundation
 
 /// How hard Pulse should be looking right now.
 ///
-/// A status lamp that forks a Python harvest every 3 seconds regardless of
+/// A status lamp that walks every vendor store every 3 seconds regardless of
 /// context gets flagged by macOS as an energy hog — which is fatal for a
 /// permanently-resident menu bar tool. The cadence therefore follows what is
 /// actually happening: loud when something needs you, near-silent when nothing
@@ -61,8 +61,8 @@ enum ProbeSchedule {
         return base
     }
 
-    /// Harvest (a Python fork walking dozens of directories) is far more
-    /// expensive than probe (`ps`), so it does not have to run every tick.
+    /// Harvest (a bounded walk of dozens of directories) is far more expensive
+    /// than probe (`ps`), so it does not have to run every tick.
     /// Returns how many probe ticks may pass between harvests.
     static func harvestEveryNTicks(activity: Activity, trayOpen: Bool) -> Int {
         if trayOpen { return 1 }

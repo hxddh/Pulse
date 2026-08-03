@@ -15,7 +15,7 @@ enum SnapshotBuilder {
     /// Safety bound, not the default visual density. The tray folds globally
     /// after `maxVisibleRows`; keeping this much higher means the fifth (or
     /// twentieth) concurrent session can still be expanded and inspected.
-    static let maxSessionsPerAgent = 32
+    static let maxSessionsPerAgent = 128
     /// Rows shown before the "and N more" fold.
     ///
     /// Was 5, but every row also carried a permanently visible action strip, so
@@ -23,7 +23,7 @@ enum SnapshotBuilder {
     /// five agents running had to scroll to learn that. Actions moved to hover
     /// for non-waiting rows and the panel is sized by its content now, so this
     /// can be what it should always have been.
-    static let maxVisibleRows = 8
+    static let maxVisibleRows = 12
 
     /// Outside-world facts, captured once per scan.
     struct Context {
@@ -133,9 +133,7 @@ enum SnapshotBuilder {
             liveHits.removeValue(forKey: .cursorAgent)
         }
 
-        func normalizedAgent(_ id: AgentID) -> AgentID {
-            id == .cursorAgent ? .cursor : id
-        }
+        func normalizedAgent(_ id: AgentID) -> AgentID { id.surfaceID }
 
         // A live CLI may preserve one known goal when its session store has
         // stopped updating, but it is not a blanket lease for every unfinished
@@ -178,8 +176,7 @@ enum SnapshotBuilder {
         let staleFallbackIndices = Set(staleFallbackByAgent.values)
 
         for (harvestIndex, act) in input.harvest.enumerated() {
-            var agentID = act.id
-            if agentID == .cursorAgent { agentID = .cursor }
+            let agentID = act.id.surfaceID
 
             let fresh = ActivityHarvest.isFresh(act, nowMs: context.nowMs)
             let isStaleFallback = staleFallbackIndices.contains(harvestIndex)
@@ -323,11 +320,11 @@ enum SnapshotBuilder {
             }
             let key: String = {
                 if !att.session.isEmpty {
-                    return ActivityHarvest.sessionKey(id: att.id, sessionID: att.session, project: "", cwd: att.cwd)
+                    return ActivityHarvest.sessionKey(id: att.id.surfaceID, sessionID: att.session, project: "", cwd: att.cwd)
                 }
-                return att.id.rawValue
+                return att.id.surfaceID.rawValue
             }()
-            var row = AgentRow(rowKey: key, agent: att.id)
+            var row = AgentRow(rowKey: key, agent: att.id.surfaceID)
             row.sessionID = att.session
             row.cwd = att.cwd
             row.project = AgentRow.shortProject(att.cwd)
@@ -707,7 +704,7 @@ enum SnapshotBuilder {
         _ att: AttentionReader.Entry,
         in rowsByKey: [String: AgentRow]
     ) -> String? {
-        let candidates = rowsByKey.values.filter { $0.agent == att.id }
+        let candidates = rowsByKey.values.filter { $0.agent == att.id.surfaceID }
         guard !candidates.isEmpty else { return nil }
 
         if !att.session.isEmpty {

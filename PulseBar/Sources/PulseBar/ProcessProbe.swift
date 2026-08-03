@@ -189,7 +189,10 @@ enum ProcessProbe {
         ),
     ]
 
-    static func scan(allowAppData: Bool = false) -> [Hit] {
+    static func scan(
+        allowAppData: Bool = false,
+        appDataAgents: Set<AgentID> = []
+    ) -> [Hit] {
         let output = shell("/bin/ps", ["-axo", "pid=,ppid=,tty=,etime=,args="]) ?? ""
         // Node-based agents are allowed to rewrite argv[0] for a polished
         // terminal title. Command Code, for example, appears in `args` as
@@ -295,10 +298,27 @@ enum ProcessProbe {
         // `lsof` asks the kernel for another process's open cwd and can be
         // classified as cross-app data by macOS. Activity rows already carry
         // their workspace from the agent store; keep this enrichment behind
-        // the same explicit privacy switch as deep app-data harvest.
-        let workingDirectories = allowAppData
-            ? currentWorkingDirectories(pids: acc.values.map(\.pid).filter { $0 > 0 })
-            : [:]
+        // the same explicit privacy switch as deep app-data harvest. A scoped
+        // grant is filtered by AgentID before any PID reaches lsof — selecting
+        // Cursor must never widen the lookup to every matching process.
+        var scopedAgents = appDataAgents
+        if scopedAgents.contains(.cursor) || scopedAgents.contains(.cursorAgent) {
+            scopedAgents.insert(.cursor)
+            scopedAgents.insert(.cursorAgent)
+        }
+        if scopedAgents.contains(.cascade) || scopedAgents.contains(.windsurf) {
+            scopedAgents.insert(.cascade)
+            scopedAgents.insert(.windsurf)
+        }
+        let allowed = allowAppData ? Set(acc.keys) : scopedAgents
+        let workingDirectories = allowed.isEmpty
+            ? [:]
+            : currentWorkingDirectories(
+                pids: acc.values
+                    .filter { allowed.contains($0.id) }
+                    .map(\.pid)
+                    .filter { $0 > 0 }
+            )
         for id in acc.keys {
             guard var hit = acc[id], let cwd = workingDirectories[hit.pid] else { continue }
             hit.cwd = usefulWorkingDirectory(cwd)
@@ -471,7 +491,7 @@ enum ProcessProbe {
             arguments: arguments,
             timeout: 1.5
         ), !result.timedOut, result.status == 0 else {
-            DebugLog.write("probe shell failed (URL(fileURLWithPath: launchPath).lastPathComponent)")
+            DebugLog.write("probe shell failed \(URL(fileURLWithPath: launchPath).lastPathComponent)")
             return nil
         }
         return String(data: result.stdout, encoding: .utf8)

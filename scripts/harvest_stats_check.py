@@ -576,6 +576,65 @@ def check_runtime_health_protocol() -> int:
         return fail(f"runtime failure health is malformed: {line!r}")
     if "private vendor path" in out.getvalue():
         return fail("runtime health leaked the collector exception message to stdout")
+
+    # The packaged boundary is named JSON, not a positional TSV. Exercise both
+    # a rich row and a collector health envelope so a future field addition
+    # cannot silently shift tokens, phase, or source state.
+    original_protocol = A.WIRE_PROTOCOL
+    A.WIRE_PROTOCOL = "2"
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            A.emit(
+                "codex", "Protocol fixture", 12, 3, "exec", "",
+                "/Users/me/Pulse", "/Users/me/Pulse", int(time.time() * 1000),
+                evidence=A.EVIDENCE_SESSION, phase="testing", model="gpt-5",
+                progress_done=2, progress_total=4,
+            )
+        row = json.loads(buf.getvalue().strip())
+        if row.get("schema") != 2 or row.get("type") != "row":
+            return fail(f"protocol 2 row envelope is malformed: {row}")
+        if (row.get("tokensIn"), row.get("tokensOut"), row.get("phase"), row.get("progressTotal")) != (12, 3, "testing", 4):
+            return fail(f"protocol 2 row fields shifted or lost: {row}")
+
+        out = io.StringIO()
+        original_source_probe = A.collector_source_present
+        A.collector_source_present = lambda agent: True
+        try:
+            with contextlib.redirect_stdout(out):
+                A.guard("codex", lambda: None)
+        finally:
+            A.collector_source_present = original_source_probe
+        health = json.loads(out.getvalue().strip())
+        if health.get("schema") != 2 or health.get("type") != "health":
+            return fail(f"protocol 2 health envelope is malformed: {health}")
+        if health.get("agent") != "codex" or health.get("state") != "no_sessions":
+            return fail(f"protocol 2 health state is not actionable: {health}")
+    finally:
+        A.WIRE_PROTOCOL = original_protocol
+    return 0
+
+
+def check_scoped_app_data_policy() -> int:
+    """A selected protected store must never unlock unrelated adapters."""
+    previous = (A.ALLOW_APP_DATA, A.ALLOW_APP_DATA_AGENTS, A.CURRENT_COLLECTOR_AGENTS)
+    protected = A.HOME / "Library" / "Application Support" / "Cursor"
+    safe = A.HOME / ".cursor" / "sessions"
+    try:
+        A.ALLOW_APP_DATA = False
+        A.ALLOW_APP_DATA_AGENTS = frozenset({"cursor"})
+        A.CURRENT_COLLECTOR_AGENTS = frozenset({"cursor"})
+        if not A.app_data_enabled() or not A.app_data_enabled("cursor_agent"):
+            return fail("scoped Cursor permission did not unlock its shared store")
+        if A.app_data_enabled("codex"):
+            return fail("scoped Cursor permission widened to Codex")
+        if protected not in A.safe_roots([protected]) or safe not in A.safe_roots([safe]):
+            return fail("scoped protected-store policy filtered the selected agent")
+        A.CURRENT_COLLECTOR_AGENTS = frozenset({"codex"})
+        if A.app_data_enabled() or A.safe_roots([protected]):
+            return fail("collector boundary inherited another agent's app-data grant")
+    finally:
+        A.ALLOW_APP_DATA, A.ALLOW_APP_DATA_AGENTS, A.CURRENT_COLLECTOR_AGENTS = previous
     return 0
 
 
@@ -1225,6 +1284,8 @@ def main() -> int:
             return rc
         if rc := check_runtime_health_protocol():
             return rc
+        if rc := check_scoped_app_data_policy():
+            return rc
 
         home = d / "home"
         home.mkdir()
@@ -1279,11 +1340,48 @@ def main() -> int:
     swift = (ROOT / "PulseBar" / "Sources" / "PulseBar" / "ActivityHarvest.swift").read_text(
         encoding="utf-8"
     )
-    if 'task.arguments = ["-u", script.path]' not in swift:
-        return fail(
-            "ActivityHarvest must run Python unbuffered or timeout partial rows "
-            "remain trapped in stdout"
+    native = (
+        ROOT / "PulseBar" / "Sources" / "PulseBar" / "NativeActivityHarvest.swift"
+    ).read_text(encoding="utf-8")
+    if "NativeActivityHarvest.scan" not in swift:
+        return fail("ActivityHarvest must use the Swift-native collector by default")
+    if "static func scan" not in native or "CollectorHealth" not in native:
+        return fail("Swift-native collector must expose per-agent rows and health")
+    runtime_sources = "\n".join(
+        (
+            swift,
+            native,
+            (
+                ROOT / "PulseBar" / "Sources" / "PulseBar" / "HooksSupport.swift"
+            ).read_text(encoding="utf-8"),
         )
+    )
+    fixed_system_path = "/usr/bin/" + "python3"
+    if fixed_system_path in runtime_sources:
+        return fail("runtime Swift must not hard-code a system Python path")
+    if "PULSE_LEGACY_PYTHON_HARVEST" not in swift:
+        return fail("legacy Python harvest must be explicit opt-in")
+
+    # The Swift path is now the product path. Static coverage must protect the
+    # native adapters themselves, not only the legacy Python fixture matrix;
+    # otherwise a new SQLite vendor can silently regress to process-only rows
+    # while the old collector tests stay green.
+    native_contract = {
+        "OpenCode SQLite": "collectOpenCodeDatabase",
+        "Warp Agent SQLite": "collectWarpDatabase",
+        "Pi SQLite": "collectPiDatabase",
+        "Grok SQLite": "collectGrokDatabase",
+        "Codex rollout parser": "parseCodexFacts",
+        "Amp prompt recovery": "history.jsonl",
+        "Cursor composer SQLite": "collectCursorDatabase",
+        "bounded facts": "maxFactsPerAgent = 256",
+        "bounded Swift rows": "maxRowsPerAgent = 128",
+        "per-agent deadline": "maxAgentSeconds",
+        "global byte budget": "bytesRemaining = 48_000_000",
+    }
+    for label, fragment in native_contract.items():
+        if fragment not in native:
+            return fail(f"native collector lost its {label} contract")
 
     support_model = (
         ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"

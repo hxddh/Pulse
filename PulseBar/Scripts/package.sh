@@ -4,26 +4,33 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT/PulseBar"
 
-VERSION="$(python3 - <<'PY'
-import re, pathlib
-p = pathlib.Path("Sources/PulseBar/Models.swift")
-text = p.read_text()
-m = re.search(r'static let semver = "([^"]+)"', text)
-print(m.group(1) if m else "0.0.0")
-PY
-)"
+VERSION="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' Sources/PulseBar/Models.swift | head -1)"
+VERSION="${VERSION:-0.0.0}"
+
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "error: Pulse 0.48+ is built for Apple silicon (arm64); found $(uname -m)" >&2
+  exit 1
+fi
 
 # Single source of truth: src/*.py → SPM Resources (avoid stale Bundle seed).
 for py in activity_scan.py pulse_hook.py install_hooks.py; do
   cp "$ROOT/src/$py" "$ROOT/PulseBar/Sources/PulseBar/Resources/$py"
 done
 
-python3 "$ROOT/scripts/version_check.py"
-python3 "$ROOT/scripts/coverage_check.py"
-python3 "$ROOT/scripts/matrix_check.py"
-python3 "$ROOT/scripts/make_agent_icons.py" --check
-python3 "$ROOT/scripts/appearance_check.py"
-python3 "$ROOT/scripts/harvest_stats_check.py"
+CHECK_PYTHON="$(command -v python3 || true)"
+if [[ -n "$CHECK_PYTHON" ]]; then
+  "$CHECK_PYTHON" "$ROOT/scripts/version_check.py"
+  "$CHECK_PYTHON" "$ROOT/scripts/coverage_check.py"
+  "$CHECK_PYTHON" "$ROOT/scripts/matrix_check.py"
+  "$CHECK_PYTHON" "$ROOT/scripts/make_agent_icons.py" --check
+  "$CHECK_PYTHON" "$ROOT/scripts/appearance_check.py"
+  "$CHECK_PYTHON" "$ROOT/scripts/harvest_stats_check.py"
+else
+  # Python is an optional legacy/verification tool. The application and the
+  # release artifact must still be buildable on a clean Swift-only machine;
+  # the native fixture and packaged Swift selftest below remain mandatory.
+  echo "note: python3 unavailable — optional Python source gates skipped"
+fi
 
 # Build identity stamped into Info.plist — PulseVersion reads it at runtime.
 GIT_COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -40,8 +47,15 @@ APP="$ROOT/zig-out/package/Pulse.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+# Exercise the real Swift-native adapters against all source families before
+# assembling the app. This is headless and does not require XCTest/Xcode, so a
+# clean Command Line Tools machine cannot accidentally ship a dead collector.
+echo "running --native-fixture-test..."
+"$BIN" --native-fixture-test
+
 cp "$BIN" "$APP/Contents/MacOS/PulseBar"
-# Bundle harvest + hook scripts for runtime fallbacks.
+# Bundle hook scripts and the optional legacy harvest adapter. The app's
+# default activity path is Swift-native and does not require any interpreter.
 for py in activity_scan.py pulse_hook.py install_hooks.py; do
   cp "$ROOT/src/$py" "$APP/Contents/Resources/$py"
 done
@@ -123,7 +137,15 @@ PLIST
 # The app is assembled — check it can find its own resources before we sign it
 # into a DMG. Source-level gates cannot see this: every release up to 0.23.0
 # passed all of them and still crashed on launch.
-python3 "$ROOT/scripts/package_check.py" "$APP"
+if [[ -n "$CHECK_PYTHON" ]]; then
+  "$CHECK_PYTHON" "$ROOT/scripts/package_check.py" "$APP"
+else
+  test -x "$APP/Contents/MacOS/PulseBar"
+  test -f "$APP/Contents/Info.plist"
+  test -d "$APP/Contents/Resources/PulseBar_PulseBar.bundle"
+  test -f "$APP/Contents/Resources/PulseBar_PulseBar.bundle/Info.plist"
+  echo "package structure OK — Python package_check skipped"
+fi
 
 # And then ask the app itself, which is the only check that does not depend on
 # our own assumptions about where the runtime looks. Runs the real binary from

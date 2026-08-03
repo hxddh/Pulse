@@ -4,10 +4,10 @@ import XCTest
 final class ProcessIOTests: XCTestCase {
     func testLargeStdoutAndStderrAreDrainedWithoutDeadlock() {
         let result = ProcessIO.run(
-            executable: "/usr/bin/python3",
+            executable: "/bin/sh",
             arguments: [
                 "-c",
-                "import sys; sys.stdout.write('x' * 200000); sys.stderr.write('y' * 200000)",
+                "yes x | head -c 200000; yes y | head -c 200000 >&2",
             ],
             timeout: 2.0
         )
@@ -21,8 +21,8 @@ final class ProcessIOTests: XCTestCase {
 
     func testHungProcessIsTerminatedByDeadline() {
         let result = ProcessIO.run(
-            executable: "/usr/bin/python3",
-            arguments: ["-c", "import time; time.sleep(5)"],
+            executable: "/bin/sleep",
+            arguments: ["5"],
             timeout: 0.1
         )
 

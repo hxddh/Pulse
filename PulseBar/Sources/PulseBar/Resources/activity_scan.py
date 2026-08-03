@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Best-effort local harvest of agent task/tokens/tools/skills for Pulse.
-Prints one TSV line per session/agent:
-  agent_id<TAB>task<TAB>tokens_in<TAB>tokens_out<TAB>last_tool<TAB>last_skill<TAB>project<TAB>cwd
-  <TAB>mtime_ms<TAB>sub_run<TAB>sub_total<TAB>session_id<TAB>records<TAB>started_ms
+
+Packaged runs use ``PULSE_HARVEST_PROTOCOL=2`` and emit named JSON row and
+health envelopes.  The legacy TSV branch remains only for isolated fixtures
+that exercise the parser; it is never selected by the app runtime.
 """
 from __future__ import annotations
 
@@ -29,7 +30,33 @@ HOME = Path.home()
 # Settings. The default still covers dot-directory sessions, hooks, process
 # evidence, and every adapter that has a non-protected source.
 ALLOW_APP_DATA = os.environ.get("PULSE_ALLOW_APP_DATA") == "1"
+ALLOW_APP_DATA_AGENTS = frozenset(
+    item.strip()
+    for item in os.environ.get("PULSE_ALLOW_APP_DATA_AGENTS", "").split(",")
+    if item.strip()
+)
+CURRENT_COLLECTOR_AGENTS: frozenset[str] = frozenset()
 _PROTECTED_LIBRARY_DIRS = frozenset(("Application Support", "Group Containers", "Containers", "Logs"))
+
+
+def app_data_enabled(agent: str | None = None) -> bool:
+    """Return the current collector's explicit deep-read permission.
+
+    A scoped grant is intentionally evaluated at the adapter boundary. The
+    shared Cursor/Windsurf/Warp stores use aliases, but no other collector is
+    unlocked as a side effect.
+    """
+    if ALLOW_APP_DATA:
+        return True
+    labels = set(CURRENT_COLLECTOR_AGENTS if agent is None else (agent,))
+    selected = set(ALLOW_APP_DATA_AGENTS)
+    for group in (
+        {"cursor", "cursor_agent"},
+        {"cascade", "windsurf"},
+    ):
+        if labels.intersection(group) and selected.intersection(group):
+            return True
+    return bool(labels.intersection(selected))
 
 
 def is_protected_app_data(path: Path) -> bool:
@@ -45,7 +72,7 @@ def is_protected_app_data(path: Path) -> bool:
 
 def safe_roots(roots: list[Path] | tuple[Path, ...]) -> list[Path]:
     """Filter protected roots unless the user explicitly enabled deep data."""
-    if ALLOW_APP_DATA:
+    if app_data_enabled():
         return list(roots)
     safe: list[Path] = []
     for root in roots:
@@ -70,9 +97,9 @@ def safe_roots(roots: list[Path] | tuple[Path, ...]) -> list[Path]:
 # Keep candidate scans wider than the output budget so an archived, draft, or
 # malformed record does not prevent a later active session from being found.
 # The collector deliberately emits more than the tray will render. Swift keeps
-# the newest 32 per Agent and counts the remainder, so "32 shown" never means
-# "Pulse stopped looking at 32". This is an ingestion safety budget, not UI.
-MAX_SESSIONS_PER_AGENT = 64
+# the newest 128 per Agent and counts the remainder, so "128 shown" never means
+# "Pulse stopped looking at 128". This is an ingestion safety budget, not UI.
+MAX_SESSIONS_PER_AGENT = 256
 SESSION_CANDIDATE_LIMIT = MAX_SESSIONS_PER_AGENT * 2
 
 # Bytes one collector may spend counting records. The budget is reset at each
@@ -86,15 +113,15 @@ SESSION_CANDIDATE_LIMIT = MAX_SESSIONS_PER_AGENT * 2
 # timeout the partial output is treated as a good scan, so a slow collector
 # does not just lose its own row — it can drop every collector after it. That
 # breaks "one agent's harvest must never blind the others".
-SCAN_READ_BUDGET_BYTES = 24_000_000
+SCAN_READ_BUDGET_BYTES = 48_000_000
 _scan_bytes_spent = 0
-COLLECTOR_TIMEOUT_SEC = 0.8
+COLLECTOR_TIMEOUT_SEC = 1.2
 COLLECTOR_TIMEOUT_OVERRIDES = {
     # These adapters perform bounded reverse transcript or SQLite reads. Their
     # cold path is legitimately wider than a simple JSON/cache adapter.
-    "codex": 1.4,
-    "cursor": 1.2,
-    "aider": 1.0,
+    "codex": 2.0,
+    "cursor": 1.8,
+    "aider": 1.4,
 }
 
 
@@ -1465,7 +1492,7 @@ def codex_activities() -> list[tuple[str, int, int, str, str, str, str]]:
 def workspace_cwd(workspace_id: str) -> str:
     if not workspace_id or workspace_id in ("empty-window",):
         return ""
-    if not ALLOW_APP_DATA:
+    if not app_data_enabled("cursor"):
         return ""
     wj = HOME / "Library/Application Support/Cursor/User/workspaceStorage" / workspace_id / "workspace.json"
     if not wj.is_file():
@@ -1517,7 +1544,7 @@ def cursor_activities() -> list[tuple[str, int, int, str, str, str, str]]:
     import sqlite3
     import time
 
-    if not ALLOW_APP_DATA:
+    if not app_data_enabled("cursor"):
         return []
     db = HOME / "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
     if not db.is_file():
@@ -2116,7 +2143,7 @@ def json_looks_pending(obj) -> bool:
 
 
 def vscode_user_roots() -> list[Path]:
-    if not ALLOW_APP_DATA:
+    if not app_data_enabled():
         return []
     support = HOME / "Library" / "Application Support"
     names = (
@@ -2655,8 +2682,8 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
     out: list[tuple] = []
     seen_sessions: set[str] = set()
     for store in vscode_global_storage_dirs(*needles):
-        # The row budget is 64 per agent.  A smaller adapter-local cap made
-        # sessions 5+ disappear before SnapshotBuilder could apply its own
+        # The row budget is 256 per agent.  A smaller adapter-local cap made
+        # sessions 129+ disappear before SnapshotBuilder could apply its own
         # visibility budget, which was especially noticeable in Cursor-like
         # extensions with several active conversations.
         files = recent_files_under(store, ("*.json", "*.jsonl"), limit=MAX_SESSIONS_PER_AGENT)
@@ -2994,7 +3021,7 @@ def antigravity_activities() -> list[tuple]:
         support / "Antigravity IDE" / "User" / "globalStorage",
     ])
     # Also scan VS Code-style User under those app folders
-    if ALLOW_APP_DATA:
+    if app_data_enabled("antigravity"):
         for name in ("Antigravity", "Antigravity IDE"):
             user = support / name / "User"
             if user.is_dir():
@@ -3170,7 +3197,7 @@ def warp_agent_activities() -> list[tuple]:
 
     db_paths: list[Path] = []
     group_root = HOME / "Library" / "Group Containers"
-    if ALLOW_APP_DATA and group_root.is_dir():
+    if app_data_enabled("warp_agent") and group_root.is_dir():
         try:
             db_paths.extend(
                 p for p in group_root.glob("*/Library/Application Support/dev.warp.Warp-*/warp.sqlite")
@@ -4268,6 +4295,13 @@ def generic_task_title(agent: str, task: str) -> bool:
 
 
 EMITTED_COUNTS: dict[str, int] = {}
+WIRE_PROTOCOL = os.environ.get("PULSE_HARVEST_PROTOCOL", "1").strip()
+
+
+def emit_schema_header() -> None:
+    """Announce the row protocol once before any typed output."""
+    if WIRE_PROTOCOL == "2":
+        print("#pulse-schema\t2\tjson", flush=True)
 
 
 def emit(
@@ -4351,14 +4385,44 @@ def emit(
             return
 
     EMITTED_COUNTS[agent] = EMITTED_COUNTS.get(agent, 0) + 1
-    print(
-        f"{agent}\t{clean(task)}\t{tin}\t{tout}\t{clean(tool)}\t{clean(skill)}\t"
-        f"{clean(project)}\t{clean(cwd)}\t{mtime_ms}\t{sub_run}\t{sub_total}\t{clean(session_id)}\t"
-        f"{records}\t{started_ms}\t{evidence}\t{clean(phase)}\t{clean(outcome)}\t"
-        f"{clean(model)}\t{clean(mode)}\t{max(0, int(errors or 0))}\t{max(0, int(files or 0))}\t"
-        f"{max(0, min(100, int(context_pct or 0)))}\t{max(0, int(progress_done or 0))}\t"
-        f"{max(0, int(progress_total or 0))}"
-    )
+    values = {
+        "schema": 2,
+        "type": "row",
+        "agent": agent,
+        "task": clean(task),
+        "tokensIn": max(0, int(tin or 0)),
+        "tokensOut": max(0, int(tout or 0)),
+        "tool": clean(tool),
+        "skill": clean(skill),
+        "project": clean(project),
+        "cwd": clean(cwd),
+        "harvestMs": int(mtime_ms or 0),
+        "subRunning": max(0, int(sub_run or 0)),
+        "subTotal": max(0, int(sub_total or 0)),
+        "sessionID": clean(session_id),
+        "records": max(0, int(records or 0)),
+        "startedMs": max(0, int(started_ms or 0)),
+        "evidence": evidence,
+        "phase": clean(phase),
+        "outcome": clean(outcome),
+        "model": clean(model),
+        "mode": clean(mode),
+        "errors": max(0, int(errors or 0)),
+        "files": max(0, int(files or 0)),
+        "contextPercent": max(0, min(100, int(context_pct or 0))),
+        "progressDone": max(0, int(progress_done or 0)),
+        "progressTotal": max(0, int(progress_total or 0)),
+    }
+    if WIRE_PROTOCOL == "2":
+        print(json.dumps(values, ensure_ascii=False, separators=(",", ":")), flush=True)
+    else:
+        print(
+            f"{agent}\t{values['task']}\t{values['tokensIn']}\t{values['tokensOut']}\t{values['tool']}\t{values['skill']}\t"
+            f"{values['project']}\t{values['cwd']}\t{values['harvestMs']}\t{values['subRunning']}\t{values['subTotal']}\t{values['sessionID']}\t"
+            f"{values['records']}\t{values['startedMs']}\t{values['evidence']}\t{values['phase']}\t{values['outcome']}\t"
+            f"{values['model']}\t{values['mode']}\t{values['errors']}\t{values['files']}\t"
+            f"{values['contextPercent']}\t{values['progressDone']}\t{values['progressTotal']}"
+        )
 
 
 def emit_row(
@@ -4631,9 +4695,11 @@ def guard(labels: str | tuple[str, ...], body) -> None:
     # Reset the record-count budget for this adapter. Keeping this boundary
     # explicit prevents a large early transcript from silently turning every
     # later agent's `records` field into an unknown zero.
-    global _scan_bytes_spent
+    global _scan_bytes_spent, CURRENT_COLLECTOR_AGENTS
     _scan_bytes_spent = 0
     previous_alarm = signal.getsignal(signal.SIGALRM)
+    previous_agents = CURRENT_COLLECTOR_AGENTS
+    CURRENT_COLLECTOR_AGENTS = frozenset(agent_labels)
     signal.signal(signal.SIGALRM, _collector_timeout)
     deadline = max(
         COLLECTOR_TIMEOUT_OVERRIDES.get(agent, COLLECTOR_TIMEOUT_SEC)
@@ -4653,7 +4719,10 @@ def guard(labels: str | tuple[str, ...], body) -> None:
         elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
         for agent in agent_labels:
             emitted = max(0, EMITTED_COUNTS.get(agent, 0) - before[agent])
-            source_present = collector_source_present(agent)
+            try:
+                source_present = collector_source_present(agent)
+            except Exception:
+                source_present = False
             if emitted:
                 status = "observed"
             elif error_kind in ("PermissionError",):
@@ -4671,12 +4740,28 @@ def guard(labels: str | tuple[str, ...], body) -> None:
                 status = "source_absent"
             # Runtime adapter health shares the existing scan stream. It does
             # not expose vendor paths or exception messages and does not cost a
-            # second walk over 32 private stores.
-            print(
-                f"#health\t{agent}\t{status}\t{elapsed_ms}\t{emitted}\t{error_kind}\t"
-                f"{1 if source_present else 0}",
-                flush=True,
-            )
+            # second walk over 32 private stores. Protocol 2 keeps health typed
+            # as well as rows, so a new status field cannot shift a positional
+            # column and make every adapter look healthy by accident.
+            health = {
+                "schema": 2,
+                "type": "health",
+                "agent": agent,
+                "state": status,
+                "durationMs": elapsed_ms,
+                "rowCount": emitted,
+                "sourcePresent": bool(source_present),
+                "errorKind": error_kind,
+            }
+            if WIRE_PROTOCOL == "2":
+                print(json.dumps(health, ensure_ascii=False, separators=(",", ":")), flush=True)
+            else:
+                print(
+                    f"#health\t{agent}\t{status}\t{elapsed_ms}\t{emitted}\t{error_kind}\t"
+                    f"{1 if source_present else 0}",
+                    flush=True,
+                )
+        CURRENT_COLLECTOR_AGENTS = previous_agents
         if trace:
             print(f"# pulse trace: end {label} {elapsed_ms / 1000:.3f}s", file=sys.stderr, flush=True)
 
@@ -4795,6 +4880,7 @@ HARVESTERS = (
 
 
 def main() -> None:
+    emit_schema_header()
     for label, body in HARVESTERS:
         guard(label, body)
 

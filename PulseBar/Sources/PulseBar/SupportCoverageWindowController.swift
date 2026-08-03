@@ -3,7 +3,8 @@ import SwiftUI
 
 /// Runtime adapter evidence is an operational surface, not a preference.
 /// Keep it in its own searchable window so Settings remains a short set of
-/// choices and 32 adapters can be inspected without disclosure gymnastics.
+/// choices and the full 31-agent roster can be inspected without disclosure
+/// gymnastics.
 @MainActor
 final class SupportCoverageWindowController: NSObject, NSWindowDelegate {
     static let shared = SupportCoverageWindowController()
