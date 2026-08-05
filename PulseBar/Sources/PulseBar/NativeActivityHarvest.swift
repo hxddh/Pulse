@@ -119,11 +119,13 @@ enum NativeActivityHarvest {
     }
 
     private static let maxFilesPerAgent = 384
-    /// Parse up to the product-wide 256 session budget, then keep 128 typed
-    /// facts for Swift/UI memory. The two limits are intentionally distinct:
+    /// Parse up to the product-wide session budget, then keep typed facts for
+    /// the searchable index. The two limits are intentionally distinct:
     /// truncating before normalization can hide the newest usable row.
-    private static let maxFactsPerAgent = 256
-    private static let maxRowsPerAgent = 128
+    /// 0.50 raises retain to 500 so search/pagination can cover large histories
+    /// while the tray glance stays at SnapshotBuilder.maxVisibleRows.
+    private static let maxFactsPerAgent = 512
+    private static let maxRowsPerAgent = 500
     private static let maxDepth = 8
     private static let maxFileBytes = 4 * 1024 * 1024
     /// A menu-bar refresh must not spend its whole cadence on one vendor's

@@ -442,6 +442,9 @@ struct TrayPanel: View {
     @State fileprivate var folded: Set<String> = []
     @State fileprivate var query = ""
     @State fileprivate var searchActive = false
+    @State fileprivate var filterPhase = ""
+    @State fileprivate var filterOutcome = ""
+    @State fileprivate var filterAgentRaw = ""
 
     /// Row key the keyboard has selected, if any.
     @State fileprivate var selectedKey: String?
@@ -488,18 +491,38 @@ struct TrayPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if searchActive || !query.isEmpty {
-                TextField(store.tr(.searchSessions), text: $query)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11))
-                    .padding(.horizontal, TrayChrome.padX)
-                    .padding(.bottom, 8)
+            if searchActive || !query.isEmpty || hasSessionFilters {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField(store.tr(.searchSessions), text: $query)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                    if hasSessionFilters || !query.isEmpty {
+                        HStack(spacing: 6) {
+                            Text(String(format: store.tr(.allSessionsCount), store.allRowsForDisplay.count))
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.tertiary)
+                            Spacer(minLength: 0)
+                            if hasSessionFilters {
+                                Button(store.tr(.filterClear)) {
+                                    filterPhase = ""
+                                    filterOutcome = ""
+                                    filterAgentRaw = ""
+                                }
+                                .font(.system(size: 10.5))
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        sessionFilterBar
+                    }
+                }
+                .padding(.horizontal, TrayChrome.padX)
+                .padding(.bottom, 8)
             }
             missedNotice
             maintenanceNotice
 
             if filteredRows.isEmpty {
-                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !hasSessionFilters {
                     emptyState
                 } else {
                     ContentUnavailableView(store.tr(.searchNoResults), systemImage: "magnifyingglass")
@@ -646,11 +669,59 @@ struct TrayPanel: View {
         }
     }
 
+    private var hasSessionFilters: Bool {
+        !filterPhase.isEmpty || !filterOutcome.isEmpty || !filterAgentRaw.isEmpty
+    }
+
+    private var sessionFilterBar: some View {
+        HStack(spacing: 6) {
+            filterMenu(
+                title: store.tr(.agents),
+                selection: $filterAgentRaw,
+                options: Array(Set(store.allRowsForDisplay.map(\.agent.rawValue))).sorted()
+            )
+            filterMenu(
+                title: store.tr(.filterPhase),
+                selection: $filterPhase,
+                options: Array(Set(store.allRowsForDisplay.map(\.phase).filter { !$0.isEmpty })).sorted()
+            )
+            filterMenu(
+                title: store.tr(.filterOutcome),
+                selection: $filterOutcome,
+                options: Array(Set(store.allRowsForDisplay.map(\.outcome).filter { !$0.isEmpty })).sorted()
+            )
+        }
+    }
+
+    private func filterMenu(title: String, selection: Binding<String>, options: [String]) -> some View {
+        Menu {
+            Button(store.tr(.supportFilterAll)) { selection.wrappedValue = "" }
+            ForEach(options, id: \.self) { option in
+                Button(option) { selection.wrappedValue = option }
+            }
+        } label: {
+            Text(selection.wrappedValue.isEmpty ? title : "\(title): \(selection.wrappedValue)")
+                .font(.system(size: 10.5))
+                .lineLimit(1)
+        }
+    }
+
     private var filteredRows: [AgentRow] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return store.snapshot.rows }
-        return store.allRowsForDisplay.filter { row in
-            [
+        let base: [AgentRow]
+        if text.isEmpty && !hasSessionFilters {
+            base = store.snapshot.rows
+        } else {
+            // Search/filter walk the full retain index (up to 500/agent), not
+            // the twelve-row glance window.
+            base = store.allRowsForDisplay
+        }
+        return base.filter { row in
+            if !filterAgentRaw.isEmpty, row.agent.rawValue != filterAgentRaw { return false }
+            if !filterPhase.isEmpty, row.phase != filterPhase { return false }
+            if !filterOutcome.isEmpty, row.outcome != filterOutcome { return false }
+            guard !text.isEmpty else { return true }
+            return [
                 row.agent.displayName, row.agent.rawValue, row.task, row.project,
                 row.cwd, row.sessionID, row.tool, row.skill, row.phase,
                 row.outcome, row.model, row.mode,
@@ -982,7 +1053,7 @@ struct TrayPanel: View {
                 }
             }
 
-            if !query.isEmpty {
+            if !query.isEmpty || hasSessionFilters {
                 EmptyView()
             } else if store.snapshot.hiddenCount > 0 {
                 overflowButton(
@@ -993,14 +1064,24 @@ struct TrayPanel: View {
             }
 
             // Sessions beyond the per-agent cap: say so rather than pretend
-            // they do not exist.
-            if query.isEmpty, store.snapshot.cappedSessions > 0 {
-                Text(String(format: store.tr(.cappedSessions), store.snapshot.cappedSessions))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, TrayChrome.padX)
-                    .padding(.bottom, 8)
+            // they do not exist. Always show the searchable total when expanded.
+            if query.isEmpty, !hasSessionFilters {
+                if store.snapshot.cappedSessions > 0 {
+                    Text(String(format: store.tr(.cappedSessions), store.snapshot.cappedSessions))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, TrayChrome.padX)
+                        .padding(.bottom, 4)
+                }
+                if store.snapshot.totalCount > SnapshotBuilder.maxVisibleRows {
+                    Text(String(format: store.tr(.allSessionsCount), store.snapshot.totalCount))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, TrayChrome.padX)
+                        .padding(.bottom, 8)
+                }
             }
         }
     }
@@ -1291,16 +1372,15 @@ private struct AgentRowButton: View {
         // A real session is the normal case. Labelling every healthy row
         // "Session" adds no distinction; only degraded evidence needs a tag.
         case .session: return nil
-        case .cache: return store.tr(.cacheEvidence)
-        case .process:
-            // A protected-store Agent can still be detected by its executable
-            // when deep app-data reads are off. Name that boundary directly in
-            // the row; "Process only" hid the actionable reason the session
-            // title and activity were unavailable.
-            if row.agent.requiresAppDataOptIn && !store.isAppDataAllowed(for: row.agent) {
-                return store.tr(.supportCollectorPrivacyLimited)
+        case .cache:
+            if row.quality.isLimited {
+                return store.observationQualitySummary(row)
             }
-            return store.tr(.limitedData)
+            return store.tr(.cacheEvidence)
+        case .process:
+            // Prefer the quality envelope: what is missing, why, and next step.
+            // Never leave a bare "Process only" / "Limited data" with no path.
+            return store.observationQualitySummary(row)
         }
     }
 
@@ -1881,12 +1961,19 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
             LabeledContent(store.tr(.runningFrom)) {
-                Text(store.installReport.runningURL.path)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(store.installReport.runningURL.path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    if let current = store.installReport.copies.first(where: \.isCurrent) {
+                        Text(installKindLabel(current.kind))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             }
             if store.isVersionMismatch, let bundle = PulseVersion.bundleVersion {
                 Text(String(format: store.tr(.versionMismatchHint), PulseVersion.semver, bundle))
@@ -1980,6 +2067,15 @@ struct SettingsView: View {
     private var buildText: String {
         let line = PulseVersion.buildLine
         return line.isEmpty ? store.tr(.devBuild) : line
+    }
+
+    private func installKindLabel(_ kind: InstallTruth.CopyKind) -> String {
+        switch kind {
+        case .currentInstalled: return store.tr(.runningFrom)
+        case .buildArtifact: return store.tr(.installCopyBuildArtifact)
+        case .rollback: return store.tr(.installCopyRollback)
+        case .orphanDuplicate: return store.tr(.duplicateAppsFound).replacingOccurrences(of: "%d", with: "1")
+        }
     }
 
 }

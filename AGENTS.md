@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.27.md`](docs/plan-0.27.md) | The most recent written plan |
+| [`docs/plan-0.50.md`](docs/plan-0.50.md) | The most recent written plan (Signal Quality) |
+| [`docs/plan-0.27.md`](docs/plan-0.27.md) | Historical plan (0.27) |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/`; `src/` retains optional legacy harvest
@@ -110,6 +111,7 @@ to users.
 
 ## Current state
 
-0.49.1 is the current source version. GitHub's latest public Release must be
-checked separately; a merged version is not proof that a signed/notarized DMG
-was published. See `CHANGELOG.md` for the complete contract.
+0.50.0 is the current source version. The active plan is
+[`docs/plan-0.50.md`](docs/plan-0.50.md) (Signal Quality). GitHub's latest
+public Release must be checked separately; a merged version is not proof that a
+signed/notarized DMG was published. See `CHANGELOG.md` for the complete contract.

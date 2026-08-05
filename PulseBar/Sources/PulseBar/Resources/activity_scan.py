@@ -97,9 +97,9 @@ def safe_roots(roots: list[Path] | tuple[Path, ...]) -> list[Path]:
 # Keep candidate scans wider than the output budget so an archived, draft, or
 # malformed record does not prevent a later active session from being found.
 # The collector deliberately emits more than the tray will render. Swift keeps
-# the newest 128 per Agent and counts the remainder, so "128 shown" never means
-# "Pulse stopped looking at 128". This is an ingestion safety budget, not UI.
-MAX_SESSIONS_PER_AGENT = 256
+# the newest 500 per Agent and counts the remainder, so "500 shown" never means
+# "Pulse stopped looking at 500". This is an ingestion safety budget, not UI.
+MAX_SESSIONS_PER_AGENT = 768
 SESSION_CANDIDATE_LIMIT = MAX_SESSIONS_PER_AGENT * 2
 
 # Bytes one collector may spend counting records. The budget is reset at each
@@ -2682,7 +2682,7 @@ def harvest_extension_storage(agent: str, *needles: str, limit: int = MAX_SESSIO
     out: list[tuple] = []
     seen_sessions: set[str] = set()
     for store in vscode_global_storage_dirs(*needles):
-        # The row budget is 256 per agent.  A smaller adapter-local cap made
+        # The row budget is 768 per agent.  A smaller adapter-local cap made
         # sessions 129+ disappear before SnapshotBuilder could apply its own
         # visibility budget, which was especially noticeable in Cursor-like
         # extensions with several active conversations.

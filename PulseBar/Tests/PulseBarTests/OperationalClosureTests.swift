@@ -106,13 +106,31 @@ final class OperationalClosureTests: XCTestCase {
     func testLaunchRecoveryMarksUncleanThenClean() {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
-        let first = LaunchRecovery.begin(nowMs: 10, at: url)
+        let first = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a")
         XCTAssertFalse(first.wasUnclean)
-        let second = LaunchRecovery.begin(nowMs: 20, at: url)
+        XCTAssertEqual(first.kind, .clean)
+        let second = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-a")
         XCTAssertTrue(second.wasUnclean)
+        XCTAssertEqual(second.kind, .crash)
         second.state.markCleanShutdown(at: url)
-        let third = LaunchRecovery.begin(nowMs: 30, at: url)
+        let third = LaunchRecovery.begin(nowMs: 30, at: url, bootID: "boot-a")
         XCTAssertFalse(third.wasUnclean)
+        XCTAssertEqual(third.kind, .clean)
+    }
+
+    func testLaunchRecoveryDistinguishesSystemRestartAndUpdateReplace() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let first = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a")
+        _ = first
+        let afterReboot = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-b")
+        XCTAssertTrue(afterReboot.wasUnclean)
+        XCTAssertEqual(afterReboot.kind, .systemRestart)
+
+        afterReboot.state.markIntendedExit(.updateReplace, at: url)
+        let afterUpdate = LaunchRecovery.begin(nowMs: 30, at: url, bootID: "boot-b")
+        XCTAssertFalse(afterUpdate.wasUnclean)
+        XCTAssertEqual(afterUpdate.kind, .updateReplace)
     }
 
     func testJSONIsDefaultAndTSVRequiresExplicitCompatibilityReader() {

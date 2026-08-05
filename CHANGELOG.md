@@ -2,6 +2,39 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.50.0 — Signal Quality / 有效观测
+
+0.49.1 完成可靠性闭环后，本版不再扩 Agent 名单，而是让现有 31 个 Agent 的信息更深、更可信、更可操作。详见 [`docs/plan-0.50.md`](docs/plan-0.50.md)。
+
+### P0 · 观测质量信封
+
+- 每行携带命名 `ObservationQuality`：`facts` / `missing` / `freshness` / `confidence`。缺失字段必须说明缺什么、为什么缺、下一步做什么。
+- 托盘不再出现无解释的 “Limited data / 仅进程”；改由质量信封驱动文案（进程证据、隐私受限、缓存未写出等）。
+- 详情检查器展示质量摘要与缺口列表；`bestEffortCache` Agent 继续用真实 fixture 覆盖。
+
+### P0 · 全量会话索引
+
+- 每 Agent 可搜索保留上限提升到 500；托盘 glance 仍为 12 行，避免一次扫描拖垮菜单栏。
+- 搜索表面增加 Agent / 阶段 / 结果筛选，并显示「全部 N 个会话」。
+- 详情检查器从全量索引解析行，不再绑在 glance 的 12 行窗口上。
+- 压力夹具覆盖 4 / 20 / 100 / 500 会话。
+
+### P0 · Waiting 与恢复提示
+
+- `LaunchRecovery` 区分 crash、强制退出、系统重启与正常更新替换；更新替换不再误报异常退出。
+- 异常退出横幅可在健康扫描后自动消失，也可由用户关闭。
+- Waiting 详情展示账本时间线：排队、通知、确认、稍后、解决与通知待发送状态。
+
+### P0 · 单安装副本与权限
+
+- `InstallTruth` 分类 `currentInstalled` / `buildArtifact`（zig-out 等）/ `rollback` / `orphanDuplicate`；回收只动用户安装副本。
+- 按 Agent 开启 App Data 后只重扫受影响 Agent，不再全量 `saveSettings` 刷新。
+
+### 验证
+
+- Swift Debug/Release build、原生 31-agent fixture、协议/矩阵/图标/外观/harvest gates 通过。
+- 新增 ObservationQuality 与会话索引压力测试；LaunchRecovery / InstallTruth 分类断言扩展。
+
 ## 0.49.1 — P0/P1/P2 验收收口
 
 ### 修复

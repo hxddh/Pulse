@@ -95,28 +95,32 @@ final class PulseVersionTests: XCTestCase {
             version: "0.36.0",
             commit: "abc",
             isRunning: true,
-            isCurrent: true
+            isCurrent: true,
+            kind: .currentInstalled
         )
         let old = InstallTruth.Copy(
             url: URL(fileURLWithPath: "/Applications/Pulse old.app"),
             version: "0.35.1",
             commit: "old",
             isRunning: false,
-            isCurrent: false
+            isCurrent: false,
+            kind: .orphanDuplicate
         )
         let newer = InstallTruth.Copy(
             url: URL(fileURLWithPath: "/Applications/Pulse preview.app"),
             version: "0.37.0",
             commit: "new",
             isRunning: false,
-            isCurrent: false
+            isCurrent: false,
+            kind: .orphanDuplicate
         )
         let runningOld = InstallTruth.Copy(
             url: URL(fileURLWithPath: "/Applications/Pulse running.app"),
             version: "0.34.0",
             commit: "run",
             isRunning: true,
-            isCurrent: false
+            isCurrent: false,
+            kind: .orphanDuplicate
         )
         let report = InstallTruth.Report(
             runningURL: current.url,
@@ -125,6 +129,30 @@ final class PulseVersionTests: XCTestCase {
         )
         XCTAssertEqual(report.removableDuplicates.map(\.version), ["0.35.1"])
         XCTAssertTrue(report.hasOtherRunningCopy)
+    }
+
+    func testInstallTruthClassifiesBuildAndRollbackPaths() {
+        XCTAssertEqual(
+            InstallTruth.classify(
+                url: URL(fileURLWithPath: "/Users/me/Pulse/zig-out/package/Pulse.app"),
+                isCurrent: true
+            ),
+            .buildArtifact
+        )
+        XCTAssertEqual(
+            InstallTruth.classify(
+                url: URL(fileURLWithPath: "/Users/me/Library/Application Support/Pulse/rollback/Pulse.app"),
+                isCurrent: false
+            ),
+            .rollback
+        )
+        XCTAssertEqual(
+            InstallTruth.classify(
+                url: URL(fileURLWithPath: "/Applications/Pulse.app"),
+                isCurrent: true
+            ),
+            .currentInstalled
+        )
     }
 
     func testHookStatusIsPerAgentNotGlobal() {

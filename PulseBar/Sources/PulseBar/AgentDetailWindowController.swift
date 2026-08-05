@@ -48,13 +48,12 @@ final class AgentDetailWindowController: NSObject, NSWindowDelegate {
     }
 }
 
-@MainActor
-struct AgentDetailView: View {
+private struct AgentDetailView: View {
     @ObservedObject var store: StatusStore
     let rowKey: String
 
     private var row: AgentRow? {
-        store.snapshot.rows.first(where: { $0.rowKey == rowKey })
+        store.rowForDetail(rowKey: rowKey)
     }
 
     var body: some View {
@@ -65,6 +64,7 @@ struct AgentDetailView: View {
                         identity(row)
                         if row.waiting { waitingCard(row) }
                         facts(row)
+                        qualityCard(row)
                         rawEvidence(row)
                         actions(row)
                     }
@@ -116,6 +116,9 @@ struct AgentDetailView: View {
             Text(store.localizedWaitLine(row))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let event = store.attentionEvent(for: row.rowKey) {
+                waitingTimeline(event)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -123,6 +126,61 @@ struct AgentDetailView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(GlanceKind.waiting.lampColor.opacity(0.10))
         )
+    }
+
+    private func waitingTimeline(_ event: AttentionLedger.Event) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(store.tr(.waitingTimeline))
+                .font(.caption.weight(.semibold))
+                .padding(.top, 4)
+            timelineRow(store.tr(.waitingQueuedAt), ms: event.queuedAtMs)
+            if event.notifiedAtMs > 0 {
+                timelineRow(store.tr(.waitingNotifiedAt), ms: event.notifiedAtMs)
+            } else if event.queuedAtMs > 0 {
+                Text(store.tr(.waitingNotifyPending))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            timelineRow(store.tr(.waitingAcknowledgedAt), ms: event.acknowledgedAtMs)
+            timelineRow(store.tr(.waitingSnoozedUntil), ms: event.snoozedUntilMs)
+            timelineRow(store.tr(.waitingResolvedAt), ms: event.resolvedAtMs)
+        }
+    }
+
+    private func timelineRow(_ label: String, ms: Int64) -> some View {
+        Group {
+            if ms > 0 {
+                Text("\(label) · \(relativeMs(ms))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func relativeMs(_ ms: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
+        return date.formatted(.relative(presentation: .named))
+    }
+
+    private func qualityCard(_ row: AgentRow) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(store.tr(.supportEvidence))
+                .font(.headline)
+            Text(store.observationQualitySummary(row))
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            if !row.quality.missing.isEmpty {
+                ForEach(Array(row.quality.missing.prefix(4).enumerated()), id: \.offset) { _, gap in
+                    Text("\(gap.key.rawValue): \(store.observationGapReason(gap)) → \(store.observationGapNextStep(gap))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Text("\(store.tr(.supportLastRead)): \(row.quality.freshnessMs > 0 ? relativeMs(row.quality.freshnessMs) : "—") · \(row.quality.confidence.rawValue)")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     private func facts(_ row: AgentRow) -> some View {

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.49.1"
+    static let semver = "0.50.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -217,6 +217,188 @@ enum ObservationSource: String, Equatable, Hashable {
     case process
 }
 
+/// Named fact keys for the 0.50 Signal Quality envelope.
+///
+/// Every observed row must either present these facts or explain why they are
+/// missing. Unknown is shown as unknown; Pulse never invents a goal, phase, or
+/// wait reason from process noise.
+enum ObservationFactKey: String, CaseIterable, Equatable, Hashable {
+    case task
+    case workspace
+    case action
+    case phase
+    case model
+    case progress
+    case error
+    case waitingReason
+    case evidence
+    case freshness
+}
+
+enum ObservationConfidence: String, Equatable, Hashable {
+    case high
+    case medium
+    case low
+}
+
+enum FreshnessSource: String, Equatable, Hashable {
+    case sourceMtime = "source_mtime"
+    case harvest
+    case processStart = "process_start"
+    case unknown
+}
+
+/// One missing fact with a stable reason/next-step code for localization.
+struct ObservationGap: Equatable, Hashable {
+    var key: ObservationFactKey
+    /// Stable code — never a free-form path or payload.
+    var reason: String
+    var nextStep: String
+}
+
+/// Per-row signal quality. Drives Limited-data copy and Support Health depth.
+struct ObservationQuality: Equatable, Hashable {
+    var facts: Set<ObservationFactKey> = []
+    var missing: [ObservationGap] = []
+    var freshnessMs: Int64 = 0
+    var freshnessSource: FreshnessSource = .unknown
+    var confidence: ObservationConfidence = .low
+
+    var isLimited: Bool {
+        confidence != .high
+            || !facts.contains(.evidence)
+            || (!facts.contains(.task) && !facts.contains(.workspace) && !facts.contains(.action))
+    }
+
+    /// Derive quality from the final merged row fields. Call after harvest,
+    /// process attach, and Waiting merge so the envelope matches what the tray
+    /// shows.
+    static func derive(
+        task: String,
+        workspace: String,
+        action: String,
+        phase: String,
+        model: String,
+        progressDone: Int,
+        progressTotal: Int,
+        errors: Int,
+        waiting: Bool,
+        waitMessage: String,
+        evidence: ObservationSource,
+        harvestMs: Int64,
+        processStartedMs: Int64,
+        privacyLimited: Bool,
+        agentHarvestSource: HarvestSource,
+        waitingSource: WaitingSource
+    ) -> ObservationQuality {
+        var facts: Set<ObservationFactKey> = [.evidence]
+        var missing: [ObservationGap] = []
+
+        func present(_ key: ObservationFactKey, when ok: Bool, reason: String, next: String) {
+            if ok {
+                facts.insert(key)
+            } else {
+                missing.append(ObservationGap(key: key, reason: reason, nextStep: next))
+            }
+        }
+
+        let hasTask = !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasWorkspace = !workspace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasAction = !action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasPhase = !phase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasModel = !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasProgress = progressTotal > 0
+        let hasError = errors > 0
+        let hasWaitReason = waiting && !waitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        let baseReason: String
+        let baseNext: String
+        switch evidence {
+        case .process:
+            baseReason = privacyLimited ? "privacy_limited" : "process_only"
+            baseNext = privacyLimited ? "enable_app_data" : "open_agent_for_session"
+        case .cache:
+            baseReason = "cache_conditional"
+            baseNext = privacyLimited ? "enable_app_data" : "wait_for_vendor_cache"
+        case .session:
+            baseReason = "not_emitted"
+            baseNext = "open_agent_for_session"
+        }
+
+        present(.task, when: hasTask, reason: baseReason, next: baseNext)
+        present(.workspace, when: hasWorkspace, reason: baseReason, next: baseNext)
+        present(.action, when: hasAction, reason: baseReason, next: baseNext)
+        present(.phase, when: hasPhase, reason: baseReason, next: baseNext)
+        present(.model, when: hasModel, reason: baseReason, next: baseNext)
+        present(.progress, when: hasProgress, reason: "not_emitted", next: "open_agent_for_session")
+        if hasError {
+            facts.insert(.error)
+        } else {
+            // Errors are enhancements when zero — do not demand a failure.
+        }
+        if waiting {
+            if hasWaitReason {
+                facts.insert(.waitingReason)
+            } else {
+                missing.append(ObservationGap(
+                    key: .waitingReason,
+                    reason: "waiting_no_detail",
+                    nextStep: "open_agent_for_session"
+                ))
+            }
+        } else if waitingSource == .none {
+            missing.append(ObservationGap(
+                key: .waitingReason,
+                reason: "waiting_unsupported",
+                nextStep: "use_attention_bridge"
+            ))
+        }
+
+        let freshnessMs: Int64
+        let freshnessSource: FreshnessSource
+        if harvestMs > 0 {
+            freshnessMs = harvestMs
+            freshnessSource = evidence == .process ? .harvest : .sourceMtime
+            facts.insert(.freshness)
+        } else if processStartedMs > 0 {
+            freshnessMs = processStartedMs
+            freshnessSource = .processStart
+            facts.insert(.freshness)
+        } else {
+            freshnessMs = 0
+            freshnessSource = .unknown
+            missing.append(ObservationGap(
+                key: .freshness,
+                reason: baseReason,
+                nextStep: baseNext
+            ))
+        }
+
+        let coreCount = [.task, .workspace, .action, .evidence]
+            .filter { facts.contains($0) }.count
+        let confidence: ObservationConfidence
+        switch evidence {
+        case .session:
+            confidence = coreCount >= 4 ? .high : (coreCount >= 2 ? .medium : .low)
+        case .cache:
+            confidence = coreCount >= 3 ? .medium : .low
+            if agentHarvestSource == .bestEffortCache, coreCount < 3 {
+                // Keep confidence honest for thin cache adapters.
+            }
+        case .process:
+            confidence = .low
+        }
+
+        return ObservationQuality(
+            facts: facts,
+            missing: missing,
+            freshnessMs: freshnessMs,
+            freshnessSource: freshnessSource,
+            confidence: confidence
+        )
+    }
+}
+
 /// Privacy-safe reason a process rule matched.
 ///
 /// The support window needs to explain why Pulse believes an Agent is live,
@@ -320,6 +502,31 @@ struct AgentRow: Identifiable, Hashable {
     var processStartedMs: Int64 = 0
     /// Why the process probe matched, without retaining argv.
     var processEvidence: ProcessEvidence? = nil
+    /// Named Signal Quality envelope — facts present, gaps with reasons, freshness.
+    var quality: ObservationQuality = ObservationQuality()
+
+    /// Recompute `quality` from the merged row. Safe to call after every scan merge.
+    mutating func refreshObservationQuality(privacyLimited: Bool = false) {
+        let workspace = cwd.isEmpty ? project : cwd
+        quality = ObservationQuality.derive(
+            task: usefulTask ?? task,
+            workspace: workspace,
+            action: tool.isEmpty ? skill : tool,
+            phase: phase,
+            model: model,
+            progressDone: progressDone,
+            progressTotal: progressTotal,
+            errors: errors,
+            waiting: waiting,
+            waitMessage: waitMessage.isEmpty ? waitKind : waitMessage,
+            evidence: observationSource,
+            harvestMs: harvestMs,
+            processStartedMs: processStartedMs,
+            privacyLimited: privacyLimited,
+            agentHarvestSource: agent.harvestSource,
+            waitingSource: agent.waitingSource
+        )
+    }
 
     /// How long this session has been going, in seconds; 0 when unknown.
     ///

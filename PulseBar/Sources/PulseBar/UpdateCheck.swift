@@ -254,6 +254,9 @@ final class UpdateCheck {
         do {
             try helper.run()
             store.updateDownloadStatus = .installing
+            // Mark intentional update replace so the next launch does not show
+            // the unclean-exit recovery banner.
+            store.markIntendedUpdateReplace()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 NSApp.terminate(nil)
             }

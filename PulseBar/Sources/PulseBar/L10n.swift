@@ -358,6 +358,27 @@ enum L10n {
         case .updateInstallFailed: return "Update install failed"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .recoveredAfterCrash: return "Pulse recovered after an unclean exit"
+        case .recoveredAfterForceQuit: return "Pulse recovered after a force quit"
+        case .recoveredAfterSystemRestart: return "Pulse restarted after a system reboot"
+        case .qualityReasonProcessOnly: return "Only process evidence is available"
+        case .qualityReasonCache: return "Vendor cache did not emit this field"
+        case .qualityReasonNotEmitted: return "Not present in the local session record"
+        case .qualityReasonWaitingNoDetail: return "Waiting without a detailed reason"
+        case .qualityNextOpenAgent: return "Open the agent to see full session detail"
+        case .qualityNextWaitCache: return "Keep using the agent so its local cache fills in"
+        case .allSessionsCount: return "All %d sessions"
+        case .filterPhase: return "Phase"
+        case .filterOutcome: return "Result"
+        case .filterClear: return "Clear filters"
+        case .waitingTimeline: return "Waiting timeline"
+        case .waitingQueuedAt: return "Queued"
+        case .waitingNotifiedAt: return "Notified"
+        case .waitingAcknowledgedAt: return "Acknowledged"
+        case .waitingSnoozedUntil: return "Snoozed until"
+        case .waitingResolvedAt: return "Resolved"
+        case .waitingNotifyPending: return "Notification pending"
+        case .installCopyBuildArtifact: return "Development build"
+        case .installCopyRollback: return "Rollback copy"
         case .recordsSuffix: return " events"
         case .sessionAge: return "Started %@ ago"
         case .phaseResponding: return "Responding"
@@ -691,6 +712,27 @@ enum L10n {
         case .updateInstallFailed: return "更新安装失败"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
         case .recoveredAfterCrash: return "Pulse 已从上次异常退出中恢复"
+        case .recoveredAfterForceQuit: return "Pulse 已从强制退出中恢复"
+        case .recoveredAfterSystemRestart: return "系统重启后 Pulse 已重新启动"
+        case .qualityReasonProcessOnly: return "目前只有进程证据"
+        case .qualityReasonCache: return "厂商缓存未写出该字段"
+        case .qualityReasonNotEmitted: return "本地会话记录中没有该字段"
+        case .qualityReasonWaitingNoDetail: return "正在等待，但没有详细原因"
+        case .qualityNextOpenAgent: return "打开该 Agent 查看完整会话"
+        case .qualityNextWaitCache: return "继续使用该 Agent，等待本地缓存补齐"
+        case .allSessionsCount: return "全部 %d 个会话"
+        case .filterPhase: return "阶段"
+        case .filterOutcome: return "结果"
+        case .filterClear: return "清除筛选"
+        case .waitingTimeline: return "等待时间线"
+        case .waitingQueuedAt: return "已排队"
+        case .waitingNotifiedAt: return "已通知"
+        case .waitingAcknowledgedAt: return "已确认"
+        case .waitingSnoozedUntil: return "已稍后至"
+        case .waitingResolvedAt: return "已解决"
+        case .waitingNotifyPending: return "通知待发送"
+        case .installCopyBuildArtifact: return "开发构建"
+        case .installCopyRollback: return "回滚副本"
         case .recordsSuffix: return " 条事件"
         case .sessionAge: return "始于%@前"
         case .phaseResponding: return "正在响应"
@@ -789,6 +831,13 @@ enum L10n {
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
         case installUpdate, updateInstalling, updateInstallFailed, updatePreview, recoveredAfterCrash
+        case recoveredAfterForceQuit, recoveredAfterSystemRestart
+        case qualityReasonProcessOnly, qualityReasonCache, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
+        case qualityNextOpenAgent, qualityNextWaitCache
+        case allSessionsCount, filterPhase, filterOutcome, filterClear
+        case waitingTimeline, waitingQueuedAt, waitingNotifiedAt, waitingAcknowledgedAt
+        case waitingSnoozedUntil, waitingResolvedAt, waitingNotifyPending
+        case installCopyBuildArtifact, installCopyRollback
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting
         case phaseBuilding, phasePublishing
         case nowActivity, outcomeActivity

@@ -1,5 +1,11 @@
 # Agent observability contract
 
+> **0.50 Signal Quality** — runtime rows carry a named
+> `ObservationQuality` envelope (`facts` / `missing` / `freshness` /
+> `confidence`). A missing field must explain why and what to do next; see
+> [`docs/plan-0.50.md`](plan-0.50.md). Process-only fallbacks are never
+> presented as equivalent to session/cache rows.
+
 Pulse does not count a detected process as “Agent support”. A useful row needs
 four baseline facts whenever that Agent has written them locally:
 
@@ -101,10 +107,11 @@ TTY/focus capability, and an explicit “activity unavailable” statement. That
 fallback is detection, not rich session observability, and is never presented
 as equivalent to a session/cache row.
 
-Collector ingestion is bounded at 256 rows per Agent. The Swift model keeps
-128 and reports the exact number of rows held back; the tray's global
-twelve-row fold is presentation only. This separation lets Pulse observe more
-than it shows without allowing unbounded vendor stores to consume memory.
+Collector ingestion is bounded at 256 rows per Agent for a normal glance scan.
+The 0.50 session index raises the search-visible retain ceiling to 500 per
+Agent with pagination / on-demand load; the tray's global twelve-row fold
+remains presentation only. This separation lets Pulse observe more than it
+shows without allowing unbounded vendor stores to consume menu-bar memory.
 
 ## Tool and skill policy
 

@@ -12,10 +12,11 @@ import Foundation
 /// in charge of policy and I/O; this stays a function of its inputs.
 enum SnapshotBuilder {
 
-    /// Safety bound, not the default visual density. The tray folds globally
-    /// after `maxVisibleRows`; keeping this much higher means the fifth (or
-    /// twentieth) concurrent session can still be expanded and inspected.
-    static let maxSessionsPerAgent = 128
+    /// Safety bound for the searchable session index, not the glance viewport.
+    /// The tray folds globally after `maxVisibleRows`; 0.50 raises retain so
+    /// search can cover up to 500 sessions per agent without dumping them into
+    /// the menu-bar panel.
+    static let maxSessionsPerAgent = 500
     /// Rows shown before the "and N more" fold.
     ///
     /// Was 5, but every row also carried a permanently visible action strip, so
@@ -39,6 +40,9 @@ enum SnapshotBuilder {
         var snoozedUntilMs: [String: Int64]
         /// Seconds of silence that make a live row stalled; 0 disables it.
         var stalledSeconds: Double
+        /// Agents whose protected App Data the user has not granted. Used only
+        /// to label ObservationQuality gaps — never to invent facts.
+        var privacyLimitedAgents: Set<AgentID>
 
         init(
             nowMs: Int64,
@@ -49,7 +53,8 @@ enum SnapshotBuilder {
             dismissedPendingKeys: Set<String> = [],
             showAllAgents: Bool = false,
             snoozedUntilMs: [String: Int64] = [:],
-            stalledSeconds: Double = AgentRow.stalledSeconds
+            stalledSeconds: Double = AgentRow.stalledSeconds,
+            privacyLimitedAgents: Set<AgentID> = []
         ) {
             self.nowMs = nowMs
             self.terminal = terminal
@@ -60,6 +65,7 @@ enum SnapshotBuilder {
             self.showAllAgents = showAllAgents
             self.snoozedUntilMs = snoozedUntilMs
             self.stalledSeconds = stalledSeconds
+            self.privacyLimitedAgents = privacyLimitedAgents
         }
     }
 
@@ -448,6 +454,9 @@ enum SnapshotBuilder {
                 viaWarp: row.viaWarp,
                 env: context.terminal
             )
+            let privacy = row.agent.requiresAppDataOptIn
+                && context.privacyLimitedAgents.contains(row.agent)
+            all[i].refreshObservationQuality(privacyLimited: privacy)
         }
 
         // Waiting → active → stalled → recent; evidence quality and agent

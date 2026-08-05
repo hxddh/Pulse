@@ -1378,8 +1378,8 @@ def main() -> int:
         "Codex rollout parser": "parseCodexFacts",
         "Amp prompt recovery": "history.jsonl",
         "Cursor composer SQLite": "collectCursorDatabase",
-        "bounded facts": "maxFactsPerAgent = 256",
-        "bounded Swift rows": "maxRowsPerAgent = 128",
+        "bounded facts": "maxFactsPerAgent = 512",
+        "bounded Swift rows": "maxRowsPerAgent = 500",
         "per-agent deadline": "maxAgentSeconds",
         "global byte budget": "bytesRemaining = 48_000_000",
     }

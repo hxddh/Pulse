@@ -95,7 +95,7 @@ enum NativeHarvestSelfTest {
         if openCodeRows.count < 100 {
             failures.append("100-session pressure retained only \(openCodeRows.count) OpenCode rows")
         }
-        if openCodeRows.count > 128 {
+        if openCodeRows.count > 500 {
             failures.append("OpenCode row cap exceeded: \(openCodeRows.count)")
         }
         if let opencodeHealth = result.health.first(where: { $0.id == .opencode }),
@@ -164,7 +164,7 @@ enum NativeHarvestSelfTest {
         // A native run must retain a bounded set rather than letting a large
         // rollout directory grow the tray model without limit.
         let codexRows = result.rows.filter { $0.id == .codex }
-        if codexRows.count > 128 { failures.append("Codex row cap exceeded: \(codexRows.count)") }
+        if codexRows.count > 500 { failures.append("Codex row cap exceeded: \(codexRows.count)") }
 
         if failures.isEmpty {
             print("native fixture PASSED — rows=\(result.rows.count) adapters=\(result.health.count) complete=\(result.complete)")

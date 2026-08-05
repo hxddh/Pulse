@@ -43,6 +43,10 @@ final class StatusStore: ObservableObject {
     @Published var updateStatus: UpdateCheck.Status = .idle
     @Published var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
     @Published private(set) var recoveredAfterCrash = false
+    @Published private(set) var recoveryExitKind: LaunchRecovery.ExitKind = .clean
+    /// Keep the unclean-exit banner through the first healthy scan so the user
+    /// can actually see it; clear on the next healthy scan or explicit dismiss.
+    private var recoveryNoticeSurvivedFirstHealthyScan = false
     private var launchRecovery: LaunchRecovery?
     @Published private(set) var installReport = InstallTruth.Report.empty
     @Published private(set) var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
@@ -206,7 +210,11 @@ final class StatusStore: ObservableObject {
         } else {
             appDataAgents.remove(agent)
         }
-        saveSettings()
+        // Persist without a full roster refresh — only the affected Agent needs
+        // a new harvest pass. Blanket saveSettings→refresh was waking every
+        // adapter after a single privacy toggle.
+        persistSettingsOnly()
+        refresh(reason: "appData:\(agent.rawValue)", agentFilter: [agent])
     }
 
     func setAllAppDataAccess(_ enabled: Bool) {
@@ -216,7 +224,8 @@ final class StatusStore: ObservableObject {
         } else {
             appDataAgents.removeAll()
         }
-        saveSettings()
+        persistSettingsOnly()
+        refresh(reason: "appData:all", agentFilter: Set(protectedAppDataAgents))
     }
 
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
@@ -477,9 +486,56 @@ final class StatusStore: ObservableObject {
     }
 
     /// Full session inventory for the tray search surface. The normal glance
-    /// uses `snapshot.rows`; a query must search the bounded 128-row model so a
+    /// uses `snapshot.rows`; a query must search the bounded 500-row index so a
     /// session hidden behind the twelve-row viewport is still discoverable.
     var allRowsForDisplay: [AgentRow] { cachedAll }
+
+    /// Resolve a row for the detail inspector from the full index, not glance.
+    func rowForDetail(rowKey: String) -> AgentRow? {
+        cachedAll.first(where: { $0.rowKey == rowKey })
+            ?? snapshot.rows.first(where: { $0.rowKey == rowKey })
+    }
+
+    /// Localized Limited-data / gap explanation — never a bare "Process only".
+    func observationQualitySummary(_ row: AgentRow) -> String {
+        if !row.quality.isLimited, row.observationSource == .session {
+            return tr(.sessionEvidence)
+        }
+        guard let gap = row.quality.missing.first else {
+            switch row.observationSource {
+            case .session: return tr(.sessionEvidence)
+            case .cache: return tr(.cacheEvidence)
+            case .process:
+                return "\(tr(.limitedData)) · \(tr(.qualityNextOpenAgent))"
+            }
+        }
+        return "\(observationGapReason(gap)) · \(observationGapNextStep(gap))"
+    }
+
+    func observationGapReason(_ gap: ObservationGap) -> String {
+        switch gap.reason {
+        case "privacy_limited": return tr(.supportCollectorPrivacyLimitedDetail)
+        case "process_only": return tr(.qualityReasonProcessOnly)
+        case "cache_conditional": return tr(.qualityReasonCache)
+        case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
+        case "waiting_unsupported": return tr(.supportWaitingNone)
+        default: return tr(.qualityReasonNotEmitted)
+        }
+    }
+
+    func observationGapNextStep(_ gap: ObservationGap) -> String {
+        switch gap.nextStep {
+        case "enable_app_data": return tr(.supportEnableData)
+        case "wait_for_vendor_cache": return tr(.qualityNextWaitCache)
+        case "use_attention_bridge": return tr(.attentionBridgeHint)
+        default: return tr(.qualityNextOpenAgent)
+        }
+    }
+
+    func attentionEvent(for rowKey: String) -> AttentionLedger.Event? {
+        attentionLedger.events.last(where: { $0.rowKey == rowKey && $0.isActive })
+            ?? attentionLedger.events.last(where: { $0.rowKey == rowKey })
+    }
 
     private func waitingSignalReady(for agent: AgentID) -> Bool {
         switch agent.waitingSource {
@@ -743,8 +799,12 @@ final class StatusStore: ObservableObject {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
         let recovery = LaunchRecovery.begin(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
         launchRecovery = recovery.state
+        recoveryExitKind = recovery.kind
+        // Update replacement is an intentional exit — never show the unclean banner.
         recoveredAfterCrash = recovery.wasUnclean
-        if recoveredAfterCrash { DebugLog.write("launch recovery detected unclean previous exit") }
+        if recoveredAfterCrash {
+            DebugLog.write("launch recovery unclean kind=\(recovery.kind.rawValue)")
+        }
         // Restore only Pulse-owned attention state. Agent-owned hooks remain
         // the source of truth for the current row; the ledger supplies the
         // cross-launch baseline, snooze timers and delivery dedupe.
@@ -1245,7 +1305,7 @@ final class StatusStore: ObservableObject {
     }
 
     var maintenanceNoticeText: String? {
-        if recoveredAfterCrash { return tr(.recoveredAfterCrash) }
+        if recoveredAfterCrash { return recoveryNoticeText }
         if isVersionMismatch { return tr(.versionStale) }
         if installReport.hasOtherRunningCopy { return tr(.duplicateAppRunning) }
         // A Waiting row is already visible in the tray, but without a system
@@ -1266,7 +1326,27 @@ final class StatusStore: ObservableObject {
         return nil
     }
 
+    private var recoveryNoticeText: String {
+        switch recoveryExitKind {
+        case .forceQuit: return tr(.recoveredAfterForceQuit)
+        case .systemRestart: return tr(.recoveredAfterSystemRestart)
+        case .crash, .unknown: return tr(.recoveredAfterCrash)
+        case .clean, .updateReplace: return tr(.recoveredAfterCrash)
+        }
+    }
+
+    func dismissRecoveryNotice() {
+        recoveredAfterCrash = false
+        recoveryExitKind = .clean
+        recoveryNoticeSurvivedFirstHealthyScan = false
+    }
+
     func performMaintenanceNoticeAction() {
+        if recoveredAfterCrash {
+            dismissRecoveryNotice()
+            openSettings()
+            return
+        }
         if waitingNotificationNeedsSetup {
             if notifyAuthorized == false {
                 openSystemNotificationSettings()
@@ -1356,7 +1436,7 @@ final class StatusStore: ObservableObject {
         refresh(reason: "manual")
     }
 
-    func refresh(reason: String) {
+    func refresh(reason: String, agentFilter: Set<AgentID>? = nil) {
         if scanInFlight {
             pendingRefreshReason = reason
             DebugLog.write("refresh coalesce pending=\(reason)")
@@ -1384,6 +1464,13 @@ final class StatusStore: ObservableObject {
         if !supervisorPlan.deferred.isEmpty {
             DebugLog.write("harvest supervisor deferred=\(supervisorPlan.deferred.map(\.rawValue).sorted().joined(separator: ",")) \(harvestSupervisor.summary(nowMs: supervisorNowMs))")
         }
+        // Permission toggles force the affected Agent(s) even if the supervisor
+        // would otherwise defer them. Full scans keep the supervisor plan.
+        let harvestFilter: Set<AgentID>? = {
+            if let agentFilter { return Set(agentFilter.map(\.surfaceID)) }
+            return supervisorPlan.attempted
+        }()
+        let scopedHarvest = agentFilter != nil
 
         scanQueue.async {
             let t0 = Date()
@@ -1413,27 +1500,27 @@ final class StatusStore: ObservableObject {
                 let result = ActivityHarvest.scan(
                     allowAppData: allowAllAppData,
                     appDataAgents: appDataAgentPolicy,
-                    agentFilter: supervisorPlan.attempted
+                    agentFilter: harvestFilter
                 )
                 harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
                 let intentionalPartial = Self.isIntentionalSupervisorPartial(
                     health: result.health,
                     plan: supervisorPlan
                 )
+                // Scoped permission rescans report only the affected adapters.
+                // Force a partial merge so other Agents keep their last good rows.
+                let complete = scopedHarvest ? false : result.complete
                 outcome = result.unreliable
-                    ? .failed(result.health, result.complete, intentionalPartial)
-                    : .fresh(result.rows, result.health, result.complete, intentionalPartial)
+                    ? .failed(result.health, complete, intentionalPartial || scopedHarvest)
+                    : .fresh(result.rows, result.health, complete, intentionalPartial || scopedHarvest)
             }
 
             let attention = AttentionReader.load()
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DebugLog.write(
-                "scan done #\(ticket) \(ms)ms harvest=\(why) procs=\(procs.count) " +
+                "scan done #\(ticket) \(ms)ms harvest=\(why) scoped=\(scopedHarvest) procs=\(procs.count) " +
                 "att=\(attention.count) procIds=\(procs.map(\.id.rawValue).joined(separator: ","))"
             )
-            // Capture the optional as a value before crossing queues. Swift 6
-            // diagnoses a mutable local captured by the main-queue closure,
-            // even though the scan queue has finished assigning it here.
             let completedHarvestMs = harvestMs
             DispatchQueue.main.async { [completedHarvestMs] in
                 switch outcome {
@@ -1661,7 +1748,12 @@ final class StatusStore: ObservableObject {
                 dismissedPendingKeys: dismissedPendingKeys,
                 showAllAgents: showAllAgents,
                 snoozedUntilMs: snoozedUntil.mapValues { Int64($0.timeIntervalSince1970 * 1000) },
-                stalledSeconds: Double(stallMinutes) * 60
+                stalledSeconds: Double(stallMinutes) * 60,
+                privacyLimitedAgents: Set(
+                    AgentID.allCases.filter {
+                        $0.requiresAppDataOptIn && !isAppDataAllowed(for: $0)
+                    }
+                )
             )
         )
 
@@ -1703,6 +1795,17 @@ final class StatusStore: ObservableObject {
 
         var snap = result.snapshot
         snap.updatedAt = now
+
+        // A healthy scan after launch means recovery succeeded. Keep the banner
+        // through the first healthy scan so opening the tray once still shows
+        // it; clear on the subsequent healthy scan (or explicit dismiss).
+        if recoveredAfterCrash, !harvestUnreliable {
+            if recoveryNoticeSurvivedFirstHealthyScan {
+                dismissRecoveryNotice()
+            } else {
+                recoveryNoticeSurvivedFirstHealthyScan = true
+            }
+        }
 
         // Notification policy lives here; the builder only reports the edges.
         let quiet = isInQuietHours()
@@ -2838,6 +2941,10 @@ final class StatusStore: ObservableObject {
         launchRecovery?.markCleanShutdown()
     }
 
+    func markIntendedUpdateReplace() {
+        launchRecovery?.markIntendedExit(.updateReplace)
+    }
+
     private func relative(_ date: Date) -> String {
         if date == .distantPast { return tr(.notYet) }
         let ago = Date().timeIntervalSince(date)
@@ -2909,11 +3016,7 @@ final class StatusStore: ObservableObject {
     }
 
     func saveSettings() {
-        let dir = settingsURL().deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        quietStartMinute = PulseSettings.clampMinute(quietStartMinute)
-        quietEndMinute = PulseSettings.clampMinute(quietEndMinute)
-        try? currentSettings.serialized().write(to: settingsURL(), atomically: true, encoding: .utf8)
+        persistSettingsOnly()
         // Banner button titles are baked into the registered category, so they
         // go stale on a language switch unless re-registered here.
         PulseNotify.registerCategories(lang: lang)
@@ -2922,6 +3025,16 @@ final class StatusStore: ObservableObject {
         UpdateCheck.shared.startIfEnabled(store: self)
         rescheduleTimer()
         refresh(reason: "saveSettings")
+    }
+
+    /// Write settings without scheduling a full roster harvest. Used by
+    /// per-Agent App Data toggles that refresh only the affected adapters.
+    func persistSettingsOnly() {
+        let dir = settingsURL().deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        quietStartMinute = PulseSettings.clampMinute(quietStartMinute)
+        quietEndMinute = PulseSettings.clampMinute(quietEndMinute)
+        try? currentSettings.serialized().write(to: settingsURL(), atomically: true, encoding: .utf8)
     }
 
     /// Re-register the global shortcut and report honestly when the system
