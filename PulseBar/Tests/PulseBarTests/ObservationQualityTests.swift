@@ -111,7 +111,7 @@ final class SessionIndexTests: XCTestCase {
             context: SnapshotBuilder.Context(
                 nowMs: 1_700_000_000_000 + 10_000,
                 terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                lang: .english,
+                lang: .en,
                 maxSessionsPerAgent: SnapshotBuilder.maxSessionsPerAgent,
                 maxVisibleRows: SnapshotBuilder.maxVisibleRows
             )
@@ -145,7 +145,7 @@ final class SessionIndexTests: XCTestCase {
                 context: SnapshotBuilder.Context(
                     nowMs: 1_700_000_000_000 + 5_000,
                     terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                    lang: .english
+                    lang: .en
                 )
             )
             XCTAssertEqual(result.rows.count, count, "lost sessions at pressure \(count)")
