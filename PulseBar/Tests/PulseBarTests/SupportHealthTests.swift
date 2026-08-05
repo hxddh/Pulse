@@ -187,4 +187,27 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(timeline.contains("1h"), timeline)
         XCTAssertTrue(timeline.contains("2 processes"), timeline)
     }
+
+    @MainActor
+    func testStatusFixturesInjectConcreteTrayRows() {
+        let store = StatusStore()
+        store.installPreviewFixture("status-waiting")
+        XCTAssertEqual(store.snapshot.glance, .waiting)
+        XCTAssertEqual(store.snapshot.rows.count, 1)
+        XCTAssertEqual(store.snapshot.totalCount, 1)
+        XCTAssertTrue(store.snapshot.rows[0].waiting)
+        XCTAssertEqual(store.snapshot.rows[0].waitSignal, .hooks)
+        XCTAssertNotNil(store.snapshot.rows[0].observationQuality)
+
+        store.installPreviewFixture("status-running")
+        XCTAssertEqual(store.snapshot.glance, .running)
+        XCTAssertEqual(store.snapshot.rows.count, 1)
+        XCTAssertFalse(store.snapshot.rows[0].waiting)
+        XCTAssertEqual(store.snapshot.rows[0].progressDone, 12)
+
+        store.installPreviewFixture("status-stalled")
+        XCTAssertEqual(store.snapshot.glance, .stalled)
+        XCTAssertEqual(store.snapshot.rows.count, 1)
+        XCTAssertTrue(store.snapshot.rows[0].isStalled)
+    }
 }

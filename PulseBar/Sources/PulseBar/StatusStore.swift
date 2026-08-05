@@ -854,33 +854,6 @@ final class StatusStore: ObservableObject {
         previewFixtureActive = true
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-        if name.hasPrefix("status-") {
-            var snap = PulseSnapshot()
-            switch name {
-            case "status-running":
-                snap.glance = .running
-                snap.title = "1"
-                snap.sectionTotals[.running] = 1
-            case "status-stalled":
-                snap.glance = .stalled
-                snap.title = "1"
-                snap.sectionTotals[.stalled] = 1
-            case "status-waiting":
-                snap.glance = .waiting
-                snap.title = "1"
-                snap.sectionTotals[.needsYou] = 1
-            default:
-                snap.glance = .idle
-            }
-            snap.headerTitle = name
-            snap.header = name
-            snap.tooltip = name
-            snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
-            snap.updatedAt = Date()
-            snapshot = snap
-            return
-        }
-
         func row(
             _ key: String,
             _ agent: AgentID,
@@ -902,6 +875,70 @@ final class StatusStore: ObservableObject {
             value.startedMs = now - 54 * 60 * 1000
             value.records = 126
             return value
+        }
+
+        if name.hasPrefix("status-") {
+            // Compact status fixtures used to only stamp glance/header and left
+            // `rows` empty, so `--capture-tray-panel` still showed whatever live
+            // harvest (or nothing) was present. Inject one concrete row so
+            // visual QA exercises the real tray layout for that lamp state.
+            var fixtureRow = row(
+                "status-fixture",
+                .cursor,
+                task: name == "status-waiting"
+                    ? "Approve the packaging step"
+                    : "Ship Signal Quality",
+                cwd: "/Users/me/code/Pulse"
+            )
+            fixtureRow.phase = name == "status-waiting" ? "waiting" : "testing"
+            fixtureRow.model = "fixture-model"
+            fixtureRow.tool = name == "status-waiting" ? "" : "swift_test"
+            switch name {
+            case "status-waiting":
+                fixtureRow.waiting = true
+                fixtureRow.waitKind = "Permission"
+                fixtureRow.waitMessage = "Run the signed packaging step"
+                fixtureRow.waitSignal = .hooks
+                fixtureRow.waitSinceMs = now - 8 * 60 * 1000
+            case "status-stalled":
+                fixtureRow.isStalled = true
+                fixtureRow.harvestMs = now - 25 * 60 * 1000
+            case "status-running":
+                fixtureRow.progressDone = 12
+                fixtureRow.progressTotal = 31
+            default:
+                fixtureRow.liveProcess = false
+                fixtureRow.processCount = 0
+            }
+            fixtureRow.refreshObservationQuality(privacyLimited: false)
+            cachedAll = [fixtureRow]
+
+            var snap = PulseSnapshot()
+            switch name {
+            case "status-running":
+                snap.glance = .running
+                snap.title = "1"
+                snap.sectionTotals[.running] = 1
+            case "status-stalled":
+                snap.glance = .stalled
+                snap.title = "1"
+                snap.sectionTotals[.stalled] = 1
+            case "status-waiting":
+                snap.glance = .waiting
+                snap.title = "1"
+                snap.sectionTotals[.needsYou] = 1
+            default:
+                snap.glance = .idle
+            }
+            snap.headerTitle = name
+            snap.header = name
+            snap.tooltip = name
+            snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
+            snap.rows = [fixtureRow]
+            snap.totalCount = 1
+            snap.updatedAt = Date()
+            snapshot = snap
+            return
         }
 
         if name == "coverage" {
