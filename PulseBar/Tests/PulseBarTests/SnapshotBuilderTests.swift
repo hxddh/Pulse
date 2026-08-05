@@ -307,12 +307,13 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     func testCollectorCanReportMoreThanTheDefaultSessionBudget() {
-        let rows = (1...140).map {
+        let overflow = 12
+        let rows = (1...(SnapshotBuilder.maxSessionsPerAgent + overflow)).map {
             harvest(.cursor, task: "Cursor task \($0)", session: "cursor-\($0)")
         }
         let r = build(harvest: rows)
         XCTAssertEqual(r.rows.count, SnapshotBuilder.maxSessionsPerAgent)
-        XCTAssertEqual(r.snapshot.cappedSessions, 12)
+        XCTAssertEqual(r.snapshot.cappedSessions, overflow)
         XCTAssertEqual(r.rows.filter { $0.hiddenSessions > 0 }.count, 1)
     }
 
