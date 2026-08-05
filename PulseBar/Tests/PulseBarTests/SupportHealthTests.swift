@@ -197,7 +197,7 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(store.snapshot.totalCount, 1)
         XCTAssertTrue(store.snapshot.rows[0].waiting)
         XCTAssertEqual(store.snapshot.rows[0].waitSignal, .hooks)
-        XCTAssertNotNil(store.snapshot.rows[0].observationQuality)
+        XCTAssertFalse(store.snapshot.rows[0].quality.facts.isEmpty)
 
         store.installPreviewFixture("status-running")
         XCTAssertEqual(store.snapshot.glance, .running)
