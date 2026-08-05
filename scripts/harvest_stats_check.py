@@ -1275,6 +1275,8 @@ def check_collectors(home: Path) -> int:
 
 
 def main() -> int:
+    started = time.monotonic()
+    max_seconds = float(os.environ.get("HARVEST_MAX_SECONDS", "8"))
     importlib.reload(A)
     # The product defaults to named JSON. These legacy helper-contract tests
     # intentionally exercise the explicit positional compatibility path.
@@ -1449,6 +1451,13 @@ def main() -> int:
         f"harvest stats OK — {COLUMNS} columns · 31 evidence contracts · "
         "31 quality scorecards · 31 end-to-end collector fixtures"
     )
+    elapsed = time.monotonic() - started
+    if elapsed > max_seconds:
+        return fail(
+            f"fixture matrix took {elapsed:.2f}s "
+            f"(limit {max_seconds:g}s via HARVEST_MAX_SECONDS)"
+        )
+    print(f"harvest timing OK — {elapsed:.2f}s ≤ {max_seconds:g}s")
     return 0
 
 

@@ -121,6 +121,26 @@ capture_round() {
   ls -lah "$OUT/${label}"-*.png "$OUT/${label}-harvest.txt"
 }
 
+assert_harvest_differs() {
+  local off="$OUT/A-off-harvest.txt"
+  local on="$OUT/B-on-harvest.txt"
+  if ! grep -q 'appData=0 agents=none' "$off" && ! grep -q 'agents=none' "$off"; then
+    echo "warn: A-off harvest missing agents=none marker" >&2
+  fi
+  if ! grep -Eq 'appData=0 agents=cursor|agents=cursor' "$on"; then
+    echo "error: B-on harvest did not report scoped Cursor App Data grant" >&2
+    exit 1
+  fi
+  local a_cursor b_cursor
+  a_cursor="$(grep -E 'health cursor=' "$off" || true)"
+  b_cursor="$(grep -E 'health cursor=' "$on" || true)"
+  echo "A cursor: $a_cursor"
+  echo "B cursor: $b_cursor"
+  if [[ "$a_cursor" == "$b_cursor" ]]; then
+    echo "warn: cursor health lines identical — tray captures remain the A/B source of truth" >&2
+  fi
+}
+
 echo "== A: Cursor App Data OFF (process-only baseline) =="
 set_cursor_appdata 0
 capture_round "A-off"
@@ -128,6 +148,7 @@ capture_round "A-off"
 echo "== B: Cursor App Data ON (scoped) =="
 set_cursor_appdata 1
 capture_round "B-on"
+assert_harvest_differs
 
 echo "== restore App Data OFF and relaunch user copy =="
 set_cursor_appdata 0

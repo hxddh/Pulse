@@ -2,6 +2,35 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.51.0 — Observation Truth / 诚实表面
+
+0.50.0 让观测更深之后，本版让权限文案、harvest 诊断、托盘指标与 Support/检查器对齐真实授权与扫描状态。详见 [`docs/plan-0.51.md`](docs/plan-0.51.md)。
+
+### P0 · 观测真相
+
+- Support Health 隐私横幅区分全关 / 已按 Agent 授权仍有受限 / 无受限；scoped Cursor 授权不再被写成「深度扫描已关闭」。
+- `--harvest-test` / `--harvest-dump` 读取与托盘相同的 `settings.txt` App Data 授权，并打印 `appData` / `agents`。
+- 托盘信号行在无活动变化时走 `compactSignalEvidence`，消除 `Context N% · Context N%` 重复。
+- 扫描不完整横幅区分「适配器超时且已有部分结果」与笼统失败；托盘给出同源短提示；超时行在 Support 暴露 `native_timeout` 原因。
+
+### P1 · 产品表面
+
+- 灯 tooltip / VoiceOver：Waiting 含 agent、原因与时长；Stalled 含时长。
+- `openSettings(focusAppDataFor:)` 展开 App Data 作用域并高亮目标 Agent；Support / 质量下一步可深链；CLI `--open-settings-agent=`。
+- Support 对 privacy / limited / unscanned 显示能力缺口 pill；检查器质量卡展示 facts、人类化 confidence、collector error 与授权深链。
+- `observationGapNextStep` 显式映射 `open_agent_for_session` / `retry_scan` / `enable_app_data`；新增 `scan_timeout` 原因文案。
+
+### P2 · 门禁与回归
+
+- `scripts/qa_observation_truth.sh`：status-* fixture 托盘/灯截图。
+- `scripts/qa_mac_cursor_appdata_ab.sh` 断言 harvest dump 反映 scoped 授权。
+- `harvest_stats_check.py` 墙钟上限（默认 8s，`HARVEST_MAX_SECONDS`）。
+- `status-*` tray fixture 注入真实行（承接 QA 修复）。
+
+### 验证
+
+- Swift build；Observation Truth / Support / settings / signal-line 单测扩展；七门禁与 version_check。
+
 ## 0.50.0 — Signal Quality / 有效观测
 
 0.49.1 完成可靠性闭环后，本版不再扩 Agent 名单，而是让现有 31 个 Agent 的信息更深、更可信、更可操作。详见 [`docs/plan-0.50.md`](docs/plan-0.50.md)。

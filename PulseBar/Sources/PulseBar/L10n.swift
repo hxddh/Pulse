@@ -244,6 +244,8 @@ enum L10n {
             return "Observed runtime evidence, not marketing coverage. Missing facts stay explicit."
         case .supportScanIncomplete:
             return "Scan incomplete · previous adapter results retained"
+        case .supportScanIncompleteTimeout:
+            return "Scan timed out on some adapters · partial results retained"
         case .supportNoneObserved: return "No Agent evidence observed in the latest scan."
         case .supportAllAgents: return "Other %d supported Agents"
         case .supportNotDetected: return "Not detected"
@@ -293,6 +295,8 @@ enum L10n {
         case .supportCollectorPrivacyLimited: return "Privacy-limited"
         case .supportCollectorPrivacyLimitedDetail:
             return "deep app-data scan is off; enable it in Settings for richer details"
+        case .supportCollectorPrivacyLimitedScoped:
+            return "%d agent data source(s) enabled · %d still privacy-limited"
         case .supportCollectorNoSessions: return "No usable session"
         case .supportCollectorNoSessionsDetail: return "source present · no usable session · %d ms"
         case .supportCollectorPermission: return "Permission denied"
@@ -364,8 +368,14 @@ enum L10n {
         case .qualityReasonCache: return "Vendor cache did not emit this field"
         case .qualityReasonNotEmitted: return "Not present in the local session record"
         case .qualityReasonWaitingNoDetail: return "Waiting without a detailed reason"
+        case .qualityReasonScanTimeout: return "Adapter timed out while reading local data"
         case .qualityNextOpenAgent: return "Open the agent to see full session detail"
         case .qualityNextWaitCache: return "Keep using the agent so its local cache fills in"
+        case .qualityNextRetryScan: return "Retry the scan from Support Health"
+        case .qualityConfidenceHigh: return "High confidence"
+        case .qualityConfidenceMedium: return "Medium confidence"
+        case .qualityConfidenceLow: return "Low confidence"
+        case .trayScanIncomplete: return "Scan incomplete · open Support Health"
         case .allSessionsCount: return "All %d sessions"
         case .filterPhase: return "Phase"
         case .filterOutcome: return "Result"
@@ -598,6 +608,7 @@ enum L10n {
         case .supportHealth: return "Agent 支持健康度"
         case .supportHealthHint: return "展示本机实际观测证据，而非静态支持名单；缺失信息会明确标出。"
         case .supportScanIncomplete: return "扫描未完成 · 已保留上一次适配器结果"
+        case .supportScanIncompleteTimeout: return "部分适配器超时 · 已保留部分结果"
         case .supportNoneObserved: return "最近一次扫描未观测到 Agent 证据。"
         case .supportAllAgents: return "其他 %d 个已支持 Agent"
         case .supportNotDetected: return "未检测到"
@@ -647,6 +658,8 @@ enum L10n {
         case .supportCollectorPrivacyLimited: return "隐私受限"
         case .supportCollectorPrivacyLimitedDetail:
             return "深度应用数据扫描已关闭；可在设置中开启以获取更多详情"
+        case .supportCollectorPrivacyLimitedScoped:
+            return "已开启 %d 个数据源 · 仍有 %d 个隐私受限"
         case .supportCollectorNoSessions: return "暂无可用会话"
         case .supportCollectorNoSessionsDetail: return "数据源存在 · 暂无可用会话 · %d 毫秒"
         case .supportCollectorPermission: return "无读取权限"
@@ -718,8 +731,14 @@ enum L10n {
         case .qualityReasonCache: return "厂商缓存未写出该字段"
         case .qualityReasonNotEmitted: return "本地会话记录中没有该字段"
         case .qualityReasonWaitingNoDetail: return "正在等待，但没有详细原因"
+        case .qualityReasonScanTimeout: return "读取本地数据时适配器超时"
         case .qualityNextOpenAgent: return "打开该 Agent 查看完整会话"
         case .qualityNextWaitCache: return "继续使用该 Agent，等待本地缓存补齐"
+        case .qualityNextRetryScan: return "在支持健康度中重试扫描"
+        case .qualityConfidenceHigh: return "高可信"
+        case .qualityConfidenceMedium: return "中等可信"
+        case .qualityConfidenceLow: return "低可信"
+        case .trayScanIncomplete: return "扫描未完成 · 打开支持健康度"
         case .allSessionsCount: return "全部 %d 个会话"
         case .filterPhase: return "阶段"
         case .filterOutcome: return "结果"
@@ -804,7 +823,7 @@ enum L10n {
         case waitedLongest, moreActions
         case acrossProjects, agoFormat, whileAway, noActivityYet
         case noProject, stalled, stalledFor, noProgressSignal
-        case supportHealth, supportHealthHint, supportScanIncomplete, supportNoneObserved, supportAllAgents
+        case supportHealth, supportHealthHint, supportScanIncomplete, supportScanIncompleteTimeout, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
         case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, supportEvidence, session
         case detailTool, detailSkill, detailPhase, detailOutcome, detailEvidence, detailFiles, detailErrors, detailContext
@@ -815,7 +834,7 @@ enum L10n {
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved, supportCollectorNoData, supportCollectorNoDataDetail
         case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
-        case supportCollectorPrivacyLimited, supportCollectorPrivacyLimitedDetail
+        case supportCollectorPrivacyLimited, supportCollectorPrivacyLimitedDetail, supportCollectorPrivacyLimitedScoped
         case supportCollectorNoSessions, supportCollectorNoSessionsDetail
         case supportCollectorPermission, supportCollectorPermissionDetail
         case supportCollectorSchema, supportCollectorSchemaDetail
@@ -833,7 +852,9 @@ enum L10n {
         case installUpdate, updateInstalling, updateInstallFailed, updatePreview, recoveredAfterCrash
         case recoveredAfterForceQuit, recoveredAfterSystemRestart
         case qualityReasonProcessOnly, qualityReasonCache, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
-        case qualityNextOpenAgent, qualityNextWaitCache
+        case qualityReasonScanTimeout
+        case qualityNextOpenAgent, qualityNextWaitCache, qualityNextRetryScan
+        case qualityConfidenceHigh, qualityConfidenceMedium, qualityConfidenceLow
         case allSessionsCount, filterPhase, filterOutcome, filterClear
         case waitingTimeline, waitingQueuedAt, waitingNotifiedAt, waitingAcknowledgedAt
         case waitingSnoozedUntil, waitingResolvedAt, waitingNotifyPending
@@ -843,6 +864,7 @@ enum L10n {
         case nowActivity, outcomeActivity
         case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
         case filesFact, contextFact, progressFact, turnsFact
+        case trayScanIncomplete
     }
 }
 

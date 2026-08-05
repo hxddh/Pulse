@@ -83,6 +83,27 @@ final class PulseSettingsTests: XCTestCase {
         XCTAssertTrue(parsed.appDataAgents.isEmpty)
     }
 
+    func testLoadFromDiskReadsScopedAppDataAgents() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-settings-\(UUID().uuidString)", isDirectory: true)
+        let dir = home.appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        var settings = PulseSettings()
+        settings.allowAppData = false
+        settings.appDataAgents = [.cursor]
+        try settings.serialized().write(
+            to: PulseSettings.settingsFileURL(home: home),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let loaded = PulseSettings.loadFromDisk(home: home)
+        XCTAssertFalse(loaded.allowAppData)
+        XCTAssertEqual(loaded.appDataAgents, [.cursor])
+    }
+
     func testGlobalShortcutIsOptInForLegacyAndNewFiles() {
         let legacy = PulseSettings.parse("hotkey=cmd_shift_p")
         XCTAssertEqual(legacy.hotkey, .commandShiftP)

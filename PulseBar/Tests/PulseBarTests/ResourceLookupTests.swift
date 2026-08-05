@@ -789,6 +789,21 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testSignalLineDoesNotDuplicateContextWhenNoChange() {
+        var r = row()
+        r.task = "Quiet session"
+        r.model = "gpt-5"
+        r.contextPercent = 19
+        r.liveProcess = true
+        r.observationSource = .session
+        r.activityChange = nil
+
+        let signal = store().rowSignalLine(r)
+        let contextHits = signal.components(separatedBy: "Context 19%").count - 1
+        XCTAssertEqual(contextHits, 1, "signal duplicated Context: \(signal)")
+    }
+
+    @MainActor
     func testSignalLineShowsMultipleLiveProcessesOnlyForARealSessionRow() {
         var r = row()
         r.task = "Cursor work"

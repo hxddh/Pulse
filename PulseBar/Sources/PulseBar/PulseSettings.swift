@@ -191,4 +191,24 @@ struct PulseSettings: Equatable {
             + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
             + "stall=\(stallMinutes) snooze=\(snoozeMinutes)"
     }
+
+    /// Shared on-disk path so the menu-bar store and `--harvest-test` CLI read
+    /// the same privacy grants.
+    static func settingsFileURL(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        home
+            .appendingPathComponent("Library/Application Support/Pulse/settings.txt")
+    }
+
+    /// Load the user settings file, or defaults when missing/unreadable.
+    static func loadFromDisk(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> PulseSettings {
+        let url = settingsFileURL(home: home)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return PulseSettings()
+        }
+        return parse(text)
+    }
 }
