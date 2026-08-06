@@ -109,7 +109,15 @@ struct HarvestSupervisor: Equatable {
         let retrying = states.values.filter {
             $0.nextRetryAtMs > nowMs && $0.circuitOpenUntilMs <= nowMs
         }.count
-        return "open=\(open) retrying=\(retrying)"
+        let deferred = AgentID.allCases
+            .filter { agent in
+                let state = states[agent.surfaceID] ?? AgentState()
+                return state.circuitOpenUntilMs > nowMs || state.nextRetryAtMs > nowMs
+            }
+            .map(\.rawValue)
+            .sorted()
+        let deferredLabel = deferred.isEmpty ? "-" : deferred.joined(separator: ",")
+        return "open=\(open) retrying=\(retrying) deferred=\(deferredLabel)"
     }
 
     private func retryDate(for agent: AgentID) -> Int64 {

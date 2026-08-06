@@ -70,3 +70,17 @@ jobs:
       # scripts/package_check.py against the assembled .app.
       - name: Package and verify the app bundle
         run: ./PulseBar/Scripts/package.sh
+
+      - name: Resource budget (native fixture)
+        run: python3 scripts/resource_budget_check.py
+
+      - name: Observation Truth captures
+        run: ./scripts/qa_observation_truth.sh
+
+      - name: Upload observation-truth PNGs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-observation-truth
+          path: zig-out/qa-observation-truth/
+          if-no-files-found: error

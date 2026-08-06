@@ -358,16 +358,40 @@ final class StatusStore: ObservableObject {
     /// workspace paths, tool payloads, or command lines.
     func safeSupportReport() -> String {
         let os = ProcessInfo.processInfo.operatingSystemVersion
+        let authLabel: String = {
+            switch notifyAuthorized {
+            case .some(true): return "authorized"
+            case .some(false): return "denied"
+            case .none: return "unknown"
+            }
+        }()
+        let grantLabel: String = {
+            switch appDataGrantMode {
+            case .all: return "all"
+            case .scoped(let n): return "scoped:\(n)"
+            case .none: return "none"
+            }
+        }()
+        let timeoutAgents = collectorHealthByAgent.values
+            .filter { $0.errorKind == "native_timeout" }
+            .map(\.id.rawValue)
+            .sorted()
+            .joined(separator: ",")
         var lines = [
             "Pulse safe support report",
             PulseVersion.fingerprint,
             "channel: \(PulseVersion.distributionChannel)",
+            "notarized: \(PulseVersion.isNotarized)",
             "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "Agents: \(supportHealth.count)",
             "appDataScan: \(appDataScanDescription)",
+            "appDataGrant: \(grantLabel)",
+            "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)",
+            "probeCadence: \(probeIntervalDescription)",
             "harvestProtocol: native-json-\(ActivityHarvest.wireSchemaVersion) (legacy-tsv explicit only)",
             "helperStatus: harvest=native legacyPython=\(ActivityHarvest.pythonURL() == nil ? "optional-unavailable" : "optional-ready")",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
+            "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
             "attentionLedger: active=\(attentionLedger.activeKeys.count) events=\(attentionLedger.events.count) baseline=\(attentionLedger.baselineEstablished)",
             "harvestSupervisor: \(harvestSupervisor.summary(nowMs: Int64(Date().timeIntervalSince1970 * 1000)))",
         ]
@@ -375,6 +399,9 @@ final class StatusStore: ObservableObject {
             let waiting = item.agent.waitingSource == .none
                 ? "n/a"
                 : String(item.waitingSignalReady)
+            let health = collectorHealthByAgent[item.agent]
+            let err = health?.errorKind.isEmpty == false ? health!.errorKind : "-"
+            let dur = health?.durationMs ?? 0
             lines.append(
                 "\(item.agent.rawValue): \(item.collectorState.rawValue) "
                     + "disposition=\(item.disposition) evidence=\(item.evidence?.rawValue ?? "none") "
@@ -382,7 +409,8 @@ final class StatusStore: ObservableObject {
                     + "activity=\(item.hasActivity) progress=\(item.hasProgress) "
                     + "waiting=\(waiting) "
                     + "score=\(item.usefulFactCount)/\(item.usefulFactTotal) "
-                    + "privacyLimited=\(item.privacyLimited)"
+                    + "privacyLimited=\(item.privacyLimited) "
+                    + "error=\(err) durationMs=\(dur)"
             )
         }
         return ContentSanitizer.redact(lines.joined(separator: "\n"))
@@ -1715,7 +1743,8 @@ final class StatusStore: ObservableObject {
 
     func recordCollectorHealth(
         _ health: [ActivityHarvest.CollectorHealth],
-        complete: Bool = true
+        complete: Bool = true,
+        intentionalPartial: Bool = false
     ) {
         // A partial stream must not erase the last known result for adapters
         // that have not been reached yet. Only a complete health report resets
@@ -1752,7 +1781,10 @@ final class StatusStore: ObservableObject {
             )
         }
         collectorHealthByAgent = next
-        collectorScanIncomplete = !complete
+        // Supervisor-deferred adapters are a policy partial, not a failed scan.
+        // Lighting the incomplete banner for intentional deferral made healthy
+        // ticks look broken every time one agent was in backoff.
+        collectorScanIncomplete = !complete && !intentionalPartial
     }
 
     fileprivate func applyScan(
@@ -1777,7 +1809,7 @@ final class StatusStore: ObservableObject {
         // Resolve which harvest rows this scan should use, and remember them.
         let acts: [ActivityHarvest.Row]
         switch harvest {
-        case .fresh(let rows, let health, let complete, _):
+        case .fresh(let rows, let health, let complete, let intentionalPartial):
             // A timed-out child can still emit a valid prefix of the stream.
             // Replace only adapters that reported; keep the previous rows for
             // adapters the child never reached so one slow collector cannot
@@ -1790,7 +1822,11 @@ final class StatusStore: ObservableObject {
                     previous: lastGoodHarvest
                 )
             lastGoodHarvest = acts
-            recordCollectorHealth(health, complete: complete)
+            recordCollectorHealth(
+                health,
+                complete: complete,
+                intentionalPartial: intentionalPartial
+            )
             // `row.harvestMs` is the vendor session's last activity time, not
             // when Pulse successfully read that adapter. Using it as "last
             // read" made a healthy but idle collector look months stale, and
@@ -1811,8 +1847,12 @@ final class StatusStore: ObservableObject {
             // pending included, or Waiting would flicker off between harvests.
             acts = lastGoodHarvest
             ticksSinceHarvest = ticksSinceHarvest == Int.max ? 1 : ticksSinceHarvest + 1
-        case .failed(let health, let complete, _):
-            recordCollectorHealth(health, complete: complete)
+        case .failed(let health, let complete, let intentionalPartial):
+            recordCollectorHealth(
+                health,
+                complete: complete,
+                intentionalPartial: intentionalPartial
+            )
             // Keep last good shape, but never freeze Needs-you on stale pending.
             acts = lastGoodHarvest.map { row in
                 guard row.skill == "pending" else { return row }

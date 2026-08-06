@@ -38,10 +38,16 @@ if ! git -C "$ROOT" diff --quiet HEAD 2>/dev/null; then
   GIT_COMMIT="${GIT_COMMIT}+"
 fi
 BUILD_DATE="$(date -u +%Y-%m-%d)"
-if [[ "${PULSE_SIGN_IDENTITY:--}" == "-" ]]; then
+# Channel starts provisional: ad-hoc → preview; Developer ID without notary →
+# signed. Only a successful notarization upgrades to stable. Never stamp
+# "stable" before stapler validates — that mislabels Gatekeeper-blocked builds.
+SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
+NOTARY_PROFILE="${PULSE_NOTARY_PROFILE:-}"
+PULSE_NOTARIZED="false"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
   DISTRIBUTION_CHANNEL="preview"
 else
-  DISTRIBUTION_CHANNEL="stable"
+  DISTRIBUTION_CHANNEL="signed"
 fi
 
 echo "building PulseBar ${VERSION}..."
@@ -131,6 +137,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>PulseGitCommit</key><string>${GIT_COMMIT}</string>
   <key>PulseBuildDate</key><string>${BUILD_DATE}</string>
   <key>PulseDistributionChannel</key><string>${DISTRIBUTION_CHANNEL}</string>
+  <key>PulseNotarized</key><string>${PULSE_NOTARIZED}</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
@@ -145,6 +152,7 @@ PLIST
 # passed all of them and still crashed on launch.
 if [[ -n "$CHECK_PYTHON" ]]; then
   "$CHECK_PYTHON" "$ROOT/scripts/package_check.py" "$APP"
+  "$CHECK_PYTHON" "$ROOT/scripts/resource_budget_check.py"
 else
   test -x "$APP/Contents/MacOS/PulseBar"
   test -f "$APP/Contents/Info.plist"
@@ -164,7 +172,6 @@ echo "running --selftest inside the packaged app..."
 # any other Mac. Set these to produce something actually distributable:
 #   PULSE_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
 #   PULSE_NOTARY_PROFILE=<notarytool keychain profile>   # optional
-SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
 # `--deep` is deprecated by Apple; sign nested code first, then the bundle.
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
   find "$APP/Contents" -type f -perm +111 -not -path "*/MacOS/PulseBar" -print0 2>/dev/null \
@@ -183,7 +190,6 @@ else
 fi
 codesign --verify --deep --strict --verbose=2 "$APP"
 
-NOTARY_PROFILE="${PULSE_NOTARY_PROFILE:-}"
 if [[ -n "$NOTARY_PROFILE" && "$SIGN_IDENTITY" == "-" ]]; then
   echo "error: notarization requires a Developer ID signature" >&2
   exit 1
@@ -202,20 +208,32 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
   xcrun stapler validate "$APP"
   spctl -a -vv --type execute "$APP"
   rm -f "$APP_ZIP"
+  # Upgrade channel only after stapler validates — signed≠stable until then.
+  DISTRIBUTION_CHANNEL="stable"
+  PULSE_NOTARIZED="true"
+  /usr/libexec/PlistBuddy -c "Set :PulseDistributionChannel ${DISTRIBUTION_CHANNEL}" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :PulseNotarized ${PULSE_NOTARIZED}" "$APP/Contents/Info.plist" \
+    || /usr/libexec/PlistBuddy -c "Add :PulseNotarized string ${PULSE_NOTARIZED}" "$APP/Contents/Info.plist"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+  codesign --verify --deep --strict --verbose=2 "$APP"
 fi
 
 DMG="$ROOT/zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
 rm -f "$DMG"
-# Keep the first-launch explanation next to the app in the DMG. An ad-hoc
-# signature cannot satisfy Gatekeeper on a different Mac, and hiding the only
-# recovery path in a release-page paragraph is why users reasonably conclude
-# that the app is broken. Do not suggest disabling Gatekeeper globally.
-GUIDE="$ROOT/zig-out/package/Pulse-${VERSION}-首次打开.txt"
-cat > "$GUIDE" <<TXT
+# Keep the first-launch explanation next to the app in the DMG only when the
+# build is not Gatekeeper-ready. A notarized stable build must not ship the
+# ad-hoc recovery guide — that would contradict the channel stamp.
+STAGE="$ROOT/zig-out/package/.pulse-dmg-staging"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/Pulse.app"
+if [[ "$PULSE_NOTARIZED" != "true" ]]; then
+  GUIDE="$ROOT/zig-out/package/Pulse-${VERSION}-首次打开.txt"
+  cat > "$GUIDE" <<TXT
 Pulse ${VERSION} · 首次打开 / First launch
 
-当前版本为未签名、未公证构建。macOS 首次打开可能拦截它，这是 Gatekeeper 的信任策略，
-不是 Pulse 运行时崩溃。请只对 Pulse 做一次明确放行：
+当前版本为 ${DISTRIBUTION_CHANNEL} 通道构建（未公证）。macOS 首次打开可能拦截它，这是
+Gatekeeper 的信任策略，不是 Pulse 运行时崩溃。请只对 Pulse 做一次明确放行：
 
 1. 将 Pulse.app 拖入“应用程序”。
 2. 在 Finder 的“应用程序”中按住 Control 点 Pulse.app，选择“打开”，再点“打开”。
@@ -227,15 +245,12 @@ Pulse ${VERSION} · 首次打开 / First launch
 不要关闭“允许从以下位置下载的 App”或全局禁用 Gatekeeper。
 需要 macOS 14 或更高版本；当前构建面向 Apple silicon（arm64）。
 
-English: this DMG is ad-hoc signed and not notarized. Control-click Pulse.app → Open
-once, or use the xattr command above. A Developer ID + notarization account removes
-this step in a future release.
+English: this DMG is channel=${DISTRIBUTION_CHANNEL} and not notarized. Control-click
+Pulse.app → Open once, or use the xattr command above. Developer ID + notarization
+removes this step.
 TXT
-STAGE="$ROOT/zig-out/package/.pulse-dmg-staging"
-rm -rf "$STAGE"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/Pulse.app"
-cp "$GUIDE" "$STAGE/"
+  cp "$GUIDE" "$STAGE/"
+fi
 hdiutil create -volname "Pulse ${VERSION}" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
 
@@ -249,6 +264,7 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
 fi
 
 echo "version:  ${VERSION} (${GIT_COMMIT} · ${BUILD_DATE})"
+echo "channel:  ${DISTRIBUTION_CHANNEL} (notarized=${PULSE_NOTARIZED})"
 echo "packaged: ${APP}"
 echo "archive:  ${DMG}"
 echo "run:      open \"${APP}\""

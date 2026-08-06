@@ -106,6 +106,7 @@ jobs:
           python3 scripts/make_agent_icons.py --check
           python3 scripts/appearance_check.py
           python3 scripts/harvest_stats_check.py
+          python3 scripts/resource_budget_check.py
 
       - name: Test
         run: swift test
@@ -195,7 +196,10 @@ jobs:
           tag_name: v${{ needs.decide.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: Pulse ${{ needs.decide.outputs.version }}
-          prerelease: ${{ steps.signing.outputs.sign_identity == '-' }}
+          # Never mark Gatekeeper-blocked builds as a non-prerelease "latest".
+          # Ad-hoc OR signed-without-notary both stay prerelease; only a
+          # notarized stable channel (notary_profile set) can be a full Release.
+          prerelease: ${{ steps.signing.outputs.sign_identity == '-' || steps.signing.outputs.notary_profile == '' }}
           body_path: /tmp/notes.md
           files: zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
           fail_on_unmatched_files: true

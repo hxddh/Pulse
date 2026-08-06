@@ -2,6 +2,40 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.52.0 — Release Trust / 可交付信任
+
+0.51.0 把观测文案做诚实之后，本版对齐发布标签与 Gatekeeper 事实，隔离故意延后的扫描 partial，并把通知拒绝与诊断包写进 Support。详见 [`docs/plan-0.52.md`](docs/plan-0.52.md)。
+
+### P0 · 发布与 Gatekeeper 真相
+
+- `package.sh` 通道：`preview`（ad-hoc）→ `signed`（Developer ID 未公证）→ `stable`（公证成功）；Info.plist 写入 `PulseDistributionChannel` + `PulseNotarized`。
+- GitHub Release：ad-hoc **或** 无 notary 一律 prerelease；未公证包不得标 stable。
+- About 三态文案；Gatekeeper 首次打开说明仅未公证 DMG 附带。
+- `UpdateCheck`：preview / signed 读 releases 列表（含 prerelease）；stable 仍走 `/latest` 并过滤 prerelease。
+
+### P0 · 扫描 incomplete 隔离
+
+- Supervisor 故意延后（backoff / circuit）的 partial **不**点亮 `collectorScanIncomplete`。
+- 超时且已有部分行继续用 timeout 专属文案；故意延后不再冒充扫描失败。
+
+### P0 · 通知权限真相
+
+- 系统拒绝通知时 Settings 常驻说明 + 打开系统设置；safe report 写入 authorization / pending 计数。
+
+### P1 · 诊断与回归
+
+- `safeSupportReport` 补齐 appDataGrant、probeCadence、timeoutAgents、per-agent error/duration、supervisor deferred、notarized。
+- 托盘 VoiceOver 以 `rowSignalLine` 为动态摘要主源，去掉重复 activityChange+metrics。
+- CI：`qa_observation_truth.sh` 截图并上传 PNG；缺文件失败。
+
+### P2 · 门禁
+
+- `scripts/resource_budget_check.py`：native fixture 墙钟 + RSS；接入 CI / package / AGENTS 八门禁。
+
+### 验证
+
+- Swift build；intentional-partial / UpdateCheck prerelease / safe-report 单测；八门禁与 version_check。
+
 ## 0.51.0 — Observation Truth / 诚实表面
 
 0.50.0 让观测更深之后，本版让权限文案、harvest 诊断、托盘指标与 Support/检查器对齐真实授权与扫描状态。详见 [`docs/plan-0.51.md`](docs/plan-0.51.md)。
