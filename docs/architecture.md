@@ -134,11 +134,13 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.49.1` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.49.1-dev` |
-| `mismatch` | 两者不一致 | `0.49.0≠0.48.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.52.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.52.0-dev` |
+| `mismatch` | 两者不一致 | `0.52.0≠0.51.0` + 橙色警告 |
 
-`PulseDistributionChannel` 另标记 `preview`（ad-hoc / 未公证）或 `stable`（Developer ID / 公证）。
+`PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
+未公证）、`stable`（公证成功，`PulseNotarized=true`）。ad-hoc 或未公证包在 GitHub 上必须是
+prerelease；只有 notarized stable 才能标非 prerelease / Latest。
 更新器在下载校验后先挂载预检，再由同一可执行文件的 helper 等待父进程退出，事务式移动旧 App 到
 `~/Library/Application Support/Pulse/rollback`；`current.json` 让下一次启动可以恢复未完成替换。
 
@@ -163,9 +165,10 @@ hooks 仍可按用户选择安装。它们使用 `RuntimeResolver` 查找可选 
 | `make_agent_icons.py --check` | 每个 `AgentID` 都有图标，且与生成器逐字节一致 |
 | `appearance_check.py` | 没有把随外观变化的值冻进常量（0.27.1 因此丢了深色模式） |
 | `harvest_stats_check.py` | 把真实会话文件摆到真实位置，跑真实 collector，验完整 TSV |
+| `resource_budget_check.py` | native fixture 墙钟 + RSS 上限（env 可调） |
 | `package_check.py` | 打出来的 `.app` 能找到自己的资源 |
 
-七个都在 `package.sh` 和 CI 里。加上 `swift test` 与 `--selftest`，这是全部自动防线。
+八个都在 `package.sh` 和 CI 里。加上 `swift test` 与 `--selftest`，这是全部自动防线。
 
 **门禁只能守它真正执行的东西。** `harvest_stats_check.py` 的 0.28.0 版本
 自称「跑真实 harvester」，实际只调 helper 再数源码字符串——而字符串计数

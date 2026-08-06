@@ -152,7 +152,7 @@ cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
 cd PulseBar && swift test    # 测试数量以 SwiftPM / CI 当次输出为准
 ```
 
-七个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
+八个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
 
 ```bash
 python3 scripts/version_check.py            # 版本一致性（--fix 自动对齐）
@@ -161,10 +161,11 @@ python3 scripts/matrix_check.py             # README 支持矩阵 == 代码
 python3 scripts/make_agent_icons.py --check # 每个 AgentID 都有图标，且与生成器一致
 python3 scripts/appearance_check.py         # 没有把外观冻进常量（0.27.1 因此丢了深色模式）
 python3 scripts/harvest_stats_check.py      # harvest 真的产出会变化的事实，且不猜工具名
+python3 scripts/resource_budget_check.py    # native fixture 墙钟 + RSS
 python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
 ```
 
-前六个读源码，最后一个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
+前七个读源码或跑 native fixture，最后一个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
 源码没问题、测试全绿，照样连发三个打不开的 DMG。这类 bug 只有对着 `.app` 才看得见。
 
 但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。
@@ -199,11 +200,13 @@ git push                               # CI 构建、打 tag、发布
 **tag 由 CI 用自己的 `contents: write` token 创建**，发布不依赖任何人的本地推送权限。
 已发布过的版本会被拒绝重复发布，重推是安全的。
 
-发布 workflow 不再允许 ad-hoc 构建。仓库必须配置
-`PULSE_CERTIFICATE_P12`（base64）、`PULSE_CERTIFICATE_PASSWORD`、
+发布通道三态：`preview`（ad-hoc）→ `signed`（Developer ID 未公证）→ `stable`（公证成功）。
+仓库配置齐 `PULSE_CERTIFICATE_P12`（base64）、`PULSE_CERTIFICATE_PASSWORD`、
 `PULSE_SIGN_IDENTITY`、`PULSE_NOTARY_KEY_P8`（base64）、
-`PULSE_NOTARY_KEY_ID` 和 `PULSE_NOTARY_ISSUER_ID`。CI 会导入临时 keychain，
-分别公证并 staple App 与 DMG，再以 `spctl` 验收；任一凭据缺失就拒绝发布。
+`PULSE_NOTARY_KEY_ID` 和 `PULSE_NOTARY_ISSUER_ID` 时，CI 导入临时 keychain，
+公证并 staple App 与 DMG，再以 `spctl` 验收，发布非 prerelease 的 stable。
+任一凭据缺失时仍可发布，但产物为 ad-hoc / 未公证，并**强制**标 GitHub prerelease ——
+绝不能自称 stable。详见 [`docs/plan-0.53.md`](docs/plan-0.53.md)。
 
 > 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
 > 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
