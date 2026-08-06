@@ -152,6 +152,40 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertEqual(second.kind, .forceQuit)
     }
 
+    func testSupervisorFailureTimelineOrdersNewestFirst() {
+        var supervisor = HarvestSupervisor()
+        let now: Int64 = 100_000
+        supervisor.record(
+            [
+                .init(
+                    id: .codex,
+                    state: .failed,
+                    durationMs: 10,
+                    rowCount: 0,
+                    sourcePresent: true,
+                    errorKind: "locked"
+                )
+            ],
+            nowMs: now
+        )
+        supervisor.record(
+            [
+                .init(
+                    id: .claude,
+                    state: .failed,
+                    durationMs: 10,
+                    rowCount: 0,
+                    sourcePresent: true,
+                    errorKind: "native_timeout"
+                )
+            ],
+            nowMs: now + 5_000
+        )
+        let timeline = supervisor.failureTimeline(nowMs: now + 6_000)
+        XCTAssertEqual(timeline.map(\.agent), [.claude, .codex])
+        XCTAssertEqual(timeline.map(\.error), ["native_timeout", "locked"])
+    }
+
     func testJSONIsDefaultAndTSVRequiresExplicitCompatibilityReader() {
         let tsv = "codex\tTask\t1\t2\ttool\t\tPulse\t/tmp\t100\t0\t0\ts\n"
         XCTAssertTrue(ActivityHarvest.parse(tsv).isEmpty)

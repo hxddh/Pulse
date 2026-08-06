@@ -32,6 +32,9 @@ safe report、截图 CI、resource budget 均已进源码与 CHANGELOG。GitHub 
 | InstallTruth | **LS + Desktop/Downloads；About「另有 N」** | 有 stable 后做事务替换 E2E |
 | LaunchRecovery `forceQuit` | **SIGTERM 意图 + 分类修复** | 真 Force Quit (SIGKILL) 仍报 crash |
 | 截图 QA | **轮询就绪 + appearance/language env** | 可选暗色/英文矩阵进 CI |
+| none Agent / Attention 桥 | **托盘深链 + Support repair + 文档点名** | 不扩 hook 安装器 |
+| bestEffortCache 缺口 | **隐私 → App Data；缓存 → wait-cache 文案** | — |
+| 诊断包 | **factCoverage + failureTimeline** | — |
 
 ---
 

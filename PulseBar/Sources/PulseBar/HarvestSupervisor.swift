@@ -120,6 +120,23 @@ struct HarvestSupervisor: Equatable {
         return "open=\(open) retrying=\(retrying) deferred=\(deferredLabel)"
     }
 
+    /// Recent adapter failures for the safe support report — agent, error, age.
+    /// Newest first; empty errors are omitted.
+    func failureTimeline(nowMs: Int64, limit: Int = 8) -> [(agent: AgentID, error: String, atMs: Int64)] {
+        AgentID.allCases
+            .compactMap { agent -> (AgentID, String, Int64)? in
+                let state = states[agent.surfaceID] ?? AgentState()
+                guard state.lastFailureAtMs > 0, !state.lastError.isEmpty else { return nil }
+                // Prefer the surface id (Cursor Agent folds into Cursor).
+                let surface = agent.surfaceID
+                guard surface == agent else { return nil }
+                return (surface, state.lastError, state.lastFailureAtMs)
+            }
+            .sorted { $0.2 > $1.2 }
+            .prefix(limit)
+            .map { ($0.0, $0.1, $0.2) }
+    }
+
     private func retryDate(for agent: AgentID) -> Int64 {
         let state = states[agent.surfaceID] ?? AgentState()
         return max(state.nextRetryAtMs, state.circuitOpenUntilMs)

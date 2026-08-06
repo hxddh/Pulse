@@ -85,7 +85,10 @@ enum L10n {
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
         case .attentionBridgeHint:
-            return "Optional: Droid / Kimi can append attention.tsv — see docs/attention-bridge.md (no extra installer)."
+            return "Opaque agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie) have no native Waiting path — write attention.tsv via the Attention bridge (docs/attention-bridge.md). Hook installer stays Claude/Codex only."
+        case .attentionBridgeFocusHint:
+            return "Attention bridge — write attention.tsv for Waiting on agents without a native signal"
+        case .revealAttentionFolder: return "Reveal Attention folder"
         case .launchAtLogin: return "Launch at login"
         case .language: return "Language"
         case .waitingSignals: return "Waiting signals"
@@ -108,7 +111,8 @@ enum L10n {
         case .recent: return "Recent"
         case .dismissWait: return "Dismiss"
         case .hooksNudge: return "Install hooks so Claude/Codex can signal Waiting"
-        case .waitingSignalNudge: return "This agent has no Waiting signal yet — Running only"
+        case .waitingSignalNudge:
+            return "Live agent has no Waiting path — open Waiting signals for the Attention bridge"
         case .hooksUnknown: return "Not checked"
         case .hooksMissing: return "Not installed"
         case .hooksInstalledBoth: return "Installed · Claude + Codex"
@@ -286,6 +290,8 @@ enum L10n {
         case .supportWaitingHooks: return "Waiting route: hooks"
         case .supportWaitingHarvest: return "Waiting route: session data"
         case .supportWaitingNone: return "Waiting unavailable"
+        case .supportWaitingNoneDetail:
+            return "No native Waiting path — use the Attention bridge"
         case .supportSharedCursor: return "Cursor Agent shares this adapter"
         case .supportLastSignal: return "signal %@ ago"
         case .supportDetectedExecutable: return "detected by executable"
@@ -378,7 +384,9 @@ enum L10n {
         case .qualityReasonScanTimeout: return "Adapter timed out while reading local data"
         case .qualityNextOpenAgent: return "Open the agent to see full session detail"
         case .qualityNextWaitCache: return "Keep using the agent so its local cache fills in"
+        case .qualityNextAttentionBridge: return "Set up the Attention bridge for Waiting"
         case .qualityNextRetryScan: return "Retry the scan from Support Health"
+        case .supportFailureTimelineEntry: return "Last failure · %@ · %@ ago"
         case .qualityConfidenceHigh: return "High confidence"
         case .qualityConfidenceMedium: return "Medium confidence"
         case .qualityConfidenceLow: return "Low confidence"
@@ -462,7 +470,11 @@ enum L10n {
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
-        case .attentionBridgeHint: return "可选：Droid / Kimi 可写入 attention.tsv — 见 docs/attention-bridge.md（不扩安装器）。"
+        case .attentionBridgeHint:
+            return "无原生 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie）请写入 attention.tsv（见 docs/attention-bridge.md）。hooks 安装器仍只覆盖 Claude / Codex。"
+        case .attentionBridgeFocusHint:
+            return "Attention 桥 — 为无原生 Waiting 信号的 Agent 写入 attention.tsv"
+        case .revealAttentionFolder: return "打开 Attention 文件夹"
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
         case .waitingSignals: return "等待信号"
@@ -484,7 +496,8 @@ enum L10n {
         case .recent: return "最近"
         case .dismissWait: return "忽略等待"
         case .hooksNudge: return "安装 hooks 后，Claude/Codex 才能点亮「需要你」"
-        case .waitingSignalNudge: return "该 Agent 暂无 Waiting 信号，目前仅显示运行中"
+        case .waitingSignalNudge:
+            return "有 Agent 在跑但无 Waiting 路径 — 打开「等待信号」查看 Attention 桥"
         case .hooksUnknown: return "未检查"
         case .hooksMissing: return "未安装"
         case .hooksInstalledBoth: return "已安装 · Claude + Codex"
@@ -656,6 +669,7 @@ enum L10n {
         case .supportWaitingHooks: return "等待通路：hooks"
         case .supportWaitingHarvest: return "等待通路：会话数据"
         case .supportWaitingNone: return "等待：不可用"
+        case .supportWaitingNoneDetail: return "无原生 Waiting 路径 — 请用 Attention 桥"
         case .supportSharedCursor: return "Cursor Agent 与此适配器共用"
         case .supportLastSignal: return "%@前收到信号"
         case .supportDetectedExecutable: return "通过可执行程序检测"
@@ -748,7 +762,9 @@ enum L10n {
         case .qualityReasonScanTimeout: return "读取本地数据时适配器超时"
         case .qualityNextOpenAgent: return "打开该 Agent 查看完整会话"
         case .qualityNextWaitCache: return "继续使用该 Agent，等待本地缓存补齐"
+        case .qualityNextAttentionBridge: return "设置 Attention 桥以获得 Waiting"
         case .qualityNextRetryScan: return "在支持健康度中重试扫描"
+        case .supportFailureTimelineEntry: return "最近失败 · %@ · %@前"
         case .qualityConfidenceHigh: return "高可信"
         case .qualityConfidenceMedium: return "中等可信"
         case .qualityConfidenceLow: return "低可信"
@@ -802,7 +818,8 @@ enum L10n {
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
-        case attentionBridgeHint, shortcuts, hotkeyHint, globalShortcut, globalShortcutHint, a11yHint
+        case attentionBridgeHint, attentionBridgeFocusHint, revealAttentionFolder
+        case shortcuts, hotkeyHint, globalShortcut, globalShortcutHint, a11yHint
         case agents, running, idleNotify, settingsTitle
         case hooksNudge, waitingSignalNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
@@ -844,7 +861,7 @@ enum L10n {
         case supportResources, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingWaiting
-        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportSharedCursor
+        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportWaitingNoneDetail, supportSharedCursor
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved, supportCollectorNoData, supportCollectorNoDataDetail
         case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
@@ -868,7 +885,8 @@ enum L10n {
         case recoveredAfterForceQuit, recoveredAfterSystemRestart
         case qualityReasonProcessOnly, qualityReasonCache, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
         case qualityReasonScanTimeout
-        case qualityNextOpenAgent, qualityNextWaitCache, qualityNextRetryScan
+        case qualityNextOpenAgent, qualityNextWaitCache, qualityNextAttentionBridge, qualityNextRetryScan
+        case supportFailureTimelineEntry
         case qualityConfidenceHigh, qualityConfidenceMedium, qualityConfidenceLow
         case allSessionsCount, filterPhase, filterOutcome, filterClear
         case waitingTimeline, waitingQueuedAt, waitingNotifiedAt, waitingAcknowledgedAt

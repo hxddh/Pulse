@@ -193,6 +193,12 @@ private struct AgentDetailView: View {
                             }
                             .buttonStyle(.link)
                             .font(.caption)
+                        } else if gap.nextStep == "use_attention_bridge" {
+                            Button(store.tr(.setupWaitingSignals)) {
+                                store.openSettings(focusWaitingSignals: true)
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
                         }
                     }
                 }

@@ -21,9 +21,15 @@ All notable changes to Pulse are documented here.
 
 - `qa_observation_truth.sh`：按文件就绪轮询代替固定 `sleep 9`；支持 `PULSE_QA_APPEARANCE` / `PULSE_QA_LANGUAGE`。
 
+### P2 · 辅线
+
+- `waitingSource=.none` 六 Agent：托盘 / Support 深链 Waiting signals；Attention 桥文案点名；「打开 Attention 文件夹」。
+- bestEffortCache：隐私缺口一律 `enable_app_data` 深链；缓存受限行展示 wait-cache 下一步。
+- `safeSupportReport`：`factCoverage` + `failureTimeline`；Support 行展示最近失败年龄。
+
 ### 验证
 
-- intentional forceQuit / About hidden-duplicate / InstallTruth Desktop 分类单测；八门禁与 version_check 对 0.53.0。
+- intentional forceQuit / About hidden-duplicate / InstallTruth Desktop / Attention bridge / factCoverage 单测；八门禁与 version_check 对 0.53.0。
 
 ## 0.52.0 — Release Trust / 可交付信任
 
