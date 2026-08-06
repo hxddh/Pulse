@@ -170,6 +170,7 @@ enum L10n {
         case .versionMismatchHint:
             return "Binary reports %@ but the bundle says %@ — repackage with PulseBar/Scripts/package.sh."
         case .duplicateAppsFound: return "%d other Pulse app(s) found"
+        case .duplicateAppsMore: return "and %d more"
         case .duplicateAppRunning: return "Another copy is running; quit it before removal."
         case .removeDuplicateApps: return "Remove older copies…"
         case .removeDuplicateAppsConfirm:
@@ -207,6 +208,7 @@ enum L10n {
         case .updateDownloading: return "Downloading installer…"
         case .updateVerifying: return "Verifying SHA-256…"
         case .updateVerified: return "Verified · installer opened"
+        case .updateVerifiedOpenOnly: return "Verified · open the DMG to install (this build is not Gatekeeper-ready)"
         case .updateVerifyFailed: return "Installer verification failed"
         case .updateIdle: return "Not checked"
         case .updateChecking: return "Checking…"
@@ -362,6 +364,8 @@ enum L10n {
         case .installUpdate: return "Install verified update"
         case .updateInstalling: return "Installing update…"
         case .updateInstallFailed: return "Update install failed"
+        case .updateInstallRequiresNotarized:
+            return "In-place install needs a notarized stable build — open the DMG instead"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
         case .recoveredAfterCrash: return "Pulse recovered after an unclean exit"
@@ -541,6 +545,7 @@ enum L10n {
         case .versionStale: return "版本不一致"
         case .versionMismatchHint: return "程序版本为 %@，但 app 包标记为 %@ — 请用 PulseBar/Scripts/package.sh 重新打包。"
         case .duplicateAppsFound: return "发现另外 %d 个 Pulse 应用"
+        case .duplicateAppsMore: return "另有 %d 个"
         case .duplicateAppRunning: return "另一个副本正在运行，退出后才能移除。"
         case .removeDuplicateApps: return "移除旧副本…"
         case .removeDuplicateAppsConfirm: return "将 %d 个未运行的 Pulse 应用移到废纸篓？当前正在运行的应用会保留。"
@@ -576,6 +581,7 @@ enum L10n {
         case .updateDownloading: return "正在下载安装包…"
         case .updateVerifying: return "正在校验 SHA-256…"
         case .updateVerified: return "校验通过 · 已打开安装包"
+        case .updateVerifiedOpenOnly: return "校验通过 · 请打开 DMG 安装（当前构建未通过 Gatekeeper）"
         case .updateVerifyFailed: return "安装包校验失败"
         case .updateIdle: return "未检查"
         case .updateChecking: return "检查中…"
@@ -728,6 +734,8 @@ enum L10n {
         case .installUpdate: return "安装已校验更新"
         case .updateInstalling: return "正在安装更新…"
         case .updateInstallFailed: return "更新安装失败"
+        case .updateInstallRequiresNotarized:
+            return "就地安装需要已公证的 stable 构建 — 请打开 DMG 安装"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
         case .updateSignedUnnotarized: return "已用 Developer ID 签名 · 未公证 · Gatekeeper 可能拦截"
         case .recoveredAfterCrash: return "Pulse 已从上次异常退出中恢复"
@@ -810,7 +818,7 @@ enum L10n {
         case actionPlanning, actionCommand, actionEditing, actionImage
         case actionResearch, actionReading, actionAutomation, setupWaitingSignals
         case about, tagline, build, runningFrom, devBuild, copyDiagnostics, copied
-        case versionStale, versionMismatchHint, duplicateAppsFound, duplicateAppRunning
+        case versionStale, versionMismatchHint, duplicateAppsFound, duplicateAppsMore, duplicateAppRunning
         case removeDuplicateApps, removeDuplicateAppsConfirm, moveToTrash, cancel
         case durNow, durSec, durMin, durHour
         case notificationsSection, notifyNotConfigured, waitingNotifyNotConfigured
@@ -819,7 +827,7 @@ enum L10n {
         case revealShortcut, hotkeyTaken
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint
         case checkForUpdates, checkNow, openRelease, downloadAndVerify
-        case updateDownloading, updateVerifying, updateVerified, updateVerifyFailed
+        case updateDownloading, updateVerifying, updateVerified, updateVerifiedOpenOnly, updateVerifyFailed
         case updateIdle, updateChecking, updateCurrent, updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
@@ -855,7 +863,8 @@ enum L10n {
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
-        case installUpdate, updateInstalling, updateInstallFailed, updatePreview, updateSignedUnnotarized, recoveredAfterCrash
+        case installUpdate, updateInstalling, updateInstallFailed, updateInstallRequiresNotarized
+        case updatePreview, updateSignedUnnotarized, recoveredAfterCrash
         case recoveredAfterForceQuit, recoveredAfterSystemRestart
         case qualityReasonProcessOnly, qualityReasonCache, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
         case qualityReasonScanTimeout

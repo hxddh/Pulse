@@ -48,6 +48,8 @@ final class StatusStore: ObservableObject {
     /// can actually see it; clear on the next healthy scan or explicit dismiss.
     private var recoveryNoticeSurvivedFirstHealthyScan = false
     private var launchRecovery: LaunchRecovery?
+    /// SIGTERM → force-quit marker. Force Quit via SIGKILL still looks like a crash.
+    private var terminationSignalSource: DispatchSourceSignal?
     @Published private(set) var installReport = InstallTruth.Report.empty
     @Published private(set) var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
@@ -954,6 +956,7 @@ final class StatusStore: ObservableObject {
             }
         }
         UpdateCheck.shared.startIfEnabled(store: self)
+        installTerminationSignalMarker()
         DebugLog.write("start armed auto=\(autoProbe)")
     }
 
@@ -1443,12 +1446,20 @@ final class StatusStore: ObservableObject {
         return false
     }
 
+    /// In-place install is only honest on notarized stable builds.
+    var updateCanInstallInPlace: Bool {
+        PulseVersion.isGatekeeperReady
+    }
+
     var updateDownloadStatusText: String? {
         switch updateDownloadStatus {
         case .idle: return nil
         case .downloading: return tr(.updateDownloading)
         case .verifying: return tr(.updateVerifying)
-        case .ready: return tr(.updateVerified)
+        case .ready:
+            return updateCanInstallInPlace
+                ? tr(.updateVerified)
+                : tr(.updateVerifiedOpenOnly)
         case .installing: return tr(.updateInstalling)
         case .failed(let message): return "\(tr(.updateVerifyFailed)) · \(message)"
         }
@@ -1481,7 +1492,9 @@ final class StatusStore: ObservableObject {
         case .forceQuit: return tr(.recoveredAfterForceQuit)
         case .systemRestart: return tr(.recoveredAfterSystemRestart)
         case .crash, .unknown: return tr(.recoveredAfterCrash)
-        case .clean, .updateReplace: return tr(.recoveredAfterCrash)
+        case .clean, .updateReplace:
+            // wasUnclean excludes these; never surface a crash lie here.
+            return ""
         }
     }
 
@@ -3114,6 +3127,21 @@ final class StatusStore: ObservableObject {
 
     func markIntendedUpdateReplace() {
         launchRecovery?.markIntendedExit(.updateReplace)
+    }
+
+    /// Soft termination (SIGTERM / Activity Monitor "Quit") writes a force-quit
+    /// intent so the next launch can distinguish it from a crash. True Force
+    /// Quit (SIGKILL) cannot be intercepted and remains classified as crash.
+    private func installTerminationSignalMarker() {
+        guard terminationSignalSource == nil else { return }
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { [weak self] in
+            self?.launchRecovery?.markIntendedExit(.forceQuit)
+            NSApp.terminate(nil)
+        }
+        source.resume()
+        terminationSignalSource = source
     }
 
     private func relative(_ date: Date) -> String {

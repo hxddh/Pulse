@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import Foundation
 
 /// Runtime installation truth for a menu-bar app that is easy to leave running
@@ -9,6 +10,8 @@ import Foundation
 /// and other live bundle paths separate so Settings can explain that state
 /// without guessing.
 enum InstallTruth {
+    /// How many duplicate paths About lists before "and N more".
+    static let aboutDuplicateLimit = 5
     enum CopyKind: String, Equatable {
         /// User-facing install under /Applications or ~/Applications.
         case currentInstalled
@@ -45,6 +48,14 @@ enum InstallTruth {
 
         var duplicates: [Copy] {
             copies.filter { !$0.isCurrent && $0.isUserInstall }
+        }
+        /// First `aboutDuplicateLimit` duplicates for the About list.
+        var aboutVisibleDuplicates: [Copy] {
+            Array(duplicates.prefix(InstallTruth.aboutDuplicateLimit))
+        }
+        /// Count of duplicates not shown in About (0 when within the limit).
+        var aboutHiddenDuplicateCount: Int {
+            max(0, duplicates.count - InstallTruth.aboutDuplicateLimit)
         }
         var removableDuplicates: [Copy] {
             let currentVersion = copies.first(where: \.isCurrent)?.version ?? PulseVersion.semver
@@ -111,11 +122,16 @@ enum InstallTruth {
             NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
                 .compactMap { $0.bundleURL?.resolvingSymlinksInPath().path }
         ).union([current.path])
+        let home = fm.homeDirectoryForCurrentUser
         let roots = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
-            fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true),
+            home.appendingPathComponent("Applications", isDirectory: true),
+            // Dropped DMGs often leave a copy on the Desktop or in Downloads;
+            // one-level scan keeps cost bounded while catching the common orphans.
+            home.appendingPathComponent("Desktop", isDirectory: true),
+            home.appendingPathComponent("Downloads", isDirectory: true),
         ]
-        let rollbackRoot = fm.homeDirectoryForCurrentUser
+        let rollbackRoot = home
             .appendingPathComponent("Library/Application Support/Pulse/rollback", isDirectory: true)
 
         var urls: [URL] = []
@@ -128,6 +144,16 @@ enum InstallTruth {
         }
 
         include(current)
+        // Launch Services knows every registered copy, including paths outside
+        // the shallow roots below (e.g. a leftover in ~/Projects).
+        if let cfURLs = LSCopyApplicationURLsForBundleIdentifier(
+            bundleIdentifier as CFString,
+            nil
+        )?.takeRetainedValue() as? [URL] {
+            for url in cfURLs {
+                include(url)
+            }
+        }
         for root in roots {
             guard let children = try? fm.contentsOfDirectory(
                 at: root,

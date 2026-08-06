@@ -115,7 +115,7 @@ to users.
 
 ## Current state
 
-0.52.0 is the current source version. The active plan is
+0.53.0 is the current source version. The active plan is
 [`docs/plan-0.53.md`](docs/plan-0.53.md) (Delivery Continuity). GitHub's latest
 public Release must be checked separately; a merged version is not proof that a
 signed/notarized DMG was published. Ad-hoc or unnotarized artifacts must stay

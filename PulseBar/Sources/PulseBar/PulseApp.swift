@@ -2053,12 +2053,22 @@ struct SettingsView: View {
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
-                    ForEach(store.installReport.duplicates.prefix(3)) { copy in
+                    ForEach(store.installReport.aboutVisibleDuplicates) { copy in
                         Text("\(copy.version) · \(copy.url.path)")
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                    }
+                    if store.installReport.aboutHiddenDuplicateCount > 0 {
+                        Text(
+                            String(
+                                format: store.tr(.duplicateAppsMore),
+                                store.installReport.aboutHiddenDuplicateCount
+                            )
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                     }
                     if !store.installReport.removableDuplicates.isEmpty {
                         Button(store.tr(.removeDuplicateApps)) {
@@ -2114,9 +2124,13 @@ struct SettingsView: View {
                         }()
                     )
             }
-            if case .ready = store.updateDownloadStatus {
+            if case .ready = store.updateDownloadStatus, store.updateCanInstallInPlace {
                 Button(store.tr(.installUpdate)) { store.installVerifiedUpdate() }
                     .font(.caption)
+            } else if case .ready = store.updateDownloadStatus, !store.updateCanInstallInPlace {
+                Text(store.tr(.updateInstallRequiresNotarized))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {

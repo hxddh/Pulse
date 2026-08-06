@@ -140,6 +140,18 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertEqual(afterUpdate.kind, .updateReplace)
     }
 
+    func testLaunchRecoveryForceQuitMarkerSurvivesCleanShutdownHook() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let first = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a")
+        first.state.markIntendedExit(.forceQuit, at: url)
+        // applicationWillTerminate still calls markCleanShutdown; intent must stick.
+        first.state.markCleanShutdown(at: url)
+        let second = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-a")
+        XCTAssertTrue(second.wasUnclean)
+        XCTAssertEqual(second.kind, .forceQuit)
+    }
+
     func testJSONIsDefaultAndTSVRequiresExplicitCompatibilityReader() {
         let tsv = "codex\tTask\t1\t2\ttool\t\tPulse\t/tmp\t100\t0\t0\ts\n"
         XCTAssertTrue(ActivityHarvest.parse(tsv).isEmpty)

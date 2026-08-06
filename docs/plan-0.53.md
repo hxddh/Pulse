@@ -24,15 +24,14 @@ safe report、截图 CI、resource budget 均已进源码与 CHANGELOG。GitHub 
 
 | 主题 | 状态 | 0.53 动作 |
 | --- | --- | --- |
-| 通道三态 `preview` / `signed` / `stable` | 代码完成；runtime 仍 preview | 配齐 secrets → 首个 notarized stable |
-| GitHub Latest | 停在 `v0.48.0`（非 prerelease） | stable 发布后 Latest 追上源码版本 |
-| README 发布说明 | 谎称「拒绝 ad-hoc / 缺凭据拒发」 | 与 `release.yml` 对齐（可立即） |
-| architecture / README 门禁 | 仍写七门禁、缺 `signed` | 同步三态 + 八门禁（可立即） |
-| UpdateCheck | preview 跟 prerelease 已做 | stable `/latest` 真机验收；文案诚实 |
-| InstallTruth | 只扫 Applications + rollback；About 前 3 | 孤儿发现面与展示/回收 UX |
-| LaunchRecovery `forceQuit` | 标「future hook」，与 crash 难分 | intended-exit 写入补齐 |
-| 截图 QA | Darwin、固定 sleep、仅 light/zh | 减竞态；可选暗色/英文 |
-| 观测深度 | 0.50–0.51 已深耕 | 仅作辅线补刀，不当整版标题 |
+| 通道三态 `preview` / `signed` / `stable` | 代码完成；runtime 仍 preview | 配齐 secrets → 首个 notarized stable（外部） |
+| GitHub Latest | 停在 `v0.48.0`（非 prerelease） | stable 发布后 Latest 追上源码版本（外部） |
+| README 发布说明 | **已对齐**（本版） | 与 `release.yml` 一致 |
+| architecture / README 门禁 | **已对齐**（本版） | 三态 + 八门禁 |
+| UpdateCheck | **就地安装仅 Gatekeeper-ready** | stable `/latest` 真机仍待公证工件 |
+| InstallTruth | **LS + Desktop/Downloads；About「另有 N」** | 有 stable 后做事务替换 E2E |
+| LaunchRecovery `forceQuit` | **SIGTERM 意图 + 分类修复** | 真 Force Quit (SIGKILL) 仍报 crash |
+| 截图 QA | **轮询就绪 + appearance/language env** | 可选暗色/英文矩阵进 CI |
 
 ---
 
