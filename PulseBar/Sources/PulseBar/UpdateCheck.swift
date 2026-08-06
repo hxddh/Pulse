@@ -52,16 +52,25 @@ final class UpdateCheck {
     }
 
     /// Default feed; override with `PulseUpdateFeed` in Info.plist.
-    private static let defaultFeed = "https://api.github.com/repos/hxddh/Pulse/releases/latest"
+    private static let defaultLatestFeed = "https://api.github.com/repos/hxddh/Pulse/releases/latest"
+    private static let defaultReleasesFeed = "https://api.github.com/repos/hxddh/Pulse/releases?per_page=15"
     private static let minInterval: TimeInterval = 24 * 60 * 60
 
     private var lastCheck: Date?
     private var inFlight = false
 
     private var feedURL: URL? {
-        let raw = (Bundle.main.infoDictionary?["PulseUpdateFeed"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return URL(string: raw?.isEmpty == false ? raw! : Self.defaultFeed)
+        if let raw = (Bundle.main.infoDictionary?["PulseUpdateFeed"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty {
+            return URL(string: raw)
+        }
+        // Preview/signed builds are published as GitHub prereleases; `/latest`
+        // ignores them, so those channels would never see their own updates.
+        let raw = PulseVersion.prefersPrereleaseUpdates
+            ? Self.defaultReleasesFeed
+            : Self.defaultLatestFeed
+        return URL(string: raw)
     }
 
     /// Called at launch and whenever settings change.
@@ -91,7 +100,13 @@ final class UpdateCheck {
         request.setValue("Pulse/\(PulseVersion.semver)", forHTTPHeaderField: "User-Agent")
 
         URLSession.shared.dataTask(with: request) { data, response, error in
-            let result = Self.interpret(data: data, response: response, error: error)
+            let preferPrerelease = PulseVersion.prefersPrereleaseUpdates
+            let result = Self.interpret(
+                data: data,
+                response: response,
+                error: error,
+                preferPrerelease: preferPrerelease
+            )
             Task { @MainActor in
                 self.inFlight = false
                 store.updateStatus = result
@@ -103,19 +118,38 @@ final class UpdateCheck {
     nonisolated static func interpret(
         data: Data?,
         response: URLResponse?,
-        error: Error?
+        error: Error?,
+        preferPrerelease: Bool = false
     ) -> Status {
         if let error { return .failed(error.localizedDescription) }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             return .failed("HTTP \(http.statusCode)")
         }
-        guard let data,
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let data else { return .failed("bad response") }
+
+        let object: [String: Any]?
+        if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            object = dict
+        } else if let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            // Releases list: pick the newest tag that matches this channel.
+            object = list.first { entry in
+                let pre = (entry["prerelease"] as? Bool) ?? false
+                if preferPrerelease { return true }
+                return !pre
+            } ?? list.first
+        } else {
             return .failed("bad response")
         }
+        guard let object else { return .failed("bad response") }
+
         let tag = (object["tag_name"] as? String) ?? ""
         let page = (object["html_url"] as? String) ?? ""
         let body = (object["body"] as? String) ?? ""
+        let isPrerelease = (object["prerelease"] as? Bool) ?? false
+        // Stable builds must not auto-offer a prerelease; preview builds may.
+        if isPrerelease && !preferPrerelease {
+            return .current
+        }
         let latest = normalize(tag)
         guard !latest.isEmpty else { return .failed("no tag") }
         guard isNewer(latest, than: PulseVersion.semver) else { return .current }

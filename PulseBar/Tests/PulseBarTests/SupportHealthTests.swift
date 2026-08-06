@@ -301,4 +301,42 @@ final class SupportHealthTests: XCTestCase {
         )
         XCTAssertEqual(store.scanIncompleteBannerText, store.tr(.supportScanIncomplete))
     }
+
+    @MainActor
+    func testIntentionalSupervisorPartialDoesNotLightIncompleteBanner() {
+        let store = StatusStore()
+        store.language = .en
+        store.recordCollectorHealth(
+            [
+                ActivityHarvest.CollectorHealth(
+                    id: .codex,
+                    state: .observed,
+                    durationMs: 12,
+                    rowCount: 1,
+                    sourcePresent: true,
+                    errorKind: ""
+                )
+            ],
+            complete: false,
+            intentionalPartial: true
+        )
+        XCTAssertFalse(store.collectorScanIncomplete)
+        XCTAssertNil(store.scanIncompleteBannerText)
+    }
+
+    @MainActor
+    func testSafeSupportReportIncludesReleaseAndNotifyFields() {
+        let store = StatusStore()
+        let report = store.safeSupportReport()
+        XCTAssertTrue(report.contains("channel:"))
+        XCTAssertTrue(report.contains("notarized:"))
+        XCTAssertTrue(report.contains("notifications: authorization="))
+        XCTAssertTrue(report.contains("notifyWaiting="))
+        XCTAssertTrue(report.contains("pending="))
+        XCTAssertTrue(report.contains("appDataGrant:"))
+        XCTAssertTrue(report.contains("probeCadence:"))
+        XCTAssertTrue(report.contains("timeoutAgents:"))
+        XCTAssertTrue(report.contains("harvestSupervisor:"))
+        XCTAssertTrue(report.contains("deferred="))
+    }
 }

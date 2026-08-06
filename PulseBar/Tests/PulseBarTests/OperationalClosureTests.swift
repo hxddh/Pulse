@@ -71,6 +71,7 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertTrue(probe.attempted.contains(.amp))
     }
 
+    @MainActor
     func testSupervisorDeferralDoesNotMakeHealthyPartialScanUnreliable() {
         var supervisor = HarvestSupervisor()
         let failure = ActivityHarvest.CollectorHealth(
@@ -101,6 +102,12 @@ final class OperationalClosureTests: XCTestCase {
                 plan: plan
             )
         )
+
+        let store = StatusStore()
+        store.recordCollectorHealth([healthyCodex], complete: false, intentionalPartial: true)
+        XCTAssertFalse(store.collectorScanIncomplete)
+        store.recordCollectorHealth([failedCodex], complete: false, intentionalPartial: false)
+        XCTAssertTrue(store.collectorScanIncomplete)
     }
 
     func testLaunchRecoveryMarksUncleanThenClean() {

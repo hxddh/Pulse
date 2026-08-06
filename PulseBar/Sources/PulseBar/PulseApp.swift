@@ -1575,9 +1575,12 @@ private struct AgentRowButton: View {
         }
         parts.append(state)
         if !contextLine.isEmpty { parts.append(contextLine) }
-        if !activityChange.isEmpty { parts.append(activityChange) }
-        if !metrics.isEmpty { parts.append(metrics) }
-        if !observationLine.isEmpty { parts.append(observationLine) }
+        // Canonical dynamic summary — do not also append activityChange +
+        // metrics; that duplicated Context / Changed facts for VoiceOver.
+        if !signalLine.isEmpty { parts.append(signalLine) }
+        if !observationLine.isEmpty, observationLine != signalLine {
+            parts.append(observationLine)
+        }
         if row.waiting {
             let line = store.localizedWaitLine(row)
             if !line.isEmpty { parts.append(line) }
@@ -1790,6 +1793,10 @@ struct SettingsView: View {
                 Label(store.tr(.notifyDenied), systemImage: "bell.slash")
                     .font(.caption)
                     .foregroundStyle(GlanceKind.error.lampColor)
+                Text(store.tr(.notifyDeniedPersistentHint))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Button(store.tr(.openNotificationSettings)) {
                     store.openSystemNotificationSettings()
                 }
@@ -1999,6 +2006,10 @@ struct SettingsView: View {
                         .foregroundStyle(.tertiary)
                     if PulseVersion.distributionChannel == "preview" {
                         Text(store.tr(.updatePreview))
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    } else if PulseVersion.distributionChannel == "signed" {
+                        Text(store.tr(.updateSignedUnnotarized))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }

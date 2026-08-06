@@ -186,6 +186,8 @@ enum L10n {
         case .enableNotifications: return "Enable notifications"
         case .notifyDenied: return "Notifications are turned off for Pulse — these switches cannot fire."
         case .waitingNotifyDenied: return "Waiting alerts are blocked — open System Settings"
+        case .notifyDeniedPersistentHint:
+            return "Waiting alerts cannot fire until System Settings allows notifications for Pulse."
         case .openNotificationSettings: return "Open System Settings"
         case .muteAgents: return "Mute agents"
         case .muteHint: return "Muted agents still appear in the tray; they just stop sending notifications."
@@ -361,6 +363,7 @@ enum L10n {
         case .updateInstalling: return "Installing update…"
         case .updateInstallFailed: return "Update install failed"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
+        case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
         case .recoveredAfterCrash: return "Pulse recovered after an unclean exit"
         case .recoveredAfterForceQuit: return "Pulse recovered after a force quit"
         case .recoveredAfterSystemRestart: return "Pulse restarted after a system reboot"
@@ -553,6 +556,8 @@ enum L10n {
         case .enableNotifications: return "启用通知"
         case .notifyDenied: return "系统已关闭 Pulse 的通知权限，下面的开关不会生效。"
         case .waitingNotifyDenied: return "需要你处理 · 通知已被系统关闭"
+        case .notifyDeniedPersistentHint:
+            return "在系统设置允许 Pulse 通知之前，Waiting 提醒无法送达。"
         case .openNotificationSettings: return "打开系统设置"
         case .muteAgents: return "静音 Agent"
         case .muteHint: return "被静音的 Agent 仍会出现在列表中，只是不再发送通知。"
@@ -724,6 +729,7 @@ enum L10n {
         case .updateInstalling: return "正在安装更新…"
         case .updateInstallFailed: return "更新安装失败"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
+        case .updateSignedUnnotarized: return "已用 Developer ID 签名 · 未公证 · Gatekeeper 可能拦截"
         case .recoveredAfterCrash: return "Pulse 已从上次异常退出中恢复"
         case .recoveredAfterForceQuit: return "Pulse 已从强制退出中恢复"
         case .recoveredAfterSystemRestart: return "系统重启后 Pulse 已重新启动"
@@ -808,7 +814,7 @@ enum L10n {
         case removeDuplicateApps, removeDuplicateAppsConfirm, moveToTrash, cancel
         case durNow, durSec, durMin, durHour
         case notificationsSection, notifyNotConfigured, waitingNotifyNotConfigured
-        case enableNotifications, notifyDenied, waitingNotifyDenied, openNotificationSettings
+        case enableNotifications, notifyDenied, notifyDeniedPersistentHint, waitingNotifyDenied, openNotificationSettings
         case muteAgents, muteHint, uninstallHooks
         case revealShortcut, hotkeyTaken
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint
@@ -849,7 +855,7 @@ enum L10n {
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
-        case installUpdate, updateInstalling, updateInstallFailed, updatePreview, recoveredAfterCrash
+        case installUpdate, updateInstalling, updateInstallFailed, updatePreview, updateSignedUnnotarized, recoveredAfterCrash
         case recoveredAfterForceQuit, recoveredAfterSystemRestart
         case qualityReasonProcessOnly, qualityReasonCache, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
         case qualityReasonScanTimeout

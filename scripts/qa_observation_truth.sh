@@ -4,10 +4,17 @@
 #   ./scripts/qa_observation_truth.sh
 #
 # Writes PNGs under zig-out/qa-observation-truth/ for status-* tray fixtures.
+# Fails if any expected PNG is missing (CI-friendly).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="${PULSE_APP:-/Applications/Pulse.app/Contents/MacOS/PulseBar}"
+if [[ -n "${PULSE_APP:-}" ]]; then
+  APP="$PULSE_APP"
+elif [[ -x "$ROOT/zig-out/package/Pulse.app/Contents/MacOS/PulseBar" ]]; then
+  APP="$ROOT/zig-out/package/Pulse.app/Contents/MacOS/PulseBar"
+else
+  APP="/Applications/Pulse.app/Contents/MacOS/PulseBar"
+fi
 OUT="${PULSE_QA_OUT:-$ROOT/zig-out/qa-observation-truth}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -20,7 +27,7 @@ if [[ ! -x "$APP" ]]; then
 fi
 
 mkdir -p "$OUT"
-echo "Observation Truth captures → $OUT"
+echo "Observation Truth captures → $OUT (app=$APP)"
 
 quit_pulse() {
   osascript -e 'tell application id "com.pulse.app" to quit' >/dev/null 2>&1 || true
@@ -42,7 +49,14 @@ capture_fixture() {
   local pid=$!
   sleep 9
   kill "$pid" >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
   quit_pulse
+  for f in "$OUT/${fixture}-tray-zh-light.png" "$OUT/${fixture}-lamp-zh-light.png"; do
+    if [[ ! -s "$f" ]]; then
+      echo "error: missing capture $f" >&2
+      exit 1
+    fi
+  done
   ls -lah "$OUT/${fixture}"-*.png
 }
 

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.51.0"
+    static let semver = "0.52.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -33,8 +33,30 @@ enum PulseVersion {
     /// ISO date stamped at package time (empty when unpackaged).
     static var buildDate: String { plist("PulseBuildDate") ?? "" }
 
+    /// `preview` (ad-hoc) / `signed` (Developer ID, not notarized) / `stable`
+    /// (notarized) / `dev` (unpackaged). Never treat signed-as-stable.
     static var distributionChannel: String {
         plist("PulseDistributionChannel") ?? (bundleVersion == nil ? "dev" : "preview")
+    }
+
+    /// Stapler success stamp from `package.sh`. Absent or false → not Gatekeeper-ready.
+    static var isNotarized: Bool {
+        (plist("PulseNotarized") ?? "false").lowercased() == "true"
+    }
+
+    /// True only for notarized stable builds that other Macs can open without
+    /// the Control-click recovery path.
+    static var isGatekeeperReady: Bool {
+        distributionChannel == "stable" && isNotarized
+    }
+
+    /// Preview and signed-but-unnotarized builds should follow prerelease feeds.
+    static var prefersPrereleaseUpdates: Bool {
+        switch distributionChannel {
+        case "stable": return false
+        case "dev": return false
+        default: return true
+        }
     }
 
     static var channel: Channel {

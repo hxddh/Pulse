@@ -73,6 +73,67 @@ final class PulseVersionTests: XCTestCase {
         )
     }
 
+    func testInterpretReleasesListSkipsPrereleaseOnStableChannel() {
+        let sha = String(repeating: "b", count: 64)
+        let json = """
+        [
+          {
+            "tag_name":"v99.1.0",
+            "prerelease":true,
+            "html_url":"https://example.com/pre",
+            "body":"SHA-256: \(sha)",
+            "assets":[{
+              "name":"pulse-99.1.0.dmg",
+              "browser_download_url":"https://example.com/pre.dmg",
+              "size":100
+            }]
+          },
+          {
+            "tag_name":"v99.0.0",
+            "prerelease":false,
+            "html_url":"https://example.com/r",
+            "body":"SHA-256: \(sha)",
+            "assets":[{
+              "name":"pulse-99.0.0.dmg",
+              "browser_download_url":"https://example.com/pulse.dmg",
+              "size":200
+            }]
+          }
+        ]
+        """
+        let stable = UpdateCheck.interpret(
+            data: Data(json.utf8),
+            response: nil,
+            error: nil,
+            preferPrerelease: false
+        )
+        if case let .available(info) = stable {
+            XCTAssertEqual(info.version, "99.0.0")
+        } else {
+            XCTFail("stable channel should pick the non-prerelease entry, got \(stable)")
+        }
+
+        let preview = UpdateCheck.interpret(
+            data: Data(json.utf8),
+            response: nil,
+            error: nil,
+            preferPrerelease: true
+        )
+        if case let .available(info) = preview {
+            XCTAssertEqual(info.version, "99.1.0")
+        } else {
+            XCTFail("preview channel should accept the newest prerelease, got \(preview)")
+        }
+    }
+
+    func testUnpackagedChannelDoesNotPreferPrerelease() {
+        guard PulseVersion.bundleVersion == nil else { return }
+        XCTAssertEqual(PulseVersion.distributionChannel, "dev")
+        XCTAssertFalse(PulseVersion.prefersPrereleaseUpdates)
+        XCTAssertFalse(PulseVersion.isNotarized)
+        XCTAssertFalse(PulseVersion.isGatekeeperReady)
+    }
+
     func testUpdateInstallerDestinationNeverOverwritesExistingFiles() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-update-\(UUID().uuidString)")
