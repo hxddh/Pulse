@@ -3172,11 +3172,21 @@ final class StatusStore: ObservableObject {
     }
 
     func markCleanShutdown() {
-        launchRecovery?.markCleanShutdown()
+        guard var recovery = launchRecovery else { return }
+        recovery.markCleanShutdown()
+        launchRecovery = recovery
     }
 
     func markIntendedUpdateReplace() {
-        launchRecovery?.markIntendedExit(.updateReplace)
+        guard var recovery = launchRecovery else { return }
+        recovery.markIntendedExit(.updateReplace)
+        launchRecovery = recovery
+    }
+
+    func markIntendedForceQuit() {
+        guard var recovery = launchRecovery else { return }
+        recovery.markIntendedExit(.forceQuit)
+        launchRecovery = recovery
     }
 
     /// Soft termination (SIGTERM / Activity Monitor "Quit") writes a force-quit
@@ -3187,7 +3197,7 @@ final class StatusStore: ObservableObject {
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         source.setEventHandler { [weak self] in
-            self?.launchRecovery?.markIntendedExit(.forceQuit)
+            self?.markIntendedForceQuit()
             NSApp.terminate(nil)
         }
         source.resume()

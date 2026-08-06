@@ -92,37 +92,35 @@ struct LaunchRecovery: Codable, Equatable {
         return nil
     }
 
-    func markCleanShutdown(at url: URL = fileURL) {
-        var clean = self
+    mutating func markCleanShutdown(at url: URL = fileURL) {
         // Do not clobber an intentional exit marker written just before
         // terminate (update replace / SIGTERM force-quit path).
         if intendedExit == .updateReplace {
-            clean.cleanShutdown = true
-            clean.save(to: url)
+            cleanShutdown = true
+            save(to: url)
             return
         }
         if intendedExit == .forceQuit {
-            clean.save(to: url)
+            save(to: url)
             return
         }
-        clean.cleanShutdown = true
-        clean.intendedExit = .clean
-        clean.save(to: url)
+        cleanShutdown = true
+        intendedExit = .clean
+        save(to: url)
     }
 
-    func markIntendedExit(_ kind: ExitKind, at url: URL = fileURL) {
-        var next = self
-        next.intendedExit = kind
+    mutating func markIntendedExit(_ kind: ExitKind, at url: URL = fileURL) {
+        intendedExit = kind
         switch kind {
         case .updateReplace, .clean:
-            next.cleanShutdown = true
+            cleanShutdown = true
         case .forceQuit:
             // Keep unclean so the next launch can show the force-quit notice.
-            next.cleanShutdown = false
+            cleanShutdown = false
         case .crash, .systemRestart, .unknown:
             break
         }
-        next.save(to: url)
+        save(to: url)
     }
 
     private func save(to url: URL) {

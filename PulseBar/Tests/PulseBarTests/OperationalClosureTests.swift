@@ -143,10 +143,11 @@ final class OperationalClosureTests: XCTestCase {
     func testLaunchRecoveryForceQuitMarkerSurvivesCleanShutdownHook() {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
-        let first = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a")
-        first.state.markIntendedExit(.forceQuit, at: url)
-        // applicationWillTerminate still calls markCleanShutdown; intent must stick.
-        first.state.markCleanShutdown(at: url)
+        var state = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a").state
+        state.markIntendedExit(.forceQuit, at: url)
+        // applicationWillTerminate still calls markCleanShutdown; intent must stick
+        // because StatusStore keeps the mutated value (same as this var).
+        state.markCleanShutdown(at: url)
         let second = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-a")
         XCTAssertTrue(second.wasUnclean)
         XCTAssertEqual(second.kind, .forceQuit)
