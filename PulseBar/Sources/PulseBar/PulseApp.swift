@@ -33,11 +33,24 @@ enum PulseBarMain {
         }
         if CommandLine.arguments.contains("--harvest-test") {
             let started = Date()
-            let result = ActivityHarvest.scan()
+            // Match the menu-bar store: App Data grants live in settings.txt.
+            // Ignoring that file made A/B harvest dumps always look process-only.
+            let settings = PulseSettings.loadFromDisk()
+            let agentsLabel = settings.allowAppData
+                ? "all"
+                : (settings.appDataAgents.isEmpty
+                    ? "none"
+                    : settings.appDataAgents.map(\.rawValue).sorted().joined(separator: ","))
+            let result = ActivityHarvest.scan(
+                allowAppData: settings.allowAppData,
+                appDataAgents: settings.appDataAgents
+            )
             print(
                 "harvest rows=\(result.rows.count) adapters=\(result.health.count) "
                     + "unreliable=\(result.unreliable) "
                     + "complete=\(result.complete) "
+                    + "appData=\(settings.allowAppData ? 1 : 0) "
+                    + "agents=\(agentsLabel) "
                     + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
             )
             if CommandLine.arguments.contains("--harvest-dump") {
@@ -138,6 +151,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 AppServices.store.openSettings()
+            }
+        }
+        if let focus = CommandLine.arguments.first(where: { $0.hasPrefix("--open-settings-agent=") }) {
+            let raw = String(focus.dropFirst("--open-settings-agent=".count))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                AppServices.store.openSettings(focusAppDataFor: AgentID(rawValue: raw))
             }
         }
         if CommandLine.arguments.contains("--open-support-health") {
@@ -764,6 +783,26 @@ struct TrayPanel: View {
                 .padding(.horizontal, TrayChrome.padX)
                 .padding(.bottom, 10)
                 .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else if let incomplete = store.trayScanIncompleteNotice {
+            Button { store.openSupportHealth() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.badge.exclamationmark")
+                        .font(.system(size: 11))
+                    Text(store.tr(.trayScanIncomplete))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .opacity(0.55)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, TrayChrome.padX)
+                .padding(.bottom, 10)
+                .contentShape(Rectangle())
+                .accessibilityLabel(incomplete)
             }
             .buttonStyle(.plain)
         }
@@ -1662,7 +1701,12 @@ struct SettingsView: View {
             Text(store.tr(.agentDataAccessHint))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DisclosureGroup(store.tr(.agentDataAccessScopes)) {
+            DisclosureGroup(
+                isExpanded: Binding(
+                    get: { store.settingsExpandAppDataScopes },
+                    set: { store.settingsExpandAppDataScopes = $0 }
+                ),
+                content: {
                 Text(store.tr(.agentDataAccessScopeHint))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -1686,8 +1730,15 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(store.allowAppData)
+                    .listRowBackground(
+                        store.settingsFocusAppDataAgent == agent
+                            ? Color.accentColor.opacity(0.12)
+                            : Color.clear
+                    )
                 }
-            }
+            },
+                label: { Text(store.tr(.agentDataAccessScopes)) }
+            )
             Toggle(store.tr(.launchAtLogin), isOn: $store.launchAtLogin)
                 .onChange(of: store.launchAtLogin) { _, _ in store.saveSettings() }
             Picker(store.tr(.language), selection: $store.language) {
@@ -2201,22 +2252,24 @@ struct SupportCoverageView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if store.supportHealth.contains(where: \.privacyLimited) {
+                if let privacy = store.privacyBannerText {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Label(
-                            store.tr(.supportCollectorPrivacyLimitedDetail),
+                            privacy,
                             systemImage: "lock"
                         )
                         .foregroundStyle(.orange)
                         Spacer(minLength: 8)
-                        Button(store.tr(.settings)) { store.openSettings() }
-                            .buttonStyle(.borderless)
+                        Button(store.tr(.settings)) {
+                            store.openSettings(focusAppDataFor: store.firstPrivacyLimitedAgent)
+                        }
+                        .buttonStyle(.borderless)
                     }
                     .font(.caption)
                 }
-                if store.collectorScanIncomplete {
+                if let incomplete = store.scanIncompleteBannerText {
                     HStack(spacing: 8) {
-                        Label(store.tr(.supportScanIncomplete), systemImage: "clock.badge.exclamationmark")
+                        Label(incomplete, systemImage: "clock.badge.exclamationmark")
                             .foregroundStyle(.orange)
                         Spacer(minLength: 8)
                         Button(store.tr(.supportRetry)) {
@@ -2406,6 +2459,21 @@ struct SupportHealthRow: View {
                         .foregroundStyle(observed.isEmpty ? .tertiary : .secondary)
                         .lineLimit(2)
                         .truncationMode(.tail)
+                } else if item.privacyLimited
+                    || item.disposition == .limited
+                    || item.disposition == .unscanned
+                    || item.disposition == .permissionDenied
+                {
+                    // Capability gaps stay visible when the adapter has not
+                    // produced a row — otherwise Support Health collapses to
+                    // disposition labels alone.
+                    HStack(spacing: 6) {
+                        SupportFactPill(label: store.tr(.supportGoal), present: false)
+                        SupportFactPill(label: store.tr(.supportWorkspace), present: false)
+                        SupportFactPill(label: store.tr(.supportActivity), present: false)
+                        SupportFactPill(label: store.tr(.supportProgress), present: false)
+                    }
+                    .font(.caption)
                 }
 
                 let timeline = store.supportTimelineDetail(item)
@@ -2414,6 +2482,12 @@ struct SupportHealthRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if item.collectorErrorKind == "native_timeout" {
+                    Label(store.tr(.qualityReasonScanTimeout), systemImage: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
 
                 if let missing = store.supportMissingDetail(item) {
@@ -2427,7 +2501,7 @@ struct SupportHealthRow: View {
                         switch item.repair {
                         case .installHooks: store.installHooks()
                         case .retry: store.refresh(reason: "support-retry")
-                        case .openSettings: store.openSettings()
+                        case .openSettings: store.openSettings(focusAppDataFor: item.agent)
                         case .runAgent: store.focusAgent(idRaw: item.agent.rawValue)
                         case .none: break
                         }
@@ -2443,7 +2517,7 @@ struct SupportHealthRow: View {
                 // detail/diagnostics disclosure still carries the full reason.
                 if item.repair == .none, let action = nextActionLabel {
                     if item.privacyLimited {
-                        Button(action) { store.openSettings() }
+                        Button(action) { store.openSettings(focusAppDataFor: item.agent) }
                             .buttonStyle(.link)
                             .font(.caption)
                     } else if [.failed, .permissionDenied, .schemaMismatch, .unscanned].contains(item.collectorState) {

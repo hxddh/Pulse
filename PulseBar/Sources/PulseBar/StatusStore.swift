@@ -519,6 +519,7 @@ final class StatusStore: ObservableObject {
         case "cache_conditional": return tr(.qualityReasonCache)
         case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
         case "waiting_unsupported": return tr(.supportWaitingNone)
+        case "scan_timeout": return tr(.qualityReasonScanTimeout)
         default: return tr(.qualityReasonNotEmitted)
         }
     }
@@ -528,7 +529,91 @@ final class StatusStore: ObservableObject {
         case "enable_app_data": return tr(.supportEnableData)
         case "wait_for_vendor_cache": return tr(.qualityNextWaitCache)
         case "use_attention_bridge": return tr(.attentionBridgeHint)
+        case "retry_scan": return tr(.qualityNextRetryScan)
+        case "open_agent_for_session": return tr(.qualityNextOpenAgent)
         default: return tr(.qualityNextOpenAgent)
+        }
+    }
+
+    /// How deep App Data is currently granted — drives Support Health copy so
+    /// a scoped Cursor grant is not described as "scan is off".
+    enum AppDataGrantMode: Equatable {
+        case all
+        case scoped(Int)
+        case none
+    }
+
+    var appDataGrantMode: AppDataGrantMode {
+        if allowAppData { return .all }
+        let count = appDataAgents.filter { $0 != .cursorAgent }.count
+        return count == 0 ? .none : .scoped(count)
+    }
+
+    var privacyLimitedAgents: [AgentSupportHealth] {
+        supportHealth.filter(\.privacyLimited)
+    }
+
+    var privacyLimitedCount: Int { privacyLimitedAgents.count }
+
+    /// Banner when some protected agents remain privacy-limited.
+    var privacyBannerText: String? {
+        guard privacyLimitedCount > 0 else { return nil }
+        switch appDataGrantMode {
+        case .all:
+            return nil
+        case .none:
+            return tr(.supportCollectorPrivacyLimitedDetail)
+        case .scoped(let granted):
+            return String(
+                format: tr(.supportCollectorPrivacyLimitedScoped),
+                granted,
+                privacyLimitedCount
+            )
+        }
+    }
+
+    var firstPrivacyLimitedAgent: AgentID? {
+        privacyLimitedAgents.first?.agent
+    }
+
+    /// Incomplete-scan banner: timeout-with-rows is not the same claim as a
+    /// blank failure.
+    var scanIncompleteBannerText: String? {
+        guard collectorScanIncomplete else { return nil }
+        let timedOutWithRows = collectorHealthByAgent.values.contains {
+            $0.errorKind == "native_timeout" && $0.rowCount > 0
+        }
+        if timedOutWithRows {
+            return tr(.supportScanIncompleteTimeout)
+        }
+        return tr(.supportScanIncomplete)
+    }
+
+    /// Short tray notice sharing the Support incomplete vocabulary.
+    var trayScanIncompleteNotice: String? {
+        scanIncompleteBannerText
+    }
+
+    func confidenceLabel(_ confidence: ObservationConfidence) -> String {
+        switch confidence {
+        case .high: return tr(.qualityConfidenceHigh)
+        case .medium: return tr(.qualityConfidenceMedium)
+        case .low: return tr(.qualityConfidenceLow)
+        }
+    }
+
+    func factKeyLabel(_ key: ObservationFactKey) -> String {
+        switch key {
+        case .task: return tr(.supportGoal)
+        case .workspace: return tr(.supportWorkspace)
+        case .action: return tr(.supportAction)
+        case .phase: return tr(.detailPhase)
+        case .model: return tr(.supportModel)
+        case .progress: return tr(.supportProgress)
+        case .error: return tr(.detailErrors)
+        case .waitingReason: return tr(.supportMissingWaiting)
+        case .evidence: return tr(.supportEvidence)
+        case .freshness: return tr(.supportLastRead)
         }
     }
 
@@ -854,33 +939,6 @@ final class StatusStore: ObservableObject {
         previewFixtureActive = true
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
-        if name.hasPrefix("status-") {
-            var snap = PulseSnapshot()
-            switch name {
-            case "status-running":
-                snap.glance = .running
-                snap.title = "1"
-                snap.sectionTotals[.running] = 1
-            case "status-stalled":
-                snap.glance = .stalled
-                snap.title = "1"
-                snap.sectionTotals[.stalled] = 1
-            case "status-waiting":
-                snap.glance = .waiting
-                snap.title = "1"
-                snap.sectionTotals[.needsYou] = 1
-            default:
-                snap.glance = .idle
-            }
-            snap.headerTitle = name
-            snap.header = name
-            snap.tooltip = name
-            snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
-            snap.updatedAt = Date()
-            snapshot = snap
-            return
-        }
-
         func row(
             _ key: String,
             _ agent: AgentID,
@@ -902,6 +960,70 @@ final class StatusStore: ObservableObject {
             value.startedMs = now - 54 * 60 * 1000
             value.records = 126
             return value
+        }
+
+        if name.hasPrefix("status-") {
+            // Compact status fixtures used to only stamp glance/header and left
+            // `rows` empty, so `--capture-tray-panel` still showed whatever live
+            // harvest (or nothing) was present. Inject one concrete row so
+            // visual QA exercises the real tray layout for that lamp state.
+            var fixtureRow = row(
+                "status-fixture",
+                .cursor,
+                task: name == "status-waiting"
+                    ? "Approve the packaging step"
+                    : "Ship Signal Quality",
+                cwd: "/Users/me/code/Pulse"
+            )
+            fixtureRow.phase = name == "status-waiting" ? "waiting" : "testing"
+            fixtureRow.model = "fixture-model"
+            fixtureRow.tool = name == "status-waiting" ? "" : "swift_test"
+            switch name {
+            case "status-waiting":
+                fixtureRow.waiting = true
+                fixtureRow.waitKind = "Permission"
+                fixtureRow.waitMessage = "Run the signed packaging step"
+                fixtureRow.waitSignal = .hooks
+                fixtureRow.waitSinceMs = now - 8 * 60 * 1000
+            case "status-stalled":
+                fixtureRow.isStalled = true
+                fixtureRow.harvestMs = now - 25 * 60 * 1000
+            case "status-running":
+                fixtureRow.progressDone = 12
+                fixtureRow.progressTotal = 31
+            default:
+                fixtureRow.liveProcess = false
+                fixtureRow.processCount = 0
+            }
+            fixtureRow.refreshObservationQuality(privacyLimited: false)
+            cachedAll = [fixtureRow]
+
+            var snap = PulseSnapshot()
+            switch name {
+            case "status-running":
+                snap.glance = .running
+                snap.title = "1"
+                snap.sectionTotals[.running] = 1
+            case "status-stalled":
+                snap.glance = .stalled
+                snap.title = "1"
+                snap.sectionTotals[.stalled] = 1
+            case "status-waiting":
+                snap.glance = .waiting
+                snap.title = "1"
+                snap.sectionTotals[.needsYou] = 1
+            default:
+                snap.glance = .idle
+            }
+            snap.headerTitle = name
+            snap.header = name
+            snap.tooltip = name
+            snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
+            snap.rows = [fixtureRow]
+            snap.totalCount = 1
+            snap.updatedAt = Date()
+            snapshot = snap
+            return
         }
 
         if name == "coverage" {
@@ -1591,7 +1713,7 @@ final class StatusStore: ObservableObject {
             }
     }
 
-    private func recordCollectorHealth(
+    func recordCollectorHealth(
         _ health: [ActivityHarvest.CollectorHealth],
         complete: Bool = true
     ) {
@@ -2376,11 +2498,11 @@ final class StatusStore: ObservableObject {
             let evidence = compactSignalEvidence(metrics: metrics, stableFacts: stableFacts)
             if !evidence.isEmpty { bits.append(evidence) }
         } else {
-            if !metrics.isEmpty { bits.append(metrics) }
-            if !stableFacts.isEmpty {
-                let stable = stableFacts.prefix(2).joined(separator: " · ")
-                if !stable.isEmpty { bits.append(stable) }
-            }
+            // Same dedupe path as the change branch: metrics and stable facts
+            // both emit Context N%, and concatenating them produced
+            // "Context 19% · Context 19%" on quiet sessions.
+            let evidence = compactSignalEvidence(metrics: metrics, stableFacts: stableFacts)
+            if !evidence.isEmpty { bits.append(evidence) }
         }
         // Generic shell wrappers are still useful as a historical activity
         // fact when they are the only action a vendor exposes. Keep the claim
@@ -2918,8 +3040,17 @@ final class StatusStore: ObservableObject {
         TrayReveal.show()
     }
 
-    func openSettings() {
-        SettingsWindowController.shared.show(store: self)
+    /// When set, Settings expands the App Data scopes group and highlights
+    /// this agent — used by Support Health and quality next-step deep links.
+    @Published var settingsFocusAppDataAgent: AgentID? = nil
+    @Published var settingsExpandAppDataScopes = false
+
+    func openSettings(focusAppDataFor agent: AgentID? = nil) {
+        settingsFocusAppDataAgent = agent
+        if agent != nil {
+            settingsExpandAppDataScopes = true
+        }
+        SettingsWindowController.shared.show(store: self, focusAppDataFor: agent)
     }
 
     func openSupportHealth() {
@@ -2954,8 +3085,7 @@ final class StatusStore: ObservableObject {
     }
 
     private func settingsURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Pulse/settings.txt")
+        PulseSettings.settingsFileURL()
     }
 
     /// Snapshot of the settings the store currently holds.

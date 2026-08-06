@@ -169,17 +169,48 @@ private struct AgentDetailView: View {
             Text(store.observationQualitySummary(row))
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
+            if !row.quality.facts.isEmpty {
+                Text(
+                    row.quality.facts
+                        .map { store.factKeyLabel($0) }
+                        .sorted()
+                        .joined(separator: " · ")
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
             if !row.quality.missing.isEmpty {
                 ForEach(Array(row.quality.missing.prefix(4).enumerated()), id: \.offset) { _, gap in
-                    Text("\(gap.key.rawValue): \(store.observationGapReason(gap)) → \(store.observationGapNextStep(gap))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("\(store.factKeyLabel(gap.key)): \(store.observationGapReason(gap)) → \(store.observationGapNextStep(gap))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if gap.nextStep == "enable_app_data" {
+                            Button(store.tr(.supportEnableData)) {
+                                store.openSettings(focusAppDataFor: row.agent)
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                    }
                 }
             }
-            Text("\(store.tr(.supportLastRead)): \(row.quality.freshnessMs > 0 ? relativeMs(row.quality.freshnessMs) : "—") · \(row.quality.confidence.rawValue)")
+            let health = store.supportHealth.first(where: { $0.agent == row.agent })
+            Text("\(store.tr(.supportLastRead)): \(row.quality.freshnessMs > 0 ? relativeMs(row.quality.freshnessMs) : "—") · \(store.confidenceLabel(row.quality.confidence))")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+            if let health, !health.collectorErrorKind.isEmpty {
+                Text(String(format: store.tr(.supportCollectorFailedDetail), health.collectorErrorKind))
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let health, health.lastSuccessfulReadMs > 0 {
+                Text("\(store.tr(.supportLastRead)): \(relativeMs(health.lastSuccessfulReadMs))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 

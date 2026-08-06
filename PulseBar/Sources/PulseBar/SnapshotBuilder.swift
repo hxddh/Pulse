@@ -605,13 +605,20 @@ enum SnapshotBuilder {
                 snap.title = dur.isEmpty
                     ? "\(w.agent.displayName)…"
                     : "\(w.agent.displayName) · \(dur)"
-                snap.tooltip = "\(t(.needsYou, lang)) · \(w.agent.displayName)"
+                let reason = w.waitKind.isEmpty
+                    ? (w.waitMessage.isEmpty ? t(.needsYou, lang) : w.waitMessage)
+                    : w.waitKind
+                snap.tooltip = dur.isEmpty
+                    ? "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason)"
+                    : "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason) · \(dur)"
                 snap.headerTitle = stateSummary()
             } else {
                 snap.title = dur.isEmpty
                     ? "\(waitingRows.count)"
                     : "\(waitingRows.count) · \(dur)"
-                snap.tooltip = "\(t(.needsYou, lang)): \(nameJoin)"
+                snap.tooltip = dur.isEmpty
+                    ? "\(t(.needsYou, lang)): \(nameJoin)"
+                    : "\(t(.needsYou, lang)): \(nameJoin) · \(dur)"
                 snap.headerTitle = stateSummary()
             }
             snap.headerDetail = aggregate()
@@ -629,7 +636,13 @@ enum SnapshotBuilder {
                 snap.tooltip = "\(liveRows[0].agent.displayName) \(t(.running, lang))"
             } else if liveRunning == 0 {
                 snap.title = "\(stalledCount)"
-                snap.tooltip = "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames)"
+                let oldest = stalledRows.map(\.lastActivitySeconds).filter { $0 > 0 }.max() ?? 0
+                let stalledDur = oldest > 0
+                    ? DurationFormat.label(seconds: oldest, lang: lang)
+                    : ""
+                snap.tooltip = stalledDur.isEmpty
+                    ? "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames)"
+                    : "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames) · \(stalledDur)"
             } else {
                 snap.title = "\(liveRunning + stalledCount)"
                 snap.tooltip = "\(stateSummary()): \(liveNames)"
@@ -659,6 +672,12 @@ enum SnapshotBuilder {
             snap.header = t(.noAgents, lang)
         }
         snap.accessibilityLabel = t(snap.glance.accessibilityKey, lang)
+        if snap.glance == .waiting || snap.glance == .stalled || snap.glance == .error {
+            // Keep VoiceOver aligned with the explainable menu-bar tooltip.
+            if !snap.tooltip.isEmpty {
+                snap.accessibilityLabel = snap.tooltip
+            }
+        }
         result.snapshot = snap
 
         // Edges — reported, not acted on. The store owns notification policy.
