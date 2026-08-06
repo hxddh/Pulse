@@ -64,21 +64,22 @@ struct LaunchRecovery: Codable, Equatable {
         if previous.schemaVersion < schema {
             return previous.cleanShutdown ? .clean : .unknown
         }
-        if previous.cleanShutdown {
-            return previous.intendedExit == .updateReplace ? .updateReplace : .clean
-        }
+        // Intentional markers win over the cleanShutdown bit. updateReplace is
+        // a quiet relaunch; forceQuit still surfaces a recovery notice.
         if previous.intendedExit == .updateReplace {
             return .updateReplace
+        }
+        if previous.intendedExit == .forceQuit {
+            return .forceQuit
+        }
+        if previous.cleanShutdown {
+            return .clean
         }
         if !previous.bootID.isEmpty, !bootID.isEmpty, previous.bootID != bootID {
             return .systemRestart
         }
-        // Force-quit and crash both leave cleanShutdown=false with the same
-        // boot. Prefer crash as the actionable recovery label; force-quit is
-        // reserved when an intentional marker was written (future hook).
-        if previous.intendedExit == .forceQuit {
-            return .forceQuit
-        }
+        // Force-quit (SIGKILL) and crash both leave no marker on the same boot.
+        // Without an intent bit we can only report crash.
         return .crash
     }
 
@@ -91,20 +92,35 @@ struct LaunchRecovery: Codable, Equatable {
         return nil
     }
 
-    func markCleanShutdown(at url: URL = fileURL) {
-        var clean = self
-        clean.cleanShutdown = true
-        clean.intendedExit = .clean
-        clean.save(to: url)
+    mutating func markCleanShutdown(at url: URL = fileURL) {
+        // Do not clobber an intentional exit marker written just before
+        // terminate (update replace / SIGTERM force-quit path).
+        if intendedExit == .updateReplace {
+            cleanShutdown = true
+            save(to: url)
+            return
+        }
+        if intendedExit == .forceQuit {
+            save(to: url)
+            return
+        }
+        cleanShutdown = true
+        intendedExit = .clean
+        save(to: url)
     }
 
-    func markIntendedExit(_ kind: ExitKind, at url: URL = fileURL) {
-        var next = self
-        next.intendedExit = kind
-        if kind == .updateReplace || kind == .forceQuit || kind == .clean {
-            next.cleanShutdown = true
+    mutating func markIntendedExit(_ kind: ExitKind, at url: URL = fileURL) {
+        intendedExit = kind
+        switch kind {
+        case .updateReplace, .clean:
+            cleanShutdown = true
+        case .forceQuit:
+            // Keep unclean so the next launch can show the force-quit notice.
+            cleanShutdown = false
+        case .crash, .systemRestart, .unknown:
+            break
         }
-        next.save(to: url)
+        save(to: url)
     }
 
     private func save(to url: URL) {

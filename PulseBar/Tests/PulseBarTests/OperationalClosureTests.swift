@@ -119,7 +119,8 @@ final class OperationalClosureTests: XCTestCase {
         let second = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-a")
         XCTAssertTrue(second.wasUnclean)
         XCTAssertEqual(second.kind, .crash)
-        second.state.markCleanShutdown(at: url)
+        var cleaned = second.state
+        cleaned.markCleanShutdown(at: url)
         let third = LaunchRecovery.begin(nowMs: 30, at: url, bootID: "boot-a")
         XCTAssertFalse(third.wasUnclean)
         XCTAssertEqual(third.kind, .clean)
@@ -134,10 +135,58 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertTrue(afterReboot.wasUnclean)
         XCTAssertEqual(afterReboot.kind, .systemRestart)
 
-        afterReboot.state.markIntendedExit(.updateReplace, at: url)
+        var replacing = afterReboot.state
+        replacing.markIntendedExit(.updateReplace, at: url)
         let afterUpdate = LaunchRecovery.begin(nowMs: 30, at: url, bootID: "boot-b")
         XCTAssertFalse(afterUpdate.wasUnclean)
         XCTAssertEqual(afterUpdate.kind, .updateReplace)
+    }
+
+    func testLaunchRecoveryForceQuitMarkerSurvivesCleanShutdownHook() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var state = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a").state
+        state.markIntendedExit(.forceQuit, at: url)
+        // applicationWillTerminate still calls markCleanShutdown; intent must stick
+        // because StatusStore keeps the mutated value (same as this var).
+        state.markCleanShutdown(at: url)
+        let second = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-a")
+        XCTAssertTrue(second.wasUnclean)
+        XCTAssertEqual(second.kind, .forceQuit)
+    }
+
+    func testSupervisorFailureTimelineOrdersNewestFirst() {
+        var supervisor = HarvestSupervisor()
+        let now: Int64 = 100_000
+        supervisor.record(
+            [
+                .init(
+                    id: .codex,
+                    state: .failed,
+                    durationMs: 10,
+                    rowCount: 0,
+                    sourcePresent: true,
+                    errorKind: "locked"
+                )
+            ],
+            nowMs: now
+        )
+        supervisor.record(
+            [
+                .init(
+                    id: .claude,
+                    state: .failed,
+                    durationMs: 10,
+                    rowCount: 0,
+                    sourcePresent: true,
+                    errorKind: "native_timeout"
+                )
+            ],
+            nowMs: now + 5_000
+        )
+        let timeline = supervisor.failureTimeline(nowMs: now + 6_000)
+        XCTAssertEqual(timeline.map(\.agent), [.claude, .codex])
+        XCTAssertEqual(timeline.map(\.error), ["native_timeout", "locked"])
     }
 
     func testJSONIsDefaultAndTSVRequiresExplicitCompatibilityReader() {

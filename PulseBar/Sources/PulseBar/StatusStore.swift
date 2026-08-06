@@ -48,6 +48,8 @@ final class StatusStore: ObservableObject {
     /// can actually see it; clear on the next healthy scan or explicit dismiss.
     private var recoveryNoticeSurvivedFirstHealthyScan = false
     private var launchRecovery: LaunchRecovery?
+    /// SIGTERM → force-quit marker. Force Quit via SIGKILL still looks like a crash.
+    private var terminationSignalSource: DispatchSourceSignal?
     @Published private(set) var installReport = InstallTruth.Report.empty
     @Published private(set) var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
@@ -377,13 +379,19 @@ final class StatusStore: ObservableObject {
             .map(\.id.rawValue)
             .sorted()
             .joined(separator: ",")
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let healthItems = supportHealth
+        let factPresent = healthItems.reduce(0) { $0 + $1.usefulFactCount }
+        let factPossible = healthItems.reduce(0) { $0 + $1.usefulFactTotal }
+        let limitedAgents = healthItems.filter { $0.disposition == .limited }.count
+        let failures = harvestSupervisor.failureTimeline(nowMs: nowMs)
         var lines = [
             "Pulse safe support report",
             PulseVersion.fingerprint,
             "channel: \(PulseVersion.distributionChannel)",
             "notarized: \(PulseVersion.isNotarized)",
             "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-            "Agents: \(supportHealth.count)",
+            "Agents: \(healthItems.count)",
             "appDataScan: \(appDataScanDescription)",
             "appDataGrant: \(grantLabel)",
             "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)",
@@ -392,19 +400,33 @@ final class StatusStore: ObservableObject {
             "helperStatus: harvest=native legacyPython=\(ActivityHarvest.pythonURL() == nil ? "optional-unavailable" : "optional-ready")",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
+            "factCoverage: present=\(factPresent) possible=\(factPossible) limitedAgents=\(limitedAgents)",
             "attentionLedger: active=\(attentionLedger.activeKeys.count) events=\(attentionLedger.events.count) baseline=\(attentionLedger.baselineEstablished)",
-            "harvestSupervisor: \(harvestSupervisor.summary(nowMs: Int64(Date().timeIntervalSince1970 * 1000)))",
+            "harvestSupervisor: \(harvestSupervisor.summary(nowMs: nowMs))",
         ]
-        for item in supportHealth {
+        if failures.isEmpty {
+            lines.append("failureTimeline: -")
+        } else {
+            lines.append("failureTimeline:")
+            for entry in failures {
+                let ageSec = max(0, (nowMs - entry.atMs) / 1000)
+                lines.append(
+                    "  \(entry.agent.rawValue)=\(entry.error) ageSec=\(ageSec)"
+                )
+            }
+        }
+        for item in healthItems {
             let waiting = item.agent.waitingSource == .none
                 ? "n/a"
                 : String(item.waitingSignalReady)
             let health = collectorHealthByAgent[item.agent]
             let err = health?.errorKind.isEmpty == false ? health!.errorKind : "-"
             let dur = health?.durationMs ?? 0
+            let harvest = item.agent.harvestSource == .bestEffortCache ? "cache" : "session"
             lines.append(
                 "\(item.agent.rawValue): \(item.collectorState.rawValue) "
                     + "disposition=\(item.disposition) evidence=\(item.evidence?.rawValue ?? "none") "
+                    + "harvest=\(harvest) "
                     + "goal=\(item.hasGoal) workspace=\(item.hasWorkspace) "
                     + "activity=\(item.hasActivity) progress=\(item.hasProgress) "
                     + "waiting=\(waiting) "
@@ -546,8 +568,9 @@ final class StatusStore: ObservableObject {
         case "process_only": return tr(.qualityReasonProcessOnly)
         case "cache_conditional": return tr(.qualityReasonCache)
         case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
-        case "waiting_unsupported": return tr(.supportWaitingNone)
+        case "waiting_unsupported": return tr(.supportWaitingNoneDetail)
         case "scan_timeout": return tr(.qualityReasonScanTimeout)
+        case "cache_conditional": return tr(.qualityReasonCache)
         default: return tr(.qualityReasonNotEmitted)
         }
     }
@@ -556,7 +579,7 @@ final class StatusStore: ObservableObject {
         switch gap.nextStep {
         case "enable_app_data": return tr(.supportEnableData)
         case "wait_for_vendor_cache": return tr(.qualityNextWaitCache)
-        case "use_attention_bridge": return tr(.attentionBridgeHint)
+        case "use_attention_bridge": return tr(.qualityNextAttentionBridge)
         case "retry_scan": return tr(.qualityNextRetryScan)
         case "open_agent_for_session": return tr(.qualityNextOpenAgent)
         default: return tr(.qualityNextOpenAgent)
@@ -904,8 +927,20 @@ final class StatusStore: ObservableObject {
         switch agent.waitingSource {
         case .hooks: return tr(.supportWaitingHooks)
         case .harvestPending: return tr(.supportWaitingHarvest)
-        case .none: return tr(.supportWaitingNone)
+        case .none: return tr(.supportWaitingNoneDetail)
         }
+    }
+
+    /// Compact collector failure age for Support diagnostics (empty when clean).
+    func supportFailureTimelineDetail(_ health: AgentSupportHealth) -> String? {
+        let state = harvestSupervisor.state(for: health.agent)
+        guard state.lastFailureAtMs > 0, !state.lastError.isEmpty else { return nil }
+        let seconds = max(0, Date().timeIntervalSince1970 - Double(state.lastFailureAtMs) / 1000.0)
+        return String(
+            format: tr(.supportFailureTimelineEntry),
+            state.lastError,
+            DurationFormat.label(seconds: seconds, lang: lang)
+        )
     }
 
     func start() {
@@ -954,6 +989,7 @@ final class StatusStore: ObservableObject {
             }
         }
         UpdateCheck.shared.startIfEnabled(store: self)
+        installTerminationSignalMarker()
         DebugLog.write("start armed auto=\(autoProbe)")
     }
 
@@ -1443,12 +1479,20 @@ final class StatusStore: ObservableObject {
         return false
     }
 
+    /// In-place install is only honest on notarized stable builds.
+    var updateCanInstallInPlace: Bool {
+        PulseVersion.isGatekeeperReady
+    }
+
     var updateDownloadStatusText: String? {
         switch updateDownloadStatus {
         case .idle: return nil
         case .downloading: return tr(.updateDownloading)
         case .verifying: return tr(.updateVerifying)
-        case .ready: return tr(.updateVerified)
+        case .ready:
+            return updateCanInstallInPlace
+                ? tr(.updateVerified)
+                : tr(.updateVerifiedOpenOnly)
         case .installing: return tr(.updateInstalling)
         case .failed(let message): return "\(tr(.updateVerifyFailed)) · \(message)"
         }
@@ -1481,7 +1525,9 @@ final class StatusStore: ObservableObject {
         case .forceQuit: return tr(.recoveredAfterForceQuit)
         case .systemRestart: return tr(.recoveredAfterSystemRestart)
         case .crash, .unknown: return tr(.recoveredAfterCrash)
-        case .clean, .updateReplace: return tr(.recoveredAfterCrash)
+        case .clean, .updateReplace:
+            // wasUnclean excludes these; never surface a crash lie here.
+            return ""
         }
     }
 
@@ -1508,7 +1554,7 @@ final class StatusStore: ObservableObject {
         // The tray notice is reserved for actionable non-hook maintenance or
         // an already-configured Waiting route. Hook setup stays in Settings.
         if needsWaitingSignalNudge {
-            openSettings()
+            openSettings(focusWaitingSignals: true)
             return
         }
         if case .available = updateStatus, updateCanVerifyDownload {
@@ -3084,13 +3130,30 @@ final class StatusStore: ObservableObject {
     /// this agent — used by Support Health and quality next-step deep links.
     @Published var settingsFocusAppDataAgent: AgentID? = nil
     @Published var settingsExpandAppDataScopes = false
+    /// When true, Settings scrolls/highlights the Waiting signals section
+    /// (Attention bridge path for agents without a native Waiting contract).
+    @Published var settingsFocusWaitingSignals = false
 
-    func openSettings(focusAppDataFor agent: AgentID? = nil) {
+    func openSettings(focusAppDataFor agent: AgentID? = nil, focusWaitingSignals: Bool = false) {
         settingsFocusAppDataAgent = agent
         if agent != nil {
             settingsExpandAppDataScopes = true
         }
-        SettingsWindowController.shared.show(store: self, focusAppDataFor: agent)
+        settingsFocusWaitingSignals = focusWaitingSignals
+        SettingsWindowController.shared.show(
+            store: self,
+            focusAppDataFor: agent,
+            focusWaitingSignals: focusWaitingSignals
+        )
+    }
+
+    /// Open the Pulse Application Support folder so the Attention bridge path
+    /// is one click away — never expands the hook installer past Claude/Codex.
+    func revealAttentionBridgeFolder() {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(url)
     }
 
     func openSupportHealth() {
@@ -3109,11 +3172,36 @@ final class StatusStore: ObservableObject {
     }
 
     func markCleanShutdown() {
-        launchRecovery?.markCleanShutdown()
+        guard var recovery = launchRecovery else { return }
+        recovery.markCleanShutdown()
+        launchRecovery = recovery
     }
 
     func markIntendedUpdateReplace() {
-        launchRecovery?.markIntendedExit(.updateReplace)
+        guard var recovery = launchRecovery else { return }
+        recovery.markIntendedExit(.updateReplace)
+        launchRecovery = recovery
+    }
+
+    func markIntendedForceQuit() {
+        guard var recovery = launchRecovery else { return }
+        recovery.markIntendedExit(.forceQuit)
+        launchRecovery = recovery
+    }
+
+    /// Soft termination (SIGTERM / Activity Monitor "Quit") writes a force-quit
+    /// intent so the next launch can distinguish it from a crash. True Force
+    /// Quit (SIGKILL) cannot be intercepted and remains classified as crash.
+    private func installTerminationSignalMarker() {
+        guard terminationSignalSource == nil else { return }
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { [weak self] in
+            self?.markIntendedForceQuit()
+            NSApp.terminate(nil)
+        }
+        source.resume()
+        terminationSignalSource = source
     }
 
     private func relative(_ date: Date) -> String {

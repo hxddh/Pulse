@@ -85,7 +85,10 @@ enum L10n {
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
         case .attentionBridgeHint:
-            return "Optional: Droid / Kimi can append attention.tsv — see docs/attention-bridge.md (no extra installer)."
+            return "Opaque agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie) have no native Waiting path — write attention.tsv via the Attention bridge (docs/attention-bridge.md). Hook installer stays Claude/Codex only."
+        case .attentionBridgeFocusHint:
+            return "Attention bridge — write attention.tsv for Waiting on agents without a native signal"
+        case .revealAttentionFolder: return "Reveal Attention folder"
         case .launchAtLogin: return "Launch at login"
         case .language: return "Language"
         case .waitingSignals: return "Waiting signals"
@@ -108,7 +111,8 @@ enum L10n {
         case .recent: return "Recent"
         case .dismissWait: return "Dismiss"
         case .hooksNudge: return "Install hooks so Claude/Codex can signal Waiting"
-        case .waitingSignalNudge: return "This agent has no Waiting signal yet — Running only"
+        case .waitingSignalNudge:
+            return "Live agent has no Waiting path — open Waiting signals for the Attention bridge"
         case .hooksUnknown: return "Not checked"
         case .hooksMissing: return "Not installed"
         case .hooksInstalledBoth: return "Installed · Claude + Codex"
@@ -170,6 +174,7 @@ enum L10n {
         case .versionMismatchHint:
             return "Binary reports %@ but the bundle says %@ — repackage with PulseBar/Scripts/package.sh."
         case .duplicateAppsFound: return "%d other Pulse app(s) found"
+        case .duplicateAppsMore: return "and %d more"
         case .duplicateAppRunning: return "Another copy is running; quit it before removal."
         case .removeDuplicateApps: return "Remove older copies…"
         case .removeDuplicateAppsConfirm:
@@ -207,6 +212,7 @@ enum L10n {
         case .updateDownloading: return "Downloading installer…"
         case .updateVerifying: return "Verifying SHA-256…"
         case .updateVerified: return "Verified · installer opened"
+        case .updateVerifiedOpenOnly: return "Verified · open the DMG to install (this build is not Gatekeeper-ready)"
         case .updateVerifyFailed: return "Installer verification failed"
         case .updateIdle: return "Not checked"
         case .updateChecking: return "Checking…"
@@ -284,6 +290,8 @@ enum L10n {
         case .supportWaitingHooks: return "Waiting route: hooks"
         case .supportWaitingHarvest: return "Waiting route: session data"
         case .supportWaitingNone: return "Waiting unavailable"
+        case .supportWaitingNoneDetail:
+            return "No native Waiting path — use the Attention bridge"
         case .supportSharedCursor: return "Cursor Agent shares this adapter"
         case .supportLastSignal: return "signal %@ ago"
         case .supportDetectedExecutable: return "detected by executable"
@@ -362,6 +370,8 @@ enum L10n {
         case .installUpdate: return "Install verified update"
         case .updateInstalling: return "Installing update…"
         case .updateInstallFailed: return "Update install failed"
+        case .updateInstallRequiresNotarized:
+            return "In-place install needs a notarized stable build — open the DMG instead"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
         case .recoveredAfterCrash: return "Pulse recovered after an unclean exit"
@@ -374,7 +384,9 @@ enum L10n {
         case .qualityReasonScanTimeout: return "Adapter timed out while reading local data"
         case .qualityNextOpenAgent: return "Open the agent to see full session detail"
         case .qualityNextWaitCache: return "Keep using the agent so its local cache fills in"
+        case .qualityNextAttentionBridge: return "Set up the Attention bridge for Waiting"
         case .qualityNextRetryScan: return "Retry the scan from Support Health"
+        case .supportFailureTimelineEntry: return "Last failure · %@ · %@ ago"
         case .qualityConfidenceHigh: return "High confidence"
         case .qualityConfidenceMedium: return "Medium confidence"
         case .qualityConfidenceLow: return "Low confidence"
@@ -458,7 +470,11 @@ enum L10n {
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
-        case .attentionBridgeHint: return "可选：Droid / Kimi 可写入 attention.tsv — 见 docs/attention-bridge.md（不扩安装器）。"
+        case .attentionBridgeHint:
+            return "无原生 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie）请写入 attention.tsv（见 docs/attention-bridge.md）。hooks 安装器仍只覆盖 Claude / Codex。"
+        case .attentionBridgeFocusHint:
+            return "Attention 桥 — 为无原生 Waiting 信号的 Agent 写入 attention.tsv"
+        case .revealAttentionFolder: return "打开 Attention 文件夹"
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
         case .waitingSignals: return "等待信号"
@@ -480,7 +496,8 @@ enum L10n {
         case .recent: return "最近"
         case .dismissWait: return "忽略等待"
         case .hooksNudge: return "安装 hooks 后，Claude/Codex 才能点亮「需要你」"
-        case .waitingSignalNudge: return "该 Agent 暂无 Waiting 信号，目前仅显示运行中"
+        case .waitingSignalNudge:
+            return "有 Agent 在跑但无 Waiting 路径 — 打开「等待信号」查看 Attention 桥"
         case .hooksUnknown: return "未检查"
         case .hooksMissing: return "未安装"
         case .hooksInstalledBoth: return "已安装 · Claude + Codex"
@@ -541,6 +558,7 @@ enum L10n {
         case .versionStale: return "版本不一致"
         case .versionMismatchHint: return "程序版本为 %@，但 app 包标记为 %@ — 请用 PulseBar/Scripts/package.sh 重新打包。"
         case .duplicateAppsFound: return "发现另外 %d 个 Pulse 应用"
+        case .duplicateAppsMore: return "另有 %d 个"
         case .duplicateAppRunning: return "另一个副本正在运行，退出后才能移除。"
         case .removeDuplicateApps: return "移除旧副本…"
         case .removeDuplicateAppsConfirm: return "将 %d 个未运行的 Pulse 应用移到废纸篓？当前正在运行的应用会保留。"
@@ -576,6 +594,7 @@ enum L10n {
         case .updateDownloading: return "正在下载安装包…"
         case .updateVerifying: return "正在校验 SHA-256…"
         case .updateVerified: return "校验通过 · 已打开安装包"
+        case .updateVerifiedOpenOnly: return "校验通过 · 请打开 DMG 安装（当前构建未通过 Gatekeeper）"
         case .updateVerifyFailed: return "安装包校验失败"
         case .updateIdle: return "未检查"
         case .updateChecking: return "检查中…"
@@ -650,6 +669,7 @@ enum L10n {
         case .supportWaitingHooks: return "等待通路：hooks"
         case .supportWaitingHarvest: return "等待通路：会话数据"
         case .supportWaitingNone: return "等待：不可用"
+        case .supportWaitingNoneDetail: return "无原生 Waiting 路径 — 请用 Attention 桥"
         case .supportSharedCursor: return "Cursor Agent 与此适配器共用"
         case .supportLastSignal: return "%@前收到信号"
         case .supportDetectedExecutable: return "通过可执行程序检测"
@@ -728,6 +748,8 @@ enum L10n {
         case .installUpdate: return "安装已校验更新"
         case .updateInstalling: return "正在安装更新…"
         case .updateInstallFailed: return "更新安装失败"
+        case .updateInstallRequiresNotarized:
+            return "就地安装需要已公证的 stable 构建 — 请打开 DMG 安装"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
         case .updateSignedUnnotarized: return "已用 Developer ID 签名 · 未公证 · Gatekeeper 可能拦截"
         case .recoveredAfterCrash: return "Pulse 已从上次异常退出中恢复"
@@ -740,7 +762,9 @@ enum L10n {
         case .qualityReasonScanTimeout: return "读取本地数据时适配器超时"
         case .qualityNextOpenAgent: return "打开该 Agent 查看完整会话"
         case .qualityNextWaitCache: return "继续使用该 Agent，等待本地缓存补齐"
+        case .qualityNextAttentionBridge: return "设置 Attention 桥以获得 Waiting"
         case .qualityNextRetryScan: return "在支持健康度中重试扫描"
+        case .supportFailureTimelineEntry: return "最近失败 · %@ · %@前"
         case .qualityConfidenceHigh: return "高可信"
         case .qualityConfidenceMedium: return "中等可信"
         case .qualityConfidenceLow: return "低可信"
@@ -794,7 +818,8 @@ enum L10n {
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
-        case attentionBridgeHint, shortcuts, hotkeyHint, globalShortcut, globalShortcutHint, a11yHint
+        case attentionBridgeHint, attentionBridgeFocusHint, revealAttentionFolder
+        case shortcuts, hotkeyHint, globalShortcut, globalShortcutHint, a11yHint
         case agents, running, idleNotify, settingsTitle
         case hooksNudge, waitingSignalNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
@@ -810,7 +835,7 @@ enum L10n {
         case actionPlanning, actionCommand, actionEditing, actionImage
         case actionResearch, actionReading, actionAutomation, setupWaitingSignals
         case about, tagline, build, runningFrom, devBuild, copyDiagnostics, copied
-        case versionStale, versionMismatchHint, duplicateAppsFound, duplicateAppRunning
+        case versionStale, versionMismatchHint, duplicateAppsFound, duplicateAppsMore, duplicateAppRunning
         case removeDuplicateApps, removeDuplicateAppsConfirm, moveToTrash, cancel
         case durNow, durSec, durMin, durHour
         case notificationsSection, notifyNotConfigured, waitingNotifyNotConfigured
@@ -819,7 +844,7 @@ enum L10n {
         case revealShortcut, hotkeyTaken
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint
         case checkForUpdates, checkNow, openRelease, downloadAndVerify
-        case updateDownloading, updateVerifying, updateVerified, updateVerifyFailed
+        case updateDownloading, updateVerifying, updateVerified, updateVerifiedOpenOnly, updateVerifyFailed
         case updateIdle, updateChecking, updateCurrent, updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
@@ -836,7 +861,7 @@ enum L10n {
         case supportResources, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingWaiting
-        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportSharedCursor
+        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportWaitingNoneDetail, supportSharedCursor
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved, supportCollectorNoData, supportCollectorNoDataDetail
         case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
@@ -855,11 +880,13 @@ enum L10n {
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
-        case installUpdate, updateInstalling, updateInstallFailed, updatePreview, updateSignedUnnotarized, recoveredAfterCrash
+        case installUpdate, updateInstalling, updateInstallFailed, updateInstallRequiresNotarized
+        case updatePreview, updateSignedUnnotarized, recoveredAfterCrash
         case recoveredAfterForceQuit, recoveredAfterSystemRestart
         case qualityReasonProcessOnly, qualityReasonCache, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
         case qualityReasonScanTimeout
-        case qualityNextOpenAgent, qualityNextWaitCache, qualityNextRetryScan
+        case qualityNextOpenAgent, qualityNextWaitCache, qualityNextAttentionBridge, qualityNextRetryScan
+        case supportFailureTimelineEntry
         case qualityConfidenceHigh, qualityConfidenceMedium, qualityConfidenceLow
         case allSessionsCount, filterPhase, filterOutcome, filterClear
         case waitingTimeline, waitingQueuedAt, waitingNotifiedAt, waitingAcknowledgedAt

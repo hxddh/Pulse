@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.52.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.53.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -308,12 +308,14 @@ Model 片段。`--harvest-test` 诊断必须读取与托盘相同的 App Data �
      静默失效不可接受 —— 开关显示「开」就必须真的会响。托盘 Waiting 维护条
      与 Support safe report 同源写出 authorization / pending。
 4. **等待信号** —— hooks 说明（2 行内）· 安装连接 / 移除连接 · 当前状态 ·
-   一句 attention 桥提示
+   Attention 桥说明（点名无 Waiting 路径的六 Agent）·「打开 Attention 文件夹」；
+   托盘 / Support 可深链聚焦本节
 5. **快捷键** —— 唤出组合键可选；被占用时明说「已被其他应用占用」，不归咎辅助功能权限
 6. **最近的等待**（有记录才出现）—— 已结束的等待，最多 12 条，可清空
 7. **关于** —— 版本 · 构建行（`sha · 日期`，可选中；无指纹时显示「开发构建」）·
    分发通道三态（`preview` / `signed` 未公证 / `stable`）· 检查更新 + 状态 ·
-   复制诊断信息。未公证包的更新检查跟随 prerelease 源。
+   复制诊断信息。未公证包的更新检查跟随 prerelease 源；校验通过后打开 DMG，
+   **就地安装按钮仅 notarized stable 出现**。重复安装副本最多列 5 条并写「另有 N 个」。
 
 运行中的 Agent 列表不进入设置页。它属于 Tray 的实时内容，复制到 Preferences
 只会把设置页变成第二块 HUD，并让长任务标题撑坏表单节奏。
@@ -418,7 +420,9 @@ Model 片段。`--harvest-test` 诊断必须读取与托盘相同的 App Data �
 | I | 息屏 | 探测停表；唤醒后立即补一次扫描 |
 | J | 旧 app 与新版并存 | 关于区显示 `x.y.z≠bundle` 并提示重新打包 |
 | K | Supervisor 故意延后一 Agent | 不出现 incomplete 横幅；其它 Agent 照常可见 |
-| L | ad-hoc / 未公证包 | About 标 preview 或 signed；不得自称 stable；更新跟 prerelease |
+| L | ad-hoc / 未公证包 | About 标 preview 或 signed；不得自称 stable；更新跟 prerelease；无就地安装按钮 |
+| M | 多份用户安装副本 | About 最多列 5 条路径，超出显示「另有 N 个」；回收只动用户安装 |
+| N | 无 Waiting 路径的 Agent 在跑 | 托盘 / Support 指向 Waiting signals · Attention 桥；不伪造 Waiting |
 
 ---
 

@@ -338,5 +338,64 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(report.contains("timeoutAgents:"))
         XCTAssertTrue(report.contains("harvestSupervisor:"))
         XCTAssertTrue(report.contains("deferred="))
+        XCTAssertTrue(report.contains("factCoverage: present="))
+        XCTAssertTrue(report.contains("failureTimeline:"))
+    }
+
+    func testOpaqueLiveAgentOffersAttentionBridgeRepair() {
+        var item = health(
+            agent: .replit,
+            evidence: .process,
+            processDetected: true,
+            goal: false,
+            workspace: false,
+            activity: false
+        )
+        XCTAssertEqual(item.agent.waitingSource, .none)
+        XCTAssertEqual(item.repair, .openAttentionBridge)
+    }
+
+    @MainActor
+    func testObservationGapAttentionBridgeIsActionable() {
+        let store = StatusStore()
+        store.language = .en
+        let gap = ObservationGap(
+            key: .waitingReason,
+            reason: "waiting_unsupported",
+            nextStep: "use_attention_bridge"
+        )
+        XCTAssertEqual(store.observationGapNextStep(gap), store.tr(.qualityNextAttentionBridge))
+        XCTAssertEqual(store.observationGapReason(gap), store.tr(.supportWaitingNoneDetail))
+        store.openSettings(focusWaitingSignals: true)
+        XCTAssertTrue(store.settingsFocusWaitingSignals)
+    }
+
+    @MainActor
+    func testCachePrivacyGapDeepLinksToAppData() {
+        let store = StatusStore()
+        store.language = .en
+        let quality = ObservationQuality.derive(
+            task: "",
+            workspace: "",
+            action: "",
+            phase: "",
+            model: "",
+            progressDone: 0,
+            progressTotal: 0,
+            errors: 0,
+            waiting: false,
+            waitMessage: "",
+            evidence: .cache,
+            harvestMs: 1,
+            processStartedMs: 0,
+            privacyLimited: true,
+            agentHarvestSource: .bestEffortCache,
+            waitingSource: .harvestPending
+        )
+        XCTAssertTrue(quality.missing.contains(where: {
+            $0.reason == "privacy_limited" && $0.nextStep == "enable_app_data"
+        }))
+        let gap = quality.missing.first { $0.nextStep == "enable_app_data" }!
+        XCTAssertEqual(store.observationGapNextStep(gap), store.tr(.supportEnableData))
     }
 }

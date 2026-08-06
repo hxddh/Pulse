@@ -614,7 +614,9 @@ struct TrayPanel: View {
 
                     Menu {
                         if store.needsWaitingSignalNudge {
-                            Button(store.tr(.setupWaitingSignals)) { store.openSettings() }
+                            Button(store.tr(.setupWaitingSignals)) {
+                                store.openSettings(focusWaitingSignals: true)
+                            }
                             Divider()
                         }
                         if store.snapshot.rows.contains(where: \.waiting) {
@@ -1886,6 +1888,11 @@ struct SettingsView: View {
 
     private var waitingSignalsSection: some View {
         Section(store.tr(.waitingSignals)) {
+            if store.settingsFocusWaitingSignals {
+                Label(store.tr(.attentionBridgeFocusHint), systemImage: "link")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             Text(store.tr(.hooksHint))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1910,7 +1917,12 @@ struct SettingsView: View {
             }
             Text(store.tr(.attentionBridgeHint))
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(store.tr(.revealAttentionFolder)) {
+                store.revealAttentionBridgeFolder()
+            }
+            .font(.caption)
         }
     }
 
@@ -2053,12 +2065,22 @@ struct SettingsView: View {
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
-                    ForEach(store.installReport.duplicates.prefix(3)) { copy in
+                    ForEach(store.installReport.aboutVisibleDuplicates) { copy in
                         Text("\(copy.version) · \(copy.url.path)")
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                    }
+                    if store.installReport.aboutHiddenDuplicateCount > 0 {
+                        Text(
+                            String(
+                                format: store.tr(.duplicateAppsMore),
+                                store.installReport.aboutHiddenDuplicateCount
+                            )
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                     }
                     if !store.installReport.removableDuplicates.isEmpty {
                         Button(store.tr(.removeDuplicateApps)) {
@@ -2114,9 +2136,13 @@ struct SettingsView: View {
                         }()
                     )
             }
-            if case .ready = store.updateDownloadStatus {
+            if case .ready = store.updateDownloadStatus, store.updateCanInstallInPlace {
                 Button(store.tr(.installUpdate)) { store.installVerifiedUpdate() }
                     .font(.caption)
+            } else if case .ready = store.updateDownloadStatus, !store.updateCanInstallInPlace {
+                Text(store.tr(.updateInstallRequiresNotarized))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
@@ -2514,6 +2540,7 @@ struct SupportHealthRow: View {
                         case .retry: store.refresh(reason: "support-retry")
                         case .openSettings: store.openSettings(focusAppDataFor: item.agent)
                         case .runAgent: store.focusAgent(idRaw: item.agent.rawValue)
+                        case .openAttentionBridge: store.openSettings(focusWaitingSignals: true)
                         case .none: break
                         }
                     }
@@ -2535,11 +2562,22 @@ struct SupportHealthRow: View {
                         Button(action) { store.refresh(reason: "support-retry-\(item.agent.rawValue)") }
                             .buttonStyle(.link)
                             .font(.caption)
+                    } else if item.agent.harvestSource == .bestEffortCache,
+                              item.evidence == .cache || item.evidence == .process {
+                        Label(action, systemImage: "arrow.right.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     } else {
                         Label(action, systemImage: "arrow.right.circle")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                if let failure = store.supportFailureTimelineDetail(item) {
+                    Label(failure, systemImage: "exclamationmark.triangle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
 
                 DisclosureGroup(isExpanded: $diagnosticsExpanded) {
@@ -2601,6 +2639,7 @@ struct SupportHealthRow: View {
         case .retry: return store.tr(.supportRetry)
         case .openSettings: return store.tr(.supportEnableData)
         case .runAgent: return store.tr(.supportRunAgent)
+        case .openAttentionBridge: return store.tr(.setupWaitingSignals)
         case .none: return ""
         }
     }
@@ -2615,6 +2654,11 @@ struct SupportHealthRow: View {
         case .sourceAbsent, .noSessions, .noRecentData:
             return item.isObserved ? nil : store.tr(.supportRunAgent)
         case .observed:
+            if item.agent.harvestSource == .bestEffortCache,
+               item.disposition == .limited,
+               !item.privacyLimited {
+                return store.tr(.qualityNextWaitCache)
+            }
             return nil
         }
     }

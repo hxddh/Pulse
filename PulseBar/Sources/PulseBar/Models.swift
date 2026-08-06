@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.52.0"
+    static let semver = "0.53.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -340,7 +340,7 @@ struct ObservationQuality: Equatable, Hashable {
             baseReason = privacyLimited ? "privacy_limited" : "process_only"
             baseNext = privacyLimited ? "enable_app_data" : "open_agent_for_session"
         case .cache:
-            baseReason = "cache_conditional"
+            baseReason = privacyLimited ? "privacy_limited" : "cache_conditional"
             baseNext = privacyLimited ? "enable_app_data" : "wait_for_vendor_cache"
         case .session:
             baseReason = "not_emitted"
@@ -1053,6 +1053,10 @@ struct AgentSupportHealth: Identifiable, Equatable {
         }
         if disposition == .permissionDenied { return .openSettings }
         if collectorState.isIssue { return .retry }
+        // Live opaque agents cannot invent Waiting — point at the Attention bridge.
+        if agent.waitingSource == .none, processDetected {
+            return .openAttentionBridge
+        }
         return .none
     }
 }
@@ -1073,6 +1077,7 @@ enum SupportRepair: Equatable {
     case retry
     case openSettings
     case runAgent
+    case openAttentionBridge
 }
 
 enum SupportCapability: String, Equatable {

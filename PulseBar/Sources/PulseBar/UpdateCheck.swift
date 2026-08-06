@@ -170,8 +170,9 @@ final class UpdateCheck {
     }
 
     /// Download the published DMG, verify its release-note SHA-256, then open
-    /// the installer. Pulse does not silently replace itself while releases are
-    /// ad-hoc signed; the user still owns the final installation decision.
+    /// the installer. In-place replacement is reserved for Gatekeeper-ready
+    /// (notarized stable) builds; preview/signed keep the user in charge of
+    /// the final drag-install / Control-click Open path.
     func downloadAndOpen(store: StatusStore) {
         guard case .available(let release) = store.updateStatus,
               release.canVerifyDownload,
@@ -270,7 +271,17 @@ final class UpdateCheck {
     /// Replace the running app through the same executable in helper mode. The
     /// helper waits for this process to exit, mounts the already verified DMG,
     /// and commits a recoverable transaction.
+    ///
+    /// Only notarized stable builds take this path. Ad-hoc / signed-unnotarized
+    /// builds already opened the DMG in `downloadAndOpen`; pretending an
+    /// in-place install is Gatekeeper-safe would lie about the channel.
     func installVerifiedUpdate(store: StatusStore) {
+        guard PulseVersion.isGatekeeperReady else {
+            store.updateDownloadStatus = .failed(
+                store.tr(.updateInstallRequiresNotarized)
+            )
+            return
+        }
         guard case .ready(let dmg) = store.updateDownloadStatus,
               Bundle.main.bundleURL.pathExtension == "app",
               let executable = Bundle.main.executableURL else {

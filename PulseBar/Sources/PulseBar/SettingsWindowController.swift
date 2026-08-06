@@ -10,13 +10,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var hosting: NSHostingController<SettingsView>?
     private(set) var isOpen = false
 
-    func show(store: StatusStore, focusAppDataFor agent: AgentID? = nil) {
+    func show(store: StatusStore, focusAppDataFor agent: AgentID? = nil, focusWaitingSignals: Bool = false) {
         // Fast path: reuse window + hosting; SettingsView already observes store.
         SettingsPresenter.prepareToOpen()
         if let agent {
             store.settingsFocusAppDataAgent = agent
             store.settingsExpandAppDataScopes = true
         }
+        store.settingsFocusWaitingSignals = focusWaitingSignals
 
         if let window, let hosting {
             hosting.rootView = SettingsView(store: store)

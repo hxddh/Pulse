@@ -214,6 +214,42 @@ final class PulseVersionTests: XCTestCase {
             ),
             .currentInstalled
         )
+        XCTAssertEqual(
+            InstallTruth.classify(
+                url: URL(fileURLWithPath: "/Users/me/Desktop/Pulse.app"),
+                isCurrent: false
+            ),
+            .orphanDuplicate
+        )
+    }
+
+    func testAboutDuplicateListReportsHiddenRemainder() {
+        let current = InstallTruth.Copy(
+            url: URL(fileURLWithPath: "/Applications/Pulse.app"),
+            version: "0.53.0",
+            commit: "abc",
+            isRunning: true,
+            isCurrent: true,
+            kind: .currentInstalled
+        )
+        let extras = (1...7).map { index in
+            InstallTruth.Copy(
+                url: URL(fileURLWithPath: "/Applications/Pulse \(index).app"),
+                version: "0.5\(index).0",
+                commit: "c\(index)",
+                isRunning: false,
+                isCurrent: false,
+                kind: .orphanDuplicate
+            )
+        }
+        let report = InstallTruth.Report(
+            runningURL: current.url,
+            copies: [current] + extras,
+            inspectedAt: Date()
+        )
+        XCTAssertEqual(report.duplicates.count, 7)
+        XCTAssertEqual(report.aboutVisibleDuplicates.count, InstallTruth.aboutDuplicateLimit)
+        XCTAssertEqual(report.aboutHiddenDuplicateCount, 2)
     }
 
     func testHookStatusIsPerAgentNotGlobal() {

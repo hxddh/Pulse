@@ -14,6 +14,25 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 
 ---
 
+## 谁最需要这座桥
+
+下列 Agent 的 `waitingSource` 为 **none**：本机没有 hooks，也没有可靠的
+`skill=pending` 路径。Pulse 只会显示 Running，并在托盘 / Support 指向这里 ——
+**不会伪造 Waiting**：
+
+| Agent id | 产品 |
+| --- | --- |
+| `replit` | Replit |
+| `devin` | Devin |
+| `warpAgent` | Warp Agent |
+| `trae` | Trae |
+| `antigravity` | Antigravity |
+| `junie` | Junie |
+
+设置 → Waiting signals →「打开 Attention 文件夹」可直接到达写入目录。
+
+---
+
 ## 文件
 
 ```
@@ -24,7 +43,7 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 
 | 列 | 内容 |
 | --- | --- |
-| `agent` | Pulse 的 agent id：`droid`、`kimi`、`claude`… |
+| `agent` | Pulse 的 agent id：`droid`、`kimi`、`replit`、`devin`… |
 | `kind` | `permission` · `idle_prompt` / `waiting` · `done` · `stop` |
 | `ms` | Unix 毫秒时间戳 |
 | `message` | 一句原因，无制表符和换行 |
@@ -53,20 +72,20 @@ HOOK="/Applications/Pulse.app/Contents/Resources/pulse_hook.py"
 
 # 从 JSON 取 kind / message / session / cwd
 echo '{"notification_type":"permission","message":"Approve shell","session_id":"abc","cwd":"'"$PWD"'"}' \
-  | python3 "$HOOK" droid
+  | python3 "$HOOK" replit
 
 # 或者直接用 argv 给 kind
-python3 "$HOOK" kimi permission
+python3 "$HOOK" junie permission
 ```
 
 清除等待：
 
 ```bash
 # 该 agent 全部会话
-python3 "$HOOK" droid done
+python3 "$HOOK" replit done
 
 # 仅某个会话 —— session id 只能走 stdin JSON，argv 形态表达不了
-echo '{"session_id":"abc"}' | python3 "$HOOK" droid done
+echo '{"session_id":"abc"}' | python3 "$HOOK" replit done
 ```
 
 ### 退路：纯 shell 追加
@@ -77,7 +96,7 @@ echo '{"session_id":"abc"}' | python3 "$HOOK" droid done
 PULSE="$HOME/Library/Application Support/Pulse"
 mkdir -p "$PULSE"
 ms=$(($(date +%s) * 1000))
-printf 'droid\tpermission\t%s\tApprove tool\tsess1\t%s\n' "$ms" "$PWD" \
+printf 'replit\tpermission\t%s\tApprove tool\tsess1\t%s\n' "$ms" "$PWD" \
   >> "$PULSE/attention.tsv"
 ```
 
@@ -100,6 +119,6 @@ printf 'droid\tpermission\t%s\tApprove tool\tsess1\t%s\n' "$ms" "$PWD" \
 ## 边界
 
 - **不要**把安装器扩成覆盖所有 agent —— 这座桥就是为了避免那件事。
-- 名单内的 agent 在没有 TSV 行时，仍走 harvest `pending`，二者不冲突。
+- 名单内有 `harvestPending` 的 agent 在没有 TSV 行时，仍走 harvest `pending`，二者不冲突。
 - 只写真实的等待。Pulse 的核心承诺是「亮了就真的在等你」，
   伪造一条等待损害的是整个产品的可信度。

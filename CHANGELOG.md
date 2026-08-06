@@ -2,6 +2,35 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.53.0 — Delivery Continuity / 交付连续信任
+
+0.52.0 把发布标签与 Gatekeeper 事实对齐之后，本版把信任推进到安装、更新与恢复连续性；无 Apple 公证凭据时仍诚实停留在 prerelease，不把未公证包装成 Latest。详见 [`docs/plan-0.53.md`](docs/plan-0.53.md)。
+
+### P0 · 通道与更新叙事
+
+- 文档契约：README / architecture 与 `release.yml` 对齐——缺凭据 → ad-hoc + prerelease；八门禁含 `resource_budget_check.py`；通道写全 preview / signed / stable。
+- 就地安装仅 `isGatekeeperReady`（notarized stable）；preview / signed 校验 DMG 后由用户打开安装，About 说明不假装 Gatekeeper-ready。
+- **stable 公证工件仍依赖仓库 Apple secrets**；凭据缺席时继续 prerelease，绝不假标 Latest。
+
+### P0 / P1 · 安装面与恢复
+
+- InstallTruth：Launch Services 全量注册副本 + Desktop / Downloads 浅扫；About 列出前 5 条并显示「另有 N 个」。
+- LaunchRecovery：SIGTERM 写入 `forceQuit` 意图；`markCleanShutdown` 不再覆盖意图；分类与文案不再把 clean / updateReplace 误报为 crash。
+
+### P1 · QA
+
+- `qa_observation_truth.sh`：按文件就绪轮询代替固定 `sleep 9`；支持 `PULSE_QA_APPEARANCE` / `PULSE_QA_LANGUAGE`。
+
+### P2 · 辅线
+
+- `waitingSource=.none` 六 Agent：托盘 / Support 深链 Waiting signals；Attention 桥文案点名；「打开 Attention 文件夹」。
+- bestEffortCache：隐私缺口一律 `enable_app_data` 深链；缓存受限行展示 wait-cache 下一步。
+- `safeSupportReport`：`factCoverage` + `failureTimeline`；Support 行展示最近失败年龄。
+
+### 验证
+
+- intentional forceQuit / About hidden-duplicate / InstallTruth Desktop / Attention bridge / factCoverage 单测；八门禁与 version_check 对 0.53.0。
+
 ## 0.52.0 — Release Trust / 可交付信任
 
 0.51.0 把观测文案做诚实之后，本版对齐发布标签与 Gatekeeper 事实，隔离故意延后的扫描 partial，并把通知拒绝与诊断包写进 Support。详见 [`docs/plan-0.52.md`](docs/plan-0.52.md)。
