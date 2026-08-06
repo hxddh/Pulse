@@ -134,6 +134,17 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertFalse(PulseVersion.isGatekeeperReady)
     }
 
+    @MainActor
+    func testUpdateCurrentCopyIsChannelRelative() {
+        let store = StatusStore()
+        store.language = .en
+        store.updateStatus = .current
+        // Unpackaged / dev builds keep the plain "Up to date" string.
+        XCTAssertEqual(store.updateStatusText, store.tr(.updateCurrent))
+        XCTAssertNotEqual(store.tr(.updateCurrentPrerelease), store.tr(.updateCurrentStable))
+        XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("prerelease"))
+    }
+
     func testUpdateInstallerDestinationNeverOverwritesExistingFiles() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-update-\(UUID().uuidString)")

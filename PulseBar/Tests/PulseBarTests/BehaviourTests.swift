@@ -149,6 +149,10 @@ final class ProbeScheduleTests: XCTestCase {
         XCTAssertEqual(ProbeSchedule.harvestEveryNTicks(activity: .waiting, trayOpen: false), 1)
         XCTAssertEqual(ProbeSchedule.harvestEveryNTicks(activity: .running, trayOpen: true), 1)
         XCTAssertGreaterThan(ProbeSchedule.harvestEveryNTicks(activity: .running, trayOpen: false), 1)
+        // Idle machines should not harvest every probe tick — empty cadence is
+        // already ~30s; multiplying ticks keeps the menu bar cheap.
+        XCTAssertGreaterThan(ProbeSchedule.harvestEveryNTicks(activity: .empty, trayOpen: false), 1)
+        XCTAssertEqual(ProbeSchedule.harvestEveryNTicks(activity: .empty, trayOpen: true), 1)
     }
 }
 

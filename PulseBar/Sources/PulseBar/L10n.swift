@@ -217,6 +217,10 @@ enum L10n {
         case .updateIdle: return "Not checked"
         case .updateChecking: return "Checking…"
         case .updateCurrent: return "Up to date"
+        case .updateCurrentPrerelease:
+            return "Up to date on the prerelease channel"
+        case .updateCurrentStable:
+            return "Up to date on stable (excludes prereleases; notarization may lag)"
         case .updateAvailable: return "Update available: %@"
         case .updateFailed: return "Check failed"
         case .probeEvery: return "every %ds"
@@ -374,7 +378,8 @@ enum L10n {
             return "In-place install needs a notarized stable build — open the DMG instead"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
-        case .recoveredAfterCrash: return "Pulse recovered after an unclean exit"
+        case .recoveredAfterCrash:
+            return "Pulse recovered after an unclean exit (force quit cannot be told apart from a crash)"
         case .recoveredAfterForceQuit: return "Pulse recovered after a force quit"
         case .recoveredAfterSystemRestart: return "Pulse restarted after a system reboot"
         case .qualityReasonProcessOnly: return "Only process evidence is available"
@@ -599,6 +604,9 @@ enum L10n {
         case .updateIdle: return "未检查"
         case .updateChecking: return "检查中…"
         case .updateCurrent: return "已是最新"
+        case .updateCurrentPrerelease: return "已是最新（相对 prerelease 通道）"
+        case .updateCurrentStable:
+            return "已是最新（stable 不含 prerelease；公证前能力可能仍在预发布）"
         case .updateAvailable: return "有新版本：%@"
         case .updateFailed: return "检查失败"
         case .probeEvery: return "每 %d 秒"
@@ -752,7 +760,8 @@ enum L10n {
             return "就地安装需要已公证的 stable 构建 — 请打开 DMG 安装"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
         case .updateSignedUnnotarized: return "已用 Developer ID 签名 · 未公证 · Gatekeeper 可能拦截"
-        case .recoveredAfterCrash: return "Pulse 已从上次异常退出中恢复"
+        case .recoveredAfterCrash:
+            return "Pulse 已从上次异常退出中恢复（强制退出与崩溃无法区分）"
         case .recoveredAfterForceQuit: return "Pulse 已从强制退出中恢复"
         case .recoveredAfterSystemRestart: return "系统重启后 Pulse 已重新启动"
         case .qualityReasonProcessOnly: return "目前只有进程证据"
@@ -845,7 +854,8 @@ enum L10n {
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint
         case checkForUpdates, checkNow, openRelease, downloadAndVerify
         case updateDownloading, updateVerifying, updateVerified, updateVerifiedOpenOnly, updateVerifyFailed
-        case updateIdle, updateChecking, updateCurrent, updateAvailable, updateFailed
+        case updateIdle, updateChecking, updateCurrent, updateCurrentPrerelease, updateCurrentStable
+        case updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
         case sectionNeedsYou, sectionRunning, sectionStalled, sectionRecent

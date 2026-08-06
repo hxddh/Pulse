@@ -78,10 +78,26 @@ jobs:
         id: observation_truth
         run: ./scripts/qa_observation_truth.sh
 
+      - name: Observation Truth captures (en · dark)
+        id: observation_truth_en_dark
+        run: |
+          PULSE_QA_APPEARANCE=dark \
+          PULSE_QA_LANGUAGE=en \
+          PULSE_QA_OUT="$PWD/zig-out/qa-observation-truth-en-dark" \
+            ./scripts/qa_observation_truth.sh
+
       - name: Upload observation-truth PNGs
         uses: actions/upload-artifact@v4
         if: ${{ always() && steps.observation_truth.outcome == 'success' }}
         with:
           name: qa-observation-truth
           path: zig-out/qa-observation-truth/
+          if-no-files-found: error
+
+      - name: Upload observation-truth PNGs (en · dark)
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.observation_truth_en_dark.outcome == 'success' }}
+        with:
+          name: qa-observation-truth-en-dark
+          path: zig-out/qa-observation-truth-en-dark/
           if-no-files-found: error

@@ -2,6 +2,37 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.54.0 — Channel Continuity / 通道与契约连续
+
+0.53.0 把安装与恢复契约做完之后，本版对齐用户触达的下载链接、验收数字与更新文案；无 Apple 公证凭据时仍诚实停留在 prerelease。详见 [`docs/plan-0.54.md`](docs/plan-0.54.md)。
+
+### P0 · 触达契约
+
+- README 下载链跟当前 semver tag；安装节不再把 `/releases/latest` 写成「最新源码」。
+- EXPERIENCE 会话预算对齐代码（500 / 500 / glance 12）；图标 32；场景与禁常驻动画一致。
+- AGENTS / architecture / 贡献八门禁指针跟到 0.54。
+- `version_check.py`：README「下载 DMG」URL 必须含 `v{semver}`。
+
+### P0 · 更新通道叙事
+
+- 「已是最新」分 preview/signed（相对 prerelease）与 stable（不含 prerelease / 公证可能滞后）；dev 保持短句。
+
+### P1 · 节奏与回归
+
+- `ProbeSchedule`：空闲 harvest 每 4 个 probe tick（Waiting / 托盘打开仍每 tick）。
+- CI：Observation Truth 再跑一组 `en` + `dark` 截图并上传。
+
+### P2 · 收口
+
+- crash 恢复文案注明无法区分强制退出（SIGKILL）。
+- InstallTruth / architecture 写清浅扫边界。
+- Cursor App Data A/B：**明确保持手工 Darwin，不进 CI**。
+
+### 验证
+
+- version_check（含下载链）、ProbeSchedule empty 倍数、更新文案单测；八门禁对 0.54.0。
+- **stable 公证工件仍 blocked on notarization** —— 凭据缺席时继续 prerelease，绝不假标 Latest。
+
 ## 0.53.0 — Delivery Continuity / 交付连续信任
 
 0.52.0 把发布标签与 Gatekeeper 事实对齐之后，本版把信任推进到安装、更新与恢复连续性；无 Apple 公证凭据时仍诚实停留在 prerelease，不把未公证包装成 Latest。详见 [`docs/plan-0.53.md`](docs/plan-0.53.md)。
