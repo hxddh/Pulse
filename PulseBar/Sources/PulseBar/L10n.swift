@@ -218,7 +218,7 @@ enum L10n {
         case .updateChecking: return "Checking…"
         case .updateCurrent: return "Up to date"
         case .updateCurrentPrerelease:
-            return "Up to date on the prerelease channel"
+            return "Up to date on the preview channel (unsigned)"
         case .updateCurrentStable:
             return "Up to date on stable (excludes prereleases; notarization may lag)"
         case .updateAvailable: return "Update available: %@"
@@ -604,7 +604,7 @@ enum L10n {
         case .updateIdle: return "未检查"
         case .updateChecking: return "检查中…"
         case .updateCurrent: return "已是最新"
-        case .updateCurrentPrerelease: return "已是最新（相对 prerelease 通道）"
+        case .updateCurrentPrerelease: return "已是最新（preview 通道 · 未签名公证）"
         case .updateCurrentStable:
             return "已是最新（stable 不含 prerelease；公证前能力可能仍在预发布）"
         case .updateAvailable: return "有新版本：%@"

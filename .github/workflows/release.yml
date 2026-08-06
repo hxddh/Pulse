@@ -181,6 +181,17 @@ jobs:
           VERSION="${{ needs.decide.outputs.version }}"
           DMG="zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
           python3 scripts/changelog_section.py "$VERSION" > /tmp/notes.md
+          if [[ "${{ steps.signing.outputs.sign_identity }}" == "-" || -z "${{ steps.signing.outputs.notary_profile }}" ]]; then
+            {
+              echo
+              echo "### Gatekeeper"
+              echo
+              echo "This build is **ad-hoc / unnotarized** (no Apple Developer ID in CI)."
+              echo "About stays \`preview\` — it is **not** Gatekeeper-ready and must not be"
+              echo "described as notarized stable. First open: Control-click → Open, or"
+              echo "\`xattr -dr com.apple.quarantine /Applications/Pulse.app\`."
+            } >> /tmp/notes.md
+          fi
           {
             echo
             echo "### Download verification"
@@ -198,10 +209,12 @@ jobs:
           tag_name: v${{ needs.decide.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: Pulse ${{ needs.decide.outputs.version }}
-          # Never mark Gatekeeper-blocked builds as a non-prerelease "latest".
-          # Ad-hoc OR signed-without-notary both stay prerelease; only a
-          # notarized stable channel (notary_profile set) can be a full Release.
-          prerelease: ${{ steps.signing.outputs.sign_identity == '-' || steps.signing.outputs.notary_profile == '' }}
+          # Without an Apple Developer ID the DMG is still ad-hoc / unnotarized
+          # (Info.plist stays preview|signed — never stamp stable). GitHub Latest
+          # must still track the current semver so /releases/latest is not stuck
+          # on an older build. Gatekeeper recovery stays in README + notes.
+          prerelease: false
+          make_latest: true
           body_path: /tmp/notes.md
           files: zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
           fail_on_unmatched_files: true

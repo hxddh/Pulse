@@ -134,13 +134,14 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.54.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.54.0-dev` |
-| `mismatch` | 两者不一致 | `0.54.0≠0.53.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.54.1` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.54.1-dev` |
+| `mismatch` | 两者不一致 | `0.54.1≠0.54.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
-未公证）、`stable`（公证成功，`PulseNotarized=true`）。ad-hoc 或未公证包在 GitHub 上必须是
-prerelease；只有 notarized stable 才能标非 prerelease / Latest。
+未公证）、`stable`（公证成功，`PulseNotarized=true`）。无 Apple Developer ID 时 GitHub
+仍可将当前 semver 标为 **Latest**，但 Info.plist **不得**写 `stable`，About 保持
+preview/signed；只有 notarized 才能自称 Gatekeeper-ready。
 `InstallTruth` 发现用户安装副本的边界：Launch Services 已注册路径 + `/Applications`、
 `~/Applications`、Desktop、Downloads **一层** `*.app`，以及 Application Support 下的
 rollback；不递归扫嵌套目录。未注册且不在上述根的孤儿可能漏检。
