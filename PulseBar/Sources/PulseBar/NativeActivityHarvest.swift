@@ -1410,10 +1410,9 @@ enum NativeActivityHarvest {
                 } else if responseType == "function_call" {
                     let name = firstString(payload, keys: ["name", "toolName"])
                     if !name.isEmpty { f.tool = name }
-                    if f.task.isEmpty, let raw = payload["arguments"] as? String,
-                       let args = jsonObject(raw) {
-                        f.task = firstString(args, keys: ["title", "description", "prompt", "query"])
-                    }
+                    // Never promote tool-call argument titles into `task`.
+                    // Those are plan steps / MCP labels, not the user's goal —
+                    // they used to become the tray hero (e.g. update_plan titles).
                 } else if responseType == "message",
                           firstString(payload, keys: ["role"]).lowercased() == "assistant" {
                     let phase = firstString(payload, keys: ["phase", "status"])
@@ -1497,8 +1496,10 @@ enum NativeActivityHarvest {
         f.structured = structured
         f.sourcePath = path
         f.task = firstString(dict, keys: [
-            "task", "title", "summary", "subject", "prompt", "query",
-            "lastMessage", "last_message", "goal", "description",
+            "task", "goal", "prompt", "query", "user_message", "userMessage",
+            "lastMessage", "last_message", "subject",
+            // Vendor chrome last — often "Agent session" / plan-step titles.
+            "title", "summary", "description",
         ])
         if f.task.isEmpty, isUserRecord(dict) {
             f.task = textValue(firstValue(dict, keys: ["content", "message", "text"]))

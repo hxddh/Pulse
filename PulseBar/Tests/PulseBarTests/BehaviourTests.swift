@@ -239,13 +239,26 @@ final class AgentRowTests: XCTestCase {
     }
 
     func testLiveRowWithToolButNoTaskFallsBackToTool() {
-        // This fallback existed but was never wired into the tray before 0.22.
+        // Raw tool is never a session title; it remains a live-tool fallback
+        // that the tray humanizes into the hero.
         let r = row {
             $0.liveProcess = true
             $0.tool = "Bash"
         }
-        XCTAssertEqual(r.sessionDetail, "Bash")
+        XCTAssertNil(r.sessionDetail)
+        XCTAssertNil(r.usefulTask)
+        XCTAssertTrue(r.hasLiveToolFallback)
         XCTAssertFalse(r.isProcessOnly, "a known tool is more than 'process detected'")
+    }
+
+    func testInternalToolIdentifiersAreNotSessionTitles() {
+        XCTAssertNil(row {
+            $0.task = "update_plan"
+            $0.tool = "update_plan"
+        }.usefulTask)
+        XCTAssertNil(row { $0.task = "Read Models.swift" }.usefulTask)
+        XCTAssertNil(row { $0.task = "Models.swift" }.usefulTask)
+        XCTAssertNotNil(row { $0.task = "Improve tray density" }.usefulTask)
     }
 
     func testLiveRowWithNothingToSayIsProcessOnly() {
