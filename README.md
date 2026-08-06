@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.54.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.54.0) · macOS 14+
+**版本：`0.54.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.54.1) · macOS 14+
 
 ---
 
@@ -29,11 +29,11 @@ Pulse 把这件事变成余光可见：
 ## 安装
 
 从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG
-（当前源码对应 [v0.54.0](https://github.com/hxddh/Pulse/releases/tag/v0.49.1)），拖进「应用程序」。
+（当前源码对应 [v0.54.1](https://github.com/hxddh/Pulse/releases/tag/v0.54.1)），拖进「应用程序」。
 
-> **不要**把 GitHub 的 `/releases/latest` 当成「最新源码」。在 Developer ID + 公证
-> 齐备之前，新版本都以 **prerelease** 发布；`/latest` 仍可能停在更早的一枚非
-> prerelease（例如历史上的 0.48）。请按版本号选包，或跟徽标上的 tag。
+> **没有 Apple Developer ID 时**：GitHub **Latest** 会跟到当前 semver（避免停在旧包），
+> 但 DMG 仍是 ad-hoc / 未公证，About 标 `preview`，**不是** Gatekeeper-ready。首次打开
+> 仍需右键「打开」或下面的 `xattr`。有 Developer ID + 公证之后才会变成 `stable` 通道。
 
 > 目前的构建是 ad-hoc 签名，首次打开 macOS 会拦。右键点应用选「打开」，或：
 > ```bash
@@ -209,9 +209,10 @@ git push                               # CI 构建、打 tag、发布
 仓库配置齐 `PULSE_CERTIFICATE_P12`（base64）、`PULSE_CERTIFICATE_PASSWORD`、
 `PULSE_SIGN_IDENTITY`、`PULSE_NOTARY_KEY_P8`（base64）、
 `PULSE_NOTARY_KEY_ID` 和 `PULSE_NOTARY_ISSUER_ID` 时，CI 导入临时 keychain，
-公证并 staple App 与 DMG，再以 `spctl` 验收，发布非 prerelease 的 stable。
-任一凭据缺失时仍可发布，但产物为 ad-hoc / 未公证，并**强制**标 GitHub prerelease ——
-绝不能自称 stable。详见 [`docs/plan-0.53.md`](docs/plan-0.53.md)。
+公证并 staple App 与 DMG，再以 `spctl` 验收，并在 Info.plist 写入 `stable`。
+**任一凭据缺失时仍发布 GitHub Latest**（跟当前 semver），产物为 ad-hoc / 未公证，
+About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。详见
+[`CHANGELOG.md`](CHANGELOG.md) 的 0.54.1 说明。
 
 > 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
 > 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，

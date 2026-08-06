@@ -82,8 +82,10 @@ open zig-out/package/Pulse.app
 Local packaging uses `PULSE_SIGN_IDENTITY` plus `PULSE_NOTARY_PROFILE` for a
 distributable build. Release CI uses the base64 Developer ID certificate,
 password and App Store Connect API key secrets when available. Without an
-Apple Developer account it publishes an explicitly marked `preview` / ad-hoc /
-unnotarized prerelease; that artifact must never be labeled stable.
+Apple Developer account it still publishes GitHub **Latest** for the current
+semver (so `/releases/latest` is not stuck on an older cut), but the binary
+stays `preview` / ad-hoc / unnotarized — that artifact must never be labeled
+`stable` or Gatekeeper-ready. Release notes include the Control-click recovery.
 
 ## Release
 
@@ -116,9 +118,7 @@ to users.
 
 ## Current state
 
-0.54.0 is the current source version. The active plan is
-[`docs/plan-0.54.md`](docs/plan-0.54.md) (Channel Continuity). GitHub's latest
-public Release must be checked separately; a merged version is not proof that a
-signed/notarized DMG was published. Ad-hoc or unnotarized artifacts must stay
-prerelease / preview|signed — never labeled stable. See `CHANGELOG.md` for the
-complete contract.
+0.54.1 is the current source version. Without an Apple Developer ID, GitHub
+**Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
+never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The last
+written plan is [`docs/plan-0.54.md`](docs/plan-0.54.md) (Channel Continuity).

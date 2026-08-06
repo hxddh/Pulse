@@ -2,6 +2,28 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.54.1 — Formal Latest without notarization / 无公证正式 Latest
+
+没有 Apple Developer ID 时无法公证。按产品要求恢复 **GitHub Latest = 当前 semver**，
+结束 0.49–0.54 把新版关进 Pre-release、Latest 钉死在 0.48 的失败模式。
+
+### 发布策略
+
+- `release.yml`：无论是否有签名 secrets，GitHub Release **一律非 prerelease** 且
+  `make_latest`；缺凭据时 notes 强制附 Gatekeeper 说明。
+- Info.plist 仍为 `preview`（ad-hoc）——**绝不**把未公证包装成 `stable` / Gatekeeper-ready。
+- About / 就地安装契约不变：仅 notarized stable 出现就地安装。
+- 更新文案：preview 通道写「unsigned」，不再假装「prerelease 通道」。
+
+### 文档
+
+- AGENTS / README / EXPERIENCE / architecture：Latest ≠ notarized；无 Developer ID 时
+  Latest 跟 semver，Gatekeeper 仍需右键打开。
+
+### 验证
+
+- version_check → 0.54.1；发布后 `/releases/latest` == `v0.54.1` 且 `prerelease=false`。
+
 ## 0.54.0 — Channel Continuity / 通道与契约连续
 
 0.53.0 把安装与恢复契约做完之后，本版对齐用户触达的下载链接、验收数字与更新文案；无 Apple 公证凭据时仍诚实停留在 prerelease。详见 [`docs/plan-0.54.md`](docs/plan-0.54.md)。

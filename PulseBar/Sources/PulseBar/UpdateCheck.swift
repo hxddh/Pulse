@@ -65,8 +65,9 @@ final class UpdateCheck {
            !raw.isEmpty {
             return URL(string: raw)
         }
-        // Preview/signed builds are published as GitHub prereleases; `/latest`
-        // ignores them, so those channels would never see their own updates.
+        // Preview/signed builds use the releases list so they see every cut
+        // (including when CI publishes unsigned builds as GitHub Latest).
+        // Stable (notarized) stays on `/latest` and ignores prereleases.
         let raw = PulseVersion.prefersPrereleaseUpdates
             ? Self.defaultReleasesFeed
             : Self.defaultLatestFeed
