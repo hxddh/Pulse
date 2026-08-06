@@ -134,13 +134,16 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.52.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.52.0-dev` |
-| `mismatch` | 两者不一致 | `0.52.0≠0.51.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.54.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.54.0-dev` |
+| `mismatch` | 两者不一致 | `0.54.0≠0.53.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
 未公证）、`stable`（公证成功，`PulseNotarized=true`）。ad-hoc 或未公证包在 GitHub 上必须是
 prerelease；只有 notarized stable 才能标非 prerelease / Latest。
+`InstallTruth` 发现用户安装副本的边界：Launch Services 已注册路径 + `/Applications`、
+`~/Applications`、Desktop、Downloads **一层** `*.app`，以及 Application Support 下的
+rollback；不递归扫嵌套目录。未注册且不在上述根的孤儿可能漏检。
 更新器在下载校验后先挂载预检，再由同一可执行文件的 helper 等待父进程退出，事务式移动旧 App 到
 `~/Library/Application Support/Pulse/rollback`；`current.json` 让下一次启动可以恢复未完成替换。
 

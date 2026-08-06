@@ -134,6 +134,28 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertFalse(PulseVersion.isGatekeeperReady)
     }
 
+    @MainActor
+    func testUpdateCurrentCopyIsChannelRelative() {
+        let store = StatusStore()
+        store.language = .en
+        store.updateStatus = .current
+        // Copy follows the running build's channel — not a fixed string.
+        // XCTest on CI often sees Bundle.main version keys, so channel may be
+        // preview rather than unpackaged dev; assert the mapping, not the host.
+        let expected: L10n.Key
+        if PulseVersion.prefersPrereleaseUpdates {
+            expected = .updateCurrentPrerelease
+        } else if PulseVersion.distributionChannel == "stable" {
+            expected = .updateCurrentStable
+        } else {
+            expected = .updateCurrent
+        }
+        XCTAssertEqual(store.updateStatusText, store.tr(expected))
+        XCTAssertNotEqual(store.tr(.updateCurrentPrerelease), store.tr(.updateCurrentStable))
+        XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPrerelease))
+        XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("prerelease"))
+    }
+
     func testUpdateInstallerDestinationNeverOverwritesExistingFiles() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-update-\(UUID().uuidString)")

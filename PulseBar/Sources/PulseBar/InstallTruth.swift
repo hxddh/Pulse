@@ -9,6 +9,11 @@ import Foundation
 /// different Pulse.app. Keep the running bundle, every discoverable app copy,
 /// and other live bundle paths separate so Settings can explain that state
 /// without guessing.
+///
+/// Discovery boundary (intentionally shallow): Launch Services registrations
+/// for `com.pulse.app`, plus one-level `*.app` scans of `/Applications`,
+/// `~/Applications`, Desktop, and Downloads, and the rollback stash. Nested
+/// folders and unregistered paths outside those roots are not walked.
 enum InstallTruth {
     /// How many duplicate paths About lists before "and N more".
     static let aboutDuplicateLimit = 5

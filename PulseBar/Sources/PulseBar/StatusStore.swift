@@ -1459,7 +1459,14 @@ final class StatusStore: ObservableObject {
         switch updateStatus {
         case .idle: return tr(.updateIdle)
         case .checking: return tr(.updateChecking)
-        case .current: return tr(.updateCurrent)
+        case .current:
+            if PulseVersion.prefersPrereleaseUpdates {
+                return tr(.updateCurrentPrerelease)
+            }
+            if PulseVersion.distributionChannel == "stable" {
+                return tr(.updateCurrentStable)
+            }
+            return tr(.updateCurrent)
         case .available(let release): return String(format: tr(.updateAvailable), release.version)
         case .failed(let message): return "\(tr(.updateFailed)) · \(message)"
         }

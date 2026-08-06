@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Mac-only A/B: Cursor process-only vs App Data session detail.
 #
+# Decision (0.54): stays **manual Darwin** — not CI. It needs a live Cursor
+# install, real App Support trees, and interactive TCC grants that runners do
+# not have. Keep it as a local QA script; Observation Truth fixtures cover the
+# automated visual path.
+#
 # Prerequisites: Pulse 0.50+ installed at /Applications/Pulse.app
 #
 #   ./scripts/qa_mac_cursor_appdata_ab.sh

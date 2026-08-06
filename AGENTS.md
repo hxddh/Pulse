@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.53.md`](docs/plan-0.53.md) | The active plan (Delivery Continuity) |
+| [`docs/plan-0.54.md`](docs/plan-0.54.md) | The active plan (Channel Continuity) |
+| [`docs/plan-0.53.md`](docs/plan-0.53.md) | Historical plan (Delivery Continuity) |
 | [`docs/plan-0.52.md`](docs/plan-0.52.md) | Historical plan (Release Trust) |
 | [`docs/plan-0.51.md`](docs/plan-0.51.md) | Historical plan (Observation Truth) |
 | [`docs/plan-0.50.md`](docs/plan-0.50.md) | Historical plan (Signal Quality) |
@@ -115,8 +116,8 @@ to users.
 
 ## Current state
 
-0.53.0 is the current source version. The active plan is
-[`docs/plan-0.53.md`](docs/plan-0.53.md) (Delivery Continuity). GitHub's latest
+0.54.0 is the current source version. The active plan is
+[`docs/plan-0.54.md`](docs/plan-0.54.md) (Channel Continuity). GitHub's latest
 public Release must be checked separately; a merged version is not proof that a
 signed/notarized DMG was published. Ad-hoc or unnotarized artifacts must stay
 prerelease / preview|signed — never labeled stable. See `CHANGELOG.md` for the

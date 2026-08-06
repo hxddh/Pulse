@@ -70,7 +70,7 @@ enum ProbeSchedule {
         case .waiting: return 1
         case .running: return 2
         case .recent: return 2
-        case .empty: return 1
+        case .empty: return 4
         }
     }
 }

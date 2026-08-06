@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.53.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.49.1) · macOS 14+
+**版本：`0.54.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.54.0) · macOS 14+
 
 ---
 
@@ -13,7 +13,7 @@ Pulse 把这件事变成余光可见：
 
 | 灯 | 含义 | 你该做什么 |
 | --- | --- | --- |
-| 🔴 红（呼吸） | **需要你** —— 在等授权或输入 | 点一下，直接跳到那个终端页 |
+| 🔴 红 | **需要你** —— 在等授权或输入 | 点一下，直接跳到那个终端页 |
 | 🟢 绿 | 运行中 | 不用管 |
 | ⚪️ 灰 | 空闲 / 只有最近会话 | 不用管 |
 | 🟠 橙 | 已停滞，或探测能力异常 | 点开查看停滞原因；探测异常时看「关于 → 复制诊断信息」 |
@@ -28,7 +28,12 @@ Pulse 把这件事变成余光可见：
 
 ## 安装
 
-从 [Releases](https://github.com/hxddh/Pulse/releases/latest) 下载 DMG，拖进「应用程序」。
+从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG
+（当前源码对应 [v0.54.0](https://github.com/hxddh/Pulse/releases/tag/v0.49.1)），拖进「应用程序」。
+
+> **不要**把 GitHub 的 `/releases/latest` 当成「最新源码」。在 Developer ID + 公证
+> 齐备之前，新版本都以 **prerelease** 发布；`/latest` 仍可能停在更早的一枚非
+> prerelease（例如历史上的 0.48）。请按版本号选包，或跟徽标上的 tag。
 
 > 目前的构建是 ad-hoc 签名，首次打开 macOS 会拦。右键点应用选「打开」，或：
 > ```bash
@@ -220,7 +225,7 @@ git push                               # CI 构建、打 tag、发布
 那几条是产品决策（不假装 Waiting、不做配额 HUD、不在托盘里批准），
 不是可以顺手改掉的偏好。
 
-改动请保证 `swift test` 与七个门禁通过；CI 会替你再跑一遍。
+改动请保证 `swift test` 与八个门禁通过；CI 会替你再跑一遍。
 
 ## 许可
 
@@ -235,6 +240,8 @@ git push                               # CI 构建、打 tag、发布
 | [`docs/architecture.md`](docs/architecture.md) | 数据从进程到菜单栏的完整路径 |
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+| [`docs/plan-0.54.md`](docs/plan-0.54.md) | 0.54 计划 —— 通道与契约连续 |
+| [`docs/plan-0.53.md`](docs/plan-0.53.md) | 0.53 计划 —— 交付连续信任 |
 | [`docs/plan-0.23.md`](docs/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
 | [`docs/plan-0.24.md`](docs/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
 | [`docs/plan-0.25.md`](docs/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
