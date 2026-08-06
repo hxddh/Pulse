@@ -139,9 +139,20 @@ final class PulseVersionTests: XCTestCase {
         let store = StatusStore()
         store.language = .en
         store.updateStatus = .current
-        // Unpackaged / dev builds keep the plain "Up to date" string.
-        XCTAssertEqual(store.updateStatusText, store.tr(.updateCurrent))
+        // Copy follows the running build's channel — not a fixed string.
+        // XCTest on CI often sees Bundle.main version keys, so channel may be
+        // preview rather than unpackaged dev; assert the mapping, not the host.
+        let expected: L10n.Key
+        if PulseVersion.prefersPrereleaseUpdates {
+            expected = .updateCurrentPrerelease
+        } else if PulseVersion.distributionChannel == "stable" {
+            expected = .updateCurrentStable
+        } else {
+            expected = .updateCurrent
+        }
+        XCTAssertEqual(store.updateStatusText, store.tr(expected))
         XCTAssertNotEqual(store.tr(.updateCurrentPrerelease), store.tr(.updateCurrentStable))
+        XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPrerelease))
         XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("prerelease"))
     }
 
