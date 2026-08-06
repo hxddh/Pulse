@@ -1225,7 +1225,7 @@ private struct AgentRowButton: View {
                         // below the lamp/name line, especially in CJK mode.
                         AgentIconView(id: row.agent)
 
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2) {
                             // Agent identity is text, not an icon-recognition
                             // quiz. With the full 33-agent roster (ten of them
                             // Pulse-made), an
@@ -1271,14 +1271,17 @@ private struct AgentRowButton: View {
                                     design: .rounded
                                 ))
                                 .foregroundStyle(.primary)
-                                .lineLimit(compact || row.isProcessOnly ? 1 : 2)
+                                // Keep two lines for real session titles even when
+                                // the list is crowded — the title tail is the
+                                // identifying half. Process-only stays one line.
+                                .lineLimit(row.isProcessOnly ? 1 : 2)
                                 .fixedSize(horizontal: false, vertical: true)
 
                             if !contextLine.isEmpty {
                                 Text(contextLine)
                                     .font(.system(size: 10.75))
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+                                    .lineLimit(compact ? 1 : 2)
                                     .truncationMode(.middle)
                             }
 
@@ -1306,7 +1309,7 @@ private struct AgentRowButton: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, TrayChrome.rowLeadingInset)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.vertical, compact ? 6 : (row.isProcessOnly ? 7 : 9))
+                    .padding(.vertical, compact ? 5 : (row.isProcessOnly ? 6 : 7))
                     // The wait gutter overlays its own inset and never
                     // participates in layout. Waiting and non-waiting identity
                     // columns therefore remain exactly aligned.
@@ -1507,15 +1510,18 @@ private struct AgentRowButton: View {
         if row.isProcessOnly {
             return row.canFocusTerminal ? store.tr(.terminalSession) : store.tr(.appSession)
         }
-        if let t = row.sessionDetail {
-            // The prefix used to be added precisely when the row was *not*
-            // live, so a row read "Doing · New Session" next to a "Recent"
-            // badge — two contradictory claims about the same session.
+        if let t = row.usefulTask {
             return Self.truncate(t, Self.heroLimit)
+        }
+        // Humanize the live tool — never show update_plan / Bash raw.
+        if let toolTitle = store.heroToolTitle(row) {
+            return Self.truncate(toolTitle, Self.heroLimit)
         }
         let short = AgentRow.shortProject(row.project)
         if !short.isEmpty { return short }
-        return row.agent.displayName
+        // Agent product name is already on the identity line — do not reuse it
+        // as the hero (EXPERIENCE: no agent-as-hero).
+        return row.canFocusTerminal ? store.tr(.terminalSession) : store.tr(.appSession)
     }
 
     /// Second line: where this session is, and how long since it moved.

@@ -2,6 +2,26 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.54.2 — Tray titles & density / 托盘标题与信息密度
+
+下拉弹窗主行常被工具 ID / 占位符占用，有效信息被留白和重复叙事稀释。本版修标题来源并收紧行距。
+
+### 标题
+
+- 主行只接受真实用户目标；拒绝 `update_plan`、文件名、`Agent session`、与 tool 同名的假标题。
+- Codex 不再把 `function_call` 参数里的 title/description 写成 session task。
+- harvest 通用解析优先 `task/goal/prompt`，vendor `title/summary` 靠后。
+- 无真实标题时：人话工具名（Bash→执行命令）→ 项目 → 终端/应用短语；**不再用 Agent 名当主行**。
+
+### 密度
+
+- 真实标题在列表拥挤时仍两行；行间距 / 垂直 padding 收紧。
+- 主行已是人话工具时，次行不再重复同一动作。
+
+### 验证
+
+- usefulTask / heroToolTitle / Codex 不提升 tool-arg 单测；八门禁对 0.54.2。
+
 ## 0.54.1 — Formal Latest without notarization / 无公证正式 Latest
 
 没有 Apple Developer ID 时无法公证。按产品要求恢复 **GitHub Latest = 当前 semver**，

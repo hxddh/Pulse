@@ -2426,7 +2426,10 @@ final class StatusStore: ObservableObject {
         // something currently running. This is often the only useful signal
         // for adapters that do not expose a lifecycle phase.
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        if row.usefulTask != nil, !tool.isEmpty, usefulAction(tool) {
+        // Humanized last action earns the middle slot whenever it is useful.
+        // Skip when the hero is already that action (live tool, no real task).
+        if !tool.isEmpty, usefulAction(tool),
+           row.usefulTask != nil || !row.hasLiveToolFallback {
             bits.append(String(format: tr(.lastAction), readableAction(tool)))
         }
         let ago = lastActivityLabel(row)
@@ -2787,6 +2790,15 @@ final class StatusStore: ObservableObject {
     ///
     /// `sessionDetail` promotes `tool` to the hero when there is no task, so
     /// showing it again here would be the same word twice on two lines.
+    /// Humanized live-tool hero when harvest has no real session title.
+    /// Returns nil for empty tools; always humanizes (Bash → Running command).
+    func heroToolTitle(_ row: AgentRow) -> String? {
+        guard row.usefulTask == nil, row.hasLiveToolFallback else { return nil }
+        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tool.isEmpty else { return nil }
+        return readableAction(tool)
+    }
+
     func liveTool(_ row: AgentRow) -> String? {
         guard row.liveProcess || row.subRunning > 0, !row.waiting else { return nil }
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)

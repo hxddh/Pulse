@@ -118,7 +118,7 @@ to users.
 
 ## Current state
 
-0.54.1 is the current source version. Without an Apple Developer ID, GitHub
+0.54.2 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The last
 written plan is [`docs/plan-0.54.md`](docs/plan-0.54.md) (Channel Continuity).

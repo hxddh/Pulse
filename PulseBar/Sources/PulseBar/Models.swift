@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.54.1"
+    static let semver = "0.54.2"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -611,6 +611,7 @@ struct AgentRow: Identifiable, Hashable {
             "Agent session", "Chat", "Amp session", "Amp thread",
             // Placeholders that shipped as row titles in 0.25.
             "New Session", "New session", "Untitled", "New Chat", "New chat",
+            "Pi session", "Cursor session", "Grok session",
         ]
         if junk.contains(t) { return nil }
         let low = t.lowercased()
@@ -619,6 +620,14 @@ struct AgentRow: Identifiable, Hashable {
         let genericSuffixes = [" session", " thread", " chat", " task", " agent"]
         if genericSuffixes.contains(where: { low == agent + $0 }) { return nil }
         if t.hasPrefix("/"), !t.contains(" ") { return nil }
+        // Harvest sometimes promotes the live tool id (update_plan, Bash) or a
+        // lone filename into `task`. Those are actions/paths, not goals.
+        let toolTrim = tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !toolTrim.isEmpty, t.caseInsensitiveCompare(toolTrim) == .orderedSame {
+            return nil
+        }
+        if Self.looksLikeInternalToolIdentifier(t) { return nil }
+        if Self.looksLikeFilenameOnlyTitle(t) { return nil }
         return t
     }
 
@@ -654,13 +663,60 @@ struct AgentRow: Identifiable, Hashable {
         }
     }
 
-    /// First-class session detail for tray (task title). Tool-only falls back for live rows.
-    var sessionDetail: String? {
-        if let t = usefulTask { return t }
-        if waiting { return nil }
-        let toolTrim = tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !toolTrim.isEmpty, liveProcess || subRunning > 0 { return toolTrim }
-        return nil
+    /// `update_plan`, namespaced MCP leaves, etc. — never a user goal.
+    static func looksLikeInternalToolIdentifier(_ raw: String) -> Bool {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !t.contains(" ") else { return false }
+        let low = t.lowercased()
+        if low.contains(":") { return true } // mcp:server:tool
+        let known: Set<String> = [
+            "bash", "shell", "exec", "read", "write", "grep", "glob",
+            "update_plan", "todowrite", "todo_write", "run_terminal_cmd",
+            "run_terminal_command", "batch_execute",
+        ]
+        if known.contains(low) { return true }
+        if low.hasPrefix("mcp_") || low.hasPrefix("mcp.") { return true }
+        if low.hasSuffix("_plan") || low.hasSuffix("_todo") { return true }
+        if low.hasPrefix("run_") && low.contains("terminal") { return true }
+        // snake_case tool leaves: verb_noun with a known verb head.
+        if low.contains("_") {
+            let head = low.split(separator: "_").first.map(String.init) ?? ""
+            return [
+                "update", "run", "edit", "write", "read", "search", "browser",
+                "patch", "grep", "glob", "exec", "bash", "shell",
+            ].contains(head)
+        }
+        return false
+    }
+
+    /// Pi (and others) sometimes stamp `Read Foo.swift` or bare `Foo.swift`.
+    static func looksLikeFilenameOnlyTitle(_ raw: String) -> Bool {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.range(
+            of: #"^(Read|Reading)\s+\S+\.\w{1,12}$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return true
+        }
+        guard !t.contains(" "), t.contains(".") else { return false }
+        let ext = (t as NSString).pathExtension.lowercased()
+        let code = [
+            "swift", "ts", "tsx", "js", "jsx", "py", "md", "json", "go", "rs",
+            "rb", "java", "kt", "c", "h", "cpp", "hpp", "m", "mm", "cs", "sh",
+        ]
+        return code.contains(ext)
+    }
+
+    /// First-class session detail for tray (real task title only).
+    ///
+    /// Live tool identifiers are not titles — the tray humanizes them as a
+    /// separate hero fallback via `StatusStore.heroToolTitle`.
+    var sessionDetail: String? { usefulTask }
+
+    /// Live/subagent row has a tool string that can stand in after humanization.
+    var hasLiveToolFallback: Bool {
+        guard !waiting, liveProcess || subRunning > 0 else { return false }
+        return !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Recent (not live) rows may soft-prefix with L10n activityPrefix in the view.
@@ -687,10 +743,9 @@ struct AgentRow: Identifiable, Hashable {
     }
 
     /// Live / subagent with nothing to say about the session — secondary in list IA.
-    /// Uses `sessionDetail` (task, else the current tool) so a live row running
-    /// a known tool no longer degrades to a bare "Process detected".
+    /// A known live tool still counts as something to say (humanized in the tray).
     var isProcessOnly: Bool {
-        !waiting && (liveProcess || subRunning > 0) && sessionDetail == nil
+        !waiting && (liveProcess || subRunning > 0) && usefulTask == nil && !hasLiveToolFallback
     }
 
     /// Has a first-class session title (sorts above process-only peers).

@@ -129,8 +129,9 @@ final class RowRedundancyTests: XCTestCase {
     /// A bare process row said "Process detected", "process", and "Amp".
     func testProcessOnlyRowHasNoSessionTitleToShow() {
         let r = row(agent: .amp)
-        XCTAssertTrue(r.isProcessOnly, "no task means the hero falls back to the agent name")
+        XCTAssertTrue(r.isProcessOnly, "live with no task/tool is process-only")
         XCTAssertNil(r.usefulTask)
+        // Hero must not fall back to the agent product name (already on identity).
     }
 
     func testEveryAgentDropsItsOwnGenericSessionPlaceholder() {
@@ -479,7 +480,11 @@ final class ProjectFoldTests: XCTestCase {
 /// appeared behind a hover or an expand.
 final class LiveToolTests: XCTestCase {
     @MainActor
-    private func store() -> StatusStore { StatusStore() }
+    private func store() -> StatusStore {
+        let s = StatusStore()
+        s.language = .en
+        return s
+    }
 
     private func row(tool: String, task: String, live: Bool, waiting: Bool = false) -> AgentRow {
         var r = AgentRow(rowKey: "k", agent: .claude)
@@ -508,13 +513,29 @@ final class LiveToolTests: XCTestCase {
         XCTAssertNil(store().liveTool(row(tool: "Bash", task: "x", live: true, waiting: true)))
     }
 
-    /// With no task the tool is promoted to the title, so repeating it on the
-    /// line below would be the same word twice.
+    /// With no task the humanized tool is the hero, so repeating it on the
+    /// line below would be the same claim twice.
     @MainActor
     func testTheToolIsNotSaidTwiceWhenItIsAlreadyTheTitle() {
         let r = row(tool: "Bash", task: "", live: true)
-        XCTAssertEqual(r.sessionDetail, "Bash", "the tool is the hero here")
+        XCTAssertNil(r.sessionDetail, "raw tool is not a session title")
+        XCTAssertTrue(r.hasLiveToolFallback)
+        XCTAssertEqual(store().heroToolTitle(r), "Terminal command")
         XCTAssertNil(store().liveTool(r))
+        let context = store().rowContextLine(r)
+        XCTAssertFalse(context.contains("Terminal command"), context)
+    }
+
+    @MainActor
+    func testUpdatePlanNeverBecomesTheHeroTitle() {
+        var r = row(tool: "update_plan", task: "update_plan", live: true)
+        XCTAssertNil(r.usefulTask)
+        XCTAssertEqual(store().heroToolTitle(r), "Planning")
+        r.task = "Improve observability"
+        XCTAssertEqual(r.usefulTask, "Improve observability")
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.contains("Last action: Planning"), line)
+        XCTAssertFalse(line.contains("update_plan"), line)
     }
 }
 
