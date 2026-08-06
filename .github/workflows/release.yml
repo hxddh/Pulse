@@ -106,7 +106,6 @@ jobs:
           python3 scripts/make_agent_icons.py --check
           python3 scripts/appearance_check.py
           python3 scripts/harvest_stats_check.py
-          python3 scripts/resource_budget_check.py
 
       - name: Test
         run: swift test
@@ -173,6 +172,9 @@ jobs:
           PULSE_SIGN_IDENTITY: ${{ steps.signing.outputs.sign_identity }}
           PULSE_NOTARY_PROFILE: ${{ steps.signing.outputs.notary_profile }}
         run: ./PulseBar/Scripts/package.sh
+
+      - name: Resource budget (packaged binary)
+        run: python3 scripts/resource_budget_check.py
 
       - name: Release notes from CHANGELOG
         run: |

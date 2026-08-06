@@ -75,11 +75,12 @@ jobs:
         run: python3 scripts/resource_budget_check.py
 
       - name: Observation Truth captures
+        id: observation_truth
         run: ./scripts/qa_observation_truth.sh
 
       - name: Upload observation-truth PNGs
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && steps.observation_truth.outcome == 'success' }}
         with:
           name: qa-observation-truth
           path: zig-out/qa-observation-truth/

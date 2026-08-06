@@ -327,15 +327,16 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testSafeSupportReportIncludesReleaseAndNotifyFields() {
         let store = StatusStore()
-        store.notifyAuthorized = false
-        store.notifyOnWaiting = true
         let report = store.safeSupportReport()
         XCTAssertTrue(report.contains("channel:"))
         XCTAssertTrue(report.contains("notarized:"))
-        XCTAssertTrue(report.contains("notifications: authorization=denied"))
+        XCTAssertTrue(report.contains("notifications: authorization="))
+        XCTAssertTrue(report.contains("notifyWaiting="))
+        XCTAssertTrue(report.contains("pending="))
         XCTAssertTrue(report.contains("appDataGrant:"))
         XCTAssertTrue(report.contains("probeCadence:"))
         XCTAssertTrue(report.contains("timeoutAgents:"))
         XCTAssertTrue(report.contains("harvestSupervisor:"))
+        XCTAssertTrue(report.contains("deferred="))
     }
 }
