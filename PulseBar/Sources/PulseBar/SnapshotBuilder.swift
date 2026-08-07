@@ -130,6 +130,7 @@ enum SnapshotBuilder {
                 if cursor.tty.isEmpty { cursor.tty = agentHit.tty }
                 if cursor.pid == 0 { cursor.pid = agentHit.pid }
                 cursor.viaWarp = cursor.viaWarp || agentHit.viaWarp
+                if cursor.hostApp == nil { cursor.hostApp = agentHit.hostApp }
                 liveHits[.cursor] = cursor
             } else {
                 var mapped = agentHit
@@ -263,6 +264,7 @@ enum SnapshotBuilder {
                 row.liveProcess = true
                 row.processCount = hit.count
                 row.viaWarp = hit.viaWarp
+                row.hostApp = hit.hostApp
                 row.pid = hit.pid
                 row.tty = hit.tty
                 row.processEvidence = hit.evidence
@@ -289,6 +291,7 @@ enum SnapshotBuilder {
                     row.liveProcess = true
                     row.processCount = max(row.processCount, hit.count)
                     row.viaWarp = hit.viaWarp || row.viaWarp
+                    if row.hostApp == nil { row.hostApp = hit.hostApp }
                     if hit.pid != 0 { row.pid = hit.pid }
                     if !hit.tty.isEmpty { row.tty = hit.tty }
                     row.processEvidence = hit.evidence
@@ -452,6 +455,7 @@ enum SnapshotBuilder {
             all[i].focusTier = TerminalFocus.focusTier(
                 tty: row.tty,
                 viaWarp: row.viaWarp,
+                hostApp: row.hostApp,
                 env: context.terminal
             )
             let privacy = row.agent.requiresAppDataOptIn

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.54.2"
+    static let semver = "0.55.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -441,6 +441,7 @@ enum WaitSignalKind: String, Equatable {
 enum FocusTier: Equatable {
     case tty
     case warp
+    case hostApp(HostAppKind)
 }
 
 enum GlanceKind: Equatable {
@@ -480,6 +481,8 @@ struct AgentRow: Identifiable, Hashable {
     /// hooks vs harvest pending — for tray credibility tag.
     var waitSignal: WaitSignalKind? = nil
     var viaWarp: Bool = false
+    /// Host IDE detected by walking the process parent chain (`ps` only).
+    var hostApp: HostAppKind? = nil
     var processCount: Int = 0
     var tokensIn: Int = 0
     var tokensOut: Int = 0
@@ -1011,6 +1014,10 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var hasActionSignal: Bool = false
     var hasModelSignal: Bool = false
     var hasResourceSignal: Bool = false
+    /// Best Focus handle among this Agent's rows this scan — nil means observation only.
+    var focusTier: FocusTier? = nil
+    /// A real TTY exists but Shortcuts Automation is off — honest, not clickable.
+    var focusTTYNeedsOptIn: Bool = false
 
     var id: AgentID { agent }
 

@@ -65,10 +65,23 @@ final class PulseSettingsTests: XCTestCase {
         original.language = .zh
         original.updateCheckEnabled = false
         original.hotkey = .controlOptionP
+        original.allowTerminalAutomation = true
         original.mutedAgents = [.claude, .codex]
         original.appDataAgents = [.cursor, .warpAgent]
 
         XCTAssertEqual(PulseSettings.parse(original.serialized()), original)
+    }
+
+    func testTerminalAutomationDefaultsOffAndRoundTrips() {
+        let defaults = PulseSettings()
+        XCTAssertFalse(defaults.allowTerminalAutomation)
+        XCTAssertFalse(PulseSettings.parse(defaults.serialized()).allowTerminalAutomation)
+
+        var on = PulseSettings()
+        on.allowTerminalAutomation = true
+        XCTAssertTrue(PulseSettings.parse(on.serialized()).allowTerminalAutomation)
+        XCTAssertTrue(PulseSettings.parse("terminalAutomation=1").allowTerminalAutomation)
+        XCTAssertFalse(PulseSettings.parse("terminalAutomation=0").allowTerminalAutomation)
     }
 
     func testDefaultsRoundTrip() {

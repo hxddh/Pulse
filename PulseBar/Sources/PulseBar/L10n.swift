@@ -79,8 +79,18 @@ enum L10n {
             return "Waiting notifications still fire. Equal start/end disables quiet hours. The window may wrap past midnight."
         case .quietStart: return "From"
         case .quietEnd: return "Until"
-        case .focusTTY: return "Focus TTY"
+        case .focusTTY: return "Focus Terminal tab"
         case .focusWarp: return "Focus Warp"
+        case .focusHostApp: return "Focus %@"
+        case .focusOpenTray: return "Open Pulse tray"
+        case .allowTerminalAutomation: return "Allow Terminal / iTerm tab focus"
+        case .allowTerminalAutomationHint:
+            return "Off by default. When on, Focus may ask macOS for Automation access to select the matching tab. Warp and IDE hosts never need this."
+        case .supportFocusNone: return "Focus: observation only"
+        case .supportFocusWarp: return "Focus: Warp"
+        case .supportFocusHost: return "Focus: %@"
+        case .supportFocusTTY: return "Focus: Terminal tab"
+        case .supportFocusTTYNeedsOptIn: return "Focus: Terminal tab (enable in Shortcuts)"
         case .activityPrefix: return "Doing"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
@@ -470,8 +480,18 @@ enum L10n {
         case .quietHoursHint: return "Waiting 通知仍会发送。起止相同时安静时段不生效。时段可跨午夜。"
         case .quietStart: return "开始"
         case .quietEnd: return "结束"
-        case .focusTTY: return "聚焦终端页"
+        case .focusTTY: return "聚焦终端标签"
         case .focusWarp: return "聚焦 Warp"
+        case .focusHostApp: return "聚焦 %@"
+        case .focusOpenTray: return "打开 Pulse 托盘"
+        case .allowTerminalAutomation: return "允许聚焦 Terminal / iTerm 标签"
+        case .allowTerminalAutomationHint:
+            return "默认关闭。开启后，聚焦时 macOS 可能请求自动化权限以选中对应标签。Warp 与 IDE 宿主不需要此项。"
+        case .supportFocusNone: return "聚焦：仅观测"
+        case .supportFocusWarp: return "聚焦：Warp"
+        case .supportFocusHost: return "聚焦：%@"
+        case .supportFocusTTY: return "聚焦：终端标签"
+        case .supportFocusTTYNeedsOptIn: return "聚焦：终端标签（在快捷键中开启）"
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
@@ -822,7 +842,9 @@ enum L10n {
         case recent1, recentN, recent, idleWord
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
-        case focusTerminal, focusTTY, focusWarp, dismissWait, details
+        case focusTerminal, focusTTY, focusWarp, focusHostApp, focusOpenTray, dismissWait, details
+        case allowTerminalAutomation, allowTerminalAutomationHint
+        case supportFocusNone, supportFocusWarp, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, agentDataAccessAgentDetail, agentDataAccessSkipHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal

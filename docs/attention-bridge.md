@@ -31,6 +31,10 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 
 设置 → Waiting signals →「打开 Attention 文件夹」可直接到达写入目录。
 
+**可运行样本：** [`docs/samples/attention-bridge/`](samples/attention-bridge/)
+（`raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——只演示 TSV 写入，
+不是 hook 安装器扩展。
+
 ---
 
 ## 文件

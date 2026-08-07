@@ -125,10 +125,23 @@ def main() -> int:
     terminal_focus_source = (
         ROOT / "PulseBar/Sources/PulseBar/TerminalFocus.swift"
     ).read_text(encoding="utf-8")
-    if "/usr/bin/osascript" in terminal_focus_source or "tell application" in terminal_focus_source:
+    # 0.55: Terminal/iTerm tab Focus may use osascript only after explicit
+    # Shortcuts opt-in, and only inside focusTTY on a user click — never during
+    # scan. Advertise path must still gate on allowTTYAutomation.
+    if "allowTTYAutomation" not in terminal_focus_source:
+        print("TerminalFocus must gate TTY advertising on allowTTYAutomation")
+        return 1
+    if "focusTTY" in terminal_focus_source and (
+        "/usr/bin/osascript" in terminal_focus_source
+        or "tell application" in terminal_focus_source
+    ):
+        if "allowTTYAutomation" not in terminal_focus_source:
+            print("TTY AppleScript must stay behind Automation opt-in")
+            return 1
+    elif "/usr/bin/osascript" in terminal_focus_source or "tell application" in terminal_focus_source:
         print(
-            "Pulse must not request Automation through AppleScript; tray reveal "
-            "fails quietly and Terminal/iTerm focus is not advertised"
+            "Pulse must not request Automation through AppleScript outside "
+            "opt-in Terminal/iTerm tab Focus"
         )
         return 1
     for label, path in {
@@ -137,12 +150,14 @@ def main() -> int:
         "SingleInstanceGuard": ROOT / "PulseBar/Sources/PulseBar/SingleInstanceGuard.swift",
     }.items():
         source = path.read_text(encoding="utf-8")
-        # A LaunchServices lookup scoped to Pulse's own bundle is safe and is
-        # required to avoid moving a second running copy to the Trash. Keep
-        # rejecting broad cross-app enumeration and the old ps/Apple Events
-        # paths, but allow this exact self-only query.
+        # Broad cross-app enumeration is forbidden. Narrow bundle-id lookups on
+        # an explicit user click (host IDE / Warp activate) and a LaunchServices
+        # lookup scoped to Pulse's own bundle are allowed.
+        if re.search(r"NSWorkspace\.shared\.runningApplications\b", source):
+            print(f"{label} must not enumerate every running app")
+            return 1
         if "runningApplications" in source and not re.search(
-            r"runningApplications\s*\(withBundleIdentifier:\s*bundleIdentifier\)",
+            r"runningApplications\s*\(withBundleIdentifier:",
             source,
         ):
             print(f"{label} must not enumerate other apps during normal runtime")
