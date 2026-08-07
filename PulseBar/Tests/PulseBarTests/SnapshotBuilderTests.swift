@@ -687,6 +687,15 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.rows[0].canFocusTerminal)
     }
 
+    func testHostAppFocusTierIsResolvedFromProcessHit() {
+        var proc = ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 11)
+        proc.hostApp = .cursor
+        let r = build(procs: [proc], context: context())
+        XCTAssertEqual(r.rows[0].hostApp, .cursor)
+        XCTAssertEqual(r.rows[0].focusTier, .hostApp(.cursor))
+        XCTAssertTrue(r.rows[0].canFocusTerminal)
+    }
+
     func testRowsWithoutFocusHaveNoPrimaryNavigationAction() {
         let r = build(
             harvest: [harvest(.claude, task: "A", session: "s1", cwd: "/gone")]

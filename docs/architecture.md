@@ -3,7 +3,7 @@
 数据从「机器上有个进程」走到「菜单栏亮红灯」的完整路径。
 
 ```
-  ┌─ ProcessProbe ──┐   ps -axo，进程 → AgentID，解析 TTY 与 Warp 父进程
+  ┌─ ProcessProbe ──┐   ps -axo，进程 → AgentID，解析 TTY、Warp 与宿主 IDE 父进程
   │                 │
   ├─ ActivityHarvest┤   Swift 原生 bounded reader；可选 legacy activity_scan.py → named JSON schema 2
   │                 │
@@ -27,8 +27,10 @@
 每条规则有 basename、路径特征串和排除串——排除串是必需的，
 `amp` 要躲开系统的 `AMPLibraryAgent`，`pi` 要躲开 `pip`。
 
-顺着 ppid 链向上找，回答两件事：真实 TTY 是什么（进程自己常是 `??`），
-以及是不是跑在 Warp 里（决定 Focus 该怎么做）。
+顺着 ppid 链向上找，回答三件事：真实 TTY 是什么（进程自己常是 `??`），
+是不是跑在 Warp 里，以及父进程是否是 Cursor / VS Code / Windsurf / Zed / Trae /
+Antigravity（决定 Focus 走 Warp、宿主 App，还是 opt-in 后的终端标签）。
+扫描期只用 `ps`，不枚举 `NSRunningApplication`；activate 发生在用户点击之后。
 
 `signature()` 给出这一轮的进程指纹。指纹没变，说明会话数据大概率也没变，
 昂贵的 harvest 就能跳过。
@@ -83,8 +85,8 @@ legacy 超时不再丢弃已有结果：完整的行留下，被截断的最后�
 它做的事：
 
 1. 进程按 agent 收敛，`cursor_agent` 并进 `cursor`
-2. harvest 行建会话行；key 冲突时唯一化；每 Agent 的 256 条采集输入保留 128 条，
-   第 129–256 条精确计入未显示数量
+2. harvest 行建会话行；key 冲突时唯一化；每 Agent 的 500 条采集输入保留 500 条，
+   超出部分精确计入未显示数量；面板 glance 默认全局前 12 行
 3. 陈旧 harvest 丢弃；同 Agent 没有任何新鲜记录且进程仍在时，只允许一个未完成记录
    按工作区匹配 / 最近活动降级为上下文；subagent 仍在运行的记录不视为陈旧
 4. `skill=pending` → Waiting，除非用户软忽略过

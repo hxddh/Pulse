@@ -36,6 +36,17 @@ final class SupportHealthTests: XCTestCase {
         let item = health(progress: false, waitingReady: false)
         XCTAssertEqual(item.observedFactCount, 4)
         XCTAssertEqual(item.missingCapabilities, [.waitingSignal])
+        XCTAssertNil(item.focusTier)
+        XCTAssertFalse(item.focusTTYNeedsOptIn)
+    }
+
+    func testSupportFocusFactsAreExplicit() {
+        var item = health()
+        item.focusTier = .hostApp(.cursor)
+        XCTAssertEqual(item.focusTier, .hostApp(.cursor))
+        item.focusTier = nil
+        item.focusTTYNeedsOptIn = true
+        XCTAssertTrue(item.focusTTYNeedsOptIn)
     }
 
     func testAgentWithoutWaitingContractIsNotPermanentlyIncomplete() {

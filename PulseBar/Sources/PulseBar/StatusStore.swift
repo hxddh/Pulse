@@ -23,6 +23,8 @@ final class StatusStore: ObservableObject {
     @Published var mutedAgents: Set<AgentID> = []
     @Published var hotkey: HotkeyChoice = .commandShiftP
     @Published var hotkeyEnabled = false
+    /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
+    @Published var allowTerminalAutomation = false
     @Published var trayGrouping: TrayGrouping = .status
     @Published var playSoundOnWaiting = false
     /// Minutes of silence before a live row reads as stalled; 0 turns it off.
@@ -530,8 +532,39 @@ final class StatusStore: ObservableObject {
                 hasResourceSignal: rows.contains {
                     $0.tokensIn > 0 || $0.tokensOut > 0 || $0.records > 0
                         || $0.errors > 0 || $0.files > 0 || $0.contextPercent > 0
-                }
+                },
+                focusTier: bestSupportFocus(in: rows),
+                focusTTYNeedsOptIn: supportTTYNeedsOptIn(in: rows)
             )
+        }
+    }
+
+    /// Prefer Warp → host IDE → TTY — same honesty order as `TerminalFocus.focusTier`.
+    private func bestSupportFocus(in rows: [AgentRow]) -> FocusTier? {
+        let tiers = rows.compactMap(\.focusTier)
+        if tiers.contains(where: { if case .warp = $0 { return true }; return false }) {
+            return .warp
+        }
+        if let host = tiers.compactMap({ tier -> HostAppKind? in
+            if case .hostApp(let kind) = tier { return kind }
+            return nil
+        }).first {
+            return .hostApp(host)
+        }
+        if tiers.contains(where: { if case .tty = $0 { return true }; return false }) {
+            return .tty
+        }
+        return nil
+    }
+
+    /// Real TTY on a row that still has no advertised focus (Automation off).
+    private func supportTTYNeedsOptIn(in rows: [AgentRow]) -> Bool {
+        guard !allowTerminalAutomation else { return false }
+        return rows.contains { row in
+            guard row.focusTier == nil, !row.viaWarp, row.hostApp == nil else { return false }
+            var t = row.tty.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.hasPrefix("/dev/") { t = String(t.dropFirst(5)) }
+            return !t.isEmpty && t != "?" && t != "??" && t != "-"
         }
     }
 
@@ -1958,7 +1991,9 @@ final class StatusStore: ObservableObject {
             previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: waitingKeysForEdges),
             context: SnapshotBuilder.Context(
                 nowMs: Int64(now.timeIntervalSince1970 * 1000),
-                terminal: TerminalFocus.Environment.current(),
+                terminal: TerminalFocus.Environment.current(
+                    allowTTYAutomation: allowTerminalAutomation
+                ),
                 lang: lang,
                 dismissedPendingKeys: dismissedPendingKeys,
                 showAllAgents: showAllAgents,
@@ -3036,13 +3071,33 @@ final class StatusStore: ObservableObject {
         switch row.focusTier {
         case .tty: return tr(.focusTTY)
         case .warp: return tr(.focusWarp)
-        case .none: return tr(.focusTerminal)
+        case .hostApp(let kind):
+            return String(format: tr(.focusHostApp), kind.displayName)
+        case .none:
+            // No handle — never advertise "Focus terminal" for cwd-only rows.
+            return tr(.focusOpenTray)
         }
     }
 
     func primaryActionTitle(_ row: AgentRow) -> String {
         if row.canFocusTerminal { return focusActionTitle(row) }
         return tr(.moreActions)
+    }
+
+    /// Support Health Focus fact — observation-only when nothing is clickable.
+    func supportFocusDetail(_ health: AgentSupportHealth) -> String {
+        if let tier = health.focusTier {
+            switch tier {
+            case .warp: return tr(.supportFocusWarp)
+            case .hostApp(let kind):
+                return String(format: tr(.supportFocusHost), kind.displayName)
+            case .tty: return tr(.supportFocusTTY)
+            }
+        }
+        if health.focusTTYNeedsOptIn {
+            return tr(.supportFocusTTYNeedsOptIn)
+        }
+        return tr(.supportFocusNone)
     }
 
     /// "Remind me later" — the answer that did not exist.
@@ -3251,6 +3306,7 @@ final class StatusStore: ObservableObject {
             appDataAgents: appDataAgents,
             hotkey: hotkey,
             hotkeyEnabled: hotkeyEnabled,
+            allowTerminalAutomation: allowTerminalAutomation,
             mutedAgents: mutedAgents,
             trayGrouping: trayGrouping,
             playSoundOnWaiting: playSoundOnWaiting,
@@ -3273,6 +3329,7 @@ final class StatusStore: ObservableObject {
         appDataAgents = s.appDataAgents
         hotkey = s.hotkey
         hotkeyEnabled = s.hotkeyEnabled
+        allowTerminalAutomation = s.allowTerminalAutomation
         mutedAgents = s.mutedAgents
         trayGrouping = s.trayGrouping
         playSoundOnWaiting = s.playSoundOnWaiting

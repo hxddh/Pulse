@@ -2,6 +2,34 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.55.0 — Return Continuity / 回到现场
+
+红灯已立；本版把「点一下回到正确表面」做完。详见 [`docs/plan-0.55.md`](docs/plan-0.55.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready** ——
+GitHub Latest 仍可跟 semver，Info.plist 保持 preview。
+
+### P0 · Focus 诚实与宿主回到现场
+
+- Support Health 每 Agent 标明 Focus 事实（Warp / 宿主 / TTY / 需 opt-in / 仅观测）。
+- 通知与「跳到等待」：有句柄则 Focus，否则打开托盘 —— 不静默失败。
+- `FocusTier.hostApp`：Cursor / VS Code / Windsurf / Zed / Trae / Antigravity 经
+  `ps` 父链识别，点击时 `NSWorkspace` activate（扫描期不枚举、不隐式 TCC）。
+- `architecture.md` 会话预算对齐 500/500/glance 12；EXPERIENCE Focus / 英雄文案同步。
+
+### P1 · Automation opt-in 与行动作文案
+
+- Shortcuts：显式「允许聚焦 Terminal / iTerm 标签」（默认 off）；开启后才广告 `.tty`。
+- 动作文案分级：Focus Warp / Focus 宿主 / Focus 终端标签；无句柄不伪装 Focus 按钮。
+
+### P2 · Attention 样本与标题回归
+
+- `docs/samples/attention-bridge/`：replit / devin / warpAgent / trae / antigravity / junie。
+- 标题边角（tool 同名 / 文件名）单测保留；补宿主 Focus 文案单测。
+
+### 验证
+
+- FocusTier / SnapshotBuilder hostApp、settings `terminalAutomation` round-trip；八门禁对 0.55.0。
+
 ## 0.54.2 — Tray titles & density / 托盘标题与信息密度
 
 下拉弹窗主行常被工具 ID / 占位符占用，有效信息被留白和重复叙事稀释。本版修标题来源并收紧行距。

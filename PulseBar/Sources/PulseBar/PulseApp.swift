@@ -1974,6 +1974,14 @@ struct SettingsView: View {
             Text(store.tr(.a11yHint))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            Toggle(store.tr(.allowTerminalAutomation), isOn: $store.allowTerminalAutomation)
+                .onChange(of: store.allowTerminalAutomation) { _, _ in
+                    store.saveSettings()
+                    store.refresh(reason: "terminalAutomation")
+                }
+            Text(store.tr(.allowTerminalAutomationHint))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -2451,6 +2459,10 @@ struct SupportHealthRow: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
+
+                Text(store.supportFocusDetail(item))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 if item.isObserved {
                     HStack(spacing: 6) {

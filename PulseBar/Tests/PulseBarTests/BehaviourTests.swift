@@ -159,7 +159,7 @@ final class ProbeScheduleTests: XCTestCase {
 /// Focus honesty: never claim a TTY we cannot select.
 final class FocusTierTests: XCTestCase {
     private let fullEnv = TerminalFocus.Environment(
-        warpRunning: true, ttyHostRunning: true
+        warpRunning: true, ttyHostRunning: true, allowTTYAutomation: true
     )
 
     func testWarpWins_WhenProcessRunsUnderWarp() {
@@ -167,33 +167,70 @@ final class FocusTierTests: XCTestCase {
         XCTAssertEqual(tier, .warp, "TTY tab select does not work inside Warp")
     }
 
-    func testTTYIsNotAdvertisedBecauseItWouldRequestAutomationPermission() {
+    func testHostAppIsAdvertisedWithoutAutomation() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true
+            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
+        )
+        XCTAssertEqual(
+            TerminalFocus.focusTier(
+                tty: "", viaWarp: false, hostApp: .cursor, env: env
+            ),
+            .hostApp(.cursor)
+        )
+        XCTAssertEqual(
+            TerminalFocus.focusTier(
+                tty: "ttys003", viaWarp: false, hostApp: .vsCode, env: env
+            ),
+            .hostApp(.vsCode)
+        )
+    }
+
+    func testWarpBeatsHostApp() {
+        let env = TerminalFocus.Environment(
+            warpRunning: true, ttyHostRunning: false, allowTTYAutomation: false
+        )
+        XCTAssertEqual(
+            TerminalFocus.focusTier(
+                tty: "", viaWarp: true, hostApp: .cursor, env: env
+            ),
+            .warp
+        )
+    }
+
+    func testTTYIsNotAdvertisedUntilAutomationOptIn() {
+        let off = TerminalFocus.Environment(
+            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: false
         )
         XCTAssertNil(
-            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: env),
-            "a real TTY is still not permission-free focus"
+            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: off),
+            "default off — never advertise TTY before Shortcuts opt-in"
+        )
+        let on = TerminalFocus.Environment(
+            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: true
+        )
+        XCTAssertEqual(
+            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: on),
+            .tty
         )
     }
 
     func testCwdDoesNotPretendToBeAFocusHandle() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false
+            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
         )
         XCTAssertNil(TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: env))
     }
 
     func testNoHandleMeansNoFocusButtonAtAll() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false
+            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
         )
         XCTAssertNil(TerminalFocus.focusTier(tty: "", viaWarp: false, env: env))
     }
 
     func testPlaceholderTTYValuesAreNotRealHandles() {
         let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true
+            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: true
         )
         for placeholder in ["", "?", "??", "-"] {
             XCTAssertNil(
@@ -201,6 +238,14 @@ final class FocusTierTests: XCTestCase {
                 "\(placeholder) should not count as a TTY"
             )
         }
+    }
+
+    func testFocusHostAppActionCopyIsProductNameNotGenericTerminal() {
+        let en = L10n.t(.focusHostApp, .en)
+        XCTAssertEqual(String(format: en, HostAppKind.cursor.displayName), "Focus Cursor")
+        XCTAssertEqual(String(format: en, HostAppKind.zed.displayName), "Focus Zed")
+        let zh = L10n.t(.focusHostApp, .zh)
+        XCTAssertEqual(String(format: zh, "Cursor"), "聚焦 Cursor")
     }
 }
 

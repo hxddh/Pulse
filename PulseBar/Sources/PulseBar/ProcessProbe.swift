@@ -28,6 +28,8 @@ enum ProcessProbe {
         var cwd: String = ""
         /// Rule class only; never retain or show the matched argv.
         var evidence: ProcessEvidence = .executable
+        /// Parent IDE / editor from `ps` argv walk — Focus host without TCC.
+        var hostApp: HostAppKind? = nil
     }
 
     private struct Rule {
@@ -252,6 +254,25 @@ enum ProcessProbe {
             return false
         }
 
+        /// Walk parents for a host IDE path needle — `ps` only, no AppKit.
+        func resolveHostApp(_ pid: Int) -> HostAppKind? {
+            var seen = Set<Int>()
+            var cur: Int? = pid
+            while let c = cur, seen.insert(c).inserted {
+                guard let a = argsByPid[c] else {
+                    cur = byPid[c]
+                    continue
+                }
+                for kind in HostAppKind.allCases {
+                    if kind.pathNeedles.contains(where: { a.contains($0) }) {
+                        return kind
+                    }
+                }
+                cur = byPid[c]
+            }
+            return nil
+        }
+
         /// Walk parents for a real tty when the process itself is `??`.
         func resolveTTY(_ pid: Int) -> String {
             var seen = Set<Int>()
@@ -281,6 +302,7 @@ enum ProcessProbe {
             hit.count += 1
             hit.evidence = match.evidence
             if underWarp(p.pid) { hit.viaWarp = true }
+            if hit.hostApp == nil { hit.hostApp = resolveHostApp(p.pid) }
             if hit.pid == 0 {
                 hit.pid = p.pid
                 hit.tty = resolveTTY(p.pid)

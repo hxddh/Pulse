@@ -50,6 +50,9 @@ struct PulseSettings: Equatable {
     /// request on unsigned builds. Keep it opt-in; choosing a shortcut in the
     /// settings UI enables it explicitly.
     var hotkeyEnabled = false
+    /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
+    /// prompt Automation TCC on the first Focus click, never during a scan.
+    var allowTerminalAutomation = false
     /// Muted agents still appear in the tray; they just stop notifying.
     var mutedAgents: Set<AgentID> = []
     /// How the tray groups rows. Status is the default because "who needs me"
@@ -111,6 +114,7 @@ struct PulseSettings: Equatable {
                 sawCurrentAppDataPolicy = Int(raw) == Self.appDataPolicyVersion
             case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .commandShiftP
             case "hotkeyEnabled": s.hotkeyEnabled = on
+            case "terminalAutomation": s.allowTerminalAutomation = on
             case "mute":
                 s.mutedAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
             case "lang": s.language = AppLanguage(rawValue: raw) ?? .auto
@@ -157,6 +161,7 @@ struct PulseSettings: Equatable {
             appDataPolicyVersion=\(Self.appDataPolicyVersion)
             hotkey=\(hotkey.rawValue)
             hotkeyEnabled=\(hotkeyEnabled ? 1 : 0)
+            terminalAutomation=\(allowTerminalAutomation ? 1 : 0)
             grouping=\(trayGrouping.rawValue)
             waitSound=\(playSoundOnWaiting ? 1 : 0)
             stallMin=\(stallMinutes)
@@ -185,7 +190,8 @@ struct PulseSettings: Equatable {
         "auto=\(autoProbe) notifyIdle=\(notifyOnIdle) notifyWait=\(notifyOnWaiting) "
             + "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) "
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
-            + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
+            + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) "
+            + "terminalAutomation=\(allowTerminalAutomation) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
             + "appData=\(allowAppData) "
             + "appDataAgents=\(appDataAgents.count) "
             + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
