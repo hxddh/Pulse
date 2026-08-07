@@ -266,7 +266,6 @@ enum L10n {
         case .noProject: return "Workspace unknown"
         case .stalled: return "Stalled"
         case .stalledFor: return "No activity for %@"
-        case .noProgressSignal: return "No progress signal yet"
         case .supportHealth: return "Agent support health"
         case .supportHealthHint:
             return "Observed runtime evidence, not marketing coverage. Missing facts stay explicit."
@@ -312,6 +311,9 @@ enum L10n {
         case .supportWaitingNone: return "Waiting unavailable"
         case .supportWaitingNoneDetail:
             return "No native Waiting path — use the Attention bridge"
+        case .supportDepthSession: return "Depth: session transcript"
+        case .supportDepthCache: return "Depth: cache / index (Limited)"
+        case .supportDepthWaitingNone: return "Waiting unavailable — Attention bridge"
         case .supportSharedCursor: return "Cursor Agent shares this adapter"
         case .supportLastSignal: return "signal %@ ago"
         case .supportDetectedExecutable: return "detected by executable"
@@ -668,7 +670,6 @@ enum L10n {
         case .noProject: return "工作区未知"
         case .stalled: return "停滞"
         case .stalledFor: return "已 %@ 无活动"
-        case .noProgressSignal: return "暂无执行进展信号"
         case .supportHealth: return "Agent 支持健康度"
         case .supportHealthHint: return "展示本机实际观测证据，而非静态支持名单；缺失信息会明确标出。"
         case .supportScanIncomplete: return "扫描未完成 · 已保留上一次适配器结果"
@@ -710,6 +711,9 @@ enum L10n {
         case .supportWaitingHarvest: return "等待通路：会话数据"
         case .supportWaitingNone: return "等待：不可用"
         case .supportWaitingNoneDetail: return "无原生 Waiting 路径 — 请用 Attention 桥"
+        case .supportDepthSession: return "深度：会话笔录"
+        case .supportDepthCache: return "深度：缓存 / 索引（有限）"
+        case .supportDepthWaitingNone: return "Waiting 不可用 — Attention 桥"
         case .supportSharedCursor: return "Cursor Agent 与此适配器共用"
         case .supportLastSignal: return "%@前收到信号"
         case .supportDetectedExecutable: return "通过可执行程序检测"
@@ -857,6 +861,7 @@ enum L10n {
         case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait, details
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
+        case supportDepthSession, supportDepthCache, supportDepthWaitingNone
         case attentionBridgeWriteSample, attentionBridgeWriteSampleHint, attentionBridgeClearSample
         case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, agentDataAccessAgentDetail, agentDataAccessSkipHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
@@ -898,7 +903,7 @@ enum L10n {
         case jumpToOldest, interruptionsToday, playSound
         case waitedLongest, moreActions
         case acrossProjects, agoFormat, whileAway, noActivityYet
-        case noProject, stalled, stalledFor, noProgressSignal
+        case noProject, stalled, stalledFor
         case supportHealth, supportHealthHint, supportScanIncomplete, supportScanIncompleteTimeout, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
         case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, supportEvidence, session

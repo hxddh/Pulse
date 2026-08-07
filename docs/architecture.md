@@ -61,8 +61,25 @@ JSON……每个 Agent 一个 bounded adapter，直接生成 Swift `Row` 和 `Co
   渲染成有效内容。读取受保护的 App Support/App Group 需要按 Agent 明确授权；native reader
   在访问前做 lexical TCC gate，ProcessProbe 的 lsof 也只接收已授权 Agent 的 PID。
 
-legacy 超时不再丢弃已有结果：完整的行留下，被截断的最后一行丢掉；native adapter
+legacy 超时不再丢弃已有结果：完整的行留下、被截断的最后一行丢掉；native adapter
 按自己的时间预算直接返回已解析事实。
+
+#### Harvest merge（事实连续）
+
+一个会话文件常被拆成多条 Fact（用户 prompt、多次 `tool_use`、cwd 碎片）。
+Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计数之后，
+会对同一文件的碎片 **再跑一次 merge**，否则盖章同一 session id 会把身份压扁，
+最早的碎片会永远抢走最新动作。
+
+合并规则（`NativeActivityHarvest.merge`）：
+
+- **identity**：同一 `(session / path)` 收成一行
+- **task / cwd / project / model…**：先写优先（空才填）
+- **tool：后写非空覆盖** —— Claude 的 `tool_use` 出现在用户 prompt 之后；
+  prefer-first 会让行永远停在空动作
+- **tokens / progress / subRunning / subTotal**：取 max
+- Codex 无类型的 head/compat 行：保留 cwd/tool/tokens，**不把裸 `title`
+  升成 task**（那是 plan/registry 标签，不是用户目标）
 
 `HarvestSupervisor` 在 `StatusStore` 外围为每个 Agent 保存独立的失败次数、下次重试、熔断截止和最后错误；
 一次 partial scan 只更新已到达的 adapter，下一次只探测已到期的 Agent，全部退避时做一个半开探测。

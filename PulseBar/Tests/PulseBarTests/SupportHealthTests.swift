@@ -49,6 +49,21 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(item.focusTTYNeedsOptIn)
     }
 
+    func testSupportDepthDistinguishesSessionCacheAndWaitingNone() {
+        let store = StatusStore()
+        let session = health(agent: .claude)
+        XCTAssertEqual(store.supportDepthDetail(session), store.tr(.supportDepthSession))
+
+        let cache = health(agent: .cline, evidence: .cache)
+        XCTAssertEqual(AgentID.cline.harvestSource, .bestEffortCache)
+        XCTAssertNotEqual(AgentID.cline.waitingSource, .none)
+        XCTAssertEqual(store.supportDepthDetail(cache), store.tr(.supportDepthCache))
+
+        let none = health(agent: .devin)
+        XCTAssertEqual(AgentID.devin.waitingSource, .none)
+        XCTAssertEqual(store.supportDepthDetail(none), store.tr(.supportDepthWaitingNone))
+    }
+
     func testAgentWithoutWaitingContractIsNotPermanentlyIncomplete() {
         let item = health(agent: .devin, progress: true, waitingReady: false)
         XCTAssertTrue(item.missingCapabilities.isEmpty)

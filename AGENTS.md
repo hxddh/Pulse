@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.56.md`](docs/plan-0.56.md) | The active plan (Landing Precision) |
+| [`docs/plan-0.57.md`](docs/plan-0.57.md) | The active plan (Fact Continuity) |
+| [`docs/plan-0.56.md`](docs/plan-0.56.md) | Historical plan (Landing Precision) |
 | [`docs/plan-0.55.md`](docs/plan-0.55.md) | Historical plan (Return Continuity) |
 | [`docs/plan-0.54.md`](docs/plan-0.54.md) | Historical plan (Channel Continuity) |
 | [`docs/plan-0.53.md`](docs/plan-0.53.md) | Historical plan (Delivery Continuity) |
@@ -120,8 +121,7 @@ to users.
 
 ## Current state
 
-0.56.1 is the current source version. Without an Apple Developer ID, GitHub
+0.57.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.56.md`](docs/plan-0.56.md) (Landing Precision); 0.56.1 is
-a bugfix on tray facts and the post-update phantom Settings window.
+plan is [`docs/plan-0.57.md`](docs/plan-0.57.md) (Fact Continuity).

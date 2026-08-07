@@ -576,6 +576,15 @@ enum NativeActivityHarvest {
                     }
                 }
             }
+            if id == .claude {
+                let counts = claudeSubagentCounts(for: item)
+                if counts.total > 0 {
+                    for index in parsed.indices {
+                        parsed[index].subRunning = max(parsed[index].subRunning, counts.running)
+                        parsed[index].subTotal = max(parsed[index].subTotal, counts.total)
+                    }
+                }
+            }
             // Stamping the same path-derived session id onto every fragment
             // collapses identities — re-merge so latest tool / richest task win.
             parsed = merge(parsed)
@@ -1366,7 +1375,15 @@ enum NativeActivityHarvest {
             // typed payload. Merge those fields before handling the richer
             // event envelope so cwd/title/tool/token evidence is not lost.
             if type.isEmpty {
-                let generic = fact(from: object, context: "codex.rollout", structured: true, path: path)
+                var generic = fact(from: object, context: "codex.rollout", structured: true, path: path)
+                // Untyped Codex head/compat lines often carry registry or plan
+                // step `title` values. Keep cwd/tool/tokens; only accept task
+                // from real prompt keys so tool-arg titles never become the hero.
+                let prompt = firstString(object, keys: [
+                    "task", "goal", "prompt", "query", "user_message", "userMessage",
+                    "lastMessage", "last_message", "subject",
+                ])
+                if prompt.isEmpty { generic.task = "" }
                 if generic.hasUsefulSignal { merge(&f, generic) }
             }
             let payload = object["payload"] as? [String: Any] ?? [:]
@@ -1691,6 +1708,35 @@ enum NativeActivityHarvest {
         let head = parts[0].lowercased()
         guard head == "users" || head == "home" else { return "" }
         return "/" + parts.joined(separator: "/")
+    }
+
+    /// Layout: `~/.claude/projects/<proj>/<sessionId>/subagents/agent-*.jsonl`
+    /// Running ≈ mtime within 2 minutes (matches activity_scan.claude_subagent_counts).
+    private static func claudeSubagentCounts(for sessionFile: URL) -> (running: Int, total: Int) {
+        let subDir = sessionFile
+            .deletingLastPathComponent()
+            .appendingPathComponent(sessionFile.deletingPathExtension().lastPathComponent, isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: subDir.path) else { return (0, 0) }
+        guard let files = try? fm.contentsOfDirectory(
+            at: subDir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return (0, 0) }
+        let now = Date().timeIntervalSince1970
+        var running = 0
+        var total = 0
+        for file in files {
+            let name = file.lastPathComponent.lowercased()
+            guard name.hasPrefix("agent-"), name.hasSuffix(".jsonl") else { continue }
+            total += 1
+            let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate?
+                .timeIntervalSince1970 ?? 0
+            if mtime > 0, now - mtime <= 120 { running += 1 }
+        }
+        return (running, total)
     }
 
     private static func makeRows(from facts: [Fact], id: AgentID, home: URL) -> [ActivityHarvest.Row] {

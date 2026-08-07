@@ -3100,6 +3100,19 @@ final class StatusStore: ObservableObject {
         return tr(.supportFocusNone)
     }
 
+    /// Thin vs deep observation — never let a cache/none Agent look session-deep.
+    func supportDepthDetail(_ health: AgentSupportHealth) -> String {
+        if health.agent.waitingSource == .none {
+            return tr(.supportDepthWaitingNone)
+        }
+        switch health.agent.harvestSource {
+        case .bestEffortCache:
+            return tr(.supportDepthCache)
+        case .structuredSession:
+            return tr(.supportDepthSession)
+        }
+    }
+
     /// "Remind me later" — the answer that did not exist.
     ///
     /// A wait had exactly two available responses: deal with it now, or clear

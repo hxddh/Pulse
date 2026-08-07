@@ -117,6 +117,12 @@ up as Limited / ObservationQuality gaps — never as a silent “full session”
 claim. Agents with `waitingSource=none` stay Running-only unless the Attention
 bridge writes a real Waiting line.
 
+High-traffic cache adapters (Windsurf / Cascade, Cline, Roo, Warp, and peers
+marked `verified cache` above) stay **Limited** when the index is thin: Support
+depth reads “cache / index”, not “session transcript”. Do not promote a
+best-effort cache hit into structured-session copy just because a process is
+alive.
+
 ## Tool and skill policy
 
 Raw tool and skill names are usually low-value implementation metadata:

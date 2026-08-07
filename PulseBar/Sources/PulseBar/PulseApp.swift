@@ -86,27 +86,21 @@ enum PulseBarMain {
             return
         }
         instanceGuard = guardLock
-        PulseBarApp.main()
+        // AppKit-only run loop — no SwiftUI `Settings { EmptyView() }` scene.
+        // That scene was a lifecycle anchor and became a blank Settings window
+        // on Finder/Spotlight reopen after update (0.56.1 workaround). Real
+        // settings stay in SettingsWindowController.
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        retainedAppDelegate = delegate
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.run()
     }
-}
 
-struct PulseBarApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-    var body: some Scene {
-        // The status item and its panel are AppKit-owned by `StatusPanelController`.
-        // A SwiftUI MenuBarExtra(.window) adds private top/bottom content insets
-        // outside the root view. Those insets remained visible as two long bars
-        // regardless of which material the root painted. An app-owned panel has
-        // one exact content rect and therefore one surface.
-        Settings {
-            // Anchor for SwiftUI App lifecycle only. Real settings are AppKit
-            // (`SettingsWindowController`). An EmptyView Settings scene still
-            // becomes a titled window on reopen/activation after update —
-            // AppDelegate must refuse that reopen and dismiss orphans.
-            EmptyView()
-        }
-    }
+    /// Retained for the process lifetime — NSApplication does not keep a strong
+    /// reference to its delegate.
+    private static var retainedAppDelegate: AppDelegate?
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -116,8 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// completed scan or its honest timeout result.
     private static let captureDelay: TimeInterval = 6.8
 
-    /// Windows Pulse intentionally owns. Anything else titled under a normal
-    /// window level is treated as the phantom SwiftUI Settings scene.
+    /// Windows Pulse intentionally owns. Orphan titled windows without these
+    /// ids are closed as defense-in-depth (should not appear without a Settings scene).
     private static let ownedWindowIDs: Set<String> = [
         "pulse-settings",
         "pulse-support-coverage",
@@ -129,10 +123,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var activationObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Activation policy is also set before run(); keep accessory here so
+        // CLI/QA relaunch paths stay consistent.
         NSApp.setActivationPolicy(.accessory)
-        // Notification authorization can be changed in System Settings while
-        // Pulse remains alive. Refresh on return so the toggles and policy do
-        // not stay stuck at the pre-settings value.
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: NSApp,
@@ -228,8 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Finder / Spotlight / post-update "Open" must not create a blank Settings
-    /// window from `Settings { EmptyView() }`. Tray reveal is user-driven.
+    /// Finder / Spotlight reopen must not invent windows. Tray is user-driven.
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
@@ -242,18 +234,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
-    /// Close titled windows that are not Pulse-owned controllers.
+    /// Defense-in-depth: close titled windows that are not Pulse-owned.
+    /// After removing the SwiftUI Settings scene this should be a no-op.
     private func dismissPhantomSettingsWindows() {
         for window in NSApp.windows {
             if let id = window.identifier?.rawValue, Self.ownedWindowIDs.contains(id) {
                 continue
             }
-            // Tray / status panels are borderless or non-normal level.
             if window.styleMask.contains(.borderless) { continue }
             if window.level != .normal { continue }
             guard window.styleMask.contains(.titled) else { continue }
-            // Real settings always carry `pulse-settings`. The SwiftUI Settings
-            // scene ships with a nil identifier and EmptyView content.
             if window.identifier == nil {
                 window.close()
             }
@@ -2524,6 +2514,10 @@ struct SupportHealthRow: View {
                 Text(store.supportFocusDetail(item))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Text(store.supportDepthDetail(item))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
 
                 if item.isObserved {
                     HStack(spacing: 6) {
