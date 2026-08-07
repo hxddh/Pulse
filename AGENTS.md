@@ -120,7 +120,8 @@ to users.
 
 ## Current state
 
-0.56.0 is the current source version. Without an Apple Developer ID, GitHub
+0.56.1 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.56.md`](docs/plan-0.56.md) (Landing Precision).
+plan is [`docs/plan-0.56.md`](docs/plan-0.56.md) (Landing Precision); 0.56.1 is
+a bugfix on tray facts and the post-update phantom Settings window.
