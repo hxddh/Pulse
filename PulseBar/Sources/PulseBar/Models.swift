@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.55.0"
+    static let semver = "0.56.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -437,10 +437,15 @@ enum WaitSignalKind: String, Equatable {
     case pending
 }
 
-/// Honesty tier for Focus — never claim TTY when we only have cwd.
+/// Honesty tier for Focus — never claim session/tab precision when we only activate an app.
 enum FocusTier: Equatable, Hashable {
+    /// Terminal/iTerm tab select (Automation opt-in only).
     case tty
+    /// Warp app activate — never tab-precise.
     case warp
+    /// Host IDE with an absolute workspace path we can open via `open -a`.
+    case hostWorkspace(HostAppKind)
+    /// Host IDE app activate only.
     case hostApp(HostAppKind)
 }
 

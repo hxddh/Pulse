@@ -29,11 +29,14 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 | `antigravity` | Antigravity |
 | `junie` | Junie |
 
-设置 → Waiting signals →「打开 Attention 文件夹」可直接到达写入目录。
+设置 → Waiting signals →「打开 Attention 文件夹」可直接到达写入目录；
+同区「写入样本 Waiting」可为 Replit 追加一行可清除的样本（不扩 hook 安装器）。
 
 **可运行样本：** [`docs/samples/attention-bridge/`](samples/attention-bridge/)
 （`raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——只演示 TSV 写入，
 不是 hook 安装器扩展。
+
+深链 / Focus 精度边界：[`docs/landing-hosts.md`](landing-hosts.md)。
 
 ---
 

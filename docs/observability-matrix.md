@@ -107,11 +107,15 @@ TTY/focus capability, and an explicit “activity unavailable” statement. That
 fallback is detection, not rich session observability, and is never presented
 as equivalent to a session/cache row.
 
-Collector ingestion is bounded at 256 rows per Agent for a normal glance scan.
-The 0.50 session index raises the search-visible retain ceiling to 500 per
-Agent with pagination / on-demand load; the tray's global twelve-row fold
-remains presentation only. This separation lets Pulse observe more than it
-shows without allowing unbounded vendor stores to consume menu-bar memory.
+Collector ingestion is bounded at 500 rows per Agent (same ceiling as Swift
+retain). The tray's global twelve-row fold remains presentation only. This
+separation lets Pulse observe more than it shows without allowing unbounded
+vendor stores to consume menu-bar memory.
+
+`bestEffortCache` Agents may still miss goal / workspace / activity; that shows
+up as Limited / ObservationQuality gaps — never as a silent “full session”
+claim. Agents with `waitingSource=none` stay Running-only unless the Attention
+bridge writes a real Waiting line.
 
 ## Tool and skill policy
 

@@ -651,7 +651,7 @@ enum NativeActivityHarvest {
         into facts: inout [Fact],
         error: inout Bool
     ) {
-        let sql = "SELECT session_id, cwd, updated_at, title, content FROM session_docs ORDER BY updated_at DESC LIMIT 256"
+        let sql = "SELECT session_id, cwd, updated_at, title, content FROM session_docs ORDER BY updated_at DESC LIMIT \(maxRowsPerAgent)"
         guard let statement = sqlitePrepare(database, sql) else {
             error = true
             return
@@ -718,7 +718,7 @@ enum NativeActivityHarvest {
         FROM session
         WHERE IFNULL(time_archived, 0) = 0
         ORDER BY time_updated DESC
-        LIMIT 256
+        LIMIT \(maxRowsPerAgent)
         """
         guard let statement = sqlitePrepare(database, sql) else {
             error = true
@@ -854,7 +854,7 @@ enum NativeActivityHarvest {
                 taskCounts[sqliteString(statement, column: 0)] = max(0, Int(sqlite3_column_int64(statement, 1)))
             }
         }
-        guard let statement = sqlitePrepare(database, "SELECT conversation_id, last_modified_at, summary, conversation_data FROM agent_conversations ORDER BY last_modified_at DESC LIMIT 256") else {
+        guard let statement = sqlitePrepare(database, "SELECT conversation_id, last_modified_at, summary, conversation_data FROM agent_conversations ORDER BY last_modified_at DESC LIMIT \(maxRowsPerAgent)") else {
             error = true
             return
         }
@@ -911,7 +911,7 @@ enum NativeActivityHarvest {
         into facts: inout [Fact],
         error: inout Bool
     ) {
-        let sql = "SELECT session_id, project_dir, started_at, last_event_at, event_count FROM session_meta ORDER BY COALESCE(last_event_at, started_at) DESC LIMIT 256"
+        let sql = "SELECT session_id, project_dir, started_at, last_event_at, event_count FROM session_meta ORDER BY COALESCE(last_event_at, started_at) DESC LIMIT \(maxRowsPerAgent)"
         guard let statement = sqlitePrepare(database, sql) else {
             error = true
             return
@@ -1148,7 +1148,7 @@ enum NativeActivityHarvest {
         FROM composerHeaders
         WHERE IFNULL(isArchived, 0) = 0 AND IFNULL(isSubagent, 0) = 0
         ORDER BY lastUpdatedAt DESC
-        LIMIT 256
+        LIMIT \(maxRowsPerAgent)
         """
         // Cursor versions do not all ship the cloud-agent ItemTable. Treat
         // each table as an optional capability: a missing table must not turn

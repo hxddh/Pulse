@@ -2,6 +2,33 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.56.0 — Landing Precision / 精确落地
+
+0.55 能回去；本版把「回到哪一层」说清楚，并在可验证时落到宿主工作区。
+详见 [`docs/plan-0.56.md`](docs/plan-0.56.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 落地精度
+
+- `FocusTier.hostWorkspace`：绝对 cwd 时 `open -a Host.app <cwd>`；否则 `.hostApp`。
+- 文案 / Support：TTY 标签 · 工作区 · Warp/宿主 (app) · 仅观测；不再把仅激活 App 写成「跳到该会话」。
+- Warp 明确为 App 级；深链边界见 [`docs/landing-hosts.md`](docs/landing-hosts.md)。
+- EXPERIENCE / README / architecture / matrix / AGENTS 对齐 0.56。
+
+### P1 · ingest 与 Attention 可达
+
+- SQLite 采集 `LIMIT` 与 retain 同为 500。
+- Settings → Waiting signals：一键写入 / 清除 Replit Attention 样本（不扩 hook 安装器）。
+- bestEffortCache / none Waiting 叙事与 matrix 一致。
+
+### P2 · 回归
+
+- hostWorkspace / 文案单测；标题边角回归保留。
+
+### 验证
+
+- FocusTier / SnapshotBuilder / L10n；八门禁对 0.56.0。
+
 ## 0.55.0 — Return Continuity / 回到现场
 
 红灯已立；本版把「点一下回到正确表面」做完。详见 [`docs/plan-0.55.md`](docs/plan-0.55.md)。

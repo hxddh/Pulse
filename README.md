@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.55.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.55.0) · macOS 14+
+**版本：`0.56.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.56.0) · macOS 14+
 
 ---
 
@@ -13,13 +13,13 @@ Pulse 把这件事变成余光可见：
 
 | 灯 | 含义 | 你该做什么 |
 | --- | --- | --- |
-| 🔴 红 | **需要你** —— 在等授权或输入 | 点一下，直接跳到那个终端页 |
+| 🔴 红 | **需要你** —— 在等授权或输入 | 点一下：有句柄则按精度落地（标签 / 工作区 / 仅 App），否则打开托盘 |
 | 🟢 绿 | 运行中 | 不用管 |
 | ⚪️ 灰 | 空闲 / 只有最近会话 | 不用管 |
 | 🟠 橙 | 已停滞，或探测能力异常 | 点开查看停滞原因；探测异常时看「关于 → 复制诊断信息」 |
 
 点开托盘看到的是**可解释的观测**：每行明确标出结构化会话、本地缓存或仅进程；
-有可靠 Warp 句柄时整行可聚焦，否则保持为信息，不制造无效动作。
+有可靠 Focus 句柄时整行可聚焦（TTY 标签 / 宿主工作区 / Warp 或宿主 App），否则保持为信息，不制造无效动作。
 
 **明确不做**：额度 / 费用 / 重置倒计时、桌面宠物、统计大盘、托盘内批准或拒绝。
 详见 [`EXPERIENCE.md`](EXPERIENCE.md)。
@@ -29,7 +29,7 @@ Pulse 把这件事变成余光可见：
 ## 安装
 
 从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG
-（当前源码对应 [v0.55.0](https://github.com/hxddh/Pulse/releases/tag/v0.55.0)），拖进「应用程序」。
+（当前源码对应 [v0.56.0](https://github.com/hxddh/Pulse/releases/tag/v0.56.0)），拖进「应用程序」。
 
 > **没有 Apple Developer ID 时**：GitHub **Latest** 会跟到当前 semver（避免停在旧包），
 > 但 DMG 仍是 ad-hoc / 未公证，About 标 `preview`，**不是** Gatekeeper-ready。首次打开
@@ -85,9 +85,9 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 - Waiting 只来自 hooks 或 `skill=pending`，**绝不推断**。没有 Waiting 通路的 Agent，
   托盘明说「暂无 Waiting 信号」，不假装。
 - 每条 Waiting 行标注来源是 `hooks` 还是 `pending`，你自己判断可信度。
-- Focus 不吹牛：Warp 下可直接激活 Warp；Terminal/iTerm 的 TTY 选择需要系统自动化权限，
-  Pulse 不会隐式索取。没有可验证 Focus 句柄时，行保持为观测内容，不提供低价值的
-  「打开目录」替代动作。
+- Focus 不吹牛：落地精度分 TTY 标签、宿主工作区、`Warp/宿主 (app)`；Terminal/iTerm
+  的 TTY 选择默认关闭（Shortcuts opt-in）。没有可验证句柄时，行保持为观测内容，
+  不提供 Finder「打开目录」替代动作。深链边界见 [`docs/landing-hosts.md`](docs/landing-hosts.md)。
 
 ## 支持的 Agent
 
@@ -212,7 +212,7 @@ git push                               # CI 构建、打 tag、发布
 公证并 staple App 与 DMG，再以 `spctl` 验收，并在 Info.plist 写入 `stable`。
 **任一凭据缺失时仍发布 GitHub Latest**（跟当前 semver），产物为 ad-hoc / 未公证，
 About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。详见
-[`CHANGELOG.md`](CHANGELOG.md) 的 0.55.0 说明。
+[`CHANGELOG.md`](CHANGELOG.md) 的 0.56.0 说明。
 
 > 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
 > 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
@@ -241,6 +241,7 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/architecture.md`](docs/architecture.md) | 数据从进程到菜单栏的完整路径 |
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+| [`docs/plan-0.56.md`](docs/plan-0.56.md) | 0.56 计划 —— 精确落地 |
 | [`docs/plan-0.55.md`](docs/plan-0.55.md) | 0.55 计划 —— 回到现场 |
 | [`docs/plan-0.54.md`](docs/plan-0.54.md) | 0.54 计划 —— 通道与契约连续 |
 | [`docs/plan-0.53.md`](docs/plan-0.53.md) | 0.53 计划 —— 交付连续信任 |
