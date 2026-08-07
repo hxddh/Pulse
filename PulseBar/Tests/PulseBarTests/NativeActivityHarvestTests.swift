@@ -13,7 +13,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         defer { try? fm.removeItem(at: home) }
 
         let lines = [
-            #"{"session_id":"native-123","cwd":"/Users/me/Pulse","title":"Run the native harvest","model":"gpt-5","status":"testing","lastAction":"swift_test","inputTokens":120,"outputTokens":34,"progressDone":3,"progressTotal":5}"#,
+            #"{"session_id":"native-123","cwd":"/Users/me/Pulse","task":"Run the native harvest","model":"gpt-5","status":"testing","lastAction":"swift_test","inputTokens":120,"outputTokens":34,"progressDone":3,"progressTotal":5}"#,
             #"{"session_id":"native-123","cwd":"/Users/me/Pulse","status":"testing","filesChanged":2}"#,
         ].joined(separator: "\n") + "\n"
         try lines.write(to: session, atomically: true, encoding: .utf8)
@@ -131,5 +131,57 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.cwd, "/Users/me/code/Pulse")
         XCTAssertEqual(row.project, "Pulse")
         XCTAssertEqual(row.tool, "Edit", "latest tool_use must win, not the first")
+    }
+
+    func testClaudeSubagentDirectoryCountsAttachToSessionRow() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-claude-sub-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".claude/projects/-Users-me-code-Pulse", isDirectory: true)
+            .appendingPathComponent("sess-sub.jsonl")
+        let subDir = session
+            .deletingLastPathComponent()
+            .appendingPathComponent("sess-sub/subagents", isDirectory: true)
+        try fm.createDirectory(at: subDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"{"type":"user","message":{"role":"user","content":"Spin up helpers"},"sessionId":"sess-sub"}"#
+            .write(to: session, atomically: true, encoding: .utf8)
+        let fresh = subDir.appendingPathComponent("agent-alpha.jsonl")
+        let stale = subDir.appendingPathComponent("agent-beta.jsonl")
+        try " {}\n".write(to: fresh, atomically: true, encoding: .utf8)
+        try " {}\n".write(to: stale, atomically: true, encoding: .utf8)
+        let old = Date(timeIntervalSince1970: Date().timeIntervalSince1970 - 600)
+        try fm.setAttributes([.modificationDate: old], ofItemAtPath: stale.path)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
+        XCTAssertEqual(row.subTotal, 2)
+        XCTAssertEqual(row.subRunning, 1, "only mtime ≤ 120s counts as running")
+        XCTAssertEqual(row.task, "Spin up helpers")
+    }
+
+    func testCodexUntypedTitleIsNotPromotedToTask() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-codex-title-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".codex/sessions/2026/08/03", isDirectory: true)
+            .appendingPathComponent("rollout-tool-title.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        // Untyped head lines often carry plan/registry `title` values — those
+        // must not become the tray hero. Real prompts use task/prompt keys.
+        let lines = [
+            #"{"session_id":"title-1","cwd":"/Users/me/Pulse","title":"update_plan step label","lastAction":"Bash"}"#,
+            #"{"session_id":"title-1","cwd":"/Users/me/Pulse","model":"gpt-5"}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(row.tool, "Bash")
+        XCTAssertTrue(row.task.isEmpty, "tool-arg / registry title must not become task")
     }
 }

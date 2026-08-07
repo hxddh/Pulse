@@ -2,6 +2,39 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.57.0 — Fact Continuity / 事实连续
+
+0.56 能诚实回去；本版保证托盘行带着**真实事实**，不留空壳 chrome，也不再靠
+SwiftUI Settings 场景当生命周期锚点。详见 [`docs/plan-0.57.md`](docs/plan-0.57.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 事实硬化与 Settings 根治
+
+- **Claude**：session 盖章后 re-merge；tool 后写覆盖；从
+  `…/<sessionId>/subagents/agent-*.jsonl` 计数 subRunning/subTotal（mtime ≤ 120s）。
+- **Codex**：无类型 head/compat 行不再把裸 `title`（plan/registry）升成 task；
+  只认 task/prompt 等真提示键。
+- **Cursor**：App Data 下 composer Goal/cwd/pending 回归保留；薄则 Limited。
+- **托盘空壳禁令**：无动态事实 → 次行省略；无溢出 → 无 gutter；仅进程文案不重复
+  （EXPERIENCE 场景 O）。
+- **Settings**：去掉 SwiftUI `Settings { EmptyView() }`，AppKit-only 启动；
+  reopen 拒绝造窗（场景 P）。真设置仍走 `SettingsWindowController`。
+
+### P1 · 可读深度与文档
+
+- Support Health 一眼区分 session / cache / Waiting-none 深度。
+- `architecture.md` 写明 harvest merge：session stamp → re-merge、tool 后写覆盖。
+- matrix：高流量 cache（Windsurf/Cascade/Cline/Roo/Warp…）薄则 Limited，不升格假 session。
+- EXPERIENCE 场景 O / P；AGENTS / README 对齐 0.57。
+
+### P2 · 回归
+
+- 删除死 L10n `noProgressSignal`；Focus / 标题 / 0.56.1 回归保留。
+
+### 验证
+
+- Claude subagent / Codex untyped-title / Support depth 单测；八门禁对 0.57.0。
+
 ## 0.56.1 — Tray facts & phantom Settings / 托盘事实与幽灵设置窗
 
 ### Bug fixes
