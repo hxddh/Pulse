@@ -2,6 +2,27 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.56.1 — Tray facts & phantom Settings / 托盘事实与幽灵设置窗
+
+### Bug fixes
+
+- **幽灵空设置窗**：更新后用 Finder/Spotlight「打开」Pulse 时，SwiftUI
+  `Settings { EmptyView() }` 会被 AppKit reopen 弹出空白设置页。现拒绝 reopen，
+  并在启动 / 激活时关掉无 `pulse-*` identifier 的幽灵窗。真设置仍走
+  `SettingsWindowController`。
+- **Claude 行缺有效信息**：原生 harvest 识别 `tool_use`/`name`；从
+  `~/.claude/projects/<encoded>/` 解码 cwd；session id 盖章后重新 merge，且
+  **tool 后写覆盖**，避免最早碎片抢走最新动作。
+- **托盘空行占位**：次行不再回退成 Agent 名；无动态事实时不发明
+  「No progress signal yet」；仅进程行的「无活动数据」改到主行文案，次行不重复。
+- 无真实标题时，人话工具名可作主行（不再要求 live process）。
+- ObservationQuality 只认 `usefulTask`，拒绝的占位 task 不再冒充有目标。
+- 无溢出菜单时不再预留尾部空白 gutter。
+
+### 验证
+
+- Claude tool_use + encoded cwd 单测；托盘 context/signal/hero 回归；八门禁对 0.56.1。
+
 ## 0.56.0 — Landing Precision / 精确落地
 
 0.55 能回去；本版把「回到哪一层」说清楚，并在可验证时落到宿主工作区。

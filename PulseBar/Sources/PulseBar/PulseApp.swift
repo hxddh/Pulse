@@ -100,6 +100,10 @@ struct PulseBarApp: App {
         // regardless of which material the root painted. An app-owned panel has
         // one exact content rect and therefore one surface.
         Settings {
+            // Anchor for SwiftUI App lifecycle only. Real settings are AppKit
+            // (`SettingsWindowController`). An EmptyView Settings scene still
+            // becomes a titled window on reopen/activation after update —
+            // AppDelegate must refuse that reopen and dismiss orphans.
             EmptyView()
         }
     }
@@ -111,6 +115,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ActivityHarvest has a 6s hard deadline, so 6.8s covers either a
     /// completed scan or its honest timeout result.
     private static let captureDelay: TimeInterval = 6.8
+
+    /// Windows Pulse intentionally owns. Anything else titled under a normal
+    /// window level is treated as the phantom SwiftUI Settings scene.
+    private static let ownedWindowIDs: Set<String> = [
+        "pulse-settings",
+        "pulse-support-coverage",
+        "pulse-agent-detail",
+        "pulse-tray-preview",
+    ]
 
     private var statusPanel: StatusPanelController?
     private var activationObserver: NSObjectProtocol?
@@ -124,8 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSApplication.didBecomeActiveNotification,
             object: NSApp,
             queue: .main
-        ) { _ in
+        ) { [weak self] _ in
             PulseNotify.refreshAuthorization()
+            self?.dismissPhantomSettingsWindows()
         }
         if CommandLine.arguments.contains("--appearance=dark") {
             NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -207,10 +221,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         }
+        // Post-update Launch Services reopen can surface the EmptyView Settings
+        // scene before we refuse it — sweep once on the next runloop turn.
+        DispatchQueue.main.async { [weak self] in
+            self?.dismissPhantomSettingsWindows()
+        }
+    }
+
+    /// Finder / Spotlight / post-update "Open" must not create a blank Settings
+    /// window from `Settings { EmptyView() }`. Tray reveal is user-driven.
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        dismissPhantomSettingsWindows()
+        return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// Close titled windows that are not Pulse-owned controllers.
+    private func dismissPhantomSettingsWindows() {
+        for window in NSApp.windows {
+            if let id = window.identifier?.rawValue, Self.ownedWindowIDs.contains(id) {
+                continue
+            }
+            // Tray / status panels are borderless or non-normal level.
+            if window.styleMask.contains(.borderless) { continue }
+            if window.level != .normal { continue }
+            guard window.styleMask.contains(.titled) else { continue }
+            // Real settings always carry `pulse-settings`. The SwiftUI Settings
+            // scene ships with a nil identifier and EmptyView content.
+            if window.identifier == nil {
+                window.close()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1305,7 +1352,7 @@ private struct AgentRowButton: View {
 
                         }
                     }
-                    .padding(.trailing, TrayChrome.headerControlSize + 4)
+                    .padding(.trailing, hasSecondaryActions ? TrayChrome.headerControlSize + 4 : 0)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, TrayChrome.rowLeadingInset)
                     .padding(.trailing, TrayChrome.padX)
@@ -1508,7 +1555,9 @@ private struct AgentRowButton: View {
             return store.tr(.needsYou)
         }
         if row.isProcessOnly {
-            return row.canFocusTerminal ? store.tr(.terminalSession) : store.tr(.appSession)
+            return row.canFocusTerminal
+                ? store.tr(.terminalDetectedNoDetails)
+                : store.tr(.appDetectedNoDetails)
         }
         if let t = row.usefulTask {
             return Self.truncate(t, Self.heroLimit)
