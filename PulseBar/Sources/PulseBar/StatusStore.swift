@@ -603,7 +603,6 @@ final class StatusStore: ObservableObject {
         case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
         case "waiting_unsupported": return tr(.supportWaitingNoneDetail)
         case "scan_timeout": return tr(.qualityReasonScanTimeout)
-        case "cache_conditional": return tr(.qualityReasonCache)
         default: return tr(.qualityReasonNotEmitted)
         }
     }
