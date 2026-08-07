@@ -565,7 +565,20 @@ enum NativeActivityHarvest {
                 if parsed[index].sessionID.isEmpty, structured {
                     parsed[index].sessionID = sessionIDFromPath(item)
                 }
+                if id == .claude, parsed[index].cwd.isEmpty {
+                    let encoded = item.deletingLastPathComponent().lastPathComponent
+                    let decoded = decodeClaudeProjectDir(encoded)
+                    if !decoded.isEmpty {
+                        parsed[index].cwd = decoded
+                        if parsed[index].project.isEmpty {
+                            parsed[index].project = lastPathComponent(decoded)
+                        }
+                    }
+                }
             }
+            // Stamping the same path-derived session id onto every fragment
+            // collapses identities — re-merge so latest tool / richest task win.
+            parsed = merge(parsed)
             let remaining = max(0, maxFactsPerAgent - facts.count)
             if remaining > 0 {
                 facts.append(contentsOf: parsed.filter { $0.hasUsefulSignal && $0.hasDisplaySignal }.prefix(remaining))
@@ -1534,6 +1547,15 @@ enum NativeActivityHarvest {
             "currentTool", "current_tool", "lastTool", "last_tool", "lastAction",
             "last_action", "toolName", "tool_name", "tool",
         ])
+        // Claude / Anthropic transcripts emit `{type:"tool_use", name:"Bash"}`
+        // rather than a lastTool field. Same-dict name only — never the next
+        // sibling's name (see activity_scan.last_tool_name_strict).
+        if f.tool.isEmpty {
+            let recordType = firstString(dict, keys: ["type"]).lowercased()
+            if ["tool_use", "tool_call", "function_call", "custom_tool_call"].contains(recordType) {
+                f.tool = firstString(dict, keys: ["name", "toolName", "tool_name"])
+            }
+        }
         f.skill = firstString(dict, keys: ["skill", "skillName", "skill_name"])
         let phaseRaw = firstString(dict, keys: ["phase", "stage", "currentPhase", "current_phase", "status", "state"])
         f.phase = semanticPhase(phaseRaw)
@@ -1638,7 +1660,10 @@ enum NativeActivityHarvest {
         func prefer(_ old: inout String, _ new: String) { if old.isEmpty, !new.isEmpty { old = new } }
         prefer(&target.task, source.task); prefer(&target.project, source.project)
         prefer(&target.cwd, source.cwd); prefer(&target.sessionID, source.sessionID)
-        prefer(&target.tool, source.tool); prefer(&target.skill, source.skill)
+        // Last non-empty tool wins — Claude tool_use records arrive after the
+        // user prompt; prefer-first left rows without an action forever.
+        if !source.tool.isEmpty { target.tool = source.tool }
+        prefer(&target.skill, source.skill)
         prefer(&target.phase, source.phase); prefer(&target.outcome, source.outcome)
         prefer(&target.model, source.model); prefer(&target.mode, source.mode)
         target.tokensIn = max(target.tokensIn, source.tokensIn)
@@ -1655,6 +1680,17 @@ enum NativeActivityHarvest {
         target.startedMs = target.startedMs == 0 ? source.startedMs : min(target.startedMs, source.startedMs == 0 ? target.startedMs : source.startedMs)
         target.records = max(target.records, source.records)
         target.structured = target.structured || source.structured
+    }
+
+    /// Best-effort: `-Users-me-code-Pulse` → `/Users/me/code/Pulse` (Claude projects dir).
+    private static func decodeClaudeProjectDir(_ name: String) -> String {
+        let s = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard s.hasPrefix("-"), !s.contains("/") else { return "" }
+        let parts = s.split(separator: "-", omittingEmptySubsequences: true).map(String.init)
+        guard parts.count >= 2 else { return "" }
+        let head = parts[0].lowercased()
+        guard head == "users" || head == "home" else { return "" }
+        return "/" + parts.joined(separator: "/")
     }
 
     private static func makeRows(from facts: [Fact], id: AgentID, home: URL) -> [ActivityHarvest.Row] {

@@ -835,13 +835,13 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testSessionWithoutDynamicFactsStatesTheInformationBoundary() {
+    func testSessionWithoutDynamicFactsDoesNotInventSignalChrome() {
         var r = row()
         r.task = "A session with no telemetry"
         r.liveProcess = true
         r.observationSource = .session
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("No progress signal yet"), signal)
+        XCTAssertTrue(signal.isEmpty, "empty signal must hide, not invent chrome: \(signal)")
     }
 
     @MainActor
@@ -858,8 +858,9 @@ final class RowMetricsTests: XCTestCase {
         var r = row()
         r.liveProcess = true
         r.processCount = 3
+        // Gap lives on the hero (terminalDetectedNoDetails / appDetectedNoDetails);
+        // context keeps detection evidence only.
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
         XCTAssertFalse(line.contains("3"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("process"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("agent app running"), line)
@@ -872,7 +873,34 @@ final class RowMetricsTests: XCTestCase {
         r.processEvidence = .pathSignature
         let line = store().rowContextLine(r)
         XCTAssertTrue(line.localizedCaseInsensitiveContains("detected by path signature"), line)
-        XCTAssertTrue(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
+        XCTAssertFalse(
+            line.localizedCaseInsensitiveContains("activity feed unavailable"),
+            "hero owns the feed gap; context must not repeat it: \(line)"
+        )
+    }
+
+    @MainActor
+    func testContextLineNeverFallsBackToAgentDisplayName() {
+        var r = row()
+        r.task = "Real goal"
+        r.liveProcess = true
+        r.observationSource = .session
+        r.cwd = ""
+        r.project = ""
+        r.tool = ""
+        r.harvestMs = 0
+        let line = store().rowContextLine(r)
+        XCTAssertFalse(line.contains(r.agent.displayName), "agent name is identity chrome, not context: \(line)")
+    }
+
+    @MainActor
+    func testRecentToolCanBeHeroWithoutLiveProcess() {
+        var r = row()
+        r.tool = "Bash"
+        r.task = ""
+        r.liveProcess = false
+        XCTAssertTrue(r.hasLiveToolFallback)
+        XCTAssertEqual(store().heroToolTitle(r), "Terminal command")
     }
 
     @MainActor
@@ -892,8 +920,9 @@ final class RowMetricsTests: XCTestCase {
         r.processCount = 1
         r.focusTier = .warp
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
+        // Context stays quiet when there is no path/evidence; hero owns the gap.
         XCTAssertFalse(line.localizedCaseInsensitiveContains("terminal session running"), line)
+        XCTAssertFalse(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
     }
 }
 

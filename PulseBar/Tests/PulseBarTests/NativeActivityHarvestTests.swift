@@ -108,4 +108,28 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertTrue(result.health.contains { $0.id == .amp })
         XCTAssertTrue(result.health.contains { $0.id == .codex })
     }
+
+    func testClaudeToolUseAndEncodedProjectDirBecomeUsefulRowFacts() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-claude-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".claude/projects/-Users-me-code-Pulse", isDirectory: true)
+            .appendingPathComponent("sess-claude.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        let lines = [
+            #"{"type":"user","message":{"role":"user","content":"Fix the tray density"},"sessionId":"sess-claude"}"#,
+            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}"#,
+            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file":"PulseApp.swift"}}]}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
+        XCTAssertEqual(row.task, "Fix the tray density")
+        XCTAssertEqual(row.cwd, "/Users/me/code/Pulse")
+        XCTAssertEqual(row.project, "Pulse")
+        XCTAssertEqual(row.tool, "Edit", "latest tool_use must win, not the first")
+    }
 }

@@ -2445,9 +2445,8 @@ final class StatusStore: ObservableObject {
             let path = row.displayPath
             if !path.isEmpty, !omitPath { bits.append(path) }
             // Process-only is still useful liveness evidence. Explain how the
-            // row was found instead of collapsing every limited observation
-            // into the opaque "activity unavailable" label. The command line
-            // itself is deliberately never retained or displayed.
+            // row was found. Hero already states the activity-feed gap — do not
+            // repeat "activity unavailable" on the secondary line.
             if let evidence = row.processEvidence {
                 bits.append(
                     evidence == .pathSignature
@@ -2455,7 +2454,6 @@ final class StatusStore: ObservableObject {
                         : tr(.supportDetectedExecutable)
                 )
             }
-            bits.append(tr(.activityUnavailable))
             return bits.joined(separator: " · ")
         }
         var bits: [String] = []
@@ -2488,9 +2486,8 @@ final class StatusStore: ObservableObject {
         if row.liveProcess, row.agent.waitingSource == .none {
             bits.append(tr(.supportWaitingNone))
         }
-        // With none of them, fall back to naming the agent rather than an
-        // empty line.
-        if bits.isEmpty { return row.isProcessOnly ? "" : row.agent.displayName }
+        // Empty secondary is honest. Agent name already sits on the identity
+        // line — repeating it here is EXPERIENCE-forbidden empty chrome.
         return bits.joined(separator: " · ")
     }
 
@@ -2652,14 +2649,8 @@ final class StatusStore: ObservableObject {
         if row.liveProcess, !row.isProcessOnly, row.processCount > 1 {
             bits.append(String(format: tr(.processCount), row.processCount))
         }
-        // A structured/cache row can still be real while exposing no phase,
-        // action, model, progress, token, or outcome. Do not leave the third
-        // line blank: that looks like a Pulse rendering bug and hides the
-        // adapter's actual information boundary. Process-only and stalled rows
-        // have more precise fallbacks above.
-        if bits.isEmpty, row.observationSource != .process {
-            bits.append(tr(.noProgressSignal))
-        }
+        // EXPERIENCE: observation / signal line disappears when there are no
+        // facts — do not invent "No progress signal yet" chrome on the tray.
         return bits.prefix(3).joined(separator: " · ")
     }
 

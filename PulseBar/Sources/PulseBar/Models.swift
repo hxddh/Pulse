@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.56.0"
+    static let semver = "0.56.1"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -539,7 +539,7 @@ struct AgentRow: Identifiable, Hashable {
     mutating func refreshObservationQuality(privacyLimited: Bool = false) {
         let workspace = cwd.isEmpty ? project : cwd
         quality = ObservationQuality.derive(
-            task: usefulTask ?? task,
+            task: usefulTask ?? "",
             workspace: workspace,
             action: tool.isEmpty ? skill : tool,
             phase: phase,
@@ -721,9 +721,10 @@ struct AgentRow: Identifiable, Hashable {
     /// separate hero fallback via `StatusStore.heroToolTitle`.
     var sessionDetail: String? { usefulTask }
 
-    /// Live/subagent row has a tool string that can stand in after humanization.
+    /// Live/subagent or recent row has a tool string that can stand in after
+    /// humanization when there is no real session title.
     var hasLiveToolFallback: Bool {
-        guard !waiting, liveProcess || subRunning > 0 else { return false }
+        guard !waiting else { return false }
         return !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
