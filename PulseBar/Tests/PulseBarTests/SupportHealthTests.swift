@@ -49,6 +49,7 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(item.focusTTYNeedsOptIn)
     }
 
+    @MainActor
     func testSupportDepthDistinguishesSessionCacheAndWaitingNone() {
         let store = StatusStore()
         let session = health(agent: .claude)
