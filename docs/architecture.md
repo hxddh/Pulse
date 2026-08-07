@@ -29,8 +29,10 @@
 
 顺着 ppid 链向上找，回答三件事：真实 TTY 是什么（进程自己常是 `??`），
 是不是跑在 Warp 里，以及父进程是否是 Cursor / VS Code / Windsurf / Zed / Trae /
-Antigravity（决定 Focus 走 Warp、宿主 App，还是 opt-in 后的终端标签）。
-扫描期只用 `ps`，不枚举 `NSRunningApplication`；activate 发生在用户点击之后。
+Antigravity。Focus 精度：Warp / 宿主仅 App、有绝对 cwd 时宿主工作区
+（`open -a Host.app <cwd>`）、opt-in 后的终端标签。扫描期只用 `ps`，
+不枚举 `NSRunningApplication`；activate / open 发生在用户点击之后。
+详见 [`docs/landing-hosts.md`](landing-hosts.md)。
 
 `signature()` 给出这一轮的进程指纹。指纹没变，说明会话数据大概率也没变，
 昂贵的 harvest 就能跳过。
@@ -136,9 +138,9 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.54.2` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.54.2-dev` |
-| `mismatch` | 两者不一致 | `0.54.2≠0.54.1` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.56.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.56.0-dev` |
+| `mismatch` | 两者不一致 | `0.56.0≠0.55.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
 未公证）、`stable`（公证成功，`PulseNotarized=true`）。无 Apple Developer ID 时 GitHub

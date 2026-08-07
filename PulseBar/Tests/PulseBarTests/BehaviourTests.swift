@@ -185,13 +185,43 @@ final class FocusTierTests: XCTestCase {
         )
     }
 
+    func testAbsoluteWorkspacePromotesHostWorkspaceTier() {
+        let env = TerminalFocus.Environment(
+            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
+        )
+        XCTAssertEqual(
+            TerminalFocus.focusTier(
+                tty: "",
+                viaWarp: false,
+                hostApp: .cursor,
+                workspace: "/Users/me/code/Pulse",
+                env: env
+            ),
+            .hostWorkspace(.cursor)
+        )
+        XCTAssertEqual(
+            TerminalFocus.focusTier(
+                tty: "",
+                viaWarp: false,
+                hostApp: .zed,
+                workspace: "/",
+                env: env
+            ),
+            .hostApp(.zed),
+            "root is not a usable workspace advertisement"
+        )
+        XCTAssertFalse(TerminalFocus.isAbsoluteWorkspacePath(""))
+        XCTAssertFalse(TerminalFocus.isAbsoluteWorkspacePath("relative/path"))
+        XCTAssertTrue(TerminalFocus.isAbsoluteWorkspacePath("/Users/me/proj"))
+    }
+
     func testWarpBeatsHostApp() {
         let env = TerminalFocus.Environment(
             warpRunning: true, ttyHostRunning: false, allowTTYAutomation: false
         )
         XCTAssertEqual(
             TerminalFocus.focusTier(
-                tty: "", viaWarp: true, hostApp: .cursor, env: env
+                tty: "", viaWarp: true, hostApp: .cursor, workspace: "/Users/me/p", env: env
             ),
             .warp
         )
@@ -241,11 +271,13 @@ final class FocusTierTests: XCTestCase {
     }
 
     func testFocusHostAppActionCopyIsProductNameNotGenericTerminal() {
-        let en = L10n.t(.focusHostApp, .en)
-        XCTAssertEqual(String(format: en, HostAppKind.cursor.displayName), "Focus Cursor")
-        XCTAssertEqual(String(format: en, HostAppKind.zed.displayName), "Focus Zed")
+        let enApp = L10n.t(.focusHostApp, .en)
+        XCTAssertEqual(String(format: enApp, HostAppKind.cursor.displayName), "Focus Cursor (app)")
+        let enWs = L10n.t(.focusHostWorkspace, .en)
+        XCTAssertEqual(String(format: enWs, HostAppKind.zed.displayName), "Open workspace in Zed")
+        XCTAssertEqual(L10n.t(.focusWarp, .en), "Focus Warp (app)")
         let zh = L10n.t(.focusHostApp, .zh)
-        XCTAssertEqual(String(format: zh, "Cursor"), "聚焦 Cursor")
+        XCTAssertEqual(String(format: zh, "Cursor"), "聚焦 Cursor（应用）")
     }
 }
 

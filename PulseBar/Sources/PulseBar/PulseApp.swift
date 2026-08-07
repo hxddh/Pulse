@@ -1929,6 +1929,18 @@ struct SettingsView: View {
                 store.revealAttentionBridgeFolder()
             }
             .font(.caption)
+            Button(store.tr(.attentionBridgeWriteSample)) {
+                store.writeAttentionBridgeSample()
+            }
+            .font(.caption)
+            Button(store.tr(.attentionBridgeClearSample)) {
+                store.clearAttentionBridgeSample()
+            }
+            .font(.caption)
+            Text(store.tr(.attentionBridgeWriteSampleHint))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

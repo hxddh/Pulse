@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.54.2），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.56.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -185,21 +185,24 @@ Prefs 只改开关与连接。
 （最久的在最上；时间戳未知的排最后，不得当作 0 而冒到最前）。
 
 整行点击只在有真实句柄时执行 Focus；没有 Focus 句柄的行是观测内容，不伪装成按钮。
-行内动作（忽略等待 / **稍后** / 聚焦 Warp · 宿主 IDE · 终端标签）：
+行内动作（忽略等待 / **稍后** / 聚焦）：
 **Waiting 行常驻，其余行悬停时出现** —— 常驻动作条是「只能看到 3 个 agent」的主因。
 
 **不提供「在终端打开」。** cwd 只能定位目录，不能定位现有会话；拿 cwd 新建一个终端窗口
-不是 Focus，可能失败，还会制造重复上下文。可聚焦时动作文案分级诚实：
+不是 Focus，可能失败，还会制造重复上下文。**不提供 Finder「打开目录」。**
+可聚焦时动作文案按落地精度分级诚实：
 
-| 句柄 | 动作 |
-| --- | --- |
-| 进程在 Warp 下 | 聚焦 Warp（`NSWorkspace`，无 Automation） |
-| 父进程是 Cursor / VS Code / Windsurf / Zed / Trae / Antigravity | 聚焦该宿主 App（点击时 activate，扫描期不枚举） |
-| 真实 TTY 且设置里已 opt-in「允许聚焦 Terminal / iTerm 标签」 | 聚焦终端标签（可能弹 Automation TCC） |
-| 以上皆无 | 无 Focus 按钮；通知 /「跳到等待」只打开 Pulse 托盘 |
+| 句柄 | 动作 | 精度 |
+| --- | --- | --- |
+| 进程在 Warp 下 | 聚焦 Warp（应用） | 仅 App，不暗示标签 |
+| 宿主 IDE + 绝对工作区路径 | 在宿主打开工作区（`open -a Host.app <cwd>`） | 工作区；不是会话/composer |
+| 宿主 IDE、无可验证 cwd | 聚焦宿主（应用） | 仅 App |
+| 真实 TTY 且 Shortcuts 已 opt-in | 聚焦终端标签 | 标签（可能弹 Automation TCC） |
+| 以上皆无 | 无 Focus 按钮；通知 /「跳到等待」只打开 Pulse 托盘 | — |
 
 Terminal/iTerm 的 TTY 选择**默认关闭**；Shortcuts 里显式开启后才广告 `.tty`。
-Support Health 对每个 Agent 标明 Focus 事实（可聚焦 vs 仅观测 / 需开启 Automation）。
+Support Health 对每个 Agent 标明 Focus 事实（工作区 / 仅 App / TTY / 需 opt-in / 仅观测）。
+深链边界见 [`docs/landing-hosts.md`](docs/landing-hosts.md)。
 
 **不提供「打开目录」。** Finder 只能把用户带到目录，既不能恢复会话，也不能回答 Agent
 是否仍在推进；它增加一次应用切换，并把“工作区存在”误包装成“可操作”。cwd 留在信息层，
@@ -412,10 +415,10 @@ Model 片段。`--harvest-test` 诊断必须读取与托盘相同的 App Data �
 - **数量不估算。** 会话文件超过采集预算就报「未知」，不按比例外推；采集器已读到、
   但超过 Swift 500 条容量的部分必须精确计数。
 - 每条 Waiting 标注来源 `hooks` / `pending`。
-- Focus 分级诚实：Warp → 宿主 IDE（`NSWorkspace`）→ opt-in 后的 Terminal/iTerm TTY；
-  cwd 只用于显示工作区，不生成替代性操作；
+- Focus 分级诚实：TTY 标签 → 宿主工作区 → 宿主/Warp 仅 App；
+  cwd 可打开进宿主，但绝不经 Finder 冒充 Focus，也不把仅激活 App 写成「跳到该会话」；
   什么都没有就不给聚焦按钮，通知路径退回打开托盘。
-  绝不把新开终端冒充为聚焦现有会话；无 Apple Developer ID 时不标 `stable`。
+  无 Apple Developer ID 时不标 `stable`。
 - 被上限压下的会话**显式计数告知**，不静默丢弃。
 
 ---

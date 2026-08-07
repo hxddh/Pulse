@@ -456,6 +456,7 @@ enum SnapshotBuilder {
                 tty: row.tty,
                 viaWarp: row.viaWarp,
                 hostApp: row.hostApp,
+                workspace: row.cwd,
                 env: context.terminal
             )
             let privacy = row.agent.requiresAppDataOptIn

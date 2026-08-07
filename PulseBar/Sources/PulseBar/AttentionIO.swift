@@ -74,6 +74,29 @@ enum AttentionIO {
         appendRawLine(line)
     }
 
+    /// Append a permission Waiting line — used by Settings sample and tests.
+    /// Never invents Waiting for adapters; the caller must be an explicit user action.
+    static func appendPermission(
+        agent: AgentID,
+        message: String,
+        session: String = "",
+        cwd: String = ""
+    ) {
+        let ts = Int64(Date().timeIntervalSince1970 * 1000)
+        let safeMessage = message
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeSession = session
+            .replacingOccurrences(of: "\t", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        let safeCwd = cwd
+            .replacingOccurrences(of: "\t", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+        let line = "\(agent.rawValue)\tpermission\t\(ts)\t\(safeMessage)\t\(safeSession)\t\(safeCwd)"
+        appendRawLine(line)
+    }
+
     private static func appendRawLine(_ line: String) {
         withExclusiveLock { fd in
             let size = lseek(fd, 0, SEEK_END)

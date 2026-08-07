@@ -539,11 +539,17 @@ final class StatusStore: ObservableObject {
         }
     }
 
-    /// Prefer Warp → host IDE → TTY — same honesty order as `TerminalFocus.focusTier`.
+    /// Prefer Warp → host workspace → host app → TTY — honesty order.
     private func bestSupportFocus(in rows: [AgentRow]) -> FocusTier? {
         let tiers = rows.compactMap(\.focusTier)
         if tiers.contains(where: { if case .warp = $0 { return true }; return false }) {
             return .warp
+        }
+        if let host = tiers.compactMap({ tier -> HostAppKind? in
+            if case .hostWorkspace(let kind) = tier { return kind }
+            return nil
+        }).first {
+            return .hostWorkspace(host)
         }
         if let host = tiers.compactMap({ tier -> HostAppKind? in
             if case .hostApp(let kind) = tier { return kind }
@@ -3070,6 +3076,8 @@ final class StatusStore: ObservableObject {
         switch row.focusTier {
         case .tty: return tr(.focusTTY)
         case .warp: return tr(.focusWarp)
+        case .hostWorkspace(let kind):
+            return String(format: tr(.focusHostWorkspace), kind.displayName)
         case .hostApp(let kind):
             return String(format: tr(.focusHostApp), kind.displayName)
         case .none:
@@ -3088,6 +3096,8 @@ final class StatusStore: ObservableObject {
         if let tier = health.focusTier {
             switch tier {
             case .warp: return tr(.supportFocusWarp)
+            case .hostWorkspace(let kind):
+                return String(format: tr(.supportFocusHostWorkspace), kind.displayName)
             case .hostApp(let kind):
                 return String(format: tr(.supportFocusHost), kind.displayName)
             case .tty: return tr(.supportFocusTTY)
@@ -3227,6 +3237,27 @@ final class StatusStore: ObservableObject {
             .appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.open(url)
+    }
+
+    /// Settings one-click sample Waiting via Attention bridge (Replit).
+    /// Does not install hooks and does not invent Waiting for other agents.
+    func writeAttentionBridgeSample() {
+        let cwd = FileManager.default.homeDirectoryForCurrentUser.path
+        AttentionIO.appendPermission(
+            agent: .replit,
+            message: "Approve tool (sample)",
+            session: "pulse-sample",
+            cwd: cwd
+        )
+        DebugLog.write("attention sample written agent=replit session=pulse-sample")
+        refresh(reason: "attentionSample")
+        TrayReveal.show()
+    }
+
+    func clearAttentionBridgeSample() {
+        AttentionIO.appendDone(agent: .replit, session: "pulse-sample")
+        DebugLog.write("attention sample cleared agent=replit session=pulse-sample")
+        refresh(reason: "attentionSampleClear")
     }
 
     func openSupportHealth() {

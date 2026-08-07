@@ -102,22 +102,34 @@ enum TerminalFocus {
             return focusTTY(row.tty)
         case .warp:
             return activateWarp()
+        case .hostWorkspace(let kind):
+            return activateHost(kind, workspace: row.cwd)
         case .hostApp(let kind):
-            return activateHost(kind)
+            return activateHost(kind, workspace: nil)
         }
     }
 
     /// Pure given an `Environment`, so it can be computed once per scan.
+    ///
+    /// Workspace advertising uses path shape only (absolute, non-trivial).
+    /// Existence is verified at click time; missing folders fall back to app activate.
     static func focusTier(
         tty rawTTY: String,
         viaWarp: Bool,
         hostApp: HostAppKind? = nil,
+        workspace: String = "",
         env: Environment
     ) -> FocusTier? {
         // Warp activation uses NSWorkspace and needs no Automation permission.
+        // It is app-level only — never advertise tab precision.
         if viaWarp, env.warpRunning { return .warp }
-        // Host IDE — same honesty class as Warp (open/activate on click).
-        if let hostApp { return .hostApp(hostApp) }
+        // Host IDE — prefer workspace open when cwd looks like a real absolute path.
+        if let hostApp {
+            if isAbsoluteWorkspacePath(workspace) {
+                return .hostWorkspace(hostApp)
+            }
+            return .hostApp(hostApp)
+        }
         // TTY tab select requires Apple Events. Advertise only after opt-in.
         let tty = normalizeTTY(rawTTY)
         if env.allowTTYAutomation, env.ttyHostRunning, !tty.isEmpty {
@@ -126,8 +138,25 @@ enum TerminalFocus {
         return nil
     }
 
+    /// Absolute path that could be a workspace folder (pure shape check).
+    static func isAbsoluteWorkspacePath(_ raw: String) -> Bool {
+        let p = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard p.hasPrefix("/"), p.count > 1 else { return false }
+        if p == "/" || p == "/tmp" || p == "/private/tmp" { return false }
+        return true
+    }
+
     @discardableResult
-    static func activateHost(_ kind: HostAppKind) -> Bool {
+    static func activateHost(_ kind: HostAppKind, workspace: String? = nil) -> Bool {
+        if let workspace, isAbsoluteWorkspacePath(workspace) {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: workspace, isDirectory: &isDir),
+               isDir.boolValue,
+               let app = kind.appURLs.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+               openFolder(workspace, inApplicationAt: app) {
+                return true
+            }
+        }
         // Prefer opening the app URL — no need to list every running app.
         if let app = kind.appURLs.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             if NSWorkspace.shared.open(app) { return true }
@@ -138,6 +167,22 @@ enum TerminalFocus {
             if let app = running.first, app.activate() { return true }
         }
         return false
+    }
+
+    /// `open -a App.app /path` — no Automation TCC; lands on the folder in that host.
+    private static func openFolder(_ path: String, inApplicationAt app: URL) -> Bool {
+        let t = Process()
+        t.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        t.arguments = ["-a", app.path, path]
+        t.standardOutput = Pipe()
+        t.standardError = Pipe()
+        do {
+            try t.run()
+            t.waitUntilExit()
+            return t.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 
     private static func activateWarp() -> Bool {
