@@ -438,7 +438,7 @@ enum WaitSignalKind: String, Equatable {
 }
 
 /// Honesty tier for Focus — never claim TTY when we only have cwd.
-enum FocusTier: Equatable {
+enum FocusTier: Equatable, Hashable {
     case tty
     case warp
     case hostApp(HostAppKind)

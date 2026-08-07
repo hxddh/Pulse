@@ -4,7 +4,7 @@ import AppKit
 ///
 /// Activation uses `NSWorkspace.open` / bundle-id activate on an explicit user
 /// click — never a scan-time enumeration of every running application.
-enum HostAppKind: String, Equatable, CaseIterable {
+enum HostAppKind: String, Equatable, Hashable, CaseIterable {
     case cursor
     case vsCode
     case windsurf
