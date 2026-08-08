@@ -69,16 +69,14 @@ enum PulseHookReceiver {
     }
 
     static func parseKind(from payload: [String: Any]) -> String {
-        if let ntype = string(payload, keys: ["notification_type", "notificationType"]), !ntype.isEmpty {
-            return ntype
-        }
+        let ntype = string(payload, keys: ["notification_type", "notificationType"])
+        if !ntype.isEmpty { return ntype }
         let event = string(payload, keys: ["hook_event_name", "hookEventName"])
         switch event {
         case "Stop", "SubagentStop": return "stop"
         case "Notification":
-            return string(payload, keys: ["notification_type", "notificationType"]).isEmpty
-                ? "waiting"
-                : string(payload, keys: ["notification_type", "notificationType"])
+            let nested = string(payload, keys: ["notification_type", "notificationType"])
+            return nested.isEmpty ? "waiting" : nested
         case "PermissionRequest": return "permission"
         default: break
         }
