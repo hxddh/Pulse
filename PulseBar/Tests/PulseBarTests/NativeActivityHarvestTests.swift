@@ -91,6 +91,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.contextPercent, 42)
         XCTAssertEqual(row.files, 3)
         XCTAssertEqual(row.skill, "pending")
+        XCTAssertEqual(row.mode, "agent", "unifiedMode must reach the tray, not invent local")
     }
 
     func testCorruptStoreDoesNotHideOtherAdapterAndFilterIsIsolated() throws {
@@ -120,8 +121,8 @@ final class NativeActivityHarvestTests: XCTestCase {
 
         let lines = [
             #"{"type":"user","message":{"role":"user","content":"Fix the tray density"},"sessionId":"sess-claude"}"#,
-            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}"#,
-            #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file":"PulseApp.swift"}}]}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":1200,"output_tokens":340},"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":1500,"output_tokens":80},"content":[{"type":"tool_use","name":"Edit","input":{"file":"PulseApp.swift"}}]}}"#,
         ].joined(separator: "\n") + "\n"
         try lines.write(to: session, atomically: true, encoding: .utf8)
 
@@ -131,6 +132,32 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.cwd, "/Users/me/code/Pulse")
         XCTAssertEqual(row.project, "Pulse")
         XCTAssertEqual(row.tool, "Edit", "latest tool_use must win, not the first")
+        XCTAssertEqual(row.model, "claude-sonnet-4")
+        XCTAssertEqual(row.tokensIn, 1500)
+        XCTAssertEqual(row.tokensOut, 80)
+    }
+
+    func testCodexLastTokenUsageBecomesTrayTokens() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-codex-tokens-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".codex/sessions/2026/08/03", isDirectory: true)
+            .appendingPathComponent("rollout-tokens.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        let lines = [
+            #"{"type":"session_meta","payload":{"session_id":"tok-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,
+            #"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Count the tokens"}]},"timestamp":1700000001}"#,
+            #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":220,"output_tokens":55}}},"timestamp":1700000002}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
+        XCTAssertEqual(row.task, "Count the tokens")
+        XCTAssertEqual(row.tokensIn, 220)
+        XCTAssertEqual(row.tokensOut, 55)
     }
 
     func testClaudeSubagentDirectoryCountsAttachToSessionRow() throws {

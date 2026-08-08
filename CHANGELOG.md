@@ -2,6 +2,34 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.81.0 — Tray Substance / 托盘实质
+
+0.80 画出了观测行，但仍空：**harvest 没把 model/tokens 送进默认行**，次行还会被
+tool-hero + 分组去路径压扁。本版打通 Claude / Codex / Cursor 实质字段。详见
+[`docs/plan-0.81.md`](docs/plan-0.81.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · harvest → 默认行
+
+- Claude：`message.model` + `usage` + content tool_use；model last-wins。
+- Codex：优先 `last_token_usage`，回退 `total_token_usage`。
+- Cursor：读 `unifiedMode` / `composerMode`；**不再**默认 `local`。
+- 次行：`omitPath` / tool-hero 时仍保留最近动作或路径；`usefulAction` 凡人话非空即收录。
+- EXPERIENCE 场景 **AA**；Native + ResourceLookup 回归。
+
+### P1 · 回归
+
+- 0.80 观测行渲染保留；不发明 Waiting / 进度占位。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- Claude fixture → model+tokens；Codex last_token_usage；Cursor mode=agent；
+  八门禁对 0.81.0。
+
 ## 0.80.0 — Tray Legibility / 托盘可读
 
 0.70 收了契约漂移；本版换章：**默认托盘行必须扫得到有效信息**。观测行真正渲染，

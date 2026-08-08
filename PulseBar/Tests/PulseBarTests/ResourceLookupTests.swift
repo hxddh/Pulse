@@ -954,6 +954,46 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testGenericToolNamesStillEarnLastAction() {
+        var r = row()
+        r.task = "Improve observability"
+        r.tool = "LS"
+        r.liveProcess = true
+        let line = store().rowContextLine(r)
+        XCTAssertTrue(line.contains("Last action:"), line)
+        XCTAssertTrue(line.contains("LS") || line.contains("ls"), line)
+    }
+
+    @MainActor
+    func testOmitPathStillKeepsLastActionWhenHeroIsTool() {
+        var r = row()
+        r.task = ""
+        r.tool = "Bash"
+        r.cwd = "/Users/me/Pulse"
+        r.liveProcess = true
+        r.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
+        XCTAssertTrue(r.hasLiveToolFallback)
+        let line = store().rowContextLine(r, omitPath: true)
+        XCTAssertTrue(line.contains("Last action:"), "omitPath must not leave age-only context: \(line)")
+        XCTAssertFalse(line.isEmpty, line)
+    }
+
+    @MainActor
+    func testClaudeShapedObservationSurfacesModelAndTokens() {
+        var r = row(inTok: 1_500, outTok: 80)
+        r.task = "Fix the tray density"
+        r.model = "claude-sonnet-4"
+        r.tool = "Edit"
+        r.liveProcess = true
+        r.activityChange = nil
+        let observation = store().rowObservationLine(r)
+        XCTAssertTrue(observation.contains("claude sonnet 4") || observation.contains("Model"), observation)
+        XCTAssertTrue(observation.contains("1.5k") || observation.contains("1500") || observation.contains("1,500") || observation.contains("↑"), observation)
+        let context = store().rowContextLine(r)
+        XCTAssertTrue(context.contains("Last action:"), context)
+    }
+
+    @MainActor
     func testRecentToolCanBeHeroWithoutLiveProcess() {
         var r = row()
         r.tool = "Bash"
