@@ -25,7 +25,7 @@ hook 安装器，不伪造 Waiting，不碰 composer 深链 / Stable Gate。
 | ID | 项 | 验收 |
 | --- | --- | --- |
 | P0-1 | harvestPending 审计 | Cline/Roo/Cascade 等：显式 ask/block 字段 + ask tool → pending；`depending` 仍否；Waiting-none 仍不抬 |
-| P0-2 | Attention 挂靠身份 | 有 session 且无命中 → 新建 Waiting 行，不点亮兄弟；cwd 仅在无 session 时回退 |
+| P0-2 | Attention 挂靠身份 | 有 session 且候选均已占用别的 session → 新建 Waiting 行，不点亮兄弟；空 session 进程行可收养；cwd 仅在无 session 时回退 |
 | P0-3 | 一键修复路径 | Support/Tray → Waiting signals；样本写/清六 Agent；文案可跟 |
 | P0-4 | EXPERIENCE 场景 S + 文档 | AGENTS/attention-bridge/matrix 对齐 0.60 |
 

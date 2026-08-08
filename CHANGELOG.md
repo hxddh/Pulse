@@ -12,7 +12,7 @@ Attention 桥。详见 [`docs/plan-0.60.md`](docs/plan-0.60.md)。
 ### P0 · 等待可达
 
 - **Attention 挂靠身份**：带明确 session 却无命中 → 新建 Waiting 行，不点亮兄弟；
-  cwd 仅在无 session 时回退。
+  空 session 的进程行可收养该 wait；cwd 仅在无 session 时回退。
 - **harvestPending 审计**：Cline `ask=followup`（无 `askResponse`）/ Roo ask tool /
   Cascade `isWaitingForResponse` / `ask_clarifying_question` → pending；
   `askResponse` 已答则否；`depending` 仍否；Waiting-none 仍不从 harvest 抬 pending。

@@ -558,6 +558,18 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(siblings.allSatisfy { !$0.waiting }, "named session must not smear onto siblings")
     }
 
+    func testAttentionNamedSessionAdoptsProcessOnlyRow() {
+        let r = build(
+            procs: [hit(.codex, pid: 42)],
+            attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")]
+        )
+        XCTAssertEqual(r.rows.count, 1, "process-only row adopts the named wait")
+        XCTAssertTrue(r.rows[0].waiting)
+        XCTAssertEqual(r.rows[0].sessionID, "codex-wait-1")
+        XCTAssertTrue(r.rows[0].liveProcess)
+        XCTAssertEqual(r.snapshot.hiddenCount, 0)
+    }
+
     func testHooksSignalOutranksHarvestPendingOnTheSameRow() {
         let r = build(
             harvest: [harvest(.codex, task: "A", session: "s1", skill: "pending")],
