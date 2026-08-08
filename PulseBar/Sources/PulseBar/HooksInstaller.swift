@@ -130,10 +130,19 @@ enum HooksInstaller {
         var data: [String: Any] = [:]
         if FileManager.default.fileExists(atPath: settings.path) {
             let raw = try String(contentsOf: settings, encoding: .utf8)
-            guard let parsed = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
-                throw InstallError.invalidClaudeJSON(settings.path, "top level is not a JSON object")
+            do {
+                guard let parsed = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
+                    throw InstallError.invalidClaudeJSON(settings.path, "top level is not a JSON object")
+                }
+                data = parsed
+            } catch let error as InstallError {
+                throw error
+            } catch {
+                throw InstallError.invalidClaudeJSON(
+                    settings.path,
+                    "not valid JSON (\(error.localizedDescription))"
+                )
             }
-            data = parsed
             let backup = settings.deletingPathExtension().appendingPathExtension("json.pulse-backup")
             if !FileManager.default.fileExists(atPath: backup.path) {
                 try raw.write(to: backup, atomically: true, encoding: .utf8)

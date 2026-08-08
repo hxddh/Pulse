@@ -131,7 +131,8 @@ final class HooksInstallerTests: XCTestCase {
         try "not-json".write(to: settings, atomically: true, encoding: .utf8)
         try HooksInstaller.ensureLauncher()
         XCTAssertThrowsError(try HooksInstaller.install()) { error in
-            XCTAssertTrue("\(error)".contains("refusing to rewrite"))
+            let text = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            XCTAssertTrue(text.contains("refusing to rewrite"), text)
         }
         // Original untouched.
         XCTAssertEqual(try String(contentsOf: settings, encoding: .utf8), "not-json")
