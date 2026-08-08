@@ -733,6 +733,10 @@ enum SnapshotBuilder {
     }
 
     /// Match an attention entry to an existing harvest/process row.
+    ///
+    /// Identity order: session id → cwd → best live/fresh row for the agent.
+    /// If Attention names a **session** and no row owns that id, return nil so
+    /// the caller creates a dedicated Waiting row — never smear onto a sibling.
     static func matchAttentionRow(
         _ att: AttentionReader.Entry,
         in rowsByKey: [String: AgentRow]
@@ -752,6 +756,8 @@ enum SnapshotBuilder {
             }) {
                 return hit.rowKey
             }
+            // Explicit session that matches nothing must not light another row.
+            return nil
         }
         if !att.cwd.isEmpty {
             if let hit = candidates.first(where: {

@@ -377,4 +377,112 @@ final class NativeActivityHarvestTests: XCTestCase {
         let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
         XCTAssertEqual(row.skill, "pending")
     }
+
+    func testClineAskFieldIsPendingUntilAskResponse() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cline-ask-\(UUID().uuidString)")
+        let waiting = home.appendingPathComponent(
+            "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/session.json"
+        )
+        try fm.createDirectory(at: waiting.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"""
+        {
+          "sessionId": "cl-ask",
+          "title": "Cline needs input",
+          "workspacePath": "/Users/me/Pulse",
+          "status": "running",
+          "ask": "followup",
+          "text": "Which package manager?"
+        }
+        """#.write(to: waiting, atomically: true, encoding: .utf8)
+
+        let pending = NativeActivityHarvest.scan(
+            allowAppData: false,
+            appDataAgents: [.cline],
+            home: home,
+            agentFilter: [.cline]
+        )
+        let pendingRow = try XCTUnwrap(pending.rows.first { $0.id == .cline })
+        XCTAssertEqual(pendingRow.skill, "pending", "Cline ask=followup is an explicit wait")
+        XCTAssertEqual(pendingRow.evidence, .cache)
+
+        try #"""
+        {
+          "sessionId": "cl-ask",
+          "title": "Cline needs input",
+          "workspacePath": "/Users/me/Pulse",
+          "status": "running",
+          "ask": "followup",
+          "askResponse": "messageResponse",
+          "text": "Which package manager?"
+        }
+        """#.write(to: waiting, atomically: true, encoding: .utf8)
+
+        let answered = NativeActivityHarvest.scan(
+            allowAppData: false,
+            appDataAgents: [.cline],
+            home: home,
+            agentFilter: [.cline]
+        )
+        let answeredRow = try XCTUnwrap(answered.rows.first { $0.id == .cline })
+        XCTAssertNotEqual(answeredRow.skill, "pending", "askResponse means the user already answered")
+    }
+
+    func testCascadeWaitingForResponseFlagIsPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cascade-wait-\(UUID().uuidString)")
+        let windsurf = home.appendingPathComponent(".windsurf/session.json")
+        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"""
+        {
+          "sessionId": "ws-ask",
+          "title": "Cascade needs you",
+          "workspace": "/Users/me/Pulse",
+          "status": "running",
+          "isWaitingForResponse": true,
+          "currentTool": "ask_clarifying_question"
+        }
+        """#.write(to: windsurf, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.windsurf])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
+        XCTAssertEqual(row.skill, "pending")
+        XCTAssertEqual(row.tool, "ask_clarifying_question")
+        XCTAssertEqual(row.evidence, .cache)
+    }
+
+    func testWaitingNoneAgentNeverStampsHarvestPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-waiting-none-\(UUID().uuidString)")
+        // Trae is waitingSource.none and bestEffortCache — status words / ask
+        // tools must not invent Waiting; Attention bridge is the only honest path.
+        let trae = home.appendingPathComponent(".trae/session.json")
+        try fm.createDirectory(at: trae.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"""
+        {
+          "sessionId": "trae-1",
+          "title": "Trae work",
+          "cwd": "/tmp/trae",
+          "status": "awaiting_user",
+          "currentTool": "ask_followup_question"
+        }
+        """#.write(to: trae, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(
+            allowAppData: false,
+            appDataAgents: [.trae],
+            home: home,
+            agentFilter: [.trae]
+        )
+        let row = try XCTUnwrap(result.rows.first { $0.id == .trae })
+        XCTAssertEqual(AgentID.trae.waitingSource, .none)
+        XCTAssertNotEqual(row.skill, "pending", "Waiting-none must never stamp harvest pending")
+        XCTAssertEqual(row.evidence, .cache)
+    }
 }

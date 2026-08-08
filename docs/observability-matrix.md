@@ -126,6 +126,12 @@ still never `.session`. Runtime gate: `NativeActivityHarvest.makeRows` stamps
 regardless of path needles. Agents with `waitingSource=none` never promote
 harvest status words into Waiting.
 
+Cline / Roo / Cascade harvestPending recognizes explicit ask/block fields and
+ask tools (`ask=followup` without `askResponse`, `ask_followup_question`,
+`isWaitingForResponse`, …) — never substring matches like `depending`. Attention
+entries that name an unknown session create a dedicated Waiting row; they do
+not light sibling sessions.
+
 ## Tool and skill policy
 
 Raw tool and skill names are usually low-value implementation metadata:

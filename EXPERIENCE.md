@@ -450,6 +450,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | P | 更新后用 Finder / Spotlight 打开 | 不弹空白 Settings 窗；真设置只经菜单进入 `SettingsWindowController`；无 SwiftUI `Settings` 场景 |
 | Q | 舰队事实连续（非旗舰 session + 高流量 cache） | Amp/Pi/Grok 等有 goal/cwd/tool 时主行诚实；`bestEffortCache` 证据恒为 cache；薄索引 Limited；`depending` 等不得假 Waiting；Waiting-none 六 Agent 可从 Settings 写 Attention 样本 |
 | R | 富缓存 Limited（Windsurf / Cline / Roo / Warp…） | 有 goal+cwd/tool 时托盘显示真实事实，Support 标「cache facts (Limited)」；薄索引标「thin cache」；证据仍 `.cache`，不升格假 session |
+| S | Waiting 连续（harvestPending + Waiting-none） | Cline `ask=followup` / Roo ask tool / Cascade waiting 旗 → 红灯；`depending` 仍否；Attention 带未知 session 不点亮兄弟行；Waiting-none 只经 Settings → Waiting signals → Attention 样本，不从 harvest 抬 pending |
 
 ---
 

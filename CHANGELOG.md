@@ -2,6 +2,37 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.60.0 — Waiting Continuity / 等待连续
+
+0.59 让 Limited 缓存有料；本版回到产品本职：**红灯在舰队上可达且可信** ——
+harvestPending 认显式 ask/block，Attention 不 smear 兄弟行，Waiting-none 只走
+Attention 桥。详见 [`docs/plan-0.60.md`](docs/plan-0.60.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 等待可达
+
+- **Attention 挂靠身份**：带明确 session 却无命中 → 新建 Waiting 行，不点亮兄弟；
+  cwd 仅在无 session 时回退。
+- **harvestPending 审计**：Cline `ask=followup`（无 `askResponse`）/ Roo ask tool /
+  Cascade `isWaitingForResponse` / `ask_clarifying_question` → pending；
+  `askResponse` 已答则否；`depending` 仍否；Waiting-none 仍不从 harvest 抬 pending。
+- **一键修复**：Support/Tray → Waiting signals；六 Agent 样本写/清保留。
+- EXPERIENCE 场景 S；attention-bridge / AGENTS / matrix 对齐 0.60。
+
+### P1 · 回归
+
+- pending 矩阵、soft-dismiss × harvest pending、通知带 `waitMessage`、
+  `isSessionPath`（Pi `sessions/`、Goose `session.json`）保留。
+
+### P2 · 收口
+
+- Focus / Cache / Settings / 能量预算 / 假 stable 禁令保留。
+
+### 验证
+
+- Attention 未知 session、Cline ask 字段、Cascade waiting 旗、Waiting-none 门闩、
+  pending depending；八门禁对 0.60.0。
+
 ## 0.59.0 — Cache Continuity / 缓存连续
 
 0.58 止住了假 session；本版让高流量 `bestEffortCache` 在 Limited 下**有料**：
