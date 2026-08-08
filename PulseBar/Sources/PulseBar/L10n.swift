@@ -95,7 +95,7 @@ enum L10n {
         case .supportFocusTTYNeedsOptIn: return "Focus: Terminal tab (enable in Shortcuts)"
         case .attentionBridgeWriteSample: return "Write sample Waiting"
         case .attentionBridgeWriteSampleHint:
-            return "Appends one Attention bridge line for Replit (docs/samples). Does not expand the Claude/Codex hook installer."
+            return "Appends Attention bridge lines for all six Waiting-none Agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie). Does not expand the Claude/Codex hook installer."
         case .attentionBridgeClearSample: return "Clear sample Waiting"
         case .activityPrefix: return "Doing"
         case .signalHooks: return "hooks"
@@ -504,7 +504,7 @@ enum L10n {
         case .supportFocusTTYNeedsOptIn: return "聚焦：终端标签（在快捷键中开启）"
         case .attentionBridgeWriteSample: return "写入样本 Waiting"
         case .attentionBridgeWriteSampleHint:
-            return "为 Replit 追加一行 Attention 桥样本（见 docs/samples）。不会把 hook 安装器扩到 Claude/Codex 以外。"
+            return "为全部六个无 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie）追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
         case .attentionBridgeClearSample: return "清除样本 Waiting"
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"

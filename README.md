@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.57.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.57.0) · macOS 14+
+**版本：`0.58.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.58.0) · macOS 14+
 
 ---
 
@@ -241,6 +241,7 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/architecture.md`](docs/architecture.md) | 数据从进程到菜单栏的完整路径 |
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+| [`docs/plan-0.58.md`](docs/plan-0.58.md) | 0.58 计划 —— 舰队连续 |
 | [`docs/plan-0.57.md`](docs/plan-0.57.md) | 0.57 计划 —— 事实连续 |
 | [`docs/plan-0.56.md`](docs/plan-0.56.md) | 0.56 计划 —— 精确落地 |
 | [`docs/plan-0.55.md`](docs/plan-0.55.md) | 0.55 计划 —— 回到现场 |

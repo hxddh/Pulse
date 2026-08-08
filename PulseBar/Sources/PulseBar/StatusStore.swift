@@ -3243,24 +3243,38 @@ final class StatusStore: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Settings one-click sample Waiting via Attention bridge (Replit).
-    /// Does not install hooks and does not invent Waiting for other agents.
+    /// Agents with `waitingSource=.none` — Settings one-click Attention samples.
+    /// Does not expand the Claude/Codex hook installer.
+    static let attentionSampleAgents: [AgentID] = [
+        .replit, .devin, .warpAgent, .trae, .antigravity, .junie,
+    ]
+
+    /// Settings one-click sample Waiting via Attention bridge for every
+    /// Waiting-none Agent. Does not invent native Waiting paths.
     func writeAttentionBridgeSample() {
         let cwd = FileManager.default.homeDirectoryForCurrentUser.path
-        AttentionIO.appendPermission(
-            agent: .replit,
-            message: "Approve tool (sample)",
-            session: "pulse-sample",
-            cwd: cwd
+        for agent in Self.attentionSampleAgents {
+            AttentionIO.appendPermission(
+                agent: agent,
+                message: "Approve tool (sample)",
+                session: "pulse-sample",
+                cwd: cwd
+            )
+        }
+        DebugLog.write(
+            "attention sample written agents=\(Self.attentionSampleAgents.map(\.rawValue).joined(separator: ",")) session=pulse-sample"
         )
-        DebugLog.write("attention sample written agent=replit session=pulse-sample")
         refresh(reason: "attentionSample")
         TrayReveal.show()
     }
 
     func clearAttentionBridgeSample() {
-        AttentionIO.appendDone(agent: .replit, session: "pulse-sample")
-        DebugLog.write("attention sample cleared agent=replit session=pulse-sample")
+        for agent in Self.attentionSampleAgents {
+            AttentionIO.appendDone(agent: agent, session: "pulse-sample")
+        }
+        DebugLog.write(
+            "attention sample cleared agents=\(Self.attentionSampleAgents.map(\.rawValue).joined(separator: ",")) session=pulse-sample"
+        )
         refresh(reason: "attentionSampleClear")
     }
 

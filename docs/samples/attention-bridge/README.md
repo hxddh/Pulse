@@ -25,3 +25,7 @@ Usage:
 
 These are **samples**, not an installer. Do not expand the Claude/Codex hook
 installer to cover these Agents.
+
+In-app: Settings → Waiting signals → **Write sample Waiting** appends one
+Attention line for **all six** Waiting-none Agents (`pulse-sample` session);
+**Clear sample Waiting** clears them. Same contract as these scripts.

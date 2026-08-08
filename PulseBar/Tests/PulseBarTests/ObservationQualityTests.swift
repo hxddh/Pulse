@@ -77,6 +77,56 @@ final class ObservationQualityTests: XCTestCase {
         XCTAssertTrue(quality.missing.contains(where: { $0.reason == "cache_conditional" }))
     }
 
+    func testThinBestEffortCacheStaysLimitedNeverHigh() {
+        let quality = ObservationQuality.derive(
+            task: "Only a title",
+            workspace: "",
+            action: "",
+            phase: "",
+            model: "x",
+            progressDone: 0,
+            progressTotal: 0,
+            errors: 0,
+            waiting: false,
+            waitMessage: "",
+            evidence: .cache,
+            harvestMs: 1_700_000_000_000,
+            processStartedMs: 0,
+            privacyLimited: false,
+            agentHarvestSource: .bestEffortCache,
+            waitingSource: .harvestPending
+        )
+        XCTAssertEqual(quality.confidence, .low)
+        XCTAssertTrue(quality.isLimited)
+        XCTAssertTrue(quality.missing.contains(where: { $0.reason == "cache_conditional" }))
+        XCTAssertFalse(quality.missing.contains(where: { $0.nextStep == "enable_app_data" }))
+    }
+
+    func testPrivacyLimitedCacheStillOffersEnableAppData() {
+        let quality = ObservationQuality.derive(
+            task: "",
+            workspace: "",
+            action: "",
+            phase: "",
+            model: "",
+            progressDone: 0,
+            progressTotal: 0,
+            errors: 0,
+            waiting: false,
+            waitMessage: "",
+            evidence: .cache,
+            harvestMs: 0,
+            processStartedMs: 0,
+            privacyLimited: true,
+            agentHarvestSource: .bestEffortCache,
+            waitingSource: .harvestPending
+        )
+        XCTAssertTrue(quality.isLimited)
+        XCTAssertTrue(quality.missing.contains(where: {
+            $0.reason == "privacy_limited" && $0.nextStep == "enable_app_data"
+        }))
+    }
+
     func testAgentRowRefreshObservationQuality() {
         var row = AgentRow(rowKey: "codex|s1", agent: .codex)
         row.task = "Ship 0.50"

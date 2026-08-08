@@ -290,7 +290,10 @@ final class AgentRowTests: XCTestCase {
     }
 
     func testPlaceholderTitlesAreNotTreatedAsSessions() {
-        for junk in ["-", "—", "Running", "Active", "none", "Agent session", "Chat"] {
+        for junk in [
+            "-", "—", "Running", "Active", "none", "Agent session", "Chat",
+            "Amp session", "OpenCode session", "Windsurf session", "Cline session",
+        ] {
             let r = row { $0.task = junk }
             XCTAssertNil(r.usefulTask, "\(junk) is not a real session title")
         }
