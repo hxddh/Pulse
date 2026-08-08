@@ -540,6 +540,36 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.rows[0].waitMessage, "approve")
     }
 
+    func testAttentionUnknownSessionDoesNotLightSiblingRows() {
+        let r = build(
+            harvest: [
+                harvest(.claude, task: "A", session: "sess-aaa"),
+                harvest(.claude, task: "B", session: "sess-bbb"),
+            ],
+            attention: [attention(.claude, message: "approve tool", session: "sess-zzz")]
+        )
+        let waiting = r.rows.filter(\.waiting)
+        XCTAssertEqual(waiting.count, 1, "must create a dedicated Waiting row")
+        XCTAssertEqual(waiting[0].sessionID, "sess-zzz")
+        XCTAssertEqual(waiting[0].waitMessage, "approve tool")
+        XCTAssertEqual(waiting[0].waitSignal, .hooks)
+        let siblings = r.rows.filter { ["sess-aaa", "sess-bbb"].contains($0.sessionID) }
+        XCTAssertEqual(siblings.count, 2)
+        XCTAssertTrue(siblings.allSatisfy { !$0.waiting }, "named session must not smear onto siblings")
+    }
+
+    func testAttentionNamedSessionAdoptsProcessOnlyRow() {
+        let r = build(
+            procs: [hit(.codex, pid: 42)],
+            attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")]
+        )
+        XCTAssertEqual(r.rows.count, 1, "process-only row adopts the named wait")
+        XCTAssertTrue(r.rows[0].waiting)
+        XCTAssertEqual(r.rows[0].sessionID, "codex-wait-1")
+        XCTAssertTrue(r.rows[0].liveProcess)
+        XCTAssertEqual(r.snapshot.hiddenCount, 0)
+    }
+
     func testHooksSignalOutranksHarvestPendingOnTheSameRow() {
         let r = build(
             harvest: [harvest(.codex, task: "A", session: "s1", skill: "pending")],

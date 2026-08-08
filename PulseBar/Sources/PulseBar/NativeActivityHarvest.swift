@@ -1655,8 +1655,17 @@ enum NativeActivityHarvest {
             "needsApproval", "needs_approval", "awaitingInput", "awaiting_input",
             "requiresAction", "requires_action", "pending",
             "hasBlockingPendingActions", "hasPendingPlan",
+            // Explicit waiting-for-user flags (bool / yes / pending / waiting).
+            // Do not include askResponse — in Cline that field means the user
+            // already answered; see vendorAskFieldPending.
+            "isWaitingForResponse", "is_waiting_for_response",
+            "waitingForResponse", "waiting_for_response",
+            "isAwaitingUserResponse", "is_awaiting_user_response",
+            "userResponseNeeded", "user_response_needed",
+            "didAskFollowupQuestion", "did_ask_followup_question",
         ])) || pendingPhase(phaseRaw) || pendingPhase(f.outcome)
             || isVendorAskTool(f.tool)
+            || vendorAskFieldPending(dict)
         if f.explicitPending { f.skill = "pending" }
         let stamped = normalizeTimestamp(firstValue(dict, keys: [
             "lastUpdatedAt", "last_updated_at", "updatedAt", "updated_at",
@@ -1783,7 +1792,7 @@ enum NativeActivityHarvest {
         return t.hasSuffix(" session") || t.hasSuffix(" thread") || t.hasSuffix(" chat")
     }
 
-    /// Cline/Roo ask tool ids — exact tokens only, never free-text inference.
+    /// Cline/Roo/Cascade ask tool ids — exact tokens only, never free-text inference.
     private static func isVendorAskTool(_ tool: String) -> Bool {
         let normalized = tool.lowercased()
             .replacingOccurrences(of: "-", with: "_")
@@ -1792,8 +1801,34 @@ enum NativeActivityHarvest {
             "ask_followup_question", "askfollowupquestion",
             "waiting_for_response", "waitingforresponse",
             "ask_user", "askuser",
+            "ask_clarifying_question", "askclarifyingquestion",
+            "request_user_input", "requestuserinput",
         ]
         return markers.contains(normalized)
+    }
+
+    /// Cline (and kin) stamp an `ask` field while blocked on the user.
+    /// When `askResponse` is already present, the user answered — not pending.
+    private static func vendorAskFieldPending(_ dict: [String: Any]) -> Bool {
+        let ask = firstString(dict, keys: ["ask", "askType", "ask_type"])
+        guard !ask.isEmpty else { return false }
+        if let raw = firstValue(dict, keys: ["askResponse", "ask_response"]) {
+            if let flag = raw as? Bool { return !flag }
+            let text = stringValue(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { return false }
+        }
+        let normalized = ask.lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        let waitingAsks: Set<String> = [
+            "followup", "command", "command_output", "completion_result",
+            "tool", "use_mcp_server", "browser_action_launch",
+            "resume_task", "resume_completed_task", "plan_mode_response",
+            "clarifying_question", "user_input", "permission",
+            "auto_approval_max_req_reached", "mistake_limit_reached",
+            "new_task",
+        ]
+        return waitingAsks.contains(normalized) || pendingPhase(ask)
     }
 
     /// Best-effort: `-Users-me-code-Pulse` → `/Users/me/code/Pulse` (Claude projects dir).
@@ -2003,14 +2038,17 @@ enum NativeActivityHarvest {
             "needs user", "awaiting user", "awaiting approval",
             "waiting for user", "waiting for approval", "ask user",
             "user approval", "blocking pending", "has blocking",
+            "waiting for response", "awaiting response",
         ]
         if phrases.contains(where: { normalized.contains($0) }) { return true }
         let tokens = normalized
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init)
+        // Bare "ask" is too broad (matches unrelated status words). Keep
+        // askuser / permission / pending / waiting / approval / awaiting.
         let markers: Set<String> = [
             "pending", "waiting", "approval", "awaiting",
-            "ask", "askuser", "permission", "confirm", "confirmation",
+            "askuser", "permission", "confirm", "confirmation",
             "blocked",
         ]
         return tokens.contains(where: { markers.contains($0) })

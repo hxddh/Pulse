@@ -733,6 +733,13 @@ enum SnapshotBuilder {
     }
 
     /// Match an attention entry to an existing harvest/process row.
+    ///
+    /// Identity order: session id → (empty-session process row) → cwd → best
+    /// live/fresh row for the agent.
+    /// If Attention names a **session** and every candidate already owns a
+    /// *different* session, return nil so the caller creates a dedicated
+    /// Waiting row — never smear onto a sibling. A process-only row with an
+    /// empty session id may adopt the named wait.
     static func matchAttentionRow(
         _ att: AttentionReader.Entry,
         in rowsByKey: [String: AgentRow]
@@ -752,6 +759,12 @@ enum SnapshotBuilder {
             }) {
                 return hit.rowKey
             }
+            // Process-only / unset-session rows can adopt the named wait.
+            if let unset = candidates.first(where: { $0.sessionID.isEmpty }) {
+                return unset.rowKey
+            }
+            // Every candidate already owns a different session — do not smear.
+            return nil
         }
         if !att.cwd.isEmpty {
             if let hit = candidates.first(where: {

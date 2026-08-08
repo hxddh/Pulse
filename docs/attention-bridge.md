@@ -34,6 +34,11 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 （replit / devin / warpAgent / trae / antigravity / junie）各追加一行可清除的
 样本（`pulse-sample` 会话）——不扩 hook 安装器。
 
+**session 身份：** Attention 行若带明确 `session`，优先挂到同 id 行；若现有行
+都已占用*别的* session，Pulse 会**新建** Waiting 行，而不会 smear 到兄弟会话
+（0.60）。仅有空 session 的进程行可以收养该 wait。`cwd` 回退只在未写 session
+时生效。
+
 **可运行样本：** [`docs/samples/attention-bridge/`](samples/attention-bridge/)
 （`raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——只演示 TSV 写入，
 不是 hook 安装器扩展。
