@@ -109,7 +109,7 @@ enum L10n {
         case .language: return "Language"
         case .waitingSignals: return "Waiting signals"
         case .hooksHint:
-            return "Install Claude/Codex hooks so Pulse can show permission, input waits, and subagent lifecycle."
+            return "Install Claude/Codex hooks so Pulse can show permission, input waits, and subagent lifecycle. Native — no Python required."
         case .installHooks: return "Install hooks"
         case .testWaitingSignal: return "Test connection"
         case .hookTestIdle: return "Not tested"
@@ -520,7 +520,7 @@ enum L10n {
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
         case .waitingSignals: return "等待信号"
-        case .hooksHint: return "安装 Claude/Codex hooks 后，Pulse 才能显示权限、输入等待与 subagent 生命周期。"
+        case .hooksHint: return "安装 Claude/Codex hooks 后，Pulse 才能显示权限、输入等待与 subagent 生命周期。原生通路，无需 Python。"
         case .installHooks: return "安装连接"
         case .testWaitingSignal: return "测试连接"
         case .hookTestIdle: return "尚未测试"

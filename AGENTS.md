@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.60.md`](docs/plan-0.60.md) | The active plan (Waiting Continuity) |
+| [`docs/plan-0.61.md`](docs/plan-0.61.md) | The active plan (Hook Autonomy) |
+| [`docs/plan-0.60.md`](docs/plan-0.60.md) | Historical plan (Waiting Continuity) |
 | [`docs/plan-0.59.md`](docs/plan-0.59.md) | Historical plan (Cache Continuity) |
 | [`docs/plan-0.58.md`](docs/plan-0.58.md) | Historical plan (Fleet Continuity) |
 | [`docs/plan-0.57.md`](docs/plan-0.57.md) | Historical plan (Fact Continuity) |
@@ -124,7 +125,7 @@ to users.
 
 ## Current state
 
-0.60.0 is the current source version. Without an Apple Developer ID, GitHub
+0.61.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.60.md`](docs/plan-0.60.md) (Waiting Continuity).
+plan is [`docs/plan-0.61.md`](docs/plan-0.61.md) (Hook Autonomy).

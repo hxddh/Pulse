@@ -1,16 +1,32 @@
 import Darwin
 import Foundation
 
-/// Locked read/write for attention.tsv — same exclusive flock as pulse_hook.py.
-/// Columns: agent \\t kind \\t ms \\t message \\t session \\t cwd
+/// Locked read/write for attention.tsv — same exclusive flock as pulse_hook.py /
+/// `PulseBar --hook`. Columns: agent \\t kind \\t ms \\t message \\t session \\t cwd
 enum AttentionIO {
-    static var path: URL {
+    /// Tests and `PULSE_HOME` hook self-tests redirect the ledger without
+    /// touching the user's real Application Support file.
+    static var pathOverride: URL?
+
+    static var defaultPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Pulse/attention.tsv")
     }
 
-    /// Must match `pulse_hook.py` and `AttentionWatcher` byte for byte —
-    /// three different header strings used to end up in the same file.
+    static var path: URL {
+        if let pathOverride { return pathOverride }
+        if let home = ProcessInfo.processInfo.environment["PULSE_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !home.isEmpty {
+            return URL(fileURLWithPath: home, isDirectory: true)
+                .appendingPathComponent("attention.tsv")
+        }
+        return defaultPath
+    }
+
+    /// Must match `pulse_hook.py`, `PulseHookReceiver`, and `AttentionWatcher`
+    /// byte for byte — three different header strings used to end up in the
+    /// same file.
     static let header = "# Pulse attention log (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
 
     static func readText() -> String {
@@ -97,7 +113,8 @@ enum AttentionIO {
         appendRawLine(line)
     }
 
-    private static func appendRawLine(_ line: String) {
+    /// Shared by Settings samples and the native hook receiver.
+    static func appendRawLine(_ line: String) {
         withExclusiveLock { fd in
             let size = lseek(fd, 0, SEEK_END)
             lseek(fd, 0, SEEK_SET)

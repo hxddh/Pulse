@@ -2,6 +2,37 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.61.0 — Hook Autonomy / 原生等待通路
+
+0.60 让红灯在舰队上可达；本版换轴：**Claude/Codex 金标准 Waiting 不再依赖
+optional Python** —— 原生 `pulse-hook` / `PulseBar --hook` 写入 attention.tsv，
+install / self-test 与 native harvest 同级。详见 [`docs/plan-0.61.md`](docs/plan-0.61.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 原生 Waiting 通路
+
+- **`PulseBar --hook`** + Application Support `pulse-hook` launcher（flock/TSV =
+  AttentionIO）；`PULSE_HOME` / pathOverride 支持自检隔离。
+- **Swift install/uninstall**：改 Claude settings / Codex root-table `notify`；
+  拒绝损坏 JSON；迁移 `pulse_hook.py` → native。
+- **self-test 无 Python**：进程内写入校验；Settings「测试连接」不依赖解释器。
+- 仍 seed 旧 `pulse_hook.py`；probe 认 native 与 legacy；uninstall 清两者。
+- EXPERIENCE 场景 T；AGENTS / attention-bridge / README 对齐 0.61。
+
+### P1 · 文案与回归
+
+- hooksHint：原生、无需 Python。
+- Attention 样本 / bridge raise 优先 `pulse-hook`；停滞行仍标无活动时长。
+- Attention 身份、pending、Waiting-none、Focus 回归保留。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- PulseHookReceiver / HooksInstaller 单测；self-test；八门禁对 0.61.0。
+
 ## 0.60.0 — Waiting Continuity / 等待连续
 
 0.59 让 Limited 缓存有料；本版回到产品本职：**红灯在舰队上可达且可信** ——
