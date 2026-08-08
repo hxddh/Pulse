@@ -2,6 +2,36 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.63.0 — Live Continuity / 绿灯可信
+
+0.60–0.62 让红灯可达；本版换轴：**绿 / 橙不得说谎** —— 混合舰队、无活动时长、
+仅进程观测，不能在菜单栏装成健康 Running。详见 [`docs/plan-0.63.md`](docs/plan-0.63.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · Glance 与停滞钟
+
+- **混合舰队**：任意 stalled → Glance 橙（优先于健康绿）；Waiting 仍最高。
+- **停滞钟**：`max(harvestMs, activityChangedMs)` —— progress/tokens 前进即刷新，
+  不因 mtime 未动假停滞。
+- **薄 Running**：process-only / 无活动时钟单独在跑 → Glance 橙，不装健康绿；
+  未知年龄仍不把行硬标 `isStalled`（未知 ≠ 沉默证据）。
+- EXPERIENCE 场景 **V**；Glance 规则写入体验规格。
+
+### P1 · Support 与文案
+
+- Support：活动年龄 / `no activity yet` / live stalled 可见。
+- 停滞主导时 tooltip 尽量带无活动时长。
+- 关 stall 阈值、Waiting 不双标 stalled 保留；0.60–0.62 回归保留。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- SnapshotBuilder：混合橙、信号前进不假停滞、仅进程不绿；AgentRow.stalled 单测；
+  八门禁对 0.63.0。
+
 ## 0.62.0 — Attention Autonomy / 开放 Attention 协议
 
 0.61 让 Claude/Codex Waiting 脱离 Python；本版换轴：把同一原生 `pulse-hook`

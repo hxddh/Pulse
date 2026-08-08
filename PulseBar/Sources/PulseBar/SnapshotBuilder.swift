@@ -444,7 +444,8 @@ enum SnapshotBuilder {
                 nowMs: context.nowMs,
                 waiting: row.waiting,
                 live: row.liveProcess || row.isExplicitlyRunningPhase || row.subRunning > 0,
-                threshold: context.stalledSeconds
+                threshold: context.stalledSeconds,
+                activityChangedMs: all[i].activityChangedMs
             )
             // Resolved here for the same reason as `isStalled`: a countdown
             // read from `Date()` inside a view body drifts away from the scan
@@ -501,9 +502,21 @@ enum SnapshotBuilder {
 
         let waitingCount = all.filter(\.waiting).count
         let liveRunning = all.filter { $0.section == .running }.count
+        let healthyRunning = all.filter(\.isHealthyRunning).count
+        let thinRunning = all.filter(\.isThinRunning).count
         let stalledCount = all.filter { $0.section == .stalled }.count
         let recentOnly = all.filter { $0.section == .recent }.count
         result.waitingKeys = Set(all.filter(\.waiting).map(\.rowKey))
+
+        /// Menu-bar lamp for non-Waiting fleets.
+        /// Priority: any stalled → orange; else healthy Running → green; else
+        /// thin/process-only Running → orange (not healthy green); else idle.
+        func liveFleetGlance() -> GlanceKind {
+            if stalledCount > 0 { return .stalled }
+            if healthyRunning > 0 { return .running }
+            if thinRunning > 0 || liveRunning > 0 { return .stalled }
+            return .idle
+        }
 
         var snap = PulseSnapshot()
         snap.totalCount = all.count
@@ -582,7 +595,7 @@ enum SnapshotBuilder {
             // me later" reminds you continuously.
             let waitingRows = all.filter { $0.waiting && !$0.isSnoozed }
             snap.glance = waitingRows.isEmpty
-                ? (liveRunning > 0 ? .running : (stalledCount > 0 ? .stalled : .idle))
+                ? liveFleetGlance()
                 : .waiting
             let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
             // The menu bar carries the two facts that decide whether to look:
@@ -631,23 +644,35 @@ enum SnapshotBuilder {
                 ? snap.headerTitle
                 : "\(snap.headerTitle) · \(snap.headerDetail)"
         } else if liveRunning > 0 || stalledCount > 0 {
-            snap.glance = liveRunning > 0 ? .running : .stalled
+            snap.glance = liveFleetGlance()
             let liveRows = all.filter { $0.section == .running }
             let stalledRows = all.filter { $0.section == .stalled }
             let busyRows = liveRows + stalledRows
             let liveNames = busyRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            if liveRunning == 1, stalledCount == 0 {
-                snap.title = liveRows[0].agent.displayName
-                snap.tooltip = "\(liveRows[0].agent.displayName) \(t(.running, lang))"
-            } else if liveRunning == 0 {
-                snap.title = "\(stalledCount)"
-                let oldest = stalledRows.map(\.lastActivitySeconds).filter { $0 > 0 }.max() ?? 0
-                let stalledDur = oldest > 0
-                    ? DurationFormat.label(seconds: oldest, lang: lang)
-                    : ""
-                snap.tooltip = stalledDur.isEmpty
-                    ? "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames)"
-                    : "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames) · \(stalledDur)"
+            let oldestStall = stalledRows.map(\.lastActivitySeconds).filter { $0 > 0 }.max() ?? 0
+            let stalledDur = oldestStall > 0
+                ? DurationFormat.label(seconds: oldestStall, lang: lang)
+                : ""
+            if healthyRunning == 1, stalledCount == 0, thinRunning == 0 {
+                snap.title = liveRows.first(where: \.isHealthyRunning)?.agent.displayName
+                    ?? liveRows[0].agent.displayName
+                snap.tooltip = "\(snap.title) \(t(.running, lang))"
+            } else if snap.glance == .stalled, liveRunning == 0 || stalledCount > 0 {
+                // Stall-only, or mixed fleet where stall wins the lamp: surface
+                // count + oldest silence so the corner matches Waiting's "how long".
+                let n = max(stalledCount, liveRunning + stalledCount)
+                snap.title = "\(stalledCount > 0 ? stalledCount : n)"
+                if stalledCount > 0 {
+                    snap.tooltip = stalledDur.isEmpty
+                        ? "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames)"
+                        : "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames) · \(stalledDur)"
+                } else {
+                    snap.tooltip = "\(stateSummary()): \(liveNames)"
+                }
+            } else if snap.glance == .stalled {
+                // Thin / process-only Running — orange lamp, not "healthy".
+                snap.title = "\(liveRunning)"
+                snap.tooltip = "\(stateSummary()): \(liveNames)"
             } else {
                 snap.title = "\(liveRunning + stalledCount)"
                 snap.tooltip = "\(stateSummary()): \(liveNames)"

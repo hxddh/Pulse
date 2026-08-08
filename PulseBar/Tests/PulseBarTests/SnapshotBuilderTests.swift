@@ -1006,6 +1006,7 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.rows.first?.section, .stalled)
         XCTAssertEqual(r.snapshot.sectionTotals[.stalled], 1)
         XCTAssertEqual(r.snapshot.sectionTotals[.running], 0)
+        XCTAssertEqual(r.snapshot.glance, .stalled)
     }
 
     func testHeaderSeparatesActiveStalledAndRecent() {
@@ -1023,6 +1024,43 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.snapshot.headerTitle.contains("1 running"), r.snapshot.headerTitle)
         XCTAssertTrue(r.snapshot.headerTitle.lowercased().contains("1 stalled"), r.snapshot.headerTitle)
         XCTAssertTrue(r.snapshot.headerTitle.contains("1 recent"), r.snapshot.headerTitle)
+        // Live Continuity: stall wins the lamp over a healthy runner.
+        XCTAssertEqual(r.snapshot.glance, .stalled)
+        XCTAssertTrue(r.snapshot.tooltip.lowercased().contains("stalled"), r.snapshot.tooltip)
+    }
+
+    /// Progress/tokens can move without a newer harvest mtime — that is still live.
+    func testLiveSignalMovePreventsFalseStall() {
+        var priorSource = harvest(.claude, task: "build", session: "s1", ageMs: 30 * 60 * 1000)
+        priorSource.progressDone = 1
+        priorSource.progressTotal = 10
+        let prior = build(
+            procs: [hit(.claude)],
+            harvest: [priorSource],
+            context: context(stalledSeconds: 5 * 60)
+        )
+        XCTAssertEqual(prior.rows.first?.isStalled, true)
+
+        var current = harvest(.claude, task: "build", session: "s1", ageMs: 30 * 60 * 1000)
+        current.progressDone = 4
+        current.progressTotal = 10
+        let moved = build(
+            procs: [hit(.claude)],
+            harvest: [current],
+            previous: .init(rows: prior.rows, waitingKeys: []),
+            context: context(stalledSeconds: 5 * 60)
+        )
+        XCTAssertEqual(moved.rows.first?.activityChange, .progress(done: 4, total: 10))
+        XCTAssertFalse(moved.rows.contains { $0.isStalled }, "signal move must refresh the stall clock")
+        XCTAssertEqual(moved.snapshot.glance, .running)
+    }
+
+    /// Process-only liveness is orange in the tray — the menu bar must not claim healthy green.
+    func testProcessOnlyRunningIsNotHealthyGreenGlance() {
+        let r = build(procs: [hit(.amp)])
+        XCTAssertTrue(r.rows.contains { $0.isProcessOnly && $0.section == .running })
+        XCTAssertEqual(r.snapshot.glance, .stalled)
+        XCTAssertNotEqual(r.snapshot.glance, .running)
     }
 
     /// Running with a live session is ordinary and gets no badge.
@@ -1033,6 +1071,7 @@ final class SnapshotBuilderTests: XCTestCase {
         )
         let row = try? XCTUnwrap(r.rows.first)
         XCTAssertEqual(row?.needsStatusChip, false)
+        XCTAssertEqual(r.snapshot.glance, .running)
     }
 
     func testProcessOnlyAndWaitingRowsDoGetAChip() {

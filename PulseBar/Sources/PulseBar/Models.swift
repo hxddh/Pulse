@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.62.0"
+    static let semver = "0.63.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -900,11 +900,13 @@ struct AgentRow: Identifiable, Hashable {
 
     /// Seconds since this session last did anything (0 when unknown).
     ///
-    /// `harvestMs` is the last-activity stamp. "Running for 20 minutes with
-    /// nothing happening" is a real signal, and the tray never carried it.
+    /// Prefer the fresher of harvest mtime and a live signal move
+    /// (`activityChangedMs`) — progress/tokens can advance without a newer
+    /// filesystem stamp.
     var lastActivitySeconds: Double {
-        guard harvestMs > 0 else { return 0 }
-        return max(0, Date().timeIntervalSince1970 - Double(harvestMs) / 1000.0)
+        let lastMs = max(harvestMs, activityChangedMs)
+        guard lastMs > 0 else { return 0 }
+        return max(0, Date().timeIntervalSince1970 - Double(lastMs) / 1000.0)
     }
 
     /// Running with a live session is the ordinary case, and the ordinary case
@@ -937,15 +939,34 @@ struct AgentRow: Identifiable, Hashable {
     ///
     /// `threshold <= 0` means the user turned staleness off, which must read as
     /// "never stalled" rather than "always stalled".
+    ///
+    /// `activityChangedMs` counts as a live signal (progress / tokens / …) even
+    /// when `harvestMs` did not move — same rule as the change banner. A zero
+    /// clock is still *not* evidence of silence (unknown ≠ stalled row), but
+    /// Glance must not treat thin/process-only Running as healthy green.
     static func stalled(
         harvestMs: Int64,
         nowMs: Int64,
         waiting: Bool,
         live: Bool,
-        threshold: Double = stalledSeconds
+        threshold: Double = stalledSeconds,
+        activityChangedMs: Int64 = 0
     ) -> Bool {
-        guard threshold > 0, !waiting, live, harvestMs > 0 else { return false }
-        return Double(nowMs - harvestMs) / 1000.0 >= threshold
+        guard threshold > 0, !waiting, live else { return false }
+        let lastMs = max(harvestMs, activityChangedMs)
+        guard lastMs > 0 else { return false }
+        return Double(nowMs - lastMs) / 1000.0 >= threshold
+    }
+
+    /// Session-backed Running that may light a healthy green glance.
+    /// Process-only / no-mtime rows stay live in the tray but are not "healthy".
+    var isHealthyRunning: Bool {
+        section == .running && !isProcessOnly && harvestMs > 0
+    }
+
+    /// Live Running without a trusted activity clock or session title.
+    var isThinRunning: Bool {
+        section == .running && (isProcessOnly || harvestMs == 0)
     }
 
     /// A wait old enough to deserve more than the ordinary Waiting treatment.
@@ -1036,6 +1057,11 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var focusTier: FocusTier? = nil
     /// A real TTY exists but Shortcuts Automation is off — honest, not clickable.
     var focusTTYNeedsOptIn: Bool = false
+    /// Seconds since the freshest session activity clock (0 = unknown).
+    /// Distinct from `lastSuccessfulReadMs` (Pulse read the adapter).
+    var activityAgeSeconds: Double = 0
+    /// True when any live row for this Agent is currently marked stalled.
+    var hasStalledLive: Bool = false
 
     var id: AgentID { agent }
 

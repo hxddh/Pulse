@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.62.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.63.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -56,18 +56,19 @@ Prefs 只改开关与连接。
 | 状态 | 灯 | 标题 | 触发 |
 | --- | --- | --- | --- |
 | Waiting | 暂停形 | `Claude…`，多个时用数量 | 有任意行在等你 |
-| Running | 实心灯 | 单名或数量 | 有 live 进程或 subagent |
+| Running | 实心灯 | 单名或数量 | 有**健康** live 会话（有活动时钟且非仅进程），且无停滞 |
 | Idle | 脉冲线 | **空** | 只有最近会话，或什么都没有 |
-| Stalled / Error | 橙色脉冲线 | 数量 / `!` | live 会话停滞，或 probe 与 harvest 同时不可用 |
+| Stalled / Error | 橙色脉冲线 | 数量 / `!` | live 会话停滞；仅进程 / 无活动时钟的 Running；或 probe 与 harvest 同时不可用 |
 
 规则：
 
+- **Glance 优先级（非 Waiting）：** 任意停滞 → 橙；否则健康 Running → 绿；否则仅进程 / 薄 Running → 橙（不得装健康绿）。
 - 标题预算 **≤ 8 个显示宽度**（CJK 按宽字符算），超限降级成数量。
 - Agent 产品名**始终英文**（Claude、Codex…），即使界面是中文。
 - Glance 不显示 tokens、相对时间、项目路径。
 - Idle 必须安静 —— 不刷「空闲」这种没信息量的词。
 - `LSUIElement`：无 Dock 图标；启动不闪窗。
-- Tooltip 一句状态，可略长于标题。
+- Tooltip 一句状态，可略长于标题；停滞主导时尽量带无活动时长。
 
 ---
 
@@ -453,6 +454,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | S | Waiting 连续（harvestPending + Waiting-none） | Cline `ask=followup` / Roo ask tool / Cascade waiting 旗 → 红灯；`depending` 仍否；Attention 带未知 session 不点亮已有兄弟会话（空 session 进程行可收养）；Waiting-none 只经 Settings → Waiting signals → Attention 样本，不从 harvest 抬 pending |
 | T | Hook Autonomy（无 Python） | 无 Python 的 Mac：Settings 安装 Claude/Codex hooks 成功；「测试连接」通过；`pulse-hook` / `PulseBar --hook` 写入 attention.tsv；已装 `pulse_hook.py` 可迁移且可卸载 |
 | U | Attention Autonomy（外接 raise） | Waiting-none / 名单外工具按 Attention Protocol v1 经 `pulse-hook` raise → 红灯 + Tray `hooks`；未知 kind 不写不亮；不扩 Claude/Codex 安装器；样本 `raise.sh` 可冒烟 |
+| V | Live Continuity（绿灯可信） | stall-only → 橙；`running + stalled` 混合 → 橙（不装健康绿）；progress/tokens 前进且 harvestMs 未动 → 不假停滞；仅进程 / 无活动时钟 Running → Glance 橙；Waiting 仍优先于 stall |
 
 ---
 
@@ -471,5 +473,6 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 版本 / 构建指纹 | `Models.swift` → `PulseVersion` |
 | Harvest / hooks | `NativeActivityHarvest.swift`、可选 `src/activity_scan.py`、`src/pulse_hook.py` |
 | Attention 协议 | `AttentionProtocol.swift`、`AttentionIO.swift`、`PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
+| 绿灯 / 停滞 | `AgentRow.stalled` / `isHealthyRunning` / `isThinRunning`；`SnapshotBuilder` liveFleetGlance |
 
 数据流详见 [`docs/architecture.md`](docs/architecture.md)。

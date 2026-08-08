@@ -279,6 +279,28 @@ final class ScreenshotRegressionTests: XCTestCase {
         )
     }
 
+    func testFreshActivitySignalPreventsStallDespiteOldHarvest() {
+        XCTAssertFalse(
+            AgentRow.stalled(
+                harvestMs: now - 30 * 60 * 1000,
+                nowMs: now,
+                waiting: false,
+                live: true,
+                activityChangedMs: now - 30_000
+            ),
+            "progress/token moves refresh the stall clock"
+        )
+        XCTAssertTrue(
+            AgentRow.stalled(
+                harvestMs: now - 30 * 60 * 1000,
+                nowMs: now,
+                waiting: false,
+                live: true,
+                activityChangedMs: now - 30 * 60 * 1000
+            )
+        )
+    }
+
     /// A stalled row is one the user should react to, so it keeps its badge.
     func testStalledRowsAreBadged() {
         var r = row(live: true)

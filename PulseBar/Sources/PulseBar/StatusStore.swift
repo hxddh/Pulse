@@ -534,7 +534,16 @@ final class StatusStore: ObservableObject {
                         || $0.errors > 0 || $0.files > 0 || $0.contextPercent > 0
                 },
                 focusTier: bestSupportFocus(in: rows),
-                focusTTYNeedsOptIn: supportTTYNeedsOptIn(in: rows)
+                focusTTYNeedsOptIn: supportTTYNeedsOptIn(in: rows),
+                activityAgeSeconds: {
+                    let clocks = rows.compactMap { row -> Int64? in
+                        let ms = max(row.harvestMs, row.activityChangedMs)
+                        return ms > 0 ? ms : nil
+                    }
+                    guard let newest = clocks.max() else { return 0 }
+                    return max(0, Date().timeIntervalSince1970 - Double(newest) / 1000.0)
+                }(),
+                hasStalledLive: rows.contains { $0.liveProcess && $0.isStalled }
             )
         }
     }
@@ -923,6 +932,23 @@ final class StatusStore: ObservableObject {
             }
         }
         facts.append(supportWaitingLabel(health.agent))
+        if health.hasStalledLive {
+            if health.activityAgeSeconds > 0 {
+                facts.append(String(
+                    format: tr(.stalledFor),
+                    DurationFormat.label(seconds: health.activityAgeSeconds, lang: lang)
+                ))
+            } else {
+                facts.append(tr(.stalled))
+            }
+        } else if health.hasActivity, health.activityAgeSeconds > 0 {
+            facts.append(String(
+                format: tr(.agoFormat),
+                DurationFormat.label(seconds: health.activityAgeSeconds, lang: lang)
+            ))
+        } else if health.processDetected, !health.hasActivity {
+            facts.append(tr(.noActivityYet))
+        }
         if health.lastWaitingSignalMs > 0 {
             let seconds = max(
                 0,
@@ -2418,7 +2444,7 @@ final class StatusStore: ObservableObject {
 
     /// "12m ago" for a row's last activity, or "no activity yet".
     func lastActivityLabel(_ row: AgentRow) -> String {
-        guard row.harvestMs > 0 else { return "" }
+        guard row.harvestMs > 0 || row.activityChangedMs > 0 else { return "" }
         let secs = row.lastActivitySeconds
         // "54s ago" reads as precision the number does not have — the panel
         // rescans every few seconds and nobody acts on the difference between

@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.62.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.62.0) · macOS 14+
+**版本：`0.63.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.63.0) · macOS 14+
 
 ---
 
@@ -29,7 +29,7 @@ Pulse 把这件事变成余光可见：
 ## 安装
 
 从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG
-（当前源码对应 [v0.62.0](https://github.com/hxddh/Pulse/releases/tag/v0.62.0)），拖进「应用程序」。
+（当前源码对应 [v0.63.0](https://github.com/hxddh/Pulse/releases/tag/v0.63.0)），拖进「应用程序」。
 
 > **没有 Apple Developer ID 时**：GitHub **Latest** 会跟到当前 semver（避免停在旧包），
 > 但 DMG 仍是 ad-hoc / 未公证，About 标 `preview`，**不是** Gatekeeper-ready。首次打开
@@ -213,7 +213,7 @@ git push                               # CI 构建、打 tag、发布
 公证并 staple App 与 DMG，再以 `spctl` 验收，并在 Info.plist 写入 `stable`。
 **任一凭据缺失时仍发布 GitHub Latest**（跟当前 semver），产物为 ad-hoc / 未公证，
 About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。详见
-[`CHANGELOG.md`](CHANGELOG.md) 的 0.62.0 说明。
+[`CHANGELOG.md`](CHANGELOG.md) 的 0.63.0 说明。
 
 > 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
 > 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
@@ -243,6 +243,7 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v1 契约 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+| [`docs/plan-0.63.md`](docs/plan-0.63.md) | 0.63 计划 —— 绿灯可信 |
 | [`docs/plan-0.62.md`](docs/plan-0.62.md) | 0.62 计划 —— 开放 Attention 协议 |
 | [`docs/plan-0.61.md`](docs/plan-0.61.md) | 0.61 计划 —— 原生等待通路 |
 | [`docs/plan-0.60.md`](docs/plan-0.60.md) | 0.60 计划 —— 等待连续 |
