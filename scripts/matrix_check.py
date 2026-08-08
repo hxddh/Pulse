@@ -179,6 +179,23 @@ def main() -> int:
             print("MISMATCH", f)
         return 1
 
+    # Contract Honesty (0.70): fleet-count prose must not lag AgentID growth.
+    experience = (ROOT / "EXPERIENCE.md").read_text(encoding="utf-8")
+    if "32 个用户可见 Agent" not in experience:
+        print("FAIL: EXPERIENCE.md Support Health must say 32 visible Agents", file=sys.stderr)
+        return 1
+    if "| Y |" not in experience or "Contract Honesty" not in experience:
+        print("FAIL: EXPERIENCE.md missing scenario Y (Contract Honesty)", file=sys.stderr)
+        return 1
+    obs = (ROOT / "docs" / "observability-matrix.md").read_text(encoding="utf-8")
+    if "all 32 surfaces" not in obs:
+        print("FAIL: observability-matrix.md must say all 32 surfaces", file=sys.stderr)
+        return 1
+    models = MODELS.read_text(encoding="utf-8")
+    if "static var waitingNoneAgents" not in models:
+        print("FAIL: Models.swift missing AgentID.waitingNoneAgents truth source", file=sys.stderr)
+        return 1
+
     print(f"support matrix OK — {len(covered)} agents agree with harvestSource + waitingSource")
     return 0
 

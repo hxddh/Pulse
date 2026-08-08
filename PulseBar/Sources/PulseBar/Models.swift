@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.65.0"
+    static let semver = "0.70.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -216,6 +216,12 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
         .openhands, .cline, .roo, .continue_, .amazonQ, .zedAgent, .trae,
         .warpAgent, .replit, .zcode, .cursor,
     ]
+
+    /// Surface Agents with no native Waiting path — Attention Protocol only.
+    /// Single source for Settings samples, Support repair, and L10n lists.
+    static var waitingNoneAgents: [AgentID] {
+        priority.filter { $0 != .cursorAgent && $0.waitingSource == .none }
+    }
 }
 
 enum WaitingSource {

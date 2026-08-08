@@ -41,7 +41,7 @@ score is evaluated out of four rather than five.
 Static coverage and runtime health are different claims. The same bounded scan
 that reads session data emits one privacy-safe result per collector:
 
-Since 0.48 the normal scan is `NativeActivityHarvest.swift`: all 31 surfaces
+Since 0.48 the normal scan is `NativeActivityHarvest.swift`: all 32 surfaces
 have a Swift descriptor and typed row/health output. Cursor's composer database
 is read through the macOS SQLite3 module when the user grants that Agent's
 protected store. The old Python adapters remain an explicit legacy diagnostic

@@ -2,6 +2,34 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.70.0 — Contract Honesty / 契约诚实
+
+0.60–0.65 Continuity 弧闭环后，本版换章：**规格 / Support / 样本不得再与代码漂移**。
+Waiting-none 单一真源，深度不遮盖，Attention Reach 点名 Agent。详见
+[`docs/plan-0.70.md`](docs/plan-0.70.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 契约真源
+
+- **`AgentID.waitingNoneAgents`**：样本 / Support / 动态提示派生自 enum，不手抄七名单。
+- Support 深度：Waiting-none 仍露出 cache thin/partial（ZCode 不再只显示「Waiting 不可用」）。
+- Attention Reach：Support → Waiting signals 携带该 Agent 名聚焦提示。
+- EXPERIENCE / observability-matrix 对齐 **32** Agent；场景 **Y**。
+- safe report：`waitingNone` + `gatekeeperReady`；matrix_check 拒「31 个用户可见」漂移。
+
+### P1 · 回归
+
+- About preview/signed 仍明示非 Gatekeeper-ready；0.60–0.65 回归保留。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- SupportHealthTests：深度复合文案、Waiting-none 真源、Attention Reach 点名；
+  八门禁对 0.70.0。
+
 ## 0.65.0 — Fleet Coverage / ZCode
 
 0.60–0.64 闭环灯与打断；本版换轴：**舰队诚实扩员** —— 接入 Z.ai ZCode ADE

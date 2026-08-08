@@ -251,7 +251,7 @@ Support Health 对每个 Agent 标明 Focus 事实（工作区 / 仅 App / TTY /
 检测到但仅有进程，是两个不同状态。Supervisor 故意延后（backoff / circuit）不得点亮
 「扫描未完成」横幅；超时且已有部分行用专属文案，不得把其它健康 Agent 空白掉。
 
-支持健康度默认展示完整的 31 个用户可见 Agent 名单，首屏直接看到每个适配器的
+支持健康度默认展示完整的 32 个用户可见 Agent 名单，首屏直接看到每个适配器的
 需要处理 / 信息受限 / 健康 / 暂无本机证据状态；「已观测」筛选仍可快速收窄到本机已有
 有效证据。深度应用数据关闭时，受保护来源必须明确标为隐私受限，不能让用户把“未读取”
 误认为“不支持”。若用户已按 Agent 开启部分数据源，顶栏不得再写成「深度扫描已关闭」；
@@ -457,6 +457,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | V | Live Continuity（绿灯可信） | stall-only → 橙；`running + stalled` 混合 → 橙（不装健康绿）；progress/tokens 前进且 harvestMs 未动 → 不假停滞；仅进程 / 无活动时钟 Running → Glance 橙；Waiting 仍优先于 stall |
 | W | Go-Look Closure（打断闭环） | 点 Waiting 通知 /「去看看」→ 托盘打开且**该行**选中并滚入视口；有 Focus 句柄时仍可激活宿主，但不因 Focus 成功丢行身份；多 Waiting 摘要用精确 `rowKey`，不 smear |
 | X | Fleet Coverage（ZCode） | `ZCode.app` / `~/.zcode` 可探测；证据为 best-effort cache；无原生 Waiting；Settings Attention 样本与 `raise-zcode.sh` 可亮红；不扩 Claude/Codex hooks |
+| Y | Contract Honesty（契约诚实） | Support / 样本 / L10n 的 Waiting-none 名单派生自 `AgentID.waitingNoneAgents`；Waiting-none 深度仍露出 cache thin/partial；Support → Waiting signals 点名该 Agent；规格写 32 Agent；未公证不标 Gatekeeper-ready |
 
 ---
 

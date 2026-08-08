@@ -195,7 +195,10 @@ private struct AgentDetailView: View {
                             .font(.caption)
                         } else if gap.nextStep == "use_attention_bridge" {
                             Button(store.tr(.setupWaitingSignals)) {
-                                store.openSettings(focusWaitingSignals: true)
+                                store.openSettings(
+                                    focusWaitingSignals: true,
+                                    focusWaitingAgent: row.agent
+                                )
                             }
                             .buttonStyle(.link)
                             .font(.caption)

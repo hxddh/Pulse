@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.65.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.65.0) · macOS 14+
+**版本：`0.70.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.70.0) · macOS 14+
 
 ---
 
@@ -243,6 +243,7 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v1 契约 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+| [`docs/plan-0.70.md`](docs/plan-0.70.md) | 0.70 计划 —— 契约诚实 |
 | [`docs/plan-0.65.md`](docs/plan-0.65.md) | 0.65 计划 —— 舰队覆盖 / ZCode |
 | [`docs/plan-0.64.md`](docs/plan-0.64.md) | 0.64 计划 —— 打断闭环 |
 | [`docs/plan-0.63.md`](docs/plan-0.63.md) | 0.63 计划 —— 绿灯可信 |

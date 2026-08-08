@@ -1976,7 +1976,7 @@ struct SettingsView: View {
     private var waitingSignalsSection: some View {
         Section(store.tr(.waitingSignals)) {
             if store.settingsFocusWaitingSignals {
-                Label(store.tr(.attentionBridgeFocusHint), systemImage: "link")
+                Label(store.attentionBridgeFocusHintText(), systemImage: "link")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -2002,7 +2002,7 @@ struct SettingsView: View {
                     .foregroundStyle(hookTestColor)
                     .lineLimit(1)
             }
-            Text(store.tr(.attentionBridgeHint))
+            Text(store.attentionBridgeHintText())
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2018,7 +2018,7 @@ struct SettingsView: View {
                 store.clearAttentionBridgeSample()
             }
             .font(.caption)
-            Text(store.tr(.attentionBridgeWriteSampleHint))
+            Text(store.attentionBridgeWriteSampleHintText())
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2655,7 +2655,11 @@ struct SupportHealthRow: View {
                         case .retry: store.refresh(reason: "support-retry")
                         case .openSettings: store.openSettings(focusAppDataFor: item.agent)
                         case .runAgent: store.focusAgent(idRaw: item.agent.rawValue)
-                        case .openAttentionBridge: store.openSettings(focusWaitingSignals: true)
+                        case .openAttentionBridge:
+                            store.openSettings(
+                                focusWaitingSignals: true,
+                                focusWaitingAgent: item.agent
+                            )
                         case .none: break
                         }
                     }

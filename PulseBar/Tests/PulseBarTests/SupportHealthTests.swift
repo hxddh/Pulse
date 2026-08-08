@@ -65,7 +65,18 @@ final class SupportHealthTests: XCTestCase {
 
         let none = health(agent: .devin)
         XCTAssertEqual(AgentID.devin.waitingSource, .none)
-        XCTAssertEqual(store.supportDepthDetail(none), store.tr(.supportDepthWaitingNone))
+        XCTAssertEqual(AgentID.devin.harvestSource, .bestEffortCache)
+        XCTAssertEqual(
+            store.supportDepthDetail(none),
+            "\(store.tr(.supportDepthWaitingNone)) · \(store.tr(.supportDepthCacheThin))"
+        )
+
+        let richNone = health(agent: .zcode, evidence: .cache, goal: true, workspace: true, activity: true)
+        XCTAssertEqual(AgentID.zcode.waitingSource, .none)
+        XCTAssertEqual(
+            store.supportDepthDetail(richNone),
+            "\(store.tr(.supportDepthWaitingNone)) · \(store.tr(.supportDepthCachePartial))"
+        )
     }
 
     func testAgentWithoutWaitingContractIsNotPermanentlyIncomplete() {
@@ -360,6 +371,9 @@ final class SupportHealthTests: XCTestCase {
         let report = store.safeSupportReport()
         XCTAssertTrue(report.contains("channel:"))
         XCTAssertTrue(report.contains("notarized:"))
+        XCTAssertTrue(report.contains("gatekeeperReady:"))
+        XCTAssertTrue(report.contains("waitingNone:"))
+        XCTAssertTrue(report.contains("zcode"))
         XCTAssertTrue(report.contains("notifications: authorization="))
         XCTAssertTrue(report.contains("notifyWaiting="))
         XCTAssertTrue(report.contains("pending="))
@@ -386,11 +400,25 @@ final class SupportHealthTests: XCTestCase {
     }
 
     func testAttentionSampleAgentsCoverEveryWaitingNoneContract() {
-        let none = Set(AgentID.allCases.filter { $0.waitingSource == .none })
+        let none = Set(AgentID.allCases.filter { $0.waitingSource == .none && $0 != .cursorAgent })
         let samples = Set(StatusStore.attentionSampleAgents)
         XCTAssertEqual(samples, none, "Settings sample must cover every Waiting-none Agent")
+        XCTAssertEqual(Set(AgentID.waitingNoneAgents), none)
         XCTAssertFalse(samples.contains(.claude))
         XCTAssertFalse(samples.contains(.codex))
+        XCTAssertTrue(samples.contains(.zcode))
+    }
+
+    @MainActor
+    func testAttentionReachNamesWaitingNoneAgent() {
+        let store = StatusStore()
+        store.language = .en
+        store.openSettings(focusWaitingSignals: true, focusWaitingAgent: .zcode)
+        XCTAssertTrue(store.settingsFocusWaitingSignals)
+        XCTAssertEqual(store.settingsFocusWaitingAgent, .zcode)
+        XCTAssertTrue(store.attentionBridgeFocusHintText().contains("ZCode"))
+        XCTAssertTrue(store.attentionBridgeWriteSampleHintText().contains("ZCode"))
+        XCTAssertTrue(store.attentionBridgeHintText().contains("ZCode"))
     }
 
     @MainActor

@@ -394,6 +394,8 @@ final class StatusStore: ObservableObject {
             "notarized: \(PulseVersion.isNotarized)",
             "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "Agents: \(healthItems.count)",
+            "waitingNone: \(Self.attentionSampleAgents.map(\.rawValue).joined(separator: ","))",
+            "gatekeeperReady: \(PulseVersion.isGatekeeperReady)",
             "appDataScan: \(appDataScanDescription)",
             "appDataGrant: \(grantLabel)",
             "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)",
@@ -3128,17 +3130,21 @@ final class StatusStore: ObservableObject {
 
     /// Thin vs deep observation — never let a cache/none Agent look session-deep.
     /// Rich cache (goal + workspace/activity) stays Limited but says so honestly.
+    /// Waiting-none still exposes harvest depth so ZCode/Trae cannot hide behind
+    /// “Waiting unavailable” alone (0.70 Contract Honesty).
     func supportDepthDetail(_ health: AgentSupportHealth) -> String {
-        if health.agent.waitingSource == .none {
-            return tr(.supportDepthWaitingNone)
-        }
+        let harvest: String
         switch health.agent.harvestSource {
         case .bestEffortCache:
             let rich = health.hasGoal && (health.hasWorkspace || health.hasActivity)
-            return rich ? tr(.supportDepthCachePartial) : tr(.supportDepthCacheThin)
+            harvest = rich ? tr(.supportDepthCachePartial) : tr(.supportDepthCacheThin)
         case .structuredSession:
-            return tr(.supportDepthSession)
+            harvest = tr(.supportDepthSession)
         }
+        if health.agent.waitingSource == .none {
+            return "\(tr(.supportDepthWaitingNone)) · \(harvest)"
+        }
+        return harvest
     }
 
     /// "Remind me later" — the answer that did not exist.
@@ -3258,6 +3264,8 @@ final class StatusStore: ObservableObject {
     /// When true, Settings scrolls/highlights the Waiting signals section
     /// (Attention bridge path for agents without a native Waiting contract).
     @Published var settingsFocusWaitingSignals = false
+    /// Waiting-none Agent named when Support deep-links into Attention Reach.
+    @Published var settingsFocusWaitingAgent: AgentID? = nil
     /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump
     /// seeds a `rowKey`, TrayPanel selects+scrolls it, then clears.
     @Published private(set) var pendingRevealRowKey: String? = nil
@@ -3274,12 +3282,17 @@ final class StatusStore: ObservableObject {
         pendingRevealRowKey = nil
     }
 
-    func openSettings(focusAppDataFor agent: AgentID? = nil, focusWaitingSignals: Bool = false) {
+    func openSettings(
+        focusAppDataFor agent: AgentID? = nil,
+        focusWaitingSignals: Bool = false,
+        focusWaitingAgent: AgentID? = nil
+    ) {
         settingsFocusAppDataAgent = agent
         if agent != nil {
             settingsExpandAppDataScopes = true
         }
         settingsFocusWaitingSignals = focusWaitingSignals
+        settingsFocusWaitingAgent = focusWaitingAgent
         SettingsWindowController.shared.show(
             store: self,
             focusAppDataFor: agent,
@@ -3296,11 +3309,40 @@ final class StatusStore: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// Agents with `waitingSource=.none` — Settings one-click Attention samples.
+    /// Agents with `waitingSource=.none` — derived from `AgentID.waitingNoneAgents`.
     /// Does not expand the Claude/Codex hook installer.
-    static let attentionSampleAgents: [AgentID] = [
-        .replit, .devin, .warpAgent, .trae, .antigravity, .junie, .zcode,
-    ]
+    static var attentionSampleAgents: [AgentID] { AgentID.waitingNoneAgents }
+
+    /// Localized sample hint listing every Waiting-none display name from the
+    /// enum — never a hand-maintained seven-name string.
+    func attentionBridgeWriteSampleHintText() -> String {
+        let names = Self.attentionSampleAgents.map(\.displayName)
+        let joined = lang == .zh ? names.joined(separator: "、") : names.joined(separator: ", ")
+        let n = names.count
+        if lang == .zh {
+            return "为全部\(n)个无 Waiting 路径的 Agent（\(joined)）追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
+        }
+        return "Appends Attention bridge lines for all \(n) Waiting-none Agents (\(joined)). Does not expand the Claude/Codex hook installer."
+    }
+
+    func attentionBridgeHintText() -> String {
+        let names = Self.attentionSampleAgents.map(\.displayName)
+        let joined = lang == .zh ? names.joined(separator: "、") : names.joined(separator: ", ")
+        if lang == .zh {
+            return "无原生 Waiting 路径的 Agent（\(joined)）请用 pulse-hook / Attention Protocol v1 上报（docs/attention-protocol.md）。hooks 安装器仍只覆盖 Claude / Codex。"
+        }
+        return "Opaque agents (\(joined)) have no native Waiting path — raise via pulse-hook / Attention Protocol v1 (docs/attention-protocol.md). Hook installer stays Claude/Codex only."
+    }
+
+    func attentionBridgeFocusHintText() -> String {
+        if let agent = settingsFocusWaitingAgent {
+            if lang == .zh {
+                return "\(agent.displayName) 无原生 Waiting 路径 — 在此用 pulse-hook / Attention Protocol 上报"
+            }
+            return "\(agent.displayName) has no native Waiting path — raise here via pulse-hook / Attention Protocol"
+        }
+        return tr(.attentionBridgeFocusHint)
+    }
 
     /// Settings one-click sample Waiting via Attention bridge for every
     /// Waiting-none Agent. Does not invent native Waiting paths.
