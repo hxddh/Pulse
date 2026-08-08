@@ -232,8 +232,11 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testLiveProcessSuppressesErrorEvenWhenHarvestFailed() {
         // A dead harvest is not a dead machine — `ps` still saw the agent.
+        // Live Continuity: process-only is orange honesty, never the red error
+        // lamp, and never a healthy green "fully observed" claim.
         let r = build(procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 10)], unreliable: true)
-        XCTAssertEqual(r.snapshot.glance, .running, "probe still had an answer")
+        XCTAssertEqual(r.snapshot.glance, .stalled, "probe-only liveness is not healthy green")
+        XCTAssertNotEqual(r.snapshot.glance, .error)
         XCTAssertNil(r.snapshot.probeError)
     }
 
