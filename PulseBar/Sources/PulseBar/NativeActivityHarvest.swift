@@ -1121,10 +1121,17 @@ enum NativeActivityHarvest {
         let ext = url.pathExtension.lowercased()
         let stem = url.deletingPathExtension().lastPathComponent.lowercased()
         let namedTranscript = ["rollout", "session", "conversation", "thread", "transcript", "history"]
-            .contains(where: { stem.hasPrefix($0) })
-        return parts.contains(where: { sessionNeedles.contains($0) })
+            .contains(where: { stem == $0 || stem.hasPrefix($0 + "-") || stem.hasPrefix($0 + "_") })
+        // `sessions` / `threads` directories must count — exact needle equality
+        // missed Pi's `.../sessions/*.jsonl` and Goose `session.json`.
+        let partHit = parts.contains(where: { part in
+            sessionNeedles.contains(where: { needle in
+                part == needle || part.hasPrefix(needle)
+            })
+        })
+        return partHit
             || parts.contains(where: { $0.contains("rollout") || $0.contains("transcript") })
-            || (["jsonl", "ndjson"].contains(ext) && namedTranscript)
+            || (["jsonl", "ndjson", "json"].contains(ext) && namedTranscript)
     }
 
     private static func sessionIDFromPath(_ url: URL) -> String {
