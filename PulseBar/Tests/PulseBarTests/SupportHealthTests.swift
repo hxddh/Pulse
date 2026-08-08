@@ -63,7 +63,7 @@ final class SupportHealthTests: XCTestCase {
         let rich = health(agent: .cline, evidence: .cache, goal: true, workspace: true, activity: true)
         XCTAssertEqual(store.supportDepthDetail(rich), store.tr(.supportDepthCachePartial))
 
-        let none = health(agent: .devin)
+        let none = health(agent: .devin, evidence: .cache, goal: false, workspace: false, activity: false)
         XCTAssertEqual(AgentID.devin.waitingSource, .none)
         XCTAssertEqual(AgentID.devin.harvestSource, .bestEffortCache)
         XCTAssertEqual(
