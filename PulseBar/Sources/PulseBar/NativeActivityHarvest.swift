@@ -1797,8 +1797,10 @@ enum NativeActivityHarvest {
         prefer(&target.phase, source.phase); prefer(&target.outcome, source.outcome)
         if !source.model.isEmpty { target.model = source.model }
         if !source.mode.isEmpty { target.mode = source.mode }
-        target.tokensIn = max(target.tokensIn, source.tokensIn)
-        target.tokensOut = max(target.tokensOut, source.tokensOut)
+        // Latest turn usage wins (Claude assistant envelopes; matches Codex
+        // last_token_usage semantics). Never sum every turn into the tray.
+        if source.tokensIn > 0 { target.tokensIn = source.tokensIn }
+        if source.tokensOut > 0 { target.tokensOut = source.tokensOut }
         target.errors = max(target.errors, source.errors); target.files = max(target.files, source.files)
         target.contextPercent = max(target.contextPercent, source.contextPercent)
         target.progressDone = max(target.progressDone, source.progressDone)
