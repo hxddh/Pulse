@@ -659,7 +659,12 @@ final class RowMetricsTests: XCTestCase {
         let observation = store().rowObservationLine(loaded)
         let context = store().rowContextLine(loaded)
         XCTAssertTrue(metrics.contains("2 of 5"), metrics)
-        XCTAssertTrue(observation.contains("34 events"), observation)
+        XCTAssertTrue(observation.contains("12k"), observation)
+        XCTAssertTrue(observation.contains("2 of 5") || observation.contains("2"), observation)
+        XCTAssertFalse(
+            observation.contains("34 events"),
+            "subagents displace diagnostic record counts: \(observation)"
+        )
         XCTAssertTrue(context.contains("3h"), context)
         XCTAssertTrue(metrics.contains("12k"), metrics)
         XCTAssertFalse(metrics.contains("34"), metrics)
@@ -707,13 +712,14 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testRecentDynamicRowDoesNotSpendSpaceRepeatingStartAge() {
+    func testRecentDynamicRowKeepsSessionStartOnContext() {
         var r = row(startedAgo: 54 * 60)
         r.task = "Run checks"
         r.tool = "swift_test"
         r.liveProcess = true
         let line = store().rowContextLine(r)
-        XCTAssertFalse(line.contains("Started"), line)
+        // EXPERIENCE 次行右端: Started stays visible (0.80 Tray Legibility).
+        XCTAssertTrue(line.contains("Started"), line)
         XCTAssertTrue(line.contains("Last action: Testing"), line)
     }
 

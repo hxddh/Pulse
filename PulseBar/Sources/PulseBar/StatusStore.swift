@@ -2806,9 +2806,12 @@ final class StatusStore: ObservableObject {
         }
         let skill = readableSkill(row.skill)
         if facts.count < 4, !skill.isEmpty { facts.append(skill) }
-        // Records are diagnostic filler — only when the line would otherwise be
-        // thin. Never crowd out model/tokens/context (0.80).
-        if facts.count <= 2, row.records > 0 {
+        // Records are last-resort filler when no stronger progress-class fact
+        // earned a slot (0.80 — never crowd model/tokens/context).
+        let hasProgressClass = row.errors > 0 || row.subTotal > 0
+            || row.progressTotal > 0 || row.progressDone > 0
+            || row.files > 0 || row.contextPercent > 0
+        if facts.count < 4, !hasProgressClass, row.records > 0 {
             facts.append(String(row.records) + tr(.recordsSuffix))
         }
         return facts.prefix(4).joined(separator: " · ")
