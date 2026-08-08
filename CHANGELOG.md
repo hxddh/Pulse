@@ -2,6 +2,37 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.62.0 — Attention Autonomy / 开放 Attention 协议
+
+0.61 让 Claude/Codex Waiting 脱离 Python；本版换轴：把同一原生 `pulse-hook`
+升成 **对外契约** —— Waiting-none 与名单外工具可按协议亮红灯，**不扩**
+Claude/Codex hook 安装器。详见 [`docs/plan-0.62.md`](docs/plan-0.62.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 协议与可交付 raise
+
+- **`AttentionProtocol` v1**：统一 header、六列、kind 白名单；未知 kind soft-fail
+  （exit 0，不写）；`AttentionReader` 永不把自由文本当 Waiting。
+- **契约文档** [`docs/attention-protocol.md`](docs/attention-protocol.md) + 通用
+  [`raise.sh`](docs/samples/attention-bridge/raise.sh)；样本优先 `pulse-hook`。
+- **可发现**：Waiting-none nudge / Support / L10n 指向协议 raise via `pulse-hook`。
+- EXPERIENCE 场景 **U**；architecture / AGENTS / attention-bridge 对齐 0.62。
+
+### P1 · 零依赖叙事与回归
+
+- seed / 文档与「不需要 Python」一致；Live stall 仍标无活动时长。
+- 0.60 Attention 身份、0.61 native install/self-test、Waiting-none 不抬 harvest
+  pending 回归保留。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- 未知 kind 拒绝写入；v1 header；外接 raise → AttentionReader Waiting；
+  PulseHookReceiver / AttentionReader 单测；八门禁对 0.62.0。
+
 ## 0.61.0 — Hook Autonomy / 原生等待通路
 
 0.60 让红灯在舰队上可达；本版换轴：**Claude/Codex 金标准 Waiting 不再依赖

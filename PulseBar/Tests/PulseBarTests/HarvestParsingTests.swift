@@ -474,6 +474,24 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
     }
 
+    func testUnknownKindNeverRaisesWaiting() {
+        let text = tsv([["replit", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]])
+        XCTAssertTrue(
+            AttentionReader.parse(text, nowMs: now).isEmpty,
+            "free-text kinds must never light Waiting"
+        )
+    }
+
+    func testProtocolHeaderIsIgnoredAsComment() {
+        let text = AttentionProtocol.header + tsv([
+            ["junie", "waiting", "\(now - 1000)", "Need choice", "j1", "/w"],
+        ])
+        let entries = AttentionReader.parse(text, nowMs: now)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].id, .junie)
+        XCTAssertEqual(entries[0].kind, "Waiting")
+    }
+
     func testCommentsAndShortRowsAreSkipped() {
         let text = "# header\nclaude\tpermission\n\n"
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)

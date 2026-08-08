@@ -720,24 +720,23 @@ enum AttentionReader {
         case permission, idlePrompt, waiting, stop, done, ignore
 
         static func parse(_ raw: String) -> Kind {
-            switch raw {
-            case "permission", "permission_prompt", "PermissionRequest":
+            // Protocol v1: only canonical / aliased waiting+clear kinds light
+            // or clear Waiting. Unknown free-text never becomes a red lamp.
+            let normalized = AttentionProtocol.normalizeKind(raw)
+            switch normalized {
+            case "permission":
                 return .permission
-            case "idle_prompt", "idle", "agent_needs_input":
+            case "idle_prompt":
                 return .idlePrompt
-            case "waiting", "needs_input":
+            case "waiting":
                 return .waiting
-            case "stop", "Stop":
+            case "stop":
                 return .stop
-            case "done", "agent-turn-complete", "agent_completed":
+            case "done":
                 return .done
-            case "subagent", "subagent_start", "subagent_stop", "SubagentStart", "SubagentStop":
+            case "subagent_start", "subagent_stop":
                 return .ignore
             default:
-                // Codex-normalized kinds already mapped in hook; treat unknown clears carefully.
-                let low = raw.lowercased()
-                if low.contains("approval") && !low.contains("response") { return .permission }
-                if low.contains("user_input") && !low.contains("response") { return .idlePrompt }
                 return .ignore
             }
         }

@@ -5,10 +5,11 @@ Usage:
   pulse_hook.py <agent> [kind]          # kind from argv or stdin JSON
   echo '{...}' | pulse_hook.py claude
 
-TSV columns (v3, backward compatible):
+TSV columns (Attention Protocol v1):
   agent \\t kind \\t ms \\t message \\t session \\t cwd
 
 Exit 0 always so agent hooks never block the agent.
+Unknown kinds soft-fail (no write) — same gate as PulseBar --hook.
 """
 from __future__ import annotations
 
@@ -21,6 +22,11 @@ import time
 from pathlib import Path
 
 MAX_LINES = 80
+HEADER = "# pulse-attention v1 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
+WAITING_KINDS = frozenset({"permission", "idle_prompt", "waiting"})
+CLEAR_KINDS = frozenset({"done", "stop"})
+LIFECYCLE_KINDS = frozenset({"subagent_start", "subagent_stop"})
+ACCEPTED_KINDS = WAITING_KINDS | CLEAR_KINDS | LIFECYCLE_KINDS
 
 # Hooks receive untrusted agent payloads. Redacting only in Swift would leave
 # the same credential in attention.tsv on disk and in any copied diagnostics.
@@ -117,8 +123,16 @@ def normalize_kind(kind: str) -> str:
         "elicitation_dialog": "idle_prompt",
         "permission_prompt": "permission",
         "idle_prompt": "idle_prompt",
+        "idle": "idle_prompt",
         "agent_needs_input": "idle_prompt",
         "needs_input": "idle_prompt",
+        "subagent_start": "subagent_start",
+        "subagent_stop": "subagent_stop",
+        "subagent": "subagent_start",
+        "permission": "permission",
+        "stop": "stop",
+        "done": "done",
+        "waiting": "waiting",
     }
     if low in mapping:
         return mapping[low]
@@ -126,7 +140,11 @@ def normalize_kind(kind: str) -> str:
         return "permission"
     if "user_input" in low and "response" not in low:
         return "idle_prompt"
-    return k or "waiting"
+    return "waiting" if not k else low
+
+
+def accepts_write(kind: str) -> bool:
+    return normalize_kind(kind) in ACCEPTED_KINDS
 
 
 def message_from_json(payload: dict) -> str:
@@ -201,7 +219,7 @@ def append_event(agent: str, kind: str, message: str, session: str = "", cwd: st
             lines = lines[-MAX_LINES:]
             f.seek(0)
             f.truncate()
-            f.write("# Pulse attention log (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n")
+            f.write(HEADER)
             f.write("\n".join(lines) + "\n")
             f.flush()
             os.fsync(f.fileno())
@@ -237,6 +255,8 @@ def main(argv: list[str]) -> int:
         payload = {**payload, **payload["msg"]}
 
     kind = normalize_kind(kind_arg or parse_kind_from_json(payload) or "waiting")
+    if not accepts_write(kind):
+        return 0
     msg = message_from_json(payload)
     session = session_from_json(payload)
     cwd = cwd_from_json(payload)

@@ -101,9 +101,9 @@ enum L10n {
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
         case .attentionBridgeHint:
-            return "Opaque agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie) have no native Waiting path — write attention.tsv via the Attention bridge (docs/attention-bridge.md). Hook installer stays Claude/Codex only."
+            return "Opaque agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie) have no native Waiting path — raise via pulse-hook / Attention Protocol v1 (docs/attention-protocol.md). Hook installer stays Claude/Codex only."
         case .attentionBridgeFocusHint:
-            return "Attention bridge — write attention.tsv for Waiting on agents without a native signal"
+            return "Attention Protocol — raise Waiting with pulse-hook for agents without a native signal"
         case .revealAttentionFolder: return "Reveal Attention folder"
         case .launchAtLogin: return "Launch at login"
         case .language: return "Language"
@@ -128,7 +128,7 @@ enum L10n {
         case .dismissWait: return "Dismiss"
         case .hooksNudge: return "Install hooks so Claude/Codex can signal Waiting"
         case .waitingSignalNudge:
-            return "Live agent has no Waiting path — open Waiting signals for the Attention bridge"
+            return "Live agent has no Waiting path — open Waiting signals and raise via pulse-hook (Attention Protocol)"
         case .hooksUnknown: return "Not checked"
         case .hooksMissing: return "Not installed"
         case .hooksInstalledBoth: return "Installed · Claude + Codex"
@@ -513,9 +513,9 @@ enum L10n {
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
         case .attentionBridgeHint:
-            return "无原生 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie）请写入 attention.tsv（见 docs/attention-bridge.md）。hooks 安装器仍只覆盖 Claude / Codex。"
+            return "无原生 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie）请用 pulse-hook / Attention Protocol v1 上报（docs/attention-protocol.md）。hooks 安装器仍只覆盖 Claude / Codex。"
         case .attentionBridgeFocusHint:
-            return "Attention 桥 — 为无原生 Waiting 信号的 Agent 写入 attention.tsv"
+            return "Attention Protocol — 用 pulse-hook 为无原生 Waiting 信号的 Agent 上报等待"
         case .revealAttentionFolder: return "打开 Attention 文件夹"
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
@@ -539,7 +539,7 @@ enum L10n {
         case .dismissWait: return "忽略等待"
         case .hooksNudge: return "安装 hooks 后，Claude/Codex 才能点亮「需要你」"
         case .waitingSignalNudge:
-            return "有 Agent 在跑但无 Waiting 路径 — 打开「等待信号」查看 Attention 桥"
+            return "有 Agent 在跑但无 Waiting 路径 — 打开「等待信号」，用 pulse-hook 按协议上报"
         case .hooksUnknown: return "未检查"
         case .hooksMissing: return "未安装"
         case .hooksInstalledBoth: return "已安装 · Claude + Codex"

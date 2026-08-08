@@ -90,13 +90,15 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 
 ### AttentionReader（事件驱动）
 
-`~/Library/Application Support/Pulse/attention.tsv`，由 `pulse_hook.py` 写入
-（Claude Code 的 hooks、Codex 的 `notify`）。格式见
+`~/Library/Application Support/Pulse/attention.tsv`，由原生 `pulse-hook` /
+`PulseBar --hook`（`PulseHookReceiver`）写入；可选 legacy `pulse_hook.py` 仍认
+同一 Attention Protocol v1。契约见
+[`attention-protocol.md`](attention-protocol.md)；产品政策见
 [`attention-bridge.md`](attention-bridge.md)。
 
 规则：同一 `(agent, session)` 后写的覆盖先写的；`done` 清除；`stop` 也清除，
 但 20 秒宽限内不清掉刚发生的 Permission/Input——Claude 常常先发 idle_prompt 再发 Stop。
-超过 30 分钟的条目直接过期。
+未知 kind 拒绝写入且读者忽略（永不自由文本 Waiting）。超过 30 分钟的条目直接过期。
 
 `AttentionWatcher` 用 `DispatchSource` 盯着这个文件，写入即触发刷新，
 所以红灯不用等下一个探测周期。
@@ -159,9 +161,9 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.61.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.61.0-dev` |
-| `mismatch` | 两者不一致 | `0.61.0≠0.60.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.62.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.62.0-dev` |
+| `mismatch` | 两者不一致 | `0.62.0≠0.61.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
 未公证）、`stable`（公证成功，`PulseNotarized=true`）。无 Apple Developer ID 时 GitHub
@@ -181,8 +183,9 @@ rollback；不递归扫嵌套目录。未注册且不在上述根的孤儿可能
 Swift descriptor、权限边界、bounded file walk 和健康结果。`src/activity_scan.py` 只保留为
 可选 legacy adapter / fixture source；它不会在默认启动或刷新路径被 fork，也不能使自检失败。
 
-hooks 仍可按用户选择安装。它们使用 `RuntimeResolver` 查找可选 Python，而不是假定某个
-系统路径；缺少 Python 只会让 hook 操作返回可行动的失败，不影响 native harvest。
+hooks 仍可按用户选择安装。Claude / Codex 走原生 `pulse-hook`（无需 Python）；
+Waiting-none / 名单外工具按 Attention Protocol v1 自行 raise。缺少 Python 不影响
+native harvest、hook install，或 self-test。
 
 ## 门禁
 

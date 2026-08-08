@@ -8,9 +8,11 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 1. **什么都不做** —— harvest 会尽力从它们的会话文件里认出 `pending`
    （Cursor、Droid、Kimi、OpenCode…… 见 README 的支持矩阵）；
 2. **走这座桥** —— 想要 hooks 级别的准确度（明确的授权 / 输入等待，而不是猜），
-   让工具在等待时写一行 TSV。
+   让工具在等待时按 **Attention Protocol v1** 写一行 TSV。
 
-桥接进来的等待，在 Tray 上标注为 `hooks`，与 Claude / Codex 同级。
+**契约正文：** [`attention-protocol.md`](attention-protocol.md)（header、六列、
+kind 白名单、raise / clear）。桥接进来的等待在 Tray 上标注为 `hooks`，与
+Claude / Codex 同级。
 
 ---
 
@@ -45,8 +47,8 @@ Waiting-none Agent（replit / devin / warpAgent / trae / antigravity / junie）�
 时生效。
 
 **可运行样本：** [`docs/samples/attention-bridge/`](samples/attention-bridge/)
-（`raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——优先调用 `pulse-hook`，
-否则直接追加 TSV；不是 hook 安装器扩展。
+（通用 `raise.sh` + `raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——优先
+调用 `pulse-hook`，否则直接追加 TSV；不是 hook 安装器扩展。
 
 深链 / Focus 精度边界：[`docs/landing-hosts.md`](landing-hosts.md)。
 
@@ -58,12 +60,13 @@ Waiting-none Agent（replit / devin / warpAgent / trae / antigravity / junie）�
 ~/Library/Application Support/Pulse/attention.tsv
 ```
 
-制表符分隔，六列：
+制表符分隔，六列 —— 完整白名单与 header 见
+[`attention-protocol.md`](attention-protocol.md)：
 
 | 列 | 内容 |
 | --- | --- |
 | `agent` | Pulse 的 agent id：`droid`、`kimi`、`replit`、`devin`… |
-| `kind` | `permission` · `idle_prompt` / `waiting` · `done` · `stop` |
+| `kind` | 白名单：`permission` · `idle_prompt` · `waiting` · `done` · `stop` · `subagent_*` |
 | `ms` | Unix 毫秒时间戳 |
 | `message` | 一句原因，无制表符和换行 |
 | `session` | 可选，会话 id —— 有它才能挂到正确的会话行 |
@@ -75,6 +78,7 @@ Pulse 的读取规则：
 - `done` 清除该会话（`session` 留空则清除该 agent 全部）；
 - `stop` 也清除，但**20 秒宽限内**不会清掉刚发生的 `permission` / `idle_prompt`
   —— Claude 常常先发 idle_prompt 紧接着发 Stop；
+- 未知 kind **不写、不亮**（No fake Waiting）；
 - 超过 **30 分钟**的条目自动过期；
 - 文件保留最近 80 行。
 

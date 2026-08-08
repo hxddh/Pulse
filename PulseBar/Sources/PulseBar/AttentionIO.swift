@@ -24,10 +24,10 @@ enum AttentionIO {
         return defaultPath
     }
 
-    /// Must match `pulse_hook.py`, `PulseHookReceiver`, and `AttentionWatcher`
-    /// byte for byte — three different header strings used to end up in the
-    /// same file.
-    static let header = "# Pulse attention log (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
+    /// Must match `AttentionProtocol.header`, `PulseHookReceiver`, and the
+    /// optional legacy `pulse_hook.py` — divergent headers used to coexist in
+    /// the same file and confuse readers.
+    static var header: String { AttentionProtocol.header }
 
     static func readText() -> String {
         var result = ""

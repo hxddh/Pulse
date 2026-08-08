@@ -1,10 +1,10 @@
 import Foundation
 
-/// Native Claude/Codex → attention.tsv receiver.
+/// Native attention receiver for Claude/Codex hooks and the public Attention
+/// bridge (`pulse-hook` / `PulseBar --hook`).
 ///
-/// Parity with `src/pulse_hook.py`: same kind normalization, JSON field
-/// extraction, flocked TSV append, and soft-fail exit. Invoked as
-/// `PulseBar --hook <agent> [kind]` so Waiting never depends on optional Python.
+/// Parity with `src/pulse_hook.py` plus Attention Protocol v1: unknown kinds
+/// soft-fail (exit 0, no write) so vendor agents are never blocked.
 enum PulseHookReceiver {
     /// Always returns 0 — vendor hooks must never block the agent.
     @discardableResult
@@ -21,15 +21,20 @@ enum PulseHookReceiver {
             if !kindArg.isEmpty, !kindArg.hasPrefix("{") { return kindArg }
             return parseKind(from: payload)
         }()
-        let kind = normalizeKind(kindSource.isEmpty ? "waiting" : kindSource)
+        let kind = AttentionProtocol.normalizeKind(kindSource.isEmpty ? "waiting" : kindSource)
+        guard AttentionProtocol.acceptsWrite(kind: kind) else {
+            DebugLog.write("attention reject unknown kind=\(kind) agent=\(agentRaw)")
+            return 0
+        }
         let message = message(from: payload)
         let session = session(from: payload)
         let cwd = cwd(from: payload)
-        appendEvent(agent: agentRaw, kind: kind, message: message, session: session, cwd: cwd)
+        _ = appendEvent(agent: agentRaw, kind: kind, message: message, session: session, cwd: cwd)
         return 0
     }
 
-    /// In-process self-test helper (no Process, no Python).
+    /// In-process helper. Rejects unknown kinds the same way as `run`.
+    @discardableResult
     static func appendEvent(
         agent: String,
         kind: String,
@@ -37,16 +42,19 @@ enum PulseHookReceiver {
         session: String = "",
         cwd: String = "",
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
-    ) {
+    ) -> Bool {
+        let normalized = AttentionProtocol.normalizeKind(kind)
+        guard AttentionProtocol.acceptsWrite(kind: normalized) else { return false }
         let line = [
             cleanField(agent, limit: 48),
-            cleanField(kind, limit: 64),
+            cleanField(normalized, limit: 64),
             String(nowMs),
             cleanField(message, limit: 200),
             cleanField(session, limit: 80),
             cleanField(cwd, limit: 240),
         ].joined(separator: "\t")
         AttentionIO.appendRawLine(line)
+        return true
     }
 
     // MARK: - Parse
@@ -84,41 +92,9 @@ enum PulseHookReceiver {
         return t.isEmpty ? "waiting" : t
     }
 
+    /// Compatibility alias — prefer `AttentionProtocol.normalizeKind`.
     static func normalizeKind(_ kind: String) -> String {
-        let k = kind.trimmingCharacters(in: .whitespacesAndNewlines)
-        let low = k.lowercased().replacingOccurrences(of: "-", with: "_")
-        let mapping: [String: String] = [
-            "agent_turn_complete": "done",
-            "agent-turn-complete": "done",
-            "agent_completed": "done",
-            "turn_complete": "done",
-            "task_complete": "done",
-            "exec_approval_request": "permission",
-            "apply_patch_approval_request": "permission",
-            "approval_request": "permission",
-            "pending_approval": "permission",
-            "request_user_input": "idle_prompt",
-            "user_input_request": "idle_prompt",
-            "elicitation_dialog": "idle_prompt",
-            "permission_prompt": "permission",
-            "idle_prompt": "idle_prompt",
-            "agent_needs_input": "idle_prompt",
-            "needs_input": "idle_prompt",
-            "subagent_start": "subagent_start",
-            "subagent_stop": "subagent_stop",
-            "permission": "permission",
-            "stop": "stop",
-            "done": "done",
-            "waiting": "waiting",
-        ]
-        if let mapped = mapping[low] { return mapped }
-        if low.contains("approval"), !low.contains("response"), !low.contains("decision") {
-            return "permission"
-        }
-        if low.contains("user_input"), !low.contains("response") {
-            return "idle_prompt"
-        }
-        return k.isEmpty ? "waiting" : k
+        AttentionProtocol.normalizeKind(kind)
     }
 
     private static func message(from payload: [String: Any]) -> String {

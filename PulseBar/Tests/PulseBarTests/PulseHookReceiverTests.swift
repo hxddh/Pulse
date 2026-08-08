@@ -20,6 +20,9 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(PulseHookReceiver.normalizeKind("request_user_input"), "idle_prompt")
         XCTAssertEqual(PulseHookReceiver.normalizeKind("exec_approval_request"), "permission")
         XCTAssertEqual(PulseHookReceiver.normalizeKind("agent-turn-complete"), "done")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("idle"), "idle_prompt")
+        XCTAssertTrue(AttentionProtocol.acceptsWrite(kind: "permission"))
+        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "totally_made_up_kind"))
     }
 
     func testRunWritesFlockedAttentionLineWithoutPython() throws {
@@ -31,7 +34,42 @@ final class PulseHookReceiverTests: XCTestCase {
         let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
         XCTAssertTrue(text.contains("codex\tidle_prompt\t"))
         XCTAssertTrue(text.contains("\tApprove shell\tsess-1\t/tmp/pulse"))
-        XCTAssertTrue(text.hasPrefix(AttentionIO.header.trimmingCharacters(in: .newlines)) || text.contains("Pulse attention log"))
+        XCTAssertTrue(
+            text.hasPrefix(AttentionProtocol.header.trimmingCharacters(in: .newlines)),
+            "writer must stamp Attention Protocol v1 header"
+        )
+    }
+
+    func testUnknownKindIsRejectedWithoutWrite() throws {
+        let code = PulseHookReceiver.run(
+            arguments: ["PulseBar", "--hook", "replit", "made_up_vendor_event"],
+            stdin: #"{"message":"should not land","session_id":"x"}"#
+        )
+        XCTAssertEqual(code, 0, "vendor hooks must never block")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttentionIO.path.path))
+        XCTAssertFalse(PulseHookReceiver.appendEvent(
+            agent: "replit",
+            kind: "made_up_vendor_event",
+            message: "nope"
+        ))
+    }
+
+    func testExternalRaiseBecomesAttentionWaiting() throws {
+        XCTAssertTrue(PulseHookReceiver.appendEvent(
+            agent: "replit",
+            kind: "permission",
+            message: "Approve deploy",
+            session: "ext-1",
+            cwd: "/tmp/ext"
+        ))
+        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let entries = AttentionReader.parse(text, nowMs: now)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].id, .replit)
+        XCTAssertEqual(entries[0].kind, "Permission")
+        XCTAssertEqual(entries[0].session, "ext-1")
+        XCTAssertEqual(entries[0].message, "Approve deploy")
     }
 
     func testPermissionEventFromClaudeJSON() throws {

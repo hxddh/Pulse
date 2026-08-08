@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.61.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.62.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -452,6 +452,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | R | 富缓存 Limited（Windsurf / Cline / Roo / Warp…） | 有 goal+cwd/tool 时托盘显示真实事实，Support 标「cache facts (Limited)」；薄索引标「thin cache」；证据仍 `.cache`，不升格假 session |
 | S | Waiting 连续（harvestPending + Waiting-none） | Cline `ask=followup` / Roo ask tool / Cascade waiting 旗 → 红灯；`depending` 仍否；Attention 带未知 session 不点亮已有兄弟会话（空 session 进程行可收养）；Waiting-none 只经 Settings → Waiting signals → Attention 样本，不从 harvest 抬 pending |
 | T | Hook Autonomy（无 Python） | 无 Python 的 Mac：Settings 安装 Claude/Codex hooks 成功；「测试连接」通过；`pulse-hook` / `PulseBar --hook` 写入 attention.tsv；已装 `pulse_hook.py` 可迁移且可卸载 |
+| U | Attention Autonomy（外接 raise） | Waiting-none / 名单外工具按 Attention Protocol v1 经 `pulse-hook` raise → 红灯 + Tray `hooks`；未知 kind 不写不亮；不扩 Claude/Codex 安装器；样本 `raise.sh` 可冒烟 |
 
 ---
 
@@ -469,5 +470,6 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 文案 | `L10n.swift` |
 | 版本 / 构建指纹 | `Models.swift` → `PulseVersion` |
 | Harvest / hooks | `NativeActivityHarvest.swift`、可选 `src/activity_scan.py`、`src/pulse_hook.py` |
+| Attention 协议 | `AttentionProtocol.swift`、`AttentionIO.swift`、`PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
 
 数据流详见 [`docs/architecture.md`](docs/architecture.md)。
