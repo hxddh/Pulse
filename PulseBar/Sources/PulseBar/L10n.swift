@@ -385,7 +385,7 @@ enum L10n {
         case .stallAfter: return "Call it stalled after"
         case .stallOff: return "Never"
         case .minutesShort: return "%d min"
-        case .notifFocus: return "Focus"
+        case .notifFocus: return "Go look"
         case .waitingSummaryTitle: return "%d agents need your attention"
         case .waitingSummaryBody: return "Open Pulse to review all waiting sessions."
         case .searchSessions: return "Search sessions, projects, agents"

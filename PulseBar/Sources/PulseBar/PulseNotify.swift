@@ -30,10 +30,14 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
                 AppServices.store.snooze(rowKey: rowKey)
                 return
             }
-            if !summaryRowKeys.isEmpty {
-                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: summaryRowKeys[0])
-            } else if !agent.isEmpty || !rowKey.isEmpty {
+            // Prefer the concrete rowKey (summary posts it as rowKeys.first too).
+            // Never open the tray without an identity when one was carried.
+            if !rowKey.isEmpty {
                 AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
+            } else if !summaryRowKeys.isEmpty {
+                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: summaryRowKeys[0])
+            } else if !agent.isEmpty {
+                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: "")
             } else {
                 AppServices.store.focusFirstWaiting()
             }

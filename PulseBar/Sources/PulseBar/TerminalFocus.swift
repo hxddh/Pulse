@@ -297,6 +297,9 @@ enum TerminalFocus {
 /// This intentionally has no Accessibility or Apple Events fallback. The
 /// shortcut and notification actions call the panel controller owned by this
 /// process, so they cannot trigger an Automation permission prompt.
+///
+/// Prefer `StatusStore.requestTrayReveal(rowKey:)` when a concrete Waiting row
+/// should be selected after open (Go-Look Closure).
 enum TrayReveal {
     static func show() {
         Task { @MainActor in

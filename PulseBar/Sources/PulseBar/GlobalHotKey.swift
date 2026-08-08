@@ -56,7 +56,14 @@ enum GlobalHotKey {
         )
         if err == noErr, hk.signature == GlobalHotKey.signature {
             DispatchQueue.main.async {
-                TrayReveal.show()
+                // Prefer the Waiting Go-Look path when something needs you;
+                // otherwise just open the tray.
+                if AppServices.store.snapshot.rows.contains(where: \.waiting)
+                    || AppServices.store.allRowsForDisplay.contains(where: \.waiting) {
+                    AppServices.store.focusFirstWaiting()
+                } else {
+                    TrayReveal.show()
+                }
             }
         }
         return noErr

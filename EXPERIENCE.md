@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.63.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.64.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -423,7 +423,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 - 每条 Waiting 标注来源 `hooks` / `pending`。
 - Focus 分级诚实：TTY 标签 → 宿主工作区 → 宿主/Warp 仅 App；
   cwd 可打开进宿主，但绝不经 Finder 冒充 Focus，也不把仅激活 App 写成「跳到该会话」；
-  什么都没有就不给聚焦按钮，通知路径退回打开托盘。
+  什么都没有就不给聚焦按钮，通知路径退回打开托盘并**选中该 Waiting 行**（Go-Look Closure）。
   无 Apple Developer ID 时不标 `stable`。
 - 被上限压下的会话**显式计数告知**，不静默丢弃。
 
@@ -455,6 +455,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | T | Hook Autonomy（无 Python） | 无 Python 的 Mac：Settings 安装 Claude/Codex hooks 成功；「测试连接」通过；`pulse-hook` / `PulseBar --hook` 写入 attention.tsv；已装 `pulse_hook.py` 可迁移且可卸载 |
 | U | Attention Autonomy（外接 raise） | Waiting-none / 名单外工具按 Attention Protocol v1 经 `pulse-hook` raise → 红灯 + Tray `hooks`；未知 kind 不写不亮；不扩 Claude/Codex 安装器；样本 `raise.sh` 可冒烟 |
 | V | Live Continuity（绿灯可信） | stall-only → 橙；`running + stalled` 混合 → 橙（不装健康绿）；progress/tokens 前进且 harvestMs 未动 → 不假停滞；仅进程 / 无活动时钟 Running → Glance 橙；Waiting 仍优先于 stall |
+| W | Go-Look Closure（打断闭环） | 点 Waiting 通知 /「去看看」→ 托盘打开且**该行**选中并滚入视口；有 Focus 句柄时仍可激活宿主，但不因 Focus 成功丢行身份；多 Waiting 摘要用精确 `rowKey`，不 smear |
 
 ---
 
@@ -474,5 +475,6 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Harvest / hooks | `NativeActivityHarvest.swift`、可选 `src/activity_scan.py`、`src/pulse_hook.py` |
 | Attention 协议 | `AttentionProtocol.swift`、`AttentionIO.swift`、`PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
 | 绿灯 / 停滞 | `AgentRow.stalled` / `isHealthyRunning` / `isThinRunning`；`SnapshotBuilder` liveFleetGlance |
+| 打断闭环 | `pendingRevealRowKey` · `focusAgent` · `TrayPanel.applyPendingReveal` · `PulseNotify` |
 
 数据流详见 [`docs/architecture.md`](docs/architecture.md)。

@@ -558,6 +558,30 @@ struct TrayPanel: View {
         store.primaryAction(row)
     }
 
+    /// Go-Look Closure: apply a one-shot reveal from notify / hotkey / jump.
+    fileprivate func applyPendingReveal(in groups: [RowGroup]) {
+        guard let key = store.pendingRevealRowKey, !key.isEmpty else { return }
+        // Clear filters so the target row is not hidden by search.
+        query = ""
+        searchActive = false
+        filterPhase = ""
+        filterOutcome = ""
+        filterAgentRaw = ""
+        if let group = groups.first(where: { $0.rows.contains(where: { $0.rowKey == key }) }),
+           group.foldable {
+            folded.remove(group.id)
+        }
+        // Expand the glance if the target sits past the default window.
+        if !store.snapshot.rows.contains(where: { $0.rowKey == key }),
+           store.allRowsForDisplay.contains(where: { $0.rowKey == key }),
+           !store.showAllAgents {
+            store.toggleShowAllAgents()
+        }
+        selectedKey = key
+        listFocused = true
+        store.clearPendingRevealRowKey()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -1142,6 +1166,10 @@ struct TrayPanel: View {
                     withAnimation(.easeOut(duration: 0.12)) {
                         scrollProxy.scrollTo(key, anchor: .center)
                     }
+                }
+                .onAppear { applyPendingReveal(in: groups) }
+                .onChange(of: store.pendingRevealRowKey) { _, _ in
+                    applyPendingReveal(in: groups)
                 }
             }
 

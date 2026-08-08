@@ -161,9 +161,9 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.63.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.63.0-dev` |
-| `mismatch` | 两者不一致 | `0.63.0≠0.62.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.64.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.64.0-dev` |
+| `mismatch` | 两者不一致 | `0.64.0≠0.63.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
 未公证）、`stable`（公证成功，`PulseNotarized=true`）。无 Apple Developer ID 时 GitHub

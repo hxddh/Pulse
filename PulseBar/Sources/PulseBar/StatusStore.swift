@@ -2420,11 +2420,11 @@ final class StatusStore: ObservableObject {
     }
 
     /// Focus the longest-outstanding wait. One step from "something needs me"
-    /// to the terminal tab it is blocked in.
+    /// to the waiting row (and best Focus handle when one exists).
     func focusOldestWait() {
         guard let row = oldestWait else { return }
         DebugLog.write("jump to oldest wait \(row.rowKey)")
-        primaryAction(row)
+        focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
     }
 
     /// "Today: 4 interruptions, 6m average wait" — built from the wait history
@@ -3210,35 +3210,45 @@ final class StatusStore: ObservableObject {
 
     func focusFirstWaiting() {
         if let row = cachedAll.first(where: \.waiting) ?? snapshot.rows.first(where: \.waiting) {
-            if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
+            focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
+            return
         }
-        TrayReveal.show()
+        requestTrayReveal()
     }
 
+    /// Resolve a notify / hotkey / jump target, attempt best Focus, and always
+    /// keep tray row identity for Waiting (Go-Look Closure). Focus success must
+    /// not abandon the row that raised the interruption.
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
-        if !rowKey.isEmpty, let row = cachedAll.first(where: { $0.rowKey == rowKey }) {
-            if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
-            TrayReveal.show()
+        let row = resolveFocusRow(idRaw: idRaw, session: session, rowKey: rowKey)
+        if let row {
+            let didFocus = row.canFocusTerminal && TerminalFocus.focus(row: row)
+            if row.waiting || !didFocus {
+                requestTrayReveal(rowKey: row.rowKey)
+            }
             return
+        }
+        if !rowKey.isEmpty {
+            // Stale notify identity: still open the tray so the user is not stranded.
+            requestTrayReveal(rowKey: rowKey)
+            return
+        }
+        focusFirstWaiting()
+    }
+
+    /// Prefer exact `rowKey`, then session, then first waiting/live row for agent.
+    private func resolveFocusRow(idRaw: String, session: String, rowKey: String) -> AgentRow? {
+        if !rowKey.isEmpty, let row = cachedAll.first(where: { $0.rowKey == rowKey }) {
+            return row
         }
         if !session.isEmpty, let row = cachedAll.first(where: {
             !$0.sessionID.isEmpty && ($0.sessionID == session || session.hasPrefix($0.sessionID))
         }) {
-            if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
-            TrayReveal.show()
-            return
+            return row
         }
-        guard let id = ActivityHarvest.mapAgent(idRaw) else {
-            focusFirstWaiting()
-            return
-        }
-        if let row = cachedAll.first(where: { $0.agent == id && $0.waiting })
-            ?? cachedAll.first(where: { $0.agent == id }) {
-            if row.canFocusTerminal, TerminalFocus.focus(row: row) { return }
-            TrayReveal.show()
-            return
-        }
-        TrayReveal.show()
+        guard let id = ActivityHarvest.mapAgent(idRaw) else { return nil }
+        return cachedAll.first(where: { $0.agent == id && $0.waiting })
+            ?? cachedAll.first(where: { $0.agent == id })
     }
 
     /// When set, Settings expands the App Data scopes group and highlights
@@ -3248,6 +3258,21 @@ final class StatusStore: ObservableObject {
     /// When true, Settings scrolls/highlights the Waiting signals section
     /// (Attention bridge path for agents without a native Waiting contract).
     @Published var settingsFocusWaitingSignals = false
+    /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump
+    /// seeds a `rowKey`, TrayPanel selects+scrolls it, then clears.
+    @Published private(set) var pendingRevealRowKey: String? = nil
+
+    /// Open the tray, optionally selecting a concrete row after it appears.
+    func requestTrayReveal(rowKey: String = "") {
+        if !rowKey.isEmpty {
+            pendingRevealRowKey = rowKey
+        }
+        TrayReveal.show()
+    }
+
+    func clearPendingRevealRowKey() {
+        pendingRevealRowKey = nil
+    }
 
     func openSettings(focusAppDataFor agent: AgentID? = nil, focusWaitingSignals: Bool = false) {
         settingsFocusAppDataAgent = agent
@@ -3293,7 +3318,11 @@ final class StatusStore: ObservableObject {
             "attention sample written agents=\(Self.attentionSampleAgents.map(\.rawValue).joined(separator: ",")) session=pulse-sample"
         )
         refresh(reason: "attentionSample")
-        TrayReveal.show()
+        if let row = cachedAll.first(where: { $0.sessionID == "pulse-sample" && $0.waiting }) {
+            requestTrayReveal(rowKey: row.rowKey)
+        } else {
+            requestTrayReveal()
+        }
     }
 
     func clearAttentionBridgeSample() {

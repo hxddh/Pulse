@@ -2,6 +2,34 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.64.0 — Go-Look Closure / 打断闭环
+
+0.60–0.63 让灯可信；本版换轴：**点了通知必须落到那一行** —— notify → 最佳
+Focus → 托盘选中/滚到该行。详见 [`docs/plan-0.64.md`](docs/plan-0.64.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 打断闭环
+
+- **`pendingRevealRowKey`**：Store → TrayPanel 一次性桥；打开后选中并滚到该行。
+- **`focusAgent` / 通知**：携带 `rowKey`；Waiting 在 Focus 成功后仍 reveal+select
+  （软双落点），不因宿主激活丢行身份。
+- 多 Waiting 摘要优先精确 `rowKey`；热键 /「跳到最长等待」走同一路径。
+- EXPERIENCE 场景 **W**；`notifFocus` →「Go look」/「去看看」。
+
+### P1 · 诚实与回归
+
+- Focus 分级与 composer 深链禁令保留；0.60–0.63 Attention / Live Continuity /
+  native hooks 回归保留。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- GoLookClosureTests：pending reveal、精确 rowKey、focusFirst/Oldest；
+  八门禁对 0.64.0。
+
 ## 0.63.0 — Live Continuity / 绿灯可信
 
 0.60–0.62 让红灯可达；本版换轴：**绿 / 橙不得说谎** —— 混合舰队、无活动时长、
