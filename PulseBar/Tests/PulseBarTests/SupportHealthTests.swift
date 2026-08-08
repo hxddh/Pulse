@@ -55,10 +55,13 @@ final class SupportHealthTests: XCTestCase {
         let session = health(agent: .claude)
         XCTAssertEqual(store.supportDepthDetail(session), store.tr(.supportDepthSession))
 
-        let cache = health(agent: .cline, evidence: .cache)
+        let thin = health(agent: .cline, evidence: .cache, goal: false, workspace: false, activity: false)
         XCTAssertEqual(AgentID.cline.harvestSource, .bestEffortCache)
         XCTAssertNotEqual(AgentID.cline.waitingSource, .none)
-        XCTAssertEqual(store.supportDepthDetail(cache), store.tr(.supportDepthCache))
+        XCTAssertEqual(store.supportDepthDetail(thin), store.tr(.supportDepthCacheThin))
+
+        let rich = health(agent: .cline, evidence: .cache, goal: true, workspace: true, activity: true)
+        XCTAssertEqual(store.supportDepthDetail(rich), store.tr(.supportDepthCachePartial))
 
         let none = health(agent: .devin)
         XCTAssertEqual(AgentID.devin.waitingSource, .none)

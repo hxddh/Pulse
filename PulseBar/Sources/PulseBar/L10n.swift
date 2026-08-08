@@ -313,6 +313,8 @@ enum L10n {
             return "No native Waiting path — use the Attention bridge"
         case .supportDepthSession: return "Depth: session transcript"
         case .supportDepthCache: return "Depth: cache / index (Limited)"
+        case .supportDepthCacheThin: return "Depth: thin cache / index (Limited)"
+        case .supportDepthCachePartial: return "Depth: cache facts (Limited)"
         case .supportDepthWaitingNone: return "Waiting unavailable — Attention bridge"
         case .supportSharedCursor: return "Cursor Agent shares this adapter"
         case .supportLastSignal: return "signal %@ ago"
@@ -402,6 +404,7 @@ enum L10n {
         case .recoveredAfterSystemRestart: return "Pulse restarted after a system reboot"
         case .qualityReasonProcessOnly: return "Only process evidence is available"
         case .qualityReasonCache: return "Vendor cache did not emit this field"
+        case .qualityReasonCacheThin: return "Thin cache index — only partial facts available"
         case .qualityReasonNotEmitted: return "Not present in the local session record"
         case .qualityReasonWaitingNoDetail: return "Waiting without a detailed reason"
         case .qualityReasonScanTimeout: return "Adapter timed out while reading local data"
@@ -713,6 +716,8 @@ enum L10n {
         case .supportWaitingNoneDetail: return "无原生 Waiting 路径 — 请用 Attention 桥"
         case .supportDepthSession: return "深度：会话笔录"
         case .supportDepthCache: return "深度：缓存 / 索引（有限）"
+        case .supportDepthCacheThin: return "深度：薄缓存 / 索引（有限）"
+        case .supportDepthCachePartial: return "深度：缓存事实（有限）"
         case .supportDepthWaitingNone: return "Waiting 不可用 — Attention 桥"
         case .supportSharedCursor: return "Cursor Agent 与此适配器共用"
         case .supportLastSignal: return "%@前收到信号"
@@ -802,6 +807,7 @@ enum L10n {
         case .recoveredAfterSystemRestart: return "系统重启后 Pulse 已重新启动"
         case .qualityReasonProcessOnly: return "目前只有进程证据"
         case .qualityReasonCache: return "厂商缓存未写出该字段"
+        case .qualityReasonCacheThin: return "薄缓存索引 — 仅有部分事实"
         case .qualityReasonNotEmitted: return "本地会话记录中没有该字段"
         case .qualityReasonWaitingNoDetail: return "正在等待，但没有详细原因"
         case .qualityReasonScanTimeout: return "读取本地数据时适配器超时"
@@ -861,7 +867,7 @@ enum L10n {
         case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait, details
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
-        case supportDepthSession, supportDepthCache, supportDepthWaitingNone
+        case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone
         case attentionBridgeWriteSample, attentionBridgeWriteSampleHint, attentionBridgeClearSample
         case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, agentDataAccessAgentDetail, agentDataAccessSkipHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
@@ -933,7 +939,7 @@ enum L10n {
         case installUpdate, updateInstalling, updateInstallFailed, updateInstallRequiresNotarized
         case updatePreview, updateSignedUnnotarized, recoveredAfterCrash
         case recoveredAfterForceQuit, recoveredAfterSystemRestart
-        case qualityReasonProcessOnly, qualityReasonCache, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
+        case qualityReasonProcessOnly, qualityReasonCache, qualityReasonCacheThin, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
         case qualityReasonScanTimeout
         case qualityNextOpenAgent, qualityNextWaitCache, qualityNextAttentionBridge, qualityNextRetryScan
         case supportFailureTimelineEntry

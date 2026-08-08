@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.58.0"
+    static let semver = "0.59.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -340,8 +340,15 @@ struct ObservationQuality: Equatable, Hashable {
             baseReason = privacyLimited ? "privacy_limited" : "process_only"
             baseNext = privacyLimited ? "enable_app_data" : "open_agent_for_session"
         case .cache:
-            baseReason = privacyLimited ? "privacy_limited" : "cache_conditional"
-            baseNext = privacyLimited ? "enable_app_data" : "wait_for_vendor_cache"
+            if privacyLimited {
+                baseReason = "privacy_limited"
+                baseNext = "enable_app_data"
+            } else {
+                // Rich Limited ≈ goal + workspace/action present; thin is title-only.
+                let previewCore = [hasTask, hasWorkspace, hasAction].filter { $0 }.count
+                baseReason = previewCore >= 2 ? "cache_conditional" : "cache_thin"
+                baseNext = "wait_for_vendor_cache"
+            }
         case .session:
             baseReason = "not_emitted"
             baseNext = "open_agent_for_session"

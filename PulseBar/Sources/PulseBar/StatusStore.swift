@@ -606,6 +606,7 @@ final class StatusStore: ObservableObject {
         case "privacy_limited": return tr(.supportCollectorPrivacyLimitedDetail)
         case "process_only": return tr(.qualityReasonProcessOnly)
         case "cache_conditional": return tr(.qualityReasonCache)
+        case "cache_thin": return tr(.qualityReasonCacheThin)
         case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
         case "waiting_unsupported": return tr(.supportWaitingNoneDetail)
         case "scan_timeout": return tr(.qualityReasonScanTimeout)
@@ -3101,13 +3102,15 @@ final class StatusStore: ObservableObject {
     }
 
     /// Thin vs deep observation — never let a cache/none Agent look session-deep.
+    /// Rich cache (goal + workspace/activity) stays Limited but says so honestly.
     func supportDepthDetail(_ health: AgentSupportHealth) -> String {
         if health.agent.waitingSource == .none {
             return tr(.supportDepthWaitingNone)
         }
         switch health.agent.harvestSource {
         case .bestEffortCache:
-            return tr(.supportDepthCache)
+            let rich = health.hasGoal && (health.hasWorkspace || health.hasActivity)
+            return rich ? tr(.supportDepthCachePartial) : tr(.supportDepthCacheThin)
         case .structuredSession:
             return tr(.supportDepthSession)
         }

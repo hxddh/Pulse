@@ -30,7 +30,9 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 | `junie` | Junie |
 
 设置 → Waiting signals →「打开 Attention 文件夹」可直接到达写入目录；
-同区「写入样本 Waiting」可为 Replit 追加一行可清除的样本（不扩 hook 安装器）。
+同区「写入样本 Waiting」会为**全部六个** Waiting-none Agent
+（replit / devin / warpAgent / trae / antigravity / junie）各追加一行可清除的
+样本（`pulse-sample` 会话）——不扩 hook 安装器。
 
 **可运行样本：** [`docs/samples/attention-bridge/`](samples/attention-bridge/)
 （`raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——只演示 TSV 写入，
