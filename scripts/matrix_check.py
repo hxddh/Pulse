@@ -54,6 +54,7 @@ DISPLAY_TO_CASE = {
     "Command Code": "commandCode",
     "Antigravity": "antigravity",
     "Kimi": "kimi",
+    "ZCode": "zcode",
 }
 
 

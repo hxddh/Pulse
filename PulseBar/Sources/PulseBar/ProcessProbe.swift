@@ -189,6 +189,22 @@ enum ProcessProbe {
             pathNeedles: ["kimi-code", "/.kimi-code/", "@moonshot-ai/kimi-code", "moonshotai/kimi", "/bin/kimi"],
             denyNeedles: ["crashpad", "Kimis", "kimisc"]
         ),
+        .init(
+            id: .zcode,
+            basenames: ["ZCode", "zcode"],
+            pathNeedles: [
+                "ZCode.app/Contents/MacOS/ZCode",
+                "ZCode.app/",
+                "/.zcode/",
+                "zcode.cjs",
+                "Resources/glm/zcode",
+            ],
+            denyNeedles: [
+                "crashpad",
+                "ZCode Helper",
+                "ZCode Account Switcher",
+            ]
+        ),
     ]
 
     static func scan(

@@ -2,6 +2,33 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.65.0 — Fleet Coverage / ZCode
+
+0.60–0.64 闭环灯与打断；本版换轴：**舰队诚实扩员** —— 接入 Z.ai ZCode ADE
+（Probe + best-effort harvest + Waiting-none）。详见
+[`docs/plan-0.65.md`](docs/plan-0.65.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · ZCode 覆盖
+
+- **`AgentID.zcode`**：`bestEffortCache`、`waitingSource=.none`、App Data opt-in。
+- ProcessProbe + `HostAppKind.zcode`（`ZCode.app`）；harvest 根 `~/.zcode` /
+  `Library/Application Support/ZCode`。
+- 几何图标；Attention 样本 / `raise-zcode.sh`；Waiting-none 七 Agent。
+- README 矩阵、coverage / matrix / harvest_stats、attention-bridge 对齐。
+
+### P1 · 别名与回归
+
+- `z-code` / `ZCode` 别名；0.60–0.64 回归保留。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- 八门禁对 0.65.0；ProcessProbe 签名；Waiting-none 样本覆盖全集；EXPERIENCE 场景 **X**。
+
 ## 0.64.0 — Go-Look Closure / 打断闭环
 
 0.60–0.63 让灯可信；本版换轴：**点了通知必须落到那一行** —— notify → 最佳

@@ -101,6 +101,7 @@ may not have it.
 | Junie | verified cache | conditional | phase, model, mode, progress, outcome |
 | Replit Agent | verified cache | conditional | phase, model, mode, progress, outcome |
 | Antigravity | verified cache | conditional | phase, model, mode, progress, outcome |
+| ZCode | verified cache | conditional | phase, model, mode, progress, outcome |
 
 Every Agent still has a process fallback: real working directory, process age,
 TTY/focus capability, and an explicit “activity unavailable” statement. That

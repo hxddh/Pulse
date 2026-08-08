@@ -95,13 +95,13 @@ enum L10n {
         case .supportFocusTTYNeedsOptIn: return "Focus: Terminal tab (enable in Shortcuts)"
         case .attentionBridgeWriteSample: return "Write sample Waiting"
         case .attentionBridgeWriteSampleHint:
-            return "Appends Attention bridge lines for all six Waiting-none Agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie). Does not expand the Claude/Codex hook installer."
+            return "Appends Attention bridge lines for all seven Waiting-none Agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie, ZCode). Does not expand the Claude/Codex hook installer."
         case .attentionBridgeClearSample: return "Clear sample Waiting"
         case .activityPrefix: return "Doing"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
         case .attentionBridgeHint:
-            return "Opaque agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie) have no native Waiting path — raise via pulse-hook / Attention Protocol v1 (docs/attention-protocol.md). Hook installer stays Claude/Codex only."
+            return "Opaque agents (Replit, Devin, Warp Agent, Trae, Antigravity, Junie, ZCode) have no native Waiting path — raise via pulse-hook / Attention Protocol v1 (docs/attention-protocol.md). Hook installer stays Claude/Codex only."
         case .attentionBridgeFocusHint:
             return "Attention Protocol — raise Waiting with pulse-hook for agents without a native signal"
         case .revealAttentionFolder: return "Reveal Attention folder"
@@ -507,13 +507,13 @@ enum L10n {
         case .supportFocusTTYNeedsOptIn: return "聚焦：终端标签（在快捷键中开启）"
         case .attentionBridgeWriteSample: return "写入样本 Waiting"
         case .attentionBridgeWriteSampleHint:
-            return "为全部六个无 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie）追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
+            return "为全部七个无 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie、ZCode）追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
         case .attentionBridgeClearSample: return "清除样本 Waiting"
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"
         case .signalPending: return "pending"
         case .attentionBridgeHint:
-            return "无原生 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie）请用 pulse-hook / Attention Protocol v1 上报（docs/attention-protocol.md）。hooks 安装器仍只覆盖 Claude / Codex。"
+            return "无原生 Waiting 路径的 Agent（Replit、Devin、Warp Agent、Trae、Antigravity、Junie、ZCode）请用 pulse-hook / Attention Protocol v1 上报（docs/attention-protocol.md）。hooks 安装器仍只覆盖 Claude / Codex。"
         case .attentionBridgeFocusHint:
             return "Attention Protocol — 用 pulse-hook 为无原生 Waiting 信号的 Agent 上报等待"
         case .revealAttentionFolder: return "打开 Attention 文件夹"

@@ -365,6 +365,10 @@ enum NativeActivityHarvest {
                 "Library/Application Support/Antigravity IDE/User/workspaceStorage",
             ], ["agy", "antigravity"]),
             d(.kimi, [".kimi-code"], ["kimi"]),
+            d(.zcode, [
+                ".zcode",
+                "Library/Application Support/ZCode",
+            ], ["zcode", "ZCode"]),
         ]
     }
 

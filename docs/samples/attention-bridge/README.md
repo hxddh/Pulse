@@ -14,6 +14,7 @@ Minimal scripts that raise a real Waiting line for Agents whose
 | `raise-trae.sh` | `trae` |
 | `raise-antigravity.sh` | `antigravity` |
 | `raise-junie.sh` | `junie` |
+| `raise-zcode.sh` | `zcode` |
 | `clear.sh` | clear one agent (or all listed) |
 
 Usage:
@@ -37,5 +38,5 @@ These are **samples**, not an installer. Do not expand the Claude/Codex hook
 installer to cover these Agents.
 
 In-app: Settings → Waiting signals → **Write sample Waiting** appends one
-Attention line for **all six** Waiting-none Agents (`pulse-sample` session);
+Attention line for **all seven** Waiting-none Agents (`pulse-sample` session);
 **Clear sample Waiting** clears them. Same contract as these scripts.

@@ -265,6 +265,7 @@ enum ActivityHarvest {
         case "kimi-code", "kimi_code": return .kimi
         case "antigravity-ide", "antigravity_ide": return .antigravity
         case "agy": return .antigravity
+        case "z-code", "ZCode", "zcode-agent": return .zcode
         default: return nil
         }
     }

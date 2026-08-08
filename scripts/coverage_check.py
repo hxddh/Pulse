@@ -48,6 +48,7 @@ EXPECTED = {
     "command_code",
     "kimi",
     "antigravity",
+    "zcode",
 }
 
 

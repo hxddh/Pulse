@@ -800,6 +800,7 @@ def check_collectors(home: Path) -> int:
         "junie": home / ".junie" / "sessions" / "session.json",
         "replit": home / ".replit" / "sessions" / "session.json",
         "goose": home / ".config" / "goose" / "sessions" / "session.json",
+        "zcode": home / ".zcode" / "sessions" / "session.json",
     }
     simple_functions = {
         "amazon_q": A.amazon_q_activities,
@@ -815,6 +816,7 @@ def check_collectors(home: Path) -> int:
         "junie": A.junie_activities,
         "replit": A.replit_activities,
         "goose": A.goose_activities,
+        "zcode": A.zcode_activities,
     }
     for name, path in simple_sources.items():
         write_session(path, name)
@@ -1419,17 +1421,17 @@ def main() -> int:
         "copilot", "opencode", "goose", "openhands", "continue", "droid",
         "command_code", "kimi", "amazon_q", "cline", "roo", "cascade",
         "windsurf", "augment", "zed_agent", "trae", "warp_agent", "kilo",
-        "devin", "kiro", "junie", "replit", "antigravity",
+        "devin", "kiro", "junie", "replit", "antigravity", "zcode",
     }:
-        return fail("collector evidence contracts do not cover all 31 harvest agents")
+        return fail("collector evidence contracts do not cover all 32 harvest agents")
     if set(A.OBSERVABILITY_CONTRACTS) != set(A.HARVEST_CONTRACTS):
-        return fail("observability contracts do not cover the same 31 agents")
+        return fail("observability contracts do not cover the same 32 agents")
     declared_sources = set(A.COLLECTOR_SOURCE_ROOTS) | set(A.COLLECTOR_COMMANDS)
     if declared_sources != set(A.HARVEST_CONTRACTS):
         missing = sorted(set(A.HARVEST_CONTRACTS) - declared_sources)
         extra = sorted(declared_sources - set(A.HARVEST_CONTRACTS))
         return fail(
-            "source-presence declarations do not cover the same 31 agents "
+            "source-presence declarations do not cover the same 32 agents "
             f"(missing={missing}, extra={extra})"
         )
     baseline = {"goal", "workspace", "activity", "evidence"}
@@ -1448,8 +1450,8 @@ def main() -> int:
     if shallow:
         return fail(f"agents without two adapter-specific useful facts: {shallow}")
     print(
-        f"harvest stats OK — {COLUMNS} columns · 31 evidence contracts · "
-        "31 quality scorecards · 31 end-to-end collector fixtures"
+        f"harvest stats OK — {COLUMNS} columns · 32 evidence contracts · "
+        "32 quality scorecards · 32 end-to-end collector fixtures"
     )
     elapsed = time.monotonic() - started
     if elapsed > max_seconds:

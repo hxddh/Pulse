@@ -3703,6 +3703,17 @@ def junie_activities() -> list[tuple]:
     )
 
 
+def zcode_activities() -> list[tuple]:
+    """Z.ai ZCode ADE — local cache under ~/.zcode and Application Support."""
+    return home_dir_activities(
+        "zcode",
+        safe_roots([
+            HOME / ".zcode",
+            HOME / "Library" / "Application Support" / "ZCode",
+        ]),
+    )
+
+
 def replit_activities() -> list[tuple]:
     # Local signal is weak; harvest quietly if any cache exists.
     return home_dir_activities(
@@ -4088,6 +4099,7 @@ HARVEST_CONTRACTS = {
     "junie": EVIDENCE_CACHE,
     "replit": EVIDENCE_CACHE,
     "antigravity": EVIDENCE_CACHE,
+    "zcode": EVIDENCE_CACHE,
 }
 
 # What each adapter can truthfully contribute when its local source contains
@@ -4131,6 +4143,7 @@ OBSERVABILITY_CONTRACTS = {
     "junie": _CACHE_RICH - frozenset(("wait",)),
     "replit": _CACHE_RICH - frozenset(("wait",)),
     "antigravity": _CACHE_RICH - frozenset(("wait",)),
+    "zcode": _CACHE_RICH - frozenset(("wait",)),
 }
 
 # Cheap source presence checks for runtime health. These do not crawl, parse,
@@ -4206,6 +4219,10 @@ COLLECTOR_SOURCE_ROOTS = {
         HOME / ".antigravity",
         HOME / "Library/Application Support/Antigravity",
     ),
+    "zcode": (
+        HOME / ".zcode",
+        HOME / "Library/Application Support/ZCode",
+    ),
 }
 
 COLLECTOR_COMMANDS = {
@@ -4228,6 +4245,7 @@ COLLECTOR_COMMANDS = {
     "command_code": ("cmd", "command-code"),
     "kimi": ("kimi",),
     "antigravity": ("agy", "antigravity"),
+    "zcode": ("zcode", "ZCode"),
 }
 
 
@@ -4880,6 +4898,7 @@ HARVESTERS = (
     simple("command_code", command_code_activities),
     simple("kimi", kimi_activities),
     simple("antigravity", antigravity_activities),
+    simple("zcode", zcode_activities),
 )
 
 

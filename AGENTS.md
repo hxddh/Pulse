@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.64.md`](docs/plan-0.64.md) | The active plan (Go-Look Closure) |
+| [`docs/plan-0.65.md`](docs/plan-0.65.md) | The active plan (Fleet Coverage / ZCode) |
+| [`docs/plan-0.64.md`](docs/plan-0.64.md) | Historical plan (Go-Look Closure) |
 | [`docs/plan-0.63.md`](docs/plan-0.63.md) | Historical plan (Live Continuity) |
 | [`docs/plan-0.62.md`](docs/plan-0.62.md) | Historical plan (Attention Autonomy) |
 | [`docs/plan-0.61.md`](docs/plan-0.61.md) | Historical plan (Hook Autonomy) |
@@ -44,7 +45,7 @@ compiles and ships.
   for you.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
-  isolation. One broken collector cannot blind the other 31.
+  isolation. One broken collector cannot blind the other 32.
 - **No fixed probe interval.** Cadence follows `ProbeSchedule` — a resident
   menu-bar app flagged for energy use is a dead product.
 - **The builder stays pure.** `SnapshotBuilder` takes the world through
@@ -129,7 +130,7 @@ to users.
 
 ## Current state
 
-0.64.0 is the current source version. Without an Apple Developer ID, GitHub
+0.65.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.64.md`](docs/plan-0.64.md) (Go-Look Closure).
+plan is [`docs/plan-0.65.md`](docs/plan-0.65.md) (Fleet Coverage / ZCode).

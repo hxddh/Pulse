@@ -158,6 +158,12 @@ ICONS = {
     ),
     # A crescent.
     "kimi": without(circle(12, 12, 9.5), circle(15.8, 9.6, 8.4)),
+    # A bold Z zig-zag — Z.ai ZCode ADE.
+    "zcode": union(
+        bar(5.0, 5.0, 19.0, 5.0, 2.8),
+        bar(19.0, 5.0, 5.0, 19.0, 2.8),
+        bar(5.0, 19.0, 19.0, 19.0, 2.8),
+    ),
 }
 
 

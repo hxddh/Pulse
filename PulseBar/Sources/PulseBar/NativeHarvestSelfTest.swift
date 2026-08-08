@@ -204,6 +204,7 @@ enum NativeHarvestSelfTest {
             .kilo: "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/session.json",
             .replit: ".replit/session.json",
             .antigravity: "Library/Application Support/Antigravity/User/globalStorage/session.json",
+            .zcode: ".zcode/sessions/session.json",
         ]
         let generic = "{\"sessionId\":\"fixture-ID\",\"title\":\"TITLE fixture\",\"cwd\":\"/tmp/pulse-ID\",\"status\":\"running\",\"currentTool\":\"bash\",\"model\":\"fixture-model\",\"inputTokens\":12,\"outputTokens\":3,\"filesChanged\":1,\"contextPercent\":24}"
         for (id, relative) in fixture {

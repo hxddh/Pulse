@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.64.0"
+    static let semver = "0.65.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -100,6 +100,7 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
     case trae, warpAgent = "warp_agent"
     case devin, kiro, junie, kilo, replit
     case droid, commandCode = "command_code", antigravity, kimi
+    case zcode
 
     var id: String { rawValue }
 
@@ -145,6 +146,7 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
         case .commandCode: return "Command Code"
         case .antigravity: return "Antigravity"
         case .kimi: return "Kimi"
+        case .zcode: return "ZCode"
         }
     }
 
@@ -164,7 +166,7 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
              .droid, .commandCode, .kimi:
             return .harvestPending
         // Opaque / cloud-first / IDE-shell: probe (+best-effort harvest) only.
-        case .replit, .antigravity, .trae, .warpAgent, .devin, .junie:
+        case .replit, .antigravity, .trae, .warpAgent, .devin, .junie, .zcode:
             return .none
         }
     }
@@ -186,7 +188,7 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
             return .structuredSession
         case .cursorAgent, .amazonQ, .cline, .roo, .cascade, .windsurf,
              .augment, .zedAgent, .trae, .warpAgent, .kilo, .devin, .kiro,
-             .junie, .replit, .antigravity:
+             .junie, .replit, .antigravity, .zcode:
             return .bestEffortCache
         }
     }
@@ -200,7 +202,7 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .cursor, .cursorAgent, .amazonQ, .cline, .roo, .cascade, .windsurf,
              .zedAgent, .trae, .warpAgent, .kilo, .kiro, .junie, .replit,
-             .antigravity:
+             .antigravity, .zcode:
             return true
         default:
             return false
@@ -212,7 +214,7 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
         .antigravity, .cascade, .windsurf, .kiro, .junie, .kilo, .augment,
         .grok, .pi, .amp, .aider, .gemini, .copilot, .opencode, .goose,
         .openhands, .cline, .roo, .continue_, .amazonQ, .zedAgent, .trae,
-        .warpAgent, .replit, .cursor,
+        .warpAgent, .replit, .zcode, .cursor,
     ]
 }
 

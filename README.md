@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.64.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.64.0) · macOS 14+
+**版本：`0.65.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.65.0) · macOS 14+
 
 ---
 
@@ -29,7 +29,7 @@ Pulse 把这件事变成余光可见：
 ## 安装
 
 从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG
-（当前源码对应 [v0.64.0](https://github.com/hxddh/Pulse/releases/tag/v0.64.0)），拖进「应用程序」。
+（当前源码对应 [v0.65.0](https://github.com/hxddh/Pulse/releases/tag/v0.65.0)），拖进「应用程序」。
 
 > **没有 Apple Developer ID 时**：GitHub **Latest** 会跟到当前 semver（避免停在旧包），
 > 但 DMG 仍是 ad-hoc / 未公证，About 标 `preview`，**不是** Gatekeeper-ready。首次打开
@@ -59,7 +59,7 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 需要读取受 macOS 保护的 App Support / App Group 时，设置页可以按 Agent 单独授权；默认不
 访问这些目录、不制造跨应用权限弹窗。通过行的更多操作打开“详情”可查看任务、工作区、最近动作、模型、
 进度、资源、证据来源和原始 tool/skill（原始实现标识默认收起）；支持健康度窗口默认展示
-全部 31 个用户可见 Agent，逐项给出证据、缺口和下一步动作。
+全部 32 个用户可见 Agent，逐项给出证据、缺口和下一步动作。
 
 升级到 0.49.0 不会继承旧版的全局 App Data 授权；需要时请在设置中对具体 Agent 重新选择，
 这样不会因 ad-hoc 签名变化在后台反复触发 macOS 权限弹窗。
@@ -97,7 +97,7 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 | Claude / Codex | A | Structured session | hooks（+ Codex pending） |
 | Cursor / Grok / Pi / Amp / Aider / Gemini / Copilot / OpenCode / Goose / OpenHands / Continue / Droid / Command Code / Kimi | A* | Structured session | pending |
 | Amazon Q / Cline / Roo / Cascade / Windsurf / Augment / Zed / Kilo / Kiro | A | Best effort cache | pending（尽力） |
-| Trae / Warp / Antigravity / Devin / Junie / Replit | A | Best effort cache | **none**（本机无可靠信号） |
+| Trae / Warp / Antigravity / Devin / Junie / Replit / ZCode | A | Best effort cache | **none**（本机无可靠信号） |
 
 \* Cursor 进程常跳过外壳，靠 harvest 认；其余 Agent 的 Probe 仍为 A。
 `Structured session` 读取真实 transcript / thread / composer / session database；
@@ -213,7 +213,7 @@ git push                               # CI 构建、打 tag、发布
 公证并 staple App 与 DMG，再以 `spctl` 验收，并在 Info.plist 写入 `stable`。
 **任一凭据缺失时仍发布 GitHub Latest**（跟当前 semver），产物为 ad-hoc / 未公证，
 About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。详见
-[`CHANGELOG.md`](CHANGELOG.md) 的 0.64.0 说明。
+[`CHANGELOG.md`](CHANGELOG.md) 的 0.65.0 说明。
 
 > 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
 > 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
@@ -243,6 +243,7 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v1 契约 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
+| [`docs/plan-0.65.md`](docs/plan-0.65.md) | 0.65 计划 —— 舰队覆盖 / ZCode |
 | [`docs/plan-0.64.md`](docs/plan-0.64.md) | 0.64 计划 —— 打断闭环 |
 | [`docs/plan-0.63.md`](docs/plan-0.63.md) | 0.63 计划 —— 绿灯可信 |
 | [`docs/plan-0.62.md`](docs/plan-0.62.md) | 0.62 计划 —— 开放 Attention 协议 |

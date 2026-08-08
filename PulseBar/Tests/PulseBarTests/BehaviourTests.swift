@@ -414,6 +414,7 @@ final class ProcessProbeTests: XCTestCase {
             (.droid, "droid"),
             (.commandCode, "cmd"),
             (.kimi, "kimi"),
+            (.zcode, "/Applications/ZCode.app/Contents/MacOS/ZCode"),
         ]
 
         XCTAssertEqual(samples.count, AgentID.allCases.count)

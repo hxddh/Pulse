@@ -3299,7 +3299,7 @@ final class StatusStore: ObservableObject {
     /// Agents with `waitingSource=.none` — Settings one-click Attention samples.
     /// Does not expand the Claude/Codex hook installer.
     static let attentionSampleAgents: [AgentID] = [
-        .replit, .devin, .warpAgent, .trae, .antigravity, .junie,
+        .replit, .devin, .warpAgent, .trae, .antigravity, .junie, .zcode,
     ]
 
     /// Settings one-click sample Waiting via Attention bridge for every

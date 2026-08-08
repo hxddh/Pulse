@@ -161,9 +161,9 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.64.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.64.0-dev` |
-| `mismatch` | 两者不一致 | `0.64.0≠0.63.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.65.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.65.0-dev` |
+| `mismatch` | 两者不一致 | `0.65.0≠0.64.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
 未公证）、`stable`（公证成功，`PulseNotarized=true`）。无 Apple Developer ID 时 GitHub
@@ -179,7 +179,7 @@ rollback；不递归扫嵌套目录。未注册且不在上述根的孤儿可能
 
 ## Native 是运行时真源
 
-`NativeActivityHarvest.swift` 是正常运行时的采集真源，所有 31 个用户可见 Agent 都有
+`NativeActivityHarvest.swift` 是正常运行时的采集真源，所有 32 个用户可见 Agent 都有
 Swift descriptor、权限边界、bounded file walk 和健康结果。`src/activity_scan.py` 只保留为
 可选 legacy adapter / fixture source；它不会在默认启动或刷新路径被 fork，也不能使自检失败。
 

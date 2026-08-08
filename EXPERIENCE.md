@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.64.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.65.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -323,7 +323,7 @@ Model 片段。`--harvest-test` 诊断必须读取与托盘相同的 App Data �
      静默失效不可接受 —— 开关显示「开」就必须真的会响。托盘 Waiting 维护条
      与 Support safe report 同源写出 authorization / pending。
 4. **等待信号** —— hooks 说明（2 行内）· 安装连接 / 移除连接 · 当前状态 ·
-   Attention 桥说明（点名无 Waiting 路径的六 Agent）·「打开 Attention 文件夹」；
+   Attention 桥说明（点名无 Waiting 路径的七 Agent）·「打开 Attention 文件夹」；
    托盘 / Support 可深链聚焦本节
 5. **快捷键** —— 唤出组合键可选；被占用时明说「已被其他应用占用」，不归咎辅助功能权限
 6. **最近的等待**（有记录才出现）—— 已结束的等待，最多 12 条，可清空
@@ -449,13 +449,14 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | N | 无 Waiting 路径的 Agent 在跑 | 托盘 / Support 指向 Waiting signals · Attention 桥；不伪造 Waiting |
 | O | 旗舰事实连续（Claude / Codex / Cursor） | 有会话时主行是真实 goal 或人话工具；cwd / 最新 tool / subagents 可见；无动态事实时次行省略；不发明「进度信号」占位；薄 cache 标 Limited，不升格假 session |
 | P | 更新后用 Finder / Spotlight 打开 | 不弹空白 Settings 窗；真设置只经菜单进入 `SettingsWindowController`；无 SwiftUI `Settings` 场景 |
-| Q | 舰队事实连续（非旗舰 session + 高流量 cache） | Amp/Pi/Grok 等有 goal/cwd/tool 时主行诚实；`bestEffortCache` 证据恒为 cache；薄索引 Limited；`depending` 等不得假 Waiting；Waiting-none 六 Agent 可从 Settings 写 Attention 样本 |
+| Q | 舰队事实连续（非旗舰 session + 高流量 cache） | Amp/Pi/Grok 等有 goal/cwd/tool 时主行诚实；`bestEffortCache` 证据恒为 cache；薄索引 Limited；`depending` 等不得假 Waiting；Waiting-none 七 Agent（含 ZCode）可从 Settings 写 Attention 样本 |
 | R | 富缓存 Limited（Windsurf / Cline / Roo / Warp…） | 有 goal+cwd/tool 时托盘显示真实事实，Support 标「cache facts (Limited)」；薄索引标「thin cache」；证据仍 `.cache`，不升格假 session |
 | S | Waiting 连续（harvestPending + Waiting-none） | Cline `ask=followup` / Roo ask tool / Cascade waiting 旗 → 红灯；`depending` 仍否；Attention 带未知 session 不点亮已有兄弟会话（空 session 进程行可收养）；Waiting-none 只经 Settings → Waiting signals → Attention 样本，不从 harvest 抬 pending |
 | T | Hook Autonomy（无 Python） | 无 Python 的 Mac：Settings 安装 Claude/Codex hooks 成功；「测试连接」通过；`pulse-hook` / `PulseBar --hook` 写入 attention.tsv；已装 `pulse_hook.py` 可迁移且可卸载 |
 | U | Attention Autonomy（外接 raise） | Waiting-none / 名单外工具按 Attention Protocol v1 经 `pulse-hook` raise → 红灯 + Tray `hooks`；未知 kind 不写不亮；不扩 Claude/Codex 安装器；样本 `raise.sh` 可冒烟 |
 | V | Live Continuity（绿灯可信） | stall-only → 橙；`running + stalled` 混合 → 橙（不装健康绿）；progress/tokens 前进且 harvestMs 未动 → 不假停滞；仅进程 / 无活动时钟 Running → Glance 橙；Waiting 仍优先于 stall |
 | W | Go-Look Closure（打断闭环） | 点 Waiting 通知 /「去看看」→ 托盘打开且**该行**选中并滚入视口；有 Focus 句柄时仍可激活宿主，但不因 Focus 成功丢行身份；多 Waiting 摘要用精确 `rowKey`，不 smear |
+| X | Fleet Coverage（ZCode） | `ZCode.app` / `~/.zcode` 可探测；证据为 best-effort cache；无原生 Waiting；Settings Attention 样本与 `raise-zcode.sh` 可亮红；不扩 Claude/Codex hooks |
 
 ---
 

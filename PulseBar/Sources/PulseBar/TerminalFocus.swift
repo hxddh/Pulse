@@ -11,6 +11,7 @@ enum HostAppKind: String, Equatable, Hashable, CaseIterable {
     case zed
     case trae
     case antigravity
+    case zcode
 
     var displayName: String {
         switch self {
@@ -20,6 +21,7 @@ enum HostAppKind: String, Equatable, Hashable, CaseIterable {
         case .zed: return "Zed"
         case .trae: return "Trae"
         case .antigravity: return "Antigravity"
+        case .zcode: return "ZCode"
         }
     }
 
@@ -36,6 +38,7 @@ enum HostAppKind: String, Equatable, Hashable, CaseIterable {
         case .zed: return ["Zed.app/"]
         case .trae: return ["Trae.app/"]
         case .antigravity: return ["Antigravity.app/"]
+        case .zcode: return ["ZCode.app/"]
         }
     }
 
@@ -50,6 +53,7 @@ enum HostAppKind: String, Equatable, Hashable, CaseIterable {
         case .zed: names = ["Zed.app"]
         case .trae: names = ["Trae.app"]
         case .antigravity: names = ["Antigravity.app"]
+        case .zcode: names = ["ZCode.app"]
         }
         var urls: [URL] = []
         for name in names {
@@ -67,6 +71,8 @@ enum HostAppKind: String, Equatable, Hashable, CaseIterable {
         case .zed: return ["dev.zed.Zed"]
         case .trae: return ["com.bytedance.trae"]
         case .antigravity: return ["com.antigravity.app"]
+        // Electron ADE — path/open -a is primary; bundle id is best-effort.
+        case .zcode: return ["ai.z.zcode", "com.zhipuai.zcode"]
         }
     }
 }

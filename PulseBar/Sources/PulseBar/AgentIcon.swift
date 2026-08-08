@@ -61,6 +61,7 @@ enum AgentIcon {
         case .commandCode: return "CC"
         case .antigravity: return "Ag"
         case .kimi: return "Km"
+        case .zcode: return "Zc"
         }
     }
 

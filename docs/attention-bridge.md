@@ -30,10 +30,11 @@ Claude / Codex 同级。
 | `trae` | Trae |
 | `antigravity` | Antigravity |
 | `junie` | Junie |
+| `zcode` | ZCode |
 
 设置 → Waiting signals →「安装连接」写入原生 `pulse-hook`（**无需 Python**）；
-「打开 Attention 文件夹」到达写入目录；同区「写入样本 Waiting」会为**全部六个**
-Waiting-none Agent（replit / devin / warpAgent / trae / antigravity / junie）各追加
+「打开 Attention 文件夹」到达写入目录；同区「写入样本 Waiting」会为**全部七个**
+Waiting-none Agent（replit / devin / warpAgent / trae / antigravity / junie / zcode）各追加
 一行可清除的样本（`pulse-sample` 会话）——不扩 hook 安装器。
 
 **原生 hook：** Claude / Codex 的官方 Waiting 通路是
