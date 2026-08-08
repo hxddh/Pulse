@@ -458,6 +458,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | W | Go-Look Closure（打断闭环） | 点 Waiting 通知 /「去看看」→ 托盘打开且**该行**选中并滚入视口；有 Focus 句柄时仍可激活宿主，但不因 Focus 成功丢行身份；多 Waiting 摘要用精确 `rowKey`，不 smear |
 | X | Fleet Coverage（ZCode） | `ZCode.app` / `~/.zcode` 可探测；证据为 best-effort cache；无原生 Waiting；Settings Attention 样本与 `raise-zcode.sh` 可亮红；不扩 Claude/Codex hooks |
 | Y | Contract Honesty（契约诚实） | Support / 样本 / L10n 的 Waiting-none 名单派生自 `AgentID.waitingNoneAgents`；Waiting-none 深度仍露出 cache thin/partial；Support → Waiting signals 点名该 Agent；规格写 32 Agent；未公证不标 Gatekeeper-ready |
+| Z | Tray Legibility（托盘可读） | 默认行同时可见次行（路径·最近动作含执行命令·最近活动·始于）+ 运动信号 + **观测行**（model·tokens·最强进度，最多 4 事实）；无事实整行消失；核心运动事实不藏 Details；不发明进度占位 |
 
 ---
 

@@ -1364,12 +1364,24 @@ private struct AgentRowButton: View {
                                     .truncationMode(.middle)
                             }
 
+                            // Motion only — Now / Changed / stalled age.
                             if !signalLine.isEmpty {
                                 Text(signalLine)
                                     .font(.system(size: 10.5, weight: .medium))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                     .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+
+                            // EXPERIENCE 观测行: model · tokens · progress — default,
+                            // never Details-only. Disappears when empty (0.80).
+                            if !observationLine.isEmpty {
+                                Text(observationLine)
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                    .lineLimit(compact ? 1 : 2)
                                     .truncationMode(.tail)
                             }
 
@@ -1642,6 +1654,8 @@ private struct AgentRowButton: View {
             StatusChip(kind: .process, label: store.tr(.stalled))
         } else if row.subRunning > 0 {
             StatusChip(kind: .running, label: "sub \(row.subRunning)↑")
+        } else if row.subTotal > 0 {
+            StatusChip(kind: .running, label: "sub \(row.subTotal)")
         } else if row.isRecentOnly {
             StatusChip(kind: .recent, label: store.tr(.recent))
         }

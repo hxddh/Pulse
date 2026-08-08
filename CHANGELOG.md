@@ -2,6 +2,34 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.80.0 — Tray Legibility / 托盘可读
+
+0.70 收了契约漂移；本版换章：**默认托盘行必须扫得到有效信息**。观测行真正渲染，
+信号行只谈运动，次行补回执行命令与开始时间。详见
+[`docs/plan-0.80.md`](docs/plan-0.80.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 默认行合同
+
+- **`AgentRowButton` 渲染 `rowObservationLine`**：model[/mode] · tokens · 最强进度/子任务 · records（最多 4），有数据才出现。
+- **信号行只谈运动**：Now / Changed / 停滞龄；不再与观测抢 model/tokens。
+- **次行**：Bash/Shell/exec 人话「最近动作：执行命令」；`始于…` 在 1m–24h 可见。
+- **子任务芯片**：`subTotal>0` 即可见。
+- EXPERIENCE 场景 **Z**；ResourceLookupTests 对齐新 IA。
+
+### P1 · 密度诚实
+
+- compact 有事实时保留观测；不发明进度占位；不升格 cache→session。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- ResourceLookupTests：观测行 tokens/model、命令最近动作、Started、信号/观测分工；
+  八门禁对 0.80.0。
+
 ## 0.70.0 — Contract Honesty / 契约诚实
 
 0.60–0.65 Continuity 弧闭环后，本版换章：**规格 / Support / 样本不得再与代码漂移**。

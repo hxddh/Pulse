@@ -2501,11 +2501,9 @@ final class StatusStore: ObservableObject {
         let ago = lastActivityLabel(row)
         if !ago.isEmpty { bits.append(String(format: tr(.lastActive), ago)) }
         let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
-        // Session creation is useful while orienting in a new session, but an
-        // ancient store timestamp is history—not runtime state. It previously
-        // produced labels such as "Started 1276h ago" beside a fresh activity.
-        if age >= 60, age <= 24 * 60 * 60,
-           row.waiting || age >= 2 * 60 * 60 || !rowHasDynamicEvidence(row) {
+        // EXPERIENCE 次行右端: "始于…" when known. Cap at 24h so ancient store
+        // timestamps do not pretend to be runtime state (0.80 Tray Legibility).
+        if age >= 60, age <= 24 * 60 * 60 {
             bits.append(String(
                 format: tr(.sessionAge),
                 DurationFormat.label(seconds: age, lang: lang)
@@ -2636,87 +2634,33 @@ final class StatusStore: ObservableObject {
         return facts.prefix(2).joined(separator: " · ")
     }
 
-    /// One bounded execution signal line for the default row. The panel's
-    /// previous stack rendered lifecycle, change, metrics, and model context
-    /// as four separate blocks, so a multi-fact session pushed later rows below
-    /// the viewport. Keep the same evidence, but give it one scan target and
-    /// suppress facts already represented by the transient change label.
+    /// One bounded **motion** line: Now / Changed / stalled age / multi-process.
+    /// Model, tokens, and durable progress live on `rowObservationLine` so the
+    /// default tray can show both without a single truncated scan line (0.80).
     func rowSignalLine(_ row: AgentRow) -> String {
         guard !row.waiting else { return "" }
         let lifecycle = rowNowLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
         let changed = rowSignalChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
-        let metrics = rowSignalMetric(row).trimmingCharacters(in: .whitespacesAndNewlines)
-        let stableFacts = rowStableFacts(row)
         var bits: [String] = []
         if !lifecycle.isEmpty { bits.append(lifecycle) }
         if !changed.isEmpty {
             bits.append(changed)
-            // A change is already the strongest dynamic fact. Use the remaining
-            // line for the durable context that makes the change actionable:
-            // model/context first, then tokens/files/errors as available. The
-            // old branch spent this slot on tokens and silently dropped the
-            // model and context, leaving the row's meaning ambiguous.
-            let evidence = compactSignalEvidence(metrics: metrics, stableFacts: stableFacts)
-            if !evidence.isEmpty { bits.append(evidence) }
-        } else {
-            // Same dedupe path as the change branch: metrics and stable facts
-            // both emit Context N%, and concatenating them produced
-            // "Context 19% · Context 19%" on quiet sessions.
-            let evidence = compactSignalEvidence(metrics: metrics, stableFacts: stableFacts)
-            if !evidence.isEmpty { bits.append(evidence) }
+            // Urgent companion only — durable model/tokens belong on observation.
+            if row.errors > 0, !isErrorChange(row.activityChange) {
+                bits.append(row.errors == 1
+                    ? tr(.errorFactOne)
+                    : String(format: tr(.errorsFact), row.errors))
+            }
         }
-        // Generic shell wrappers are still useful as a historical activity
-        // fact when they are the only action a vendor exposes. Keep the claim
-        // explicit ("last", never "running") and place it ahead of low-value
-        // observation metadata so it is not clipped from the scan line.
-        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        if lifecycle.isEmpty, changed.isEmpty,
-           !tool.isEmpty, row.usefulTask != nil, !usefulAction(tool) {
-            bits.insert(String(format: tr(.lastAction), readableAction(tool)), at: min(1, bits.count))
+        if row.isStalled || row.isProcessOnly {
+            let metric = rowSignalMetric(row).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !metric.isEmpty, !bits.contains(metric) { bits.append(metric) }
         }
         if row.liveProcess, !row.isProcessOnly, row.processCount > 1 {
             bits.append(String(format: tr(.processCount), row.processCount))
         }
-        // EXPERIENCE: observation / signal line disappears when there are no
-        // facts — do not invent "No progress signal yet" chrome on the tray.
+        // EXPERIENCE: motion line disappears when empty — never invent chrome.
         return bits.prefix(3).joined(separator: " · ")
-    }
-
-    /// Stable execution context that makes a numeric signal meaningful. Model
-    /// and context are deliberately first: they answer which runtime is doing
-    /// the work and how close it is to its input budget. Mode/skill follows as
-    /// workflow context. Record count is only a last-resort observation
-    /// boundary; it must never displace a real progress, outcome, or token
-    /// signal.
-    private func rowStableFacts(_ row: AgentRow) -> [String] {
-        guard !row.waiting, !row.isProcessOnly else { return [] }
-        var facts: [String] = []
-        let model = readableModel(row.model)
-        if !model.isEmpty { facts.append(String(format: tr(.modelFact), model)) }
-        if row.contextPercent > 0 {
-            facts.append(String(format: tr(.contextFact), row.contextPercent))
-        }
-        let mode = readableMode(row.mode)
-        if !mode.isEmpty { facts.append(mode) }
-        let skill = readableSkill(row.skill)
-        if !skill.isEmpty { facts.append(skill) }
-        if facts.isEmpty, row.records > 0 {
-            facts.append(String(row.records) + tr(.recordsSuffix))
-        }
-        return facts
-    }
-
-    /// Fit the most useful dynamic and stable facts into the one remaining
-    /// signal slot when a row has a lifecycle + change label. Stable facts are
-    /// placed first so model/context remain visible even when SwiftUI clips a
-    /// long line at the trailing edge.
-    private func compactSignalEvidence(metrics: String, stableFacts: [String]) -> String {
-        var facts: [String] = []
-        for fact in stableFacts.prefix(2) where !fact.isEmpty {
-            if !facts.contains(fact) { facts.append(fact) }
-        }
-        if !metrics.isEmpty, !facts.contains(metrics) { facts.append(metrics) }
-        return facts.joined(separator: " · ")
     }
 
     /// Compact counterpart to the full change sentence used by accessibility
@@ -2821,22 +2765,51 @@ final class StatusStore: ObservableObject {
         return false
     }
 
-    /// Stable, useful session evidence that should not require opening a
-    /// disclosure. This is deliberately bounded to four facts and excludes
-    /// diagnostic-only values such as the full cwd and session identifier.
+    /// EXPERIENCE 观测行 — default tray surface, max 4 facts.
+    /// Example: model · in/out tokens · strongest progress · records.
+    /// Never invents chrome when empty; never Details-only (0.80).
     func rowObservationLine(_ row: AgentRow) -> String {
-        // Process-only rows can retain stale session fields after a merge, but
-        // those fields are not trustworthy without a matched session feed.
-        // Suppressing the whole line by presentation category used to hide the
-        // only useful facts on real session rows. That policy was too loose:
-        // a stale merge could carry transcript counts onto a process-only row,
-        // making "Process only" look like a real session feed. A process row
-        // now keeps only its explicit process evidence/age line.
         guard !row.waiting, !row.isProcessOnly else { return "" }
-        // Keep this public detail line in lockstep with the default signal
-        // priority. It is also used by accessibility, so exposing the same
-        // model/context facts here avoids a different meaning behind the row.
-        return rowStableFacts(row).prefix(3).joined(separator: " · ")
+        var facts: [String] = []
+        let model = readableModel(row.model)
+        if !model.isEmpty { facts.append(String(format: tr(.modelFact), model)) }
+        let mode = readableMode(row.mode)
+        if !mode.isEmpty { facts.append(mode) }
+        let input = AgentRow.compactToken(row.tokensIn)
+        let output = AgentRow.compactToken(row.tokensOut)
+        if !input.isEmpty || !output.isEmpty {
+            facts.append(String(
+                format: tr(.compactTokens),
+                input.isEmpty ? "0" : input,
+                output.isEmpty ? "0" : output
+            ))
+        }
+        let change = row.activityChange
+        // Errors already ride the motion line as an urgent companion when a
+        // change is present — do not spend an observation slot on the same fact.
+        if row.errors > 0, !isErrorChange(change), change == nil {
+            facts.append(row.errors == 1
+                ? tr(.errorFactOne)
+                : String(format: tr(.errorsFact), row.errors))
+        } else if row.subTotal > 0 {
+            facts.append(row.subRunning > 0
+                ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
+                : String(format: tr(.subagentsObserved), row.subTotal))
+        } else if row.progressTotal > 0, !isProgressChange(change) {
+            facts.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
+        } else if row.progressDone > 0, !isProgressChange(change) {
+            facts.append(String(format: tr(.turnsFact), row.progressDone))
+        } else if row.files > 0, !isFilesChange(change) {
+            facts.append(String(format: tr(.filesFact), row.files))
+        } else if row.contextPercent > 0 {
+            facts.append(String(format: tr(.contextFact), row.contextPercent))
+        }
+        let skill = readableSkill(row.skill)
+        if facts.count < 4, !skill.isEmpty { facts.append(skill) }
+        if facts.count < 4, row.records > 0 {
+            facts.append(String(row.records) + tr(.recordsSuffix))
+        }
+        return facts.prefix(4).joined(separator: " · ")
     }
 
     /// The most recent tool a live row recorded — not necessarily one still
@@ -2865,30 +2838,21 @@ final class StatusStore: ObservableObject {
         return tool
     }
 
-    /// Raw tool identifiers are diagnostic evidence. Only actions that convey
-    /// a user-recognisable workflow phase earn scarce default-row space.
+    /// Raw tool identifiers are diagnostic evidence. Actions that convey a
+    /// user-recognisable workflow phase — including Bash/Shell/exec as
+    /// EXPERIENCE's "执行命令" — earn the context-line last-action slot (0.80).
     private func usefulAction(_ raw: String) -> Bool {
         let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if low.isEmpty || low == "exec" || low == "bash" || low == "shell" { return false }
-        if low.contains("command") || low.contains("terminal") { return false }
+        if low.isEmpty { return false }
+        if low == "exec" || low == "bash" || low == "shell"
+            || low.contains("command") || low.contains("terminal") {
+            return true
+        }
         return [
             "plan", "todo", "patch", "edit", "write", "image", "screenshot",
             "search", "web", "browser", "read", "glob", "grep", "automation", "computer",
             "test", "verify", "check", "build", "compile", "package", "publish", "release", "deploy",
         ].contains { low.contains($0) }
-    }
-
-    /// Dynamic evidence makes a session's start time secondary. Keep the
-    /// duration for long-running sessions and waits, but do not repeat
-    /// `Started 54m ago` beside a live action, progress, or token signal.
-    private func rowHasDynamicEvidence(_ row: AgentRow) -> Bool {
-        usefulAction(row.tool) || !row.phase.isEmpty || !row.outcome.isEmpty
-            || row.progressDone > 0 || row.progressTotal > 0
-            || row.tokensIn > 0 || row.tokensOut > 0
-            || row.subTotal > 0 || row.errors > 0 || row.files > 0
-            || row.contextPercent > 0 || !row.model.isEmpty || !row.mode.isEmpty
-            || !row.skill.isEmpty || row.activityChange != nil
-            || row.isStalled || row.section == .stalled
     }
 
     private func readablePhase(_ raw: String) -> String? {
