@@ -1754,8 +1754,13 @@ enum NativeActivityHarvest {
             // vendor created an empty session record.
             guard hasDisplaySignal else { return nil }
             let normalizedTask = task.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            let placeholder = ["new session", "new chat", "untitled", "agent session", "chat"]
-                .contains(normalizedTask)
+            let placeholder = [
+                "new session", "new chat", "untitled", "agent session", "chat",
+                "amp session", "pi session", "grok session", "cursor session",
+                "opencode session", "gemini session", "goose session",
+                "copilot session", "continue session", "warp session",
+                "windsurf session", "cline session", "roo session",
+            ].contains(normalizedTask)
             if placeholder, cwd.isEmpty, fact.tool.isEmpty, fact.phase.isEmpty,
                fact.outcome.isEmpty, fact.model.isEmpty, fact.tokensIn == 0,
                fact.tokensOut == 0, fact.errors == 0, fact.files == 0,
@@ -1766,6 +1771,9 @@ enum NativeActivityHarvest {
             if sid.isEmpty, fact.structured { sid = sessionIDFromPath(URL(fileURLWithPath: fact.sourcePath)) }
             let key = sid.isEmpty ? "\(task)|\(cwd)|\(fact.sourcePath)" : sid
             guard seen.insert(key).inserted else { return nil }
+            // Fleet honesty: bestEffortCache adapters never advertise session
+            // evidence, even when a path needle or SQLite row looked "structured".
+            let sessionEvidence = fact.structured && id.harvestSource == .structuredSession
             return ActivityHarvest.Row(
                 id: id,
                 task: ContentSanitizer.redact(task),
@@ -1781,7 +1789,7 @@ enum NativeActivityHarvest {
                 sessionID: ContentSanitizer.redact(sid),
                 records: max(0, fact.records),
                 startedMs: max(0, fact.startedMs),
-                evidence: fact.structured ? .session : .cache,
+                evidence: sessionEvidence ? .session : .cache,
                 phase: ContentSanitizer.redact(fact.phase),
                 outcome: ContentSanitizer.redact(fact.outcome),
                 model: ContentSanitizer.redact(fact.model),
@@ -1883,11 +1891,28 @@ enum NativeActivityHarvest {
         return sessionNeedles.contains(where: { lower.contains($0) })
     }
 
+    /// Whole-token / phrase markers only — never substring-match inside words
+    /// like `depending` (historical Goose false Waiting footgun).
     private static func pendingPhase(_ value: String) -> Bool {
-        let lower = value.lowercased()
-        return lower.contains("pending") || lower.contains("waiting")
-            || lower.contains("approval") || lower.contains("awaiting")
-            || lower.contains("needs_user") || lower.contains("needs user")
+        let normalized = value
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        let phrases = [
+            "needs user", "awaiting user", "awaiting approval",
+            "waiting for user", "waiting for approval", "ask user",
+            "user approval", "blocking pending", "has blocking",
+        ]
+        if phrases.contains(where: { normalized.contains($0) }) { return true }
+        let tokens = normalized
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        let markers: Set<String> = [
+            "pending", "waiting", "approval", "awaiting",
+            "ask", "askuser", "permission", "confirm", "confirmation",
+            "blocked",
+        ]
+        return tokens.contains(where: { markers.contains($0) })
     }
 
     private static func semanticPhase(_ raw: String) -> String {

@@ -184,4 +184,98 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.tool, "Bash")
         XCTAssertTrue(row.task.isEmpty, "tool-arg / registry title must not become task")
     }
+
+    func testAmpHistoryFixtureYieldsGoalAndCwd() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-amp-\(UUID().uuidString)")
+        let history = home.appendingPathComponent(".local/share/amp/history.jsonl")
+        try fm.createDirectory(at: history.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"text":"Ship fleet continuity","cwd":"/Users/me/Pulse"}"#,
+            #"{"text":"continue","cwd":"/Users/me/Pulse"}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: history, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.amp])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .amp })
+        XCTAssertEqual(row.task, "Ship fleet continuity")
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(row.evidence, .session)
+    }
+
+    func testBestEffortCacheNeverClaimsSessionEvidence() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cache-\(UUID().uuidString)")
+        let windsurf = home.appendingPathComponent(".windsurf/session.json")
+        let cline = home.appendingPathComponent(
+            "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/session.json"
+        )
+        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: cline.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        // Thin index: title + model only — still cache, never structured session.
+        try #"{"sessionId":"ws-1","title":"Windsurf thin","model":"cascade","status":"running"}"#
+            .write(to: windsurf, atomically: true, encoding: .utf8)
+        try #"{"sessionId":"cl-1","title":"Cline thin","cwd":"/tmp/cline","status":"running"}"#
+            .write(to: cline, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(
+            allowAppData: false,
+            appDataAgents: [.cline],
+            home: home,
+            agentFilter: [.windsurf, .cline]
+        )
+        let wind = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
+        XCTAssertEqual(AgentID.windsurf.harvestSource, .bestEffortCache)
+        XCTAssertEqual(wind.evidence, .cache, "cache adapters must not stamp session evidence")
+        XCTAssertEqual(wind.task, "Windsurf thin")
+
+        let clineRow = try XCTUnwrap(result.rows.first { $0.id == .cline })
+        XCTAssertEqual(clineRow.evidence, .cache)
+        XCTAssertEqual(clineRow.cwd, "/tmp/cline")
+
+        var agentRow = AgentRow(rowKey: "windsurf|ws-1", agent: .windsurf)
+        agentRow.task = wind.task
+        agentRow.cwd = wind.cwd
+        agentRow.tool = wind.tool
+        agentRow.model = wind.model
+        agentRow.observationSource = wind.evidence
+        agentRow.harvestMs = wind.harvestMs
+        agentRow.refreshObservationQuality()
+        XCTAssertTrue(agentRow.quality.isLimited, "thin cache must stay Limited")
+        XCTAssertEqual(agentRow.quality.confidence, .low)
+    }
+
+    func testDependingStatusIsNotHarvestPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pending-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".config/goose/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"{"sessionId":"g-dep","title":"Real goose goal","cwd":"/tmp/goose","status":"depending","currentTool":"bash"}"#
+            .write(to: goose, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        XCTAssertEqual(row.task, "Real goose goal")
+        XCTAssertNotEqual(row.skill, "pending", "depending must not substring-match pending")
+    }
+
+    func testAwaitingUserStatusIsHarvestPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-await-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".config/goose/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"{"sessionId":"g-wait","title":"Need approval","cwd":"/tmp/goose","status":"awaiting_user","currentTool":"bash"}"#
+            .write(to: goose, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        XCTAssertEqual(row.skill, "pending")
+    }
 }

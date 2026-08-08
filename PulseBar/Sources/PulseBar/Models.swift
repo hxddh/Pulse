@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.57.0"
+    static let semver = "0.58.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -620,6 +620,11 @@ struct AgentRow: Identifiable, Hashable {
             // Placeholders that shipped as row titles in 0.25.
             "New Session", "New session", "Untitled", "New Chat", "New chat",
             "Pi session", "Cursor session", "Grok session",
+            // Fleet chrome — vendor default titles are identity, not goals.
+            "OpenCode session", "Gemini session", "Goose session",
+            "Copilot session", "Continue session", "Warp session",
+            "Windsurf session", "Cline session", "Roo session",
+            "Aider session", "Droid session", "Kimi session",
         ]
         if junk.contains(t) { return nil }
         let low = t.lowercased()

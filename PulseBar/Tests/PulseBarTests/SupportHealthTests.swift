@@ -382,6 +382,14 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(item.repair, .openAttentionBridge)
     }
 
+    func testAttentionSampleAgentsCoverEveryWaitingNoneContract() {
+        let none = Set(AgentID.allCases.filter { $0.waitingSource == .none })
+        let samples = Set(StatusStore.attentionSampleAgents)
+        XCTAssertEqual(samples, none, "Settings sample must cover every Waiting-none Agent")
+        XCTAssertFalse(samples.contains(.claude))
+        XCTAssertFalse(samples.contains(.codex))
+    }
+
     @MainActor
     func testObservationGapAttentionBridgeIsActionable() {
         let store = StatusStore()

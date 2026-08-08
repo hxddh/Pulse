@@ -2,6 +2,38 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.58.0 — Fleet Continuity / 舰队连续
+
+0.57 硬化了旗舰行；本版把同一套事实契约铺到舰队：非旗舰 session 审计、
+`bestEffortCache` 永不假 session、pending 整词匹配、Waiting-none 六 Agent
+Attention 样本可达。详见 [`docs/plan-0.58.md`](docs/plan-0.58.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 舰队事实诚实
+
+- **非旗舰 structuredSession**：Amp 等 goal/cwd 回归；chrome 默认标题扩拒；
+  EXPERIENCE 场景 Q。
+- **`bestEffortCache` 证据门闩**：`makeRows` 对 cache 适配器恒输出 `.cache`，
+  即使路径/SQLite 看起来 structured；Windsurf/Cline 薄索引 → Limited。
+- **空壳禁令**扩到舰队；Support depth 与 matrix 一致。
+- EXPERIENCE / architecture / AGENTS / README 对齐 0.58。
+
+### P1 · Waiting 与 App Data
+
+- Settings「写入样本 Waiting」覆盖全部六个 Waiting-none Agent
+  （replit / devin / warpAgent / trae / antigravity / junie）；清除同范围。
+- **pending 整词/短语匹配**：`depending` 不再因子串 `pending` 假抬 Waiting。
+- 薄 cache / privacy_limited 的 `enable_app_data` nextStep 保持可点。
+
+### P2 · 回归
+
+- Focus / AppKit Settings / 旗舰 subagent / Codex title / Support depth 保留。
+
+### 验证
+
+- Amp / Windsurf·Cline cache evidence / pending depending / Attention 六样本 /
+  ObservationQuality 薄 cache 单测；八门禁对 0.58.0。
+
 ## 0.57.0 — Fact Continuity / 事实连续
 
 0.56 能诚实回去；本版保证托盘行带着**真实事实**，不留空壳 chrome，也不再靠

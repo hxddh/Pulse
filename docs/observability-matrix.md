@@ -121,7 +121,8 @@ High-traffic cache adapters (Windsurf / Cascade, Cline, Roo, Warp, and peers
 marked `verified cache` above) stay **Limited** when the index is thin: Support
 depth reads “cache / index”, not “session transcript”. Do not promote a
 best-effort cache hit into structured-session copy just because a process is
-alive.
+alive. Runtime gate: `NativeActivityHarvest.makeRows` stamps `.cache` evidence
+whenever `AgentID.harvestSource == .bestEffortCache`, regardless of path needles.
 
 ## Tool and skill policy
 

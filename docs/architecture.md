@@ -80,6 +80,10 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 - **tokens / progress / subRunning / subTotal**：取 max
 - Codex 无类型的 head/compat 行：保留 cwd/tool/tokens，**不把裸 `title`
   升成 task**（那是 plan/registry 标签，不是用户目标）
+- **`bestEffortCache` 永不输出 `.session` 证据** —— 即使路径针或 SQLite 行
+  看起来像 structured；薄索引保持 Limited + Support depth「cache / index」
+- **pending 词表按整词/短语匹配** —— `depending` 不得因包含 `pending` 子串
+  而假抬 Waiting（Goose 历史坑）
 
 `HarvestSupervisor` 在 `StatusStore` 外围为每个 Agent 保存独立的失败次数、下次重试、熔断截止和最后错误；
 一次 partial scan 只更新已到达的 adapter，下一次只探测已到期的 Agent，全部退避时做一个半开探测。
@@ -155,9 +159,9 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 
 | channel | 判据 | 显示 |
 | --- | --- | --- |
-| `release` | bundle 版本 == 编译版本 | `Pulse 0.56.0` |
-| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.56.0-dev` |
-| `mismatch` | 两者不一致 | `0.56.0≠0.55.0` + 橙色警告 |
+| `release` | bundle 版本 == 编译版本 | `Pulse 0.58.0` |
+| `dev` | 无 bundle 版本（`swift run`） | `Pulse 0.58.0-dev` |
+| `mismatch` | 两者不一致 | `0.58.0≠0.57.0` + 橙色警告 |
 
 `PulseDistributionChannel` 另标记分发通道：`preview`（ad-hoc）、`signed`（Developer ID
 未公证）、`stable`（公证成功，`PulseNotarized=true`）。无 Apple Developer ID 时 GitHub
