@@ -45,7 +45,8 @@ Pulse 把这件事变成余光可见：
 
 装好后可直接使用，不需要安装 hooks。Pulse 默认读取本地会话与进程证据；Claude/Codex
 的 hooks 只是额外增强权限/输入等待和 subagent 生命周期的 Waiting 信号，按需在设置里
-启用即可。没有 hooks 时，能从会话数据确认的 `pending` 仍会点亮红灯；无法确认的路径
+启用即可（**原生通路，无需 Python**）。没有 hooks 时，能从会话数据确认的 `pending`
+仍会点亮红灯；无法确认的路径
 会诚实标为仅运行中，不伪造 Waiting。
 
 0.49.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
