@@ -2,6 +2,36 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.59.0 — Cache Continuity / 缓存连续
+
+0.58 止住了假 session；本版让高流量 `bestEffortCache` 在 Limited 下**有料**：
+抽出已有的 goal/cwd/tool/mtime，Support 区分薄索引与富缓存事实。
+详见 [`docs/plan-0.59.md`](docs/plan-0.59.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
+
+### P0 · 富缓存事实
+
+- cwd 认 `workspace` / `path`（仅绝对路径）；JSON `updatedAt`/`lastUpdatedAt` → activityMs。
+- chrome title 不压嵌套用户 prompt；merge 偏好真实 goal。
+- 扩展 Cline/Roo（Windsurf/Trae hosts）、Cascade/Codeium、Warp、Zed、Amazon Q 根。
+- Support：薄 → `thin cache`；富 → `cache facts (Limited)`；证据仍 `.cache`。
+- `waitingSource.none`（含 Warp）不从 harvest 抬 `skill=pending`。
+- EXPERIENCE 场景 R；attention-bridge 样本文案对齐六 Agent。
+
+### P1 · 质量三分与回归
+
+- ObservationQuality：`cache_thin` vs `cache_conditional` vs privacy。
+- pending：`depending` 仍否；`awaiting_user` / `ask_followup_question` 仍是。
+- Pi mid-tier fixture；Attention / Support 深链保留。
+
+### P2 · 回归
+
+- Focus / AppKit Settings / 0.58 证据门闩 / 能量预算保留。
+
+### 验证
+
+- 富/薄 Windsurf·Roo、Pi、pending、Support depth、ObservationQuality；八门禁对 0.59.0。
+
 ## 0.58.0 — Fleet Continuity / 舰队连续
 
 0.57 硬化了旗舰行；本版把同一套事实契约铺到舰队：非旗舰 session 审计、

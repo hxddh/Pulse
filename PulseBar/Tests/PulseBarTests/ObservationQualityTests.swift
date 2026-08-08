@@ -98,7 +98,7 @@ final class ObservationQualityTests: XCTestCase {
         )
         XCTAssertEqual(quality.confidence, .low)
         XCTAssertTrue(quality.isLimited)
-        XCTAssertTrue(quality.missing.contains(where: { $0.reason == "cache_conditional" }))
+        XCTAssertTrue(quality.missing.contains(where: { $0.reason == "cache_thin" }))
         XCTAssertFalse(quality.missing.contains(where: { $0.nextStep == "enable_app_data" }))
     }
 

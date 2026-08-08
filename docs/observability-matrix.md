@@ -119,10 +119,12 @@ bridge writes a real Waiting line.
 
 High-traffic cache adapters (Windsurf / Cascade, Cline, Roo, Warp, and peers
 marked `verified cache` above) stay **Limited** when the index is thin: Support
-depth reads “cache / index”, not “session transcript”. Do not promote a
-best-effort cache hit into structured-session copy just because a process is
-alive. Runtime gate: `NativeActivityHarvest.makeRows` stamps `.cache` evidence
-whenever `AgentID.harvestSource == .bestEffortCache`, regardless of path needles.
+depth reads “thin cache / index”, not “session transcript”. When the same cache
+emits goal + workspace/action, Support depth reads “cache facts (Limited)” —
+still never `.session`. Runtime gate: `NativeActivityHarvest.makeRows` stamps
+`.cache` evidence whenever `AgentID.harvestSource == .bestEffortCache`,
+regardless of path needles. Agents with `waitingSource=none` never promote
+harvest status words into Waiting.
 
 ## Tool and skill policy
 

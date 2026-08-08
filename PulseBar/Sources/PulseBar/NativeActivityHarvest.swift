@@ -312,22 +312,41 @@ enum NativeActivityHarvest {
             d(.cline, [
                 "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev",
                 "Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev",
+                "Library/Application Support/Windsurf/User/globalStorage/saoudrizwan.claude-dev",
+                "Library/Application Support/Trae/User/globalStorage/saoudrizwan.claude-dev",
             ]),
             d(.roo, [
                 "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline",
                 "Library/Application Support/Cursor/User/globalStorage/rooveterinaryinc.roo-cline",
+                "Library/Application Support/Windsurf/User/globalStorage/rooveterinaryinc.roo-cline",
+                "Library/Application Support/Trae/User/globalStorage/rooveterinaryinc.roo-cline",
             ]),
             d(.continue_, [".continue"]),
-            d(.amazonQ, [".aws/amazonq", ".aws/amazon-q", "Library/Application Support/Amazon Q"]),
-            d(.cascade, [".codeium", ".windsurf", "Library/Application Support/Windsurf"]),
+            d(.amazonQ, [
+                ".aws/amazonq", ".aws/amazon-q", ".aws/q",
+                ".local/share/amazon-q",
+                "Library/Application Support/Amazon Q",
+                "Library/Application Support/amazon-q",
+                "Library/Application Support/AmazonQ",
+            ]),
+            d(.cascade, [
+                ".codeium", ".windsurf",
+                "Library/Application Support/Windsurf",
+                "Library/Application Support/Codeium",
+            ]),
             d(.windsurf, [".windsurf", "Library/Application Support/Windsurf"]),
             d(.augment, [".augment", ".auggie"]),
-            d(.zedAgent, [".zed", ".config/zed"]),
+            d(.zedAgent, [
+                ".zed", ".config/zed",
+                "Library/Application Support/Zed",
+            ]),
             d(.trae, [".trae", "Library/Application Support/Trae"]),
             d(.warpAgent, [
                 ".warp",
                 "Library/Application Support/dev.warp.Warp-Stable",
+                "Library/Application Support/dev.warp.Warp",
                 "Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp-Stable",
+                "Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp",
             ]),
             d(.devin, [".devin", ".cognition"], ["devin"]),
             d(.kiro, [".kiro", "Library/Application Support/Kiro"], ["kiro"]),
@@ -540,10 +559,21 @@ enum NativeActivityHarvest {
                 : 0
             for index in parsed.indices {
                 parsed[index].sourcePath = item.path
-                parsed[index].activityMs = mtime
+                // Prefer vendor timestamps already parsed from the object; fall
+                // back to file mtime. Never let a freshly-touched thin file mask
+                // an older authoritative updatedAt from the cache payload.
+                if parsed[index].activityMs <= 0 {
+                    parsed[index].activityMs = mtime
+                }
                 parsed[index].startedMs = birth > 0 && birth <= mtime + 1000 ? birth : 0
                 parsed[index].records = records
                 parsed[index].structured = structured
+                // Waiting-none Agents must not invent Waiting from cache status
+                // words — Attention bridge is the only honest path (Warp etc.).
+                if id.waitingSource == .none, parsed[index].skill == "pending" {
+                    parsed[index].skill = ""
+                    parsed[index].explicitPending = false
+                }
                 if id == .amp, item.path.lowercased().hasSuffix("history.jsonl") {
                     // history.jsonl is a shared prompt log, not a transcript
                     // per row. Repeating the file line count on every prompt
@@ -914,9 +944,8 @@ enum NativeActivityHarvest {
                 fact.phase = "turn_complete"; fact.outcome = "failed"
             } else if status.contains("cancel") || status.contains("abort") {
                 fact.phase = "turn_complete"; fact.outcome = "cancelled"
-            } else if status.contains("pending") || status.contains("wait") {
-                fact.explicitPending = true; fact.skill = "pending"
             }
+            // Warp is waitingSource.none — never stamp skill=pending from status.
             if fact.tool.isEmpty { fact.tool = jsonFirstTool(query?.input ?? "") }
             let usage = firstValue(conversation, keys: ["context_window_usage"])
             if let usage { fact.contextPercent = contextPercent(usage) }
@@ -1534,6 +1563,20 @@ enum NativeActivityHarvest {
         if f.task.isEmpty, isUserRecord(dict) {
             f.task = textValue(firstValue(dict, keys: ["content", "message", "text"]))
         }
+        // Cache / IDE JSON often nests the real goal under messages[] while the
+        // parent title is chrome ("Cascade session"). Prefer the latest user
+        // turn when the headline is empty or chrome-only — never invent text.
+        if f.task.isEmpty || isChromeTask(f.task),
+           let messages = dict["messages"] as? [Any] {
+            for item in messages.reversed() {
+                guard let msg = item as? [String: Any], isUserRecord(msg) else { continue }
+                let prompt = textValue(firstValue(msg, keys: ["content", "message", "text", "prompt"]))
+                if !prompt.isEmpty {
+                    f.task = prompt
+                    break
+                }
+            }
+        }
         // Amp's modern history.jsonl deliberately keeps each user prompt as
         // `{text, cwd}` without a role/type marker. This is still a safe,
         // session-shaped source (and is the only useful source on installs
@@ -1548,6 +1591,8 @@ enum NativeActivityHarvest {
         f.cwd = normalizedPath(firstString(dict, keys: [
             "cwd", "workingDirectory", "workdir", "workspacePath", "workspace_path",
             "projectPath", "project_path", "directory", "worktree", "repoPath",
+            // Cascade / Cline aliases — absolute paths only (normalizedPath).
+            "workspace", "path",
         ]))
         f.project = firstString(dict, keys: ["project", "projectName", "project_name", "repository", "repoName"])
         f.sessionID = firstString(dict, keys: [
@@ -1604,7 +1649,13 @@ enum NativeActivityHarvest {
             "requiresAction", "requires_action", "pending",
             "hasBlockingPendingActions", "hasPendingPlan",
         ])) || pendingPhase(phaseRaw) || pendingPhase(f.outcome)
+            || isVendorAskTool(f.tool)
         if f.explicitPending { f.skill = "pending" }
+        let stamped = normalizeTimestamp(firstValue(dict, keys: [
+            "lastUpdatedAt", "last_updated_at", "updatedAt", "updated_at",
+            "time_updated", "timestamp", "modifiedAt", "modified_at",
+        ]))
+        if stamped > 0 { f.activityMs = stamped }
 
         if f.project.isEmpty, !f.cwd.isEmpty { f.project = lastPathComponent(f.cwd) }
         f.task = clean(f.task, limit: 160)
@@ -1674,8 +1725,9 @@ enum NativeActivityHarvest {
     }
 
     private static func merge(_ target: inout Fact, _ source: Fact) {
+        preferTask(&target.task, source.task)
         func prefer(_ old: inout String, _ new: String) { if old.isEmpty, !new.isEmpty { old = new } }
-        prefer(&target.task, source.task); prefer(&target.project, source.project)
+        prefer(&target.project, source.project)
         prefer(&target.cwd, source.cwd); prefer(&target.sessionID, source.sessionID)
         // Last non-empty tool wins — Claude tool_use records arrive after the
         // user prompt; prefer-first left rows without an action forever.
@@ -1697,6 +1749,44 @@ enum NativeActivityHarvest {
         target.startedMs = target.startedMs == 0 ? source.startedMs : min(target.startedMs, source.startedMs == 0 ? target.startedMs : source.startedMs)
         target.records = max(target.records, source.records)
         target.structured = target.structured || source.structured
+    }
+
+    /// Prefer a real user goal over chrome titles when merging fragments.
+    private static func preferTask(_ old: inout String, _ new: String) {
+        if new.isEmpty { return }
+        if old.isEmpty { old = new; return }
+        let oldChrome = isChromeTask(old)
+        let newChrome = isChromeTask(new)
+        if oldChrome, !newChrome { old = new; return }
+        if newChrome { return }
+        if new.count >= old.count + 8 { old = new }
+    }
+
+    private static func isChromeTask(_ value: String) -> Bool {
+        let t = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let chrome: Set<String> = [
+            "new session", "new chat", "untitled", "agent session", "chat",
+            "amp session", "pi session", "grok session", "cursor session",
+            "opencode session", "gemini session", "goose session",
+            "copilot session", "continue session", "warp session",
+            "windsurf session", "cline session", "roo session",
+            "cascade session", "aider session", "droid session", "kimi session",
+        ]
+        if chrome.contains(t) { return true }
+        return t.hasSuffix(" session") || t.hasSuffix(" thread") || t.hasSuffix(" chat")
+    }
+
+    /// Cline/Roo ask tool ids — exact tokens only, never free-text inference.
+    private static func isVendorAskTool(_ tool: String) -> Bool {
+        let normalized = tool.lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let markers: Set<String> = [
+            "ask_followup_question", "askfollowupquestion",
+            "waiting_for_response", "waitingforresponse",
+            "ask_user", "askuser",
+        ]
+        return markers.contains(normalized)
     }
 
     /// Best-effort: `-Users-me-code-Pulse` → `/Users/me/code/Pulse` (Claude projects dir).
@@ -1774,12 +1864,16 @@ enum NativeActivityHarvest {
             // Fleet honesty: bestEffortCache adapters never advertise session
             // evidence, even when a path needle or SQLite row looked "structured".
             let sessionEvidence = fact.structured && id.harvestSource == .structuredSession
+            var skill = ContentSanitizer.redact(fact.skill)
+            if id.waitingSource == .none, skill == "pending" {
+                skill = ""
+            }
             return ActivityHarvest.Row(
                 id: id,
                 task: ContentSanitizer.redact(task),
                 project: ContentSanitizer.redact(project),
                 cwd: ContentSanitizer.redact(cwd),
-                skill: ContentSanitizer.redact(fact.skill),
+                skill: skill,
                 tokensIn: max(0, fact.tokensIn),
                 tokensOut: max(0, fact.tokensOut),
                 tool: ContentSanitizer.redact(fact.tool),

@@ -246,6 +246,105 @@ final class NativeActivityHarvestTests: XCTestCase {
         agentRow.refreshObservationQuality()
         XCTAssertTrue(agentRow.quality.isLimited, "thin cache must stay Limited")
         XCTAssertEqual(agentRow.quality.confidence, .low)
+        XCTAssertTrue(agentRow.quality.missing.contains(where: { $0.reason == "cache_thin" }))
+    }
+
+    func testRichWindsurfCacheExtractsGoalWorkspaceToolStillCacheEvidence() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-rich-cache-\(UUID().uuidString)")
+        let windsurf = home.appendingPathComponent(".windsurf/session.json")
+        let roo = home.appendingPathComponent(
+            "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/session.json"
+        )
+        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: roo.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"""
+        {
+          "sessionId": "ws-rich",
+          "title": "Cascade session",
+          "task": "Ship cache continuity",
+          "workspace": "/Users/me/Pulse",
+          "status": "running",
+          "currentTool": "edit_file",
+          "model": "cascade",
+          "lastUpdatedAt": 1700000000000
+        }
+        """#.write(to: windsurf, atomically: true, encoding: .utf8)
+
+        try #"""
+        {
+          "sessionId": "roo-1",
+          "title": "Roo session",
+          "messages": [{"role": "user", "content": "Refactor the tray density"}],
+          "workspacePath": "/Users/me/Pulse",
+          "status": "running",
+          "currentTool": "ask_followup_question"
+        }
+        """#.write(to: roo, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(
+            allowAppData: false,
+            appDataAgents: [.roo],
+            home: home,
+            agentFilter: [.windsurf, .roo]
+        )
+        let wind = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
+        XCTAssertEqual(wind.evidence, .cache)
+        XCTAssertEqual(wind.task, "Ship cache continuity")
+        XCTAssertEqual(wind.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(wind.tool, "edit_file")
+        XCTAssertEqual(wind.harvestMs, 1_700_000_000_000)
+
+        var agentRow = AgentRow(rowKey: "windsurf|ws-rich", agent: .windsurf)
+        agentRow.task = wind.task
+        agentRow.cwd = wind.cwd
+        agentRow.tool = wind.tool
+        agentRow.model = wind.model
+        agentRow.observationSource = wind.evidence
+        agentRow.harvestMs = wind.harvestMs
+        agentRow.refreshObservationQuality()
+        XCTAssertTrue(agentRow.quality.isLimited)
+        XCTAssertEqual(agentRow.quality.confidence, .medium)
+        XCTAssertTrue(agentRow.quality.missing.contains(where: { $0.reason == "cache_conditional" }))
+
+        let rooRow = try XCTUnwrap(result.rows.first { $0.id == .roo })
+        XCTAssertEqual(rooRow.evidence, .cache)
+        XCTAssertEqual(rooRow.task, "Refactor the tray density", "nested user message must beat chrome title")
+        XCTAssertEqual(rooRow.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(rooRow.skill, "pending", "ask_followup_question is an explicit ask tool")
+    }
+
+    func testGooseAskFollowupIsPendingButDependingIsNot() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-ask-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".config/goose/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        try #"{"sessionId":"g-ask","title":"Need input","cwd":"/tmp/goose","status":"running","currentTool":"ask_followup_question"}"#
+            .write(to: goose, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        XCTAssertEqual(row.skill, "pending")
+        XCTAssertEqual(row.evidence, .session)
+    }
+
+    func testPiFixtureYieldsGoalAndCwd() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(".pi/agent/sessions/sess-pi.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"sess-pi","title":"Improve cache continuity","cwd":"/Users/me/Pulse","status":"editing","currentTool":"bash"}"#
+            .write(to: session, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Improve cache continuity")
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(row.tool, "bash")
+        XCTAssertEqual(row.evidence, .session)
     }
 
     func testDependingStatusIsNotHarvestPending() throws {
