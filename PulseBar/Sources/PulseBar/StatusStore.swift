@@ -3311,7 +3311,7 @@ final class StatusStore: ObservableObject {
 
     /// Agents with `waitingSource=.none` — derived from `AgentID.waitingNoneAgents`.
     /// Does not expand the Claude/Codex hook installer.
-    static var attentionSampleAgents: [AgentID] { AgentID.waitingNoneAgents }
+    nonisolated static var attentionSampleAgents: [AgentID] { AgentID.waitingNoneAgents }
 
     /// Localized sample hint listing every Waiting-none display name from the
     /// enum — never a hand-maintained seven-name string.
