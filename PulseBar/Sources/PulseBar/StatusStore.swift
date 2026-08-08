@@ -2806,7 +2806,9 @@ final class StatusStore: ObservableObject {
         }
         let skill = readableSkill(row.skill)
         if facts.count < 4, !skill.isEmpty { facts.append(skill) }
-        if facts.count < 4, row.records > 0 {
+        // Records are diagnostic filler — only when the line would otherwise be
+        // thin. Never crowd out model/tokens/context (0.80).
+        if facts.count <= 2, row.records > 0 {
             facts.append(String(row.records) + tr(.recordsSuffix))
         }
         return facts.prefix(4).joined(separator: " · ")
