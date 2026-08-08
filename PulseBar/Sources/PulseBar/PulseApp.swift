@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Darwin
 
 enum AppServices {
     @MainActor static let store = StatusStore()
@@ -30,6 +31,19 @@ enum PulseBarMain {
         }
         if CommandLine.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--hook") {
+            // Native Waiting path for Claude/Codex — no Python. Always exit 0
+            // so vendor hooks never block the agent process.
+            var stdinText = ""
+            // Vendors pipe JSON on stdin. Never read when attached to a TTY —
+            // that would block the menu-bar binary until EOF.
+            if isatty(STDIN_FILENO) == 0,
+               let data = try? FileHandle.standardInput.readToEnd(),
+               let text = String(data: data, encoding: .utf8) {
+                stdinText = text
+            }
+            exit(Int32(PulseHookReceiver.run(arguments: CommandLine.arguments, stdin: stdinText)))
         }
         if CommandLine.arguments.contains("--harvest-test") {
             let started = Date()

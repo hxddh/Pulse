@@ -17,21 +17,35 @@ def pulse_dir() -> Path:
 
 
 def hook_cmd(agent: str, kind: str = "") -> str:
+    """Prefer native pulse-hook launcher; fall back to python3 pulse_hook.py."""
+    d = pulse_dir()
+    native = d / "pulse-hook"
+    if native.exists() and os.access(native, os.X_OK):
+        quoted = f'"{native}"' if " " in str(native) else str(native)
+        if kind:
+            return f"{quoted} {agent} {kind}"
+        return f"{quoted} {agent}"
     py = sys.executable or "python3"
-    hook = pulse_dir() / "pulse_hook.py"
-    # Quote path for spaces in Application Support
+    hook = d / "pulse_hook.py"
     if kind:
         return f'{py} "{hook}" {agent} {kind}'
     return f'{py} "{hook}" {agent}'
 
 
 def ensure_pulse_hook_script() -> None:
-    # install_hooks is invoked after Pulse wrote pulse_hook.py next to it
+    # Preferred path is native pulse-hook (written by Pulse). Legacy python
+    # remains for hosts that have not opened a 0.61+ build yet.
     d = pulse_dir()
     d.mkdir(parents=True, exist_ok=True)
+    native = d / "pulse-hook"
     hook = d / "pulse_hook.py"
+    if native.exists() and os.access(native, os.X_OK):
+        return
     if not hook.exists():
-        print("missing pulse_hook.py — open Pulse once so it can install assets", file=sys.stderr)
+        print(
+            "missing pulse-hook / pulse_hook.py — open Pulse once so it can install assets",
+            file=sys.stderr,
+        )
         sys.exit(1)
     hook.chmod(hook.stat().st_mode | 0o111)
 
@@ -67,8 +81,8 @@ def install_claude() -> str:
     def ensure_event(event: str, command: str, matcher: str | None = None, marker: str | None = None) -> None:
         entries = hooks.setdefault(event, [])
         blob = json.dumps(entries)
-        token = marker or "pulse_hook.py"
-        if token in blob:
+        token = marker or "pulse-hook"
+        if token in blob or "pulse-hook" in blob or "pulse_hook.py" in blob:
             return
         entry: dict = {
             "hooks": [{"type": "command", "command": command, "timeout": 5}],
@@ -101,14 +115,24 @@ def install_codex() -> str:
     cfg = Path.home() / ".codex" / "config.toml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
-    py = sys.executable or "python3"
-    hook = pulse_dir() / "pulse_hook.py"
-    line = f'notify = ["{py}", "{hook}", "codex"]\n'
+    native = pulse_dir() / "pulse-hook"
+    if native.exists() and os.access(native, os.X_OK):
+        line = f'notify = ["{native}", "codex"]\n'
+    else:
+        py = sys.executable or "python3"
+        hook = pulse_dir() / "pulse_hook.py"
+        line = f'notify = ["{py}", "{hook}", "codex"]\n'
 
     end = root_table_end(text)
     root, rest = text[:end], text[end:]
 
-    if re.search(r"(?m)^\s*notify\s*=.*pulse_hook\.py", root):
+    if re.search(r"(?m)^\s*notify\s*=.*(pulse-hook|pulse_hook\.py)", root):
+        if "pulse_hook.py" in root and "pulse-hook" not in root and native.exists():
+            root = re.sub(r"(?m)^\s*notify\s*=.*$", line.rstrip(), root, count=1)
+            if not root.endswith("\n"):
+                root += "\n"
+            cfg.write_text(root + rest, encoding="utf-8")
+            return str(cfg) + " (migrated)"
         return str(cfg) + " (already present)"
 
     if re.search(r"(?m)^\s*notify\s*=", root):
@@ -118,7 +142,7 @@ def install_codex() -> str:
     else:
         if root and not root.endswith("\n"):
             root += "\n"
-        root += "\n# Pulse v2 attention hooks\n" + line
+        root += "\n# Pulse attention hooks\n" + line
 
     if rest:
         if not root.endswith("\n"):
@@ -137,7 +161,7 @@ def uninstall_claude() -> str:
         if not target.exists():
             continue
         raw = target.read_text(encoding="utf-8")
-        if "pulse_hook.py" not in raw:
+        if "pulse_hook.py" not in raw and "pulse-hook" not in raw and "--hook" not in raw:
             continue
         try:
             data = json.loads(raw)
@@ -152,7 +176,13 @@ def uninstall_claude() -> str:
             entries = hooks.get(event)
             if not isinstance(entries, list):
                 continue
-            kept = [e for e in entries if "pulse_hook.py" not in json.dumps(e)]
+            kept = [
+                e
+                for e in entries
+                if "pulse_hook.py" not in json.dumps(e)
+                and "pulse-hook" not in json.dumps(e)
+                and "--hook" not in json.dumps(e)
+            ]
             removed += len(entries) - len(kept)
             if kept:
                 hooks[event] = kept
@@ -169,11 +199,14 @@ def uninstall_codex() -> str:
     if not cfg.exists():
         return f"{cfg} (absent)"
     text = cfg.read_text(encoding="utf-8")
-    if "pulse_hook.py" not in text:
+    if "pulse_hook.py" not in text and "pulse-hook" not in text:
         return f"{cfg} (nothing to remove)"
     kept: list[str] = []
     for ln in text.splitlines():
-        if "pulse_hook.py" in ln or ln.strip() == "# Pulse v2 attention hooks":
+        if "pulse_hook.py" in ln or "pulse-hook" in ln or ln.strip() in (
+            "# Pulse v2 attention hooks",
+            "# Pulse attention hooks",
+        ):
             continue
         # Don't leave a stack of blank lines where our block used to be.
         if not ln.strip() and kept and not kept[-1].strip():

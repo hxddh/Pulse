@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.59.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.61.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -451,6 +451,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Q | 舰队事实连续（非旗舰 session + 高流量 cache） | Amp/Pi/Grok 等有 goal/cwd/tool 时主行诚实；`bestEffortCache` 证据恒为 cache；薄索引 Limited；`depending` 等不得假 Waiting；Waiting-none 六 Agent 可从 Settings 写 Attention 样本 |
 | R | 富缓存 Limited（Windsurf / Cline / Roo / Warp…） | 有 goal+cwd/tool 时托盘显示真实事实，Support 标「cache facts (Limited)」；薄索引标「thin cache」；证据仍 `.cache`，不升格假 session |
 | S | Waiting 连续（harvestPending + Waiting-none） | Cline `ask=followup` / Roo ask tool / Cascade waiting 旗 → 红灯；`depending` 仍否；Attention 带未知 session 不点亮已有兄弟会话（空 session 进程行可收养）；Waiting-none 只经 Settings → Waiting signals → Attention 样本，不从 harvest 抬 pending |
+| T | Hook Autonomy（无 Python） | 无 Python 的 Mac：Settings 安装 Claude/Codex hooks 成功；「测试连接」通过；`pulse-hook` / `PulseBar --hook` 写入 attention.tsv；已装 `pulse_hook.py` 可迁移且可卸载 |
 
 ---
 

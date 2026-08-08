@@ -1558,9 +1558,8 @@ final class StatusStore: ObservableObject {
                 : tr(.waitingNotifyNotConfigured)
         }
         // The tray is an observation surface, not a hook installer. Missing
-        // Claude/Codex hooks remain visible in Support Health and Settings,
-        // but must not displace the session facts or imply that hooks are a
-        // prerequisite for local harvest.
+        // Claude/Codex hooks remain visible in Support Health and Settings
+        // (native install — no Python). Do not displace session facts.
         if needsWaitingSignalNudge { return tr(.waitingSignalNudge) }
         if case .available = updateStatus { return updateStatusText }
         return nil

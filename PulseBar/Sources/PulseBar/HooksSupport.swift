@@ -39,11 +39,16 @@ enum HooksSupport {
     }
 
     static func supportDir() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let home = HooksInstaller.homeOverride {
+            return home.appendingPathComponent("Library/Application Support/Pulse")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Pulse")
     }
 
-    /// Seed hook scripts into Application Support — never downgrade a flock-aware hook.
+    /// Seed optional legacy Python assets + native launcher.
+    /// Native install/self-test never require Python; the `.py` files remain for
+    /// users who already wired `python3 …/pulse_hook.py` by hand.
     static func seedAssets() {
         let fm = FileManager.default
         let dir = supportDir()
@@ -67,24 +72,31 @@ enum HooksSupport {
             try? fm.copyItem(at: src, to: dest)
             try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
         }
+        try? HooksInstaller.ensureLauncher()
+        HooksInstaller.refreshRunnerPath()
     }
 
     static func probeStatus() -> Status {
-        let hook = supportDir().appendingPathComponent("pulse_hook.py")
-        guard FileManager.default.fileExists(atPath: hook.path) else { return .missing }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        // Claude Code merges settings.json with settings.local.json; hooks in
-        // either file are live, so checking only the first reported a false
-        // "not installed" and nagged users who had wired it up themselves.
+        let launcher = HooksInstaller.launcherURL
+        let legacy = supportDir().appendingPathComponent(HooksInstaller.legacyHookName)
+        let hasAsset = FileManager.default.isExecutableFile(atPath: launcher.path)
+            || FileManager.default.fileExists(atPath: legacy.path)
+        guard hasAsset else { return .missing }
+
+        let home = HooksInstaller.homeURL
         let claudeCandidates = [
             home.appendingPathComponent(".claude/settings.json"),
             home.appendingPathComponent(".claude/settings.local.json"),
         ]
         let codex = home.appendingPathComponent(".codex/config.toml")
         let claudeOK = claudeCandidates.contains { url in
-            (try? String(contentsOf: url, encoding: .utf8))?.contains("pulse_hook.py") == true
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+            return HooksInstaller.containsPulseMarker(text)
         }
-        let codexOK = (try? String(contentsOf: codex, encoding: .utf8))?.contains("pulse_hook.py") == true
+        let codexOK: Bool = {
+            guard let text = try? String(contentsOf: codex, encoding: .utf8) else { return false }
+            return HooksInstaller.containsPulseMarker(text)
+        }()
         switch (claudeOK, codexOK) {
         case (true, true): return .installedBoth
         case (true, false): return .installedClaude
@@ -93,110 +105,71 @@ enum HooksSupport {
         }
     }
 
-    /// Remove Pulse hooks from Claude/Codex configs. Leaving dead hook commands
-    /// behind after uninstall made both tools spawn a missing script every turn.
+    /// Remove Pulse hooks from Claude/Codex configs. Native — no Python.
     @discardableResult
     static func uninstall() -> Status {
-        let script = supportDir().appendingPathComponent("install_hooks.py")
-        guard FileManager.default.fileExists(atPath: script.path) else {
-            return .failed("install_hooks.py missing")
+        seedAssets()
+        do {
+            _ = try HooksInstaller.uninstall()
+        } catch {
+            return .failed(error.localizedDescription)
         }
-        let result = run(script: script, arguments: ["--uninstall"])
-        if case .failure(let message) = result { return .failed(message) }
         return probeStatus()
     }
 
+    /// Install native `pulse-hook` into Claude/Codex configs. No Python.
     @discardableResult
     static func install() -> Status {
         seedAssets()
-        let script = supportDir().appendingPathComponent("install_hooks.py")
-        guard FileManager.default.fileExists(atPath: script.path) else {
-            return .failed("install_hooks.py missing")
+        do {
+            _ = try HooksInstaller.install()
+        } catch {
+            return .failed(error.localizedDescription)
         }
-        let result = run(script: script, arguments: [])
-        if case .failure(let message) = result { return .failed(message) }
         let status = probeStatus()
         return status == .missing ? .missing : status
     }
 
-    /// Exercise the shipped hook receiver end-to-end in an isolated temporary
-    /// Pulse home. This never writes a fake wait into the user's attention log
-    /// and never asks for Automation, Accessibility, or Screen Recording.
+    /// Exercise the native hook receiver end-to-end in an isolated temporary
+    /// Pulse home. Never writes a fake wait into the user's attention log and
+    /// never asks for Automation, Accessibility, or Screen Recording.
+    /// Does **not** require Python.
     static func selfTest() -> SelfTestResult {
         seedAssets()
-        let hook = supportDir().appendingPathComponent("pulse_hook.py")
-        guard FileManager.default.fileExists(atPath: hook.path) else {
-            return .failed("pulse_hook.py missing")
-        }
         let fm = FileManager.default
         let temp = fm.temporaryDirectory.appendingPathComponent(
             "pulse-hook-selftest-\(UUID().uuidString)",
             isDirectory: true
         )
+        let previousOverride = AttentionIO.pathOverride
         do {
             try fm.createDirectory(at: temp, withIntermediateDirectories: true)
-            defer { try? fm.removeItem(at: temp) }
-            let task = Process()
-            guard let python = RuntimeResolver.python3() else {
-                return .failed("optional Python runtime unavailable")
+            defer {
+                AttentionIO.pathOverride = previousOverride
+                try? fm.removeItem(at: temp)
             }
-            task.executableURL = python
-            task.arguments = [hook.path, "codex", "request_user_input"]
-            var environment = ProcessInfo.processInfo.environment
-            environment["PULSE_HOME"] = temp.path
-            task.environment = environment
-            let input = Pipe()
-            task.standardInput = input
-            // The self-test only validates the hook file, not its console
-            // output. Null devices avoid creating unread pipes that could
-            // block if a future hook adds diagnostic output.
-            task.standardOutput = FileHandle.nullDevice
-            task.standardError = FileHandle.nullDevice
-            try task.run()
-            input.fileHandleForWriting.write(
-                Data(#"{"message":"Pulse self-test","session_id":"selftest"}"#.utf8)
+            AttentionIO.pathOverride = temp.appendingPathComponent("attention.tsv")
+            PulseHookReceiver.appendEvent(
+                agent: "codex",
+                kind: PulseHookReceiver.normalizeKind("request_user_input"),
+                message: "Pulse self-test",
+                session: "selftest",
+                cwd: ""
             )
-            try? input.fileHandleForWriting.close()
-            task.waitUntilExit()
-            guard task.terminationStatus == 0 else {
-                return .failed("hook exit \(task.terminationStatus)")
-            }
-            let attention = temp.appendingPathComponent("attention.tsv")
-            let text = try String(contentsOf: attention, encoding: .utf8)
+            // Also exercise argv/stdin parsing the vendor path uses.
+            _ = PulseHookReceiver.run(
+                arguments: ["--hook", "codex", "request_user_input"],
+                stdin: #"{"message":"Pulse self-test","session_id":"selftest"}"#
+            )
+            let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
             guard text.contains("codex\tidle_prompt\t"),
                   text.contains("\tPulse self-test\tselftest\t")
             else { return .failed("hook output mismatch") }
             return .passed(Date())
         } catch {
+            AttentionIO.pathOverride = previousOverride
             return .failed(error.localizedDescription)
         }
-    }
-
-    private enum RunResult {
-        case success
-        case failure(String)
-    }
-
-    private static func run(script: URL, arguments: [String]) -> RunResult {
-        guard let python = RuntimeResolver.python3() else {
-            return .failure("optional Python runtime unavailable")
-        }
-        guard let result = ProcessIO.run(
-            executable: python.path,
-            arguments: [script.path] + arguments,
-            timeout: 4.0
-        ) else {
-            return .failure("could not start hook installer")
-        }
-        if result.timedOut {
-            return .failure("hook installer timed out")
-        }
-        if result.status != 0 {
-            let msg = String(data: result.stderr, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return .failure(msg.isEmpty ? "exit \(result.status)" : msg)
-        }
-        return .success
     }
 
     private static func resourceURL(named name: String) -> URL? {

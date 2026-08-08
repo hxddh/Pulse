@@ -29,10 +29,15 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 | `antigravity` | Antigravity |
 | `junie` | Junie |
 
-设置 → Waiting signals →「打开 Attention 文件夹」可直接到达写入目录；
-同区「写入样本 Waiting」会为**全部六个** Waiting-none Agent
-（replit / devin / warpAgent / trae / antigravity / junie）各追加一行可清除的
-样本（`pulse-sample` 会话）——不扩 hook 安装器。
+设置 → Waiting signals →「安装连接」写入原生 `pulse-hook`（**无需 Python**）；
+「打开 Attention 文件夹」到达写入目录；同区「写入样本 Waiting」会为**全部六个**
+Waiting-none Agent（replit / devin / warpAgent / trae / antigravity / junie）各追加
+一行可清除的样本（`pulse-sample` 会话）——不扩 hook 安装器。
+
+**原生 hook：** Claude / Codex 的官方 Waiting 通路是
+`~/Library/Application Support/Pulse/pulse-hook` → `PulseBar --hook …`，
+与 `AttentionIO` 同一 flock/TSV 契约。旧的 `pulse_hook.py` 仍可识别与卸载，但
+新安装优先原生。
 
 **session 身份：** Attention 行若带明确 `session`，优先挂到同 id 行；若现有行
 都已占用*别的* session，Pulse 会**新建** Waiting 行，而不会 smear 到兄弟会话
@@ -40,8 +45,8 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 时生效。
 
 **可运行样本：** [`docs/samples/attention-bridge/`](samples/attention-bridge/)
-（`raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——只演示 TSV 写入，
-不是 hook 安装器扩展。
+（`raise-replit.sh` … `raise-junie.sh` + `clear.sh`）——优先调用 `pulse-hook`，
+否则直接追加 TSV；不是 hook 安装器扩展。
 
 深链 / Focus 精度边界：[`docs/landing-hosts.md`](landing-hosts.md)。
 
@@ -77,34 +82,41 @@ Pulse 的读取规则：
 
 ## 写入方式
 
-### 推荐：调用 `pulse_hook.py`
+### 推荐：原生 `pulse-hook`（无需 Python）
 
-它已经在 app 包里，处理了 flock、字段规范化和行数上限：
+Settings → Waiting signals → 安装连接后，Application Support 里会有可执行的
+`pulse-hook`（转调 `PulseBar --hook`）：
 
 ```bash
-HOOK="/Applications/Pulse.app/Contents/Resources/pulse_hook.py"
+HOOK="$HOME/Library/Application Support/Pulse/pulse-hook"
 
 # 从 JSON 取 kind / message / session / cwd
 echo '{"notification_type":"permission","message":"Approve shell","session_id":"abc","cwd":"'"$PWD"'"}' \
-  | python3 "$HOOK" replit
+  | "$HOOK" replit
 
 # 或者直接用 argv 给 kind
-python3 "$HOOK" junie permission
+"$HOOK" junie permission
 ```
 
 清除等待：
 
 ```bash
-# 该 agent 全部会话
-python3 "$HOOK" replit done
+"$HOOK" replit done
+echo '{"session_id":"abc"}' | "$HOOK" replit done
+```
 
-# 仅某个会话 —— session id 只能走 stdin JSON，argv 形态表达不了
-echo '{"session_id":"abc"}' | python3 "$HOOK" replit done
+### 兼容：旧 `pulse_hook.py`
+
+仍随 app seed；probe / uninstall 认它。新安装优先原生 launcher。
+
+```bash
+HOOK="$HOME/Library/Application Support/Pulse/pulse_hook.py"
+python3 "$HOOK" replit permission   # 仅当你已有 Python 且仍指向旧脚本时
 ```
 
 ### 退路：纯 shell 追加
 
-只在无法调用 Python 时用。**有竞态**，且不做行数回收：
+只在无法调用 `pulse-hook` 时用。**有竞态**，且不做行数回收：
 
 ```bash
 PULSE="$HOME/Library/Application Support/Pulse"
