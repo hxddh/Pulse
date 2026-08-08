@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.80.md`](docs/plan-0.80.md) | The active plan (Tray Legibility) |
+| [`docs/plan-0.81.md`](docs/plan-0.81.md) | The active plan (Tray Substance) |
+| [`docs/plan-0.80.md`](docs/plan-0.80.md) | Historical plan (Tray Legibility) |
 | [`docs/plan-0.70.md`](docs/plan-0.70.md) | Historical plan (Contract Honesty) |
 | [`docs/plan-0.65.md`](docs/plan-0.65.md) | Historical plan (Fleet Coverage / ZCode) |
 | [`docs/plan-0.64.md`](docs/plan-0.64.md) | Historical plan (Go-Look Closure) |
@@ -132,7 +133,7 @@ to users.
 
 ## Current state
 
-0.80.0 is the current source version. Without an Apple Developer ID, GitHub
+0.81.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.80.md`](docs/plan-0.80.md) (Tray Legibility).
+plan is [`docs/plan-0.81.md`](docs/plan-0.81.md) (Tray Substance).

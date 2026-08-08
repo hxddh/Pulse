@@ -2492,10 +2492,11 @@ final class StatusStore: ObservableObject {
         // something currently running. This is often the only useful signal
         // for adapters that do not expose a lifecycle phase.
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Humanized last action earns the middle slot whenever it is useful.
-        // Skip when the hero is already that action (live tool, no real task).
-        if !tool.isEmpty, usefulAction(tool),
-           row.usefulTask != nil || !row.hasLiveToolFallback {
+        // EXPERIENCE skips last-action when the hero is already that tool —
+        // unless a project heading omitted the path, which would leave an
+        // age-only secondary (0.81 Tray Substance).
+        let heroIsToolOnly = row.usefulTask == nil && row.hasLiveToolFallback
+        if !tool.isEmpty, usefulAction(tool), !heroIsToolOnly || omitPath {
             bits.append(String(format: tr(.lastAction), readableAction(tool)))
         }
         let ago = lastActivityLabel(row)
@@ -2511,6 +2512,11 @@ final class StatusStore: ObservableObject {
         }
         if row.liveProcess, row.agent.waitingSource == .none {
             bits.append(tr(.supportWaitingNone))
+        }
+        // Heading ate the path and there is no tool action → restore path so
+        // the secondary line is not age chrome alone.
+        if omitPath, !path.isEmpty, tool.isEmpty {
+            bits.insert(path, at: 0)
         }
         // Empty secondary is honest. Agent name already sits on the identity
         // line — repeating it here is EXPERIENCE-forbidden empty chrome.
@@ -2843,21 +2849,13 @@ final class StatusStore: ObservableObject {
         return tool
     }
 
-    /// Raw tool identifiers are diagnostic evidence. Actions that convey a
-    /// user-recognisable workflow phase — including Bash/Shell/exec as
-    /// EXPERIENCE's "执行命令" — earn the context-line last-action slot (0.80).
+    /// Any tool that humanizes to a non-empty label earns the context-line
+    /// last-action slot. A keyword whitelist previously dropped LS/Task/Agent
+    /// and left running Claude rows without a middle fact (0.81).
     private func usefulAction(_ raw: String) -> Bool {
-        let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if low.isEmpty { return false }
-        if low == "exec" || low == "bash" || low == "shell"
-            || low.contains("command") || low.contains("terminal") {
-            return true
-        }
-        return [
-            "plan", "todo", "patch", "edit", "write", "image", "screenshot",
-            "search", "web", "browser", "read", "glob", "grep", "automation", "computer",
-            "test", "verify", "check", "build", "compile", "package", "publish", "release", "deploy",
-        ].contains { low.contains($0) }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return !readableAction(trimmed).isEmpty
     }
 
     private func readablePhase(_ raw: String) -> String? {

@@ -1251,7 +1251,14 @@ enum NativeActivityHarvest {
                     parsed[index].activityMs = updated > 0 ? updated : fileMTime(url)
                     parsed[index].sourcePath = url.path
                     parsed[index].structured = true
-                    parsed[index].mode = parsed[index].mode.isEmpty ? "local" : parsed[index].mode
+                    // Do not invent mode=local — readableMode strips it and the
+                    // observation line goes blank (0.81). Prefer vendor keys.
+                    if parsed[index].mode.isEmpty, let object = jsonObject(value) {
+                        parsed[index].mode = firstString(object, keys: [
+                            "unifiedMode", "unified_mode", "composerMode", "composer_mode",
+                            "agentMode", "agent_mode", "mode", "role",
+                        ])
+                    }
                 }
                 let remaining = max(0, maxFactsPerAgent - facts.count)
                 if remaining > 0 {
@@ -1456,10 +1463,19 @@ enum NativeActivityHarvest {
                     f.phase = "turn_complete"
                     f.outcome = "completed"
                 case "token_count":
-                    if let info = payload["info"] as? [String: Any],
-                       let usage = info["total_token_usage"] as? [String: Any] {
-                        f.tokensIn = max(f.tokensIn, firstNumber(usage, keys: ["input_tokens"]))
-                        f.tokensOut = max(f.tokensOut, firstNumber(usage, keys: ["output_tokens"]))
+                    if let info = payload["info"] as? [String: Any] {
+                        // Prefer the latest turn (`last_token_usage`); fall back
+                        // to cumulative totals. Matching activity_scan.codex_last_usage.
+                        let usage = (info["last_token_usage"] as? [String: Any])
+                            ?? (info["total_token_usage"] as? [String: Any])
+                        if let usage {
+                            f.tokensIn = max(f.tokensIn, firstNumber(usage, keys: [
+                                "input_tokens", "inputTokens", "prompt_tokens",
+                            ]))
+                            f.tokensOut = max(f.tokensOut, firstNumber(usage, keys: [
+                                "output_tokens", "outputTokens", "completion_tokens",
+                            ]))
+                        }
                     }
                 default:
                     break
@@ -1634,7 +1650,10 @@ enum NativeActivityHarvest {
         f.phase = semanticPhase(phaseRaw)
         f.outcome = firstString(dict, keys: ["outcome", "result", "completion", "finalStatus", "final_status"])
         f.model = firstString(dict, keys: ["model", "modelId", "model_id", "currentModel", "current_model"])
-        f.mode = firstString(dict, keys: ["agentMode", "agent_mode", "mode", "role"])
+        f.mode = firstString(dict, keys: [
+            "unifiedMode", "unified_mode", "composerMode", "composer_mode",
+            "agentMode", "agent_mode", "mode", "role",
+        ])
         f.tokensIn = firstNumber(dict, keys: [
             "inputTokens", "input_tokens", "promptTokens", "prompt_tokens",
             "inputTokenCount", "input_token_count", "promptTokenCount",
@@ -1643,6 +1662,28 @@ enum NativeActivityHarvest {
             "outputTokens", "output_tokens", "completionTokens", "completion_tokens",
             "outputTokenCount", "output_token_count", "completionTokenCount",
         ])
+        // Claude / Anthropic: model + usage live under `message`, not the
+        // envelope. Dig once so tray observation is not empty when walk order
+        // would otherwise drop a child-only fragment (0.81).
+        if let message = dict["message"] as? [String: Any] {
+            if f.model.isEmpty {
+                f.model = firstString(message, keys: [
+                    "model", "modelId", "model_id", "currentModel", "current_model",
+                ])
+            }
+            applyTokenUsage(&f, message["usage"] as? [String: Any])
+            if f.tool.isEmpty, let content = message["content"] as? [Any] {
+                for item in content.reversed() {
+                    guard let block = item as? [String: Any] else { continue }
+                    let blockType = firstString(block, keys: ["type"]).lowercased()
+                    if ["tool_use", "tool_call", "function_call", "custom_tool_call"].contains(blockType) {
+                        let name = firstString(block, keys: ["name", "toolName", "tool_name"])
+                        if !name.isEmpty { f.tool = name; break }
+                    }
+                }
+            }
+        }
+        applyTokenUsage(&f, dict["usage"] as? [String: Any])
         f.errors = firstNumber(dict, keys: ["errorCount", "errors", "toolFailureCount", "tool_failures"])
         f.files = firstNumber(dict, keys: [
             "filesChanged", "filesChangedCount", "totalFilesTouched",
@@ -1749,12 +1790,13 @@ enum NativeActivityHarvest {
         func prefer(_ old: inout String, _ new: String) { if old.isEmpty, !new.isEmpty { old = new } }
         prefer(&target.project, source.project)
         prefer(&target.cwd, source.cwd); prefer(&target.sessionID, source.sessionID)
-        // Last non-empty tool wins — Claude tool_use records arrive after the
-        // user prompt; prefer-first left rows without an action forever.
+        // Last non-empty tool / model wins — Claude assistant envelopes arrive
+        // after the user prompt; prefer-first left rows without telemetry.
         if !source.tool.isEmpty { target.tool = source.tool }
         prefer(&target.skill, source.skill)
         prefer(&target.phase, source.phase); prefer(&target.outcome, source.outcome)
-        prefer(&target.model, source.model); prefer(&target.mode, source.mode)
+        if !source.model.isEmpty { target.model = source.model }
+        if !source.mode.isEmpty { target.mode = source.mode }
         target.tokensIn = max(target.tokensIn, source.tokensIn)
         target.tokensOut = max(target.tokensOut, source.tokensOut)
         target.errors = max(target.errors, source.errors); target.files = max(target.files, source.files)
@@ -1944,6 +1986,18 @@ enum NativeActivityHarvest {
     }
 
     // MARK: - Small value helpers
+
+    private static func applyTokenUsage(_ fact: inout Fact, _ usage: [String: Any]?) {
+        guard let usage else { return }
+        fact.tokensIn = max(fact.tokensIn, firstNumber(usage, keys: [
+            "inputTokens", "input_tokens", "promptTokens", "prompt_tokens",
+            "inputTokenCount", "input_token_count", "promptTokenCount",
+        ]))
+        fact.tokensOut = max(fact.tokensOut, firstNumber(usage, keys: [
+            "outputTokens", "output_tokens", "completionTokens", "completion_tokens",
+            "outputTokenCount", "output_token_count", "completionTokenCount",
+        ]))
+    }
 
     private static func normalizedKey(_ key: String) -> String {
         key.lowercased().filter { $0.isLetter || $0.isNumber }
