@@ -933,6 +933,21 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testObservationLineSurfacesTokensAndModelByDefault() {
+        var r = row(inTok: 12_000, outTok: 3_000)
+        r.task = "Ship tray legibility"
+        r.model = "claude-sonnet-4"
+        r.liveProcess = true
+        r.activityChange = nil
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.isEmpty, "quiet motion stays empty: \(signal)")
+        let observation = store().rowObservationLine(r)
+        XCTAssertTrue(observation.contains("Model claude sonnet 4"), observation)
+        XCTAssertTrue(observation.contains("12k"), observation)
+        XCTAssertTrue(observation.contains("3.0k") || observation.contains("3k"), observation)
+    }
+
+    @MainActor
     func testRecentToolCanBeHeroWithoutLiveProcess() {
         var r = row()
         r.tool = "Bash"
