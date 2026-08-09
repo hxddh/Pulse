@@ -388,6 +388,129 @@ final class NativeActivityHarvestTests: XCTestCase {
         let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
         XCTAssertEqual(row.task, "Real goose goal")
         XCTAssertNotEqual(row.skill, "pending", "depending must not substring-match pending")
+        XCTAssertEqual(row.phase, "working", "Goose depending is lifecycle busy, not Waiting (0.82)")
+    }
+
+    func testGeminiFunctionCallAndUsageMetadataReachTray() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-gemini-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".gemini/tmp/pulse/chats", isDirectory: true)
+            .appendingPathComponent("session-gemini.jsonl")
+        let projectRoot = home.appendingPathComponent(".gemini/tmp/pulse/.project_root")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try "/Users/me/Pulse\n".write(to: projectRoot, atomically: true, encoding: .utf8)
+        let lines = [
+            #"{"sessionId":"gem-1","title":"Ship fleet substance","cwd":"/Users/me/Pulse","modelName":"gemini-2.5-pro","status":"in_progress","functionCall":{"name":"run_shell"},"usageMetadata":{"promptTokenCount":800,"candidatesTokenCount":120}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.gemini])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .gemini })
+        XCTAssertEqual(row.task, "Ship fleet substance")
+        XCTAssertEqual(row.model, "gemini-2.5-pro")
+        XCTAssertEqual(row.tool, "run_shell")
+        XCTAssertEqual(row.tokensIn, 800)
+        XCTAssertEqual(row.tokensOut, 120)
+        XCTAssertEqual(row.phase, "working", "in_progress must normalize to working")
+        XCTAssertEqual(row.evidence, .session)
+    }
+
+    func testCursorComposerModelDetailsReachTray() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cursor-model-\(UUID().uuidString)")
+        let user = home.appendingPathComponent("Library/Application Support/Cursor/User", isDirectory: true)
+        let dbURL = user.appendingPathComponent("globalStorage/state.vscdb")
+        let workspace = user.appendingPathComponent("workspaceStorage/ws-m/workspace.json")
+        try fm.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: workspace.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"folder":"/Users/me/Client"}"#.write(to: workspace, atomically: true, encoding: .utf8)
+
+        var database: OpaquePointer?
+        guard sqlite3_open(dbURL.path, &database) == SQLITE_OK, let database else {
+            XCTFail("could not create Cursor fixture database")
+            return
+        }
+        defer { sqlite3_close(database) }
+        let schema = "CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, lastUpdatedAt INTEGER, value TEXT, isArchived INTEGER, isSubagent INTEGER);"
+        XCTAssertEqual(sqlite3_exec(database, schema, nil, nil, nil), SQLITE_OK)
+        let value = #"{"name":"Model details composer","unifiedMode":"agent","modelDetails":{"modelName":"claude-4-sonnet"}}"#
+        let insert = "INSERT INTO composerHeaders VALUES ('composer-md', 'ws-m', 1700000000000, '\(value.replacingOccurrences(of: "'", with: "''"))', 0, 0);"
+        XCTAssertEqual(sqlite3_exec(database, insert, nil, nil, nil), SQLITE_OK)
+
+        let result = NativeActivityHarvest.scan(
+            allowAppData: false,
+            appDataAgents: [.cursor],
+            home: home,
+            agentFilter: [.cursor]
+        )
+        let row = try XCTUnwrap(result.rows.first { $0.id == .cursor })
+        XCTAssertEqual(row.model, "claude-4-sonnet")
+        XCTAssertEqual(row.mode, "agent")
+    }
+
+    func testPiAgentUsageJSONCarriesModelAndTokens() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-db-\(UUID().uuidString)")
+        let dbURL = home.appendingPathComponent(".pi/agent/sessions/sessions.db")
+        try fm.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        var database: OpaquePointer?
+        guard sqlite3_open(dbURL.path, &database) == SQLITE_OK, let database else {
+            XCTFail("could not create Pi fixture database")
+            return
+        }
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_exec(database, """
+            CREATE TABLE session_meta (
+              session_id TEXT, project_dir TEXT, started_at TEXT, last_event_at TEXT, event_count INTEGER
+            );
+            CREATE TABLE session_events (
+              id INTEGER PRIMARY KEY, session_id TEXT, type TEXT, category TEXT,
+              data TEXT, project_dir TEXT, created_at TEXT, bytes_returned INTEGER
+            );
+            """, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, """
+            INSERT INTO session_meta VALUES (
+              'pi-1', '/Users/me/Pulse', '1700000000', '1700000100', 4
+            );
+            INSERT INTO session_events VALUES (
+              1, 'pi-1', 'intent', '', 'Improve Pi tray substance', '/Users/me/Pulse', '1700000000', 0
+            );
+            INSERT INTO session_events VALUES (
+              2, 'pi-1', 'agent_usage', '',
+              '{"model":"gpt-5","usageMetadata":{"promptTokenCount":400,"candidatesTokenCount":90}}',
+              '/Users/me/Pulse', '1700000100', 64
+            );
+            """, nil, nil, nil), SQLITE_OK)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Improve Pi tray substance")
+        XCTAssertEqual(row.model, "gpt-5")
+        XCTAssertEqual(row.tokensIn, 400)
+        XCTAssertEqual(row.tokensOut, 90)
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+    }
+
+    func testThinCacheModelStillSurfacesWithoutSessionUpgrade() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cache-model-\(UUID().uuidString)")
+        let windsurf = home.appendingPathComponent(".windsurf/session.json")
+        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"ws-model","title":"Windsurf model only","model":"cascade","status":"active"}"#
+            .write(to: windsurf, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.windsurf])
+        let wind = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
+        XCTAssertEqual(wind.evidence, .cache)
+        XCTAssertEqual(wind.model, "cascade")
+        XCTAssertEqual(wind.phase, "working", "active → working")
+        XCTAssertNotEqual(wind.evidence, .session)
     }
 
     func testAwaitingUserStatusIsHarvestPending() throws {
