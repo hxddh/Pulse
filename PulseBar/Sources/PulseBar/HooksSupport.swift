@@ -74,6 +74,81 @@ enum HooksSupport {
         }
         try? HooksInstaller.ensureLauncher()
         HooksInstaller.refreshRunnerPath()
+        seedAttentionBridgeKit()
+    }
+
+    static func attentionBridgeKitDir() -> URL {
+        supportDir().appendingPathComponent("attention-bridge", isDirectory: true)
+    }
+
+    /// Seed a minimal Attention bridge kit next to `pulse-hook`.
+    /// Not an installer for other agents — raise/clear samples only (0.90).
+    static func seedAttentionBridgeKit() {
+        let fm = FileManager.default
+        let dir = attentionBridgeKitDir()
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let raise = #"""
+        #!/bin/sh
+        # Pulse Attention bridge sample — prefer native pulse-hook (0.90 kit).
+        # Usage: raise.sh <agent_id> [session] [kind] [message]
+        set -e
+        PULSE="${PULSE_HOME:-$HOME/Library/Application Support/Pulse}"
+        mkdir -p "$PULSE"
+        agent="${1:?usage: raise.sh <agent_id> [session] [kind] [message]}"
+        session="${2:-sample-$agent}"
+        kind="${3:-permission}"
+        message="${4:-Approve tool (sample)}"
+        HOOK="$PULSE/pulse-hook"
+        if [ -x "$HOOK" ]; then
+          printf '%s\n' "{\"notification_type\":\"$kind\",\"message\":\"$message\",\"session_id\":\"$session\",\"cwd\":\"$PWD\"}" \
+            | "$HOOK" "$agent"
+          echo "Wrote $agent Waiting via pulse-hook (session=$session kind=$kind)"
+          exit 0
+        fi
+        ms=$(($(date +%s) * 1000))
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$agent" "$kind" "$ms" "$message" "$session" "$PWD" >> "$PULSE/attention.tsv"
+        echo "Wrote $agent Waiting → $PULSE/attention.tsv"
+        """#
+        let clear = #"""
+        #!/bin/sh
+        # Clear Attention bridge Waiting for one agent id (argv) or all Waiting-none.
+        set -e
+        PULSE="${PULSE_HOME:-$HOME/Library/Application Support/Pulse}"
+        mkdir -p "$PULSE"
+        ms=$(($(date +%s) * 1000))
+        if [ "$#" -eq 0 ]; then
+          set -- replit devin warpAgent trae antigravity junie zcode
+        fi
+        for agent in "$@"; do
+          printf '%s\tdone\t%s\t\t\t\n' "$agent" "$ms" >> "$PULSE/attention.tsv"
+          echo "Cleared $agent"
+        done
+        """#
+        let readme = """
+        Pulse Attention bridge kit (0.90)
+        =================================
+        raise.sh <agent_id>   Prefer pulse-hook; falls back to attention.tsv
+        clear.sh [agent…]     Defaults to all Waiting-none agents (includes zcode)
+        Protocol: docs/attention-protocol.md — not a Claude/Codex hook installer.
+        """
+        writeKitFile(dir.appendingPathComponent("raise.sh"), raise, executable: true)
+        writeKitFile(dir.appendingPathComponent("clear.sh"), clear, executable: true)
+        writeKitFile(dir.appendingPathComponent("README.txt"), readme, executable: false)
+    }
+
+    private static func writeKitFile(_ url: URL, _ text: String, executable: Bool) {
+        let fm = FileManager.default
+        let data = Data(text.utf8)
+        if fm.fileExists(atPath: url.path),
+           let existing = try? Data(contentsOf: url),
+           existing == data {
+            return
+        }
+        try? data.write(to: url, options: .atomic)
+        if executable {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
     }
 
     static func probeStatus() -> Status {

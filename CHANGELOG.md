@@ -2,6 +2,35 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.90.0 — Waiting Reach / 等待可达
+
+0.80–0.82 把托盘观测做实。本版换章：**Waiting-none 舰队从「只会 Running」变成
+可完成的打断通路** —— Attention 从文档变成产品漏斗。详见
+[`docs/plan-0.90.md`](docs/plan-0.90.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · Waiting Reach 漏斗
+
+- Settings → Waiting signals：聚焦时显示步骤（确保 pulse-hook → 打开文件夹 → 写样本 → 见红灯）。
+- **`ensurePulseHookLauncher`**：只写原生 `pulse-hook`，不改 Claude/Codex 配置。
+- 聚焦 Agent 时可「为该 Agent 写样本」+ 复制 raise 命令。
+- Application Support 种子 `attention-bridge/`（raise.sh / clear.sh，含 zcode）。
+- Support repair / tray nudge / 空态深链带上 `focusWaitingAgent`（能推断时）。
+- EXPERIENCE 场景 **AC**；SupportHealth 回归。
+
+### P1 · 文档
+
+- attention-bridge / 样本 clear.sh 对齐七个 Waiting-none；EXPERIENCE 版本戳。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- launcher-only 不写 Claude/Codex；聚焦样本只亮该 Agent；kit 含 zcode；
+  八门禁对 0.90.0。
+
 ## 0.82.0 — Tray Fleet Substance / 舰队托盘实质
 
 0.81 打通 Claude / Codex / Cursor。本版同章补丁：**非旗舰 session + cache 观测
