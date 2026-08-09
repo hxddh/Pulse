@@ -493,11 +493,10 @@ final class SupportHealthTests: XCTestCase {
         let store = StatusStore()
         store.language = .en
         store.hooksStatus = .installedBoth
-        store.notifyAuthorized = true
-        store.notifyOnWaiting = true
+        // Prefer opaque Reach over notify setup: disable Waiting notifications.
+        store.notifyOnWaiting = false
         store.installPreviewFixture("waiting")
         guard store.needsWaitingSignalNudge else {
-            // Fixture without an opaque live row — Reach entry still deep-links.
             store.openSettings(focusWaitingSignals: true, focusWaitingAgent: .zcode)
             XCTAssertEqual(store.settingsFocusWaitingAgent, .zcode)
             return
