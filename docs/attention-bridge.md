@@ -32,10 +32,21 @@ Claude / Codex 同级。
 | `junie` | Junie |
 | `zcode` | ZCode |
 
-设置 → Waiting signals →「安装连接」写入原生 `pulse-hook`（**无需 Python**）；
-「打开 Attention 文件夹」到达写入目录；同区「写入样本 Waiting」会为**全部七个**
-Waiting-none Agent（replit / devin / warpAgent / trae / antigravity / junie / zcode）各追加
-一行可清除的样本（`pulse-sample` 会话）——不扩 hook 安装器。
+设置 → Waiting signals 是 **Waiting Reach 漏斗**（0.90）：
+
+1. **确保 pulse-hook** —— 只写原生 Attention 启动器，**不**装 Claude/Codex hooks；
+2. **打开 Attention 文件夹** / **打开桥接工具包** ——
+   `~/Library/Application Support/Pulse/` 与同级 `attention-bridge/`（`raise.sh` /
+   `clear.sh`，默认含 zcode）；
+3. **写入样本 Waiting** —— 可为单个聚焦 Agent 或全部七个 Waiting-none 追加
+   `pulse-sample` 会话；可复制 raise 命令给桥接作者；
+4. 托盘应亮红并可清除 —— **不扩 hook 安装器，不伪造原生 Waiting**。
+
+Support Health 对 Waiting-none 的 repair、托盘 nudge、空态入口都会深链到本节
+（尽量带上该 Agent 名）。
+
+「安装连接」仍只合并 Claude / Codex 官方 hooks；Waiting-none 请用上面的
+pulse-hook / Protocol 路径。
 
 **原生 hook：** Claude / Codex 的官方 Waiting 通路是
 `~/Library/Application Support/Pulse/pulse-hook` → `PulseBar --hook …`，

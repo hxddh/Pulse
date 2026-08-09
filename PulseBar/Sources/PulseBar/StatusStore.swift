@@ -15,6 +15,9 @@ final class StatusStore: ObservableObject {
     @Published var launchAtLogin = false
     @Published var language: AppLanguage = .auto
     @Published var hooksStatus: HooksSupport.Status = .unknown
+    /// Native `pulse-hook` launcher present — Attention bridge path, not Claude/Codex install.
+    @Published private(set) var pulseHookLauncherReady = false
+    @Published private(set) var didCopyAttentionRaise = false
     @Published var showAllAgents = false
     @Published private(set) var isRefreshing = false
     /// Transient "Copied" confirmation on the diagnostics button.
@@ -270,9 +273,14 @@ final class StatusStore: ObservableObject {
     /// Live agent with no Waiting path (not hooks-dependent) — one-line honesty, not a HUD.
     var needsWaitingSignalNudge: Bool {
         if needsHooksNudge { return false }
-        return cachedAll.contains {
+        return firstLiveWaitingNoneAgent != nil
+    }
+
+    /// First live Waiting-none agent still without an active wait — Reach funnel focus target.
+    var firstLiveWaitingNoneAgent: AgentID? {
+        cachedAll.first {
             $0.liveProcess && $0.agent.waitingSource == .none && !$0.waiting
-        }
+        }?.agent
     }
 
     /// Packaged bundle version disagrees with the compiled semver — usually a
@@ -1030,6 +1038,7 @@ final class StatusStore: ObservableObject {
         restoreAttentionHistory()
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
+        refreshPulseHookLauncherStatus()
         loadSettings()
         applyHotkey()
         PulseNotify.registerCategories(lang: lang)
@@ -1627,7 +1636,10 @@ final class StatusStore: ObservableObject {
         // The tray notice is reserved for actionable non-hook maintenance or
         // an already-configured Waiting route. Hook setup stays in Settings.
         if needsWaitingSignalNudge {
-            openSettings(focusWaitingSignals: true)
+            openSettings(
+                focusWaitingSignals: true,
+                focusWaitingAgent: firstLiveWaitingNoneAgent
+            )
             return
         }
         if case .available = updateStatus, updateCanVerifyDownload {
@@ -3273,10 +3285,38 @@ final class StatusStore: ObservableObject {
     /// Open the Pulse Application Support folder so the Attention bridge path
     /// is one click away — never expands the hook installer past Claude/Codex.
     func revealAttentionBridgeFolder() {
+        ensurePulseHookLauncher()
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.open(url)
+    }
+
+    /// Reveal the seeded bridge kit (`raise.sh` / `clear.sh`) under Application Support.
+    func revealAttentionBridgeKit() {
+        ensurePulseHookLauncher()
+        let url = HooksSupport.attentionBridgeKitDir()
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Write or refresh native `pulse-hook` only — does **not** merge Claude/Codex hooks.
+    func ensurePulseHookLauncher() {
+        do {
+            try HooksInstaller.ensureLauncher()
+            HooksInstaller.refreshRunnerPath()
+            HooksSupport.seedAttentionBridgeKit()
+            refreshPulseHookLauncherStatus()
+            DebugLog.write("pulse-hook launcher ensured ready=\(pulseHookLauncherReady)")
+        } catch {
+            refreshPulseHookLauncherStatus()
+            DebugLog.write("pulse-hook launcher ensure failed \(error.localizedDescription)")
+        }
+    }
+
+    func refreshPulseHookLauncherStatus() {
+        pulseHookLauncherReady = FileManager.default.isExecutableFile(
+            atPath: HooksInstaller.launcherURL.path
+        )
     }
 
     /// Agents with `waitingSource=.none` — derived from `AgentID.waitingNoneAgents`.
@@ -3314,20 +3354,62 @@ final class StatusStore: ObservableObject {
         return tr(.attentionBridgeFocusHint)
     }
 
-    /// Settings one-click sample Waiting via Attention bridge for every
-    /// Waiting-none Agent. Does not invent native Waiting paths.
-    func writeAttentionBridgeSample() {
+    func waitingReachStepsText() -> String {
+        if let agent = settingsFocusWaitingAgent {
+            if lang == .zh {
+                return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 为 \(agent.displayName) 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
+            }
+            return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting for \(agent.displayName) · 4) Tray should go red and stay clearable. Never invents native Waiting."
+        }
+        if lang == .zh {
+            return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
+        }
+        return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting · 4) Tray should go red and stay clearable. Never invents native Waiting."
+    }
+
+    func attentionRaiseCommand(for agent: AgentID) -> String {
+        let hook = HooksInstaller.launcherURL.path
+        let quoted = hook.contains(" ") ? "\"\(hook)\"" : hook
+        return "\(quoted) \(agent.rawValue)"
+    }
+
+    func copyAttentionRaiseCommand(for agent: AgentID? = nil) {
+        let target = agent ?? settingsFocusWaitingAgent ?? firstLiveWaitingNoneAgent ?? .zcode
+        ensurePulseHookLauncher()
+        let command = attentionRaiseCommand(for: target)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(command, forType: .string)
+        didCopyAttentionRaise = true
+        DebugLog.write("attention raise command copied agent=\(target.rawValue)")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            self?.didCopyAttentionRaise = false
+        }
+    }
+
+    /// Settings one-click sample Waiting via Attention bridge.
+    /// When `agent` is set, only that Waiting-none Agent is raised (Reach funnel).
+    func writeAttentionBridgeSample(for agent: AgentID? = nil) {
+        ensurePulseHookLauncher()
         let cwd = FileManager.default.homeDirectoryForCurrentUser.path
-        for agent in Self.attentionSampleAgents {
+        let agents: [AgentID]
+        if let agent {
+            guard agent.waitingSource == .none else { return }
+            agents = [agent]
+        } else {
+            agents = Self.attentionSampleAgents
+        }
+        for id in agents {
             AttentionIO.appendPermission(
-                agent: agent,
+                agent: id,
                 message: "Approve tool (sample)",
                 session: "pulse-sample",
                 cwd: cwd
             )
         }
         DebugLog.write(
-            "attention sample written agents=\(Self.attentionSampleAgents.map(\.rawValue).joined(separator: ",")) session=pulse-sample"
+            "attention sample written agents=\(agents.map(\.rawValue).joined(separator: ",")) session=pulse-sample"
         )
         refresh(reason: "attentionSample")
         if let row = cachedAll.first(where: { $0.sessionID == "pulse-sample" && $0.waiting }) {

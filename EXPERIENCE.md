@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.82.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.90.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -461,6 +461,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Z | Tray Legibility（托盘可读） | 默认行同时可见次行（路径·最近动作含执行命令·最近活动·始于）+ 运动信号 + **观测行**（model·tokens·最强进度，最多 4 事实）；无事实整行消失；核心运动事实不藏 Details；不发明进度占位 |
 | AA | Tray Substance（托盘实质） | Claude 笔录带 `message.model`/`usage` 时观测行有 model+tokens；Codex `last_token_usage` 可见；Cursor `unifiedMode` 可见且非假 local；tool-hero+分组去路径时次行仍有最近动作或路径；LS/Task 等工具可作最近动作 |
 | AB | Tray Fleet Substance（舰队托盘实质） | Gemini `functionCall`+`usageMetadata` / Goose `depending`→Working（非 Waiting）/ Cursor `modelDetails` / Pi `agent_usage` model+tokens 进默认行；有 model 的 cache 行观测非空且仍 Limited；quiet live 无 phase 时 Now 空、观测可有 model/tokens |
+| AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到 Waiting signals；一屏完成「确保 pulse-hook（不装 Claude/Codex）→ 打开文件夹 → 写样本 → 托盘红灯可清除」；可复制 raise 命令；Application Support 有 bridge kit；不伪造原生 Waiting、不扩 hooks 安装器 |
 
 ---
 

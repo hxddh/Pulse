@@ -690,7 +690,10 @@ struct TrayPanel: View {
                     Menu {
                         if store.needsWaitingSignalNudge {
                             Button(store.tr(.setupWaitingSignals)) {
-                                store.openSettings(focusWaitingSignals: true)
+                                store.openSettings(
+                                    focusWaitingSignals: true,
+                                    focusWaitingAgent: store.firstLiveWaitingNoneAgent
+                                )
                             }
                             Divider()
                         }
@@ -926,6 +929,11 @@ struct TrayPanel: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+            Button(store.tr(.setupWaitingSignals)) {
+                store.openSettings(focusWaitingSignals: true)
+            }
+            .buttonStyle(.link)
+            .font(.system(size: 11, weight: .medium))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 26)
@@ -1993,6 +2001,26 @@ struct SettingsView: View {
                 Label(store.attentionBridgeFocusHintText(), systemImage: "link")
                     .font(.caption)
                     .foregroundStyle(.orange)
+                Text(store.waitingReachStepsText())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button(store.tr(.ensurePulseHook)) {
+                        store.ensurePulseHookLauncher()
+                    }
+                    Text(
+                        store.pulseHookLauncherReady
+                            ? store.tr(.pulseHookReady)
+                            : store.tr(.pulseHookMissing)
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(store.pulseHookLauncherReady ? Color.secondary : Color.orange)
+                }
+                Text(store.tr(.ensurePulseHookHint))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(store.tr(.hooksHint))
                 .font(.caption)
@@ -2020,10 +2048,34 @@ struct SettingsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if !store.settingsFocusWaitingSignals {
+                Button(store.tr(.ensurePulseHook)) {
+                    store.ensurePulseHookLauncher()
+                }
+                .font(.caption)
+            }
             Button(store.tr(.revealAttentionFolder)) {
                 store.revealAttentionBridgeFolder()
             }
             .font(.caption)
+            Button(store.tr(.revealAttentionBridgeKit)) {
+                store.revealAttentionBridgeKit()
+            }
+            .font(.caption)
+            if let agent = store.settingsFocusWaitingAgent {
+                Button(String(format: store.tr(.attentionBridgeWriteSampleFocused), agent.displayName)) {
+                    store.writeAttentionBridgeSample(for: agent)
+                }
+                .font(.caption)
+                Button(
+                    store.didCopyAttentionRaise
+                        ? store.tr(.attentionRaiseCopied)
+                        : store.tr(.copyAttentionRaiseCommand)
+                ) {
+                    store.copyAttentionRaiseCommand(for: agent)
+                }
+                .font(.caption)
+            }
             Button(store.tr(.attentionBridgeWriteSample)) {
                 store.writeAttentionBridgeSample()
             }
@@ -2037,6 +2089,7 @@ struct SettingsView: View {
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .onAppear { store.refreshPulseHookLauncherStatus() }
     }
 
     private var hookTestColor: Color {
