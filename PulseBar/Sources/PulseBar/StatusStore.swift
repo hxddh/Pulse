@@ -2879,7 +2879,10 @@ final class StatusStore: ObservableObject {
         if low.contains("search") || low.contains("research") { return tr(.actionResearch) }
         if low.contains("read") { return tr(.actionReading) }
         if low.contains("edit") || low.contains("write") { return tr(.actionEditing) }
-        if low == "working" || low == "running" || low.contains("execut") {
+        if low == "working" || low == "running" || low.contains("execut")
+            || low == "in_progress" || low == "inprogress"
+            || low == "active" || low == "busy" || low == "thinking"
+            || low == "depending" {
             return tr(.phaseWorking)
         }
         // Unknown vendor phases remain hidden rather than leaking raw

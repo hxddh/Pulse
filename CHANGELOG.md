@@ -2,6 +2,36 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.82.0 — Tray Fleet Substance / 舰队托盘实质
+
+0.81 打通 Claude / Codex / Cursor。本版同章补丁：**非旗舰 session + cache 观测
++ quiet-live phase 诚实**，让默认行在真实有字段时不空。详见
+[`docs/plan-0.82.md`](docs/plan-0.82.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 舰队 harvest → 默认行
+
+- 共享 `fact(from:)`：`modelName` / `modelDetails`；`functionCall.name`；
+  `candidatesTokenCount`；`usageMetadata` / `response.usage`；`hasDisplaySignal` 含 model。
+- Phase：`in_progress` / `depending` / `active` / `thinking` / `busy` → `working`；
+  Now 可读为 Working（从不把 Goose `depending` 当 Waiting）。
+- Cursor：`modelDetails.modelName`；Pi：`agent_usage` JSON 带 model/tokens。
+- Cache：有 model 的 Limited 行观测非空；证据仍 `.cache`，不升格 session。
+- EXPERIENCE 场景 **AB**；Native + ResourceLookup 回归。
+
+### P1 · Quiet live
+
+- 无 phase 时 Now 仍空；观测仍可有 model/tokens；不把 last tool 冒充 Now。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- Gemini functionCall+usageMetadata；Goose depending→working；Cursor modelDetails；
+  Pi agent_usage；cache model 观测；quiet live empty Now；八门禁对 0.82.0。
+
 ## 0.81.0 — Tray Substance / 托盘实质
 
 0.80 画出了观测行，但仍空：**harvest 没把 model/tokens 送进默认行**，次行还会被

@@ -93,7 +93,7 @@ enum NativeActivityHarvest {
         /// per-Agent session budget or displace a later task with real facts.
         var hasDisplaySignal: Bool {
             !task.isEmpty || !cwd.isEmpty || !skill.isEmpty || !tool.isEmpty
-                || !phase.isEmpty || !outcome.isEmpty
+                || !phase.isEmpty || !outcome.isEmpty || !model.isEmpty
                 || tokensIn > 0 || tokensOut > 0 || errors > 0 || files > 0
                 || contextPercent > 0 || progressTotal > 0 || subTotal > 0
         }
@@ -1031,6 +1031,28 @@ enum NativeActivityHarvest {
                 fact.tokensIn = max(fact.tokensIn, tin)
                 fact.tokensOut = max(fact.tokensOut, tout)
             }
+            // Prefer structured event JSON when present — agent_usage often
+            // carries model + usageMetadata that the legacy tokens_in regex
+            // never saw (0.82 Tray Fleet Substance).
+            if let object = jsonObject(data) {
+                if fact.model.isEmpty {
+                    fact.model = clean(firstString(object, keys: [
+                        "model", "modelId", "model_id", "modelName", "model_name",
+                        "currentModel", "current_model",
+                    ]), limit: 64)
+                    if fact.model.isEmpty,
+                       let details = object["modelDetails"] as? [String: Any]
+                        ?? object["model_details"] as? [String: Any] {
+                        fact.model = clean(firstString(details, keys: [
+                            "modelName", "model_name", "model", "modelId", "model_id", "name",
+                        ]), limit: 64)
+                    }
+                }
+                applyTokenUsage(&fact, object)
+                applyTokenUsage(&fact, object["usage"] as? [String: Any])
+                applyTokenUsage(&fact, object["usageMetadata"] as? [String: Any])
+                applyTokenUsage(&fact, object["usage_metadata"] as? [String: Any])
+            }
             if fact.activityMs == 0 {
                 fact.activityMs = normalizeTimestamp(sqliteString(statement, column: 4))
             }
@@ -1258,6 +1280,21 @@ enum NativeActivityHarvest {
                             "unifiedMode", "unified_mode", "composerMode", "composer_mode",
                             "agentMode", "agent_mode", "mode", "role",
                         ])
+                    }
+                    // Composer headers nest the display model under modelDetails
+                    // more often than a top-level model key (0.82).
+                    if parsed[index].model.isEmpty, let object = jsonObject(value) {
+                        parsed[index].model = firstString(object, keys: [
+                            "model", "modelId", "model_id", "modelName", "model_name",
+                            "currentModel", "current_model",
+                        ])
+                        if parsed[index].model.isEmpty,
+                           let details = object["modelDetails"] as? [String: Any]
+                            ?? object["model_details"] as? [String: Any] {
+                            parsed[index].model = firstString(details, keys: [
+                                "modelName", "model_name", "model", "modelId", "model_id", "name",
+                            ])
+                        }
                     }
                 }
                 let remaining = max(0, maxFactsPerAgent - facts.count)
@@ -1645,11 +1682,27 @@ enum NativeActivityHarvest {
                 f.tool = firstString(dict, keys: ["name", "toolName", "tool_name"])
             }
         }
+        // Gemini / Google-style functionCall objects (0.82).
+        if f.tool.isEmpty {
+            if let fc = dict["functionCall"] as? [String: Any]
+                ?? dict["function_call"] as? [String: Any] {
+                f.tool = firstString(fc, keys: ["name", "toolName", "tool_name"])
+            }
+        }
         f.skill = firstString(dict, keys: ["skill", "skillName", "skill_name"])
         let phaseRaw = firstString(dict, keys: ["phase", "stage", "currentPhase", "current_phase", "status", "state"])
         f.phase = semanticPhase(phaseRaw)
         f.outcome = firstString(dict, keys: ["outcome", "result", "completion", "finalStatus", "final_status"])
-        f.model = firstString(dict, keys: ["model", "modelId", "model_id", "currentModel", "current_model"])
+        f.model = firstString(dict, keys: [
+            "model", "modelId", "model_id", "modelName", "model_name",
+            "currentModel", "current_model", "current_model_id",
+        ])
+        if f.model.isEmpty, let details = dict["modelDetails"] as? [String: Any]
+            ?? dict["model_details"] as? [String: Any] {
+            f.model = firstString(details, keys: [
+                "modelName", "model_name", "model", "modelId", "model_id", "name",
+            ])
+        }
         f.mode = firstString(dict, keys: [
             "unifiedMode", "unified_mode", "composerMode", "composer_mode",
             "agentMode", "agent_mode", "mode", "role",
@@ -1661,6 +1714,7 @@ enum NativeActivityHarvest {
         f.tokensOut = firstNumber(dict, keys: [
             "outputTokens", "output_tokens", "completionTokens", "completion_tokens",
             "outputTokenCount", "output_token_count", "completionTokenCount",
+            "candidatesTokenCount", "candidates_token_count",
         ])
         // Claude / Anthropic: model + usage live under `message`, not the
         // envelope. Dig once so tray observation is not empty when walk order
@@ -1668,7 +1722,7 @@ enum NativeActivityHarvest {
         if let message = dict["message"] as? [String: Any] {
             if f.model.isEmpty {
                 f.model = firstString(message, keys: [
-                    "model", "modelId", "model_id", "currentModel", "current_model",
+                    "model", "modelId", "model_id", "modelName", "currentModel", "current_model",
                 ])
             }
             applyTokenUsage(&f, message["usage"] as? [String: Any])
@@ -1684,6 +1738,12 @@ enum NativeActivityHarvest {
             }
         }
         applyTokenUsage(&f, dict["usage"] as? [String: Any])
+        applyTokenUsage(&f, dict["usageMetadata"] as? [String: Any])
+        applyTokenUsage(&f, dict["usage_metadata"] as? [String: Any])
+        if let response = dict["response"] as? [String: Any] {
+            applyTokenUsage(&f, response["usage"] as? [String: Any])
+            applyTokenUsage(&f, response["usageMetadata"] as? [String: Any])
+        }
         f.errors = firstNumber(dict, keys: ["errorCount", "errors", "toolFailureCount", "tool_failures"])
         f.files = firstNumber(dict, keys: [
             "filesChanged", "filesChangedCount", "totalFilesTouched",
@@ -1998,6 +2058,7 @@ enum NativeActivityHarvest {
         fact.tokensOut = max(fact.tokensOut, firstNumber(usage, keys: [
             "outputTokens", "output_tokens", "completionTokens", "completion_tokens",
             "outputTokenCount", "output_token_count", "completionTokenCount",
+            "candidatesTokenCount", "candidates_token_count",
         ]))
     }
 
@@ -2118,6 +2179,12 @@ enum NativeActivityHarvest {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return "" }
         let lower = value.lowercased()
+        // Vendor lifecycle enums → stable working (0.82). Never treat Goose
+        // `depending` as Waiting — that was a historical false-red footgun.
+        if ["in_progress", "inprogress", "active", "busy", "thinking", "depending"]
+            .contains(where: { lower == $0 || lower.replacingOccurrences(of: "_", with: "") == $0.replacingOccurrences(of: "_", with: "") }) {
+            return "working"
+        }
         if lower.contains("plan") { return "planning" }
         if lower.contains("read") || lower.contains("inspect") { return "reading" }
         if lower.contains("research") || lower.contains("search") { return "researching" }

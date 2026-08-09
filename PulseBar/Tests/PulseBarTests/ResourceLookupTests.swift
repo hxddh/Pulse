@@ -994,6 +994,62 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testCacheRowObservationSurfacesModelWithoutSessionUpgrade() {
+        var r = row()
+        r.agent = .windsurf
+        r.task = "Windsurf thin"
+        r.model = "cascade"
+        r.observationSource = .cache
+        r.liveProcess = false
+        r.activityChange = nil
+        r.refreshObservationQuality()
+        XCTAssertTrue(r.quality.isLimited)
+        XCTAssertEqual(r.observationSource, .cache)
+        let observation = store().rowObservationLine(r)
+        XCTAssertTrue(observation.contains("cascade") || observation.contains("Model"), observation)
+        let now = store().rowNowLine(r)
+        XCTAssertTrue(now.isEmpty, "cache without phase must not invent Now: \(now)")
+    }
+
+    @MainActor
+    func testQuietLiveRowKeepsEmptyNowWhenPhaseMissing() {
+        var r = row(inTok: 900, outTok: 40)
+        r.task = "Quiet live session"
+        r.model = "gpt-5"
+        r.phase = ""
+        r.tool = ""
+        r.liveProcess = true
+        r.activityChange = nil
+        let now = store().rowNowLine(r)
+        XCTAssertTrue(now.isEmpty, "no phase → empty Now (never last-tool): \(now)")
+        let observation = store().rowObservationLine(r)
+        XCTAssertTrue(observation.contains("gpt 5") || observation.contains("Model"), observation)
+        XCTAssertTrue(observation.contains("900") || observation.contains("40") || observation.contains("↑"), observation)
+    }
+
+    @MainActor
+    func testDependingPhaseReadsAsWorkingNotWaiting() {
+        var r = row()
+        r.task = "Goose busy"
+        r.phase = "depending"
+        r.liveProcess = true
+        r.waiting = false
+        let now = store().rowNowLine(r)
+        XCTAssertTrue(now.contains("Working") || now.contains("正在执行"), now)
+        XCTAssertFalse(now.localizedCaseInsensitiveContains("wait"), now)
+    }
+
+    @MainActor
+    func testInProgressPhaseReadsAsWorking() {
+        var r = row()
+        r.task = "Gemini turn"
+        r.phase = "in_progress"
+        r.liveProcess = true
+        let now = store().rowNowLine(r)
+        XCTAssertTrue(now.contains("Working") || now.contains("正在执行"), now)
+    }
+
+    @MainActor
     func testRecentToolCanBeHeroWithoutLiveProcess() {
         var r = row()
         r.tool = "Bash"
