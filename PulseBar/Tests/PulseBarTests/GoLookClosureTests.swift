@@ -59,4 +59,15 @@ final class GoLookClosureTests: XCTestCase {
         // May resolve to a waiting claude from fixture, or keep the stale key.
         XCTAssertNotNil(store.pendingRevealRowKey)
     }
+
+    func testLookClosureActivateReusesGoLookReveal() {
+        store.installPreviewFixture("status-running")
+        let prior = store.captureLookFingerprint()
+        store.installPreviewFixture("status-waiting")
+        store.applyLookContinuity(prior: prior, closedAt: prior.closedAt)
+        store.clearPendingRevealRowKey()
+        store.activateLookContinuity()
+        XCTAssertEqual(store.pendingRevealRowKey, "status-fixture")
+        XCTAssertTrue(store.lookContinuityNotice.isEmpty)
+    }
 }
