@@ -1028,6 +1028,84 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
+    func testRowStoryNarratesPhaseAndToolWithoutFakeNow() {
+        var r = row(inTok: 1_200, outTok: 80)
+        r.task = "Ship row story"
+        r.phase = "working"
+        r.tool = "Edit"
+        r.liveProcess = true
+        r.activityChange = nil
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Working") || story.contains("正在执行"), story)
+        XCTAssertTrue(story.localizedCaseInsensitiveContains("edit") || story.contains("编辑"), story)
+        XCTAssertFalse(story.contains("Now"), "story must not invent a Now label: \(story)")
+    }
+
+    @MainActor
+    func testQuietLiveStoryFallsBackToLastActionOrObservation() {
+        var r = row(inTok: 900, outTok: 40)
+        r.task = "Quiet live session"
+        r.model = "gpt-5"
+        r.phase = ""
+        r.tool = "Bash"
+        r.liveProcess = true
+        r.activityChange = nil
+        let story = store().rowStoryLine(r)
+        XCTAssertFalse(story.isEmpty, story)
+        XCTAssertTrue(
+            story.contains("Last action") || story.contains("最近动作") || story.contains("Model") || story.contains("模型"),
+            story
+        )
+        XCTAssertFalse(story.contains("Now"), story)
+        let now = store().rowNowLine(r)
+        XCTAssertTrue(now.isEmpty, now)
+    }
+
+    @MainActor
+    func testProcessOnlyStorySurfacesEvidenceAndNextStep() {
+        var r = row()
+        r.agent = .amp
+        r.task = ""
+        r.tool = ""
+        r.liveProcess = true
+        r.observationSource = .process
+        r.harvestMs = 0
+        r.refreshObservationQuality()
+        XCTAssertTrue(r.isProcessOnly)
+        let story = store().rowStoryLine(r)
+        XCTAssertFalse(story.isEmpty, story)
+        XCTAssertTrue(
+            story.localizedCaseInsensitiveContains("process")
+                || story.contains("进程")
+                || story.contains("Limited")
+                || story.contains("有限"),
+            story
+        )
+    }
+
+    @MainActor
+    func testWaitingStoryCarriesKindDurationAndSource() {
+        var r = row()
+        r.waiting = true
+        r.waitKind = "Permission"
+        r.waitSignal = .hooks
+        r.waitSinceMs = Int64(Date().timeIntervalSince1970 * 1000) - 8 * 60 * 1000
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.localizedCaseInsensitiveContains("permission") || story.contains("授权") || story.contains("Permission"), story)
+        XCTAssertTrue(story.contains("hooks") || story.contains("8"), story)
+    }
+
+    @MainActor
+    func testToolChangedAppearsOnSignalLine() {
+        var r = row()
+        r.task = "Ship row story"
+        r.liveProcess = true
+        r.activityChange = .toolChanged
+        let signal = store().rowSignalLine(r)
+        XCTAssertTrue(signal.contains("Tool") || signal.contains("工具") || signal.contains("Changed") || signal.contains("变化"), signal)
+    }
+
+    @MainActor
     func testDependingPhaseReadsAsWorkingNotWaiting() {
         var r = row()
         r.task = "Goose busy"

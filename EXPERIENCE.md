@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.90.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.91.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -148,6 +148,10 @@ Prefs 只改开关与连接。
   禁止把 Agent 产品名再当主行（身份行已有）。
   —— 最多两行（列表拥挤时也不砍真实标题尾部）。标题不与状态、时间或菜单争同一行。
   **任务名的后半截才是识别它的那半截**，宁可多占 16pt 也不切掉
+- **叙事行**（0.91，有话才出现）= 一句回答「这个会话在干什么 / 为何出现在托盘」：
+  可读 phase · 人话工具（标明最近动作，**不**冒充 Now）· 刚发生的 Changed；
+  quiet live 无 phase 时回落最近动作或 model/tokens；仅进程 / 薄 cache 用证据等级 + 下一步；
+  Waiting 用种类 · 时长 · 来源。空则整行消失，不发明 Waiting / 进度占位
 - **次行** = `{路径} · 最近动作：{动作} · 最近活动：{相对时间}`，
   例如 `~/code/Pulse · 最近动作：执行命令 · 最近活动：12 分钟前`
   —— 最近动作必须把 `update_plan` 等内部标识翻译成人话，并明确它是历史事件，
@@ -158,7 +162,7 @@ Prefs 只改开关与连接。
 - **等待详情**（仅 Waiting，第三行）：`↳ 时长 · 来源: 消息`
 - 完整路径、完整 session id、重复的任务原文属于诊断噪音，不进入主界面
 
-一条静态行最多 4 个事实。行间距与垂直 padding 保持紧凑：有效信息优先于留白。
+一条静态行最多 4 个事实；叙事行另计一句运动/处境摘要。行间距与垂直 padding 保持紧凑：有效信息优先于留白。
 
 > 这条规则是在「两行三级文字塞了 10 个并列事实」的时候写的，然后**矫枉过正**：
 > 到 0.27 每行只剩 2 个事实，而且**两个都是静的**——会话标题在整个会话生命周期里不变，
@@ -462,6 +466,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AA | Tray Substance（托盘实质） | Claude 笔录带 `message.model`/`usage` 时观测行有 model+tokens；Codex `last_token_usage` 可见；Cursor `unifiedMode` 可见且非假 local；tool-hero+分组去路径时次行仍有最近动作或路径；LS/Task 等工具可作最近动作 |
 | AB | Tray Fleet Substance（舰队托盘实质） | Gemini `functionCall`+`usageMetadata` / Goose `depending`→Working（非 Waiting）/ Cursor `modelDetails` / Pi `agent_usage` model+tokens 进默认行；有 model 的 cache 行观测非空且仍 Limited；quiet live 无 phase 时 Now 空、观测可有 model/tokens |
 | AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到 Waiting signals；一屏完成「确保 pulse-hook（不装 Claude/Codex）→ 打开文件夹 → 写样本 → 托盘红灯可清除」；可复制 raise 命令；Application Support 有 bridge kit；不伪造原生 Waiting、不扩 hooks 安装器 |
+| AD | Row Story（行叙事） | 默认行在标题下有一句叙事：有 phase 时可读阶段·工具；quiet live 无 Now 仍有最近动作或 model/tokens；tool/phase/task 变化进 Changed；仅进程/薄 cache 显示证据+下一步；不把 last tool 标成 Now、不伪造 Waiting |
 
 ---
 

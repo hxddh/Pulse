@@ -1364,6 +1364,15 @@ private struct AgentRowButton: View {
                                 .lineLimit(row.isProcessOnly ? 1 : 2)
                                 .fixedSize(horizontal: false, vertical: true)
 
+                            // 0.91 Row Story — one sentence: what / why on tray.
+                            if !storyLine.isEmpty {
+                                Text(storyLine)
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.primary.opacity(0.82))
+                                    .lineLimit(compact ? 1 : 2)
+                                    .truncationMode(.tail)
+                            }
+
                             if !contextLine.isEmpty {
                                 Text(contextLine)
                                     .font(.system(size: 10.75))
@@ -1510,6 +1519,7 @@ private struct AgentRowButton: View {
     private var activityChange: String { store.rowActivityChange(row) }
     private var observationLine: String { store.rowObservationLine(row) }
     private var signalLine: String { store.rowSignalLine(row) }
+    private var storyLine: String { store.rowStoryLine(row) }
     private var sourceLabel: String? {
         switch row.observationSource {
         // A real session is the normal case. Labelling every healthy row
@@ -1685,6 +1695,7 @@ private struct AgentRowButton: View {
             state = store.tr(.running)
         }
         parts.append(state)
+        if !storyLine.isEmpty { parts.append(storyLine) }
         if !contextLine.isEmpty { parts.append(contextLine) }
         // Canonical dynamic summary — do not also append activityChange +
         // metrics; that duplicated Context / Changed facts for VoiceOver.

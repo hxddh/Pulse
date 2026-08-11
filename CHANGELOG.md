@@ -2,6 +2,33 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.91.0 — Row Story / 行叙事
+
+0.80–0.82 让字段可见；0.90 让 Waiting-none 可打断。用户仍缺「有效信息」——
+根因是**行在列遥测，不在讲会话在干什么**。本版换章：默认行一句叙事。详见
+[`docs/plan-0.91.md`](docs/plan-0.91.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 行叙事
+
+- **`rowStoryLine`**：hero 下有话才出现；Waiting / 仅进程 / 薄 cache / quiet live / 有 phase 诚实合成。
+- **Changed**：tool / phase / task 变化进入 `AgentActivityChange` 与信号行（仍不推断 Waiting）。
+- Quiet live：无 Now 时 story 回落最近动作或 model/tokens，**不**把 last tool 标成 Now。
+- EXPERIENCE 场景 **AD**；ResourceLookup + SnapshotBuilder 回归。
+
+### P1 · 密度诚实
+
+- 观测行保留；story 不发明进度占位；不升格 cache→session。
+
+### P2 · 收口
+
+- 假 stable 禁令 / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- tool/phase/task → Changed；quiet live story 非空且无 Now；进程行有证据+下一步；
+  八门禁对 0.91.0。
+
 ## 0.90.0 — Waiting Reach / 等待可达
 
 0.80–0.82 把托盘观测做实。本版换章：**Waiting-none 舰队从「只会 Running」变成
