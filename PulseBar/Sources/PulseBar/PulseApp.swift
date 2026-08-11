@@ -847,10 +847,26 @@ struct TrayPanel: View {
     }
 
     /// The panel only ever showed the present moment. Coming back to it, the
-    /// first question is what happened while you were gone.
+    /// first question is what happened while you were gone (0.92 Look Continuity).
     @ViewBuilder
     private var missedNotice: some View {
-        if store.missedWhileAway > 0 {
+        if !store.lookContinuityNotice.isEmpty {
+            Button { store.clearMissedWhileAway() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 11))
+                    Text(store.lookContinuityNotice)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, TrayChrome.padX)
+                .padding(.bottom, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else if store.missedWhileAway > 0 {
             Button { store.clearMissedWhileAway() } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
@@ -930,7 +946,10 @@ struct TrayPanel: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button(store.tr(.setupWaitingSignals)) {
-                store.openSettings(focusWaitingSignals: true)
+                store.openSettings(
+                    focusWaitingSignals: true,
+                    focusWaitingAgent: store.firstLiveWaitingNoneAgent
+                )
             }
             .buttonStyle(.link)
             .font(.system(size: 11, weight: .medium))
@@ -1364,12 +1383,12 @@ private struct AgentRowButton: View {
                                 .lineLimit(row.isProcessOnly ? 1 : 2)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            // 0.91 Row Story — one sentence: what / why on tray.
+                            // 0.91/0.92 Row Story — readable even when crowded.
                             if !storyLine.isEmpty {
                                 Text(storyLine)
                                     .font(.system(size: 11, weight: .medium, design: .rounded))
                                     .foregroundStyle(.primary.opacity(0.82))
-                                    .lineLimit(compact ? 1 : 2)
+                                    .lineLimit(2)
                                     .truncationMode(.tail)
                             }
 
@@ -1514,28 +1533,10 @@ private struct AgentRowButton: View {
         return row.isUrgentWait ? 6 : 3
     }
 
-    private var metrics: String { store.rowMetrics(row) }
-    private var nowLine: String { store.rowNowLine(row) }
-    private var activityChange: String { store.rowActivityChange(row) }
     private var observationLine: String { store.rowObservationLine(row) }
     private var signalLine: String { store.rowSignalLine(row) }
     private var storyLine: String { store.rowStoryLine(row) }
-    private var sourceLabel: String? {
-        switch row.observationSource {
-        // A real session is the normal case. Labelling every healthy row
-        // "Session" adds no distinction; only degraded evidence needs a tag.
-        case .session: return nil
-        case .cache:
-            if row.quality.isLimited {
-                return store.observationQualitySummary(row)
-            }
-            return store.tr(.cacheEvidence)
-        case .process:
-            // Prefer the quality envelope: what is missing, why, and next step.
-            // Never leave a bare "Process only" / "Limited data" with no path.
-            return store.observationQualitySummary(row)
-        }
-    }
+    private var sourceLabel: String? { store.rowSourceLabel(row) }
 
     private var showActions: Bool {
         row.waiting || hovering
@@ -1671,9 +1672,9 @@ private struct AgentRowButton: View {
             // before, and it looked exactly like a healthy session.
             StatusChip(kind: .process, label: store.tr(.stalled))
         } else if row.subRunning > 0 {
-            StatusChip(kind: .running, label: "sub \(row.subRunning)↑")
+            StatusChip(kind: .running, label: String(format: store.tr(.subChipActive), row.subRunning))
         } else if row.subTotal > 0 {
-            StatusChip(kind: .running, label: "sub \(row.subTotal)")
+            StatusChip(kind: .running, label: String(format: store.tr(.subChipObserved), row.subTotal))
         } else if row.isRecentOnly {
             StatusChip(kind: .recent, label: store.tr(.recent))
         }
@@ -1781,35 +1782,51 @@ struct SettingsView: View {
     @State private var confirmDuplicateRemoval = false
 
     var body: some View {
-        Form {
-            generalSection
-            notificationsSection
-            waitingSignalsSection
-            shortcutsSection
-            if !store.waitHistory.isEmpty { historySection }
-            aboutSection
-        }
-        .formStyle(.grouped)
-        .padding(8)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear {
-            store.hooksStatus = HooksSupport.probeStatus()
-            store.refreshInstallTruth()
-            PulseNotify.refreshAuthorization()
-        }
-        .alert(
-            store.tr(.removeDuplicateApps),
-            isPresented: $confirmDuplicateRemoval
-        ) {
-            Button(store.tr(.cancel), role: .cancel) {}
-            Button(store.tr(.moveToTrash), role: .destructive) {
-                store.recycleDuplicateApps()
+        ScrollViewReader { proxy in
+            Form {
+                generalSection
+                notificationsSection
+                waitingSignalsSection
+                    .id("settings-waiting-signals")
+                shortcutsSection
+                if !store.waitHistory.isEmpty { historySection }
+                aboutSection
             }
-        } message: {
-            Text(String(
-                format: store.tr(.removeDuplicateAppsConfirm),
-                store.installReport.removableDuplicates.count
-            ))
+            .formStyle(.grouped)
+            .padding(8)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .onAppear {
+                store.hooksStatus = HooksSupport.probeStatus()
+                store.refreshInstallTruth()
+                PulseNotify.refreshAuthorization()
+                scrollToWaitingIfNeeded(proxy)
+            }
+            .onChange(of: store.settingsFocusWaitingSignals) { _, focused in
+                if focused { scrollToWaitingIfNeeded(proxy) }
+            }
+            .alert(
+                store.tr(.removeDuplicateApps),
+                isPresented: $confirmDuplicateRemoval
+            ) {
+                Button(store.tr(.cancel), role: .cancel) {}
+                Button(store.tr(.moveToTrash), role: .destructive) {
+                    store.recycleDuplicateApps()
+                }
+            } message: {
+                Text(String(
+                    format: store.tr(.removeDuplicateAppsConfirm),
+                    store.installReport.removableDuplicates.count
+                ))
+            }
+        }
+    }
+
+    private func scrollToWaitingIfNeeded(_ proxy: ScrollViewProxy) {
+        guard store.settingsFocusWaitingSignals else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo("settings-waiting-signals", anchor: .top)
+            }
         }
     }
 

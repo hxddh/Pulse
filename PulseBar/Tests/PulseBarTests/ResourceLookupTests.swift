@@ -555,8 +555,11 @@ final class LiveToolTests: XCTestCase {
         XCTAssertEqual(store().heroToolTitle(r), "Planning")
         r.task = "Improve observability"
         XCTAssertEqual(r.usefulTask, "Improve observability")
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Last action: Planning") || story.contains("Planning"), story)
+        XCTAssertFalse(story.contains("update_plan"), story)
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Last action: Planning"), line)
+        XCTAssertFalse(line.contains("Last action:"), "story owns last-action: \(line)")
         XCTAssertFalse(line.contains("update_plan"), line)
     }
 }
@@ -605,8 +608,10 @@ final class RowMetricsTests: XCTestCase {
         let line = store().rowMetrics(r)
         XCTAssertTrue(line.contains("Process started"), line)
         XCTAssertTrue(line.contains("1h"), line)
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Process started") || story.contains("进程"), story)
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("Process started"), signal)
+        XCTAssertTrue(signal.isEmpty, "opaque story owns process age (0.92): \(signal)")
         XCTAssertFalse(signal.contains("events"), signal)
     }
 
@@ -696,9 +701,11 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Improve observability"
         r.tool = "update_plan"
         r.liveProcess = true
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Last action: Planning") || story.contains("Planning"), story)
+        XCTAssertFalse(story.contains("update_plan"), story)
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Last action: Planning"), line)
-        XCTAssertFalse(line.contains("update_plan"), line)
+        XCTAssertFalse(line.contains("Last action:"), "story owns last-action (0.92): \(line)")
     }
 
     @MainActor
@@ -707,8 +714,10 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Run checks"
         r.tool = "swift_test"
         r.liveProcess = true
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Last action: Testing"), line)
+        XCTAssertFalse(line.contains("Last action:"), line)
     }
 
     @MainActor
@@ -720,7 +729,10 @@ final class RowMetricsTests: XCTestCase {
         let line = store().rowContextLine(r)
         // EXPERIENCE 次行右端: Started stays visible (0.80 Tray Legibility).
         XCTAssertTrue(line.contains("Started"), line)
-        XCTAssertTrue(line.contains("Last action: Testing"), line)
+        // 0.92: last-action lives on story, not context.
+        XCTAssertFalse(line.contains("Last action:"), line)
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
     }
 
     @MainActor
@@ -729,8 +741,11 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Review release"
         r.tool = "view_image"
         r.liveProcess = false
-        let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Last action: Reviewing image"), line)
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(
+            story.contains("Reviewing image") || story.contains("查看图片") || story.contains("Last action"),
+            story
+        )
     }
 
     @MainActor
@@ -739,10 +754,11 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Improve observability"
         r.tool = "run_terminal_command"
         r.liveProcess = true
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Last action:") || story.localizedCaseInsensitiveContains("command"), story)
+        XCTAssertFalse(story.contains("run_terminal_command"), story)
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Last action:"), line)
-        XCTAssertTrue(line.localizedCaseInsensitiveContains("command"), line)
-        XCTAssertFalse(line.contains("run_terminal_command"), line)
+        XCTAssertFalse(line.contains("Last action:"), line)
     }
 
     @MainActor
@@ -757,8 +773,10 @@ final class RowMetricsTests: XCTestCase {
         r.contextPercent = 27
         r.liveProcess = true
 
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.localizedCaseInsensitiveContains("command") || story.contains("Turn"), story)
         let context = store().rowContextLine(r)
-        XCTAssertTrue(context.localizedCaseInsensitiveContains("command"), context)
+        XCTAssertFalse(context.contains("Last action:"), "story owns tool gist: \(context)")
         let lifecycle = store().rowNowLine(r)
         XCTAssertTrue(lifecycle.contains("Outcome"), lifecycle)
         XCTAssertTrue(lifecycle.contains("Turn complete"), lifecycle)
@@ -784,10 +802,13 @@ final class RowMetricsTests: XCTestCase {
         r.model = "gpt-5"
         r.liveProcess = true
 
+        // 0.92: story owns Now + Changed; signal yields.
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
+        XCTAssertTrue(story.contains("18/31"), story)
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("Now") && signal.contains("Testing"), signal)
-        XCTAssertTrue(signal.contains("18/31"), signal)
-        XCTAssertFalse(signal.components(separatedBy: "18/31").count > 2, signal)
+        XCTAssertFalse(signal.contains("Now"), "signal yields Now to story: \(signal)")
+        XCTAssertFalse(signal.contains("18/31"), "signal yields Changed to story: \(signal)")
         let observation = store().rowObservationLine(r)
         XCTAssertTrue(observation.contains("Model gpt 5"), observation)
         XCTAssertTrue(observation.contains("12k") || observation.contains("3.0k") || observation.contains("3k"), observation)
@@ -804,9 +825,10 @@ final class RowMetricsTests: XCTestCase {
         r.activityChange = .modelCall
         r.liveProcess = true
 
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Model call") || story.contains("模型"), story)
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("Model call"), signal)
-        XCTAssertTrue(signal.contains("1 failure"), signal)
+        XCTAssertFalse(signal.contains("Model call"), "story owns Changed: \(signal)")
         let observation = store().rowObservationLine(r)
         XCTAssertTrue(observation.contains("Model gpt 5"), observation)
         XCTAssertTrue(
@@ -825,8 +847,10 @@ final class RowMetricsTests: XCTestCase {
         r.contextPercent = 68
         r.liveProcess = true
 
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("Testing"), signal)
+        XCTAssertFalse(signal.contains("Now"), signal)
         let observation = store().rowObservationLine(r)
         XCTAssertTrue(observation.contains("Model claude sonnet 4"), observation)
         XCTAssertTrue(
@@ -959,9 +983,10 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Improve observability"
         r.tool = "LS"
         r.liveProcess = true
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Last action:") || story.contains("LS"), story)
         let line = store().rowContextLine(r)
-        XCTAssertTrue(line.contains("Last action:"), line)
-        XCTAssertTrue(line.contains("LS") || line.contains("ls"), line)
+        XCTAssertFalse(line.contains("Last action:"), "story owns last-action: \(line)")
     }
 
     @MainActor
@@ -990,7 +1015,9 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(observation.contains("claude sonnet 4") || observation.contains("Model"), observation)
         XCTAssertTrue(observation.contains("1.5k") || observation.contains("1500") || observation.contains("1,500") || observation.contains("↑"), observation)
         let context = store().rowContextLine(r)
-        XCTAssertTrue(context.contains("Last action:"), context)
+        XCTAssertFalse(context.contains("Last action:"), "story owns last-action (0.92): \(context)")
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Last action:") || story.localizedCaseInsensitiveContains("edit"), story)
     }
 
     @MainActor
@@ -1084,25 +1111,152 @@ final class RowMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testWaitingStoryCarriesKindDurationAndSource() {
+    func testWaitingChipOwnsKindDurationStoryYieldsSignal() {
         var r = row()
         r.waiting = true
         r.waitKind = "Permission"
         r.waitSignal = .hooks
+        r.waitMessage = ""
         r.waitSinceMs = Int64(Date().timeIntervalSince1970 * 1000) - 8 * 60 * 1000
         let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.localizedCaseInsensitiveContains("permission") || story.contains("授权") || story.contains("Permission"), story)
-        XCTAssertTrue(story.contains("hooks") || story.contains("8"), story)
+        // Chip owns kind·duration; story only carries signal when no message.
+        XCTAssertFalse(story.localizedCaseInsensitiveContains("permission"), story)
+        XCTAssertTrue(story.contains("hooks") || story.contains("Hooks") || story.contains("钩子"), story)
+        let dur = store().waitDurationLabel(r)
+        XCTAssertFalse(dur.isEmpty)
+        XCTAssertNil(store().localizedWaitDetail(r))
     }
 
     @MainActor
-    func testToolChangedAppearsOnSignalLine() {
+    func testWaitingDetailIsMessageFirst() {
+        var r = row()
+        r.waiting = true
+        r.waitKind = "Permission"
+        r.waitSignal = .hooks
+        r.waitMessage = "Allow network access?"
+        r.waitSinceMs = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
+        XCTAssertEqual(store().rowStoryLine(r), "")
+        let detail = store().localizedWaitDetail(r)
+        XCTAssertNotNil(detail)
+        XCTAssertTrue(detail!.hasPrefix("↳ Allow network"), detail!)
+        XCTAssertTrue(detail!.contains("hooks") || detail!.contains("Hooks") || detail!.contains("钩子"), detail!)
+        // Duration stays on the chip — not leading the detail.
+        XCTAssertFalse(detail!.hasPrefix("↳ 1m"), detail!)
+        XCTAssertFalse(detail!.hasPrefix("↳ 60"), detail!)
+    }
+
+    @MainActor
+    func testToolChangedAppearsOnStoryNotSignalWhenOwned() {
         var r = row()
         r.task = "Ship row story"
         r.liveProcess = true
         r.activityChange = .toolChanged
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Tool") || story.contains("工具") || story.contains("Changed") || story.contains("变化"), story)
         let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("Tool") || signal.contains("工具") || signal.contains("Changed") || signal.contains("变化"), signal)
+        XCTAssertFalse(
+            signal.contains("Tool") || signal.contains("工具"),
+            "signal yields Changed when story owns it: \(signal)"
+        )
+    }
+
+    @MainActor
+    func testStoryAndContextDoNotBothCarryLastAction() {
+        var r = row()
+        r.task = "Clarity"
+        r.tool = "Edit"
+        r.phase = "working"
+        r.liveProcess = true
+        let story = store().rowStoryLine(r)
+        let context = store().rowContextLine(r)
+        XCTAssertFalse(story.isEmpty, story)
+        XCTAssertFalse(context.contains("Last action:"), context)
+        XCTAssertTrue(store().storyOwnsLastAction(r))
+    }
+
+    @MainActor
+    func testLimitedQualitySummaryOnceOnStoryNotIdentity() {
+        var r = row()
+        r.agent = .amp
+        r.task = ""
+        r.tool = ""
+        r.liveProcess = true
+        r.observationSource = .process
+        r.harvestMs = 0
+        r.refreshObservationQuality()
+        let story = store().rowStoryLine(r)
+        XCTAssertFalse(story.isEmpty, story)
+        let label = store().rowSourceLabel(r)
+        XCTAssertEqual(label, store().tr(.limitedData))
+        // Identity is the short tag; full next-step lives on story.
+        XCTAssertNotEqual(label, story)
+    }
+
+    @MainActor
+    func testOpaqueStoryCarriesAgeStrongestAndNextStep() {
+        var r = row()
+        r.agent = .amp
+        r.task = ""
+        r.tool = ""
+        r.model = "amp-1"
+        r.liveProcess = true
+        r.observationSource = .process
+        r.processStartedMs = Int64((Date().timeIntervalSince1970 - 120) * 1000)
+        r.harvestMs = 0
+        r.refreshObservationQuality()
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.contains("Process started") || story.contains("进程"), story)
+        XCTAssertTrue(story.contains("amp") || story.contains("Model") || story.contains("模型"), story)
+        XCTAssertFalse(story.contains("Now"), story)
+        XCTAssertFalse(r.waiting)
+    }
+
+    @MainActor
+    func testLookContinuityDeltaDetectsMovedSessionsAndNewWaits() {
+        let closed = Date().addingTimeInterval(-120)
+        let prior = StatusStore.TrayLookFingerprint(
+            closedAt: closed,
+            rows: [
+                .init(
+                    rowKey: "claude|s1", waiting: false, waitKind: "", phase: "working",
+                    tool: "Bash", task: "Before", harvestMs: 1_000, activityChangedMs: 0,
+                    changeTag: "", tokensIn: 0, tokensOut: 0, progressDone: 0
+                ),
+            ]
+        )
+        let current = StatusStore.TrayLookFingerprint(
+            closedAt: Date(),
+            rows: [
+                .init(
+                    rowKey: "claude|s1", waiting: false, waitKind: "", phase: "testing",
+                    tool: "Edit", task: "Before", harvestMs: 2_000, activityChangedMs: 1_500,
+                    changeTag: "tool", tokensIn: 10, tokensOut: 2, progressDone: 1
+                ),
+                .init(
+                    rowKey: "codex|s2", waiting: true, waitKind: "Permission", phase: "",
+                    tool: "", task: "Needs you", harvestMs: 2_000, activityChangedMs: 0,
+                    changeTag: "", tokensIn: 0, tokensOut: 0, progressDone: 0
+                ),
+            ]
+        )
+        let delta = StatusStore.lookContinuityDelta(prior: prior, current: current)
+        XCTAssertEqual(delta.moved, 1)
+        XCTAssertEqual(delta.newWaits, 1)
+    }
+
+    @MainActor
+    func testLookContinuityNoticeFromFixtureTransition() {
+        let store = store()
+        store.installPreviewFixture("status-running")
+        let prior = store.captureLookFingerprint()
+        store.installPreviewFixture("status-waiting")
+        store.applyLookContinuity(prior: prior, closedAt: prior.closedAt)
+        XCTAssertEqual(store.lookNewWaitsWhileAway, 1)
+        XCTAssertFalse(store.lookContinuityNotice.isEmpty, store.lookContinuityNotice)
+        store.clearMissedWhileAway()
+        XCTAssertEqual(store.lookContinuityNotice, "")
+        XCTAssertEqual(store.lookNewWaitsWhileAway, 0)
+        XCTAssertEqual(store.lookMovedWhileAway, 0)
     }
 
     @MainActor
@@ -1142,9 +1296,11 @@ final class RowMetricsTests: XCTestCase {
         var r = row(records: 126)
         r.liveProcess = true
         r.processStartedMs = Int64((Date().timeIntervalSince1970 - 3_600) * 1000)
+        let story = store().rowStoryLine(r)
+        XCTAssertTrue(story.localizedCaseInsensitiveContains("process started") || story.contains("进程"), story)
+        XCTAssertFalse(story.localizedCaseInsensitiveContains("events"), story)
         let line = store().rowSignalLine(r)
-        XCTAssertTrue(line.localizedCaseInsensitiveContains("process started"), line)
-        XCTAssertFalse(line.localizedCaseInsensitiveContains("events"), line)
+        XCTAssertTrue(line.isEmpty, "process-only signal yields to story: \(line)")
     }
 
     @MainActor

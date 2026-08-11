@@ -2,6 +2,39 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.92.0 — Row Clarity / 行清晰
+
+0.91 给了默认行一句叙事，但 story / 次行 / 信号 / 芯片 / Limited 标签仍互相复述。
+本版换章：**事实所有权** —— 叙事占「在干什么」，其它行让位；Look Continuity 回答
+「离开后什么动了」。详见 [`docs/plan-0.92.md`](docs/plan-0.92.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 行清晰
+
+- **事实所有权**：`rowStoryLine` 拥有 phase / 工具 gist / Changed；次行 = 路径·年龄；
+  信号在 story 已带 Now/Changed 时让位。
+- **Waiting / Limited 去重**：芯片 = 种类·时长；等待详情 = 消息优先；Limited 质量摘要
+  只出现一次（短身份标签 **或** story，不双份）。
+- **Look Continuity**：托盘关闭打指纹；重开可见结束的等待 + 新等待 + 有变化的会话。
+- **Details 对齐**：详情审视器展示同一叙事 + Changed。
+- **不透明可观测**：cache/process story = 证据年龄 · 最强事实 · nextStep；仍 Limited。
+- **拥挤优雅**：≥5 行叙事仍两行可读；删死 props；子任务芯片本地化；Settings Reach
+  滚到 Waiting；空态可推断时带 `focusWaitingAgent`。
+- EXPERIENCE 场景 **AE**；反重叠 + Look Continuity 回归。
+
+### P1 · 收口
+
+- EXPERIENCE 版本戳对齐 0.92.0。
+
+### P2 · 禁令
+
+- 假 stable / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- story 与次行/信号不双份 last-action / Changed；Waiting 详情消息优先；
+  Limited 身份短标签；离开再回 notice；八门禁对 0.92.0。
+
 ## 0.91.0 — Row Story / 行叙事
 
 0.80–0.82 让字段可见；0.90 让 Waiting-none 可打断。用户仍缺「有效信息」——

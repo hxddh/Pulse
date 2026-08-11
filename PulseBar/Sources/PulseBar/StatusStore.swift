@@ -67,8 +67,36 @@ final class StatusStore: ObservableObject {
     @Published private(set) var waitHistory: [ResolvedWait] = []
     /// Waits that ended while the tray was closed — "what did I miss?".
     @Published private(set) var missedWhileAway = 0
+    /// Sessions that moved / new waits while the tray was closed (Look Continuity).
+    @Published private(set) var lookMovedWhileAway = 0
+    @Published private(set) var lookNewWaitsWhileAway = 0
+    /// Localized one-line Look Continuity notice (empty when nothing moved).
+    @Published private(set) var lookContinuityNotice = ""
     /// When the tray was last dismissed, for the missed-wait count.
     private var trayClosedAt: Date?
+    /// Fingerprint of visible rows at last tray close — Look Continuity (0.92).
+    private var trayCloseFingerprint: TrayLookFingerprint?
+
+    /// Compact tray-close snapshot for "what moved since you left".
+    struct TrayLookFingerprint: Equatable {
+        struct RowSnap: Equatable {
+            var rowKey: String
+            var waiting: Bool
+            var waitKind: String
+            var phase: String
+            var tool: String
+            var task: String
+            var harvestMs: Int64
+            var activityChangedMs: Int64
+            var changeTag: String
+            var tokensIn: Int
+            var tokensOut: Int
+            var progressDone: Int
+        }
+
+        var closedAt: Date
+        var rows: [RowSnap]
+    }
     /// Install-copy discovery is diagnostic-only. Keep it off the main thread
     /// and avoid re-running a process/filesystem scan on every tray open.
     private var installTruthRefreshInFlight = false
@@ -1397,6 +1425,13 @@ final class StatusStore: ObservableObject {
         // panel only ever showed the present moment.
         if let closed = trayClosedAt {
             missedWhileAway = waitHistory.filter { $0.resolvedAt > closed }.count
+            if let prior = trayCloseFingerprint {
+                applyLookContinuity(prior: prior, closedAt: closed)
+            } else {
+                lookMovedWhileAway = 0
+                lookNewWaitsWhileAway = 0
+                rebuildLookContinuityNotice()
+            }
         }
         rescheduleTimer()
         if !previewFixtureActive {
@@ -1407,12 +1442,111 @@ final class StatusStore: ObservableObject {
     func trayDidDisappear() {
         trayOpen = false
         trayClosedAt = Date()
+        trayCloseFingerprint = captureLookFingerprint(at: trayClosedAt ?? Date())
         rescheduleTimer()
     }
 
     /// Acknowledge the "while you were away" line.
     func clearMissedWhileAway() {
         missedWhileAway = 0
+        lookMovedWhileAway = 0
+        lookNewWaitsWhileAway = 0
+        lookContinuityNotice = ""
+    }
+
+    /// Snapshot of live tray rows for Look Continuity (0.92).
+    func captureLookFingerprint(at date: Date = Date()) -> TrayLookFingerprint {
+        let snaps = cachedAll.map { row -> TrayLookFingerprint.RowSnap in
+            TrayLookFingerprint.RowSnap(
+                rowKey: row.rowKey,
+                waiting: row.waiting,
+                waitKind: row.waitKind,
+                phase: row.phase,
+                tool: row.tool,
+                task: row.task,
+                harvestMs: row.harvestMs,
+                activityChangedMs: row.activityChangedMs,
+                changeTag: lookChangeTag(row.activityChange),
+                tokensIn: row.tokensIn,
+                tokensOut: row.tokensOut,
+                progressDone: row.progressDone
+            )
+        }
+        return TrayLookFingerprint(closedAt: date, rows: snaps)
+    }
+
+    private func lookChangeTag(_ change: AgentActivityChange?) -> String {
+        guard let change else { return "" }
+        switch change {
+        case .errors(let n): return "errors:\(n)"
+        case .files(let n): return "files:\(n)"
+        case .progress(let d, let t): return "progress:\(d)/\(t)"
+        case .modelCall: return "model"
+        case .toolChanged: return "tool"
+        case .phaseChanged: return "phase"
+        case .taskChanged: return "task"
+        case .completed: return "completed"
+        case .failed: return "failed"
+        case .cancelled: return "cancelled"
+        }
+    }
+
+    /// Compare close fingerprint to current rows — what moved while away.
+    func applyLookContinuity(prior: TrayLookFingerprint, closedAt: Date) {
+        let now = captureLookFingerprint(at: Date())
+        let delta = Self.lookContinuityDelta(prior: prior, current: now)
+        lookMovedWhileAway = delta.moved
+        lookNewWaitsWhileAway = delta.newWaits
+        // Keep resolved-wait count from history (already set by caller).
+        _ = closedAt
+        rebuildLookContinuityNotice()
+    }
+
+    /// Pure diff for Look Continuity (0.92) — unit-tested without a live harvest.
+    static func lookContinuityDelta(
+        prior: TrayLookFingerprint,
+        current: TrayLookFingerprint
+    ) -> (moved: Int, newWaits: Int) {
+        let priorByKey = Dictionary(uniqueKeysWithValues: prior.rows.map { ($0.rowKey, $0) })
+        var moved = 0
+        var newWaits = 0
+        for snap in current.rows {
+            guard let old = priorByKey[snap.rowKey] else {
+                if snap.waiting { newWaits += 1 }
+                else if snap.harvestMs > 0 || snap.activityChangedMs > 0 { moved += 1 }
+                continue
+            }
+            if snap.waiting, !old.waiting {
+                newWaits += 1
+                continue
+            }
+            let changed = snap.phase != old.phase
+                || snap.tool != old.tool
+                || snap.task != old.task
+                || snap.changeTag != old.changeTag
+                || snap.harvestMs != old.harvestMs
+                || snap.activityChangedMs != old.activityChangedMs
+                || snap.tokensIn != old.tokensIn
+                || snap.tokensOut != old.tokensOut
+                || snap.progressDone != old.progressDone
+                || snap.waitKind != old.waitKind
+            if changed { moved += 1 }
+        }
+        return (moved, newWaits)
+    }
+
+    private func rebuildLookContinuityNotice() {
+        var parts: [String] = []
+        if missedWhileAway > 0 {
+            parts.append(String(format: tr(.whileAway), missedWhileAway))
+        }
+        if lookNewWaitsWhileAway > 0 {
+            parts.append(String(format: tr(.whileAwayNewWaits), lookNewWaitsWhileAway))
+        }
+        if lookMovedWhileAway > 0 {
+            parts.append(String(format: tr(.whileAwayMoved), lookMovedWhileAway))
+        }
+        lookContinuityNotice = parts.joined(separator: " · ")
     }
 
     /// Current cadence, for Settings/diagnostics ("probing every 5s").
@@ -2467,15 +2601,11 @@ final class StatusStore: ObservableObject {
         return String(format: tr(.agoFormat), durationLabel(seconds: secs))
     }
 
-    /// Second line of a row: where it is, what it is doing, and how long since
-    /// it moved.
+    /// Second line of a row: where it is and how long since it moved.
     ///
-    /// The middle fact is the one the panel was missing. A row's title is the
-    /// *session* name — it is fixed for the whole life of the session, so a
-    /// running row said the same two things at minute one and minute forty and
-    /// the panel read as static. `tool` is the live fact, it has been harvested
-    /// since the first version, and it only ever appeared behind a hover or an
-    /// expand. It is what turns "Claude is open" into "Claude is running Bash".
+    /// 0.92 Row Clarity — story owns “what is this session doing?” (phase /
+    /// tool gist / Changed). Context yields last-action when story already
+    /// carries it, so the secondary line stays where · age.
     ///
     /// Only for live rows: on a finished session the last tool it touched is
     /// history, not status, and would read as though it were still going.
@@ -2500,15 +2630,14 @@ final class StatusStore: ObservableObject {
         let path = row.displayPath
         if !path.isEmpty, !omitPath { bits.append(path) }
         // A completed/recent session still benefits from the last meaningful
-        // action. It is explicitly labelled as history, never presented as
-        // something currently running. This is often the only useful signal
-        // for adapters that do not expose a lifecycle phase.
+        // action — unless the story line already owns that fact (0.92).
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
         // EXPERIENCE skips last-action when the hero is already that tool —
         // unless a project heading omitted the path, which would leave an
         // age-only secondary (0.81 Tray Substance).
         let heroIsToolOnly = row.usefulTask == nil && row.hasLiveToolFallback
-        if !tool.isEmpty, usefulAction(tool), !heroIsToolOnly || omitPath {
+        let storyOwnsAction = storyOwnsLastAction(row)
+        if !tool.isEmpty, usefulAction(tool), !heroIsToolOnly || omitPath, !storyOwnsAction {
             bits.append(String(format: tr(.lastAction), readableAction(tool)))
         }
         let ago = lastActivityLabel(row)
@@ -2527,8 +2656,8 @@ final class StatusStore: ObservableObject {
         }
         // Heading ate the path and there is no tool action → restore path so
         // the secondary line is not age chrome alone.
-        if omitPath, !path.isEmpty, tool.isEmpty {
-            bits.insert(path, at: 0)
+        if omitPath, !path.isEmpty, tool.isEmpty || storyOwnsAction {
+            if !bits.contains(path) { bits.insert(path, at: 0) }
         }
         // Empty secondary is honest. Agent name already sits on the identity
         // line — repeating it here is EXPERIENCE-forbidden empty chrome.
@@ -2587,27 +2716,25 @@ final class StatusStore: ObservableObject {
         return String(format: tr(.activityChanged), detail)
     }
 
-    /// EXPERIENCE 行叙事（0.91）— one scannable sentence answering
+    /// EXPERIENCE 行叙事（0.91 / 0.92）— one scannable sentence answering
     /// “what is this session doing / why is it on the tray”.
     /// Composes existing fields only; never invents Waiting or fake Now.
+    /// 0.92: story owns phase / tool gist / Changed; Waiting yields kind·duration
+    /// to the chip; Limited opaque story carries age · strongest · nextStep once.
     func rowStoryLine(_ row: AgentRow) -> String {
         if row.waiting {
-            var bits: [String] = []
-            let kind = row.waitKind.isEmpty
-                ? tr(.needsYou)
-                : localizedWaitKind(row.waitKind)
-            bits.append(kind)
-            let dur = waitDurationLabel(row)
-            if !dur.isEmpty { bits.append(dur) }
+            // Chip owns kind · duration; wait detail owns the message (0.92).
+            // Story only surfaces the signal source when there is no message.
+            let msg = row.waitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !msg.isEmpty { return "" }
             if let signal = row.waitSignal {
-                bits.append(signal == .hooks ? tr(.signalHooks) : tr(.signalPending))
+                return signal == .hooks ? tr(.signalHooks) : tr(.signalPending)
             }
-            return bits.prefix(3).joined(separator: " · ")
+            return ""
         }
 
         if row.isProcessOnly || (row.quality.isLimited && row.usefulTask == nil && row.tool.isEmpty) {
-            let summary = observationQualitySummary(row)
-            return summary.isEmpty ? "" : summary
+            return opaqueObservationStory(row)
         }
 
         var bits: [String] = []
@@ -2660,6 +2787,117 @@ final class StatusStore: ObservableObject {
         }
 
         return bits.prefix(3).joined(separator: " · ")
+    }
+
+    /// Cache / process Limited story — evidence age · strongest fact · nextStep.
+    /// Still Limited; never invents Now or Waiting; never upgrades to session.
+    private func opaqueObservationStory(_ row: AgentRow) -> String {
+        var bits: [String] = []
+        if row.isProcessOnly, row.processStartedMs > 0 {
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let age = max(0, Double(nowMs - row.processStartedMs) / 1000.0)
+            bits.append(String(
+                format: tr(.processAge),
+                DurationFormat.label(seconds: age, lang: lang)
+            ))
+        } else {
+            let ago = lastActivityLabel(row)
+            if !ago.isEmpty {
+                bits.append(String(format: tr(.lastActive), ago))
+            } else if row.quality.freshnessMs > 0 {
+                let ageSec = max(
+                    0,
+                    Double(Int64(Date().timeIntervalSince1970 * 1000) - row.quality.freshnessMs) / 1000.0
+                )
+                if ageSec >= 0 {
+                    bits.append(String(
+                        format: tr(.lastActive),
+                        ageSec < 60 ? tr(.durNow) : durationLabel(seconds: ageSec)
+                    ))
+                }
+            }
+        }
+
+        let model = readableModel(row.model)
+        if !model.isEmpty {
+            bits.append(String(format: tr(.modelFact), model))
+        } else {
+            let input = AgentRow.compactToken(row.tokensIn)
+            let output = AgentRow.compactToken(row.tokensOut)
+            if !input.isEmpty || !output.isEmpty {
+                bits.append(String(
+                    format: tr(.compactTokens),
+                    input.isEmpty ? "0" : input,
+                    output.isEmpty ? "0" : output
+                ))
+            } else if let evidence = row.processEvidence {
+                bits.append(
+                    evidence == .pathSignature
+                        ? tr(.supportDetectedPath)
+                        : tr(.supportDetectedExecutable)
+                )
+            } else if row.observationSource == .cache {
+                bits.append(tr(.cacheEvidence))
+            } else if row.isProcessOnly {
+                bits.append(tr(.limitedData))
+            }
+        }
+
+        if let gap = row.quality.missing.first {
+            let next = observationGapNextStep(gap)
+            if !bits.contains(next) { bits.append(next) }
+        } else if row.isProcessOnly {
+            let next = tr(.qualityNextOpenAgent)
+            if !bits.contains(next) { bits.append(next) }
+        }
+
+        let joined = bits.prefix(3).joined(separator: " · ")
+        return joined.isEmpty ? observationQualitySummary(row) : joined
+    }
+
+    /// True when `rowStoryLine` will carry last-action / tool gist for this row.
+    func storyOwnsLastAction(_ row: AgentRow) -> Bool {
+        guard !row.waiting else { return false }
+        if row.isProcessOnly || (row.quality.isLimited && row.usefulTask == nil && row.tool.isEmpty) {
+            return false
+        }
+        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        let heroIsToolOnly = row.usefulTask == nil && row.hasLiveToolFallback
+        guard !tool.isEmpty, usefulAction(tool), !heroIsToolOnly else { return false }
+        return true
+    }
+
+    /// True when story already narrates lifecycle phase (signal yields Now).
+    func storyOwnsNow(_ row: AgentRow) -> Bool {
+        guard !row.waiting else { return false }
+        if row.isProcessOnly || (row.quality.isLimited && row.usefulTask == nil && row.tool.isEmpty) {
+            return false
+        }
+        if row.isStalled { return true }
+        if let _ = readablePhase(row.phase), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
+            return true
+        }
+        return false
+    }
+
+    /// True when story already carries the Changed compact (signal yields).
+    func storyOwnsChange(_ row: AgentRow) -> Bool {
+        guard !row.waiting, row.activityChange != nil else { return false }
+        if row.isProcessOnly || (row.quality.isLimited && row.usefulTask == nil && row.tool.isEmpty) {
+            return false
+        }
+        return true
+    }
+
+    /// Limited quality summary rides on story — identity tag stays short (0.92).
+    func rowSourceLabel(_ row: AgentRow) -> String? {
+        switch row.observationSource {
+        case .session: return nil
+        case .cache:
+            return tr(.cacheEvidence)
+        case .process:
+            return tr(.limitedData)
+        }
     }
 
     /// The single strongest progress fact for this row.
@@ -2736,10 +2974,15 @@ final class StatusStore: ObservableObject {
     /// One bounded **motion** line: Now / Changed / stalled age / multi-process.
     /// Model, tokens, and durable progress live on `rowObservationLine` so the
     /// default tray can show both without a single truncated scan line (0.80).
+    /// 0.92: yields Now / Changed when `rowStoryLine` already carries them.
     func rowSignalLine(_ row: AgentRow) -> String {
         guard !row.waiting else { return "" }
-        let lifecycle = rowNowLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
-        let changed = rowSignalChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let lifecycle = storyOwnsNow(row)
+            ? ""
+            : rowNowLine(row).trimmingCharacters(in: .whitespacesAndNewlines)
+        let changed = storyOwnsChange(row)
+            ? ""
+            : rowSignalChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
         var bits: [String] = []
         if !lifecycle.isEmpty { bits.append(lifecycle) }
         if !changed.isEmpty {
@@ -2751,10 +2994,11 @@ final class StatusStore: ObservableObject {
                     : String(format: tr(.errorsFact), row.errors))
             }
         }
-        if row.isStalled || row.isProcessOnly {
+        if row.isStalled {
             let metric = rowSignalMetric(row).trimmingCharacters(in: .whitespacesAndNewlines)
             if !metric.isEmpty, !bits.contains(metric) { bits.append(metric) }
         }
+        // Process-only age · nextStep live on opaque story (0.92) — signal yields.
         if row.liveProcess, !row.isProcessOnly, row.processCount > 1 {
             bits.append(String(format: tr(.processCount), row.processCount))
         }
@@ -3128,24 +3372,21 @@ final class StatusStore: ObservableObject {
         DurationFormat.label(seconds: ago, lang: lang)
     }
 
-    /// Rebuild wait detail under the badge: duration · signal · message (kind lives in the badge).
+    /// Rebuild wait detail under the badge: message-first (0.92).
+    /// Kind · duration live on the chip; story may carry signal when no message.
     /// Returns nil when there is nothing beyond the badge label.
     func localizedWaitDetail(_ row: AgentRow) -> String? {
         guard row.waiting else { return nil }
-        var head: [String] = []
-        let dur = waitDurationLabel(row)
-        if !dur.isEmpty { head.append(dur) }
-        if let sig = row.waitSignal {
-            head.append(sig == .hooks ? tr(.signalHooks) : tr(.signalPending))
-        }
-        let headText = head.joined(separator: " · ")
         let msg = row.waitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         if !msg.isEmpty {
-            if headText.isEmpty { return "↳ \(msg)" }
-            return "↳ \(headText): \(msg)"
+            if let sig = row.waitSignal {
+                let src = sig == .hooks ? tr(.signalHooks) : tr(.signalPending)
+                return "↳ \(msg) · \(src)"
+            }
+            return "↳ \(msg)"
         }
-        if headText.isEmpty { return nil }
-        return "↳ \(headText)"
+        // No message — signal may already sit on the story line; do not repeat.
+        return nil
     }
 
     /// Full wait line (kind + detail) — used by glance / a11y.
