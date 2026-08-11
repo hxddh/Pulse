@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.92.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.93.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -161,7 +161,9 @@ Prefs 只改开关与连接。
 - **观测行**（有数据才出现）= `模型调用 · 入 12k · 出 3k · 641 条事件`
   —— **默认显示，不藏在悬停或 Details 里**，最多 4 个事实；详情审视器提供完整证据（含同一叙事 + Changed）
 - **等待详情**（仅 Waiting）：`↳ 消息 · 来源`（**消息优先**；种类·时长在芯片）
-- **离开再回**（0.92 Look Continuity）：关闭托盘打指纹；重开可见结束的等待 + 新等待 + 有变化的会话
+- **离开再回**（0.92 / **0.93 Look Closure**）：关闭托盘打指纹；重开可见**具名**变化
+  （新等待 → 已结束等待 → 有变化会话，最多 3 条 +「+N」）；一点滚到优先行（复用 Go-Look）；
+  受影响非 Waiting 行有短暂「离开后有变」标记直至确认；不发明 Waiting
 - 完整路径、完整 session id、重复的任务原文属于诊断噪音，不进入主界面
 
 一条静态行最多 4 个事实；叙事行另计一句运动/处境摘要。行间距与垂直 padding 保持紧凑：有效信息优先于留白。拥挤（≥5 行）时叙事行仍保持两行可读上限。
@@ -470,6 +472,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到 Waiting signals；一屏完成「确保 pulse-hook（不装 Claude/Codex）→ 打开文件夹 → 写样本 → 托盘红灯可清除」；可复制 raise 命令；Application Support 有 bridge kit；不伪造原生 Waiting、不扩 hooks 安装器 |
 | AD | Row Story（行叙事） | 默认行在标题下有一句叙事：有 phase 时可读阶段·工具；quiet live 无 Now 仍有最近动作或 model/tokens；tool/phase/task 变化进 Changed；仅进程/薄 cache 显示证据+下一步；不把 last tool 标成 Now、不伪造 Waiting |
 | AE | Row Clarity（行清晰） | Story 拥有 phase/工具/Changed；次行只留路径·年龄；信号在 story 已带 Now/Changed 时让位；Waiting 芯片=种类·时长、详情=消息优先；Limited 质量摘要只出现一次；离开再回可见「什么动了」；Details 同叙事；不伪造 Waiting / 不升格 session |
+| AF | Look Closure（回看闭环） | 离开再回 notice **具名**（最多 3 +「+N」）；优先级新等待→已结束→有变化；一点经 `pendingRevealRowKey` 选中滚到该行；受影响行短暂「离开后有变」；不发明 Waiting、不伪造会话深链 |
 
 ---
 
@@ -490,5 +493,6 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Attention 协议 | `AttentionProtocol.swift`、`AttentionIO.swift`、`PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
 | 绿灯 / 停滞 | `AgentRow.stalled` / `isHealthyRunning` / `isThinRunning`；`SnapshotBuilder` liveFleetGlance |
 | 打断闭环 | `pendingRevealRowKey` · `focusAgent` · `TrayPanel.applyPendingReveal` · `PulseNotify` |
+| 回看闭环 | `lookContinuityItems` · `activateLookContinuity` · `lookMovedRowKeys` · Go-Look reveal |
 
 数据流详见 [`docs/architecture.md`](docs/architecture.md)。
