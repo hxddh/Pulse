@@ -62,6 +62,7 @@ private struct AgentDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         identity(row)
+                        storyCard(row)
                         if row.waiting { waitingCard(row) }
                         facts(row)
                         qualityCard(row)
@@ -102,6 +103,35 @@ private struct AgentDetailView: View {
                 }
             }
             Spacer()
+        }
+    }
+
+    private func storyCard(_ row: AgentRow) -> some View {
+        let story = store.rowStoryLine(row)
+        let changed = store.rowActivityChange(row)
+        return Group {
+            if !story.isEmpty || !changed.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(store.tr(.rowStoryHeading))
+                        .font(.headline)
+                    if !story.isEmpty {
+                        Text(story)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !changed.isEmpty {
+                        Text(changed)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.primary.opacity(0.04))
+                )
+            }
         }
     }
 

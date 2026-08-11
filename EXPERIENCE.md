@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.91.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.92.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -148,21 +148,23 @@ Prefs 只改开关与连接。
   禁止把 Agent 产品名再当主行（身份行已有）。
   —— 最多两行（列表拥挤时也不砍真实标题尾部）。标题不与状态、时间或菜单争同一行。
   **任务名的后半截才是识别它的那半截**，宁可多占 16pt 也不切掉
-- **叙事行**（0.91，有话才出现）= 一句回答「这个会话在干什么 / 为何出现在托盘」：
+- **叙事行**（0.91 / **0.92 事实所有权**，有话才出现）= 一句回答「这个会话在干什么 / 为何出现在托盘」：
   可读 phase · 人话工具（标明最近动作，**不**冒充 Now）· 刚发生的 Changed；
-  quiet live 无 phase 时回落最近动作或 model/tokens；仅进程 / 薄 cache 用证据等级 + 下一步；
-  Waiting 用种类 · 时长 · 来源。空则整行消失，不发明 Waiting / 进度占位
-- **次行** = `{路径} · 最近动作：{动作} · 最近活动：{相对时间}`，
-  例如 `~/code/Pulse · 最近动作：执行命令 · 最近活动：12 分钟前`
+  quiet live 无 phase 时回落最近动作或 model/tokens；仅进程 / 薄 cache 用**证据年龄 · 最强事实 · nextStep**；
+  Waiting **不**复述芯片上的种类·时长（无消息时只补信号来源）。空则整行消失，不发明 Waiting / 进度占位
+- **次行** = `{路径} · 最近活动：{相对时间}`（始于…）；**叙事行已有最近动作时次行不再重复**；
+  例如 `~/code/Pulse · 最近活动：12 分钟前 · 始于 42 分钟前`
   —— 最近动作必须把 `update_plan` 等内部标识翻译成人话，并明确它是历史事件，
-  不能伪装成仍在执行；主行已是该人话工具时次行不再重复
+  不能伪装成仍在执行；主行已是该人话工具时次行也不再重复
 - **次行右端** = 开始时间，例如 `始于 42 分钟前`，不得写成含义不明的 `session 42m`
+- **运动信号行** = Now / Changed；**叙事行已带 Now 或 Changed 时让位**（整行可消失）
 - **观测行**（有数据才出现）= `模型调用 · 入 12k · 出 3k · 641 条事件`
-  —— **默认显示，不藏在悬停或 Details 里**，最多 4 个事实；详情审视器提供完整证据
-- **等待详情**（仅 Waiting，第三行）：`↳ 时长 · 来源: 消息`
+  —— **默认显示，不藏在悬停或 Details 里**，最多 4 个事实；详情审视器提供完整证据（含同一叙事 + Changed）
+- **等待详情**（仅 Waiting）：`↳ 消息 · 来源`（**消息优先**；种类·时长在芯片）
+- **离开再回**（0.92 Look Continuity）：关闭托盘打指纹；重开可见结束的等待 + 新等待 + 有变化的会话
 - 完整路径、完整 session id、重复的任务原文属于诊断噪音，不进入主界面
 
-一条静态行最多 4 个事实；叙事行另计一句运动/处境摘要。行间距与垂直 padding 保持紧凑：有效信息优先于留白。
+一条静态行最多 4 个事实；叙事行另计一句运动/处境摘要。行间距与垂直 padding 保持紧凑：有效信息优先于留白。拥挤（≥5 行）时叙事行仍保持两行可读上限。
 
 > 这条规则是在「两行三级文字塞了 10 个并列事实」的时候写的，然后**矫枉过正**：
 > 到 0.27 每行只剩 2 个事实，而且**两个都是静的**——会话标题在整个会话生命周期里不变，
@@ -467,6 +469,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AB | Tray Fleet Substance（舰队托盘实质） | Gemini `functionCall`+`usageMetadata` / Goose `depending`→Working（非 Waiting）/ Cursor `modelDetails` / Pi `agent_usage` model+tokens 进默认行；有 model 的 cache 行观测非空且仍 Limited；quiet live 无 phase 时 Now 空、观测可有 model/tokens |
 | AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到 Waiting signals；一屏完成「确保 pulse-hook（不装 Claude/Codex）→ 打开文件夹 → 写样本 → 托盘红灯可清除」；可复制 raise 命令；Application Support 有 bridge kit；不伪造原生 Waiting、不扩 hooks 安装器 |
 | AD | Row Story（行叙事） | 默认行在标题下有一句叙事：有 phase 时可读阶段·工具；quiet live 无 Now 仍有最近动作或 model/tokens；tool/phase/task 变化进 Changed；仅进程/薄 cache 显示证据+下一步；不把 last tool 标成 Now、不伪造 Waiting |
+| AE | Row Clarity（行清晰） | Story 拥有 phase/工具/Changed；次行只留路径·年龄；信号在 story 已带 Now/Changed 时让位；Waiting 芯片=种类·时长、详情=消息优先；Limited 质量摘要只出现一次；离开再回可见「什么动了」；Details 同叙事；不伪造 Waiting / 不升格 session |
 
 ---
 

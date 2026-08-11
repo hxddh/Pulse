@@ -186,6 +186,9 @@ enum L10n {
         case .compactTokens: return "↑%@ ↓%@"
         case .subagentsActive: return "%d of %d subagents active"
         case .subagentsObserved: return "%d subagents observed"
+        case .subChipActive: return "sub %d↑"
+        case .subChipObserved: return "sub %d"
+        case .rowStoryHeading: return "Story"
         case .actionPlanning: return "Planning"
         case .actionCommand: return "Terminal command"
         case .actionEditing: return "Editing files"
@@ -277,6 +280,8 @@ enum L10n {
         case .acrossProjects: return "across %d projects"
         case .agoFormat: return "%@ ago"
         case .whileAway: return "%d wait(s) ended while you were away"
+        case .whileAwayNewWaits: return "%d new wait(s)"
+        case .whileAwayMoved: return "%d session(s) moved"
         case .noActivityYet: return "no activity yet"
         case .noProject: return "Workspace unknown"
         case .stalled: return "Stalled"
@@ -612,6 +617,9 @@ enum L10n {
         case .compactTokens: return "↑%@ ↓%@"
         case .subagentsActive: return "%d / %d 个 subagent 活跃"
         case .subagentsObserved: return "已观测 %d 个 subagent"
+        case .subChipActive: return "子任务 %d↑"
+        case .subChipObserved: return "子任务 %d"
+        case .rowStoryHeading: return "叙事"
         case .actionPlanning: return "规划"
         case .actionCommand: return "执行命令"
         case .actionEditing: return "编辑文件"
@@ -699,6 +707,8 @@ enum L10n {
         case .acrossProjects: return "%d 个项目"
         case .agoFormat: return "%@前"
         case .whileAway: return "你离开时有 %d 个等待已结束"
+        case .whileAwayNewWaits: return "%d 个新等待"
+        case .whileAwayMoved: return "%d 个会话有变化"
         case .noActivityYet: return "暂无动静"
         case .noProject: return "工作区未知"
         case .stalled: return "停滞"
@@ -921,7 +931,7 @@ enum L10n {
         case signalCompleted, signalFailed, signalCancelled
         case terminalDetectedNoDetails, appDetectedNoDetails
         case lastAction, lastActive, latestCallTokens, reportedTokens, compactTokens
-        case subagentsActive, subagentsObserved
+        case subagentsActive, subagentsObserved, subChipActive, subChipObserved, rowStoryHeading
         case actionPlanning, actionCommand, actionEditing, actionImage
         case actionResearch, actionReading, actionAutomation, setupWaitingSignals
         case about, tagline, build, runningFrom, devBuild, copyDiagnostics, copied
@@ -943,7 +953,7 @@ enum L10n {
         case groupByAgent, groupByProject, groupingLabel
         case jumpToOldest, interruptionsToday, playSound
         case waitedLongest, moreActions
-        case acrossProjects, agoFormat, whileAway, noActivityYet
+        case acrossProjects, agoFormat, whileAway, whileAwayNewWaits, whileAwayMoved, noActivityYet
         case noProject, stalled, stalledFor
         case supportHealth, supportHealthHint, supportScanIncomplete, supportScanIncompleteTimeout, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
