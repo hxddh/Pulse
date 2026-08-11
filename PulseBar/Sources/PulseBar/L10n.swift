@@ -164,10 +164,16 @@ enum L10n {
         case .newFiles: return "%d more files"
         case .progressAdvanced: return "Progress moved to %d/%d"
         case .modelCallChanged: return "New model call"
+        case .toolChanged: return "Tool changed"
+        case .phaseChanged: return "Phase changed"
+        case .taskChanged: return "Goal changed"
         case .signalProgress: return "Progress %d/%d"
         case .signalErrors: return "+%d errors"
         case .signalFiles: return "+%d files"
         case .signalModel: return "Model call"
+        case .signalTool: return "Tool"
+        case .signalPhase: return "Phase"
+        case .signalTask: return "Goal"
         case .signalCompleted: return "Complete"
         case .signalFailed: return "Failed"
         case .signalCancelled: return "Cancelled"
@@ -584,10 +590,16 @@ enum L10n {
         case .newFiles: return "新增 %d 个文件"
         case .progressAdvanced: return "进度推进至 %d/%d"
         case .modelCallChanged: return "新的模型调用"
+        case .toolChanged: return "工具已切换"
+        case .phaseChanged: return "阶段已变化"
+        case .taskChanged: return "目标已更新"
         case .signalProgress: return "进度 %d/%d"
         case .signalErrors: return "+%d 个错误"
         case .signalFiles: return "+%d 个文件"
         case .signalModel: return "模型调用"
+        case .signalTool: return "工具"
+        case .signalPhase: return "阶段"
+        case .signalTask: return "目标"
         case .signalCompleted: return "已完成"
         case .signalFailed: return "失败"
         case .signalCancelled: return "已取消"
@@ -904,7 +916,9 @@ enum L10n {
         case processDetected, processWord, processCount
         case limitedData, sessionEvidence, cacheEvidence, terminalSession, appSession, activityUnavailable, processAge
         case activityChanged, newErrors, newFiles, progressAdvanced, modelCallChanged
-        case signalProgress, signalErrors, signalFiles, signalModel, signalCompleted, signalFailed, signalCancelled
+        case toolChanged, phaseChanged, taskChanged
+        case signalProgress, signalErrors, signalFiles, signalModel, signalTool, signalPhase, signalTask
+        case signalCompleted, signalFailed, signalCancelled
         case terminalDetectedNoDetails, appDetectedNoDetails
         case lastAction, lastActive, latestCallTokens, reportedTokens, compactTokens
         case subagentsActive, subagentsObserved

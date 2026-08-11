@@ -199,6 +199,43 @@ final class SnapshotBuilderTests: XCTestCase {
         )
     }
 
+    func testToolPhaseTaskChangesSurfaceAsActivityChange() {
+        var priorSource = harvest(
+            .claude,
+            task: "Ship row story",
+            session: "story-1",
+            cwd: "/Users/me/Pulse",
+            ageMs: 5_000
+        )
+        priorSource.tool = "Bash"
+        priorSource.phase = "working"
+        let prior = build(harvest: [priorSource])
+
+        var toolMoved = priorSource
+        toolMoved.tool = "Edit"
+        let toolChange = build(
+            harvest: [toolMoved],
+            previous: .init(rows: prior.rows, waitingKeys: [])
+        )
+        XCTAssertEqual(toolChange.rows.first?.activityChange, .toolChanged)
+
+        var phaseMoved = toolMoved
+        phaseMoved.phase = "testing"
+        let phaseChange = build(
+            harvest: [phaseMoved],
+            previous: .init(rows: toolChange.rows, waitingKeys: [])
+        )
+        XCTAssertEqual(phaseChange.rows.first?.activityChange, .phaseChanged)
+
+        var taskMoved = phaseMoved
+        taskMoved.task = "Ship row story — second pass"
+        let taskChange = build(
+            harvest: [taskMoved],
+            previous: .init(rows: phaseChange.rows, waitingKeys: [])
+        )
+        XCTAssertEqual(taskChange.rows.first?.activityChange, .taskChanged)
+    }
+
     func testOldCompletedSessionDoesNotRideForeverOnPersistentCLI() {
         var source = harvest(
             .codex,

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.90.0"
+    static let semver = "0.91.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -999,6 +999,12 @@ enum AgentActivityChange: Hashable {
     case files(Int)
     case progress(done: Int, total: Int)
     case modelCall
+    /// Vendor tool / lastAction name changed between scans (0.91).
+    case toolChanged
+    /// Lifecycle phase string changed (still never invents Waiting).
+    case phaseChanged
+    /// Session title / goal text changed.
+    case taskChanged
     case completed
     case failed
     case cancelled

@@ -401,6 +401,11 @@ enum SnapshotBuilder {
                     || current.records != old.records
                     || current.subRunning != old.subRunning
                     || current.subTotal != old.subTotal
+                    // 0.91 Row Story — tool/phase/task are what users mean by
+                    // "it moved", even when token counters stay flat.
+                    || current.tool != old.tool
+                    || current.phase != old.phase
+                    || current.task != old.task
                 guard current.harvestMs > 0,
                       current.harvestMs > old.harvestMs || signalMoved
                 else { return nil }
@@ -417,6 +422,15 @@ enum SnapshotBuilder {
                     return .progress(done: current.progressDone, total: current.progressTotal)
                 }
                 if current.files > old.files { return .files(current.files - old.files) }
+                if current.tool != old.tool, !current.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return .toolChanged
+                }
+                if current.phase != old.phase, !current.phase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return .phaseChanged
+                }
+                if current.task != old.task, !current.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return .taskChanged
+                }
                 if current.tokensIn != old.tokensIn || current.tokensOut != old.tokensOut
                     || current.model != old.model || current.mode != old.mode
                     || current.records != old.records {

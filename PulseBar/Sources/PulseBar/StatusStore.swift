@@ -2571,6 +2571,12 @@ final class StatusStore: ObservableObject {
             detail = String(format: tr(.progressAdvanced), done, total)
         case .modelCall:
             detail = tr(.modelCallChanged)
+        case .toolChanged:
+            detail = tr(.toolChanged)
+        case .phaseChanged:
+            detail = tr(.phaseChanged)
+        case .taskChanged:
+            detail = tr(.taskChanged)
         case .completed:
             detail = tr(.phaseTurnComplete)
         case .failed:
@@ -2579,6 +2585,81 @@ final class StatusStore: ObservableObject {
             detail = tr(.outcomeCancelled)
         }
         return String(format: tr(.activityChanged), detail)
+    }
+
+    /// EXPERIENCE 行叙事（0.91）— one scannable sentence answering
+    /// “what is this session doing / why is it on the tray”.
+    /// Composes existing fields only; never invents Waiting or fake Now.
+    func rowStoryLine(_ row: AgentRow) -> String {
+        if row.waiting {
+            var bits: [String] = []
+            let kind = row.waitKind.isEmpty
+                ? tr(.needsYou)
+                : localizedWaitKind(row.waitKind)
+            bits.append(kind)
+            let dur = waitDurationLabel(row)
+            if !dur.isEmpty { bits.append(dur) }
+            if let signal = row.waitSignal {
+                bits.append(signal == .hooks ? tr(.signalHooks) : tr(.signalPending))
+            }
+            return bits.prefix(3).joined(separator: " · ")
+        }
+
+        if row.isProcessOnly || (row.quality.isLimited && row.usefulTask == nil && row.tool.isEmpty) {
+            let summary = observationQualitySummary(row)
+            return summary.isEmpty ? "" : summary
+        }
+
+        var bits: [String] = []
+        // Prefer explicit lifecycle — never promote last tool under a Now label.
+        if let phase = readablePhase(row.phase), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
+            bits.append(phase)
+        } else if row.isStalled {
+            bits.append(tr(.stalled))
+        }
+
+        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        let heroIsToolOnly = row.usefulTask == nil && row.hasLiveToolFallback
+        if bits.isEmpty, !tool.isEmpty, usefulAction(tool), !heroIsToolOnly {
+            // Quiet live: last action is history, not Now (0.91 / 0.82 honesty).
+            bits.append(String(format: tr(.lastAction), readableAction(tool)))
+        } else if !bits.isEmpty, !tool.isEmpty, usefulAction(tool), !heroIsToolOnly {
+            // Phase known — append humanized tool as companion, not as Now.
+            let action = readableAction(tool)
+            if !action.isEmpty, !bits.contains(action) {
+                bits.append(action)
+            }
+        }
+
+        if let change = row.activityChange {
+            let compact = rowSignalChange(row)
+            if !compact.isEmpty, !bits.contains(compact) {
+                bits.append(compact)
+            } else if change == .toolChanged || change == .phaseChanged || change == .taskChanged {
+                let full = rowActivityChange(row)
+                if !full.isEmpty { bits.append(full) }
+            }
+        }
+
+        if bits.isEmpty {
+            let model = readableModel(row.model)
+            if !model.isEmpty { bits.append(String(format: tr(.modelFact), model)) }
+            let input = AgentRow.compactToken(row.tokensIn)
+            let output = AgentRow.compactToken(row.tokensOut)
+            if !input.isEmpty || !output.isEmpty {
+                bits.append(String(
+                    format: tr(.compactTokens),
+                    input.isEmpty ? "0" : input,
+                    output.isEmpty ? "0" : output
+                ))
+            }
+        }
+
+        if bits.isEmpty, row.agent.waitingSource == .none, row.liveProcess {
+            return tr(.supportWaitingNoneDetail)
+        }
+
+        return bits.prefix(3).joined(separator: " · ")
     }
 
     /// The single strongest progress fact for this row.
@@ -2695,6 +2776,12 @@ final class StatusStore: ObservableObject {
             return String(format: tr(.signalProgress), done, total)
         case .modelCall:
             return tr(.signalModel)
+        case .toolChanged:
+            return tr(.signalTool)
+        case .phaseChanged:
+            return tr(.signalPhase)
+        case .taskChanged:
+            return tr(.signalTask)
         case .completed:
             return tr(.signalCompleted)
         case .failed:
