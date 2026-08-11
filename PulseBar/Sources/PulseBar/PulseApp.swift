@@ -847,17 +847,20 @@ struct TrayPanel: View {
     }
 
     /// The panel only ever showed the present moment. Coming back to it, the
-    /// first question is what happened while you were gone (0.92 Look Continuity).
+    /// first question is what happened while you were gone (0.93 Look Closure).
     @ViewBuilder
     private var missedNotice: some View {
         if !store.lookContinuityNotice.isEmpty {
-            Button { store.clearMissedWhileAway() } label: {
+            Button { store.activateLookContinuity() } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 11))
                     Text(store.lookContinuityNotice)
                         .lineLimit(2)
                     Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .opacity(0.55)
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -866,13 +869,17 @@ struct TrayPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityHint(store.tr(.lookClosureHint))
         } else if store.missedWhileAway > 0 {
-            Button { store.clearMissedWhileAway() } label: {
+            Button { store.activateLookContinuity() } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 11))
                     Text(String(format: store.tr(.whileAway), store.missedWhileAway))
                     Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .opacity(0.55)
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -1671,6 +1678,10 @@ private struct AgentRowButton: View {
             // Live for twenty minutes with nothing happening. Never surfaced
             // before, and it looked exactly like a healthy session.
             StatusChip(kind: .process, label: store.tr(.stalled))
+        } else if store.lookMarkedWhileAway(row) {
+            // Look Closure (0.93): session moved while the tray was closed.
+            // Waiting / stalled chips win; this is only for quiet motion.
+            StatusChip(kind: .recent, label: store.tr(.lookMovedMark))
         } else if row.subRunning > 0 {
             StatusChip(kind: .running, label: String(format: store.tr(.subChipActive), row.subRunning))
         } else if row.subTotal > 0 {

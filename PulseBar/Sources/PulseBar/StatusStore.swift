@@ -70,17 +70,47 @@ final class StatusStore: ObservableObject {
     /// Sessions that moved / new waits while the tray was closed (Look Continuity).
     @Published private(set) var lookMovedWhileAway = 0
     @Published private(set) var lookNewWaitsWhileAway = 0
-    /// Localized one-line Look Continuity notice (empty when nothing moved).
+    /// Localized Look Closure notice — named agents/sessions, not only counts (0.93).
     @Published private(set) var lookContinuityNotice = ""
+    /// Ordered Look Closure events (new wait → ended wait → moved).
+    @Published private(set) var lookContinuityItems: [LookDeltaItem] = []
+    /// Row keys marked “moved while away” until the notice is acknowledged.
+    @Published private(set) var lookMovedRowKeys: Set<String> = []
     /// When the tray was last dismissed, for the missed-wait count.
     private var trayClosedAt: Date?
     /// Fingerprint of visible rows at last tray close — Look Continuity (0.92).
     private var trayCloseFingerprint: TrayLookFingerprint?
 
+    /// One named Look Closure event (0.93).
+    struct LookDeltaItem: Equatable, Identifiable {
+        enum Kind: Equatable {
+            case newWait
+            case endedWait
+            case moved
+        }
+
+        var id: String { "\(kindTag)|\(rowKey)|\(label)" }
+        var kind: Kind
+        var rowKey: String
+        var label: String
+        /// True when the live tray still has this rowKey (can Go-Look reveal).
+        var revealable: Bool
+
+        private var kindTag: String {
+            switch kind {
+            case .newWait: return "new"
+            case .endedWait: return "ended"
+            case .moved: return "moved"
+            }
+        }
+    }
+
     /// Compact tray-close snapshot for "what moved since you left".
     struct TrayLookFingerprint: Equatable {
         struct RowSnap: Equatable {
             var rowKey: String
+            var agentRaw: String
+            var label: String
             var waiting: Bool
             var waitKind: String
             var phase: String
@@ -1428,8 +1458,23 @@ final class StatusStore: ObservableObject {
             if let prior = trayCloseFingerprint {
                 applyLookContinuity(prior: prior, closedAt: closed)
             } else {
+                // No fingerprint — still name ended waits from history (0.93).
                 lookMovedWhileAway = 0
                 lookNewWaitsWhileAway = 0
+                let ended = waitHistory.filter { $0.resolvedAt > closed }
+                lookContinuityItems = ended.map { wait in
+                    let label = wait.title.isEmpty
+                        ? wait.agent.displayName
+                        : "\(wait.agent.displayName) · \(wait.title)"
+                    let revealable = cachedAll.contains(where: { $0.rowKey == wait.rowKey })
+                    return LookDeltaItem(
+                        kind: .endedWait,
+                        rowKey: wait.rowKey,
+                        label: label,
+                        revealable: revealable
+                    )
+                }
+                lookMovedRowKeys = []
                 rebuildLookContinuityNotice()
             }
         }
@@ -1446,19 +1491,42 @@ final class StatusStore: ObservableObject {
         rescheduleTimer()
     }
 
-    /// Acknowledge the "while you were away" line.
+    /// Acknowledge the "while you were away" line (clears named notice + row marks).
     func clearMissedWhileAway() {
         missedWhileAway = 0
         lookMovedWhileAway = 0
         lookNewWaitsWhileAway = 0
         lookContinuityNotice = ""
+        lookContinuityItems = []
+        lookMovedRowKeys = []
     }
 
-    /// Snapshot of live tray rows for Look Continuity (0.92).
+    /// Look Closure (0.93): reveal the highest-priority named row, then ack.
+    func activateLookContinuity() {
+        let key = lookContinuityPrimaryRevealKey
+        clearMissedWhileAway()
+        if let key, !key.isEmpty {
+            requestTrayReveal(rowKey: key)
+        }
+    }
+
+    /// First revealable Look Closure row — new wait → ended (if still present) → moved.
+    var lookContinuityPrimaryRevealKey: String? {
+        lookContinuityItems.first(where: \.revealable)?.rowKey
+    }
+
+    /// Short row mark while the Look Closure notice is still up.
+    func lookMarkedWhileAway(_ row: AgentRow) -> Bool {
+        lookMovedRowKeys.contains(row.rowKey) && !row.waiting
+    }
+
+    /// Snapshot of live tray rows for Look Continuity / Closure.
     func captureLookFingerprint(at date: Date = Date()) -> TrayLookFingerprint {
         let snaps = cachedAll.map { row -> TrayLookFingerprint.RowSnap in
             TrayLookFingerprint.RowSnap(
                 rowKey: row.rowKey,
+                agentRaw: row.agent.rawValue,
+                label: lookRowLabel(row),
                 waiting: row.waiting,
                 waitKind: row.waitKind,
                 phase: row.phase,
@@ -1473,6 +1541,14 @@ final class StatusStore: ObservableObject {
             )
         }
         return TrayLookFingerprint(closedAt: date, rows: snaps)
+    }
+
+    private func lookRowLabel(_ row: AgentRow) -> String {
+        if let task = row.usefulTask, !task.isEmpty {
+            let short = task.count > 28 ? String(task.prefix(27)) + "…" : task
+            return "\(row.agent.displayName) · \(short)"
+        }
+        return row.agent.displayName
     }
 
     private func lookChangeTag(_ change: AgentActivityChange?) -> String {
@@ -1491,33 +1567,95 @@ final class StatusStore: ObservableObject {
         }
     }
 
-    /// Compare close fingerprint to current rows — what moved while away.
+    /// Compare close fingerprint to current rows — named Look Closure events (0.93).
     func applyLookContinuity(prior: TrayLookFingerprint, closedAt: Date) {
         let now = captureLookFingerprint(at: Date())
-        let delta = Self.lookContinuityDelta(prior: prior, current: now)
-        lookMovedWhileAway = delta.moved
-        lookNewWaitsWhileAway = delta.newWaits
-        // Keep resolved-wait count from history (already set by caller).
-        _ = closedAt
+        let keyDelta = Self.lookContinuityKeyDelta(prior: prior, current: now)
+        lookMovedWhileAway = keyDelta.movedKeys.count
+        lookNewWaitsWhileAway = keyDelta.newWaitKeys.count
+        missedWhileAway = waitHistory.filter { $0.resolvedAt > closedAt }.count
+
+        let liveByKey = Dictionary(uniqueKeysWithValues: cachedAll.map { ($0.rowKey, $0) })
+        var items: [LookDeltaItem] = []
+
+        // Priority: new waits → ended waits → moved sessions.
+        for key in keyDelta.newWaitKeys {
+            let label: String
+            let revealable: Bool
+            if let row = liveByKey[key] {
+                label = lookRowLabel(row)
+                revealable = true
+            } else if let snap = now.rows.first(where: { $0.rowKey == key }) {
+                label = snap.label.isEmpty ? snap.agentRaw : snap.label
+                revealable = false
+            } else {
+                label = key
+                revealable = false
+            }
+            items.append(LookDeltaItem(kind: .newWait, rowKey: key, label: label, revealable: revealable))
+        }
+
+        let ended = waitHistory.filter { $0.resolvedAt > closedAt }
+        for wait in ended {
+            let label = wait.title.isEmpty
+                ? wait.agent.displayName
+                : "\(wait.agent.displayName) · \(wait.title)"
+            let revealable = liveByKey[wait.rowKey] != nil
+            items.append(LookDeltaItem(
+                kind: .endedWait,
+                rowKey: wait.rowKey,
+                label: label,
+                revealable: revealable
+            ))
+        }
+
+        for key in keyDelta.movedKeys {
+            let label: String
+            let revealable: Bool
+            if let row = liveByKey[key] {
+                label = lookRowLabel(row)
+                revealable = true
+            } else if let snap = now.rows.first(where: { $0.rowKey == key }) {
+                label = snap.label.isEmpty ? snap.agentRaw : snap.label
+                revealable = false
+            } else {
+                continue
+            }
+            items.append(LookDeltaItem(kind: .moved, rowKey: key, label: label, revealable: revealable))
+        }
+
+        lookContinuityItems = items
+        lookMovedRowKeys = Set(
+            items.compactMap { item -> String? in
+                guard item.revealable else { return nil }
+                switch item.kind {
+                case .newWait, .moved: return item.rowKey
+                case .endedWait: return nil
+                }
+            }
+        )
         rebuildLookContinuityNotice()
     }
 
-    /// Pure diff for Look Continuity (0.92) — unit-tested without a live harvest.
-    static func lookContinuityDelta(
+    /// Key-level Look Continuity diff — only fingerprint fields; never invents Waiting.
+    static func lookContinuityKeyDelta(
         prior: TrayLookFingerprint,
         current: TrayLookFingerprint
-    ) -> (moved: Int, newWaits: Int) {
+    ) -> (movedKeys: [String], newWaitKeys: [String]) {
         let priorByKey = Dictionary(uniqueKeysWithValues: prior.rows.map { ($0.rowKey, $0) })
-        var moved = 0
-        var newWaits = 0
+        var movedKeys: [String] = []
+        var newWaitKeys: [String] = []
         for snap in current.rows {
             guard let old = priorByKey[snap.rowKey] else {
-                if snap.waiting { newWaits += 1 }
-                else if snap.harvestMs > 0 || snap.activityChangedMs > 0 { moved += 1 }
+                if snap.waiting {
+                    newWaitKeys.append(snap.rowKey)
+                } else if snap.harvestMs > 0 || snap.activityChangedMs > 0 {
+                    movedKeys.append(snap.rowKey)
+                }
                 continue
             }
             if snap.waiting, !old.waiting {
-                newWaits += 1
+                newWaitKeys.append(snap.rowKey)
                 continue
             }
             let changed = snap.phase != old.phase
@@ -1530,12 +1668,26 @@ final class StatusStore: ObservableObject {
                 || snap.tokensOut != old.tokensOut
                 || snap.progressDone != old.progressDone
                 || snap.waitKind != old.waitKind
-            if changed { moved += 1 }
+            if changed { movedKeys.append(snap.rowKey) }
         }
-        return (moved, newWaits)
+        return (movedKeys, newWaitKeys)
+    }
+
+    /// Compatibility wrapper used by older tests — counts only.
+    static func lookContinuityDelta(
+        prior: TrayLookFingerprint,
+        current: TrayLookFingerprint
+    ) -> (moved: Int, newWaits: Int) {
+        let keys = lookContinuityKeyDelta(prior: prior, current: current)
+        return (keys.movedKeys.count, keys.newWaitKeys.count)
     }
 
     private func rebuildLookContinuityNotice() {
+        // Prefer named Look Closure copy (0.93); fall back to counts if empty.
+        if !lookContinuityItems.isEmpty {
+            lookContinuityNotice = formatLookContinuityNotice(lookContinuityItems)
+            return
+        }
         var parts: [String] = []
         if missedWhileAway > 0 {
             parts.append(String(format: tr(.whileAway), missedWhileAway))
@@ -1547,6 +1699,27 @@ final class StatusStore: ObservableObject {
             parts.append(String(format: tr(.whileAwayMoved), lookMovedWhileAway))
         }
         lookContinuityNotice = parts.joined(separator: " · ")
+    }
+
+    /// Named notice: up to 3 events + "+N". Priority already encoded in items order.
+    func formatLookContinuityNotice(_ items: [LookDeltaItem], limit: Int = 3) -> String {
+        guard !items.isEmpty else { return "" }
+        let head = items.prefix(limit).map { item -> String in
+            switch item.kind {
+            case .newWait:
+                return String(format: tr(.whileAwayNamedNew), item.label)
+            case .endedWait:
+                return String(format: tr(.whileAwayNamedEnded), item.label)
+            case .moved:
+                return String(format: tr(.whileAwayNamedMoved), item.label)
+            }
+        }
+        var text = head.joined(separator: " · ")
+        let overflow = items.count - limit
+        if overflow > 0 {
+            text += " · " + String(format: tr(.whileAwayMore), overflow)
+        }
+        return text
     }
 
     /// Current cadence, for Settings/diagnostics ("probing every 5s").

@@ -1218,7 +1218,8 @@ final class RowMetricsTests: XCTestCase {
             closedAt: closed,
             rows: [
                 .init(
-                    rowKey: "claude|s1", waiting: false, waitKind: "", phase: "working",
+                    rowKey: "claude|s1", agentRaw: "claude", label: "Claude · Before",
+                    waiting: false, waitKind: "", phase: "working",
                     tool: "Bash", task: "Before", harvestMs: 1_000, activityChangedMs: 0,
                     changeTag: "", tokensIn: 0, tokensOut: 0, progressDone: 0
                 ),
@@ -1228,12 +1229,14 @@ final class RowMetricsTests: XCTestCase {
             closedAt: Date(),
             rows: [
                 .init(
-                    rowKey: "claude|s1", waiting: false, waitKind: "", phase: "testing",
+                    rowKey: "claude|s1", agentRaw: "claude", label: "Claude · Before",
+                    waiting: false, waitKind: "", phase: "testing",
                     tool: "Edit", task: "Before", harvestMs: 2_000, activityChangedMs: 1_500,
                     changeTag: "tool", tokensIn: 10, tokensOut: 2, progressDone: 1
                 ),
                 .init(
-                    rowKey: "codex|s2", waiting: true, waitKind: "Permission", phase: "",
+                    rowKey: "codex|s2", agentRaw: "codex", label: "Codex · Needs you",
+                    waiting: true, waitKind: "Permission", phase: "",
                     tool: "", task: "Needs you", harvestMs: 2_000, activityChangedMs: 0,
                     changeTag: "", tokensIn: 0, tokensOut: 0, progressDone: 0
                 ),
@@ -1242,6 +1245,9 @@ final class RowMetricsTests: XCTestCase {
         let delta = StatusStore.lookContinuityDelta(prior: prior, current: current)
         XCTAssertEqual(delta.moved, 1)
         XCTAssertEqual(delta.newWaits, 1)
+        let keys = StatusStore.lookContinuityKeyDelta(prior: prior, current: current)
+        XCTAssertEqual(keys.movedKeys, ["claude|s1"])
+        XCTAssertEqual(keys.newWaitKeys, ["codex|s2"])
     }
 
     @MainActor
@@ -1253,10 +1259,106 @@ final class RowMetricsTests: XCTestCase {
         store.applyLookContinuity(prior: prior, closedAt: prior.closedAt)
         XCTAssertEqual(store.lookNewWaitsWhileAway, 1)
         XCTAssertFalse(store.lookContinuityNotice.isEmpty, store.lookContinuityNotice)
+        // 0.93: named notice, not bare counts.
+        XCTAssertTrue(
+            store.lookContinuityNotice.localizedCaseInsensitiveContains("cursor")
+                || store.lookContinuityNotice.contains("等你")
+                || store.lookContinuityNotice.contains("needs you"),
+            store.lookContinuityNotice
+        )
+        XCTAssertEqual(store.lookContinuityItems.first?.kind, .newWait)
+        XCTAssertEqual(store.lookContinuityPrimaryRevealKey, "status-fixture")
         store.clearMissedWhileAway()
         XCTAssertEqual(store.lookContinuityNotice, "")
         XCTAssertEqual(store.lookNewWaitsWhileAway, 0)
         XCTAssertEqual(store.lookMovedWhileAway, 0)
+        XCTAssertTrue(store.lookContinuityItems.isEmpty)
+        XCTAssertTrue(store.lookMovedRowKeys.isEmpty)
+    }
+
+    @MainActor
+    func testLookClosureNamedNoticeCapsAndOverflow() {
+        let store = store()
+        let items: [StatusStore.LookDeltaItem] = [
+            .init(kind: .newWait, rowKey: "a", label: "Claude", revealable: true),
+            .init(kind: .endedWait, rowKey: "b", label: "Codex", revealable: false),
+            .init(kind: .moved, rowKey: "c", label: "Cursor", revealable: true),
+            .init(kind: .moved, rowKey: "d", label: "Amp", revealable: true),
+            .init(kind: .moved, rowKey: "e", label: "Pi", revealable: true),
+        ]
+        let notice = store.formatLookContinuityNotice(items, limit: 3)
+        XCTAssertTrue(notice.contains("Claude"), notice)
+        XCTAssertTrue(notice.contains("Codex"), notice)
+        XCTAssertTrue(notice.contains("Cursor"), notice)
+        XCTAssertTrue(notice.contains("+2"), notice)
+        XCTAssertFalse(notice.contains("Amp"), notice)
+    }
+
+    @MainActor
+    func testLookClosureActivateRevealsPrimaryThenClears() {
+        let store = store()
+        store.installPreviewFixture("status-running")
+        let prior = store.captureLookFingerprint()
+        store.installPreviewFixture("status-waiting")
+        store.applyLookContinuity(prior: prior, closedAt: prior.closedAt)
+        XCTAssertEqual(store.lookContinuityPrimaryRevealKey, "status-fixture")
+        store.clearPendingRevealRowKey()
+        store.activateLookContinuity()
+        XCTAssertEqual(store.pendingRevealRowKey, "status-fixture")
+        XCTAssertTrue(store.lookContinuityNotice.isEmpty)
+        XCTAssertTrue(store.lookMovedRowKeys.isEmpty)
+    }
+
+    @MainActor
+    func testLookClosurePriorityOrdersNewWaitBeforeMoved() {
+        let closed = Date().addingTimeInterval(-60)
+        let prior = StatusStore.TrayLookFingerprint(
+            closedAt: closed,
+            rows: [
+                .init(
+                    rowKey: "run|1", agentRaw: "claude", label: "Claude",
+                    waiting: false, waitKind: "", phase: "working",
+                    tool: "Bash", task: "T", harvestMs: 1, activityChangedMs: 0,
+                    changeTag: "", tokensIn: 0, tokensOut: 0, progressDone: 0
+                ),
+            ]
+        )
+        let current = StatusStore.TrayLookFingerprint(
+            closedAt: Date(),
+            rows: [
+                .init(
+                    rowKey: "run|1", agentRaw: "claude", label: "Claude",
+                    waiting: false, waitKind: "", phase: "testing",
+                    tool: "Edit", task: "T", harvestMs: 2, activityChangedMs: 2,
+                    changeTag: "tool", tokensIn: 1, tokensOut: 0, progressDone: 0
+                ),
+                .init(
+                    rowKey: "wait|2", agentRaw: "codex", label: "Codex",
+                    waiting: true, waitKind: "Permission", phase: "",
+                    tool: "", task: "Ask", harvestMs: 2, activityChangedMs: 0,
+                    changeTag: "", tokensIn: 0, tokensOut: 0, progressDone: 0
+                ),
+            ]
+        )
+        let keys = StatusStore.lookContinuityKeyDelta(prior: prior, current: current)
+        XCTAssertEqual(keys.newWaitKeys.first, "wait|2")
+        XCTAssertEqual(keys.movedKeys.first, "run|1")
+    }
+
+    @MainActor
+    func testLookMarkedWhileAwayOnlyForNonWaitingMovedRows() {
+        let store = store()
+        store.installPreviewFixture("status-running")
+        let prior = store.captureLookFingerprint()
+        // Same fixture key, change to stalled so it counts as moved (not new wait).
+        store.installPreviewFixture("status-stalled")
+        store.applyLookContinuity(prior: prior, closedAt: prior.closedAt)
+        let row = try! XCTUnwrap(store.snapshot.rows.first)
+        if row.waiting {
+            XCTAssertFalse(store.lookMarkedWhileAway(row))
+        } else {
+            XCTAssertTrue(store.lookMovedRowKeys.contains(row.rowKey) || store.lookMovedWhileAway > 0)
+        }
     }
 
     @MainActor

@@ -282,6 +282,12 @@ enum L10n {
         case .whileAway: return "%d wait(s) ended while you were away"
         case .whileAwayNewWaits: return "%d new wait(s)"
         case .whileAwayMoved: return "%d session(s) moved"
+        case .whileAwayNamedNew: return "%@ needs you"
+        case .whileAwayNamedEnded: return "%@ wait ended"
+        case .whileAwayNamedMoved: return "%@ moved"
+        case .whileAwayMore: return "+%d"
+        case .lookMovedMark: return "while away"
+        case .lookClosureHint: return "Show the session that changed"
         case .noActivityYet: return "no activity yet"
         case .noProject: return "Workspace unknown"
         case .stalled: return "Stalled"
@@ -709,6 +715,12 @@ enum L10n {
         case .whileAway: return "你离开时有 %d 个等待已结束"
         case .whileAwayNewWaits: return "%d 个新等待"
         case .whileAwayMoved: return "%d 个会话有变化"
+        case .whileAwayNamedNew: return "%@ 在等你"
+        case .whileAwayNamedEnded: return "%@ 等待已结束"
+        case .whileAwayNamedMoved: return "%@ 有变化"
+        case .whileAwayMore: return "+%d"
+        case .lookMovedMark: return "离开后有变"
+        case .lookClosureHint: return "查看发生变化的会话"
         case .noActivityYet: return "暂无动静"
         case .noProject: return "工作区未知"
         case .stalled: return "停滞"
@@ -953,7 +965,9 @@ enum L10n {
         case groupByAgent, groupByProject, groupingLabel
         case jumpToOldest, interruptionsToday, playSound
         case waitedLongest, moreActions
-        case acrossProjects, agoFormat, whileAway, whileAwayNewWaits, whileAwayMoved, noActivityYet
+        case acrossProjects, agoFormat, whileAway, whileAwayNewWaits, whileAwayMoved
+        case whileAwayNamedNew, whileAwayNamedEnded, whileAwayNamedMoved, whileAwayMore
+        case lookMovedMark, lookClosureHint, noActivityYet
         case noProject, stalled, stalledFor
         case supportHealth, supportHealthHint, supportScanIncomplete, supportScanIncompleteTimeout, supportNoneObserved, supportAllAgents
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected

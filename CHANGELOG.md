@@ -2,6 +2,34 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.93.0 — Look Closure / 回看闭环
+
+0.92 交了指纹，但离开再回只剩**计数横幅**。本版换章：具名 + 一点落到该行
+（复用 Go-Look）。详见 [`docs/plan-0.93.md`](docs/plan-0.93.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 回看闭环
+
+- **具名 delta**：notice 列出 Agent/会话（最多 3 +「+N」），不只计数。
+- **notice → reveal**：点击走 `pendingRevealRowKey`（Go-Look）；优先可揭示行。
+- **优先级**：新等待 → 已结束等待 → 有变化会话。
+- **行级标记**：受影响非 Waiting 行短暂「离开后有变」直至确认。
+- **诚实 diff**：只陈述指纹已观测字段；不推断 Waiting。
+- EXPERIENCE 场景 **AF**；Look Closure 回归。
+
+### P1 · 收口
+
+- EXPERIENCE 版本戳对齐 0.93.0。
+
+### P2 · 禁令
+
+- 假 stable / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- 具名 notice + overflow；activate → reveal 后清空；优先级新等待优先；
+  八门禁对 0.93.0。
+
 ## 0.92.0 — Row Clarity / 行清晰
 
 0.91 给了默认行一句叙事，但 story / 次行 / 信号 / 芯片 / Limited 标签仍互相复述。
