@@ -792,7 +792,13 @@ final class StatusStore: ObservableObject {
     private func waitingSignalReady(for agent: AgentID) -> Bool {
         switch agent.waitingSource {
         case .hooks:
-            return hooksStatus.isInstalled(for: agent)
+            if hooksStatus.isInstalled(for: agent) { return true }
+            // Codex also has a harvest-pending Waiting path (README matrix).
+            if agent == .codex {
+                let state = collectorHealthByAgent[agent]?.state ?? .unscanned
+                return state == .observed || state == .noRecentData
+            }
+            return false
         case .harvestPending:
             let state = collectorHealthByAgent[agent]?.state
                 ?? (agent == .cursor ? collectorHealthByAgent[.cursorAgent]?.state : nil)
@@ -1093,6 +1099,7 @@ final class StatusStore: ObservableObject {
         snoozedUntil = attentionLedger.snoozedUntil
         knownWaitingKeys = attentionLedger.activeKeys
         waitingNotifySeeded = attentionLedger.baselineEstablished
+        dismissedPendingKeys = Self.loadDismissedPendingKeys()
         restoreAttentionHistory()
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
@@ -2291,15 +2298,11 @@ final class StatusStore: ObservableObject {
                 complete: complete,
                 intentionalPartial: intentionalPartial
             )
-            // Keep last good shape, but never freeze Needs-you on stale pending.
-            acts = lastGoodHarvest.map { row in
-                guard row.skill == "pending" else { return row }
-                var cleared = row
-                cleared.skill = ""
-                return cleared
-            }
+            // 0.95: keep last-good pending intact. Stripping pending on failure
+            // manufactured a false clear then a re-raise on the next skip.
+            acts = lastGoodHarvest
             ticksSinceHarvest = 0
-            DebugLog.write("harvest unreliable → reuse \(acts.count) cached rows (pending stripped)")
+            DebugLog.write("harvest unreliable → reuse \(acts.count) cached rows (pending kept)")
         }
         let harvestUnreliable: Bool = {
             switch harvest {
@@ -2361,6 +2364,9 @@ final class StatusStore: ObservableObject {
 
         for note in result.debugNotes { DebugLog.write(note) }
         dismissedPendingKeys.subtract(result.clearedPendingKeys)
+        if !result.clearedPendingKeys.isEmpty {
+            persistDismissedPendingKeys()
+        }
         cachedAll = result.rows
         showAllAgents = result.showAllAgents
         knownWaitingKeys = result.waitingKeys
@@ -2711,14 +2717,19 @@ final class StatusStore: ObservableObject {
     }
 
     func clearWaiting() {
-        AttentionIO.clearAll()
-        // 0.94: only suppress harvest-pending soft-dismiss keys — hooks Waiting
-        // is cleared by AttentionIO.clearAll, not by dismissedPendingKeys.
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        // 0.95: extinguish delivery synchronously so a queued banner cannot
+        // fire after the user already cleared Waiting.
+        pendingWaitingNotifications.removeAll()
         for row in cachedAll where row.waiting {
+            attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
             if row.waitSignal == .pending || row.skill == "pending" {
                 dismissedPendingKeys.insert(row.rowKey)
             }
         }
+        attentionLedger.save()
+        persistDismissedPendingKeys()
+        AttentionIO.clearAll()
         refresh(reason: "clearWaiting")
     }
 
@@ -3695,14 +3706,21 @@ final class StatusStore: ObservableObject {
     }
 
     func dismissWaiting(_ row: AgentRow) {
-        AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
+        let isHarvestPending = row.waitSignal == .pending || row.skill == "pending"
+        // 0.95: pure harvest soft-dismiss must not write agent-wide Attention
+        // done (empty session clears every wait for that agent).
+        if row.waitSignal == .hooks {
+            AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
+        } else if !isHarvestPending, !row.sessionID.isEmpty {
+            AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
+        }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
         attentionLedger.save()
         pendingWaitingNotifications.removeValue(forKey: row.rowKey)
-        // 0.94: soft-dismiss harvest Waiting by signal, not only skill string.
-        if row.waitSignal == .pending || row.skill == "pending" {
+        if isHarvestPending {
             dismissedPendingKeys.insert(row.rowKey)
+            persistDismissedPendingKeys()
         }
         refresh(reason: "dismissWaiting")
     }
@@ -4089,6 +4107,30 @@ final class StatusStore: ObservableObject {
         quietStartMinute = PulseSettings.clampMinute(quietStartMinute)
         quietEndMinute = PulseSettings.clampMinute(quietEndMinute)
         try? currentSettings.serialized().write(to: settingsURL(), atomically: true, encoding: .utf8)
+    }
+
+    /// Soft-dismiss tombstones for harvest pending — survive relaunch until
+    /// the builder observes a natural clear or complete absence (0.95).
+    private static func dismissedPendingURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Pulse/dismissed-pending.json")
+    }
+
+    private static func loadDismissedPendingKeys() -> Set<String> {
+        let url = dismissedPendingURL()
+        guard let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([String].self, from: data)
+        else { return [] }
+        return Set(decoded.filter { !$0.isEmpty })
+    }
+
+    private func persistDismissedPendingKeys() {
+        let url = Self.dismissedPendingURL()
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keys = Array(dismissedPendingKeys).sorted()
+        guard let data = try? JSONEncoder().encode(keys) else { return }
+        try? data.write(to: url, atomically: true)
     }
 
     /// Re-register the global shortcut and report honestly when the system

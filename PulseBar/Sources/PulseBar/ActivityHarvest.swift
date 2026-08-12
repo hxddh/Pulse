@@ -791,7 +791,7 @@ enum AttentionReader {
             }
             if kind == .stop {
                 func shouldKeep(_ existing: Entry) -> Bool {
-                    (existing.kind == "Permission" || existing.kind == "Input")
+                    (existing.kind == "Permission" || existing.kind == "Input" || existing.kind == "Waiting")
                         && existing.tsMs > 0
                         && nowMs - existing.tsMs < stopGraceMs
                 }

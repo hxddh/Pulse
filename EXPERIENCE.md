@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.94.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.95.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -474,6 +474,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AE | Row Clarity（行清晰） | Story 拥有 phase/工具/Changed；次行只留路径·年龄；信号在 story 已带 Now/Changed 时让位；Waiting 芯片=种类·时长、详情=消息优先；Limited 质量摘要只出现一次；离开再回可见「什么动了」；Details 同叙事；不伪造 Waiting / 不升格 session |
 | AF | Look Closure（回看闭环） | 离开再回 notice **具名**（最多 3 +「+N」）；优先级新等待→已结束→有变化；一点经 `pendingRevealRowKey` 选中滚到该行；受影响行短暂「离开后有变」；不发明 Waiting、不伪造会话深链 |
 | AG | Waiting Proof（等待可证） | Cline/Roo/Cascade/Cursor 显式 ask/block → 红灯；soft-dismiss 后自然清除可再亮；`depending`/Waiting-none 永不从 harvest 抬；Attention raise 精确点亮并可 clear；Waiting-none 在跑时可直达 Waiting signals；不扩 hooks、不伪造 Waiting |
+| AH | Extinguish Honesty（熄灭诚实） | 已答 ask / 终态不亮；Cascade/Windsurf 共享根不双红；Pi/Grok 正文不抬；soft-dismiss 重启仍压、可靠缺席后可再亮；纯 harvest dismiss 不抹掉同 Agent Attention；歧义 session 前缀不 smear；`Waiting`+Stop 有 grace；Clear waiting 无迟到通知 |
 
 ---
 

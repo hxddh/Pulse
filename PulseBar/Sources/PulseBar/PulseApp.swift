@@ -559,6 +559,8 @@ struct TrayPanel: View {
     }
 
     /// Go-Look Closure: apply a one-shot reveal from notify / hotkey / jump.
+    /// Keep the pending key until the target is actually visible — expanding
+    /// "show all" or unfolding must not clear the reveal before scroll runs.
     fileprivate func applyPendingReveal(in groups: [RowGroup]) {
         guard let key = store.pendingRevealRowKey, !key.isEmpty else { return }
         // Clear filters so the target row is not hidden by search.
@@ -576,7 +578,11 @@ struct TrayPanel: View {
            store.allRowsForDisplay.contains(where: { $0.rowKey == key }),
            !store.showAllAgents {
             store.toggleShowAllAgents()
+            // Defer selection until the next layout with the expanded list.
+            return
         }
+        let visible = visibleRows(groups)
+        guard visible.contains(where: { $0.rowKey == key }) else { return }
         selectedKey = key
         listFocused = true
         store.clearPendingRevealRowKey()
@@ -1205,6 +1211,12 @@ struct TrayPanel: View {
                 .onChange(of: store.pendingRevealRowKey) { _, _ in
                     applyPendingReveal(in: groups)
                 }
+                .onChange(of: store.showAllAgents) { _, _ in
+                    applyPendingReveal(in: groups)
+                }
+                .onChange(of: store.snapshot.totalCount) { _, _ in
+                    applyPendingReveal(in: groups)
+                }
             }
 
             if !query.isEmpty || hasSessionFilters {
@@ -1553,7 +1565,9 @@ private struct AgentRowButton: View {
     private var sourceLabel: String? { store.rowSourceLabel(row) }
 
     private var showActions: Bool {
-        row.waiting || hovering || store.isWaitingNoneNeedsReach(row)
+        // Waiting-none Reach stays in the secondary menu; do not permanently
+        // expand every non-Waiting live row (EXPERIENCE: action strip for Waiting).
+        row.waiting || hovering
     }
 
     private var hasSecondaryActions: Bool {

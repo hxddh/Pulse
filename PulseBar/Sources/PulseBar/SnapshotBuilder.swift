@@ -114,6 +114,7 @@ enum SnapshotBuilder {
         var liveHits: [AgentID: ProcessProbe.Hit] = [:]
         var perAgentSessionCount: [AgentID: Int] = [:]
         var droppedSessionsByAgent: [AgentID: Int] = [:]
+        var observedHarvestKeys: Set<String> = []
 
         for hit in input.procs {
             // Prefer richer hit if duplicate agent ids appear.
@@ -210,6 +211,7 @@ enum SnapshotBuilder {
             if rowsByKey[finalKey] != nil, rowsByKey[finalKey]?.sessionID != act.sessionID || act.sessionID.isEmpty {
                 finalKey = "\(key)#\(count + 1)"
             }
+            observedHarvestKeys.insert(finalKey)
 
             var row = rowsByKey[finalKey] ?? AgentRow(rowKey: finalKey, agent: agentID)
             if !act.sessionID.isEmpty { row.sessionID = act.sessionID }
@@ -253,6 +255,15 @@ enum SnapshotBuilder {
 
             rowsByKey[finalKey] = row
             perAgentSessionCount[agentID] = count + 1
+        }
+
+        // 0.95: a reliable complete scan that no longer observes a dismissed
+        // key means the session left — forget the tombstone so a genuine new
+        // pending on the same identity can re-raise.
+        if !input.harvestUnreliable {
+            for key in context.dismissedPendingKeys where !observedHarvestKeys.contains(key) {
+                result.clearedPendingKeys.insert(key)
+            }
         }
 
         // Attach live process to at most one session row per agent (no smear).
@@ -787,16 +798,22 @@ enum SnapshotBuilder {
         guard !candidates.isEmpty else { return nil }
 
         if !att.session.isEmpty {
-            // `rowKey` elides long session ids (prefix…suffix), so a full id can
-            // never be a substring of it — that check silently never matched.
-            // Compare session ids directly, both directions for truncated forms.
-            if let hit = candidates.first(where: {
+            // Exact match first; prefix only when uniquely resolvable so a
+            // truncated Attention id cannot smear onto a sibling (0.95).
+            let sessionMatches = candidates.filter {
                 guard !$0.sessionID.isEmpty else { return false }
                 return $0.sessionID == att.session
                     || att.session.hasPrefix($0.sessionID)
                     || $0.sessionID.hasPrefix(att.session)
-            }) {
-                return hit.rowKey
+            }
+            if let exact = sessionMatches.first(where: { $0.sessionID == att.session }) {
+                return exact.rowKey
+            }
+            if sessionMatches.count == 1 {
+                return sessionMatches[0].rowKey
+            }
+            if sessionMatches.count > 1 {
+                return nil
             }
             // Process-only / unset-session rows can adopt the named wait.
             if let unset = candidates.first(where: { $0.sessionID.isEmpty }) {
@@ -809,8 +826,8 @@ enum SnapshotBuilder {
             if let hit = candidates.first(where: {
                 !$0.cwd.isEmpty && (
                     $0.cwd == att.cwd
-                        || $0.cwd.hasPrefix(att.cwd)
-                        || att.cwd.hasPrefix($0.cwd)
+                        || $0.cwd.hasPrefix(att.cwd + "/")
+                        || att.cwd.hasPrefix($0.cwd + "/")
                 )
             }) {
                 return hit.rowKey
