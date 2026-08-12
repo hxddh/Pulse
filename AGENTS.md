@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.93.md`](docs/plan-0.93.md) | The active plan (Look Closure) |
+| [`docs/plan-0.94.md`](docs/plan-0.94.md) | The active plan (Waiting Proof) |
+| [`docs/plan-0.93.md`](docs/plan-0.93.md) | Historical plan (Look Closure) |
 | [`docs/plan-0.92.md`](docs/plan-0.92.md) | Historical plan (Row Clarity) |
 | [`docs/plan-0.91.md`](docs/plan-0.91.md) | Historical plan (Row Story) |
 | [`docs/plan-0.90.md`](docs/plan-0.90.md) | Historical plan (Waiting Reach) |
@@ -138,7 +139,7 @@ to users.
 
 ## Current state
 
-0.93.0 is the current source version. Without an Apple Developer ID, GitHub
+0.94.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.93.md`](docs/plan-0.93.md) (Look Closure).
+plan is [`docs/plan-0.94.md`](docs/plan-0.94.md) (Waiting Proof).

@@ -1768,6 +1768,11 @@ enum NativeActivityHarvest {
             "isAwaitingUserResponse", "is_awaiting_user_response",
             "userResponseNeeded", "user_response_needed",
             "didAskFollowupQuestion", "did_ask_followup_question",
+            // 0.94 Waiting Proof — additional explicit vendor flags only.
+            "requiresUserAction", "requires_user_action",
+            "awaitingConfirmation", "awaiting_confirmation",
+            "isBlockedOnUser", "is_blocked_on_user",
+            "blockedOnUser", "blocked_on_user",
         ])) || pendingPhase(phaseRaw) || pendingPhase(f.outcome)
             || isVendorAskTool(f.tool)
             || vendorAskFieldPending(dict)
@@ -1900,7 +1905,7 @@ enum NativeActivityHarvest {
         return t.hasSuffix(" session") || t.hasSuffix(" thread") || t.hasSuffix(" chat")
     }
 
-    /// Cline/Roo/Cascade ask tool ids — exact tokens only, never free-text inference.
+    /// Cline/Roo/Cascade (+ kin) ask tool ids — exact tokens only, never free-text inference.
     private static func isVendorAskTool(_ tool: String) -> Bool {
         let normalized = tool.lowercased()
             .replacingOccurrences(of: "-", with: "_")
@@ -1911,6 +1916,12 @@ enum NativeActivityHarvest {
             "ask_user", "askuser",
             "ask_clarifying_question", "askclarifyingquestion",
             "request_user_input", "requestuserinput",
+            // 0.94 Waiting Proof — additional exact vendor ask tools.
+            "ask_question", "askquestion",
+            "ask_user_question", "askuserquestion",
+            "confirm_with_user", "confirmwithuser",
+            "get_user_input", "getuserinput",
+            "request_approval", "requestapproval",
         ]
         return markers.contains(normalized)
     }
@@ -1935,6 +1946,8 @@ enum NativeActivityHarvest {
             "clarifying_question", "user_input", "permission",
             "auto_approval_max_req_reached", "mistake_limit_reached",
             "new_task",
+            // 0.94 — additional Cline-family ask enums (exact tokens).
+            "yolo_mode_toggled", "api_req_failed",
         ]
         return waitingAsks.contains(normalized) || pendingPhase(ask)
     }

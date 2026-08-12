@@ -2,6 +2,35 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.94.0 — Waiting Proof / 等待可证
+
+0.90 让 Waiting-none「能写样本」；0.93 让离开再回「能点名」。本版换章：**证明**
+声称有 Waiting 的路径，真 ask/block 会亮、清会灭。详见
+[`docs/plan-0.94.md`](docs/plan-0.94.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 等待可证
+
+- **harvestPending 举证**：Cline/Roo/Cascade/Cursor 显式 ask → Waiting；soft-dismiss →
+  自然清除 → 可再亮；`depending` / Waiting-none 永不从 harvest 抬。
+- **漏报加固**：补显式 bool 旗与 ask-tool 精确标记（不扩子串推断）。
+- **Attention raise→clear**：精确 session 点亮；清空 attention 熄灭；不 smear。
+- **Waiting-none Reach**：在跑时托盘可直达 Waiting signals（`openWaitingReach`）。
+- **清除生命周期**：soft-dismiss / `clearWaiting` 认 `waitSignal=.pending`。
+- EXPERIENCE 场景 **AG**；WaitingProof 回归。
+
+### P1 · 收口
+
+- EXPERIENCE 版本戳对齐 0.94.0。
+
+### P2 · 禁令
+
+- 假 stable / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- 举证链 + 漏报旗/工具 + Attention 精确点亮 + Waiting-none Reach；八门禁对 0.94.0。
+
 ## 0.93.0 — Look Closure / 回看闭环
 
 0.92 交了指纹，但离开再回只剩**计数横幅**。本版换章：具名 + 一点落到该行
