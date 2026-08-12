@@ -4130,7 +4130,7 @@ final class StatusStore: ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keys = Array(dismissedPendingKeys).sorted()
         guard let data = try? JSONEncoder().encode(keys) else { return }
-        try? data.write(to: url, atomically: true)
+        try? data.write(to: url, options: .atomic)
     }
 
     /// Re-register the global shortcut and report honestly when the system
