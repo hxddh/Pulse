@@ -2712,10 +2712,29 @@ final class StatusStore: ObservableObject {
 
     func clearWaiting() {
         AttentionIO.clearAll()
+        // 0.94: only suppress harvest-pending soft-dismiss keys — hooks Waiting
+        // is cleared by AttentionIO.clearAll, not by dismissedPendingKeys.
         for row in cachedAll where row.waiting {
-            dismissedPendingKeys.insert(row.rowKey)
+            if row.waitSignal == .pending || row.skill == "pending" {
+                dismissedPendingKeys.insert(row.rowKey)
+            }
         }
         refresh(reason: "clearWaiting")
+    }
+
+    /// Live Waiting-none session — needs Attention Reach, not a fake Waiting chip.
+    func isWaitingNoneNeedsReach(_ row: AgentRow) -> Bool {
+        !row.waiting
+            && row.liveProcess
+            && row.agent.waitingSource == .none
+    }
+
+    /// Open Waiting signals focused on this Waiting-none agent (0.94 Proof).
+    func openWaitingReach(for row: AgentRow) {
+        openSettings(
+            focusWaitingSignals: true,
+            focusWaitingAgent: row.agent.waitingSource == .none ? row.agent : firstLiveWaitingNoneAgent
+        )
     }
 
     func localizedWaitKind(_ kind: String) -> String {
@@ -3681,7 +3700,8 @@ final class StatusStore: ObservableObject {
         attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
         attentionLedger.save()
         pendingWaitingNotifications.removeValue(forKey: row.rowKey)
-        if row.skill == "pending" {
+        // 0.94: soft-dismiss harvest Waiting by signal, not only skill string.
+        if row.waitSignal == .pending || row.skill == "pending" {
             dismissedPendingKeys.insert(row.rowKey)
         }
         refresh(reason: "dismissWaiting")

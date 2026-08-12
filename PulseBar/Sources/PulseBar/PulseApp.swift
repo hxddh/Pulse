@@ -1501,6 +1501,13 @@ private struct AgentRowButton: View {
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
                     }
+                    if store.isWaitingNoneNeedsReach(row) {
+                        Button(store.tr(.setupWaitingSignals)) {
+                            store.openWaitingReach(for: row)
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11, weight: .medium))
+                    }
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, 48)
@@ -1546,11 +1553,12 @@ private struct AgentRowButton: View {
     private var sourceLabel: String? { store.rowSourceLabel(row) }
 
     private var showActions: Bool {
-        row.waiting || hovering
+        row.waiting || hovering || store.isWaitingNoneNeedsReach(row)
     }
 
     private var hasSecondaryActions: Bool {
         row.waiting || row.canFocusTerminal || row.isProcessOnly
+            || store.isWaitingNoneNeedsReach(row)
     }
 
     /// A compact per-session lamp makes the state of every visible Agent
@@ -1613,6 +1621,11 @@ private struct AgentRowButton: View {
         }
         if row.isProcessOnly {
             Button(store.tr(.supportHealth)) { store.openSupportHealth() }
+        }
+        if store.isWaitingNoneNeedsReach(row) {
+            Button(store.tr(.setupWaitingSignals)) {
+                store.openWaitingReach(for: row)
+            }
         }
     }
 
