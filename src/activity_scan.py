@@ -961,15 +961,19 @@ def pi_user_title(text: str) -> str:
     candidates: list[str] = []
     compaction_users: list[str] = []
     compaction_summaries: list[str] = []
+    saw_session_info = False
 
     for obj in json_records(text):
         if not isinstance(obj, dict):
             continue
         kind = str(obj.get("type") or "").lower()
         if kind == "session_info":
-            title = clean_session_title(str(obj.get("name") or obj.get("title") or ""))
-            if title:
-                names.append(title)
+            raw = obj.get("name")
+            if raw is None:
+                raw = obj.get("title")
+            text_name = str(raw).strip() if raw is not None else ""
+            names = [clean_session_title(text_name) if text_name else ""]
+            saw_session_info = True
             continue
         if kind == "compaction":
             summary = clean_session_title(str(obj.get("summary") or ""))
@@ -995,12 +999,10 @@ def pi_user_title(text: str) -> str:
         if title:
             candidates.append(title)
 
-    for group in (names,):
-        for candidate in reversed(group):
-            if meaningful_prompt(candidate):
-                return candidate
-        if group:
-            return group[-1]
+    if saw_session_info:
+        latest = names[-1] if names else ""
+        if latest:
+            return latest
     # /resume uses the first user message, not the latest turn.
     for candidate in candidates:
         if meaningful_prompt(candidate):

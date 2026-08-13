@@ -336,6 +336,7 @@ final class AgentRowTests: XCTestCase {
             $0.task = "update_plan"
             $0.tool = "update_plan"
         }.usefulTask)
+        XCTAssertEqual(row { $0.task = "update_auth" }.usefulTask, "update_auth")
         XCTAssertNil(row { $0.task = "Read Models.swift" }.usefulTask)
         XCTAssertNil(row { $0.task = "Models.swift" }.usefulTask)
         XCTAssertNotNil(row { $0.task = "Improve tray density" }.usefulTask)
