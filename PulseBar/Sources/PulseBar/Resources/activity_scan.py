@@ -769,15 +769,49 @@ def meaningful_prompt(value) -> str:
     return title
 
 
+_PI_DROP_TAGS = (
+    "environment_context",
+    "recommended_plugins",
+    "app-context",
+    "system-reminder",
+    "git_status",
+    "git-status",
+)
+
+
+def _strip_tagged_blocks(text: str, name: str) -> str:
+    open_tag = re.compile(rf"<{re.escape(name)}\b[^>]*>", re.I)
+    close_tag = re.compile(rf"</{re.escape(name)}>", re.I)
+    while True:
+        start = open_tag.search(text)
+        if not start:
+            return text
+        end = close_tag.search(text, start.end())
+        if end:
+            text = text[: start.start()] + text[end.end() :]
+            continue
+        gt = text.find(">", start.start())
+        if gt < 0:
+            return text
+        text = text[: start.start()] + text[gt + 1 :]
+
+
 def clean_session_title(value) -> str:
     """Normalize a human-facing title and reject injected context envelopes."""
     if not isinstance(value, str):
         return ""
-    title = " ".join(value.strip().split())
+    text = value.strip()
+    query = re.search(r"<user_query\b[^>]*>(.*?)</user_query>", text, re.I | re.S)
+    if query and query.group(1).strip():
+        text = query.group(1)
+    else:
+        for tag in _PI_DROP_TAGS:
+            text = _strip_tagged_blocks(text, tag)
+    title = " ".join(text.strip().split())
     if len(title) < 3:
         return ""
     low = title.lower()
-    if low.startswith(("<environment_context", "<recommended_plugins", "<app-context")):
+    if low.startswith(("<environment_context", "<recommended_plugins", "<app-context", "<system-reminder")):
         return ""
     return title[:160]
 
@@ -904,14 +938,11 @@ def latest_user_prompt(text: str) -> str:
 def pi_user_title(text: str) -> str:
     """Return Pi's latest substantive user goal, not a transport command.
 
-    Pi stores prompts inside ``message.content`` rather than a top-level
-    ``title`` field.  The old fallback searched the first JSON ``text`` key,
-    which made a long-lived session keep showing the opening ``pi update``
-    forever even after later turns had a real goal.  Keep the extraction
-    schema-specific and walk backwards so a tool result or thinking block can
-    never become the row hero.
+    Official Pi JSONL uses a ``type:session`` header, ``message.content`` as a
+    string *or* text blocks, optional ``session_info.name`` (the ``/name``
+    selector title), and compaction ``retainedTail``. Walk those envelopes
+    specifically so a tool result can never become the row hero.
     """
-    candidates: list[str] = []
 
     def content_text(content) -> str:
         if isinstance(content, str):
@@ -919,13 +950,43 @@ def pi_user_title(text: str) -> str:
         if isinstance(content, list):
             parts = []
             for part in content:
-                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                if isinstance(part, str) and part.strip():
+                    parts.append(part)
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
                     parts.append(part["text"])
             return " ".join(parts)
         return ""
 
+    names: list[str] = []
+    candidates: list[str] = []
+    compaction_users: list[str] = []
+    compaction_summaries: list[str] = []
+
     for obj in json_records(text):
-        if not isinstance(obj, dict) or obj.get("type") != "message":
+        if not isinstance(obj, dict):
+            continue
+        kind = str(obj.get("type") or "").lower()
+        if kind == "session_info":
+            title = clean_session_title(str(obj.get("name") or obj.get("title") or ""))
+            if title:
+                names.append(title)
+            continue
+        if kind == "compaction":
+            summary = clean_session_title(str(obj.get("summary") or ""))
+            if summary:
+                compaction_summaries.append(summary)
+            tail = obj.get("retainedTail") or []
+            if isinstance(tail, list):
+                for item in tail:
+                    if not isinstance(item, dict):
+                        continue
+                    if str(item.get("role") or "").lower() != "user":
+                        continue
+                    title = clean_session_title(content_text(item.get("content")))
+                    if title:
+                        compaction_users.append(title)
+            continue
+        if kind != "message":
             continue
         message = obj.get("message")
         if not isinstance(message, dict) or str(message.get("role") or "").lower() != "user":
@@ -934,10 +995,13 @@ def pi_user_title(text: str) -> str:
         if title:
             candidates.append(title)
 
-    for candidate in reversed(candidates):
-        if meaningful_prompt(candidate):
-            return candidate
-    return candidates[-1] if candidates else ""
+    for group in (names, candidates, compaction_users, compaction_summaries):
+        for candidate in reversed(group):
+            if meaningful_prompt(candidate):
+                return candidate
+        if group:
+            return group[-1]
+    return ""
 
 
 def normalize_pi_task(task: str) -> str:

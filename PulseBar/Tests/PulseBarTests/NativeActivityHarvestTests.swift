@@ -643,7 +643,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         defer { try? fm.removeItem(at: home) }
         let lines = [
             #"{"type":"session","id":"sess-stale","cwd":"/Users/me/Pulse"}"#,
-            #"{"type":"message","message":{"role":"user","content":"Old but named Pi session"}}"#,
+            #"{"type":"message","message":{"role":"user","content":"Old but named Pi goal"}}"#,
         ].joined(separator: "\n") + "\n"
         try lines.write(to: session, atomically: true, encoding: .utf8)
         try fm.setAttributes(
@@ -653,7 +653,7 @@ final class NativeActivityHarvestTests: XCTestCase {
 
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
         let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
-        XCTAssertEqual(row.task, "Old but named Pi session")
+        XCTAssertEqual(row.task, "Old but named Pi goal")
     }
 
     func testPiEmptySqliteDoesNotHideOfficialJSONL() throws {
