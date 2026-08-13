@@ -122,6 +122,8 @@ final class StatusStore: ObservableObject {
             var tokensIn: Int
             var tokensOut: Int
             var progressDone: Int
+            /// Wait generation — same row can end one wait and start another.
+            var waitSinceMs: Int64 = 0
         }
 
         var closedAt: Date
@@ -170,6 +172,10 @@ final class StatusStore: ObservableObject {
     private let powerMonitor = PowerMonitor()
     /// Tray panel is on screen — worth probing faster while the user reads it.
     private var trayOpen = false
+    /// Close instant to apply Look Continuity *after* the opening scan (0.96).
+    private var lookContinuityPendingClosedAt: Date?
+    /// Sample Waiting reveal waits until the row exists in `cachedAll`.
+    private var pendingSampleRevealSession = ""
     private var activity: ProbeSchedule.Activity = .empty
     private var currentInterval: TimeInterval?
     /// Live-process fingerprint; a change forces a harvest even off-cadence.
@@ -700,6 +706,17 @@ final class StatusStore: ObservableObject {
         case "open_agent_for_session": return tr(.qualityNextOpenAgent)
         default: return tr(.qualityNextOpenAgent)
         }
+    }
+
+    /// Details lists actionable gaps first so truncation cannot hide the fix.
+    func prioritizedObservationGaps(_ gaps: [ObservationGap]) -> [ObservationGap] {
+        let actionable: Set<String> = ["use_attention_bridge", "enable_app_data"]
+        return gaps.enumerated().sorted { left, right in
+            let leftAct = actionable.contains(left.element.nextStep)
+            let rightAct = actionable.contains(right.element.nextStep)
+            if leftAct != rightAct { return leftAct && !rightAct }
+            return left.offset < right.offset
+        }.map(\.element)
     }
 
     /// How deep App Data is currently granted — drives Support Health copy so
@@ -1458,35 +1475,16 @@ final class StatusStore: ObservableObject {
     /// Tray panel appeared — probe faster while the user is looking at it.
     func trayDidAppear() {
         trayOpen = true
-        // Coming back to the tray, the first question is what was missed. The
-        // panel only ever showed the present moment.
-        if let closed = trayClosedAt {
-            missedWhileAway = waitHistory.filter { $0.resolvedAt > closed }.count
-            if let prior = trayCloseFingerprint {
-                applyLookContinuity(prior: prior, closedAt: closed)
-            } else {
-                // No fingerprint — still name ended waits from history (0.93).
-                lookMovedWhileAway = 0
-                lookNewWaitsWhileAway = 0
-                let ended = waitHistory.filter { $0.resolvedAt > closed }
-                lookContinuityItems = ended.map { wait in
-                    let label = wait.title.isEmpty
-                        ? wait.agent.displayName
-                        : "\(wait.agent.displayName) · \(wait.title)"
-                    let revealable = cachedAll.contains(where: { $0.rowKey == wait.rowKey })
-                    return LookDeltaItem(
-                        kind: .endedWait,
-                        rowKey: wait.rowKey,
-                        label: label,
-                        revealable: revealable
-                    )
-                }
-                lookMovedRowKeys = []
-                rebuildLookContinuityNotice()
-            }
+        // 0.96: keep the close fingerprint until the opening scan finishes.
+        // Diffing `cachedAll` here used the last background tick, so sleep/lock
+        // changes landed in the list but not in the while-away notice.
+        if trayClosedAt != nil {
+            lookContinuityPendingClosedAt = trayClosedAt
         }
         rescheduleTimer()
-        if !previewFixtureActive {
+        if previewFixtureActive {
+            applyPendingLookContinuity()
+        } else {
             refresh(reason: "trayOpen")
         }
     }
@@ -1495,7 +1493,41 @@ final class StatusStore: ObservableObject {
         trayOpen = false
         trayClosedAt = Date()
         trayCloseFingerprint = captureLookFingerprint(at: trayClosedAt ?? Date())
+        lookContinuityPendingClosedAt = nil
         rescheduleTimer()
+    }
+
+    /// Apply Look Closure against the rows from the opening scan (0.96).
+    private func applyPendingLookContinuity() {
+        guard let closed = lookContinuityPendingClosedAt else { return }
+        lookContinuityPendingClosedAt = nil
+        missedWhileAway = waitHistory.filter { $0.resolvedAt > closed }.count
+        if let prior = trayCloseFingerprint {
+            applyLookContinuity(prior: prior, closedAt: closed)
+            return
+        }
+        lookMovedWhileAway = 0
+        lookNewWaitsWhileAway = 0
+        let ended = waitHistory.filter { $0.resolvedAt > closed }
+        lookContinuityItems = ended.map { wait in
+            let label = wait.title.isEmpty
+                ? wait.agent.displayName
+                : "\(wait.agent.displayName) · \(wait.title)"
+            let revealable = cachedAll.contains(where: { $0.rowKey == wait.rowKey })
+            return LookDeltaItem(
+                kind: .endedWait,
+                rowKey: wait.rowKey,
+                label: label,
+                revealable: revealable
+            )
+        }
+        lookMovedRowKeys = []
+        rebuildLookContinuityNotice()
+    }
+
+    /// Test seam: seed resolved-wait history for Look Closure assertions.
+    func seedWaitHistory(_ items: [ResolvedWait]) {
+        waitHistory = items
     }
 
     /// Acknowledge the "while you were away" line (clears named notice + row marks).
@@ -1544,7 +1576,8 @@ final class StatusStore: ObservableObject {
                 changeTag: lookChangeTag(row.activityChange),
                 tokensIn: row.tokensIn,
                 tokensOut: row.tokensOut,
-                progressDone: row.progressDone
+                progressDone: row.progressDone,
+                waitSinceMs: row.waitSinceMs
             )
         }
         return TrayLookFingerprint(closedAt: date, rows: snaps)
@@ -1578,10 +1611,6 @@ final class StatusStore: ObservableObject {
     func applyLookContinuity(prior: TrayLookFingerprint, closedAt: Date) {
         let now = captureLookFingerprint(at: Date())
         let keyDelta = Self.lookContinuityKeyDelta(prior: prior, current: now)
-        lookMovedWhileAway = keyDelta.movedKeys.count
-        lookNewWaitsWhileAway = keyDelta.newWaitKeys.count
-        missedWhileAway = waitHistory.filter { $0.resolvedAt > closedAt }.count
-
         let liveByKey = Dictionary(uniqueKeysWithValues: cachedAll.map { ($0.rowKey, $0) })
         var items: [LookDeltaItem] = []
 
@@ -1603,7 +1632,17 @@ final class StatusStore: ObservableObject {
         }
 
         let ended = waitHistory.filter { $0.resolvedAt > closedAt }
+        let endedKeys = Set(ended.map(\.rowKey))
+        let newWaitSet = Set(keyDelta.newWaitKeys)
+        lookNewWaitsWhileAway = keyDelta.newWaitKeys.count
+        lookMovedWhileAway = keyDelta.movedKeys.filter {
+            !endedKeys.contains($0) && !newWaitSet.contains($0)
+        }.count
+        missedWhileAway = ended.count
+
         for wait in ended {
+            // Same row lighting a new wait outranks the ended history item.
+            if newWaitSet.contains(wait.rowKey) { continue }
             let label = wait.title.isEmpty
                 ? wait.agent.displayName
                 : "\(wait.agent.displayName) · \(wait.title)"
@@ -1617,6 +1656,7 @@ final class StatusStore: ObservableObject {
         }
 
         for key in keyDelta.movedKeys {
+            if endedKeys.contains(key) || newWaitSet.contains(key) { continue }
             let label: String
             let revealable: Bool
             if let row = liveByKey[key] {
@@ -1662,6 +1702,14 @@ final class StatusStore: ObservableObject {
                 continue
             }
             if snap.waiting, !old.waiting {
+                newWaitKeys.append(snap.rowKey)
+                continue
+            }
+            // 0.96: a new wait generation on the same row (waitSinceMs moved)
+            // is a new wait, not a silent continuation.
+            if snap.waiting, old.waiting,
+               snap.waitSinceMs > 0, old.waitSinceMs > 0,
+               snap.waitSinceMs != old.waitSinceMs {
                 newWaitKeys.append(snap.rowKey)
                 continue
             }
@@ -2134,7 +2182,8 @@ final class StatusStore: ObservableObject {
                     attention: attention,
                     ticket: ticket,
                     harvestMs: completedHarvestMs,
-                    clearRefreshing: showSpinner
+                    clearRefreshing: showSpinner,
+                    reason: reason
                 )
             }
         }
@@ -2239,7 +2288,8 @@ final class StatusStore: ObservableObject {
         attention: [AttentionReader.Entry],
         ticket: UInt64,
         harvestMs: Int? = nil,
-        clearRefreshing: Bool = false
+        clearRefreshing: Bool = false,
+        reason: String = ""
     ) {
         defer { finishScanFlight() }
 
@@ -2363,6 +2413,9 @@ final class StatusStore: ObservableObject {
         )
 
         for note in result.debugNotes { DebugLog.write(note) }
+        for (oldKey, newKey) in result.remappedRowKeys {
+            migrateRowIdentity(from: oldKey, to: newKey)
+        }
         dismissedPendingKeys.subtract(result.clearedPendingKeys)
         if !result.clearedPendingKeys.isEmpty {
             persistDismissedPendingKeys()
@@ -2456,6 +2509,12 @@ final class StatusStore: ObservableObject {
 
         snapshot = snap
         if clearRefreshing { isRefreshing = false }
+        if reason == "trayOpen" {
+            applyPendingLookContinuity()
+        }
+        if reason == "trayOpen" || reason == "attentionSample" {
+            applyPendingSampleReveal()
+        }
 
         let previousActivity = activity
         activity = result.activity
@@ -2972,21 +3031,11 @@ final class StatusStore: ObservableObject {
         }
 
         if bits.isEmpty {
-            let model = readableModel(row.model)
-            if !model.isEmpty { bits.append(String(format: tr(.modelFact), model)) }
-            let input = AgentRow.compactToken(row.tokensIn)
-            let output = AgentRow.compactToken(row.tokensOut)
-            if !input.isEmpty || !output.isEmpty {
-                bits.append(String(
-                    format: tr(.compactTokens),
-                    input.isEmpty ? "0" : input,
-                    output.isEmpty ? "0" : output
-                ))
+            if row.agent.waitingSource == .none, row.liveProcess {
+                return tr(.supportWaitingNoneDetail)
             }
-        }
-
-        if bits.isEmpty, row.agent.waitingSource == .none, row.liveProcess {
-            return tr(.supportWaitingNoneDetail)
+            // 0.96: observation line owns model/tokens — do not duplicate.
+            return ""
         }
 
         return bits.prefix(3).joined(separator: " · ")
@@ -3039,8 +3088,6 @@ final class StatusStore: ObservableObject {
                         ? tr(.supportDetectedPath)
                         : tr(.supportDetectedExecutable)
                 )
-            } else if row.observationSource == .cache {
-                bits.append(tr(.cacheEvidence))
             } else if row.isProcessOnly {
                 bits.append(tr(.limitedData))
             }
@@ -3950,13 +3997,27 @@ final class StatusStore: ObservableObject {
         DebugLog.write(
             "attention sample written agents=\(agents.map(\.rawValue).joined(separator: ",")) session=pulse-sample"
         )
+        pendingSampleRevealSession = "pulse-sample"
         refresh(reason: "attentionSample")
-        if let row = cachedAll.first(where: { $0.sessionID == "pulse-sample" && $0.waiting }) {
+    }
+
+    private func applyPendingSampleReveal() {
+        guard !pendingSampleRevealSession.isEmpty else { return }
+        if let row = cachedAll.first(where: {
+            $0.sessionID == pendingSampleRevealSession && $0.waiting
+        }) {
             requestTrayReveal(rowKey: row.rowKey)
-        } else {
-            requestTrayReveal()
+            pendingSampleRevealSession = ""
         }
     }
+
+    /// Test seam: sample Go-Look waits until the named session row exists.
+    func testingRevealSampleIfPresent(session: String) {
+        pendingSampleRevealSession = session
+        applyPendingSampleReveal()
+    }
+
+    var testingHasPendingSampleReveal: Bool { !pendingSampleRevealSession.isEmpty }
 
     func clearAttentionBridgeSample() {
         for agent in Self.attentionSampleAgents {
@@ -4131,6 +4192,35 @@ final class StatusStore: ObservableObject {
         let keys = Array(dismissedPendingKeys).sorted()
         guard let data = try? JSONEncoder().encode(keys) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// Follow a process-only → session identity change so snooze/dismiss survive.
+    private func migrateRowIdentity(from oldKey: String, to newKey: String) {
+        guard oldKey != newKey, !newKey.isEmpty else { return }
+        if dismissedPendingKeys.remove(oldKey) != nil {
+            dismissedPendingKeys.insert(newKey)
+            persistDismissedPendingKeys()
+        }
+        if let until = snoozedUntil.removeValue(forKey: oldKey) {
+            snoozedUntil[newKey] = until
+        }
+        if let queued = pendingWaitingNotifications.removeValue(forKey: oldKey) {
+            var moved = queued
+            moved.rowKey = newKey
+            pendingWaitingNotifications[newKey] = moved
+        }
+        if knownWaitingKeys.remove(oldKey) {
+            knownWaitingKeys.insert(newKey)
+        }
+        if lookMovedRowKeys.remove(oldKey) {
+            lookMovedRowKeys.insert(newKey)
+        }
+        if waitingDeliveryInFlight.remove(oldKey) {
+            waitingDeliveryInFlight.insert(newKey)
+        }
+        attentionLedger.remapRowKey(from: oldKey, to: newKey)
+        attentionLedger.save()
+        DebugLog.write("row identity \(oldKey) → \(newKey)")
     }
 
     /// Re-register the global shortcut and report honestly when the system

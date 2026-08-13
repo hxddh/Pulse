@@ -97,6 +97,8 @@ enum SnapshotBuilder {
         var wentIdle: Bool = false
         /// Soft-dismissed keys whose `pending` cleared — the store may forget them.
         var clearedPendingKeys: Set<String> = []
+        /// Process-only / Attention adoption that changed row identity (old → new).
+        var remappedRowKeys: [String: String] = [:]
         /// `showAllAgents` after collapsing it when the list got short again.
         var showAllAgents: Bool = false
         /// Lines the caller should log; keeps `DebugLog` out of the pure path.
@@ -336,7 +338,21 @@ enum SnapshotBuilder {
                 if best.sessionID.isEmpty, !att.session.isEmpty { best.sessionID = att.session }
                 if best.cwd.isEmpty, !att.cwd.isEmpty { best.cwd = att.cwd }
                 best.processCount = max(best.processCount, 1)
-                rowsByKey[targetKey] = best
+                // 0.96: rekey process-only adoption so snooze/dismiss follow harvest identity.
+                let newKey = ActivityHarvest.sessionKey(
+                    id: best.agent,
+                    sessionID: best.sessionID,
+                    project: best.project,
+                    cwd: best.cwd
+                )
+                if newKey != targetKey, rowsByKey[newKey] == nil {
+                    rowsByKey.removeValue(forKey: targetKey)
+                    best.rowKey = newKey
+                    rowsByKey[newKey] = best
+                    result.remappedRowKeys[targetKey] = newKey
+                } else {
+                    rowsByKey[targetKey] = best
+                }
                 continue
             case .ambiguous:
                 // Truncated id matched multiple siblings — never invent Waiting.
@@ -471,6 +487,12 @@ enum SnapshotBuilder {
 
         // Resolve focus once per scan. Doing this per row inside the SwiftUI body
         // meant enumerating running apps and stat-ing the disk on every redraw.
+        var snoozeUntilByKey = context.snoozedUntilMs
+        for (oldKey, newKey) in result.remappedRowKeys {
+            if let until = snoozeUntilByKey[oldKey] {
+                snoozeUntilByKey[newKey] = until
+            }
+        }
         for i in all.indices {
             let row = all[i]
             all[i].isStalled = !row.isCompletedPhase && AgentRow.stalled(
@@ -484,7 +506,7 @@ enum SnapshotBuilder {
             // Resolved here for the same reason as `isStalled`: a countdown
             // read from `Date()` inside a view body drifts away from the scan
             // that produced the row it is drawn on.
-            if row.waiting, let until = context.snoozedUntilMs[row.rowKey], until > context.nowMs {
+            if row.waiting, let until = snoozeUntilByKey[row.rowKey], until > context.nowMs {
                 all[i].snoozeRemainingSeconds = Double(until - context.nowMs) / 1000.0
             }
             all[i].focusTier = TerminalFocus.focusTier(
@@ -638,7 +660,8 @@ enum SnapshotBuilder {
             // A wait younger than five seconds formats as "now", which says
             // nothing the lamp has not already said — so hold the space until
             // the number is worth it, and let the label escalate on its own
-            // from "Claude…" to "Claude · 4m".
+            // from "Claude…" to a duration that still fits the 8-cell budget
+            // (`1 · 4m` when `Claude · 4m` is too wide).
             // Elapsed time in the menu bar must come from the waits that are
             // still shouting, not from a snoozed one that happens to be older.
             let activeStamps = waitingRows.filter { $0.waitSinceMs > 0 }.map(\.waitSinceMs)
@@ -654,9 +677,11 @@ enum SnapshotBuilder {
                 snap.tooltip = "\(t(.needsYou, lang)) · \(t(.snoozed, lang))"
                 snap.headerTitle = stateSummary()
             } else if waitingRows.count == 1, let w = waitingRows.first {
-                snap.title = dur.isEmpty
+                let named = dur.isEmpty
                     ? "\(w.agent.displayName)…"
                     : "\(w.agent.displayName) · \(dur)"
+                let counted = dur.isEmpty ? "1" : "1 · \(dur)"
+                snap.title = GlanceTitle.fit(named, counted, "1")
                 let reason = w.waitKind.isEmpty
                     ? (w.waitMessage.isEmpty ? t(.needsYou, lang) : w.waitMessage)
                     : w.waitKind
@@ -665,9 +690,10 @@ enum SnapshotBuilder {
                     : "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason) · \(dur)"
                 snap.headerTitle = stateSummary()
             } else {
-                snap.title = dur.isEmpty
+                let counted = dur.isEmpty
                     ? "\(waitingRows.count)"
                     : "\(waitingRows.count) · \(dur)"
+                snap.title = GlanceTitle.fit(counted, "\(waitingRows.count)")
                 snap.tooltip = dur.isEmpty
                     ? "\(t(.needsYou, lang)): \(nameJoin)"
                     : "\(t(.needsYou, lang)): \(nameJoin) · \(dur)"
@@ -688,9 +714,10 @@ enum SnapshotBuilder {
                 ? DurationFormat.label(seconds: oldestStall, lang: lang)
                 : ""
             if healthyRunning == 1, stalledCount == 0, thinRunning == 0 {
-                snap.title = liveRows.first(where: \.isHealthyRunning)?.agent.displayName
+                let name = liveRows.first(where: \.isHealthyRunning)?.agent.displayName
                     ?? liveRows[0].agent.displayName
-                snap.tooltip = "\(snap.title) \(t(.running, lang))"
+                snap.title = GlanceTitle.fit(name, "1")
+                snap.tooltip = "\(name) \(t(.running, lang))"
             } else if snap.glance == .stalled, liveRunning == 0 || stalledCount > 0 {
                 // Stall-only, or mixed fleet where stall wins the lamp: surface
                 // count + oldest silence so the corner matches Waiting's "how long".
@@ -753,10 +780,19 @@ enum SnapshotBuilder {
         }
         result.wentIdle = previousLampBusy && !nowLampBusy
 
-        let newcomers = result.waitingKeys.subtracting(previous.waitingKeys)
+        var previousWaiting = previous.waitingKeys
+        for (oldKey, newKey) in result.remappedRowKeys {
+            if previousWaiting.contains(oldKey) {
+                previousWaiting.remove(oldKey)
+                previousWaiting.insert(newKey)
+            }
+        }
+        let newcomers = result.waitingKeys.subtracting(previousWaiting)
         result.newlyWaiting = all.filter { newcomers.contains($0.rowKey) }
-        result.resolvedWaits = previous.rows.filter {
-            $0.waiting && !result.waitingKeys.contains($0.rowKey)
+        result.resolvedWaits = previous.rows.filter { row in
+            guard row.waiting else { return false }
+            let liveKey = result.remappedRowKeys[row.rowKey] ?? row.rowKey
+            return !result.waitingKeys.contains(liveKey)
         }
 
         if waitingCount > 0 {
@@ -864,5 +900,33 @@ enum SnapshotBuilder {
             return .hit(first.rowKey)
         }
         return .unmatched
+    }
+}
+
+/// Menu-bar title budget (EXPERIENCE: ≤ 8 display cells; CJK = 2).
+enum GlanceTitle {
+    static let maxCells = 8
+
+    static func cells(_ text: String) -> Int {
+        text.unicodeScalars.reduce(0) { $0 + (isWide($1) ? 2 : 1) }
+    }
+
+    static func fit(_ candidates: String...) -> String {
+        for text in candidates where cells(text) <= maxCells {
+            return text
+        }
+        return candidates.last ?? ""
+    }
+
+    private static func isWide(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 0x1100...0x115F, 0x2329...0x232A, 0x2E80...0xA4CF,
+             0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE10...0xFE19,
+             0xFE30...0xFE6F, 0xFF00...0xFF60, 0xFFE0...0xFFE6,
+             0x1F300...0x1F64F, 0x1F900...0x1F9FF:
+            return true
+        default:
+            return false
+        }
     }
 }

@@ -119,7 +119,7 @@ private struct AgentDetailView: View {
                             .font(.callout)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if !changed.isEmpty {
+                    if !changed.isEmpty, !store.storyOwnsChange(row) {
                         Text(changed)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -143,9 +143,6 @@ private struct AgentDetailView: View {
             Text(store.notificationBody(row))
                 .font(.body)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(store.localizedWaitLine(row))
-                .font(.caption)
-                .foregroundStyle(.secondary)
             if let event = store.attentionEvent(for: row.rowKey) {
                 waitingTimeline(event)
             }
@@ -211,7 +208,8 @@ private struct AgentDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
             if !row.quality.missing.isEmpty {
-                ForEach(Array(row.quality.missing.prefix(4).enumerated()), id: \.offset) { _, gap in
+                let gaps = store.prioritizedObservationGaps(row.quality.missing)
+                ForEach(Array(gaps.prefix(4).enumerated()), id: \.offset) { _, gap in
                     HStack(alignment: .top, spacing: 6) {
                         Text("\(store.factKeyLabel(gap.key)): \(store.observationGapReason(gap)) → \(store.observationGapNextStep(gap))")
                             .font(.caption)

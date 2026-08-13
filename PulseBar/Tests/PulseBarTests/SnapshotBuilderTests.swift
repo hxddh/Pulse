@@ -607,7 +607,40 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.rows[0].waiting)
         XCTAssertEqual(r.rows[0].sessionID, "codex-wait-1")
         XCTAssertTrue(r.rows[0].liveProcess)
+        XCTAssertEqual(r.rows[0].rowKey, "codex|codex-wait-1")
+        XCTAssertEqual(r.remappedRowKeys["codex"], "codex|codex-wait-1")
         XCTAssertEqual(r.snapshot.hiddenCount, 0)
+    }
+
+    func testAttentionAdoptionDoesNotReFireWaitingEdge() {
+        let first = build(
+            procs: [hit(.codex, pid: 42)],
+            attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")]
+        )
+        XCTAssertEqual(first.newlyWaiting.count, 1)
+        var previousRow = AgentRow(rowKey: "codex", agent: .codex)
+        previousRow.waiting = true
+        previousRow.sessionID = ""
+        previousRow.liveProcess = true
+        let second = build(
+            procs: [hit(.codex, pid: 42)],
+            attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")],
+            previous: .init(rows: [previousRow], waitingKeys: ["codex"])
+        )
+        XCTAssertTrue(second.newlyWaiting.isEmpty, "rekey is identity, not a new wait")
+        XCTAssertTrue(second.resolvedWaits.isEmpty, "rekey must not look like a clear")
+        XCTAssertEqual(second.rows[0].rowKey, "codex|codex-wait-1")
+    }
+
+    func testAttentionAdoptionCarriesSnoozeOntoNewKey() {
+        let r = build(
+            procs: [hit(.codex, pid: 42)],
+            attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")],
+            context: context(snoozed: ["codex": now + 300_000])
+        )
+        XCTAssertEqual(r.rows[0].rowKey, "codex|codex-wait-1")
+        XCTAssertTrue(r.rows[0].isSnoozed, "snooze must follow the adopted session key")
+        XCTAssertGreaterThan(r.rows[0].snoozeRemainingSeconds, 0)
     }
 
     func testHooksSignalOutranksHarvestPendingOnTheSameRow() {
@@ -654,7 +687,8 @@ final class SnapshotBuilderTests: XCTestCase {
     /// earns its space by escalating once the number means something.
     func testSingleWaitGainsItsAgeOnceItIsWorthSaying() {
         let r = build(procs: [hit(.claude)], attention: [attention(.claude, ageMs: 240_000)])
-        XCTAssertEqual(r.snapshot.title, "Claude · 4m")
+        XCTAssertEqual(r.snapshot.title, "1 · 4m")
+        XCTAssertLessThanOrEqual(GlanceTitle.cells(r.snapshot.title), GlanceTitle.maxCells)
     }
 
     func testFreshWaitDoesNotSpendMenuBarSpaceOnNow() {

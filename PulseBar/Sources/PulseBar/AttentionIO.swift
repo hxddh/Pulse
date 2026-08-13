@@ -29,6 +29,41 @@ enum AttentionIO {
     /// the same file and confuse readers.
     static var header: String { AttentionProtocol.header }
 
+    static let maxRetainedLines = 80
+
+    /// Keep unresolved raises when compacting the TSV. A suffix-only cap can
+    /// drop a still-open permission/waiting line with no `done`.
+    static func compactLines(_ lines: [String], cap: Int = maxRetainedLines) -> [String] {
+        guard lines.count > cap else { return lines }
+        var lastKind: [String: String] = [:]
+        var lastIndex: [String: Int] = [:]
+        for (index, raw) in lines.enumerated() {
+            let columns = raw.split(separator: "\t", omittingEmptySubsequences: false)
+            guard columns.count >= 3,
+                  let agent = ActivityHarvest.mapAgent(String(columns[0]))
+            else { continue }
+            let kind = AttentionProtocol.normalizeKind(String(columns[1]))
+            let session = columns.count > 4 ? String(columns[4]) : ""
+            let key = session.isEmpty ? agent.surfaceID.rawValue : "\(agent.surfaceID.rawValue)|\(session)"
+            lastKind[key] = kind
+            lastIndex[key] = index
+        }
+        let openKinds: Set<String> = ["permission", "idle_prompt", "waiting"]
+        var mustKeep = Set(
+            lastIndex.compactMap { key, index -> Int? in
+                openKinds.contains(lastKind[key] ?? "") ? index : nil
+            }
+        )
+        if mustKeep.count > cap {
+            return mustKeep.sorted().suffix(cap).map { lines[$0] }
+        }
+        for index in stride(from: lines.count - 1, through: 0, by: -1) {
+            if mustKeep.count >= cap { break }
+            mustKeep.insert(index)
+        }
+        return mustKeep.sorted().map { lines[$0] }
+    }
+
     static func readText() -> String {
         var result = ""
         withExclusiveLock { fd in
@@ -129,8 +164,8 @@ enum AttentionIO {
                 .map(String.init)
                 .filter { !$0.isEmpty && !$0.hasPrefix("#") }
             lines.append(line.trimmingCharacters(in: .newlines))
-            if lines.count > 80 {
-                lines = Array(lines.suffix(80))
+            if lines.count > maxRetainedLines {
+                lines = compactLines(lines, cap: maxRetainedLines)
             }
             let body = header + lines.joined(separator: "\n") + "\n"
             ftruncate(fd, 0)

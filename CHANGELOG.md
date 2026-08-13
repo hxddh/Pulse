@@ -2,6 +2,38 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.96.0 — Return Truth / 回看诚实
+
+0.94/0.95 把 Waiting 亮灭做实。本版换章：**离开再回时，灯和 notice 必须说真话**。
+0.93 交了具名 Look Closure，但刷新后再算、等待世代、Glance 宽预算仍假。
+详见 [`docs/plan-0.96.md`](docs/plan-0.96.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 回看诚实
+
+- **Look 时机**：`trayOpen` 扫描完成后再算 Look Continuity，不再 diff 关闭前的旧缓存。
+- **等待世代**：指纹含 `waitSinceMs`；同行新等待优先于 ended，且不进 moved。
+- **ended 不双计**：已结束的 key 不再同时出现在「有变化」。
+- **Glance 宽预算**：显示宽 >8（CJK=2）降级 `1 · 4m` / `1`；Idle 仍空；`Claude…` 仍可。
+- **样本 Go-Look**：样本 Waiting 行出现后再 `requestTrayReveal`。
+- EXPERIENCE 场景 **AI**；ReturnTruth 回归。
+
+### P1 · 身份连续
+
+- Attention 收养进程行即重键到 `sessionKey`；snooze / dismiss / ledger 跟随。
+- Attention.tsv 80 行压缩保留未决 raise（无 `done` 不挤掉）。
+
+### P2 · Details / 行诚实
+
+- Details 缺口：可行动 `use_attention_bridge` / `enable_app_data` 优先于截断。
+- quiet 叙事不重复观测行的 model/tokens；cache 叙事不复述身份的 Local cache。
+- Details：story 已有 Changed 则不另起一句；Waiting 卡只留一条理由。
+
+### 验证
+
+- 刷新后 Look · 等待世代 · ended 不双计 · Glance 8 格 · 样本 reveal · 收养重键 ·
+  Attention 压缩保留未决 · 缺口优先 · quiet/cache 去重；八门禁对 0.96.0。
+
 ## 0.95.0 — Extinguish Honesty / 熄灭诚实
 
 0.94 证明真 ask 能亮。本版换章：**假 Waiting 不亮；清了就灭；再亮必须是新证据**。

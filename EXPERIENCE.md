@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.95.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.96.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -42,7 +42,8 @@ Prefs 只改开关与连接。
 
 ## 3. Glance（菜单栏）
 
-菜单栏在有等待时显示 `{数量} · {最久等待时长}`（单个等待时只显示时长）。
+菜单栏在有等待时显示能放进 **8 个显示宽度** 的标题：`Claude…`，或超限时的
+`1 · 4m` / `1`；多个等待用数量。
 **禁止常驻动画**：新等待出现时闪一次即止。永久呼吸在 30 秒和 40 分钟时长得一样，
 既不携带信息，又和真正表达紧迫度的时长抢注意力。
 
@@ -55,7 +56,7 @@ Prefs 只改开关与连接。
 
 | 状态 | 灯 | 标题 | 触发 |
 | --- | --- | --- | --- |
-| Waiting | 暂停形 | `Claude…`，多个时用数量 | 有任意行在等你 |
+| Waiting | 暂停形 | `Claude…`，超限 `1 · 4m` / `1`；多个时用数量 | 有任意行在等你 |
 | Running | 实心灯 | 单名或数量 | 有**健康** live 会话（有活动时钟且非仅进程），且无停滞 |
 | Idle | 脉冲线 | **空** | 只有最近会话，或什么都没有 |
 | Stalled / Error | 橙色脉冲线 | 数量 / `!` | live 会话停滞；仅进程 / 无活动时钟的 Running；或 probe 与 harvest 同时不可用 |
@@ -63,7 +64,7 @@ Prefs 只改开关与连接。
 规则：
 
 - **Glance 优先级（非 Waiting）：** 任意停滞 → 橙；否则健康 Running → 绿；否则仅进程 / 薄 Running → 橙（不得装健康绿）。
-- 标题预算 **≤ 8 个显示宽度**（CJK 按宽字符算），超限降级成数量。
+- 标题预算 **≤ 8 个显示宽度**（CJK 按宽字符算），超限降级：Waiting `1 · 4m` / `1`；Running `1`。`Claude…`（7 格）仍可。
 - Agent 产品名**始终英文**（Claude、Codex…），即使界面是中文。
 - Glance 不显示 tokens、相对时间、项目路径。
 - Idle 必须安静 —— 不刷「空闲」这种没信息量的词。
@@ -161,9 +162,10 @@ Prefs 只改开关与连接。
 - **观测行**（有数据才出现）= `模型调用 · 入 12k · 出 3k · 641 条事件`
   —— **默认显示，不藏在悬停或 Details 里**，最多 4 个事实；详情审视器提供完整证据（含同一叙事 + Changed）
 - **等待详情**（仅 Waiting）：`↳ 消息 · 来源`（**消息优先**；种类·时长在芯片）
-- **离开再回**（0.92 / **0.93 Look Closure**）：关闭托盘打指纹；重开可见**具名**变化
-  （新等待 → 已结束等待 → 有变化会话，最多 3 条 +「+N」）；一点滚到优先行（复用 Go-Look）；
-  受影响非 Waiting 行有短暂「离开后有变」标记直至确认；不发明 Waiting
+- **离开再回**（0.93 Look Closure / **0.96 Return Truth**）：关闭托盘打指纹（含
+  `waitSinceMs`）；**重开后的扫描完成再算**具名变化（新等待 → 已结束等待 → 有变化会话，
+  最多 3 条 +「+N」）；同行新等待世代优先于 ended，ended 不双计为 moved；一点滚到优先行
+  （复用 Go-Look）；受影响非 Waiting 行有短暂「离开后有变」标记直至确认；不发明 Waiting
 - 完整路径、完整 session id、重复的任务原文属于诊断噪音，不进入主界面
 
 一条静态行最多 4 个事实；叙事行另计一句运动/处境摘要。行间距与垂直 padding 保持紧凑：有效信息优先于留白。拥挤（≥5 行）时叙事行仍保持两行可读上限。
@@ -470,11 +472,12 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AA | Tray Substance（托盘实质） | Claude 笔录带 `message.model`/`usage` 时观测行有 model+tokens；Codex `last_token_usage` 可见；Cursor `unifiedMode` 可见且非假 local；tool-hero+分组去路径时次行仍有最近动作或路径；LS/Task 等工具可作最近动作 |
 | AB | Tray Fleet Substance（舰队托盘实质） | Gemini `functionCall`+`usageMetadata` / Goose `depending`→Working（非 Waiting）/ Cursor `modelDetails` / Pi `agent_usage` model+tokens 进默认行；有 model 的 cache 行观测非空且仍 Limited；quiet live 无 phase 时 Now 空、观测可有 model/tokens |
 | AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到 Waiting signals；一屏完成「确保 pulse-hook（不装 Claude/Codex）→ 打开文件夹 → 写样本 → 托盘红灯可清除」；可复制 raise 命令；Application Support 有 bridge kit；不伪造原生 Waiting、不扩 hooks 安装器 |
-| AD | Row Story（行叙事） | 默认行在标题下有一句叙事：有 phase 时可读阶段·工具；quiet live 无 Now 仍有最近动作或 model/tokens；tool/phase/task 变化进 Changed；仅进程/薄 cache 显示证据+下一步；不把 last tool 标成 Now、不伪造 Waiting |
+| AD | Row Story（行叙事） | 默认行在标题下有一句叙事：有 phase 时可读阶段·工具；quiet live 无 Now 仍有最近动作；无动作时观测行有 model/tokens（story 不重复）；tool/phase/task 变化进 Changed；仅进程/薄 cache 显示证据+下一步；不把 last tool 标成 Now、不伪造 Waiting |
 | AE | Row Clarity（行清晰） | Story 拥有 phase/工具/Changed；次行只留路径·年龄；信号在 story 已带 Now/Changed 时让位；Waiting 芯片=种类·时长、详情=消息优先；Limited 质量摘要只出现一次；离开再回可见「什么动了」；Details 同叙事；不伪造 Waiting / 不升格 session |
 | AF | Look Closure（回看闭环） | 离开再回 notice **具名**（最多 3 +「+N」）；优先级新等待→已结束→有变化；一点经 `pendingRevealRowKey` 选中滚到该行；受影响行短暂「离开后有变」；不发明 Waiting、不伪造会话深链 |
 | AG | Waiting Proof（等待可证） | Cline/Roo/Cascade/Cursor 显式 ask/block → 红灯；soft-dismiss 后自然清除可再亮；`depending`/Waiting-none 永不从 harvest 抬；Attention raise 精确点亮并可 clear；Waiting-none 在跑时可直达 Waiting signals；不扩 hooks、不伪造 Waiting |
 | AH | Extinguish Honesty（熄灭诚实） | 已答 ask / 终态不亮；Cascade/Windsurf 共享根不双红；Pi/Grok 正文不抬；soft-dismiss 重启仍压、可靠缺席后可再亮；纯 harvest dismiss 不抹掉同 Agent Attention；歧义 session 前缀不 smear；`Waiting`+Stop 有 grace；Clear waiting 无迟到通知 |
+| AI | Return Truth（回看诚实） | 重开托盘后用新扫描算 Look；同行新 `waitSinceMs` 算新等待且优先于 ended；ended 不进 moved；Glance 超 8 格降为 `1 · 4m` / `1`；样本行出现后再 Go-Look；进程收养重键；Attention 压缩保留未决；Details 可行动缺口优先、quiet/cache 不重复观测/身份 |
 
 ---
 
@@ -496,6 +499,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 绿灯 / 停滞 | `AgentRow.stalled` / `isHealthyRunning` / `isThinRunning`；`SnapshotBuilder` liveFleetGlance |
 | 打断闭环 | `pendingRevealRowKey` · `focusAgent` · `TrayPanel.applyPendingReveal` · `PulseNotify` |
 | 回看闭环 | `lookContinuityItems` · `activateLookContinuity` · `lookMovedRowKeys` · Go-Look reveal |
+| 回看诚实 | `GlanceTitle` · `lookContinuityPendingClosedAt` · 指纹 `waitSinceMs` · `AttentionIO.compactLines` · `prioritizedObservationGaps` |
 | 等待可证 | `skill=pending` → SnapshotBuilder Waiting · soft-dismiss · Attention raise/clear · `openWaitingReach` |
 
 数据流详见 [`docs/architecture.md`](docs/architecture.md)。
