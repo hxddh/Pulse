@@ -10,6 +10,7 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
+| [`docs/plan-0.97.md`](docs/plan-0.97.md) | The active plan (Hero Honesty) |
 | [`docs/plan-0.96.md`](docs/plan-0.96.md) | Historical plan (Return Truth) |
 | [`docs/plan-0.95.md`](docs/plan-0.95.md) | Historical plan (Extinguish Honesty) |
 | [`docs/plan-0.94.md`](docs/plan-0.94.md) | Historical plan (Waiting Proof) |
@@ -141,8 +142,7 @@ to users.
 
 ## Current state
 
-0.96.1 is the current source version. Without an Apple Developer ID, GitHub
+0.97.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
-never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. 0.96 was
-Return Truth; this patch is Pi session titles. The last plan is
-[`docs/plan-0.96.md`](docs/plan-0.96.md).
+never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
+plan is [`docs/plan-0.97.md`](docs/plan-0.97.md) (Hero Honesty).

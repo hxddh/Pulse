@@ -768,8 +768,18 @@ struct TrayPanel: View {
     }
 
     private var headerStates: [(TraySection, Int)] {
-        TraySection.allCases.compactMap { section in
-            let count = filteredRows.filter { $0.section == section }.count
+        // Search/filter counts the matching window. The default header must
+        // use the fleet totals so a 12-row glance cannot report "9 running"
+        // when 15 sessions are live.
+        let searching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || hasSessionFilters
+        return TraySection.allCases.compactMap { section in
+            let count: Int
+            if searching {
+                count = filteredRows.filter { $0.section == section }.count
+            } else {
+                count = store.snapshot.sectionTotals[section] ?? 0
+            }
             return count > 0 ? (section, count) : nil
         }
     }
@@ -1018,10 +1028,11 @@ struct TrayPanel: View {
             let present = TraySection.allCases.filter { s in rows.contains { $0.section == s } }
             return present.map { section in
                 let group = rows.filter { $0.section == section }
+                let fleet = store.snapshot.sectionTotals[section] ?? group.count
                 return RowGroup(
                     id: "s\(section.rawValue)",
                     title: store.tr(section.titleKey),
-                    count: group.count,
+                    count: fleet,
                     accent: section == .needsYou,
                     rows: group,
                     foldable: TrayFold.foldable(

@@ -1171,4 +1171,30 @@ final class SnapshotBuilderTests: XCTestCase {
         }
     }
 
+    func testHarvestApprovalToolIsPermissionWaitKind() {
+        let r = build(harvest: [
+            harvest(.cline, task: "Ask", session: "s1", skill: "pending", tool: "request_approval"),
+        ])
+        XCTAssertTrue(r.rows[0].waiting)
+        XCTAssertEqual(r.rows[0].waitKind, "Permission")
+    }
+
+    func testHarvestFollowupToolStaysInputWaitKind() {
+        let r = build(harvest: [
+            harvest(.roo, task: "Ask", session: "s1", skill: "pending", tool: "ask_followup_question"),
+        ])
+        XCTAssertTrue(r.rows[0].waiting)
+        XCTAssertEqual(r.rows[0].waitKind, "Input")
+    }
+
+    func testSectionTotalsCountTheFleetNotTheWindow() {
+        let rows = (1...15).map {
+            harvest(.claude, task: "T\($0)", session: "s\($0)", cwd: "/tmp/p", ageMs: 60_000)
+        }
+        let r = build(harvest: rows, context: context(maxSessions: 99, maxRows: 12))
+        XCTAssertEqual(r.snapshot.sectionTotals[.recent], 15)
+        XCTAssertEqual(r.snapshot.rows.count, 12)
+        XCTAssertEqual(r.snapshot.hiddenCount, 3)
+    }
+
 }

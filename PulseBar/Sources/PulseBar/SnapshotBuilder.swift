@@ -246,7 +246,7 @@ enum SnapshotBuilder {
             if act.skill == "pending", ActivityHarvest.isFresh(act, nowMs: context.nowMs) {
                 if !context.dismissedPendingKeys.contains(finalKey) {
                     row.waiting = true
-                    row.waitKind = "Input"
+                    row.waitKind = harvestWaitKind(tool: act.tool, phase: act.phase)
                     row.waitSignal = .pending
                     row.waitSinceMs = act.harvestMs > 0 ? act.harvestMs : context.nowMs
                 }
@@ -825,6 +825,25 @@ enum SnapshotBuilder {
         snap.totalCount = rows.count
         // Sessions dropped by the per-agent cap are separate from folded rows.
         snap.cappedSessions = rows.reduce(0) { $0 + $1.hiddenSessions }
+    }
+
+    /// Harvest only stamps `skill=pending`. Map approval/permission evidence
+    /// to the Permission chip; everything else stays Input. Never invent
+    /// Permission from an empty phase.
+    private static func harvestWaitKind(tool: String, phase: String) -> String {
+        let normalized = tool.lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let permissionTools: Set<String> = [
+            "request_approval", "requestapproval",
+            "confirm_with_user", "confirmwithuser",
+        ]
+        if permissionTools.contains(normalized) { return "Permission" }
+        let phaseLow = phase.lowercased()
+        if phaseLow.contains("permission") || phaseLow.contains("approval") {
+            return "Permission"
+        }
+        return "Input"
     }
 
     /// Match an attention entry to an existing harvest/process row.
