@@ -631,10 +631,11 @@ enum NativeActivityHarvest {
                 if parsed[index].sessionID.isEmpty, structured {
                     parsed[index].sessionID = sessionIDFromPath(item)
                 }
-                if id == .claude, parsed[index].cwd.isEmpty {
+                if id == .claude {
                     let encoded = item.deletingLastPathComponent().lastPathComponent
                     let decoded = decodeClaudeProjectDir(encoded)
-                    if !decoded.isEmpty {
+                    if !decoded.isEmpty,
+                       parsed[index].cwd.isEmpty || looksLikeFilePathCwd(parsed[index].cwd) {
                         parsed[index].cwd = decoded
                         if parsed[index].project.isEmpty {
                             parsed[index].project = lastPathComponent(decoded)
@@ -2192,6 +2193,7 @@ enum NativeActivityHarvest {
             f.task = textValue(firstValue(dict, keys: ["text", "content", "prompt", "query"]))
         }
         f.cwd = normalizedPath(firstString(dict, keys: cwdKeys(for: dict)))
+        if looksLikeFilePathCwd(f.cwd) { f.cwd = "" }
         f.project = firstString(dict, keys: ["project", "projectName", "project_name", "repository", "repoName"])
         f.sessionID = firstString(dict, keys: [
             "sessionId", "session_id", "threadId", "thread_id", "conversationId",
@@ -2399,7 +2401,12 @@ enum NativeActivityHarvest {
         preferTask(&target.task, source.task)
         func prefer(_ old: inout String, _ new: String) { if old.isEmpty, !new.isEmpty { old = new } }
         prefer(&target.project, source.project)
-        prefer(&target.cwd, source.cwd); prefer(&target.sessionID, source.sessionID)
+        if looksLikeFilePathCwd(target.cwd), !source.cwd.isEmpty, !looksLikeFilePathCwd(source.cwd) {
+            target.cwd = source.cwd
+        } else {
+            prefer(&target.cwd, source.cwd)
+        }
+        prefer(&target.sessionID, source.sessionID)
         // Last non-empty tool / model wins — Claude assistant envelopes arrive
         // after the user prompt; prefer-first left rows without telemetry.
         if !source.tool.isEmpty { target.tool = source.tool }
@@ -2555,6 +2562,13 @@ enum NativeActivityHarvest {
         let head = parts[0].lowercased()
         guard head == "users" || head == "home" else { return "" }
         return "/" + parts.joined(separator: "/")
+    }
+
+    /// Tool `input.path` is a file, not a workspace. Adopting it as cwd made
+    /// Claude (and kin) rows look like they lived in `/tmp/file-0.swift`.
+    private static func looksLikeFilePathCwd(_ path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        return AgentRow.looksLikeFilenameOnlyTitle(lastPathComponent(path))
     }
 
     /// Layout: `~/.claude/projects/<proj>/<sessionId>/subagents/agent-*.jsonl`
