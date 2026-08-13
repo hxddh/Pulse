@@ -2,6 +2,20 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.97.1 — Pi /resume titles / Pi 会话标题
+
+0.97 按文档修了 Pi，生产仍空。真实 `/resume` 标题是 `session_info.name`，否则**第一条**用户句。失败不是「窗口太小」：sibling `.db` 把 adapter 标失败；JSONL 被 SQLite 抢先；每个历史文件再读 8MB 会先耗尽 48MB 预算。以 `session` 结尾的 `/name` 被当成 chrome 丢掉。官方信封解析不出用户句时落到通用 walker，托盘主行只剩项目名。
+
+- **JSONL 优先、新到旧**：先扫 `~/.pi/agent/sessions` 笔录（mtime 新的先读），SQLite 后置；缺 `session_meta` 或打不开的 `.db` 不再标失败。
+- **标题**：与 Pi `/resume` 一致——`/name` 否则第一条有意义用户句；头 96KB + 尾 400KB；超大 tool 行不 JSON 解析。
+- **chrome**：只滤精确占位（`Pi session`），不再把 `Auth session` 整句丢掉。
+- **官方信封**：`type:session/message` 没有用户句时不退回通用 walker（避免项目名冒充标题）。
+- 无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。
+
+### 验证
+
+- 首条用户句而非最新句 · `/name` 可为 `Auth session` · 无 session_meta / 垃圾 db 不挡 JSONL · 官方头-only 不发明项目名主行 · 超大 tool 行后仍有标题；八门禁对 0.97.1。
+
 ## 0.97.0 — Hero Honesty / 主行诚实
 
 0.96.1 的 Pi 标题修的是假 fixture，生产仍空。本版换章：**主行必须是用户目标**

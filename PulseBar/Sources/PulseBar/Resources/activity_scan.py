@@ -936,7 +936,7 @@ def latest_user_prompt(text: str) -> str:
 
 
 def pi_user_title(text: str) -> str:
-    """Return Pi's latest substantive user goal, not a transport command.
+    """Return Pi's /resume title: ``session_info.name`` else first user message.
 
     Official Pi JSONL uses a ``type:session`` header, ``message.content`` as a
     string *or* text blocks, optional ``session_info.name`` (the ``/name``
@@ -995,7 +995,20 @@ def pi_user_title(text: str) -> str:
         if title:
             candidates.append(title)
 
-    for group in (names, candidates, compaction_users, compaction_summaries):
+    for group in (names,):
+        for candidate in reversed(group):
+            if meaningful_prompt(candidate):
+                return candidate
+        if group:
+            return group[-1]
+    # /resume uses the first user message, not the latest turn.
+    for candidate in candidates:
+        if meaningful_prompt(candidate):
+            return candidate
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    for group in (compaction_users, compaction_summaries):
         for candidate in reversed(group):
             if meaningful_prompt(candidate):
                 return candidate

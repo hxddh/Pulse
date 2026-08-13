@@ -484,6 +484,13 @@ def check_tool_reading() -> int:
     )
     if A.pi_user_title(compact_pi) != "Keep the compacted Pi goal":
         return fail("Pi compaction retainedTail was not used as the session title")
+    first_pi = (
+        '{"type":"session","id":"sess-first","cwd":"/Users/me/Pulse"}\n'
+        '{"type":"message","message":{"role":"user","content":"Fix the tray hero"}}\n'
+        '{"type":"message","message":{"role":"user","content":"Also update the README"}}\n'
+    )
+    if A.pi_user_title(first_pi) != "Fix the tray hero":
+        return fail("Pi /resume title used the latest user turn instead of the first")
 
     unresolved = (
         '{"type":"response_item","payload":{"type":"function_call",'

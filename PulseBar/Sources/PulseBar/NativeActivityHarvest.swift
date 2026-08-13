@@ -325,7 +325,10 @@ enum NativeActivityHarvest {
             // entire ~/.pi tree also traverses its bundled npm/runtime cache
             // (11k+ files on a typical install), consumes the global budget,
             // and can hide the actual session DBs behind a native timeout.
-            d(.pi, [".pi/context-mode/sessions", ".pi/agent/sessions"], ["pi"]),
+            // JSONL under agent/sessions is the /resume title source. Walking
+            // context-mode SQLite first spent the adapter deadline on empty
+            // session_meta rows and never opened the transcripts.
+            d(.pi, [".pi/agent/sessions", ".pi/context-mode/sessions"], ["pi"]),
             d(.amp, [".local/share/amp", ".amp"], ["amp"]),
             d(.aider, [".aider"], ["aider"]),
             d(.gemini, [".gemini/tmp"], ["gemini"]),
@@ -475,6 +478,8 @@ enum NativeActivityHarvest {
         ) else { return Date() >= deadline || budget.exhausted }
 
         var visited = 0
+        var deferredPiSqlite: [URL] = []
+        var piTranscripts: [(url: URL, values: URLResourceValues, ext: String)] = []
         while let item = enumerator.nextObject() as? URL {
             if Date() >= deadline || budget.exhausted { break }
             visited += 1
@@ -513,6 +518,13 @@ enum NativeActivityHarvest {
                 continue
             }
             if [.opencode, .warpAgent, .pi, .grok].contains(id), ["sqlite", "db"].contains(ext) {
+                if id == .pi {
+                    // JSONL carries /resume titles. A sibling sessions.db
+                    // (or any non-session_meta file) must not run first or
+                    // mark the adapter failed before those transcripts.
+                    deferredPiSqlite.append(item)
+                    continue
+                }
                 collectVendorDatabase(
                     item,
                     id: id,
@@ -545,124 +557,170 @@ enum NativeActivityHarvest {
                 if !isChat { continue }
             }
             guard ["json", "jsonl", "ndjson", "txt", "md", "log"].contains(ext) else { continue }
-            let size = values.fileSize ?? 0
-            let sizeLimit = id == .grok
-                ? 16 * 1024 * 1024
-                : (allowsBoundedLargeTranscript(id) ? 512 * 1024 * 1024 : maxFileBytes)
-            guard size > 0, size <= sizeLimit else { continue }
-
-            let mtime = values.contentModificationDate.map {
-                Int64($0.timeIntervalSince1970 * 1000)
-            } ?? 0
-            if shouldSkipStaleTranscript(id: id, mtime: mtime) { continue }
-
-            let windowCap = id == .codex ? 8_000_000 : (id == .pi ? 2_000_000 : 1_000_000)
-            let headLimit = id == .pi ? 256_000 : 64_000
-            guard let text = readWindow(
-                item, size: size, budget: budget, cap: windowCap, headLimit: headLimit
-            ), !text.isEmpty else { continue }
-            let structured = isSessionPath(item)
-                || (id == .grok && item.path.lowercased().contains("/.grok/logs/"))
-            // Missing metadata is unknown, not evidence that the session was
-            // just touched. Fabricating Date() here made a stale cache look
-            // live whenever the filesystem refused one stat call.
-            let birth = values.creationDate.map { Int64($0.timeIntervalSince1970 * 1000) } ?? 0
-            var parsed = parseFacts(text, structured: structured, path: item.path)
-            // A malformed standalone JSON document is a damaged source, not
-            // an empty session. Mark only this adapter as partial so the
-            // caller can retain the last good rows and show an actionable
-            // health state; JSONL is intentionally tolerant because a live
-            // writer can leave one incomplete trailing line between writes.
-            if parsed.isEmpty, ext == "json",
-               let data = text.data(using: .utf8),
-               (try? JSONSerialization.jsonObject(with: data)) == nil {
-                error = true
+            if id == .pi {
+                // Stat only during the walk. Reading every historical JSONL at
+                // 8 MB exhausted the 48 MB budget (and the 0.75s adapter)
+                // before the live /resume file. Newest mtime first, cheap
+                // head+tail, then SQLite.
+                piTranscripts.append((item, values, ext))
+                continue
             }
-            if parsed.isEmpty, let fallback = textFacts(text, structured: structured, path: item.path) {
-                parsed = [fallback]
-            }
-            if [.amp, .claude, .commandCode, .gemini, .aider, .copilot,
-                .goose, .openhands, .continue_, .droid, .kimi].contains(id) {
-                // Shared prompt logs and transcript adapters frequently end
-                // with conversational continuations ("continue", "继续分析")
-                // that carry no new goal. Dropping them keeps the tray focused
-                // on the last actionable prompt while retaining the session.
-                parsed.removeAll { isContinuationPrompt($0.task) }
-            }
-            guard !parsed.isEmpty else { continue }
-            let records = ext == "jsonl" || ext == "ndjson"
-                ? text.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
-                : 0
-            for index in parsed.indices {
-                parsed[index].sourcePath = item.path
-                // Prefer vendor timestamps already parsed from the object; fall
-                // back to file mtime. Never let a freshly-touched thin file mask
-                // an older authoritative updatedAt from the cache payload.
-                if parsed[index].activityMs <= 0 {
-                    parsed[index].activityMs = mtime
-                }
-                parsed[index].startedMs = birth > 0 && birth <= mtime + 1000 ? birth : 0
-                parsed[index].records = records
-                parsed[index].structured = structured
-                // Waiting-none Agents must not invent Waiting from cache status
-                // words — Attention bridge is the only honest path (Warp etc.).
-                if id.waitingSource == .none, parsed[index].skill == "pending" {
-                    parsed[index].skill = ""
-                    parsed[index].explicitPending = false
-                }
-                if id == .amp, item.path.lowercased().hasSuffix("history.jsonl") {
-                    // history.jsonl is a shared prompt log, not a transcript
-                    // per row. Repeating the file line count on every prompt
-                    // falsely implies each task had 14 records.
-                    parsed[index].records = 0
-                }
-                if id == .gemini, structured {
-                    // Normalize every record in one file to the file/session
-                    // identity; message UUIDs are not Gemini session IDs.
-                    parsed[index].sessionID = sessionIDFromPath(item)
-                }
-                if parsed[index].cwd.isEmpty, id == .gemini,
-                   let projectRoot = geminiProjectRoot(for: item) {
-                    parsed[index].cwd = projectRoot
-                    parsed[index].project = parsed[index].project.isEmpty
-                        ? lastPathComponent(projectRoot)
-                        : parsed[index].project
-                }
-                if parsed[index].sessionID.isEmpty, structured {
-                    parsed[index].sessionID = sessionIDFromPath(item)
-                }
-                if id == .claude {
-                    let encoded = item.deletingLastPathComponent().lastPathComponent
-                    let decoded = decodeClaudeProjectDir(encoded)
-                    if !decoded.isEmpty,
-                       parsed[index].cwd.isEmpty || looksLikeFilePathCwd(parsed[index].cwd) {
-                        parsed[index].cwd = decoded
-                        if parsed[index].project.isEmpty {
-                            parsed[index].project = lastPathComponent(decoded)
-                        }
-                    }
-                }
-            }
-            if id == .claude {
-                let counts = claudeSubagentCounts(for: item)
-                if counts.total > 0 {
-                    for index in parsed.indices {
-                        parsed[index].subRunning = max(parsed[index].subRunning, counts.running)
-                        parsed[index].subTotal = max(parsed[index].subTotal, counts.total)
-                    }
-                }
-            }
-            // Stamping the same path-derived session id onto every fragment
-            // collapses identities — re-merge so latest tool / richest task win.
-            parsed = merge(parsed)
-            let remaining = max(0, maxFactsPerAgent - facts.count)
-            if remaining > 0 {
-                facts.append(contentsOf: parsed.filter { $0.hasUsefulSignal && $0.hasDisplaySignal }.prefix(remaining))
-            }
+            ingestTranscriptFile(
+                item,
+                values: values,
+                ext: ext,
+                id: id,
+                home: home,
+                into: &facts,
+                error: &error,
+                budget: budget
+            )
             if facts.count >= maxFactsPerAgent { break }
+        }
+        if id == .pi {
+            let ranked = piTranscripts.sorted { lhs, rhs in
+                let a = lhs.values.contentModificationDate ?? .distantPast
+                let b = rhs.values.contentModificationDate ?? .distantPast
+                if a != b { return a > b }
+                return lhs.url.path > rhs.url.path
+            }
+            for item in ranked {
+                if Date() >= deadline || budget.exhausted { break }
+                if facts.count >= maxFactsPerAgent { break }
+                ingestTranscriptFile(
+                    item.url,
+                    values: item.values,
+                    ext: item.ext,
+                    id: id,
+                    home: home,
+                    into: &facts,
+                    error: &error,
+                    budget: budget
+                )
+            }
+            for db in deferredPiSqlite {
+                if Date() >= deadline || budget.exhausted { break }
+                if facts.count >= maxFactsPerAgent { break }
+                collectVendorDatabase(
+                    db,
+                    id: id,
+                    home: home,
+                    into: &facts,
+                    budget: budget,
+                    error: &error
+                )
+            }
         }
         error = error || errorBox.value
         return Date() >= deadline || budget.exhausted
+    }
+
+    private static func ingestTranscriptFile(
+        _ item: URL,
+        values: URLResourceValues,
+        ext: String,
+        id: AgentID,
+        home: URL,
+        into facts: inout [Fact],
+        error: inout Bool,
+        budget: ScanBudget
+    ) {
+        let size = values.fileSize ?? 0
+        let sizeLimit = id == .grok
+            ? 16 * 1024 * 1024
+            : (allowsBoundedLargeTranscript(id) ? 512 * 1024 * 1024 : maxFileBytes)
+        guard size > 0, size <= sizeLimit else { return }
+
+        let mtime = values.contentModificationDate.map {
+            Int64($0.timeIntervalSince1970 * 1000)
+        } ?? 0
+        if shouldSkipStaleTranscript(id: id, mtime: mtime) { return }
+
+        // Pi /resume titles live in the session header / first user message
+        // (head) and optional /name + compaction (usually near the tail).
+        // 8 MB per historical file exhausted the 48 MB budget; match the
+        // legacy harvest window: 96 KB head + 400 KB tail.
+        let windowCap = id == .codex ? 8_000_000 : (id == .pi ? 496_000 : 1_000_000)
+        let headLimit = id == .pi ? 96_000 : 64_000
+        guard let text = readWindow(
+            item, size: size, budget: budget, cap: windowCap, headLimit: headLimit
+        ), !text.isEmpty else { return }
+        let structured = isSessionPath(item)
+            || (id == .grok && item.path.lowercased().contains("/.grok/logs/"))
+        let birth = values.creationDate.map { Int64($0.timeIntervalSince1970 * 1000) } ?? 0
+        var parsed = parseFacts(text, structured: structured, path: item.path)
+        if parsed.isEmpty, ext == "json",
+           let data = text.data(using: .utf8),
+           (try? JSONSerialization.jsonObject(with: data)) == nil {
+            error = true
+        }
+        if parsed.isEmpty,
+           !(id == .pi && piLooksOfficial(text)),
+           let fallback = textFacts(text, structured: structured, path: item.path) {
+            parsed = [fallback]
+        }
+        if [.amp, .claude, .commandCode, .gemini, .aider, .copilot,
+            .goose, .openhands, .continue_, .droid, .kimi].contains(id) {
+            parsed.removeAll { isContinuationPrompt($0.task) }
+        }
+        guard !parsed.isEmpty else { return }
+        let records = ext == "jsonl" || ext == "ndjson"
+            ? text.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
+            : 0
+        for index in parsed.indices {
+            parsed[index].sourcePath = item.path
+            if parsed[index].activityMs <= 0 {
+                parsed[index].activityMs = mtime
+            }
+            parsed[index].startedMs = birth > 0 && birth <= mtime + 1000 ? birth : 0
+            parsed[index].records = records
+            parsed[index].structured = structured
+            if id.waitingSource == .none, parsed[index].skill == "pending" {
+                parsed[index].skill = ""
+                parsed[index].explicitPending = false
+            }
+            if id == .amp, item.path.lowercased().hasSuffix("history.jsonl") {
+                parsed[index].records = 0
+            }
+            if id == .gemini, structured {
+                parsed[index].sessionID = sessionIDFromPath(item)
+            }
+            if parsed[index].cwd.isEmpty, id == .gemini,
+               let projectRoot = geminiProjectRoot(for: item) {
+                parsed[index].cwd = projectRoot
+                parsed[index].project = parsed[index].project.isEmpty
+                    ? lastPathComponent(projectRoot)
+                    : parsed[index].project
+            }
+            if parsed[index].sessionID.isEmpty, structured {
+                parsed[index].sessionID = sessionIDFromPath(item)
+            }
+            if id == .claude {
+                let encoded = item.deletingLastPathComponent().lastPathComponent
+                let decoded = decodeClaudeProjectDir(encoded)
+                if !decoded.isEmpty,
+                   parsed[index].cwd.isEmpty || looksLikeFilePathCwd(parsed[index].cwd) {
+                    parsed[index].cwd = decoded
+                    if parsed[index].project.isEmpty {
+                        parsed[index].project = lastPathComponent(decoded)
+                    }
+                }
+            }
+        }
+        if id == .claude {
+            let counts = claudeSubagentCounts(for: item)
+            if counts.total > 0 {
+                for index in parsed.indices {
+                    parsed[index].subRunning = max(parsed[index].subRunning, counts.running)
+                    parsed[index].subTotal = max(parsed[index].subTotal, counts.total)
+                }
+            }
+        }
+        parsed = merge(parsed)
+        let remaining = max(0, maxFactsPerAgent - facts.count)
+        if remaining > 0 {
+            facts.append(contentsOf: parsed.filter { $0.hasUsefulSignal && $0.hasDisplaySignal }.prefix(remaining))
+        }
     }
 
     private static func geminiProjectRoot(for url: URL) -> String? {
@@ -709,7 +767,9 @@ enum NativeActivityHarvest {
             nil
         )
         guard status == SQLITE_OK, let database else {
-            error = true
+            // Pi JSONL is the title source. A sibling that is not SQLite
+            // must not fail the adapter (that froze lastGoodHarvest empty).
+            if id != .pi { error = true }
             if database != nil { sqlite3_close(database) }
             return
         }
@@ -721,6 +781,8 @@ enum NativeActivityHarvest {
             collectWarpDatabase(database, url: url, into: &facts, error: &error)
         case .pi:
             collectPiDatabase(database, url: url, home: home, into: &facts, error: &error)
+            // A non-session_meta sibling must not fail the JSONL adapter.
+            return
         case .grok:
             collectGrokDatabase(database, url: url, home: home, into: &facts, error: &error)
         default:
@@ -1005,7 +1067,8 @@ enum NativeActivityHarvest {
     ) {
         let sql = "SELECT session_id, project_dir, started_at, last_event_at, event_count FROM session_meta ORDER BY COALESCE(last_event_at, started_at) DESC LIMIT \(maxRowsPerAgent)"
         guard let statement = sqlitePrepare(database, sql) else {
-            error = true
+            // ~/.pi trees contain JSONL plus incidental .db files. Missing
+            // session_meta is not a harvest failure — JSONL still has titles.
             return
         }
         defer { sqlite3_finalize(statement) }
@@ -1228,9 +1291,9 @@ enum NativeActivityHarvest {
     ) -> String? {
         // The newest event is at the tail of the append-only transcripts. The
         // caller gives Codex a wider window because its compacted context is a
-        // single large JSONL record; Pi keeps the session header at the head
-        // and compaction / latest user turns at the tail. Every window remains
-        // bounded by the process-wide 48 MB budget.
+        // single large JSONL record; Pi keeps the session header and first
+        // user prompt at the head and /name + compaction at the tail. Every
+        // window remains bounded by the process-wide 48 MB budget.
         let headSize = max(64_000, headLimit)
         let window = max(headSize, cap)
         do {
@@ -1242,9 +1305,28 @@ enum NativeActivityHarvest {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
             let tailSize = window - headSize
-            let head = try handle.read(upToCount: headSize) ?? Data()
+            var head = try handle.read(upToCount: headSize) ?? Data()
+            // A Pi user turn can be one JSONL record larger than the head
+            // slice. Split records fail JSON parse and the tray hero goes
+            // blank. Extend to the next newline so the first prompt survives.
+            if head.last != 0x0A {
+                var extra = 0
+                while extra < 2_000_000 {
+                    guard budget.reserve(64_000) else { break }
+                    guard let chunk = try handle.read(upToCount: 64_000), !chunk.isEmpty else { break }
+                    head.append(chunk)
+                    extra += chunk.count
+                    if chunk.contains(0x0A) { break }
+                }
+            }
+            if let lastNL = head.lastIndex(of: 0x0A) {
+                head = Data(head[head.startIndex...lastNL])
+            }
             handle.seek(toFileOffset: UInt64(max(0, size - tailSize)))
-            let tail = try handle.read(upToCount: tailSize) ?? Data()
+            var tail = try handle.read(upToCount: tailSize) ?? Data()
+            if let firstNL = tail.firstIndex(of: 0x0A), firstNL > tail.startIndex {
+                tail = Data(tail[tail.index(after: firstNL)...])
+            }
             // The tail can begin in the middle of a multi-byte character (or
             // a JSONL record). Lossy UTF-8 decoding keeps the following
             // complete lines available instead of turning one large rollout
@@ -1473,6 +1555,10 @@ enum NativeActivityHarvest {
            lowerPath.hasSuffix(".jsonl") || lowerPath.hasSuffix(".ndjson") {
             let pi = parsePiFacts(text, path: path)
             if !pi.isEmpty { return pi }
+            // Official envelopes without a parseable user prompt must not
+            // fall through to the generic walker — that produced cwd-only
+            // rows whose tray hero was the project folder name.
+            if piLooksOfficial(text) { return [] }
         }
         var objects: [(Any, String)] = []
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1752,6 +1838,36 @@ enum NativeActivityHarvest {
         return f.hasUsefulSignal ? [f] : []
     }
 
+    private static func piLineMightCarryTitle(_ raw: String) -> Bool {
+        // Only the line prefix — megabyte tool records must stay O(1).
+        let prefix = raw.prefix(384)
+        return prefix.contains("session_info")
+            || prefix.contains("retainedTail")
+            || prefix.contains("\"role\":\"user\"")
+            || prefix.contains("\"role\": \"user\"")
+            || prefix.contains("\"type\":\"session\"")
+            || prefix.contains("\"type\": \"session\"")
+            || prefix.contains("\"type\":\"compaction\"")
+            || prefix.contains("\"type\": \"compaction\"")
+    }
+
+    private static func piLooksOfficial(_ text: String) -> Bool {
+        for line in text.split(whereSeparator: \.isNewline).prefix(8) {
+            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard raw.hasPrefix("{") else { continue }
+            let prefix = raw.prefix(384)
+            if prefix.contains("\"type\":\"session\"")
+                || prefix.contains("\"type\": \"session\"")
+                || prefix.contains("\"type\":\"message\"")
+                || prefix.contains("\"type\": \"message\"")
+                || prefix.contains("\"type\":\"session_info\"")
+                || prefix.contains("\"type\": \"session_info\"") {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Official Pi JSONL (`https://pi.dev/docs/latest/session-format`):
     /// `~/.pi/agent/sessions/--<cwd-with-slashes-as-dashes>--/<timestamp>_<uuid>.jsonl`
     /// with a `type:session` header, `message.content` as string *or* text
@@ -1771,8 +1887,11 @@ enum NativeActivityHarvest {
 
         for line in text.split(whereSeparator: \.isNewline) {
             let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard raw.hasPrefix("{"),
-                  let data = raw.data(using: .utf8),
+            guard raw.hasPrefix("{") else { continue }
+            // Tool-result bodies can be megabytes. JSON-parsing them blew the
+            // adapter deadline and left the /resume title unread.
+            if raw.count > 8_192, !piLineMightCarryTitle(raw) { continue }
+            guard let data = raw.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { continue }
             let recordType = firstString(object, keys: ["type"]).lowercased()
@@ -1824,9 +1943,11 @@ enum NativeActivityHarvest {
             f.records += 1
         }
 
-        // Prefer the user-facing session name (`/name`), then the latest
-        // meaningful user turn, then compaction's retained prompt / summary.
+        // Pi /resume shows session_info.name, else the first user message.
+        // Latest turn is only a fallback when the opening prompt was chrome
+        // or an env-context wrapper we stripped to nothing.
         let task = latestMeaningfulPiTitle(sessionNames)
+            ?? firstMeaningfulPiTitle(userTitles)
             ?? latestMeaningfulPiTitle(userTitles)
             ?? latestMeaningfulPiTitle(compactionUsers)
             ?? latestMeaningfulPiTitle(compactionSummaries)
@@ -1850,6 +1971,19 @@ enum NativeActivityHarvest {
         f.phase = clean(f.phase, limit: 64)
         f.model = clean(f.model, limit: 64)
         return f.hasUsefulSignal ? [f] : []
+    }
+
+    private static func firstMeaningfulPiTitle(_ titles: [String]) -> String? {
+        for title in titles {
+            let cleaned = cleanPiSessionTitle(title)
+            if cleaned.isEmpty || isChromeTask(cleaned) { continue }
+            if meaningfulPiPrompt(cleaned) { return cleaned }
+        }
+        for title in titles {
+            let cleaned = cleanPiSessionTitle(title)
+            if !cleaned.isEmpty, !isChromeTask(cleaned) { return cleaned }
+        }
+        return nil
     }
 
     private static func latestMeaningfulPiTitle(_ titles: [String]) -> String? {
@@ -2481,7 +2615,9 @@ enum NativeActivityHarvest {
             "cascade session", "aider session", "droid session", "kimi session",
         ]
         if chrome.contains(t) { return true }
-        return t.hasSuffix(" session") || t.hasSuffix(" thread") || t.hasSuffix(" chat")
+        // Exact vendor placeholders only. `hasSuffix(" session")` dropped
+        // real Pi `/name` titles like "Auth session".
+        return false
     }
 
     /// Cline/Roo/Cascade (+ kin) ask tool ids — exact tokens only, never free-text inference.
