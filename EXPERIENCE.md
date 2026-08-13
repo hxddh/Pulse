@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.97.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.97.1），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -147,8 +147,7 @@ Prefs 只改开关与连接。
   32 个图标不是识别测试；产品名必须可直接扫读。更多操作只在悬停 / 键盘选中时显形，
   但 VoiceOver 动作始终存在
 - **主行** = 会话标题（真实用户目标；Claude/Command Code 跳过 `tool_result`；
-  Codex 剥 Desktop 信封；Pi 来自官方 JSONL：`session_info.name`（`/name`）优先，
-  否则 `message.content` 字符串或 text 块，否则 compaction `retainedTail`；
+  Codex 剥 Desktop 信封；Pi 与 `/resume` 一致：`session_info.name` 否则第一条用户句；
   剥 `<environment_context>` 留后半句；不是 `Pi session` /
   `Read Foo.swift` / 工具回包；无标题时依次退到**人话工具名** → 项目名 →
   终端/应用会话短语）。禁止 `update_plan` / `Bash` / 文件名 / `Agent session` 当标题；
@@ -484,7 +483,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AG | Waiting Proof（等待可证） | Cline/Roo/Cascade/Cursor 显式 ask/block → 红灯；soft-dismiss 后自然清除可再亮；`depending`/Waiting-none 永不从 harvest 抬；Attention raise 精确点亮并可 clear；Waiting-none 在跑时可直达 Waiting signals；不扩 hooks、不伪造 Waiting |
 | AH | Extinguish Honesty（熄灭诚实） | 已答 ask / 终态不亮；Cascade/Windsurf 共享根不双红；Pi/Grok 正文不抬；soft-dismiss 重启仍压、可靠缺席后可再亮；纯 harvest dismiss 不抹掉同 Agent Attention；歧义 session 前缀不 smear；`Waiting`+Stop 有 grace；Clear waiting 无迟到通知 |
 | AI | Return Truth（回看诚实） | 重开托盘后用新扫描算 Look；同行新 `waitSinceMs` 算新等待且优先于 ended；ended 不进 moved；Glance 超 8 格降为 `1 · 4m` / `1`；样本行出现后再 Go-Look；进程收养重键；Attention 压缩保留未决；Details 可行动缺口优先、quiet/cache 不重复观测/身份 |
-| AJ | Pi 会话标题 | 官方 `~/.pi/agent/sessions/--<cwd>--/<timestamp>_<uuid>.jsonl`：`session` 头 id/cwd；字符串 `content`；`session_info.name` 优先于首条用户句；env 标签不吞后半句；compaction `retainedTail`；过期 JSONL 仍进主行；空 SQLite 不挡 JSONL 标题 |
+| AJ | Pi 会话标题 | 与 Pi `/resume` 一致：`session_info.name` 否则**第一条**用户句；官方 `--<cwd>--/<timestamp>_<uuid>.jsonl`；env 标签不吞后半句；compaction `retainedTail`；sibling `.db` 不挡 JSONL；`Auth session` 不是 chrome；官方头-only 不发明项目名主行 |
 | AK | Hero Honesty（主行诚实） | Claude/Command Code `tool_result` 不当标题、长笔录开场目标仍在；Codex `event_msg` 用户正文进主行、Desktop 信封剥掉、`continue` 不覆盖；tool `path` 不是 cwd；Goose `name` / Kimi `lastPrompt` 可见；表头计数=舰队；Details 空 phase 不发明「等待权限」；审批 ask → Permission 芯片 |
 
 ---
