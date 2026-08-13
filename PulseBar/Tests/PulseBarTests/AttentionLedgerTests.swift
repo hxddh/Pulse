@@ -76,4 +76,17 @@ final class AttentionLedgerTests: XCTestCase {
             "recovery must prefer the latest duplicate deadline"
         )
     }
+
+    func testRemapRowKeyMovesActiveSnooze() {
+        var ledger = AttentionLedger()
+        ledger.reconcile(activeRows: [row("codex")], nowMs: 1_000)
+        ledger.snooze(rowKey: "codex", untilMs: 9_000)
+        ledger.remapRowKey(from: "codex", to: "codex|sess")
+        XCTAssertEqual(ledger.activeKeys, ["codex|sess"])
+        XCTAssertEqual(
+            ledger.snoozedUntil["codex|sess"],
+            Date(timeIntervalSince1970: 9)
+        )
+        XCTAssertNil(ledger.snoozedUntil["codex"])
+    }
 }

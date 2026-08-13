@@ -177,6 +177,13 @@ struct AttentionLedger: Codable {
     /// history. Active waits are never removed by this action: the current
     /// agent-owned signal remains the source of truth and still needs a
     /// visible response.
+    mutating func remapRowKey(from oldKey: String, to newKey: String) {
+        guard oldKey != newKey, !newKey.isEmpty else { return }
+        for index in events.indices where events[index].rowKey == oldKey {
+            events[index].rowKey = newKey
+        }
+    }
+
     mutating func clearResolved() {
         events.removeAll { !$0.isActive }
     }
