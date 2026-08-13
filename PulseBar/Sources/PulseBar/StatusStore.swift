@@ -316,10 +316,14 @@ final class StatusStore: ObservableObject {
     /// vendor-specific phase we still show a safe, human-readable value rather
     /// than leaving the most important operational fact blank.
     func detailPhase(_ row: AgentRow) -> String {
-        if let phase = readablePhase(row.phase) { return phase }
+        if let phase = readablePhase(row.phase, waiting: row.waiting) { return phase }
         let raw = row.phase.trimmingCharacters(in: .whitespacesAndNewlines)
         if !raw.isEmpty { return raw.replacingOccurrences(of: "_", with: " ").capitalized }
-        if row.waiting { return tr(.phaseWaitingPermission) }
+        if row.waiting {
+            let kind = row.waitKind.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !kind.isEmpty { return localizedWaitKind(kind) }
+            return tr(.needsYou)
+        }
         if row.isStalled { return tr(.stalled) }
         if row.liveProcess { return tr(.phaseWorking) }
         if !row.outcome.isEmpty { return row.outcome }
@@ -960,7 +964,7 @@ final class StatusStore: ObservableObject {
         }
         if let task = row.usefulTask { facts.append(task) }
         if !row.displayPath.isEmpty { facts.append(row.displayPath) }
-        if let phase = readablePhase(row.phase) { facts.append(phase) }
+        if let phase = readablePhase(row.phase, waiting: row.waiting) { facts.append(phase) }
         if let tool = nonEmpty(row.tool) {
             let action = readableAction(tool)
             // Support diagnostics have more room than the tray's default row.
@@ -2943,10 +2947,10 @@ final class StatusStore: ObservableObject {
             // otherwise an old "reading" event would look like work happening
             // now after the session has gone quiet.
             guard row.lastActivitySeconds <= 30 * 60,
-                  let phase = readablePhase(row.phase) else { return "" }
+                  let phase = readablePhase(row.phase, waiting: row.waiting) else { return "" }
             return String(format: tr(.nowActivity), phase)
         }
-        guard let phase = readablePhase(row.phase) else { return "" }
+        guard let phase = readablePhase(row.phase, waiting: row.waiting) else { return "" }
         return String(format: tr(.nowActivity), phase)
     }
 
@@ -3001,7 +3005,7 @@ final class StatusStore: ObservableObject {
 
         var bits: [String] = []
         // Prefer explicit lifecycle — never promote last tool under a Now label.
-        if let phase = readablePhase(row.phase), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
+        if let phase = readablePhase(row.phase, waiting: row.waiting), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
             bits.append(phase)
         } else if row.isStalled {
             bits.append(tr(.stalled))
@@ -3124,7 +3128,7 @@ final class StatusStore: ObservableObject {
             return false
         }
         if row.isStalled { return true }
-        if let _ = readablePhase(row.phase), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
+        if let _ = readablePhase(row.phase, waiting: row.waiting), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
             return true
         }
         return false
@@ -3451,10 +3455,12 @@ final class StatusStore: ObservableObject {
         return !readableAction(trimmed).isEmpty
     }
 
-    private func readablePhase(_ raw: String) -> String? {
+    private func readablePhase(_ raw: String, waiting: Bool = false) -> String? {
         let low = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if low.isEmpty { return nil }
-        if low.contains("permission") { return tr(.phaseWaitingPermission) }
+        if low.contains("permission") {
+            return waiting ? tr(.phaseWaitingPermission) : tr(.phaseWorking)
+        }
         if low.contains("turn_complete") || low == "completed" || low == "complete" {
             return tr(.phaseTurnComplete)
         }

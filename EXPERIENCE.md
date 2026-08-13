@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.96.1），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.97.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -86,6 +86,8 @@ Prefs 只改开关与连接。
 采集器每 Agent 最多读取 500 条，Swift 模型保留其中最多 500 条，面板默认只展开全局前 12 条。
 三层预算分别服务于输入完整性、内存安全与扫视密度；超出 glance 窗口的会话必须精确计数，
 不得让“看起来只显示 12 条”反向限制实际检测。
+**Header 状态计数用全量 `sectionTotals`**（非搜索时），不得把窗口里可见的 9 行运行中
+写成舰队只有 9 个；「另有 N」仍说明未展开的行。
 
 面板宽度为 448pt，高度**由内容决定**（测量后封顶），不得用手写的高度加减法。
 默认封顶 660pt，展开 700pt；不能在底部只露出下一组表头却不露任何一行。
@@ -144,8 +146,9 @@ Prefs 只改开关与连接。
 - **身份行** = 6px 状态灯（等待红 / 运行绿 / 最近灰 / 异常橙）+ Agent 产品名 + 运行时证据等级（仅缓存 / 仅进程时出现）+ 非常态芯片。
   32 个图标不是识别测试；产品名必须可直接扫读。更多操作只在悬停 / 键盘选中时显形，
   但 VoiceOver 动作始终存在
-- **主行** = 会话标题（真实用户目标；Pi 来自 JSONL `message.content` 用户提示，
-  不是 `Pi session` / `Read Foo.swift`；无标题时依次退到**人话工具名** → 项目名 →
+- **主行** = 会话标题（真实用户目标；Claude/Command Code 跳过 `tool_result`；
+  Codex 剥 Desktop 信封；Pi 来自 JSONL `message.content`；不是 `Pi session` /
+  `Read Foo.swift` / 工具回包；无标题时依次退到**人话工具名** → 项目名 →
   终端/应用会话短语）。禁止 `update_plan` / `Bash` / 文件名 / `Agent session` 当标题；
   禁止把 Agent 产品名再当主行（身份行已有）。
   —— 最多两行（列表拥挤时也不砍真实标题尾部）。标题不与状态、时间或菜单争同一行。
@@ -480,6 +483,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AH | Extinguish Honesty（熄灭诚实） | 已答 ask / 终态不亮；Cascade/Windsurf 共享根不双红；Pi/Grok 正文不抬；soft-dismiss 重启仍压、可靠缺席后可再亮；纯 harvest dismiss 不抹掉同 Agent Attention；歧义 session 前缀不 smear；`Waiting`+Stop 有 grace；Clear waiting 无迟到通知 |
 | AI | Return Truth（回看诚实） | 重开托盘后用新扫描算 Look；同行新 `waitSinceMs` 算新等待且优先于 ended；ended 不进 moved；Glance 超 8 格降为 `1 · 4m` / `1`；样本行出现后再 Go-Look；进程收养重键；Attention 压缩保留未决；Details 可行动缺口优先、quiet/cache 不重复观测/身份 |
 | AJ | Pi 会话标题 | Pi JSONL `message.content` 进主行；长会话开场目标不丢、`continue` 不覆盖；SQLite `file_read` 不当标题，且不压过 JSONL 真目标 |
+| AK | Hero Honesty（主行诚实） | Claude/Command Code `tool_result` 不当标题、长笔录开场目标仍在；Codex `event_msg` 用户正文进主行、Desktop 信封剥掉、`continue` 不覆盖；tool `path` 不是 cwd；Goose `name` / Kimi `lastPrompt` 可见；表头计数=舰队；Details 空 phase 不发明「等待权限」；审批 ask → Permission 芯片 |
 
 ---
 

@@ -795,4 +795,120 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertNotEqual(row.skill, "pending", "Waiting-none must never stamp harvest pending")
         XCTAssertEqual(row.evidence, .cache)
     }
-}
+
+    func testClaudeToolResultIsNotSessionTitle() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-claude-result-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".claude/projects/-Users-me-code-Pulse", isDirectory: true)
+            .appendingPathComponent("sess-result.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let dump = String(repeating: "search hit ", count: 40)
+        let lines = [
+            #"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Keep the Claude goal"}]}}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"\#(dump)"}]}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"path":"/tmp/file-0.swift"}}]}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
+        XCTAssertEqual(row.task, "Keep the Claude goal")
+        XCTAssertFalse(row.task.contains("search hit"))
+        XCTAssertNotEqual(row.cwd, "/tmp/file-0.swift")
+        XCTAssertEqual(row.cwd, "/Users/me/code/Pulse")
+    }
+
+    func testClaudeEarlyPromptSurvivesLongToolResultTail() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-claude-tail-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".claude/projects/-Users-me-Pulse", isDirectory: true)
+            .appendingPathComponent("sess-long.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        var lines = [
+            #"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Ship hero honesty"}]}}"#,
+        ]
+        for index in 0..<300 {
+            lines.append(
+                #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"chunk-\#(index)"}]}}"#
+            )
+        }
+        try (lines.joined(separator: "\n") + "\n").write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
+        XCTAssertEqual(row.task, "Ship hero honesty")
+    }
+
+    func testCodexEventMsgUserMessageIsSessionTitle() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-codex-event-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".codex/sessions/2026/08/13", isDirectory: true)
+            .appendingPathComponent("rollout-event.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"type":"session_meta","payload":{"session_id":"evt-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"Ship Codex event titles"},"timestamp":1700000001}"#,
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"continue"},"timestamp":1700000002}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
+        XCTAssertEqual(row.task, "Ship Codex event titles")
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+    }
+
+    func testCodexDesktopEnvelopeIsStrippedFromTitle() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-codex-desk-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".codex/sessions/2026/08/13", isDirectory: true)
+            .appendingPathComponent("rollout-desk.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"type":"session_meta","payload":{"session_id":"desk-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,
+            #"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"## My request for Codex:\nFix the lamp\n<image>blob</image>"}]},"timestamp":1700000001}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
+        XCTAssertEqual(row.task, "Fix the lamp")
+        XCTAssertFalse(row.task.contains("My request"))
+        XCTAssertFalse(row.task.contains("<image"))
+    }
+
+    func testGooseNameIsSessionTitle() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-goose-name-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".config/goose/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"g-name","name":"Need input","cwd":"/tmp/goose","status":"running","currentTool":"bash"}"#
+            .write(to: goose, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        XCTAssertEqual(row.task, "Need input")
+        XCTAssertEqual(row.cwd, "/tmp/goose")
+    }
+
+    func testKimiLastPromptAndWorkDirReachTray() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-kimi-\(UUID().uuidString)")
+        let state = home.appendingPathComponent(".kimi-code/sessions/k1/state.json")
+        try fm.createDirectory(at: state.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"k1","lastPrompt":"Refactor auth","workDir":"/Users/me/app"}"#
+            .write(to: state, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .kimi })
+        XCTAssertEqual(row.task, "Refactor auth")
+        XCTAssertEqual(row.cwd, "/Users/me/app")
+    }

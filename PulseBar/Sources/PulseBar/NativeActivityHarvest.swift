@@ -1467,6 +1467,126 @@ enum NativeActivityHarvest {
             if result.count >= maxFactsPerAgent { break }
         }
         return merge(result).filter(\.hasDisplaySignal)
+            .map { fact in
+                guard usesTranscriptUserPrompt(path),
+                      let prompt = latestTranscriptUserPrompt(text),
+                      meaningfulPiPrompt(prompt)
+                else { return fact }
+                var next = fact
+                next.task = prompt
+                return next
+            }
+    }
+
+    /// Claude / Command Code / Continue / Droid / Gemini chats keep one goal
+    /// per file. Generic JSONL only walks the last 256 lines, so a long
+    /// tool-result tail blanks the hero — same class as the Pi 0.96.1 bug.
+    private static func usesTranscriptUserPrompt(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        if lower.contains("/amp/") { return false }
+        if lower.contains("/.claude/") { return true }
+        if lower.contains("/.commandcode/") { return true }
+        if lower.contains("/.continue/") { return true }
+        if lower.contains("/.factory/") { return true }
+        if lower.contains("/.gemini/") && lower.contains("/chats/") { return true }
+        return false
+    }
+
+    private static func latestTranscriptUserPrompt(_ text: String) -> String? {
+        var candidates: [String] = []
+        var attempts = 0
+        for line in text.split(whereSeparator: \.isNewline).reversed() {
+            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard raw.hasPrefix("{"), raw.contains("\"user\"") else { continue }
+            attempts += 1
+            if attempts > 4096 { break }
+            guard let data = raw.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let title = cleanPiSessionTitle(transcriptUserPrompt(from: object))
+            if !title.isEmpty { candidates.append(title) }
+        }
+        guard !candidates.isEmpty else { return nil }
+        return candidates.first(where: { meaningfulPiPrompt($0) }) ?? candidates[0]
+    }
+
+    private static func transcriptUserPrompt(from dict: [String: Any]) -> String {
+        if let nested = dict["message"] as? [String: Any],
+           firstString(nested, keys: ["role", "type", "kind"]).lowercased() == "user" {
+            let text = userMessageText(nested["content"] ?? nested["text"])
+            if !text.isEmpty { return text }
+        }
+        if isUserRecord(dict) {
+            return userMessageText(firstValue(dict, keys: ["content", "text", "message"]))
+        }
+        return ""
+    }
+
+    /// Visible user text only — skip tool_result / tool_call envelopes.
+    /// Command Code (and Claude) store tool results as role=user records.
+    private static func userMessageText(_ value: Any?) -> String {
+        guard let value else { return "" }
+        if let text = value as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let array = value as? [Any] {
+            let parts = array.compactMap { item -> String? in
+                if let text = item as? String {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                }
+                guard let dict = item as? [String: Any] else { return nil }
+                if isToolEnvelope(dict) { return nil }
+                let text = firstString(dict, keys: ["text"])
+                if !text.isEmpty { return text }
+                if ["input_text", "output_text", "text"].contains(
+                    firstString(dict, keys: ["type"]).lowercased().replacingOccurrences(of: "-", with: "_")
+                ) {
+                    let nested = firstString(dict, keys: ["content"])
+                    return nested.isEmpty ? nil : nested
+                }
+                return nil
+            }
+            return parts.joined(separator: " ")
+        }
+        if let dict = value as? [String: Any] {
+            if isToolEnvelope(dict) { return "" }
+            let text = firstString(dict, keys: ["text"])
+            if !text.isEmpty { return text }
+            return userMessageText(dict["content"])
+        }
+        return ""
+    }
+
+    private static func isToolEnvelope(_ dict: [String: Any]) -> Bool {
+        let kind = firstString(dict, keys: ["type"]).lowercased().replacingOccurrences(of: "-", with: "_")
+        let tools: Set<String> = [
+            "tool_result", "tool_call_output", "custom_tool_call_output",
+            "function_call_output", "function_response", "mcp_tool_call_end",
+            "tool_use", "tool_call", "function_call", "custom_tool_call",
+            "mcp_tool_call", "functioncall",
+        ]
+        return tools.contains(kind)
+    }
+
+    private static func isToolShapedRecord(_ dict: [String: Any]) -> Bool {
+        if isToolEnvelope(dict) { return true }
+        let kind = firstString(dict, keys: ["type"]).lowercased().replacingOccurrences(of: "-", with: "_")
+        return kind == "file_read" || kind == "tool_use" || kind == "tool_call"
+    }
+
+    private static func cwdKeys(for dict: [String: Any]) -> [String] {
+        var keys = [
+            "cwd", "workingDirectory", "workdir", "workDir", "workspacePath", "workspace_path",
+            "projectPath", "project_path", "directory", "worktree", "repoPath",
+            "workspace",
+        ]
+        // `path` is a Cline/Cascade workspace alias on session objects, and a
+        // file argument on tool_use. Only the former is a cwd.
+        if !isToolShapedRecord(dict) {
+            keys.append("path")
+        }
+        return keys
     }
 
     private static func parseCodexFacts(_ text: String, path: String) -> [Fact] {
@@ -1518,15 +1638,22 @@ enum NativeActivityHarvest {
                     guard let message = item as? [String: Any],
                           firstString(message, keys: ["role"]).lowercased() == "user"
                     else { continue }
-                    let prompt = codexUserText(message["content"])
-                    if !prompt.isEmpty, prompt.count >= 8 || f.task.isEmpty {
+                    let prompt = cleanCodexUserRequest(codexUserText(message["content"]))
+                    if !prompt.isEmpty, meaningfulPiPrompt(prompt) || f.task.isEmpty {
                         f.task = prompt
                     }
                 }
             }
             if type == "event_msg" {
                 switch payloadType {
-                case "task_started", "turn_started", "user_message":
+                case "user_message":
+                    let prompt = firstString(payload, keys: ["message", "text", "content"])
+                    let cleaned = cleanCodexUserRequest(prompt)
+                    if !cleaned.isEmpty, meaningfulPiPrompt(cleaned) || f.task.isEmpty {
+                        f.task = cleaned
+                    }
+                    f.phase = f.phase.isEmpty ? "working" : f.phase
+                case "task_started", "turn_started":
                     f.phase = f.phase.isEmpty ? "working" : f.phase
                 case "task_complete", "turn_complete":
                     f.phase = "turn_complete"
@@ -1553,13 +1680,11 @@ enum NativeActivityHarvest {
             if type == "response_item" {
                 let responseType = payloadType
                 if responseType == "message", firstString(payload, keys: ["role"]).lowercased() == "user" {
-                    let prompt = codexUserText(payload["content"])
-                    // Very short confirmations ("ok", "可以", "继续") are
-                    // useful only when a rollout has no preceding goal. Keep
-                    // the latest substantial prompt as the hero title so the
-                    // tray remains actionable instead of echoing a reply.
+                    let prompt = cleanCodexUserRequest(codexUserText(payload["content"]))
+                    // Continuations ("continue", "可以") stay only when the
+                    // rollout has no preceding goal.
                     if !prompt.isEmpty,
-                       prompt.count >= 8 || f.task.isEmpty {
+                       meaningfulPiPrompt(prompt) || f.task.isEmpty {
                         f.task = prompt
                     }
                 } else if responseType == "function_call" {
@@ -1785,6 +1910,26 @@ enum NativeActivityHarvest {
         return ""
     }
 
+    private static func cleanCodexUserRequest(_ value: String) -> String {
+        var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return "" }
+        if let regex = try? NSRegularExpression(pattern: #"##\s+My request for Codex:\s*"#, options: .caseInsensitive),
+           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let range = Range(match.range, in: text) {
+            text = String(text[range.upperBound...])
+        }
+        if let regex = try? NSRegularExpression(pattern: #"<image\b[^>]*>[\s\S]*?</image>"#, options: .caseInsensitive) {
+            text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " ")
+        }
+        if let regex = try? NSRegularExpression(pattern: #"<image\b[^>]*/?>"#, options: .caseInsensitive) {
+            text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " ")
+        }
+        if let regex = try? NSRegularExpression(pattern: #"\[Image\s*#[^\]]*\]\([^)]*\)"#, options: .caseInsensitive) {
+            text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " ")
+        }
+        return cleanPiSessionTitle(text)
+    }
+
     private static func walk(
         _ object: Any,
         context: String,
@@ -1828,17 +1973,21 @@ enum NativeActivityHarvest {
             "task", "goal", "prompt", "query", "user_message", "userMessage",
             "lastMessage", "last_message", "subject",
             // Vendor chrome last — often "Agent session" / plan-step titles.
-            "title", "summary", "description",
+            "title", "summary", "description", "lastPrompt",
         ])
+        if (f.task.isEmpty || isChromeTask(f.task)), !isToolShapedRecord(dict) {
+            let named = firstString(dict, keys: ["name"])
+            if !named.isEmpty { f.task = named }
+        }
         if f.task.isEmpty, isUserRecord(dict) {
-            f.task = textValue(firstValue(dict, keys: ["content", "message", "text"]))
+            f.task = userMessageText(firstValue(dict, keys: ["content", "message", "text"]))
         }
         // Pi (and kin) wrap the user turn as `{type:"message", message:{role:"user"}}`.
         // Top-level type is "message", so isUserRecord misses it.
         if f.task.isEmpty || isChromeTask(f.task),
            let nested = dict["message"] as? [String: Any],
            firstString(nested, keys: ["role", "type", "kind"]).lowercased() == "user" {
-            let prompt = piContentText(nested["content"] ?? firstValue(nested, keys: ["text", "message"]))
+            let prompt = userMessageText(nested["content"] ?? firstValue(nested, keys: ["text", "message"]))
             if !prompt.isEmpty { f.task = prompt }
         }
         // Cache / IDE JSON often nests the real goal under messages[] while the
@@ -1866,12 +2015,7 @@ enum NativeActivityHarvest {
            !normalizedPath(firstString(dict, keys: ["cwd", "workdir", "workingDirectory"])).isEmpty {
             f.task = textValue(firstValue(dict, keys: ["text", "content", "prompt", "query"]))
         }
-        f.cwd = normalizedPath(firstString(dict, keys: [
-            "cwd", "workingDirectory", "workdir", "workspacePath", "workspace_path",
-            "projectPath", "project_path", "directory", "worktree", "repoPath",
-            // Cascade / Cline aliases — absolute paths only (normalizedPath).
-            "workspace", "path",
-        ]))
+        f.cwd = normalizedPath(firstString(dict, keys: cwdKeys(for: dict)))
         f.project = firstString(dict, keys: ["project", "projectName", "project_name", "repository", "repoName"])
         f.sessionID = firstString(dict, keys: [
             "sessionId", "session_id", "threadId", "thread_id", "conversationId",
@@ -2135,6 +2279,11 @@ enum NativeActivityHarvest {
         if newChrome { return }
         if AgentRow.looksLikeFilenameOnlyTitle(new) { return }
         if AgentRow.looksLikeFilenameOnlyTitle(old) { old = new; return }
+        // Tool-result dumps are long; a later short user goal must still win.
+        if old.count > 200, new.count + 8 < old.count, meaningfulPiPrompt(new) {
+            old = new
+            return
+        }
         if new.count >= old.count + 8 { old = new }
     }
 
