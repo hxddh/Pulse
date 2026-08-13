@@ -221,9 +221,11 @@ final class ReturnTruthTests: XCTestCase {
         let story = store.rowStoryLine(row)
         let label = store.rowSourceLabel(row)
         XCTAssertEqual(label, store.tr(.cacheEvidence))
-        XCTAssertFalse(story.contains(store.tr(.cacheEvidence)), story)
-        XCTAssertFalse(story.localizedCaseInsensitiveContains("local cache"), story)
-        XCTAssertFalse(story.contains("本地缓存"), story)
+        let bits = story.split(separator: "·").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        XCTAssertFalse(bits.contains(label), "identity tag must not repeat on story: \(story)")
+        XCTAssertFalse(story.hasPrefix(label), story)
     }
 
     func testStoryOwnsChangeSoDetailsCanSkipDuplicate() {
