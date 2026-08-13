@@ -403,13 +403,13 @@ final class NativeActivityHarvestTests: XCTestCase {
         try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         var lines = [
+            #"{"cwd":"/Users/me/Pulse"}"#,
             #"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Keep the opening Pi goal"}]}}"#,
         ]
         for index in 0..<300 {
             lines.append(#"{"type":"tool_use","name":"read","path":"/tmp/file-\#(index).swift"}"#)
         }
         lines.append(#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"continue"}]}}"#)
-        lines.append(#"{"cwd":"/Users/me/Pulse"}"#)
         try (lines.joined(separator: "\n") + "\n").write(to: session, atomically: true, encoding: .utf8)
 
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])

@@ -1629,6 +1629,15 @@ enum NativeActivityHarvest {
             var generic = fact(from: object, context: "pi.session", structured: true, path: path)
             // Tool-arg titles and chrome must not displace the user prompt.
             generic.task = ""
+            let recordType = firstString(object, keys: ["type"]).lowercased()
+            if ["tool_use", "tool_call", "function_call", "custom_tool_call", "file_read"]
+                .contains(recordType) {
+                // Cline-style `path` is a file, not a workspace. Adopting it
+                // as cwd made long Pi transcripts look like they lived in
+                // `/tmp/file-0.swift`.
+                generic.cwd = ""
+                generic.project = ""
+            }
             if generic.hasUsefulSignal { merge(&f, generic) }
             let stamped = normalizeTimestamp(firstValue(object, keys: [
                 "timestamp", "created_at", "createdAt", "updated_at", "updatedAt",
