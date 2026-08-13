@@ -2,6 +2,24 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.96.1 — Pi session titles / Pi 会话标题
+
+托盘 Pi 行没有会话标题：native harvest 不读 `message.content`，SQLite 还把
+`file_read` 当任务。Python 早就会抽用户提示，运行时走的是 native。
+
+- **JSONL**：`~/.pi/agent/sessions` 按 Pi 信封取最新有意义用户提示（全文扫
+  `"user"` 行，不丢开场目标；`continue` 不覆盖）。
+- **SQLite**：从 event `data` 抽用户正文；去掉硬编码 `Pi session`；`file_read`
+  不再当标题。
+- **合并**：同 session 的 SQLite + JSONL 先 merge 再成行；`Read Foo.swift` 不能
+  压过真目标。
+- 无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。
+
+### 验证
+
+- 嵌套 `message.content` · 长尾仍保留开场目标 · SQLite message 无 intent ·
+  `file_read` 不当标题 · 与 JSONL 合并不丢标题；八门禁对 0.96.1。
+
 ## 0.96.0 — Return Truth / 回看诚实
 
 0.94/0.95 把 Waiting 亮灭做实。本版换章：**离开再回时，灯和 notice 必须说真话**。
