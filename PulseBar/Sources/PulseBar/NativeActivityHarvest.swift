@@ -225,7 +225,10 @@ enum NativeActivityHarvest {
             if !sourcePresent {
                 sourcePresent = descriptor.commands.contains { executableExists($0) }
             }
-            let agentRows = makeRows(from: facts, id: descriptor.id, home: home)
+            // SQLite + JSONL (Pi) and split transcript fragments share a
+            // session id. Merge before row shaping so a later real prompt is
+            // not dropped by makeRows' first-wins de-dupe.
+            let agentRows = makeRows(from: merge(facts), id: descriptor.id, home: home)
             rows.append(contentsOf: agentRows)
             let state: ActivityHarvest.CollectorState
             if agentTimedOut {
@@ -1003,7 +1006,6 @@ enum NativeActivityHarvest {
             var values: [String: Any] = [
                 "sessionId": sid,
                 "cwd": cwd,
-                "title": "Pi session",
                 "agentMode": "Pi",
                 "progressTotal": records,
             ]
@@ -1023,15 +1025,23 @@ enum NativeActivityHarvest {
         let sql = "SELECT type, category, data, project_dir, created_at, bytes_returned FROM session_events WHERE session_id = ? ORDER BY id DESC LIMIT 128"
         guard let statement = sqlitePrepare(database, sql), sqliteBind(statement, index: 1, text: sessionID) else { return }
         defer { sqlite3_finalize(statement) }
+        var foundMeaningfulPrompt = false
         while sqlite3_step(statement) == SQLITE_ROW {
             let type = sqliteString(statement, column: 0).lowercased()
             let category = sqliteString(statement, column: 1)
             let data = sqliteString(statement, column: 2)
-            if type == "intent" && (fact.task == "Pi session" || fact.task.isEmpty) {
-                fact.task = clean(data, limit: 160)
-            }
-            if fact.task == "Pi session", type == "file_read", !data.isEmpty {
-                fact.task = "Read \(lastPathComponent(data))"
+            // Newest events first. Keep the latest meaningful user prompt;
+            // never promote file_read paths into the tray hero (those used
+            // to become "Read Foo.swift" and then block a shorter JSONL title).
+            if let prompt = piEventPrompt(type: type, data: data), !prompt.isEmpty {
+                if meaningfulPiPrompt(prompt) {
+                    if !foundMeaningfulPrompt {
+                        fact.task = prompt
+                        foundMeaningfulPrompt = true
+                    }
+                } else if !foundMeaningfulPrompt, fact.task.isEmpty || isChromeTask(fact.task) {
+                    fact.task = prompt
+                }
             }
             if type == "tool_call" && fact.tool.isEmpty {
                 if let object = jsonObject(data) { fact.tool = clean(firstString(object, keys: ["tool", "name"]), limit: 64) }
@@ -1427,6 +1437,12 @@ enum NativeActivityHarvest {
             let codex = parseCodexFacts(text, path: path)
             if !codex.isEmpty { return codex }
         }
+        let lowerPath = path.lowercased()
+        if lowerPath.contains("/.pi/"),
+           lowerPath.hasSuffix(".jsonl") || lowerPath.hasSuffix(".ndjson") {
+            let pi = parsePiFacts(text, path: path)
+            if !pi.isEmpty { return pi }
+        }
         var objects: [(Any, String)] = []
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")),
@@ -1575,6 +1591,171 @@ enum NativeActivityHarvest {
         return f.hasUsefulSignal ? [f] : []
     }
 
+    /// Pi stores the user's goal inside `{type:"message", message:{role:"user",
+    /// content:[{type:"text", text:"…"}]}}` rather than a top-level `title`.
+    /// The generic JSONL walker only inspects the last 256 lines, so a long
+    /// session whose only prompt is at the head became a blank tray hero.
+    private static func parsePiFacts(_ text: String, path: String) -> [Fact] {
+        var userTitles: [String] = []
+        var userAttempts = 0
+        let lines = text.split(whereSeparator: \.isNewline)
+        for line in lines.reversed() {
+            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard raw.hasPrefix("{"), raw.contains("\"user\"") else { continue }
+            userAttempts += 1
+            if userAttempts > 4096 { break }
+            guard let data = raw.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let title = cleanPiSessionTitle(piUserText(from: object))
+            if !title.isEmpty { userTitles.append(title) }
+        }
+        // userTitles is newest-first. Only take over when this file actually
+        // uses Pi's message envelope — compatibility fixtures with a top-level
+        // `title` still fall through to the generic walker.
+        guard !userTitles.isEmpty else { return [] }
+        let task = userTitles.first(where: { meaningfulPiPrompt($0) }) ?? userTitles[0]
+
+        var f = Fact()
+        f.structured = true
+        f.sourcePath = path
+        f.task = task
+        var latestTimestamp: Int64 = 0
+        let candidates = Array(lines.prefix(64)) + Array(lines.suffix(2048))
+        for line in candidates {
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            var generic = fact(from: object, context: "pi.session", structured: true, path: path)
+            // Tool-arg titles and chrome must not displace the user prompt.
+            generic.task = ""
+            if generic.hasUsefulSignal { merge(&f, generic) }
+            let stamped = normalizeTimestamp(firstValue(object, keys: [
+                "timestamp", "created_at", "createdAt", "updated_at", "updatedAt",
+            ]))
+            if stamped > 0 { latestTimestamp = max(latestTimestamp, stamped) }
+            f.records += 1
+        }
+        f.task = task
+        if f.sessionID.isEmpty { f.sessionID = piSessionID(from: URL(fileURLWithPath: path)) }
+        if f.project.isEmpty, !f.cwd.isEmpty { f.project = lastPathComponent(f.cwd) }
+        f.activityMs = latestTimestamp > 0 ? latestTimestamp : fileMTime(URL(fileURLWithPath: path))
+        f.task = clean(f.task, limit: 160)
+        f.cwd = clean(f.cwd, limit: 240)
+        f.sessionID = clean(f.sessionID, limit: 80)
+        f.tool = clean(f.tool, limit: 64)
+        f.phase = clean(f.phase, limit: 64)
+        f.model = clean(f.model, limit: 64)
+        return f.hasUsefulSignal ? [f] : []
+    }
+
+    private static func piUserText(from dict: [String: Any]) -> String {
+        let envelope = dict["message"] as? [String: Any]
+        let role = firstString(envelope ?? dict, keys: ["role", "type", "kind"]).lowercased()
+        if role == "user" || role == "human"
+            || role.contains("user_message") || role.contains("user-prompt") {
+            let content = envelope?["content"] ?? firstValue(dict, keys: ["content", "text", "message"])
+            return piContentText(content)
+        }
+        if firstString(dict, keys: ["type"]).lowercased() == "message", let envelope {
+            if firstString(envelope, keys: ["role", "type"]).lowercased() == "user" {
+                return piContentText(envelope["content"])
+            }
+        }
+        return ""
+    }
+
+    private static func piContentText(_ value: Any?) -> String {
+        guard let value else { return "" }
+        if let text = value as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let array = value as? [Any] {
+            let parts = array.compactMap { item -> String? in
+                if let text = item as? String {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                }
+                guard let dict = item as? [String: Any] else { return nil }
+                let text = firstString(dict, keys: ["text"])
+                return text.isEmpty ? nil : text
+            }
+            return parts.joined(separator: " ")
+        }
+        if let dict = value as? [String: Any] {
+            return piContentText(dict["content"] ?? dict["text"])
+        }
+        return ""
+    }
+
+    private static func piEventPrompt(type: String, data: String) -> String? {
+        if type == "file_read" { return nil }
+        if let object = jsonObject(data) {
+            let fromEnvelope = cleanPiSessionTitle(piUserText(from: object))
+            if !fromEnvelope.isEmpty { return fromEnvelope }
+            if ["intent", "user", "message", "prompt"].contains(type) {
+                let nested = cleanPiSessionTitle(piContentText(
+                    firstValue(object, keys: ["text", "content", "prompt", "query", "data"])
+                ))
+                if !nested.isEmpty { return nested }
+            }
+            return nil
+        }
+        guard ["intent", "user", "message", "prompt"].contains(type) else { return nil }
+        let title = cleanPiSessionTitle(data)
+        return title.isEmpty ? nil : title
+    }
+
+    private static func cleanPiSessionTitle(_ value: String) -> String {
+        let title = clean(value, limit: 160)
+        if title.count < 3 { return "" }
+        let low = title.lowercased()
+        if low.hasPrefix("<environment_context")
+            || low.hasPrefix("<recommended_plugins")
+            || low.hasPrefix("<app-context") {
+            return ""
+        }
+        return title
+    }
+
+    private static func meaningfulPiPrompt(_ value: String) -> Bool {
+        let title = cleanPiSessionTitle(value)
+        if title.isEmpty { return false }
+        let compact = title
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: ".", with: "")
+            .replacingOccurrences(of: "!", with: "")
+            .replacingOccurrences(of: "！", with: "")
+            .replacingOccurrences(of: "。", with: "")
+            .replacingOccurrences(of: "?", with: "")
+            .replacingOccurrences(of: "？", with: "")
+        let continuations: Set<String> = [
+            "continue", "goon", "proceed", "resume", "keepgoing",
+            "继续", "继续分析", "继续修复", "继续处理", "继续推进",
+            "progress", "status", "statusupdate", "howisitgoing", "whatsprogress",
+            "进展如何", "进度如何", "状态如何", "现在怎么样",
+            "release", "publish", "ship", "发布", "合入发布",
+        ]
+        return !continuations.contains(compact)
+    }
+
+    private static func piSessionID(from url: URL) -> String {
+        let stem = url.deletingPathExtension().lastPathComponent
+        let generic: Set<String> = [
+            "session", "sessions", "events", "event", "messages",
+            "conversation", "history", "transcript", "log",
+        ]
+        if stem.count >= 6, !generic.contains(stem.lowercased()) {
+            return String(stem.prefix(80))
+        }
+        let parent = url.deletingLastPathComponent().lastPathComponent
+        if parent.count >= 6, !["sessions", "agent", "pi"].contains(parent.lowercased()) {
+            return String(parent.prefix(80))
+        }
+        return sessionIDFromPath(url)
+    }
+
     private static func codexUserText(_ value: Any?) -> String {
         guard let value else { return "" }
         if let text = value as? String { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1642,6 +1823,14 @@ enum NativeActivityHarvest {
         ])
         if f.task.isEmpty, isUserRecord(dict) {
             f.task = textValue(firstValue(dict, keys: ["content", "message", "text"]))
+        }
+        // Pi (and kin) wrap the user turn as `{type:"message", message:{role:"user"}}`.
+        // Top-level type is "message", so isUserRecord misses it.
+        if f.task.isEmpty || isChromeTask(f.task),
+           let nested = dict["message"] as? [String: Any],
+           firstString(nested, keys: ["role", "type", "kind"]).lowercased() == "user" {
+            let prompt = piContentText(nested["content"] ?? firstValue(nested, keys: ["text", "message"]))
+            if !prompt.isEmpty { f.task = prompt }
         }
         // Cache / IDE JSON often nests the real goal under messages[] while the
         // parent title is chrome ("Cascade session"). Prefer the latest user
@@ -1935,6 +2124,8 @@ enum NativeActivityHarvest {
         let newChrome = isChromeTask(new)
         if oldChrome, !newChrome { old = new; return }
         if newChrome { return }
+        if AgentRow.looksLikeFilenameOnlyTitle(new) { return }
+        if AgentRow.looksLikeFilenameOnlyTitle(old) { old = new; return }
         if new.count >= old.count + 8 { old = new }
     }
 
