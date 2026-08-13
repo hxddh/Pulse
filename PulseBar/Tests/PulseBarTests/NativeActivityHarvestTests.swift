@@ -912,3 +912,4 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.task, "Refactor auth")
         XCTAssertEqual(row.cwd, "/Users/me/app")
     }
+}
