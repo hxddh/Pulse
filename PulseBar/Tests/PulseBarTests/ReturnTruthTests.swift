@@ -209,7 +209,7 @@ final class ReturnTruthTests: XCTestCase {
         )
     }
 
-    func testOpaqueCacheStoryDoesNotRepeatIdentityLabel() {
+    func testOpaqueCacheStoryDoesNotRepeatIdentityLabel() throws {
         let store = StatusStore()
         var row = AgentRow(rowKey: "amp", agent: .amp)
         row.task = ""
@@ -219,7 +219,7 @@ final class ReturnTruthTests: XCTestCase {
         row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
         row.refreshObservationQuality()
         let story = store.rowStoryLine(row)
-        let label = store.rowSourceLabel(row)
+        let label = try XCTUnwrap(store.rowSourceLabel(row))
         XCTAssertEqual(label, store.tr(.cacheEvidence))
         let bits = story.split(separator: "·").map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
