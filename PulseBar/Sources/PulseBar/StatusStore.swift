@@ -4209,13 +4209,13 @@ final class StatusStore: ObservableObject {
             moved.rowKey = newKey
             pendingWaitingNotifications[newKey] = moved
         }
-        if knownWaitingKeys.remove(oldKey) {
+        if knownWaitingKeys.remove(oldKey) != nil {
             knownWaitingKeys.insert(newKey)
         }
-        if lookMovedRowKeys.remove(oldKey) {
+        if lookMovedRowKeys.remove(oldKey) != nil {
             lookMovedRowKeys.insert(newKey)
         }
-        if waitingDeliveryInFlight.remove(oldKey) {
+        if waitingDeliveryInFlight.remove(oldKey) != nil {
             waitingDeliveryInFlight.insert(newKey)
         }
         attentionLedger.remapRowKey(from: oldKey, to: newKey)
