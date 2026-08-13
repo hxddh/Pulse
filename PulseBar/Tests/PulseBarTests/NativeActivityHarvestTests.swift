@@ -874,7 +874,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         defer { try? fm.removeItem(at: home) }
         let lines = [
             #"{"type":"session_meta","payload":{"session_id":"desk-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,
-            #"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"## My request for Codex:\nFix the lamp\n<image>blob</image>"}]},"timestamp":1700000001}"#,
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"## My request for Codex:\\nFix the lamp\\n<image>blob</image>\"}]},\"timestamp\":1700000001}",
         ].joined(separator: "\n") + "\n"
         try lines.write(to: session, atomically: true, encoding: .utf8)
 
