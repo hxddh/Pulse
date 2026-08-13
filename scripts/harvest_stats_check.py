@@ -465,6 +465,25 @@ def check_tool_reading() -> int:
         return fail("Pi user prompt was not extracted from message.content")
     if A.normalize_pi_task("pi update") != "Update Pi and extensions":
         return fail("Pi maintenance prompt stayed as an opaque CLI command")
+    official_pi = (
+        '{"type":"session","id":"sess-official","cwd":"/Users/me/Pulse"}\n'
+        '{"type":"message","message":{"role":"user","content":"first prompt that should lose"}}\n'
+        '{"type":"session_info","name":"Refactor auth module"}\n'
+    )
+    if A.pi_user_title(official_pi) != "Refactor auth module":
+        return fail("Pi /name session_info was not preferred as the session title")
+    env_pi = (
+        '{"type":"message","message":{"role":"user","content":'
+        '"<environment_context>cwd</environment_context>\\nShip the Pi title"}}\n'
+    )
+    if A.pi_user_title(env_pi) != "Ship the Pi title":
+        return fail("Pi environment_context hid the real user prompt")
+    compact_pi = (
+        '{"type":"compaction","summary":"Earlier turns","retainedTail":'
+        '[{"role":"user","content":"Keep the compacted Pi goal"}]}\n'
+    )
+    if A.pi_user_title(compact_pi) != "Keep the compacted Pi goal":
+        return fail("Pi compaction retainedTail was not used as the session title")
 
     unresolved = (
         '{"type":"response_item","payload":{"type":"function_call",'

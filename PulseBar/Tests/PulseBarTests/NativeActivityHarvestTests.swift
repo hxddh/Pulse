@@ -534,6 +534,173 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertNotEqual(row.task, "Read NativeActivityHarvest.swift")
     }
 
+    func testPiOfficialSessionLayoutYieldsTitleAndCwd() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-official-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_sess-official.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"type":"session","version":3,"id":"sess-official","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/Users/me/Pulse"}"#,
+            #"{"type":"message","id":"a1b2c3d4","parentId":null,"timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"Fix the tray hero"}}"#,
+            #"{"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"On it"}],"model":"claude-sonnet-4-5"}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Fix the tray hero")
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(row.sessionID, "sess-official")
+        XCTAssertEqual(row.evidence, .session)
+    }
+
+    func testPiSessionInfoNameIsHero() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-named-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_sess-named.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"type":"session","version":3,"id":"sess-named","cwd":"/Users/me/Pulse"}"#,
+            #"{"type":"message","message":{"role":"user","content":"first prompt that should lose"}}"#,
+            #"{"type":"session_info","name":"Refactor auth module"}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Refactor auth module", "/name is the session selector title")
+    }
+
+    func testPiEnvironmentContextDoesNotHidePrompt() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-env-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_sess-env.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"type":"session","id":"sess-env","cwd":"/Users/me/Pulse"}"#,
+            #"{"type":"message","message":{"role":"user","content":"<environment_context>\ncwd: /Users/me/Pulse\n</environment_context>\nShip the Pi title"}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Ship the Pi title")
+    }
+
+    func testPiCompactionRetainedTailIsTitle() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-compact-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_sess-compact.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"type":"session","id":"sess-compact","cwd":"/Users/me/Pulse"}"#,
+            #"{"type":"compaction","summary":"Earlier turns","retainedTail":[{"role":"user","content":"Keep the compacted Pi goal"},{"role":"assistant","content":[{"type":"text","text":"ok"}]}]}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Keep the compacted Pi goal")
+    }
+
+    func testPiEncodedFolderIsCwdWithoutHeader() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-folder-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_sess-folder.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"type":"message","message":{"role":"user","content":"Decode the Pi folder"}}"#
+            .write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Decode the Pi folder")
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(row.sessionID, "sess-folder")
+    }
+
+    func testPiStaleJSONLStillYieldsTitle() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-stale-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_sess-stale.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let lines = [
+            #"{"type":"session","id":"sess-stale","cwd":"/Users/me/Pulse"}"#,
+            #"{"type":"message","message":{"role":"user","content":"Old but named Pi session"}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+        try fm.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-80 * 24 * 3600)],
+            ofItemAtPath: session.path
+        )
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Old but named Pi session")
+    }
+
+    func testPiEmptySqliteDoesNotHideOfficialJSONL() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-sqlite-official-\(UUID().uuidString)")
+        let dbURL = home.appendingPathComponent(".pi/agent/sessions/sessions.db")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_official-uuid.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        var database: OpaquePointer?
+        guard sqlite3_open(dbURL.path, &database) == SQLITE_OK, let database else {
+            XCTFail("could not create Pi fixture database")
+            return
+        }
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_exec(database, """
+            CREATE TABLE session_meta (
+              session_id TEXT, project_dir TEXT, started_at TEXT, last_event_at TEXT, event_count INTEGER
+            );
+            CREATE TABLE session_events (
+              id INTEGER PRIMARY KEY, session_id TEXT, type TEXT, category TEXT,
+              data TEXT, project_dir TEXT, created_at TEXT, bytes_returned INTEGER
+            );
+            INSERT INTO session_meta VALUES (
+              'official-uuid', '/Users/me/Pulse', '1700000000', '1700000100', 1
+            );
+            INSERT INTO session_events VALUES (
+              1, 'official-uuid', 'file_read', '',
+              '/Users/me/Pulse/NativeActivityHarvest.swift', '/Users/me/Pulse', '1700000100', 32
+            );
+            """, nil, nil, nil), SQLITE_OK)
+        let lines = [
+            #"{"type":"session","id":"official-uuid","cwd":"/Users/me/Pulse"}"#,
+            #"{"type":"message","message":{"role":"user","content":"Fix the tray hero"}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let titled = result.rows.filter { $0.id == .pi }
+        XCTAssertEqual(titled.count, 1, "empty SQLite must not add a second blank Pi row")
+        XCTAssertEqual(titled.first?.task, "Fix the tray hero")
+        XCTAssertEqual(titled.first?.sessionID, "official-uuid")
+    }
+
     func testDependingStatusIsNotHarvestPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pending-\(UUID().uuidString)")

@@ -4,12 +4,17 @@ All notable changes to Pulse are documented here.
 
 ## 0.97.0 — Hero Honesty / 主行诚实
 
-0.96.1 修好了 Pi 标题。本版换章：**主行必须是用户目标，不能是工具回包、传输信封
-或窗口计数。** 详见 [`docs/plan-0.97.md`](docs/plan-0.97.md)。
+0.96.1 的 Pi 标题修的是假 fixture，生产仍空。本版换章：**主行必须是用户目标**
+—— Pi 按官方 JSONL 取 `/name` 与用户正文；Claude/Codex 不能是工具回包、传输信封
+或窗口计数。详见 [`docs/plan-0.97.md`](docs/plan-0.97.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 主行诚实
 
+- **Pi**：官方布局 `~/.pi/agent/sessions/--<cwd>--/<timestamp>_<uuid>.jsonl`；
+  `session` 头的 id/cwd；`content` 字符串或 text 块；`session_info.name`（`/name`）
+  优先；compaction `retainedTail`；剥 `<environment_context>` 留后半句；
+  72h 过期不丢 JSONL；空 SQLite 行不得挡住 JSONL 标题。
 - **Claude / Command Code**：跳过 `tool_result` 信封；长笔录抽最新有意义用户提示，
   不丢开场目标。
 - **Codex**：`event_msg`/`user_message` 进标题；剥 Desktop `## My request for Codex`
@@ -19,13 +24,14 @@ All notable changes to Pulse are documented here.
 - **表头**：非搜索用 `sectionTotals`，不把 12 行窗口当成舰队规模。
 - **Details**：空 phase 的 Waiting 用 waitKind，不发明「等待权限」。
 - **waitKind**：审批类 tool/phase → Permission，其余 Input。
-- EXPERIENCE 场景 **AK**；HeroHonesty 回归。
+- EXPERIENCE 场景 **AJ**（官方 Pi）+ **AK**；HeroHonesty 回归。
 
 ### 验证
 
-- Claude tool_result 不当标题 · 长尾保留开场目标 · Codex event_msg / 信封 /
-  continue · tool path ≠ cwd · Goose name / Kimi lastPrompt · Details 不发明权限 ·
-  waitKind Permission；八门禁对 0.97.0。
+- 官方 Pi 路径 / `session_info` / 环境标签 / compaction / 过期 JSONL / 空 SQLite
+  不挡标题 · Claude tool_result 不当标题 · 长尾保留开场目标 · Codex event_msg /
+  信封 / continue · tool path ≠ cwd · Goose name / Kimi lastPrompt · Details 不发明
+  权限 · waitKind Permission；八门禁对 0.97.0。
 
 ## 0.96.1 — Pi session titles / Pi 会话标题
 
