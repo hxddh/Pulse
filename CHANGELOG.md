@@ -2,6 +2,22 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.97.2 — Hero Honesty follow-through / 主行诚实收口
+
+0.97.1 让 Pi JSONL 能进托盘，生产仍会把**错的那句**当主行：清空的 `/name` 粘住旧名；SQLite 最新一句因更长盖掉 `/resume` 首句；截断的 `<environment_context>` 变成 `cwd:`；`messages[]` 把 `tool_result` 当用户目标；Cursor 只读 `name` 丢掉 `subtitle`；`update_auth` 一类目标被当成工具 id 滤掉。
+
+- **Pi `/name`**：最新 `session_info.name`，空字符串清除，回落到第一条用户句。
+- **Pi 合并**：JSONL `/resume` 标题不被 SQLite 最新句因更长替换。
+- **环境标签**：未闭合的 env 块整段丢掉，不当标题。
+- **messages[]**：用 `userMessageText`，跳过 `tool_result` 信封。
+- **Cursor**：composer `subtitle` 进主行。
+- **usefulTask**：只滤已知工具 id（`update_plan`），不再按动词前缀杀掉 `update_auth`。
+- 无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。
+
+### 验证
+
+- 空 `/name` 回落首句 · SQLite 长句不盖 JSONL · 未闭合 env 不当标题 · messages[] 跳过 tool_result · Cursor subtitle · `update_auth` 仍是目标；八门禁对 0.97.2。
+
 ## 0.97.1 — Pi /resume titles / Pi 会话标题
 
 0.97 按文档修了 Pi，生产仍空。真实 `/resume` 标题是 `session_info.name`，否则**第一条**用户句。失败不是「窗口太小」：sibling `.db` 把 adapter 标失败；JSONL 被 SQLite 抢先；每个历史文件再读 8MB 会先耗尽 48MB 预算。以 `session` 结尾的 `/name` 被当成 chrome 丢掉。官方信封解析不出用户句时落到通用 walker，托盘主行只剩项目名。

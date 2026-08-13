@@ -1104,6 +1104,7 @@ enum NativeActivityHarvest {
         guard let statement = sqlitePrepare(database, sql), sqliteBind(statement, index: 1, text: sessionID) else { return }
         defer { sqlite3_finalize(statement) }
         var foundMeaningfulPrompt = false
+        var decidedSessionInfo = false
         while sqlite3_step(statement) == SQLITE_ROW {
             let type = sqliteString(statement, column: 0).lowercased()
             let category = sqliteString(statement, column: 1)
@@ -1121,13 +1122,19 @@ enum NativeActivityHarvest {
                     fact.task = prompt
                 }
             }
-            if !foundMeaningfulPrompt, type == "session_info" {
-                let name = cleanPiSessionTitle(
-                    firstString(jsonObject(data) ?? [:], keys: ["name", "title"])
-                )
-                if !name.isEmpty, !isChromeTask(name) {
-                    fact.task = name
-                    foundMeaningfulPrompt = meaningfulPiPrompt(name)
+            if !decidedSessionInfo, type == "session_info" {
+                decidedSessionInfo = true
+                let raw = firstString(jsonObject(data) ?? [:], keys: ["name", "title"])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if raw.isEmpty {
+                    // /name cleared — do not adopt an older session_info later.
+                    if !foundMeaningfulPrompt { fact.task = "" }
+                } else {
+                    let name = cleanPiSessionTitle(raw)
+                    if !name.isEmpty, !isChromeTask(name), !foundMeaningfulPrompt {
+                        fact.task = name
+                        foundMeaningfulPrompt = meaningfulPiPrompt(name)
+                    }
                 }
             }
             if type == "tool_call" && fact.tool.isEmpty {
@@ -1401,7 +1408,7 @@ enum NativeActivityHarvest {
                     if parsed[index].task.isEmpty, let object = jsonObject(value) {
                         // Cursor's composer header calls the user-visible title
                         // `name`, unlike the transcript adapters' `title`.
-                        parsed[index].task = clean(firstString(object, keys: ["name", "title"]), limit: 160)
+                        parsed[index].task = clean(firstString(object, keys: ["name", "subtitle", "title"]), limit: 160)
                     }
                     parsed[index].cwd = parsed[index].cwd.isEmpty
                         ? cursorWorkspacePath(databaseURL: url, workspaceID: workspaceID)
@@ -1907,8 +1914,16 @@ enum NativeActivityHarvest {
                 if !cwd.isEmpty { headerCwd = cwd }
             }
             if recordType == "session_info" {
-                let name = cleanPiSessionTitle(firstString(object, keys: ["name", "title"]))
-                if !name.isEmpty { sessionNames.append(name) }
+                // Official getSessionName: latest `name`, empty/null clears.
+                // Do not fall through to `title` when `name` is present and empty.
+                if object["name"] != nil {
+                    let raw = (object["name"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    sessionNames = raw.isEmpty ? [""] : [cleanPiSessionTitle(raw)]
+                } else {
+                    let title = firstString(object, keys: ["title"])
+                    sessionNames = title.isEmpty ? [""] : [cleanPiSessionTitle(title)]
+                }
             }
             if recordType == "compaction" {
                 let summary = cleanPiSessionTitle(firstString(object, keys: ["summary"]))
@@ -1943,16 +1958,22 @@ enum NativeActivityHarvest {
             f.records += 1
         }
 
-        // Pi /resume shows session_info.name, else the first user message.
-        // Latest turn is only a fallback when the opening prompt was chrome
-        // or an env-context wrapper we stripped to nothing.
-        let task = latestMeaningfulPiTitle(sessionNames)
+        // Pi /resume shows the latest session_info.name (empty clears),
+        // else the first user message. Latest turn is only a fallback when
+        // the opening prompt was chrome or an env wrapper we stripped.
+        let named = sessionNames.last.flatMap { name -> String? in
+            if name.isEmpty { return nil }
+            let cleaned = cleanPiSessionTitle(name)
+            if cleaned.isEmpty || isChromeTask(cleaned) { return nil }
+            return cleaned
+        }
+        let task = named
             ?? firstMeaningfulPiTitle(userTitles)
             ?? latestMeaningfulPiTitle(userTitles)
             ?? latestMeaningfulPiTitle(compactionUsers)
             ?? latestMeaningfulPiTitle(compactionSummaries)
             ?? ""
-        if task.isEmpty, sessionNames.isEmpty, userTitles.isEmpty,
+        if task.isEmpty, sessionNames.filter({ !$0.isEmpty }).isEmpty, userTitles.isEmpty,
            compactionUsers.isEmpty, compactionSummaries.isEmpty {
             return []
         }
@@ -2110,10 +2131,9 @@ enum NativeActivityHarvest {
                 s.removeSubrange(start.lowerBound..<end.upperBound)
                 continue
             }
-            if let gt = s.range(of: ">", range: start.upperBound..<s.endIndex) {
-                s.removeSubrange(start.lowerBound..<gt.upperBound)
-                continue
-            }
+            // Truncated / unclosed env dump: drop from the open tag to the
+            // end so `cwd:` lines cannot become the tray hero.
+            s.removeSubrange(start.lowerBound..<s.endIndex)
             break
         }
         return s
@@ -2285,6 +2305,7 @@ enum NativeActivityHarvest {
             "lastMessage", "last_message", "subject",
             // Vendor chrome last — often "Agent session" / plan-step titles.
             "title", "summary", "description", "lastPrompt",
+            "aiTitle", "customTitle", "subtitle",
         ])
         if (f.task.isEmpty || isChromeTask(f.task)), !isToolShapedRecord(dict) {
             let named = firstString(dict, keys: ["name"])
@@ -2308,7 +2329,7 @@ enum NativeActivityHarvest {
            let messages = dict["messages"] as? [Any] {
             for item in messages.reversed() {
                 guard let msg = item as? [String: Any], isUserRecord(msg) else { continue }
-                let prompt = textValue(firstValue(msg, keys: ["content", "message", "text", "prompt"]))
+                let prompt = userMessageText(firstValue(msg, keys: ["content", "message", "text", "prompt"]))
                 if !prompt.isEmpty {
                     f.task = prompt
                     break
@@ -2532,7 +2553,14 @@ enum NativeActivityHarvest {
     }
 
     private static func merge(_ target: inout Fact, _ source: Fact) {
-        preferTask(&target.task, source.task)
+        if piJSONLResumeTitle(target.sourcePath, target.task), isPiSqlitePath(source.sourcePath) {
+            // JSONL is the /resume title. SQLite's latest turn must not
+            // replace it just because it is longer.
+        } else if piJSONLResumeTitle(source.sourcePath, source.task), isPiSqlitePath(target.sourcePath) {
+            target.task = source.task
+        } else {
+            preferTask(&target.task, source.task)
+        }
         func prefer(_ old: inout String, _ new: String) { if old.isEmpty, !new.isEmpty { old = new } }
         prefer(&target.project, source.project)
         if looksLikeFilePathCwd(target.cwd), !source.cwd.isEmpty, !looksLikeFilePathCwd(source.cwd) {
@@ -2602,6 +2630,22 @@ enum NativeActivityHarvest {
             return
         }
         if new.count >= old.count + 8 { old = new }
+    }
+
+    private static func isPiSqlitePath(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        guard lower.contains("/.pi/") else { return false }
+        return lower.hasSuffix(".sqlite") || lower.hasSuffix(".db")
+    }
+
+    private static func piJSONLResumeTitle(_ path: String, _ task: String) -> Bool {
+        let lower = path.lowercased()
+        guard lower.contains("/.pi/"),
+              lower.hasSuffix(".jsonl") || lower.hasSuffix(".ndjson")
+        else { return false }
+        let cleaned = cleanPiSessionTitle(task)
+        return !cleaned.isEmpty && !isChromeTask(cleaned)
+            && !AgentRow.looksLikeFilenameOnlyTitle(cleaned)
     }
 
     private static func isChromeTask(_ value: String) -> Bool {

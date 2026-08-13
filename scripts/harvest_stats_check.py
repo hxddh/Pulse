@@ -491,6 +491,14 @@ def check_tool_reading() -> int:
     )
     if A.pi_user_title(first_pi) != "Fix the tray hero":
         return fail("Pi /resume title used the latest user turn instead of the first")
+    cleared_pi = (
+        '{"type":"session","id":"sess-clear","cwd":"/Users/me/Pulse"}\n'
+        '{"type":"message","message":{"role":"user","content":"Fix the tray hero"}}\n'
+        '{"type":"session_info","name":"Refactor auth module"}\n'
+        '{"type":"session_info","name":""}\n'
+    )
+    if A.pi_user_title(cleared_pi) != "Fix the tray hero":
+        return fail("Pi empty /name did not fall back to the first user message")
 
     unresolved = (
         '{"type":"response_item","payload":{"type":"function_call",'
