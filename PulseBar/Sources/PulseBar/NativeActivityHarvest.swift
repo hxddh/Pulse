@@ -1466,16 +1466,21 @@ enum NativeActivityHarvest {
             walk(object, context: context, structured: structured, path: path, into: &result, visited: &visited)
             if result.count >= maxFactsPerAgent { break }
         }
-        return merge(result).filter(\.hasDisplaySignal)
-            .map { fact in
-                guard usesTranscriptUserPrompt(path),
-                      let prompt = latestTranscriptUserPrompt(text),
-                      meaningfulPiPrompt(prompt)
-                else { return fact }
-                var next = fact
-                next.task = prompt
-                return next
+        var merged = merge(result).filter(\.hasDisplaySignal)
+        if usesTranscriptUserPrompt(path),
+           let prompt = latestTranscriptUserPrompt(text),
+           meaningfulPiPrompt(prompt) {
+            if merged.isEmpty {
+                var seed = Fact()
+                seed.structured = structured
+                seed.sourcePath = path
+                seed.task = prompt
+                merged = [seed]
+            } else {
+                for index in merged.indices { merged[index].task = prompt }
             }
+        }
+        return merged
     }
 
     /// Claude / Command Code / Continue / Droid / Gemini chats keep one goal
