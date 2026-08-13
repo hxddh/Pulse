@@ -62,9 +62,18 @@ enum NativeHarvestSelfTest {
             failures.append("fixture scan emitted unscanned adapters")
         }
         for id in expected {
+            // Cascade claims shared ~/.windsurf roots; Windsurf shell rows are
+            // suppressed when Cascade observed anything (legacy cascade_block).
+            if id == .windsurf, result.rows.contains(where: { $0.id == .cascade }) {
+                continue
+            }
             if !result.rows.contains(where: { $0.id.surfaceID == id }) {
                 failures.append("no native row for \(id.rawValue)")
             }
+        }
+        if result.rows.contains(where: { $0.id == .cascade }),
+           result.rows.contains(where: { $0.id == .windsurf }) {
+            failures.append("Cascade and Windsurf both raised from shared roots")
         }
         if result.rows.contains(where: { $0.task.isEmpty && $0.cwd.isEmpty && $0.tool.isEmpty && $0.model.isEmpty && $0.records == 0 }) {
             failures.append("blank structured row escaped admission")

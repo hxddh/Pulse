@@ -2,6 +2,41 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.95.0 — Extinguish Honesty / 熄灭诚实
+
+0.94 证明真 ask 能亮。本版换章：**假 Waiting 不亮；清了就灭；再亮必须是新证据**。
+详见 [`docs/plan-0.95.md`](docs/plan-0.95.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 熄灭诚实
+
+- **OpenCode**：去掉 permission 表全局 smear；只认本 session tool pending。
+- **Cascade/Windsurf**：共享根有 Cascade 时不发 Windsurf 壳（对齐 legacy）。
+- **禁文本推断**：Pi/Grok 正文里的 permission/approval 不再抬 pending。
+- **已答 / 终态否决**：`askResponse` / completed 压过 ask-tool；bool 旗全键 OR。
+- **merge last-wins**：新非 pending 片段熄灭旧 pending。
+- **清除生命周期**：soft-dismiss tombstone 持久化；可靠 scan 缺席可再亮；失败 harvest
+  保留 pending；纯 harvest dismiss 不写 agent-wide Attention done；Clear waiting
+  同步清空通知队列。
+- **Go-Look / Attention / stop grace**：可见后再清 reveal；歧义 session 前缀不 smear；
+  `Waiting`+Stop 有 grace。
+- EXPERIENCE 场景 **AH**；ExtinguishHonesty 回归。
+
+### P1 · 收口
+
+- Codex Support：hooks 未装时仍认 harvest-pending 就绪。
+- Look Closure EN「moved」→「changed」；AttentionWatcher 跟 `AttentionIO.path`。
+- Waiting-none Reach 回 hover（次菜单保留）；EXPERIENCE 版本戳 0.95.0。
+
+### P2 · 禁令
+
+- 假 stable / 能量预算 / 不扩 hooks 安装器保留。
+
+### 验证
+
+- 已答否决 · Cascade 仲裁 · 缺席 tombstone · Attention 唯一匹配 · Waiting stop grace；
+  八门禁对 0.95.0。
+
 ## 0.94.0 — Waiting Proof / 等待可证
 
 0.90 让 Waiting-none「能写样本」；0.93 让离开再回「能点名」。本版换章：**证明**

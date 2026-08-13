@@ -264,6 +264,21 @@ enum NativeActivityHarvest {
             }
         }
 
+        // Legacy parity (activity_scan.cascade_block): Windsurf shell rows only
+        // when Cascade produced none — shared ~/.windsurf roots must not double
+        // the same pending session as two red lamps (0.95 Extinguish Honesty).
+        if agentFilter == nil || agentFilter!.contains(.cascade) {
+            if rows.contains(where: { $0.id == .cascade }) {
+                rows.removeAll { $0.id == .windsurf }
+                for index in health.indices where health[index].id == .windsurf {
+                    if health[index].state == .observed || health[index].rowCount > 0 {
+                        health[index].state = .noSessions
+                        health[index].rowCount = 0
+                    }
+                }
+            }
+        }
+
         return Result(
             rows: rows,
             health: health,
@@ -738,11 +753,8 @@ enum NativeActivityHarvest {
             fact.records = content.split(whereSeparator: \.isNewline).count
             fact.activityMs = normalizeTimestamp(sqlite3_column_int64(statement, 2))
             if fact.activityMs == 0 { fact.activityMs = fileMTime(url) }
+            // 0.95: never infer Waiting from free-text transcript content.
             let lower = content.lowercased()
-            if lower.contains("permission") || lower.contains("approval") || lower.contains("waiting for") {
-                fact.explicitPending = true
-                fact.skill = "pending"
-            }
             if lower.contains("tool") || lower.contains("command") { fact.phase = "running" }
             if fact.hasUsefulSignal { facts.append(fact) }
             if facts.count >= maxFactsPerAgent { break }
@@ -782,7 +794,8 @@ enum NativeActivityHarvest {
         }
         defer { sqlite3_finalize(statement) }
 
-        let pending = openCodePermissionPending(database)
+        // 0.95: never smear a project-level permission-ruleset update onto every
+        // session. Waiting comes only from this session's tool parts.
         while sqlite3_step(statement) == SQLITE_ROW {
             let sid = sqliteString(statement, column: 0)
             guard !sid.isEmpty else { continue }
@@ -814,22 +827,11 @@ enum NativeActivityHarvest {
                 : fileMTime(url)
             fact.startedMs = normalizeTimestamp(created)
             fact.records = openCodePartCount(database, sessionID: sid)
-            if pending, fact.sessionID == sid || facts.isEmpty { fact.explicitPending = true; fact.skill = "pending" }
             enrichOpenCodeParts(database, sessionID: sid, fact: &fact)
             if fact.hasUsefulSignal { facts.append(fact) }
             if facts.count >= maxFactsPerAgent { break }
             values.removeAll(keepingCapacity: false)
         }
-    }
-
-    private static func openCodePermissionPending(_ database: OpaquePointer) -> Bool {
-        let sql = "SELECT time_updated FROM permission ORDER BY time_updated DESC LIMIT 1"
-        guard let statement = sqlitePrepare(database, sql) else { return false }
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_step(statement) == SQLITE_ROW else { return false }
-        let updated = normalizeTimestamp(sqlite3_column_int64(statement, 0))
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        return updated > 0 && now >= updated && now - updated <= 30 * 60 * 1000
     }
 
     private static func openCodePartCount(_ database: OpaquePointer, sessionID: String) -> Int {
@@ -844,6 +846,9 @@ enum NativeActivityHarvest {
         let sql = "SELECT data FROM part WHERE session_id = ? ORDER BY time_updated DESC LIMIT 80"
         guard let statement = sqlitePrepare(database, sql), sqliteBind(statement, index: 1, text: sessionID) else { return }
         defer { sqlite3_finalize(statement) }
+        // Newest tool status wins — do not OR historical pending across the
+        // whole transcript (0.95 Extinguish Honesty).
+        var decidedPending = false
         while sqlite3_step(statement) == SQLITE_ROW {
             let raw = sqliteString(statement, column: 0)
             guard let data = raw.data(using: .utf8),
@@ -854,13 +859,27 @@ enum NativeActivityHarvest {
             if type == "tool", fact.tool.isEmpty {
                 fact.tool = clean(firstString(dict, keys: ["tool", "name"]), limit: 64)
             }
-            if type == "tool", let state = dict["state"] as? [String: Any] {
-                let status = firstString(state, keys: ["status"])
-                if pendingPhase(status) || status.lowercased() == "running" {
+            if type == "tool", let state = dict["state"] as? [String: Any], !decidedPending {
+                let status = firstString(state, keys: ["status"]).lowercased()
+                let tool = firstString(dict, keys: ["tool", "name"]).lowercased()
+                if status == "running" || status == "pending" || status == "waiting" {
                     fact.phase = "working"
-                    if pendingPhase(status) { fact.explicitPending = true; fact.skill = "pending" }
                 }
-                if status.lowercased().contains("complete") { fact.outcome = "completed" }
+                if status == "pending" || status == "waiting" {
+                    // Ask/permission-like tools, or an explicit pending state on
+                    // an edit/bash that OpenCode blocked on the user.
+                    let askLike = ["permission", "ask", "question", "confirm"].contains {
+                        tool == $0 || tool.contains($0)
+                    }
+                    if askLike || status == "pending" {
+                        fact.explicitPending = true
+                        fact.skill = "pending"
+                    }
+                    decidedPending = true
+                } else if status.contains("complete") || status == "error" || status == "rejected" {
+                    fact.outcome = status.contains("complete") ? "completed" : fact.outcome
+                    decidedPending = true
+                }
             }
             if type == "step-finish" || type == "step_finish" {
                 fact.phase = fact.phase.isEmpty ? "turn_complete" : fact.phase
@@ -1022,10 +1041,7 @@ enum NativeActivityHarvest {
             if type.contains("error") { fact.errors += 1 }
             if type == "file_read" { fact.files += 1; if fact.phase.isEmpty { fact.phase = "reading" } }
             if type.contains("sandbox") { fact.phase = "running" }
-            let lower = data.lowercased()
-            if lower.contains("waiting") || lower.contains("approval") || lower.contains("permission") {
-                fact.explicitPending = true; fact.skill = "pending"
-            }
+            // 0.95: never stamp pending from free-text event payloads.
             if type == "agent_usage" {
                 let (tin, tout) = tokenPair(data)
                 fact.tokensIn = max(fact.tokensIn, tin)
@@ -1756,7 +1772,7 @@ enum NativeActivityHarvest {
         f.progressTotal = firstNumber(dict, keys: ["totalTasks", "total", "taskCount", "progressTotal"])
         f.subRunning = firstNumber(dict, keys: ["subagentsRunning", "subRunning", "activeSubagents"])
         f.subTotal = firstNumber(dict, keys: ["subagentsTotal", "subTotal", "totalSubagents"])
-        f.explicitPending = boolValue(firstValue(dict, keys: [
+        let pendingFlagKeys = [
             "needsApproval", "needs_approval", "awaitingInput", "awaiting_input",
             "requiresAction", "requires_action", "pending",
             "hasBlockingPendingActions", "hasPendingPlan",
@@ -1773,9 +1789,20 @@ enum NativeActivityHarvest {
             "awaitingConfirmation", "awaiting_confirmation",
             "isBlockedOnUser", "is_blocked_on_user",
             "blockedOnUser", "blocked_on_user",
-        ])) || pendingPhase(phaseRaw) || pendingPhase(f.outcome)
-            || isVendorAskTool(f.tool)
-            || vendorAskFieldPending(dict)
+        ]
+        // 0.95: any true flag wins — firstValue was nondeterministic across aliases.
+        let flagPending = anyTruthy(dict, keys: pendingFlagKeys)
+        let answeredAsk = vendorAskAlreadyAnswered(dict)
+        let terminalOutcome = isTerminalSessionState(phaseRaw) || isTerminalSessionState(f.outcome)
+            || isTerminalSessionState(firstString(dict, keys: ["status", "state", "lifecycle"]))
+        let askToolPending = isVendorAskTool(f.tool) && !answeredAsk && !terminalOutcome
+        f.explicitPending = !answeredAsk && !terminalOutcome && (
+            flagPending
+                || pendingPhase(phaseRaw)
+                || pendingPhase(f.outcome)
+                || askToolPending
+                || vendorAskFieldPending(dict)
+        )
         if f.explicitPending { f.skill = "pending" }
         let stamped = normalizeTimestamp(firstValue(dict, keys: [
             "lastUpdatedAt", "last_updated_at", "updatedAt", "updated_at",
@@ -1858,7 +1885,27 @@ enum NativeActivityHarvest {
         // Last non-empty tool / model wins — Claude assistant envelopes arrive
         // after the user prompt; prefer-first left rows without telemetry.
         if !source.tool.isEmpty { target.tool = source.tool }
-        prefer(&target.skill, source.skill)
+        // 0.95: pending follows the newest fragment by activityMs — never OR
+        // an older ask onto a newer answered/cleared turn.
+        if source.activityMs > target.activityMs {
+            target.explicitPending = source.explicitPending
+            if source.explicitPending || source.skill == "pending" {
+                target.skill = "pending"
+            } else if target.skill == "pending" {
+                target.skill = source.skill
+            } else {
+                prefer(&target.skill, source.skill)
+            }
+        } else if source.activityMs == target.activityMs {
+            target.explicitPending = target.explicitPending || source.explicitPending
+            if target.explicitPending {
+                target.skill = "pending"
+            } else {
+                prefer(&target.skill, source.skill)
+            }
+        } else if target.skill.isEmpty, source.skill != "pending", !source.explicitPending {
+            prefer(&target.skill, source.skill)
+        }
         prefer(&target.phase, source.phase); prefer(&target.outcome, source.outcome)
         if !source.model.isEmpty { target.model = source.model }
         if !source.mode.isEmpty { target.mode = source.mode }
@@ -1872,7 +1919,7 @@ enum NativeActivityHarvest {
         target.progressTotal = max(target.progressTotal, source.progressTotal)
         target.subRunning = max(target.subRunning, source.subRunning)
         target.subTotal = max(target.subTotal, source.subTotal)
-        target.explicitPending = target.explicitPending || source.explicitPending
+        // explicitPending already resolved above by activityMs order — do not OR.
         target.score = max(target.score, source.score)
         target.activityMs = max(target.activityMs, source.activityMs)
         target.startedMs = target.startedMs == 0 ? source.startedMs : min(target.startedMs, source.startedMs == 0 ? target.startedMs : source.startedMs)
@@ -1928,14 +1975,36 @@ enum NativeActivityHarvest {
 
     /// Cline (and kin) stamp an `ask` field while blocked on the user.
     /// When `askResponse` is already present, the user answered — not pending.
+    private static func vendorAskAlreadyAnswered(_ dict: [String: Any]) -> Bool {
+        guard let raw = firstValue(dict, keys: ["askResponse", "ask_response"]) else { return false }
+        if let flag = raw as? Bool { return flag }
+        let text = stringValue(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty
+    }
+
+    private static func isTerminalSessionState(_ value: String) -> Bool {
+        let normalized = value.lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        let terminals: Set<String> = [
+            "completed", "complete", "done", "finished", "cancelled", "canceled",
+            "error", "failed", "rejected", "aborted", "stopped",
+        ]
+        if terminals.contains(normalized) { return true }
+        let tokens = normalized
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        return tokens.contains(where: { terminals.contains($0) })
+            && !tokens.contains(where: {
+                ["pending", "waiting", "awaiting", "approval", "blocked"].contains($0)
+            })
+    }
+
     private static func vendorAskFieldPending(_ dict: [String: Any]) -> Bool {
         let ask = firstString(dict, keys: ["ask", "askType", "ask_type"])
         guard !ask.isEmpty else { return false }
-        if let raw = firstValue(dict, keys: ["askResponse", "ask_response"]) {
-            if let flag = raw as? Bool { return !flag }
-            let text = stringValue(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { return false }
-        }
+        if vendorAskAlreadyAnswered(dict) { return false }
         let normalized = ask.lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
@@ -2083,6 +2152,15 @@ enum NativeActivityHarvest {
         let wanted = Set(keys.map(normalizedKey))
         for (key, value) in dict where wanted.contains(normalizedKey(key)) { return value }
         return nil
+    }
+
+    /// True if any recognized alias is a truthy pending flag (deterministic OR).
+    private static func anyTruthy(_ dict: [String: Any], keys: [String]) -> Bool {
+        let wanted = Set(keys.map(normalizedKey))
+        for (key, value) in dict where wanted.contains(normalizedKey(key)) {
+            if boolValue(value) { return true }
+        }
+        return false
     }
 
     private static func firstString(_ dict: [String: Any], keys: [String]) -> String {

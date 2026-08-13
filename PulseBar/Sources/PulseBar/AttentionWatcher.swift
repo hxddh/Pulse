@@ -13,10 +13,9 @@ final class AttentionWatcher: @unchecked Sendable {
         lock.lock()
         self.onChange = onChange
         lock.unlock()
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Pulse")
+        let file = AttentionIO.path
+        let dir = file.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("attention.tsv")
         if !FileManager.default.fileExists(atPath: file.path) {
             try? AttentionIO.header.write(to: file, atomically: true, encoding: .utf8)
         }

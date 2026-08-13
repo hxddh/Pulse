@@ -114,6 +114,7 @@ enum SnapshotBuilder {
         var liveHits: [AgentID: ProcessProbe.Hit] = [:]
         var perAgentSessionCount: [AgentID: Int] = [:]
         var droppedSessionsByAgent: [AgentID: Int] = [:]
+        var observedHarvestKeys: Set<String> = []
 
         for hit in input.procs {
             // Prefer richer hit if duplicate agent ids appear.
@@ -210,6 +211,7 @@ enum SnapshotBuilder {
             if rowsByKey[finalKey] != nil, rowsByKey[finalKey]?.sessionID != act.sessionID || act.sessionID.isEmpty {
                 finalKey = "\(key)#\(count + 1)"
             }
+            observedHarvestKeys.insert(finalKey)
 
             var row = rowsByKey[finalKey] ?? AgentRow(rowKey: finalKey, agent: agentID)
             if !act.sessionID.isEmpty { row.sessionID = act.sessionID }
@@ -253,6 +255,15 @@ enum SnapshotBuilder {
 
             rowsByKey[finalKey] = row
             perAgentSessionCount[agentID] = count + 1
+        }
+
+        // 0.95: a reliable complete scan that no longer observes a dismissed
+        // key means the session left — forget the tombstone so a genuine new
+        // pending on the same identity can re-raise.
+        if !input.harvestUnreliable {
+            for key in context.dismissedPendingKeys where !observedHarvestKeys.contains(key) {
+                result.clearedPendingKeys.insert(key)
+            }
         }
 
         // Attach live process to at most one session row per agent (no smear).
@@ -314,7 +325,8 @@ enum SnapshotBuilder {
 
         // Hooks attention — prefer session / cwd match, else best row for agent.
         for att in input.attention {
-            if let targetKey = matchAttentionRow(att, in: rowsByKey) {
+            switch matchAttentionRow(att, in: rowsByKey) {
+            case .hit(let targetKey):
                 guard var best = rowsByKey[targetKey] else { continue }
                 best.waiting = true
                 best.waitKind = att.kind
@@ -326,6 +338,14 @@ enum SnapshotBuilder {
                 best.processCount = max(best.processCount, 1)
                 rowsByKey[targetKey] = best
                 continue
+            case .ambiguous:
+                // Truncated id matched multiple siblings — never invent Waiting.
+                result.debugNotes.append(
+                    "attention ambiguous session=\(att.session) agent=\(att.id.rawValue)"
+                )
+                continue
+            case .unmatched:
+                break
             }
             let key: String = {
                 if !att.session.isEmpty {
@@ -776,50 +796,63 @@ enum SnapshotBuilder {
     /// Identity order: session id → (empty-session process row) → cwd → best
     /// live/fresh row for the agent.
     /// If Attention names a **session** and every candidate already owns a
-    /// *different* session, return nil so the caller creates a dedicated
+    /// *different* session, return `.unmatched` so the caller creates a dedicated
     /// Waiting row — never smear onto a sibling. A process-only row with an
     /// empty session id may adopt the named wait.
+    /// Ambiguous truncated prefixes return `.ambiguous` and must not light.
+    enum AttentionMatch: Equatable {
+        case hit(String)
+        case unmatched
+        case ambiguous
+    }
+
     static func matchAttentionRow(
         _ att: AttentionReader.Entry,
         in rowsByKey: [String: AgentRow]
-    ) -> String? {
+    ) -> AttentionMatch {
         let candidates = rowsByKey.values.filter { $0.agent == att.id.surfaceID }
-        guard !candidates.isEmpty else { return nil }
+        guard !candidates.isEmpty else { return .unmatched }
 
         if !att.session.isEmpty {
-            // `rowKey` elides long session ids (prefix…suffix), so a full id can
-            // never be a substring of it — that check silently never matched.
-            // Compare session ids directly, both directions for truncated forms.
-            if let hit = candidates.first(where: {
+            // Exact match first; prefix only when uniquely resolvable so a
+            // truncated Attention id cannot smear onto a sibling (0.95).
+            let sessionMatches = candidates.filter {
                 guard !$0.sessionID.isEmpty else { return false }
                 return $0.sessionID == att.session
                     || att.session.hasPrefix($0.sessionID)
                     || $0.sessionID.hasPrefix(att.session)
-            }) {
-                return hit.rowKey
+            }
+            if let exact = sessionMatches.first(where: { $0.sessionID == att.session }) {
+                return .hit(exact.rowKey)
+            }
+            if sessionMatches.count == 1 {
+                return .hit(sessionMatches[0].rowKey)
+            }
+            if sessionMatches.count > 1 {
+                return .ambiguous
             }
             // Process-only / unset-session rows can adopt the named wait.
             if let unset = candidates.first(where: { $0.sessionID.isEmpty }) {
-                return unset.rowKey
+                return .hit(unset.rowKey)
             }
             // Every candidate already owns a different session — do not smear.
-            return nil
+            return .unmatched
         }
         if !att.cwd.isEmpty {
             if let hit = candidates.first(where: {
                 !$0.cwd.isEmpty && (
                     $0.cwd == att.cwd
-                        || $0.cwd.hasPrefix(att.cwd)
-                        || att.cwd.hasPrefix($0.cwd)
+                        || $0.cwd.hasPrefix(att.cwd + "/")
+                        || att.cwd.hasPrefix($0.cwd + "/")
                 )
             }) {
-                return hit.rowKey
+                return .hit(hit.rowKey)
             }
             let want = AgentRow.shortProject(att.cwd)
             if !want.isEmpty, let hit = candidates.first(where: {
                 AgentRow.shortProject($0.project) == want || AgentRow.shortProject($0.cwd) == want
             }) {
-                return hit.rowKey
+                return .hit(hit.rowKey)
             }
         }
         var ranked = candidates
@@ -827,6 +860,9 @@ enum SnapshotBuilder {
             if a.liveProcess != b.liveProcess { return a.liveProcess && !b.liveProcess }
             return a.harvestMs > b.harvestMs
         }
-        return ranked.first?.rowKey
+        if let first = ranked.first {
+            return .hit(first.rowKey)
+        }
+        return .unmatched
     }
 }

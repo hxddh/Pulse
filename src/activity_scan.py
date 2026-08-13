@@ -1223,7 +1223,8 @@ def gemini_has_unresolved_ask(text: str) -> bool:
 
 
 def opencode_pending_skill() -> str:
-    """OpenCode: pending tool states or recent permission rows → pending."""
+    """OpenCode: session tool parts with pending/waiting — never the project
+    permission ruleset table (that smeared every session red)."""
     db = HOME / ".local/share" / "opencode" / "opencode.db"
     if not db.is_file():
         return ""
@@ -1232,20 +1233,6 @@ def opencode_pending_skill() -> str:
 
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.4)
         try:
-            now_ms = int(time.time() * 1000)
-            # permission table with recent update
-            try:
-                row = con.execute(
-                    "SELECT time_updated FROM permission ORDER BY time_updated DESC LIMIT 1"
-                ).fetchone()
-                if row and row[0]:
-                    tu = int(row[0])
-                    if tu < 10_000_000_000:
-                        tu *= 1000
-                    if now_ms - tu <= 30 * 60 * 1000:
-                        return "pending"
-            except Exception:
-                pass
             # tool parts with non-completed status
             rows = con.execute(
                 """
