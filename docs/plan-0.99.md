@@ -1,0 +1,79 @@
+# 0.99 计划 —— Quiet Data / 数据静默
+
+## 先说这份评估的局限
+
+**0.98 的输出还没被读过。** 0.98 的全部意义是让下一次诊断变便宜：
+`--harvest-explain` 会说出每个 adapter 的 `heroOrigin` / `emptyReason` / `truncated`，
+`--harvest-shape` 会说出厂商真正写了什么键。这两份东西**只能在装了 Agent 的真机上取**，
+CI 的 fixture 取不到。
+
+所以这份计划刻意**不含任何「再修某个 Agent 的解析」**。0.96.1–0.97.2 四连发的教训是：
+没有真机证据时动解析，等于抽奖。P0-0 拿到证据之前，解析条目一律空着。
+
+本版换的章不是采集，是**落盘**：0.90–0.97 让**显示**诚实，0.98 让**采集**诚实，
+从没有人审过 Pulse **写到磁盘上的东西**——账本里存了什么、留多久、注释说的和实际做的
+是不是一回事。
+
+无 Apple Developer ID → Stable Gate 仍外部 blocked；**不跳 1.0**。
+
+**诚实前提：**
+
+- 不伪造 Waiting；不扩 hooks；不升格 cache→session。
+- builder 保持纯；无额度 HUD；托盘无 approve/deny。
+- 删代码不改行为：删 legacy Python 不得改变任何 native 结果。
+
+---
+
+## 现状盘点（0.98.0）
+
+| 主题 | 缺陷 | 0.99 动作 |
+| --- | --- | --- |
+| 账本注释撒谎 | `AttentionLedger` 的类型注释写「never stores prompts, paths, tool arguments」，实际把 `row.usefulTask`（0.98 起**定义为用户真实目标**）取 160 字存进 `attention-ledger.json`，保留 14 天 / 256 条。标题本身过了 `ContentSanitizer`，所以这不是泄漏，是**声明与实现不符** | 改注释说实话；保留期与清空入口对用户可见 |
+| chrome 词表第三份 | 0.98 收敛了采集侧两份，`AgentRow.usefulTask` 的 `junk` 是第三份且已分叉：大小写敏感（`junk.contains(t)` 不 lowercase，`isChromeTask` lowercase），且缺 `Cascade session`——正是 0.98 补进采集侧的那条 | 并入 `chromeTaskTitles`，加回归锁「只有一份」 |
+| legacy Python 负担 | `src/activity_scan.py` 4978 行 + `Resources/` 逐字节副本 4978 行 + `harvest_stats_check.py` 1514 行 = **11,470 行**，对照 Swift 运行时 21,601 行。默认永不执行，却占一道门禁 + 一条 CI 逐字节同步检查。0.98 已证明它**挡不住 native 回归**，却让 AGENTS.md 长期误称「跑真实 collector」 | 删除采集器与其门禁；hook 脚本保留 |
+| Details / Support / Settings | 三个窗口 **0 处**显式 accessibility。托盘行有 `accessibilityElement(.combine)` + label + hint，详情页没有 | 补 label/value |
+| `debug.log` | 不过 `ContentSanitizer`。当前调用点不写标题，但无 session id 时 `row.rowKey` **就是项目目录名** | rowKey 落盘前脱敏项目名 |
+| supervisor 盲区 | 0.98 用起点轮转解决了饥饿，但 `HarvestSupervisor` 仍对 `.unscanned` 完全 no-op，诊断里看不出「谁被预算挤掉过」 | 记 `lastUnscannedAtMs`，进 summary |
+
+---
+
+## 逐项清单
+
+### P0 · 必须完成
+
+| ID | 项 | 验收 |
+| --- | --- | --- |
+| P0-0 | **真机证据** | 在装了 Agent 的机器上跑 `--harvest-explain` 与 `--harvest-shape`，把逐 Agent 的 `heroOrigin` / `emptyReason` 贴回本文件。**阻塞 P0-3** |
+| P0-1 | 账本诚实 | `AttentionLedger` 注释改为陈述实情（存 ≤160 字会话标题、14 天 / 256 条、已过 `ContentSanitizer`）；设置里能看到保留期并能清空；测试锁住「注释所述 == 实际字段」 |
+| P0-2 | chrome 词表真单源 | `usefulTask` 的 `junk` 并入 `chromeTaskTitles`；大小写统一；回归断言全仓只有一份该词表 |
+| P0-3 | 解析缺口 | **由 P0-0 决定**。若某 Agent 的 `emptyReason` 指向真实缺口，按证据修；无证据则本项为空，不许凭猜填 |
+| P0-4 | 删 legacy Python | 删 `src/activity_scan.py`、`Resources/activity_scan.py`、`harvest_stats_check.py`；删 CI 的逐字节同步检查中该文件与 legacy 门禁步骤；`PULSE_LEGACY_PYTHON_HARVEST` 通路与 `legacyPythonScan` 一并移除。`pulse_hook.py` / `install_hooks.py` **保留**（仍是兼容资产）。八门禁 → 七门禁，AGENTS/architecture/README 同步 |
+| P0-5 | 删代码不改行为 | 删除前后 `--native-fixture-test` 输出的 rows/adapters 数一致；`swift test` 全绿；`--selftest` 仍认得可选资产的缺席 |
+| P0-6 | 场景 AM + 测试 | EXPERIENCE **AM**（Quiet Data）；QuietData 回归 |
+| P0-7 | 交付物 | plan；CHANGELOG；semver；AGENTS/README；七门禁；草稿 PR；**等「发布」** |
+
+### P1
+
+| ID | 项 | 验收 |
+| --- | --- | --- |
+| P1-1 | 窗口 a11y | Details / Support / Settings 的关键控件与事实行有 label/value；VoiceOver 读得出「谁、为何、多久」 |
+| P1-2 | debug.log 脱敏 | rowKey 落盘前项目名脱敏；已有调用点不回归 |
+| P1-3 | supervisor 可见 | `.unscanned` 记时间戳并进 `summary` / 安全支持报告 |
+
+### 明确不做
+
+假 Waiting、扩 hooks（Claude/Codex 之外）、composer 深链、cache→session、假 1.0、
+额度 HUD、托盘 approve/deny、上传任何遥测、把 explain 做成第二块实时 HUD、
+**凭猜修解析**。
+
+---
+
+## 为什么是这个顺序
+
+P0-0 是唯一能把 0.99 从「又一轮猜测」变成「有证据的修复」的东西，所以它排第一并阻塞
+P0-3。P0-1/P0-2 收的是同一类债：**0.98 修好的规则，在更上一层还有一份没跟上的副本**
+——这正是这个仓库反复出问题的形状，值得在它再咬一次之前清掉。
+
+P0-4 删的是 11,470 行永不执行的代码。它的真实成本不是磁盘，是**它让人以为有一道
+不存在的防线**：AGENTS.md 曾据此宣称门禁在跑真实 collector，四连发全绿出厂。
+删掉之后，剩下的每一道门禁都守着它真正执行的东西。
