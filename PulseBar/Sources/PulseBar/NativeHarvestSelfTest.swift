@@ -168,13 +168,6 @@ enum NativeHarvestSelfTest {
             failures.append("per-agent timeout did not produce an isolated partial health result")
         }
 
-        if RuntimeResolver.python3(environment: [
-            "PULSE_PYTHON": "/no/such/python3",
-            "PATH": "/no/such/bin",
-        ], includeFallbacks: false) != nil {
-            failures.append("missing optional helper was not detected")
-        }
-
         var ledger = AttentionLedger()
         var waitingRows: [AgentRow] = []
         for index in 0..<10 {

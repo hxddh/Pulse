@@ -68,6 +68,25 @@ CI 的 fixture 取不到。
 
 ---
 
+## 落地记录（0.99.0）
+
+| ID | 落点 | 状态 |
+| --- | --- | --- |
+| P0-0 | `--harvest-explain` / `--harvest-shape` 真机输出 | **未做 —— 需要装了 Agent 的机器** |
+| P0-1 | `AttentionLedger` 注释 + `retentionDays` / `maxEvents`；`StatusStore.waitHistoryRetentionLine`；设置里「最近等待」下方 | 已完成 |
+| P0-2 | `AgentRow.chromeTitles` / `isChromeTitle`；采集侧 `isChromeTask` 改为委托 | 已完成 |
+| P0-3 | 解析缺口 | **空 —— 阻塞于 P0-0** |
+| P0-4 | 删 `src/activity_scan.py`、`Resources/activity_scan.py`、`scripts/harvest_stats_check.py`、`RuntimeResolver.swift`、`legacyPythonScan` 与 schema-2 wire；`coverage_check.py` 改读 Swift descriptor；CI 新增「No Python in the harvest path」 | 已完成 |
+| P0-5 | native 墙 / `swift test` / `--selftest` 前后一致 | CI 验证 |
+| P0-6 | `QuietDataTests.swift`；EXPERIENCE 场景 **AM** | 已完成 |
+| P1-1 | `AgentDetailWindowController.fact`；`SupportFactPill` 读出有 / 未知 | 已完成 |
+| P1-2 | `DebugLog.key(_:)` + 六个调用点 | 已完成 |
+| P1-3 | `HarvestSupervisor.lastUnscannedAtMs` → `summary` | 已完成 |
+
+Settings 依赖标准控件的默认 a11y，本版未逐项加标签；这是有意的取舍，不是遗漏。
+
+---
+
 ## 为什么是这个顺序
 
 P0-0 是唯一能把 0.99 从「又一轮猜测」变成「有证据的修复」的东西，所以它排第一并阻塞

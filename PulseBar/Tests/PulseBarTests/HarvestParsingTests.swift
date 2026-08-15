@@ -2,66 +2,27 @@ import XCTest
 @testable import PulseBar
 
 final class HarvestParsingTests: XCTestCase {
-    private func line(_ cols: [String]) -> String {
-        cols.joined(separator: "\t")
-    }
-
-    func testParsesFullRow() {
-        let text = line([
-            "claude", "Refactor probe", "1200", "340", "Bash", "",
-            "Pulse", "/Users/me/Pulse", "1700000000000", "2", "5", "sess-abc",
-            "34", "1699999000000", "session",
-            "testing", "completed", "agent-4", "build",
-            "2", "7", "41", "3", "5",
-        ]) + "\n"
-        let rows = ActivityHarvest.parseLegacyTSV(text)
-        XCTAssertEqual(rows.count, 1)
-        let r = rows[0]
-        XCTAssertEqual(r.id, .claude)
-        XCTAssertEqual(r.task, "Refactor probe")
-        XCTAssertEqual(r.tokensIn, 1200)
-        XCTAssertEqual(r.tokensOut, 340)
-        XCTAssertEqual(r.tool, "Bash")
-        XCTAssertEqual(r.project, "Pulse")
-        XCTAssertEqual(r.cwd, "/Users/me/Pulse")
-        XCTAssertEqual(r.harvestMs, 1_700_000_000_000)
-        XCTAssertEqual(r.subRunning, 2)
-        XCTAssertEqual(r.subTotal, 5)
-        XCTAssertEqual(r.sessionID, "sess-abc")
-        XCTAssertEqual(r.records, 34)
-        XCTAssertEqual(r.startedMs, 1_699_999_000_000)
-        XCTAssertEqual(r.evidence, .session)
-        XCTAssertEqual(r.phase, "testing")
-        XCTAssertEqual(r.outcome, "completed")
-        XCTAssertEqual(r.model, "agent-4")
-        XCTAssertEqual(r.mode, "build")
-        XCTAssertEqual(r.errors, 2)
-        XCTAssertEqual(r.files, 7)
-        XCTAssertEqual(r.contextPercent, 41)
-        XCTAssertEqual(r.progressDone, 3)
-        XCTAssertEqual(r.progressTotal, 5)
-    }
-
-    func testParsesVersionedJSONRowEnvelope() {
-        let text = "{\"schema\":2,\"type\":\"row\",\"agent\":\"command_code\",\"task\":\"Run tests\",\"tokensIn\":12,\"tokensOut\":3,\"tool\":\"swift_test\",\"skill\":\"\",\"project\":\"Pulse\",\"cwd\":\"/Users/me/Pulse\",\"harvestMs\":1700000000000,\"subRunning\":0,\"subTotal\":0,\"sessionID\":\"cmd-1\",\"records\":9,\"startedMs\":1699999000000,\"evidence\":\"session\",\"phase\":\"testing\",\"outcome\":\"\",\"model\":\"gpt-5\",\"mode\":\"\",\"errors\":0,\"files\":2,\"contextPercent\":31,\"progressDone\":4,\"progressTotal\":8}\n"
-        let rows = ActivityHarvest.parse(text)
-        XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows[0].id, .commandCode)
-        XCTAssertEqual(rows[0].phase, "testing")
-        XCTAssertEqual(rows[0].progressTotal, 8)
-        XCTAssertEqual(rows[0].evidence, .session)
-    }
-
-    func testRedactsSecretsAtHarvestBoundary() {
+    /// The collector redacts credential-shaped content before a row exists.
+    /// 0.99 deleted the legacy wire this used to be asserted through, so it is
+    /// asserted where the boundary actually is now: a real scan of a real file.
+    func testCollectorRedactsSecretsBeforeARowExists() throws {
         let fakeKey = "sk-proj-ExampleSecret123456789"
-        let text = line([
-            "codex", "Deploy with \(fakeKey)", "0", "0", "web_fetch", "",
-            "Pulse", "/Users/me/Pulse", "1700000000000", "0", "0", "sess-redact",
-        ]) + "\n"
-        let row = ActivityHarvest.parseLegacyTSV(text)[0]
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-redact-\(UUID().uuidString)")
+        let url = home.appendingPathComponent(".openhands/session.json")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: home) }
+        try #"{"sessionId":"redact-1","role":"user","content":"Deploy with KEY","cwd":"/tmp/redact"}"#
+            .replacingOccurrences(of: "KEY", with: fakeKey)
+            .write(to: url, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
         XCTAssertFalse(row.task.contains(fakeKey))
         XCTAssertTrue(row.task.contains(ContentSanitizer.replacement))
-        XCTAssertEqual(row.project, "Pulse")
     }
 
     func testSanitizerKeepsOrdinaryTechnicalText() {
@@ -77,93 +38,6 @@ final class HarvestParsingTests: XCTestCase {
         )
     }
 
-    func testOldRowsDegradeToCacheEvidenceInsteadOfClaimingASession() {
-        let text = line([
-            "roo", "Refactor auth", "0", "0", "", "",
-            "App", "/Users/me/App", "1700000000000", "0", "0", "state",
-        ]) + "\n"
-        XCTAssertEqual(ActivityHarvest.parseLegacyTSV(text).first?.evidence, .cache)
-    }
-
-    /// A harvest killed on timeout leaves a half-written final line. Parsing it
-    /// would invent a row with fields shifted into the wrong columns.
-    func testDropsIncompleteTrailingLine() {
-        let complete = line(["claude", "Task A", "0", "0", "", "", "P", "/p", "1700000000000", "0", "0", "s1"])
-        let truncated = "codex\tTask B\t0\t0"
-        let rows = ActivityHarvest.parseLegacyTSV(complete + "\n" + truncated)
-        XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows[0].id, .claude)
-    }
-
-    func testIgnoresUnknownAgentAndCommentLines() {
-        let text = """
-        # a comment
-        notanagent\tTask\t0\t0
-        claude\tReal\t0\t0\t\t\tP\t/p\t1700000000000\t0\t0\ts1
-
-        """
-        let rows = ActivityHarvest.parseLegacyTSV(text)
-        XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows[0].task, "Real")
-    }
-
-    func testParsesCollectorRuntimeHealthWithoutTreatingItAsARow() {
-        let text = """
-        #health\tclaude\tobserved\t12\t2\t
-        #health\tamp\tno_recent_data\t3\t0\t
-        #health\tcodex\tfailed\t21\t0\tJSONDecodeError
-
-        """
-        XCTAssertTrue(ActivityHarvest.parseLegacyTSV(text).isEmpty)
-        let health = ActivityHarvest.parseHealthLegacyTSV(text)
-        XCTAssertEqual(health.count, 3)
-        XCTAssertEqual(health[0].id, .claude)
-        XCTAssertEqual(health[0].state, .observed)
-        XCTAssertEqual(health[0].rowCount, 2)
-        XCTAssertEqual(health[1].state, .noRecentData)
-        XCTAssertEqual(health[2].state, .failed)
-        XCTAssertEqual(health[2].errorKind, "JSONDecodeError")
-    }
-
-    func testParsesVersionedJSONCollectorHealth() {
-        let text = "{\"schema\":2,\"type\":\"health\",\"agent\":\"cursor\",\"state\":\"observed\",\"durationMs\":42,\"rowCount\":4,\"sourcePresent\":true,\"errorKind\":\"\"}\n"
-        XCTAssertTrue(ActivityHarvest.parse(text).isEmpty)
-        let health = ActivityHarvest.parseHealthLegacyTSV(text)
-        XCTAssertEqual(health.count, 1)
-        XCTAssertEqual(health[0].id, .cursor)
-        XCTAssertEqual(health[0].state, .observed)
-        XCTAssertEqual(health[0].durationMs, 42)
-        XCTAssertEqual(health[0].rowCount, 4)
-        XCTAssertTrue(health[0].sourcePresent)
-    }
-
-    func testCollectorPreflightFailureProducesActionableHealthForEveryAdapter() {
-        let health = ActivityHarvest.unavailableHealth("native_unavailable")
-        XCTAssertEqual(Set(health.map(\.id)), ActivityHarvest.expectedCollectorIDs)
-        XCTAssertTrue(health.allSatisfy { $0.state == .failed && $0.errorKind == "native_unavailable" })
-    }
-
-    func testDropsIncompleteTrailingCollectorHealth() {
-        let text = "#health\tclaude\tobserved\t12\t1\t\n#health\tcodex\tfailed"
-        XCTAssertEqual(ActivityHarvest.parseHealthLegacyTSV(text).map(\.id), [.claude])
-    }
-
-    func testParsesActionableCollectorStatesAndSourcePresence() {
-        let text = """
-        #health\tamp\tsource_absent\t2\t0\t\t0
-        #health\tcodex\tno_sessions\t4\t0\t\t1
-        #health\tclaude\tpermission_denied\t5\t0\tPermissionError\t1
-        #health\tcursor\tschema_mismatch\t8\t0\tJSONDecodeError\t1
-
-        """
-        let health = ActivityHarvest.parseHealthLegacyTSV(text)
-        XCTAssertEqual(health.map(\.state), [
-            .sourceAbsent, .noSessions, .permissionDenied, .schemaMismatch,
-        ])
-        XCTAssertEqual(health.map(\.sourcePresent), [false, true, true, true])
-        XCTAssertFalse(health[0].state.isIssue)
-        XCTAssertTrue(health[2].state.isIssue)
-    }
 
     func testSessionKeyIsStableAndElidesLongIds() {
         let long = String(repeating: "a", count: 40)

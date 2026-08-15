@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CryptoKit
 
 @MainActor
 final class StatusStore: ObservableObject {
@@ -379,8 +380,7 @@ final class StatusStore: ObservableObject {
             "macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "lang: \(language.rawValue) · autoProbe: \(autoProbe)",
             "appDataScan: \(appDataScanDescription)",
-            "harvestProtocol: native-json-\(ActivityHarvest.wireSchemaVersion) (legacy-tsv explicit only)",
-            "helperStatus: harvest=native legacyPython=\(ActivityHarvest.pythonURL() == nil ? "optional-unavailable" : "optional-ready")",
+            "harvest: native (no external runtime)",
             "hooks: \(hooksStatus.label(lang: lang))",
             "glance: \(snapshot.glance) · rows: \(snapshot.rows.count)/\(snapshot.totalCount)",
             "cadence: \(probeIntervalDescription) · \(probeStats.summary(now: Date()))",
@@ -483,8 +483,7 @@ final class StatusStore: ObservableObject {
             "appDataGrant: \(grantLabel)",
             "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)",
             "probeCadence: \(probeIntervalDescription)",
-            "harvestProtocol: native-json-\(ActivityHarvest.wireSchemaVersion) (legacy-tsv explicit only)",
-            "helperStatus: harvest=native legacyPython=\(ActivityHarvest.pythonURL() == nil ? "optional-unavailable" : "optional-ready")",
+            "harvest: native (no external runtime)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
             "factCoverage: present=\(factPresent) possible=\(factPossible) limitedAgents=\(limitedAgents)",
@@ -2408,7 +2407,7 @@ final class StatusStore: ObservableObject {
             snoozedUntil.removeValue(forKey: key)
             attentionLedger.unsnooze(rowKey: key)
             waitingKeysForEdges.remove(key)
-            DebugLog.write("snooze expired \(key)")
+            DebugLog.write("snooze expired \(DebugLog.key(key))")
         }
 
         let result = SnapshotBuilder.build(
@@ -2794,6 +2793,17 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    /// What the recent-wait list costs in stored data, in the panel that shows
+    /// it. The numbers come from the ledger itself so the sentence cannot drift
+    /// away from the retention it describes.
+    var waitHistoryRetentionLine: String {
+        String(
+            format: tr(.historyRetention),
+            AttentionLedger.retentionDays,
+            AttentionLedger.maxEvents
+        )
+    }
+
     func clearWaitHistory() {
         waitHistory = []
         attentionLedger.clearResolved()
@@ -2858,7 +2868,7 @@ final class StatusStore: ObservableObject {
     /// to the waiting row (and best Focus handle when one exists).
     func focusOldestWait() {
         guard let row = oldestWait else { return }
-        DebugLog.write("jump to oldest wait \(row.rowKey)")
+        DebugLog.write("jump to oldest wait \(DebugLog.key(row.rowKey))")
         focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
     }
 
@@ -3747,7 +3757,7 @@ final class StatusStore: ObservableObject {
             untilMs: Int64(deadline.timeIntervalSince1970 * 1000)
         )
         attentionLedger.save()
-        DebugLog.write("snooze \(row.rowKey) for \(snoozeMinutes)m")
+        DebugLog.write("snooze \(DebugLog.key(row.rowKey)) for \(snoozeMinutes)m")
         refresh(reason: "snooze")
     }
 
@@ -3757,7 +3767,7 @@ final class StatusStore: ObservableObject {
         guard snoozedUntil.removeValue(forKey: row.rowKey) != nil else { return }
         attentionLedger.unsnooze(rowKey: row.rowKey)
         attentionLedger.save()
-        DebugLog.write("unsnooze \(row.rowKey)")
+        DebugLog.write("unsnooze \(DebugLog.key(row.rowKey))")
         refresh(reason: "unsnooze")
     }
 
@@ -3771,7 +3781,7 @@ final class StatusStore: ObservableObject {
             untilMs: Int64(deadline.timeIntervalSince1970 * 1000)
         )
         attentionLedger.save()
-        DebugLog.write("snooze(notif) \(rowKey) for \(snoozeMinutes)m")
+        DebugLog.write("snooze(notif) \(DebugLog.key(rowKey)) for \(snoozeMinutes)m")
         refresh(reason: "snoozeNotification")
     }
 
@@ -4247,7 +4257,7 @@ final class StatusStore: ObservableObject {
         }
         attentionLedger.remapRowKey(from: oldKey, to: newKey)
         attentionLedger.save()
-        DebugLog.write("row identity \(oldKey) → \(newKey)")
+        DebugLog.write("row identity \(DebugLog.key(oldKey)) → \(DebugLog.key(newKey))")
     }
 
     /// Re-register the global shortcut and report honestly when the system
@@ -4293,6 +4303,25 @@ enum DebugLog {
     }()
     private static var bytesWritten: UInt64 = 0
     private static var sizeKnown = false
+
+    /// A row key without the project name.
+    ///
+    /// `ActivityHarvest.sessionKey` falls back to the workspace leaf when an
+    /// agent has no session id, so `claude|Pulse` — a directory name off the
+    /// user's disk — was landing in a log file that support reports quote. The
+    /// agent stays readable and the tail becomes a stable digest, so lines
+    /// about the same row still correlate across a whole log.
+    static func key(_ rowKey: String) -> String {
+        guard let split = rowKey.firstIndex(of: "|") else { return rowKey }
+        let agent = rowKey[..<split]
+        let tail = rowKey[rowKey.index(after: split)...]
+        guard !tail.isEmpty else { return rowKey }
+        let digest = SHA256.hash(data: Data(tail.utf8))
+            .prefix(4)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "\(agent)|\(digest)"
+    }
 
     static func write(_ message: String) {
         lock.lock()

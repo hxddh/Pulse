@@ -46,29 +46,7 @@ enum PulseSelfTest {
             }
         }
 
-        // The Python collector is now optional legacy compatibility. If it is
-        // bundled, prove the path is inside the artifact; its absence is not a
-        // launch or native-harvest failure.
-        let appRoot = Bundle.main.bundleURL.path
-        if let script = ActivityHarvest.selfTestScriptPath() {
-            if script.hasPrefix(appRoot + "/") {
-                print("  ok      optional legacy harvest → \(script)")
-            } else {
-                print("  note    optional legacy harvest outside bundle → \(script)")
-            }
-        } else {
-            print("  ok      native Swift harvest (no external runtime)")
-        }
-
-        // Also report the direct legacy fallback explicitly when present.
-        if Bundle.main.bundleURL.pathExtension == "app" {
-            let inApp = Bundle.main.resourceURL?.appendingPathComponent("activity_scan.py")
-            if let inApp, FileManager.default.fileExists(atPath: inApp.path) {
-                print("  ok      optional activity_scan.py in Contents/Resources")
-            } else {
-                print("  ok      no Python harvest resource required")
-            }
-        }
+        print("  ok      native Swift harvest (no external runtime)")
 
         print(ok ? "selftest PASSED" : "selftest FAILED")
         return ok

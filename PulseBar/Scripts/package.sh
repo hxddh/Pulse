@@ -13,7 +13,7 @@ if [[ "$(uname -m)" != "arm64" ]]; then
 fi
 
 # Single source of truth: src/*.py → SPM Resources (avoid stale Bundle seed).
-for py in activity_scan.py pulse_hook.py install_hooks.py; do
+for py in pulse_hook.py install_hooks.py; do
   cp "$ROOT/src/$py" "$ROOT/PulseBar/Sources/PulseBar/Resources/$py"
 done
 
@@ -24,7 +24,6 @@ if [[ -n "$CHECK_PYTHON" ]]; then
   "$CHECK_PYTHON" "$ROOT/scripts/matrix_check.py"
   "$CHECK_PYTHON" "$ROOT/scripts/make_agent_icons.py" --check
   "$CHECK_PYTHON" "$ROOT/scripts/appearance_check.py"
-  "$CHECK_PYTHON" "$ROOT/scripts/harvest_stats_check.py"
 else
   # Python is an optional legacy/verification tool. The application and the
   # release artifact must still be buildable on a clean Swift-only machine;
@@ -67,7 +66,7 @@ echo "running --native-fixture-test..."
 cp "$BIN" "$APP/Contents/MacOS/PulseBar"
 # Bundle hook scripts and the optional legacy harvest adapter. The app's
 # default activity path is Swift-native and does not require any interpreter.
-for py in activity_scan.py pulse_hook.py install_hooks.py; do
+for py in pulse_hook.py install_hooks.py; do
   cp "$ROOT/src/$py" "$APP/Contents/Resources/$py"
 done
 # Brand marks (template PNGs + SVG sources)

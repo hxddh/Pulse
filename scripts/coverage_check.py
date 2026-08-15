@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Coverage gate: every surface agent id must have a harvest emitter wired in main().
+"""Coverage gate: every surface AgentID must have a native harvest descriptor.
+
+Until 0.99 this gate read `src/activity_scan.py` and counted `emit_row("...")`
+strings — it measured the *legacy Python* collector, which had not been the
+runtime path since 0.48 and has now been deleted. It therefore could not have
+noticed a native adapter losing its roots. It now reads the Swift descriptor
+table that the product actually walks, plus `AgentID.harvestSource` for the
+evidence tier.
 
 Run: python3 scripts/coverage_check.py
-Exit 1 on missing emitter.
+Exit 1 on a missing descriptor.
 """
 from __future__ import annotations
 
@@ -11,11 +18,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN = ROOT / "src" / "activity_scan.py"
+NATIVE = ROOT / "PulseBar" / "Sources" / "PulseBar" / "NativeActivityHarvest.swift"
 MODELS = ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"
 
-# AgentID raw values that must appear as emit / emit_row first arg in main().
-# cursor_agent merges into cursor at scan time — harvest emits "cursor".
+# AgentID raw values that must have a descriptor in NativeActivityHarvest.
+# cursor_agent is a transport alias of cursor and has no descriptor of its own.
 EXPECTED = {
     "claude",
     "codex",
@@ -72,30 +79,53 @@ def swift_agent_ids() -> set[str]:
     return ids
 
 
+def swift_case_to_raw(name: str) -> str:
+    """`.commandCode` → `command_code`, matching the AgentID raw values."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower().rstrip("_")
+
+
+def harvest_tiers() -> dict[str, str]:
+    """`AgentID.harvestSource` → {raw id: structuredSession|bestEffortCache}."""
+    text = MODELS.read_text(encoding="utf-8")
+    block = re.search(
+        r"var harvestSource: HarvestSource \{(.*?)\n    \}", text, re.S
+    )
+    if not block:
+        return {}
+    tiers: dict[str, str] = {}
+    pending: list[str] = []
+    for line in block.group(1).splitlines():
+        line = line.strip()
+        if line.startswith("//"):
+            continue
+        if line.startswith("return ."):
+            tier = re.search(r"return \.(\w+)", line).group(1)
+            for case in pending:
+                tiers[swift_case_to_raw(case)] = tier
+            pending = []
+        elif line.startswith("case ") or line.startswith("."):
+            # A case list wraps across lines; continuation lines start with the
+            # next `.member` rather than repeating `case`.
+            pending += re.findall(r"\.(\w+)", line)
+    return tiers
+
+
 def main() -> int:
-    text = SCAN.read_text(encoding="utf-8")
-    wired = set(re.findall(r'emit(?:_row|_all)?\(\s*"([a-z0-9_]+)"', text))
-    # Table wiring: ("codex", codex_activities), ("grok", grok_activity)
-    wired |= set(re.findall(r'\(\s*"([a-z0-9_]+)"\s*,\s*\w+_activit(?:y|ies)\s*\)', text))
+    native = NATIVE.read_text(encoding="utf-8")
+    block = re.search(r"private static func descriptors\(.*?\n    \}", native, re.S)
+    if not block:
+        print("MISSING NativeActivityHarvest.descriptors()")
+        return 1
+    wired = {swift_case_to_raw(m) for m in re.findall(r"d\(\s*\.(\w+)\s*,", block.group(0))}
     missing = sorted(EXPECTED - wired)
-    print(f"emitters wired: {len(wired & EXPECTED)}/{len(EXPECTED)}")
+    print(f"native descriptors: {len(wired & EXPECTED)}/{len(EXPECTED)}")
     if missing:
-        print("MISSING harvest wiring:", ", ".join(missing))
+        print("MISSING native harvest descriptor:", ", ".join(missing))
         return 1
 
-    contract_block = re.search(r"HARVEST_CONTRACTS\s*=\s*\{(.*?)\n\}", text, re.S)
-    if not contract_block:
-        print("MISSING HARVEST_CONTRACTS")
-        return 1
-    contracts = {
-        name: tier
-        for name, tier in re.findall(
-            r'"([a-z0-9_]+)"\s*:\s*(EVIDENCE_SESSION|EVIDENCE_CACHE)',
-            contract_block.group(1),
-        )
-    }
-    missing_contracts = sorted(EXPECTED - contracts.keys())
-    extra_contracts = sorted(contracts.keys() - EXPECTED)
+    tiers = harvest_tiers()
+    missing_contracts = sorted(EXPECTED - tiers.keys())
+    extra_contracts = sorted(tiers.keys() - EXPECTED - {"cursor_agent"})
     if missing_contracts or extra_contracts:
         print(
             "harvest contract mismatch:",
@@ -103,8 +133,10 @@ def main() -> int:
             f"extra={','.join(extra_contracts) or '-'}",
         )
         return 1
-    session_count = sum(value == "EVIDENCE_SESSION" for value in contracts.values())
-    cache_count = sum(value == "EVIDENCE_CACHE" for value in contracts.values())
+    session_count = sum(
+        tiers[name] == "structuredSession" for name in EXPECTED
+    )
+    cache_count = sum(tiers[name] == "bestEffortCache" for name in EXPECTED)
     print(f"collector evidence: {session_count} session · {cache_count} cache")
 
     # A new AgentID must be added to EXPECTED too, or the gate silently shrinks.
@@ -163,7 +195,7 @@ def main() -> int:
         ):
             print(f"{label} must not enumerate other apps during normal runtime")
             return 1
-    print("OK — all expected harvest emitters present")
+    print("OK — every surface AgentID has a native harvest descriptor")
     return 0
 
 
