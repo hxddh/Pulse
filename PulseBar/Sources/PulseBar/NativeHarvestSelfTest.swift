@@ -202,6 +202,16 @@ enum NativeHarvestSelfTest {
 
         if failures.isEmpty {
             print("native fixture PASSED — rows=\(result.rows.count) adapters=\(result.health.count) complete=\(result.complete)")
+            // A bare total cannot be compared across releases: when 0.99 moved
+            // it by one there was no way to say which adapter changed without
+            // another CI round trip. Print the breakdown so the number is an
+            // argument rather than a mystery.
+            let byAgent = Dictionary(grouping: result.rows, by: { $0.id.rawValue })
+                .mapValues(\.count)
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: " ")
+            print("native fixture rows by agent — \(byAgent)")
             return true
         }
         print("native fixture FAILED")
