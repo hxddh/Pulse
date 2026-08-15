@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.97.2），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.98.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -434,7 +434,12 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   绝不从「任意 `"name": "..."`」里猜——那会把 `workspaceFolder`、`filesystem`、
   模型 id 显示成「它正在跑 X」。宁可空着。
 - **数量不估算。** 会话文件超过采集预算就报「未知」，不按比例外推；采集器已读到、
-  但超过 Swift 500 条容量的部分必须精确计数。
+  但超过 Swift 500 条容量的部分必须精确计数。**读取窗口截断时记录数即为未知**——
+  数 head+tail 窗口的换行符得到的是下界，不是总数，不得当作精确值展示。
+- **采集器要能自证。** 每个 adapter 报告它这一趟读了什么、主行来自哪种记录、没有主行
+  时是哪一层丢的。这是诊断输出，不进托盘，也不含标题、正文或路径。
+- **主行按来源选，不按长度。** 用户句压过厂商标题，与字数无关；占位词和纯文件名
+  永远不是目标。
 - 每条 Waiting 标注来源 `hooks` / `pending`。
 - Focus 分级诚实：TTY 标签 → 宿主工作区 → 宿主/Warp 仅 App；
   cwd 可打开进宿主，但绝不经 Finder 冒充 Focus，也不把仅激活 App 写成「跳到该会话」；
@@ -485,6 +490,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AI | Return Truth（回看诚实） | 重开托盘后用新扫描算 Look；同行新 `waitSinceMs` 算新等待且优先于 ended；ended 不进 moved；Glance 超 8 格降为 `1 · 4m` / `1`；样本行出现后再 Go-Look；进程收养重键；Attention 压缩保留未决；Details 可行动缺口优先、quiet/cache 不重复观测/身份 |
 | AJ | Pi 会话标题 | 与 Pi `/resume` 一致：最新 `session_info.name`（空则清除）否则**第一条**用户句；官方 `--<cwd>--/<timestamp>_<uuid>.jsonl`；env 标签不吞后半句，未闭合 env 不当标题；compaction `retainedTail`；sibling `.db` 不挡 JSONL；SQLite 最新句不盖 JSONL；`Auth session` 不是 chrome；官方头-only 不发明项目名主行 |
 | AK | Hero Honesty（主行诚实） | Claude/Command Code `tool_result` 不当标题、长笔录开场目标仍在；`messages[]` 跳过 tool 信封；Codex `event_msg` 用户正文进主行、Desktop 信封剥掉、`continue` 不覆盖；tool `path` 不是 cwd；Goose `name` / Kimi `lastPrompt` / Cursor `subtitle` 可见；表头计数=舰队；Details 空 phase 不发明「等待权限」；审批 ask → Permission 芯片 |
+| AL | Ground Truth（采集可证） | 主行按记录种类选而非字符串长度（`sessionName` > `userPrompt` > `cacheTitle` > chrome），同种类保留先见到的；每个 adapter 输出 explain（files/bytes/truncated/facts/heroOrigin/emptyReason）进安全支持报告与 debug.log；窗口截断时 records 报未知不报估算值；预算用尽后下次扫描从上次没走到的 adapter 开始，尾部 Agent 不再永久 `unscanned`；launchd 最小 PATH 下 `~/.local/bin` 的 CLI 仍算「已安装」；chrome 词表单源；native 墙用厂商真实布局断言主行**取值**；explain / shape 导出不含标题、正文与路径 |
 
 ---
 
@@ -496,6 +502,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Tray 结构 | `PulseApp.swift` → `TrayPanel` |
 | Prefs 布局 | `PulseApp.swift` → `SettingsView` |
 | 状态合并 / 编码 | `SnapshotBuilder.swift` |
+| 主行来源 / 采集 explain | `NativeActivityHarvest.swift` |
 | 通知策略 / 定时器 | `StatusStore.swift` |
 | 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |
 | 设置与迁移 | `PulseSettings.swift` |

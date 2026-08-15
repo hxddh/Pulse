@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.97.md`](docs/plan-0.97.md) | The active plan (Hero Honesty) |
+| [`docs/plan-0.98.md`](docs/plan-0.98.md) | The active plan (Ground Truth) |
+| [`docs/plan-0.97.md`](docs/plan-0.97.md) | Historical plan (Hero Honesty) |
 | [`docs/plan-0.96.md`](docs/plan-0.96.md) | Historical plan (Return Truth) |
 | [`docs/plan-0.95.md`](docs/plan-0.95.md) | Historical plan (Extinguish Honesty) |
 | [`docs/plan-0.94.md`](docs/plan-0.94.md) | Historical plan (Waiting Proof) |
@@ -81,7 +82,7 @@ python3 scripts/coverage_check.py
 python3 scripts/matrix_check.py
 python3 scripts/make_agent_icons.py --check   # every AgentID has a mark
 python3 scripts/appearance_check.py          # no appearance frozen into a constant
-python3 scripts/harvest_stats_check.py       # harvest emits facts that move, and never guesses a tool
+python3 scripts/harvest_stats_check.py       # LEGACY Python collector, end to end (not the runtime path)
 python3 scripts/resource_budget_check.py     # native fixture wall + RSS
 python3 scripts/package_check.py    # reads the built .app
 ```
@@ -90,6 +91,14 @@ python3 scripts/package_check.py    # reads the built .app
 are optional legacy/hook assets; `package.sh` may sync them for explicit
 compatibility diagnostics, but a missing Python runtime must never block the
 app, native harvest, or self-test.
+
+**Know which wall catches what.** `harvest_stats_check.py` runs the *legacy*
+Python collector; it cannot see a native parsing regression. The native wall is
+`PulseBar --native-fixture-test` (`NativeHarvestSelfTest.swift`) plus
+`swift test`, and it asserts hero **values** against vendor-shaped files. A
+wrong tray hero is fixed with a failing test there — never by adding a source
+string to the Python gate. Believing otherwise is what let 0.96.1, 0.97.0,
+0.97.1 and 0.97.2 each ship green with the hero still wrong.
 
 **Version truth:** `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`.
 CHANGELOG's newest heading and the README badge follow it.
@@ -142,7 +151,7 @@ to users.
 
 ## Current state
 
-0.97.2 is the current source version. Without an Apple Developer ID, GitHub
+0.98.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.97.md`](docs/plan-0.97.md) (Hero Honesty).
+plan is [`docs/plan-0.98.md`](docs/plan-0.98.md) (Ground Truth).

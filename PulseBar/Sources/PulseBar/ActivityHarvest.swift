@@ -69,6 +69,44 @@ enum ActivityHarvest {
         }
     }
 
+    /// One adapter explaining its own bounded pass.
+    ///
+    /// Counts and fixed tags only. It exists so "the hero is empty" stops
+    /// being a mystery that costs a release to diagnose: it says how much the
+    /// adapter actually read, whether the window was truncated, how many facts
+    /// the parsers produced, what kind of record the hero came from, and — when
+    /// there is no hero — which layer lost it. It is diagnostic output, never
+    /// a tray fact, and it carries no titles, prompts or vendor paths.
+    struct CollectorExplain: Equatable {
+        /// Files the bounded walk actually opened.
+        var filesRead = 0
+        /// Bytes reserved from the scan budget for this adapter.
+        var bytesRead = 0
+        /// At least one file was larger than its window and was read head+tail,
+        /// so counts derived from the text are floors, not totals.
+        var truncated = false
+        /// Facts the parsers produced before merge.
+        var factsParsed = 0
+        /// What kind of record produced the best row's hero title.
+        var heroOrigin = ""
+        /// Which layer lost the hero, when there is none.
+        var emptyReason = ""
+
+        var isEmpty: Bool { self == CollectorExplain() }
+
+        /// `files=3 bytes=41k facts=7 hero=user_prompt` — support-report line.
+        var summary: String {
+            var bits: [String] = []
+            if filesRead > 0 { bits.append("files=\(filesRead)") }
+            if bytesRead > 0 { bits.append("bytes=\(bytesRead / 1024)k") }
+            if truncated { bits.append("truncated") }
+            if factsParsed > 0 { bits.append("facts=\(factsParsed)") }
+            if !heroOrigin.isEmpty { bits.append("hero=\(heroOrigin)") }
+            if !emptyReason.isEmpty { bits.append("empty=\(emptyReason)") }
+            return bits.isEmpty ? "-" : bits.joined(separator: " ")
+        }
+    }
+
     struct CollectorHealth: Equatable {
         var id: AgentID
         var state: CollectorState
@@ -78,6 +116,8 @@ enum ActivityHarvest {
         /// Exception type only; vendor paths and exception messages never
         /// leave the diagnostic log.
         var errorKind: String
+        /// How this adapter reached the result above. Diagnostic only.
+        var explain: CollectorExplain = CollectorExplain()
 
         static func unscanned(_ id: AgentID) -> CollectorHealth {
             CollectorHealth(
@@ -338,12 +378,14 @@ enum ActivityHarvest {
     static func scan(
         allowAppData: Bool = false,
         appDataAgents: Set<AgentID> = [],
-        agentFilter: Set<AgentID>? = nil
+        agentFilter: Set<AgentID>? = nil,
+        startCursor: Int = 0
     ) -> (
         rows: [Row],
         health: [CollectorHealth],
         unreliable: Bool,
-        complete: Bool
+        complete: Bool,
+        nextCursor: Int
     ) {
         // Swift is the product path. It has no external runtime, no child
         // process deadline, and no Python/TCC prompt side effect. The legacy
@@ -353,14 +395,22 @@ enum ActivityHarvest {
         let native = NativeActivityHarvest.scan(
             allowAppData: allowAppData,
             appDataAgents: appDataAgents,
-            agentFilter: agentFilter
+            agentFilter: agentFilter,
+            startCursor: startCursor
         )
         DebugLog.write(
             "native harvest rows=\(native.rows.count) adapters=\(native.health.count) "
-                + "complete=\(native.complete) appData=\(allowAppData)"
+                + "complete=\(native.complete) appData=\(allowAppData) "
+                + "cursor=\(startCursor)->\(native.nextCursor)"
         )
+        // One line per adapter that read something or explained an empty
+        // result. This is the record that turns "the tray hero is blank" into
+        // a one-paste bug report instead of a guess and another release.
+        for item in native.health where !item.explain.isEmpty {
+            DebugLog.write("harvest explain \(item.id.rawValue) \(item.explain.summary)")
+        }
         guard legacyPythonRequested else {
-            return (native.rows, native.health, false, native.complete)
+            return (native.rows, native.health, false, native.complete, native.nextCursor)
         }
         let legacy = legacyPythonScan(
             allowAppData: allowAppData,
@@ -370,9 +420,11 @@ enum ActivityHarvest {
         // it must not replace a healthy native result with an empty/partial
         // scan. Normal users never enter this branch.
         if !legacy.rows.isEmpty && legacy.complete {
-            return legacy
+            // The legacy diagnostic path scans every adapter in one pass, so
+            // there is nothing to resume from.
+            return (legacy.rows, legacy.health, legacy.unreliable, legacy.complete, 0)
         }
-        return (native.rows, native.health, false, native.complete)
+        return (native.rows, native.health, false, native.complete, native.nextCursor)
     }
 
     private static var legacyPythonRequested: Bool {

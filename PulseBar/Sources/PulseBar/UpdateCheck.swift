@@ -352,16 +352,36 @@ final class UpdateCheck {
         return core.split(separator: ".").map { Int($0) ?? 0 }
     }
 
+    /// The published digest, read from the release body's own verification
+    /// block.
+    ///
+    /// The release body is the CHANGELOG section with a `### Download
+    /// verification` block appended by `release.yml`. Scanning the whole body
+    /// for "the first 64 hex characters" would let any unrelated hash that a
+    /// future changelog entry happens to quote become the expected digest, and
+    /// a good download would then fail verification. Anchor to the block that
+    /// exists to carry it, and only fall back to a body-wide scan when the
+    /// block is absent (older releases).
     private nonisolated static func sha256(in body: String) -> String {
+        let verificationHeading = "### Download verification"
+        if let blockStart = body.range(of: verificationHeading) {
+            let block = String(body[blockStart.upperBound...])
+            let digest = firstSHA256(in: block)
+            if !digest.isEmpty { return digest }
+        }
+        return firstSHA256(in: body)
+    }
+
+    private nonisolated static func firstSHA256(in text: String) -> String {
         let pattern = #"(?i)(?:sha[- ]?256[^0-9a-f]{0,24})?([0-9a-f]{64})"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(
-                in: body,
-                range: NSRange(body.startIndex..., in: body)
+                in: text,
+                range: NSRange(text.startIndex..., in: text)
               ),
-              let range = Range(match.range(at: 1), in: body)
+              let range = Range(match.range(at: 1), in: text)
         else { return "" }
-        return String(body[range]).lowercased()
+        return String(text[range]).lowercased()
     }
 
     private enum DownloadError: LocalizedError {

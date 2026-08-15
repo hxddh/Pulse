@@ -18,6 +18,9 @@ enum NativeHarvestSelfTest {
         do {
             try fm.createDirectory(at: home, withIntermediateDirectories: true)
             try writeGenericFixtures(home: home)
+            try writeClaudeTranscriptFixture(home: home)
+            try writeCodexEventFixture(home: home)
+            try writeOfficialPiFixture(home: home)
             try writeCorruptJSONFixture(home: home)
             try writeCursorFixture(home: home)
             try writeOpenCodeFixture(home: home)
@@ -90,6 +93,35 @@ enum NativeHarvestSelfTest {
             }
         }
         require(.codex, { $0.task == "Compacted rollout fixture" && $0.tool == "bash" }, "compacted task/action")
+
+        // Flagship hero fidelity. Everything below asserts the *value* of the
+        // tray hero against a vendor-shaped file, not merely that a row
+        // exists. The generic `{"title": …}` fixtures could not tell a correct
+        // hero from a wrong one, which is how 0.96.1 through 0.97.2 each
+        // shipped green with the tray still showing the wrong line.
+        require(
+            .claude,
+            { $0.task == "Fix the tray hero for Claude" && $0.cwd == "/Users/me/PulseFixture" },
+            "user goal under a long tool_result tail"
+        )
+        // The transcript is larger than Claude's read window, so any newline
+        // count taken from it is a floor. EXPERIENCE forbids estimating, so
+        // the row must say unknown rather than an authoritative undercount.
+        if let claudeRow = result.rows.first(where: {
+            $0.id == .claude && $0.task == "Fix the tray hero for Claude"
+        }), claudeRow.records != 0 {
+            failures.append("truncated Claude window reported \(claudeRow.records) records as exact")
+        }
+        require(
+            .codex,
+            { $0.task == "Ship the Codex event_msg hero" },
+            "event_msg user text as hero"
+        )
+        require(
+            .pi,
+            { $0.task == "Refactor the auth module" && $0.cwd == "/Users/me/PiFixture" },
+            "official JSONL /name over the first user turn"
+        )
         require(.cursor, { $0.task == "Cursor fixture" && $0.cwd == "/tmp/pulse-cursor" }, "composer workspace")
         if result.health.first(where: { $0.id == .cursor })?.state != .observed {
             failures.append("Cursor Composer source was downgraded when optional cloud table is absent")
@@ -263,6 +295,69 @@ enum NativeHarvestSelfTest {
         try exec(db, "CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, lastUpdatedAt INTEGER, value TEXT, isArchived INTEGER, isSubagent INTEGER);")
         let value = #"{"name":"Cursor fixture","currentTool":"bash","contextUsagePercent":42}"#
         try exec(db, "INSERT INTO composerHeaders VALUES ('cursor-fixture', 'ws-1', 1785715200000, '\(sql(value))', 0, 0);")
+    }
+
+    /// A Claude transcript in the shape Claude Code actually writes: an
+    /// encoded project directory, a `role=user` goal, an assistant `tool_use`,
+    /// and then a long tail of `role=user` **tool_result** envelopes. That tail
+    /// is the production failure — it is what made the tray hero a tool dump,
+    /// and it is deliberately larger than the read window so the truncation
+    /// path is exercised too.
+    private static func writeClaudeTranscriptFixture(home: URL) throws {
+        let fm = FileManager.default
+        let url = home.appendingPathComponent(
+            ".claude/projects/-Users-me-PulseFixture/transcript.jsonl"
+        )
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var lines = [
+            #"{"type":"user","sessionId":"claude-transcript","cwd":"/Users/me/PulseFixture","message":{"role":"user","content":"Fix the tray hero for Claude"}}"#,
+            #"{"type":"assistant","sessionId":"claude-transcript","message":{"role":"assistant","model":"claude-fixture-model","usage":{"input_tokens":120,"output_tokens":34},"content":[{"type":"tool_use","name":"Bash","input":{"command":"swift test","path":"/Users/me/PulseFixture/Sources/Thing.swift"}}]}}"#,
+        ]
+        // ~1.4 MB of tool_result envelopes: past Claude's 1 MB window.
+        let filler = String(repeating: "tool output line; ", count: 90)
+        for index in 0..<800 {
+            lines.append(
+                #"{"type":"user","sessionId":"claude-transcript","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t\#(index)","content":"\#(filler)"}]}}"#
+            )
+        }
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Codex writes the user's own words as an `event_msg` / `user_message`
+    /// payload, sometimes wrapped in the Desktop request envelope. A rollout
+    /// whose only user text lives there must still produce that hero.
+    private static func writeCodexEventFixture(home: URL) throws {
+        let fm = FileManager.default
+        let url = home.appendingPathComponent(
+            ".codex/sessions/event/rollout-event.jsonl"
+        )
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lines = [
+            #"{"type":"session_meta","timestamp":"2026-08-03T00:00:00Z","payload":{"id":"codex-event","cwd":"/Users/me/CodexFixture"}}"#,
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"Ship the Codex event_msg hero"}}"#,
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"continue"}}"#,
+            #"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{}"}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    /// Pi's official on-disk layout: `--<encoded cwd>--/<timestamp>_<uuid>.jsonl`
+    /// with a `session` header, string `content` user turns and a
+    /// `session_info` name. `/name` is the `/resume` title and must outrank the
+    /// first user turn — the ranking that replaced the old "longer wins" merge.
+    private static func writeOfficialPiFixture(home: URL) throws {
+        let fm = FileManager.default
+        let url = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-PiFixture--/2026-08-03T00-00-01-000Z_pi-official.jsonl"
+        )
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lines = [
+            #"{"type":"session","version":3,"id":"pi-official","timestamp":"2026-08-03T00:00:00.000Z","cwd":"/Users/me/PiFixture"}"#,
+            #"{"type":"message","timestamp":"2026-08-03T00:00:01.000Z","message":{"role":"user","content":"first prompt that must lose to /name"}}"#,
+            #"{"type":"message","timestamp":"2026-08-03T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}"#,
+            #"{"type":"session_info","timestamp":"2026-08-03T00:00:03.000Z","name":"Refactor the auth module"}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private static func writeCorruptJSONFixture(home: URL) throws {

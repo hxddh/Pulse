@@ -87,6 +87,33 @@ enum PulseBarMain {
         if CommandLine.arguments.contains("--native-fixture-test") {
             exit(NativeHarvestSelfTest.run() ? 0 : 1)
         }
+        // Donate a sample without donating your work. Prints the *shape* of the
+        // newest session records — key names and value kinds, no values — so a
+        // parsing bug can be fixed against what the vendor actually writes
+        // instead of against a format someone inferred. Opt-in, off by
+        // default, and short enough to read before sharing.
+        if CommandLine.arguments.contains("--harvest-shape") {
+            let settings = PulseSettings.loadFromDisk()
+            print(NativeActivityHarvest.shapeReport(
+                allowAppData: settings.allowAppData,
+                appDataAgents: settings.appDataAgents
+            ))
+            exit(0)
+        }
+        // Per-adapter account of the last scan: files, bytes, truncation,
+        // facts, which record kind produced the hero, and which layer lost it
+        // when there is none.
+        if CommandLine.arguments.contains("--harvest-explain") {
+            let settings = PulseSettings.loadFromDisk()
+            let result = ActivityHarvest.scan(
+                allowAppData: settings.allowAppData,
+                appDataAgents: settings.appDataAgents
+            )
+            for health in result.health.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
+                print("\(health.id.rawValue) \(health.state.rawValue) \(health.explain.summary)")
+            }
+            exit(0)
+        }
         if Bundle.main.bundleURL.pathExtension == "app" {
             _ = UpdateInstaller.recoverIfNeeded(at: Bundle.main.bundleURL)
         }

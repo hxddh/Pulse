@@ -21,6 +21,9 @@ enum NativeActivityHarvest {
         var rows: [ActivityHarvest.Row]
         var health: [ActivityHarvest.CollectorHealth]
         var complete: Bool
+        /// Where the next scan should start so a budget cutoff rotates through
+        /// the fleet instead of starving the same tail adapters forever.
+        var nextCursor: Int = 0
     }
 
     private struct Descriptor {
@@ -29,8 +32,44 @@ enum NativeActivityHarvest {
         var commands: [String]
     }
 
+    /// What kind of record a hero title came from.
+    ///
+    /// Until 0.98 `preferTask` ended in `new.count >= old.count + 8` — the
+    /// longer string wins — with six special cases layered on top to stop tool
+    /// dumps, filenames and vendor chrome from beating a short real goal.
+    /// 0.96.1, 0.97.0, 0.97.1 and 0.97.2 each added one more special case and
+    /// each shipped with the tray hero still wrong. Length is not evidence.
+    /// A merge now compares *what kind of record* produced the title, and only
+    /// falls back to first-seen when two fragments are the same kind.
+    enum TaskOrigin: Int, Comparable {
+        /// No title.
+        case none = 0
+        /// Vendor placeholder ("New chat") or a bare filename — never a goal.
+        /// Assigned at compare time, never stored.
+        case chrome = 1
+        /// Free text recovered from an otherwise unstructured file.
+        case fallbackText = 2
+        /// A vendor cache headline (`title` / `summary` / `description`).
+        case cacheTitle = 3
+        /// A label attached to a tool call or plan step.
+        case toolTitle = 4
+        /// A visible user turn — the actual goal.
+        case userPrompt = 5
+        /// A name the user gave this session (Pi `/name`, Cursor composer).
+        case sessionName = 6
+
+        static func < (lhs: TaskOrigin, rhs: TaskOrigin) -> Bool {
+            lhs.rawValue < rhs.rawValue
+        }
+    }
+
     private struct Fact {
         var task = ""
+        /// Where `task` came from. Drives merge; never rendered.
+        var taskOrigin = TaskOrigin.none
+        /// True when the source file was larger than its read window, so any
+        /// count derived from the text is a floor rather than a total.
+        var windowTruncated = false
         var project = ""
         var cwd = ""
         var sessionID = ""
@@ -111,10 +150,28 @@ enum NativeActivityHarvest {
 
         var exhausted: Bool { Date() >= deadline || bytesRemaining <= 0 }
 
+        // Explain counters for the adapter currently running. Every byte a
+        // collector reads already passes through `reserve`, so the budget is
+        // the one place that can count the pass honestly without threading a
+        // box through every adapter. `scan()` resets them per descriptor.
+        private(set) var agentFilesRead = 0
+        private(set) var agentBytesRead = 0
+        private(set) var agentTruncated = false
+
         func reserve(_ bytes: Int) -> Bool {
             guard bytes > 0, !exhausted, bytes <= bytesRemaining else { return false }
             bytesRemaining -= bytes
+            agentBytesRead += bytes
             return true
+        }
+
+        func noteFileRead() { agentFilesRead += 1 }
+        func noteTruncated() { agentTruncated = true }
+
+        func resetAgentCounters() {
+            agentFilesRead = 0
+            agentBytesRead = 0
+            agentTruncated = false
         }
     }
 
@@ -162,20 +219,32 @@ enum NativeActivityHarvest {
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         agentDeadlineSeconds: TimeInterval? = nil,
         totalDeadlineSeconds: TimeInterval? = nil,
-        agentFilter: Set<AgentID>? = nil
+        agentFilter: Set<AgentID>? = nil,
+        startCursor: Int = 0
     ) -> Result {
         let fm = FileManager.default
         let allDescriptors = descriptors(home: home)
-        let descriptors: [Descriptor]
+        let filtered: [Descriptor]
         if let agentFilter {
             let allowed = Set(agentFilter.map(\.surfaceID))
-            descriptors = allDescriptors.filter { allowed.contains($0.id.surfaceID) }
+            filtered = allDescriptors.filter { allowed.contains($0.id.surfaceID) }
         } else {
-            descriptors = allDescriptors
+            filtered = allDescriptors
         }
+        // Adapter order used to be the literal order of `descriptors()`, so
+        // whenever the global byte/time budget ran out it ran out at the same
+        // place every scan. The agents at the tail of the list — droid,
+        // Command Code, Antigravity, Kimi, ZCode — were reported `unscanned`
+        // on every single refresh and never got a turn, while the supervisor
+        // treats `unscanned` as "not this adapter's fault" and therefore never
+        // compensated. Starting each scan where the previous one gave up makes
+        // the starvation rotate instead of being permanent.
+        let offset = filtered.isEmpty ? 0 : ((startCursor % filtered.count) + filtered.count) % filtered.count
+        let descriptors = Array(filtered[offset...] + filtered[..<offset])
         let budget = ScanBudget(
             deadline: Date().addingTimeInterval(totalDeadlineSeconds ?? 5.8)
         )
+        var firstUnreachedIndex: Int?
         let perAgentSeconds = agentDeadlineSeconds ?? maxAgentSeconds
         var rows: [ActivityHarvest.Row] = []
         var health: [ActivityHarvest.CollectorHealth] = []
@@ -184,11 +253,13 @@ enum NativeActivityHarvest {
             if budget.exhausted {
                 // Emit an explicit boundary for adapters the global cutoff
                 // never reached. Do not misreport them as `no_sessions`.
+                firstUnreachedIndex = firstUnreachedIndex ?? descriptorIndex
                 health.append(contentsOf: descriptors[descriptorIndex...].map {
                     .unscanned($0.id)
                 })
                 break
             }
+            budget.resetAgentCounters()
             let started = Date()
             var sourcePresent = false
             var facts: [Fact] = []
@@ -223,7 +294,9 @@ enum NativeActivityHarvest {
             }
 
             if !sourcePresent {
-                sourcePresent = descriptor.commands.contains { executableExists($0) }
+                sourcePresent = descriptor.commands.contains {
+                    executableExists($0, home: home)
+                }
             }
             // SQLite + JSONL (Pi) and split transcript fragments share a
             // session id. Merge before row shaping so a later real prompt is
@@ -255,6 +328,16 @@ enum NativeActivityHarvest {
                 state = .sourceAbsent
             }
             let duration = max(0, Int(Date().timeIntervalSince(started) * 1000))
+            let explain = explainResult(
+                filesRead: budget.agentFilesRead,
+                bytesRead: budget.agentBytesRead,
+                truncated: budget.agentTruncated,
+                factsParsed: facts.count,
+                facts: mergedFacts,
+                rows: agentRows,
+                sourcePresent: sourcePresent,
+                timedOut: agentTimedOut
+            )
             health.append(.init(
                 id: descriptor.id,
                 state: state,
@@ -263,9 +346,11 @@ enum NativeActivityHarvest {
                 sourcePresent: sourcePresent,
                 errorKind: agentTimedOut
                     ? "native_timeout"
-                    : (visitError ? "native_read_failed" : "")
+                    : (visitError ? "native_read_failed" : ""),
+                explain: explain
             ))
             if budget.exhausted, descriptorIndex + 1 < descriptors.count {
+                firstUnreachedIndex = firstUnreachedIndex ?? (descriptorIndex + 1)
                 health.append(contentsOf: descriptors[(descriptorIndex + 1)...].map {
                     .unscanned($0.id)
                 })
@@ -288,11 +373,190 @@ enum NativeActivityHarvest {
             }
         }
 
+        // Resume at the first adapter this pass could not reach, so the next
+        // scan spends its budget on them first. A complete pass rewinds to the
+        // start, keeping the flagship agents at the head in the common case.
+        let nextCursor = firstUnreachedIndex.map { (offset + $0) % max(1, filtered.count) } ?? 0
         return Result(
             rows: rows,
             health: health,
-            complete: ActivityHarvest.isCompleteHealth(health)
+            complete: ActivityHarvest.isCompleteHealth(health),
+            nextCursor: nextCursor
         )
+    }
+
+    /// The collector's account of one bounded pass.
+    ///
+    /// `observed` with an empty hero used to be indistinguishable from
+    /// `observed` with a good one: nothing in the app, the support report or a
+    /// bug report said which layer lost the title. Four consecutive releases
+    /// each guessed at a vendor format, shipped, and found the tray still
+    /// blank. Counts and tags only — no titles, no prompt text, no paths.
+    private static func explainResult(
+        filesRead: Int,
+        bytesRead: Int,
+        truncated: Bool,
+        factsParsed: Int,
+        facts: [Fact],
+        rows: [ActivityHarvest.Row],
+        sourcePresent: Bool,
+        timedOut: Bool
+    ) -> ActivityHarvest.CollectorExplain {
+        let hero = facts.first { !$0.task.isEmpty }
+        let emptyReason: String
+        if rows.contains(where: { !$0.task.isEmpty }) {
+            emptyReason = ""
+        } else if !sourcePresent {
+            emptyReason = "no_source"
+        } else if timedOut {
+            emptyReason = "deadline"
+        } else if filesRead == 0 {
+            emptyReason = "no_readable_file"
+        } else if factsParsed == 0 {
+            emptyReason = "no_parsable_record"
+        } else if rows.isEmpty {
+            emptyReason = "facts_without_display_signal"
+        } else {
+            emptyReason = "no_user_goal_in_records"
+        }
+        return ActivityHarvest.CollectorExplain(
+            filesRead: filesRead,
+            bytesRead: bytesRead,
+            truncated: truncated,
+            factsParsed: factsParsed,
+            heroOrigin: hero.map { originLabel(effectiveOrigin($0.task, $0.taskOrigin)) } ?? "",
+            emptyReason: emptyReason
+        )
+    }
+
+    private static func originLabel(_ origin: TaskOrigin) -> String {
+        switch origin {
+        case .none: return ""
+        case .chrome: return "chrome"
+        case .fallbackText: return "fallback_text"
+        case .cacheTitle: return "cache_title"
+        case .toolTitle: return "tool_title"
+        case .userPrompt: return "user_prompt"
+        case .sessionName: return "session_name"
+        }
+    }
+
+    // MARK: - Shape export
+
+    /// A privacy-safe description of the *shape* of an agent's newest session
+    /// records: key names and value kinds, never values.
+    ///
+    /// Every hero regression from 0.96.1 to 0.97.2 came down to the same
+    /// missing input — nobody could see what the vendor actually wrote on the
+    /// machine where the tray was blank, so each fix was authored against a
+    /// format someone had inferred. A user can run this, read every line, and
+    /// decide to paste it into an issue; it emits no titles, no prompts, no
+    /// paths and no values, so what they are sharing is legible before they
+    /// share it.
+    static func shapeReport(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        agents: [AgentID] = AgentID.allCases,
+        allowAppData: Bool = false,
+        appDataAgents: Set<AgentID> = [],
+        maxRecordsPerAgent: Int = 6
+    ) -> String {
+        var lines = ["Pulse harvest shape report", "keys and value kinds only — no values"]
+        let fm = FileManager.default
+        let wanted = Set(agents.map(\.surfaceID))
+        for descriptor in descriptors(home: home) where wanted.contains(descriptor.id.surfaceID) {
+            let permitted = allowAppData || appDataAgents.contains {
+                accessAlias($0, matches: descriptor.id)
+            }
+            var newest: (url: URL, mtime: Date)?
+            for root in descriptor.roots {
+                if isProtected(root, home: home), !permitted { continue }
+                guard fm.fileExists(atPath: root.path) else { continue }
+                guard let walker = fm.enumerator(
+                    at: root,
+                    includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                    options: [.skipsPackageDescendants]
+                ) else { continue }
+                var visited = 0
+                while let item = walker.nextObject() as? URL, visited < maxFilesPerAgent {
+                    visited += 1
+                    guard ["json", "jsonl", "ndjson"].contains(item.pathExtension.lowercased()),
+                          let values = try? item.resourceValues(
+                            forKeys: [.contentModificationDateKey, .isRegularFileKey]
+                          ),
+                          values.isRegularFile == true,
+                          let mtime = values.contentModificationDate
+                    else { continue }
+                    if let current = newest, mtime <= current.mtime { continue }
+                    newest = (item, mtime)
+                }
+            }
+            guard let candidate = newest, let text = boundedTail(of: candidate.url) else {
+                lines.append("\(descriptor.id.rawValue): no readable json/jsonl source")
+                continue
+            }
+            lines.append("\(descriptor.id.rawValue): .\(candidate.url.pathExtension.lowercased())")
+            var emitted = 0
+            for raw in text.split(whereSeparator: \.isNewline).suffix(64).reversed() {
+                guard emitted < maxRecordsPerAgent else { break }
+                let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard value.hasPrefix("{"), value.count < 200_000,
+                      let data = value.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { continue }
+                lines.append("  " + shapeLine(object))
+                emitted += 1
+            }
+            if emitted == 0 { lines.append("  no parsable json record in the last 64 lines") }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Last 256 KB of a file. The shape report is a user-triggered diagnostic,
+    /// not a scan, but it must still not pull a multi-gigabyte transcript into
+    /// memory to describe its keys.
+    private static func boundedTail(of url: URL, limit: Int = 256_000) -> String? {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard size > 0 else { return nil }
+        if size <= limit {
+            guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        handle.seek(toFileOffset: UInt64(size - limit))
+        guard let data = try? handle.read(upToCount: limit) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func shapeLine(_ object: [String: Any], depth: Int = 0) -> String {
+        // Key names are vendor schema, not user content, but bound them anyway
+        // — a vendor is free to key an object by something the user typed.
+        let parts = object
+            .sorted { $0.key < $1.key }
+            .prefix(24)
+            .map { pair -> String in
+                let safeKey = pair.key.count > 40
+                    ? String(pair.key.prefix(40)) + "…"
+                    : pair.key
+                return "\(safeKey):\(shapeKind(pair.value, depth: depth))"
+            }
+        return "{" + parts.joined(separator: " ") + "}"
+    }
+
+    private static func shapeKind(_ value: Any, depth: Int) -> String {
+        if value is NSNull { return "null" }
+        if let nested = value as? [String: Any] {
+            return depth >= 2 ? "object" : shapeLine(nested, depth: depth + 1)
+        }
+        if let array = value as? [Any] {
+            guard let first = array.first else { return "array(0)" }
+            return "array(\(array.count))<\(shapeKind(first, depth: depth + 1))>"
+        }
+        if value is String { return "string" }
+        if let number = value as? NSNumber {
+            return CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() ? "bool" : "number"
+        }
+        return "unknown"
     }
 
     // MARK: - Agent roots
@@ -384,7 +648,10 @@ enum NativeActivityHarvest {
             ]),
             d(.replit, [".replit", ".config/replit"]),
             d(.droid, [".factory"], ["droid"]),
-            d(.commandCode, [".commandcode"], ["cmd", "command-code"]),
+            // `cmd` alone is far too generic a binary name to treat as
+            // evidence that Command Code is installed — especially now that
+            // the search covers ~/.local/bin and the other user bin roots.
+            d(.commandCode, [".commandcode"], ["command-code"]),
             d(.antigravity, [
                 "Library/Application Support/Antigravity/User/globalStorage",
                 "Library/Application Support/Antigravity/User/workspaceStorage",
@@ -417,12 +684,56 @@ enum NativeActivityHarvest {
             .contains(where: { relative.hasPrefix($0) })
     }
 
-    private static func executableExists(_ name: String) -> Bool {
+    static func executableExists(
+        _ name: String,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
         let fm = FileManager.default
-        let path = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-            .split(separator: ":")
-            .map(String.init)
-        return path.contains { fm.isExecutableFile(atPath: "\($0)/\(name)") }
+        return commandSearchPaths(home: home, environment: environment).contains {
+            fm.isExecutableFile(atPath: "\($0)/\(name)")
+        }
+    }
+
+    /// Where an agent CLI may be installed.
+    ///
+    /// This deliberately does not trust `$PATH` alone. A menu-bar app launched
+    /// by Finder, Spotlight or launchd inherits the launchd path —
+    /// `/usr/bin:/bin:/usr/sbin:/sbin` — so every Homebrew, npm-global, bun and
+    /// `~/.local/bin` CLI is invisible to it, while the same binary launched
+    /// from a shell finds them all. The consequence was not cosmetic: an agent
+    /// that is installed but has not written a session yet reported
+    /// `source_absent` ("not installed") instead of `no_sessions` ("installed,
+    /// nothing running") — exactly the "did not see" / "is not running"
+    /// confusion the support window exists to prevent.
+    ///
+    /// Existence checks only; Pulse never executes anything it finds here.
+    static func commandSearchPaths(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        func add(_ raw: String) {
+            var path = raw.trimmingCharacters(in: .whitespaces)
+            while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+            guard !path.isEmpty, path.hasPrefix("/"), seen.insert(path).inserted else { return }
+            result.append(path)
+        }
+        for entry in (environment["PATH"] ?? "").split(separator: ":") {
+            add(String(entry))
+        }
+        for fixed in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+            add(fixed)
+        }
+        let homePath = home.standardizedFileURL.path
+        for relative in [
+            ".local/bin", ".bun/bin", ".cargo/bin", ".volta/bin",
+            ".npm-global/bin", ".npm/bin", ".yarn/bin", ".deno/bin",
+        ] {
+            add("\(homePath)/\(relative)")
+        }
+        return result
     }
 
     private static func shouldSkipStaleTranscript(id: AgentID, mtime: Int64) -> Bool {
@@ -642,9 +953,10 @@ enum NativeActivityHarvest {
         // legacy harvest window: 96 KB head + 400 KB tail.
         let windowCap = id == .codex ? 8_000_000 : (id == .pi ? 496_000 : 1_000_000)
         let headLimit = id == .pi ? 96_000 : 64_000
-        guard let text = readWindow(
+        guard let window = readWindow(
             item, size: size, budget: budget, cap: windowCap, headLimit: headLimit
-        ), !text.isEmpty else { return }
+        ), !window.text.isEmpty else { return }
+        let text = window.text
         let structured = isSessionPath(item)
             || (id == .grok && item.path.lowercased().contains("/.grok/logs/"))
         let birth = values.creationDate.map { Int64($0.timeIntervalSince1970 * 1000) } ?? 0
@@ -664,7 +976,11 @@ enum NativeActivityHarvest {
             parsed.removeAll { isContinuationPrompt($0.task) }
         }
         guard !parsed.isEmpty else { return }
-        let records = ext == "jsonl" || ext == "ndjson"
+        // Counting newlines in a head+tail window is not the file's record
+        // count, and EXPERIENCE forbids estimating one ("数量不估算"). A
+        // truncated read reports unknown rather than a silent undercount that
+        // the tray then renders as an exact "N records".
+        let records = (ext == "jsonl" || ext == "ndjson") && !window.truncated
             ? text.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
             : 0
         for index in parsed.indices {
@@ -674,6 +990,7 @@ enum NativeActivityHarvest {
             }
             parsed[index].startedMs = birth > 0 && birth <= mtime + 1000 ? birth : 0
             parsed[index].records = records
+            parsed[index].windowTruncated = window.truncated
             parsed[index].structured = structured
             if id.waitingSource == .none, parsed[index].skill == "pending" {
                 parsed[index].skill = ""
@@ -773,6 +1090,7 @@ enum NativeActivityHarvest {
             if database != nil { sqlite3_close(database) }
             return
         }
+        budget.noteFileRead()
         defer { sqlite3_close(database) }
         switch id {
         case .opencode:
@@ -1116,10 +1434,12 @@ enum NativeActivityHarvest {
                 if meaningfulPiPrompt(prompt) {
                     if !foundMeaningfulPrompt {
                         fact.task = prompt
+                        fact.taskOrigin = .userPrompt
                         foundMeaningfulPrompt = true
                     }
                 } else if !foundMeaningfulPrompt, fact.task.isEmpty || isChromeTask(fact.task) {
                     fact.task = prompt
+                    fact.taskOrigin = .userPrompt
                 }
             }
             if !decidedSessionInfo, type == "session_info" {
@@ -1128,11 +1448,15 @@ enum NativeActivityHarvest {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if raw.isEmpty {
                     // /name cleared — do not adopt an older session_info later.
-                    if !foundMeaningfulPrompt { fact.task = "" }
+                    if !foundMeaningfulPrompt {
+                        fact.task = ""
+                        fact.taskOrigin = .none
+                    }
                 } else {
                     let name = cleanPiSessionTitle(raw)
                     if !name.isEmpty, !isChromeTask(name), !foundMeaningfulPrompt {
                         fact.task = name
+                        fact.taskOrigin = .sessionName
                         foundMeaningfulPrompt = meaningfulPiPrompt(name)
                     }
                 }
@@ -1295,7 +1619,7 @@ enum NativeActivityHarvest {
         budget: ScanBudget,
         cap: Int,
         headLimit: Int = 64_000
-    ) -> String? {
+    ) -> (text: String, truncated: Bool)? {
         // The newest event is at the tail of the append-only transcripts. The
         // caller gives Codex a wider window because its compacted context is a
         // single large JSONL record; Pi keeps the session header and first
@@ -1306,9 +1630,16 @@ enum NativeActivityHarvest {
         do {
             if size <= window {
                 guard budget.reserve(size) else { return nil }
-                return String(decoding: try Data(contentsOf: url, options: [.mappedIfSafe]), as: UTF8.self)
+                budget.noteFileRead()
+                let whole = String(
+                    decoding: try Data(contentsOf: url, options: [.mappedIfSafe]),
+                    as: UTF8.self
+                )
+                return (whole, false)
             }
             guard budget.reserve(window) else { return nil }
+            budget.noteFileRead()
+            budget.noteTruncated()
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
             let tailSize = window - headSize
@@ -1338,7 +1669,7 @@ enum NativeActivityHarvest {
             // a JSONL record). Lossy UTF-8 decoding keeps the following
             // complete lines available instead of turning one large rollout
             // into an empty adapter result.
-            return String(decoding: head + Data("\n".utf8) + tail, as: UTF8.self)
+            return (String(decoding: head + Data("\n".utf8) + tail, as: UTF8.self), true)
         } catch {
             return nil
         }
@@ -1371,6 +1702,7 @@ enum NativeActivityHarvest {
             if database != nil { sqlite3_close(database) }
             return
         }
+        budget.noteFileRead()
         defer { sqlite3_close(database) }
 
         let composerSQL = """
@@ -1409,6 +1741,9 @@ enum NativeActivityHarvest {
                         // Cursor's composer header calls the user-visible title
                         // `name`, unlike the transcript adapters' `title`.
                         parsed[index].task = clean(firstString(object, keys: ["name", "subtitle", "title"]), limit: 160)
+                        if !parsed[index].task.isEmpty {
+                            parsed[index].taskOrigin = .sessionName
+                        }
                     }
                     parsed[index].cwd = parsed[index].cwd.isEmpty
                         ? cursorWorkspacePath(databaseURL: url, workspaceID: workspaceID)
@@ -1599,9 +1934,13 @@ enum NativeActivityHarvest {
                 seed.structured = structured
                 seed.sourcePath = path
                 seed.task = prompt
+                seed.taskOrigin = .userPrompt
                 merged = [seed]
             } else {
-                for index in merged.indices { merged[index].task = prompt }
+                for index in merged.indices {
+                    merged[index].task = prompt
+                    merged[index].taskOrigin = .userPrompt
+                }
             }
         }
         return merged
@@ -1748,7 +2087,10 @@ enum NativeActivityHarvest {
                     "task", "goal", "prompt", "query", "user_message", "userMessage",
                     "lastMessage", "last_message", "subject",
                 ])
-                if prompt.isEmpty { generic.task = "" }
+                if prompt.isEmpty {
+                    generic.task = ""
+                    generic.taskOrigin = .none
+                }
                 if generic.hasUsefulSignal { merge(&f, generic) }
             }
             let payload = object["payload"] as? [String: Any] ?? [:]
@@ -1770,6 +2112,7 @@ enum NativeActivityHarvest {
                     let prompt = cleanCodexUserRequest(codexUserText(message["content"]))
                     if !prompt.isEmpty, meaningfulPiPrompt(prompt) || f.task.isEmpty {
                         f.task = prompt
+                        f.taskOrigin = .userPrompt
                     }
                 }
             }
@@ -1780,6 +2123,7 @@ enum NativeActivityHarvest {
                     let cleaned = cleanCodexUserRequest(prompt)
                     if !cleaned.isEmpty, meaningfulPiPrompt(cleaned) || f.task.isEmpty {
                         f.task = cleaned
+                        f.taskOrigin = .userPrompt
                     }
                     f.phase = f.phase.isEmpty ? "working" : f.phase
                 case "task_started", "turn_started":
@@ -1815,6 +2159,7 @@ enum NativeActivityHarvest {
                     if !prompt.isEmpty,
                        meaningfulPiPrompt(prompt) || f.task.isEmpty {
                         f.task = prompt
+                        f.taskOrigin = .userPrompt
                     }
                 } else if responseType == "function_call" {
                     let name = firstString(payload, keys: ["name", "toolName"])
@@ -1945,6 +2290,7 @@ enum NativeActivityHarvest {
 
             var generic = fact(from: object, context: "pi.session", structured: true, path: path)
             generic.task = ""
+            generic.taskOrigin = .none
             if recordType != "session" { generic.sessionID = "" }
             if ["tool_use", "tool_call", "function_call", "custom_tool_call", "file_read"]
                 .contains(recordType) {
@@ -1979,6 +2325,9 @@ enum NativeActivityHarvest {
         }
 
         f.task = task
+        // `/name` is a title the user typed for this session; everything else
+        // in the chain is a user turn recovered from the transcript.
+        f.taskOrigin = task.isEmpty ? .none : (named == nil ? .userPrompt : .sessionName)
         if !headerID.isEmpty { f.sessionID = headerID }
         if f.sessionID.isEmpty { f.sessionID = piSessionID(from: URL(fileURLWithPath: path)) }
         if !headerCwd.isEmpty { f.cwd = headerCwd }
@@ -2300,19 +2649,35 @@ enum NativeActivityHarvest {
         f.context = context
         f.structured = structured
         f.sourcePath = path
+        // Prompt-shaped keys first, vendor headlines second. The precedence is
+        // unchanged from 0.97; what is new is that each branch records *which*
+        // kind of key won, so a later merge can rank fragments instead of
+        // comparing their lengths.
         f.task = firstString(dict, keys: [
             "task", "goal", "prompt", "query", "user_message", "userMessage",
             "lastMessage", "last_message", "subject",
-            // Vendor chrome last — often "Agent session" / plan-step titles.
-            "title", "summary", "description", "lastPrompt",
-            "aiTitle", "customTitle", "subtitle",
         ])
+        if !f.task.isEmpty { f.taskOrigin = .userPrompt }
+        if f.task.isEmpty {
+            // Vendor chrome — often "Agent session" / plan-step titles.
+            f.task = firstString(dict, keys: [
+                "title", "summary", "description", "lastPrompt",
+                "aiTitle", "customTitle", "subtitle",
+            ])
+            if !f.task.isEmpty {
+                f.taskOrigin = isToolShapedRecord(dict) ? .toolTitle : .cacheTitle
+            }
+        }
         if (f.task.isEmpty || isChromeTask(f.task)), !isToolShapedRecord(dict) {
             let named = firstString(dict, keys: ["name"])
-            if !named.isEmpty { f.task = named }
+            if !named.isEmpty {
+                f.task = named
+                f.taskOrigin = .cacheTitle
+            }
         }
         if f.task.isEmpty, isUserRecord(dict) {
             f.task = userMessageText(firstValue(dict, keys: ["content", "message", "text"]))
+            if !f.task.isEmpty { f.taskOrigin = .userPrompt }
         }
         // Pi (and kin) wrap the user turn as `{type:"message", message:{role:"user"}}`.
         // Top-level type is "message", so isUserRecord misses it.
@@ -2320,7 +2685,10 @@ enum NativeActivityHarvest {
            let nested = dict["message"] as? [String: Any],
            firstString(nested, keys: ["role", "type", "kind"]).lowercased() == "user" {
             let prompt = userMessageText(nested["content"] ?? firstValue(nested, keys: ["text", "message"]))
-            if !prompt.isEmpty { f.task = prompt }
+            if !prompt.isEmpty {
+                f.task = prompt
+                f.taskOrigin = .userPrompt
+            }
         }
         // Cache / IDE JSON often nests the real goal under messages[] while the
         // parent title is chrome ("Cascade session"). Prefer the latest user
@@ -2332,6 +2700,7 @@ enum NativeActivityHarvest {
                 let prompt = userMessageText(firstValue(msg, keys: ["content", "message", "text", "prompt"]))
                 if !prompt.isEmpty {
                     f.task = prompt
+                    f.taskOrigin = .userPrompt
                     break
                 }
             }
@@ -2346,6 +2715,7 @@ enum NativeActivityHarvest {
            path.lowercased().hasSuffix("history.jsonl"),
            !normalizedPath(firstString(dict, keys: ["cwd", "workdir", "workingDirectory"])).isEmpty {
             f.task = textValue(firstValue(dict, keys: ["text", "content", "prompt", "query"]))
+            if !f.task.isEmpty { f.taskOrigin = .userPrompt }
         }
         f.cwd = normalizedPath(firstString(dict, keys: cwdKeys(for: dict)))
         if looksLikeFilePathCwd(f.cwd) { f.cwd = "" }
@@ -2511,6 +2881,7 @@ enum NativeActivityHarvest {
         f.task = regexValue(text, patterns: [
             #"(?i)\"(?:task|title|summary|subject|prompt)\"\s*:\s*\"([^\"]{1,240})\""#,
         ])
+        if !f.task.isEmpty { f.taskOrigin = .fallbackText }
         f.cwd = normalizedPath(regexValue(text, patterns: [
             #"(?i)\"(?:cwd|workdir|workingDirectory|workspacePath)\"\s*:\s*\"([^\"]+)\""#,
         ]))
@@ -2554,12 +2925,13 @@ enum NativeActivityHarvest {
 
     private static func merge(_ target: inout Fact, _ source: Fact) {
         if piJSONLResumeTitle(target.sourcePath, target.task), isPiSqlitePath(source.sourcePath) {
-            // JSONL is the /resume title. SQLite's latest turn must not
-            // replace it just because it is longer.
+            // JSONL is the /resume title. A SQLite fragment for the same
+            // session never displaces it.
         } else if piJSONLResumeTitle(source.sourcePath, source.task), isPiSqlitePath(target.sourcePath) {
             target.task = source.task
+            target.taskOrigin = source.taskOrigin
         } else {
-            preferTask(&target.task, source.task)
+            preferTask(&target, source)
         }
         func prefer(_ old: inout String, _ new: String) { if old.isEmpty, !new.isEmpty { old = new } }
         prefer(&target.project, source.project)
@@ -2611,25 +2983,42 @@ enum NativeActivityHarvest {
         target.activityMs = max(target.activityMs, source.activityMs)
         target.startedMs = target.startedMs == 0 ? source.startedMs : min(target.startedMs, source.startedMs == 0 ? target.startedMs : source.startedMs)
         target.records = max(target.records, source.records)
+        target.windowTruncated = target.windowTruncated || source.windowTruncated
         target.structured = target.structured || source.structured
     }
 
-    /// Prefer a real user goal over chrome titles when merging fragments.
-    private static func preferTask(_ old: inout String, _ new: String) {
-        if new.isEmpty { return }
-        if old.isEmpty { old = new; return }
-        let oldChrome = isChromeTask(old)
-        let newChrome = isChromeTask(new)
-        if oldChrome, !newChrome { old = new; return }
-        if newChrome { return }
-        if AgentRow.looksLikeFilenameOnlyTitle(new) { return }
-        if AgentRow.looksLikeFilenameOnlyTitle(old) { old = new; return }
-        // Tool-result dumps are long; a later short user goal must still win.
-        if old.count > 200, new.count + 8 < old.count, meaningfulPiPrompt(new) {
-            old = new
+    /// Merge two fragments' hero titles by the kind of record each came from.
+    ///
+    /// There is deliberately no comparison of string length here. The rank in
+    /// `TaskOrigin` is the whole rule: a user turn beats a cache headline no
+    /// matter how short, and a session the user named beats both. Two
+    /// fragments of the same kind keep the first one seen — which is what "the
+    /// /resume title is the *first* user message" means — unless the later
+    /// fragment is demonstrably newer.
+    private static func preferTask(_ target: inout Fact, _ source: Fact) {
+        guard !source.task.isEmpty else { return }
+        let incoming = effectiveOrigin(source.task, source.taskOrigin)
+        guard incoming > .chrome || target.task.isEmpty else { return }
+        if target.task.isEmpty {
+            target.task = source.task
+            target.taskOrigin = source.taskOrigin
             return
         }
-        if new.count >= old.count + 8 { old = new }
+        let current = effectiveOrigin(target.task, target.taskOrigin)
+        if incoming > current
+            || (incoming == current && source.activityMs > target.activityMs) {
+            target.task = source.task
+            target.taskOrigin = source.taskOrigin
+        }
+    }
+
+    /// A vendor placeholder or a bare filename can never win a merge, whatever
+    /// record produced it. A title recorded without an origin is treated as a
+    /// cache headline — the weakest claim that is still a real title.
+    private static func effectiveOrigin(_ task: String, _ origin: TaskOrigin) -> TaskOrigin {
+        if task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .none }
+        if isChromeTask(task) || AgentRow.looksLikeFilenameOnlyTitle(task) { return .chrome }
+        return origin == .none ? .cacheTitle : origin
     }
 
     private static func isPiSqlitePath(_ path: String) -> Bool {
@@ -2648,20 +3037,28 @@ enum NativeActivityHarvest {
             && !AgentRow.looksLikeFilenameOnlyTitle(cleaned)
     }
 
+    /// Exact vendor placeholders — the one list.
+    ///
+    /// This used to exist twice: here, and inlined in `makeRows`. The copies
+    /// drifted (`cascade` / `aider` / `droid` / `kimi session` reached only
+    /// one of them), so the same placeholder was chrome in a merge and a
+    /// legitimate hero at row admission.
+    ///
+    /// Exact matches only. `hasSuffix(" session")` dropped real Pi `/name`
+    /// titles like "Auth session".
+    static let chromeTaskTitles: Set<String> = [
+        "new session", "new chat", "untitled", "agent session", "chat",
+        "amp session", "pi session", "grok session", "cursor session",
+        "opencode session", "gemini session", "goose session",
+        "copilot session", "continue session", "warp session",
+        "windsurf session", "cline session", "roo session",
+        "cascade session", "aider session", "droid session", "kimi session",
+    ]
+
     private static func isChromeTask(_ value: String) -> Bool {
-        let t = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        let chrome: Set<String> = [
-            "new session", "new chat", "untitled", "agent session", "chat",
-            "amp session", "pi session", "grok session", "cursor session",
-            "opencode session", "gemini session", "goose session",
-            "copilot session", "continue session", "warp session",
-            "windsurf session", "cline session", "roo session",
-            "cascade session", "aider session", "droid session", "kimi session",
-        ]
-        if chrome.contains(t) { return true }
-        // Exact vendor placeholders only. `hasSuffix(" session")` dropped
-        // real Pi `/name` titles like "Auth session".
-        return false
+        chromeTaskTitles.contains(
+            value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     /// Cline/Roo/Cascade (+ kin) ask tool ids — exact tokens only, never free-text inference.
@@ -2794,14 +3191,7 @@ enum NativeActivityHarvest {
             // placeholders from Grok/OpenCode/Codex stores merely because the
             // vendor created an empty session record.
             guard hasDisplaySignal else { return nil }
-            let normalizedTask = task.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            let placeholder = [
-                "new session", "new chat", "untitled", "agent session", "chat",
-                "amp session", "pi session", "grok session", "cursor session",
-                "opencode session", "gemini session", "goose session",
-                "copilot session", "continue session", "warp session",
-                "windsurf session", "cline session", "roo session",
-            ].contains(normalizedTask)
+            let placeholder = isChromeTask(task)
             if placeholder, cwd.isEmpty, fact.tool.isEmpty, fact.phase.isEmpty,
                fact.outcome.isEmpty, fact.model.isEmpty, fact.tokensIn == 0,
                fact.tokensOut == 0, fact.errors == 0, fact.files == 0,
