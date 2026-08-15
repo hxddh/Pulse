@@ -200,6 +200,38 @@ enum NativeHarvestSelfTest {
         let codexRows = result.rows.filter { $0.id == .codex }
         if codexRows.count > 500 { failures.append("Codex row cap exceeded: \(codexRows.count)") }
 
+        // The wall used to report one integer. When 0.99 moved it from 133 to
+        // 134 there was no way to say which adapter changed — a total is not
+        // attributable, which is the same defect 0.98 fixed for the collector.
+        // Pin the shape instead: every count below is explained, so any future
+        // drift names the agent that drifted.
+        //
+        //   opencode 100  — the concurrency-pressure fixture
+        //   cascade    2  — .codeium/session.json plus .windsurf/session.json,
+        //                   both inside Cascade's declared roots
+        //   claude     2  — the generic fixture plus 0.98's vendor-shaped
+        //   codex      2    transcript / rollout / official-JSONL fixtures
+        //   pi         2
+        //   windsurf   0  — suppressed while Cascade claims the shared roots
+        //   everyone else 1
+        let expectedRows: [String: Int] = [
+            "aider": 1, "amazon_q": 1, "amp": 1, "antigravity": 1, "augment": 1,
+            "cascade": 2, "claude": 2, "cline": 1, "codex": 2, "command_code": 1,
+            "continue": 1, "copilot": 1, "cursor": 1, "devin": 1, "droid": 1,
+            "gemini": 1, "goose": 1, "grok": 1, "junie": 1, "kilo": 1, "kimi": 1,
+            "kiro": 1, "opencode": 100, "openhands": 1, "pi": 2, "replit": 1,
+            "roo": 1, "trae": 1, "warp_agent": 1, "zcode": 1, "zed_agent": 1,
+        ]
+        let actualRows = Dictionary(grouping: result.rows, by: { $0.id.rawValue })
+            .mapValues(\.count)
+        for agent in Set(expectedRows.keys).union(actualRows.keys).sorted() {
+            let want = expectedRows[agent] ?? 0
+            let got = actualRows[agent] ?? 0
+            if want != got {
+                failures.append("fixture rows for \(agent): expected \(want), got \(got)")
+            }
+        }
+
         if failures.isEmpty {
             print("native fixture PASSED — rows=\(result.rows.count) adapters=\(result.health.count) complete=\(result.complete)")
             // A bare total cannot be compared across releases: when 0.99 moved

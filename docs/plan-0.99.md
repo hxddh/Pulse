@@ -48,7 +48,7 @@ CI 的 fixture 取不到。
 | P0-2 | chrome 词表真单源 | `usefulTask` 的 `junk` 并入 `chromeTaskTitles`；大小写统一；回归断言全仓只有一份该词表 |
 | P0-3 | 解析缺口 | **由 P0-0 决定**。若某 Agent 的 `emptyReason` 指向真实缺口，按证据修；无证据则本项为空，不许凭猜填 |
 | P0-4 | 删 legacy Python | 删 `src/activity_scan.py`、`Resources/activity_scan.py`、`harvest_stats_check.py`；删 CI 的逐字节同步检查中该文件与 legacy 门禁步骤；`PULSE_LEGACY_PYTHON_HARVEST` 通路与 `legacyPythonScan` 一并移除。`pulse_hook.py` / `install_hooks.py` **保留**（仍是兼容资产）。八门禁 → 七门禁，AGENTS/architecture/README 同步 |
-| P0-5 | 删代码不改行为 | 删除前后 `--native-fixture-test` 输出的 rows/adapters 数一致；`swift test` 全绿；`--selftest` 仍认得可选资产的缺席 |
+| P0-5 | 删代码不改行为 | ~~删除前后 rows/adapters 数一致~~ → **改判**：adapters 一致（32）；rows 由 133 变 134，而 0.98 只打印了一个总数，**无法归因到具体 Agent**。故验收改为：fixture 墙钉住**逐 Agent 行数**且每个数字都有解释；`swift test` 全绿；`--selftest` 仍认得可选资产的缺席。改判理由与代价见下方「P0-5 的改判」 |
 | P0-6 | 场景 AM + 测试 | EXPERIENCE **AM**（Quiet Data）；QuietData 回归 |
 | P0-7 | 交付物 | plan；CHANGELOG；semver；AGENTS/README；七门禁；草稿 PR；**等「发布」** |
 
@@ -77,13 +77,46 @@ CI 的 fixture 取不到。
 | P0-2 | `AgentRow.chromeTitles` / `isChromeTitle`；采集侧 `isChromeTask` 改为委托 | 已完成 |
 | P0-3 | 解析缺口 | **空 —— 阻塞于 P0-0** |
 | P0-4 | 删 `src/activity_scan.py`、`Resources/activity_scan.py`、`scripts/harvest_stats_check.py`、`RuntimeResolver.swift`、`legacyPythonScan` 与 schema-2 wire；`coverage_check.py` 改读 Swift descriptor；CI 新增「No Python in the harvest path」 | 已完成 |
-| P0-5 | native 墙 / `swift test` / `--selftest` 前后一致 | CI 验证 |
+| P0-5 | native 墙钉住逐 Agent 行数（`expectedRows`）；`swift test` / `--selftest` 全绿 | **部分** —— 见「P0-5 的改判」 |
 | P0-6 | `QuietDataTests.swift`；EXPERIENCE 场景 **AM** | 已完成 |
 | P1-1 | `AgentDetailWindowController.fact`；`SupportFactPill` 读出有 / 未知 | 已完成 |
 | P1-2 | `DebugLog.key(_:)` + 六个调用点 | 已完成 |
 | P1-3 | `HarvestSupervisor.lastUnscannedAtMs` → `summary` | 已完成 |
 
 Settings 依赖标准控件的默认 a11y，本版未逐项加标签；这是有意的取舍，不是遗漏。
+
+---
+
+## P0-5 的改判
+
+原验收是「删除前后 `--native-fixture-test` 的 rows 数一致」。实际结果：
+
+```
+0.98.0  native fixture PASSED — rows=133 adapters=32
+0.99.0  native fixture PASSED — rows=134 adapters=32
+```
+
+adapters 一致，rows 多 1。**这一条没通过，不改成通过。**
+
+逐 Agent 分解（0.99.0）之后，134 行每一行都有出处：
+
+| 计数 | 来源 |
+| --- | --- |
+| opencode 100 | 并发压力 fixture |
+| cascade 2 | `.codeium/session.json` + `.windsurf/session.json`，两者都在 Cascade 声明的根内 |
+| claude / codex / pi 各 2 | 通用 fixture + 0.98 加的厂商真实布局 fixture |
+| windsurf 0 | Cascade 占用共享根时按设计压制 |
+| 其余 26 个各 1 | 通用 fixture |
+
+**但这不能证明 0.98 的 133 是对的。** 0.98 只打印了一个整数，没有分解，所以「多的那一行
+属于谁」在事后无法回答 —— 可能是 0.99 多admit了一行，也可能是 0.98 漏了一行而 0.99 修对了。
+两种可能我都没有证据，就不选一种写进文档。
+
+能做的是让它不再发生：fixture 墙现在钉住 `expectedRows` 逐 Agent 表，任何漂移都会指名道姓。
+这正是 0.98 对采集器做过的事 —— 一个孤立的整数不可归因 —— 只是这次轮到了墙自己。
+
+**结论：删代码本身是安全的（编译、526+ 测试、七门禁、打包、selftest 全绿），但
+「不改行为」这条我只能证明到 adapters 一级，行数一级证不到。这个 PR 带着这个已知缺口。**
 
 ---
 

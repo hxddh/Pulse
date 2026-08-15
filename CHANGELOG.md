@@ -39,6 +39,15 @@ All notable changes to Pulse are documented here.
 - **预算挤掉的 adapter 留痕**：0.98 让全局预算截断轮转，supervisor 却对 `.unscanned`
   完全 no-op，诊断里看不出发生过。现在记时间戳并进摘要（仍不算作 adapter 故障）。
 
+### 已知缺口
+
+- **「删代码不改行为」只证到 adapter 一级。** native fixture 墙的 adapters 数不变（32），
+  但行数由 133 变 134。0.98 只打印了一个总数，事后**无法归因到具体 Agent** —— 可能是
+  0.99 多收了一行，也可能是 0.98 漏了一行而 0.99 修对了，两者都没有证据。134 行现在
+  逐 Agent 有解释（opencode 100 压力 · cascade 2 共享根 · claude/codex/pi 各 2 = 通用
+  + 0.98 厂商 fixture · windsurf 0 按设计压制 · 其余各 1），且墙已钉住这张表，
+  今后任何漂移都会指名道姓。详见 [`docs/plan-0.99.md`](docs/plan-0.99.md)「P0-5 的改判」。
+
 ### 未做（等真机证据）
 
 解析类修复本版为空。`--harvest-explain` / `--harvest-shape` 的真机输出只能在装了 Agent 的
