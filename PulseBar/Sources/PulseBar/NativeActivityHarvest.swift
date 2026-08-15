@@ -4,8 +4,9 @@ import SQLite3
 /// Swift-native local activity collector.
 ///
 /// The tray must continue to work on a clean macOS machine. Earlier versions
-/// forked `activity_scan.py` for every harvest and therefore made a Python
-/// installation a runtime prerequisite. This collector deliberately uses only
+/// forked a Python collector for every harvest and therefore made a Python
+/// installation a runtime prerequisite. That second implementation was deleted
+/// in 0.99; this is the only collector. It deliberately uses only
 /// Foundation and the agent-owned files already visible to Pulse: it walks a
 /// bounded set of vendor roots, decodes JSON/JSONL metadata, and emits the
 /// same useful facts as the old wire (goal, workspace, activity, lifecycle,
@@ -358,7 +359,7 @@ enum NativeActivityHarvest {
             }
         }
 
-        // Legacy parity (activity_scan.cascade_block): Windsurf shell rows only
+        // Windsurf shell rows only
         // when Cascade produced none — shared ~/.windsurf roots must not double
         // the same pending session as two red lamps (0.95 Extinguish Honesty).
         if agentFilter == nil || agentFilter!.contains(.cascade) {
@@ -2134,7 +2135,7 @@ enum NativeActivityHarvest {
                 case "token_count":
                     if let info = payload["info"] as? [String: Any] {
                         // Prefer the latest turn (`last_token_usage`); fall back
-                        // to cumulative totals. Matching activity_scan.codex_last_usage.
+                        // to cumulative totals — the latest turn, never a sum.
                         let usage = (info["last_token_usage"] as? [String: Any])
                             ?? (info["total_token_usage"] as? [String: Any])
                         if let usage {
@@ -2736,7 +2737,7 @@ enum NativeActivityHarvest {
         ])
         // Claude / Anthropic transcripts emit `{type:"tool_use", name:"Bash"}`
         // rather than a lastTool field. Same-dict name only — never the next
-        // sibling's name (see activity_scan.last_tool_name_strict).
+        // sibling's name.
         if f.tool.isEmpty {
             let recordType = firstString(dict, keys: ["type"]).lowercased()
             if ["tool_use", "tool_call", "function_call", "custom_tool_call"].contains(recordType) {
@@ -3037,28 +3038,12 @@ enum NativeActivityHarvest {
             && !AgentRow.looksLikeFilenameOnlyTitle(cleaned)
     }
 
-    /// Exact vendor placeholders — the one list.
-    ///
-    /// This used to exist twice: here, and inlined in `makeRows`. The copies
-    /// drifted (`cascade` / `aider` / `droid` / `kimi session` reached only
-    /// one of them), so the same placeholder was chrome in a merge and a
-    /// legitimate hero at row admission.
-    ///
-    /// Exact matches only. `hasSuffix(" session")` dropped real Pi `/name`
-    /// titles like "Auth session".
-    static let chromeTaskTitles: Set<String> = [
-        "new session", "new chat", "untitled", "agent session", "chat",
-        "amp session", "pi session", "grok session", "cursor session",
-        "opencode session", "gemini session", "goose session",
-        "copilot session", "continue session", "warp session",
-        "windsurf session", "cline session", "roo session",
-        "cascade session", "aider session", "droid session", "kimi session",
-    ]
-
+    /// The collector's view of the one chrome vocabulary. 0.98 collapsed the
+    /// two copies that lived in this file; 0.99 folded in the third, which was
+    /// inside `AgentRow.usefulTask`, so the definition now lives beside the row
+    /// that renders it.
     private static func isChromeTask(_ value: String) -> Bool {
-        chromeTaskTitles.contains(
-            value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        AgentRow.isChromeTitle(value)
     }
 
     /// Cline/Roo/Cascade (+ kin) ask tool ids — exact tokens only, never free-text inference.
@@ -3149,7 +3134,7 @@ enum NativeActivityHarvest {
     }
 
     /// Layout: `~/.claude/projects/<proj>/<sessionId>/subagents/agent-*.jsonl`
-    /// Running ≈ mtime within 2 minutes (matches activity_scan.claude_subagent_counts).
+    /// Running ≈ mtime within 2 minutes.
     private static func claudeSubagentCounts(for sessionFile: URL) -> (running: Int, total: Int) {
         let subDir = sessionFile
             .deletingLastPathComponent()

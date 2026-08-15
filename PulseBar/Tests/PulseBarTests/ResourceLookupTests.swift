@@ -1481,38 +1481,3 @@ final class SessionAgeTests: XCTestCase {
     }
 }
 
-/// The wire format grew two columns; an older bundled script must still parse.
-final class HarvestWireFormatTests: XCTestCase {
-    private func line(_ cols: [String]) -> String { cols.joined(separator: "\t") }
-
-    func testTheNewColumnsAreRead() {
-        let rows = ActivityHarvest.parseLegacyTSV(line([
-            "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
-            "1700000000000", "0", "0", "sess-1", "34", "1699999000000",
-        ]) + "\n")
-        XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows.first?.records, 34)
-        XCTAssertEqual(rows.first?.startedMs, 1_699_999_000_000)
-    }
-
-    /// A DMG whose bundled script predates 0.28 emits twelve columns. That has
-    /// to keep working and read as "unknown", not as a parse failure.
-    func testATwelveColumnLineStillParses() {
-        let rows = ActivityHarvest.parseLegacyTSV(line([
-            "claude", "Fix the parser", "12000", "3000", "Bash", "", "Pulse", "/tmp/p",
-            "1700000000000", "0", "0", "sess-1",
-        ]) + "\n")
-        XCTAssertEqual(rows.count, 1)
-        XCTAssertEqual(rows.first?.task, "Fix the parser")
-        XCTAssertEqual(rows.first?.records, 0)
-        XCTAssertEqual(rows.first?.startedMs, 0)
-    }
-
-    func testGarbageInTheNewColumnsIsUnknownNotACrash() {
-        let rows = ActivityHarvest.parseLegacyTSV(line([
-            "claude", "t", "0", "0", "", "", "", "", "0", "0", "0", "s", "abc", "xyz",
-        ]) + "\n")
-        XCTAssertEqual(rows.first?.records, 0)
-        XCTAssertEqual(rows.first?.startedMs, 0)
-    }
-}

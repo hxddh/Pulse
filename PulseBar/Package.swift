@@ -12,7 +12,6 @@ let package = Package(
             name: "PulseBar",
             path: "Sources/PulseBar",
             resources: [
-                .copy("Resources/activity_scan.py"),
                 .copy("Resources/pulse_hook.py"),
                 .copy("Resources/install_hooks.py"),
                 .copy("Resources/AgentIcons"),

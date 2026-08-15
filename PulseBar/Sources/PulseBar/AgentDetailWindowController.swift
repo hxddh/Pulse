@@ -268,14 +268,26 @@ private struct AgentDetailView: View {
         }
     }
 
+    /// One label/value pair.
+    ///
+    /// The label column is decoration for VoiceOver — it would otherwise be
+    /// read as a standalone element, and the value column would be read as a
+    /// bare string with no idea what it measures. An em dash placeholder is
+    /// meaningless when spoken, so an absent fact says "unknown" out loud while
+    /// still rendering as "—".
     private func fact(_ label: String, value: String) -> some View {
         GridRow {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(value.isEmpty ? "—" : value)
+                .accessibilityHidden(true)
+            Text(value.isEmpty || value == "—" ? "—" : value)
                 .font(.callout)
                 .textSelection(.enabled)
+                .accessibilityLabel(label)
+                .accessibilityValue(
+                    value.isEmpty || value == "—" ? store.tr(.a11yUnknown) : value
+                )
         }
     }
 

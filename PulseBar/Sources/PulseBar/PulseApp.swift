@@ -2275,6 +2275,9 @@ struct SettingsView: View {
                     Spacer(minLength: 4)
                 }
             }
+            Text(store.waitHistoryRetentionLine)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             Button(store.tr(.clearHistory)) { store.clearWaitHistory() }
         }
     }
@@ -2736,19 +2739,23 @@ struct SupportHealthRow: View {
                     HStack(spacing: 6) {
                         SupportFactPill(
                             label: store.tr(.supportGoal),
-                            present: item.hasGoal
+                            present: item.hasGoal,
+                            store: store
                         )
                         SupportFactPill(
                             label: store.tr(.supportWorkspace),
-                            present: item.hasWorkspace
+                            present: item.hasWorkspace,
+                            store: store
                         )
                         SupportFactPill(
                             label: store.tr(.supportActivity),
-                            present: item.hasActivity
+                            present: item.hasActivity,
+                            store: store
                         )
                         SupportFactPill(
                             label: store.tr(.supportProgress),
-                            present: item.hasProgress
+                            present: item.hasProgress,
+                            store: store
                         )
                         Text(String(
                             format: store.tr(.supportUsefulCoverage),
@@ -2763,15 +2770,18 @@ struct SupportHealthRow: View {
                     HStack(spacing: 6) {
                         SupportFactPill(
                             label: store.tr(.supportAction),
-                            present: item.hasActionSignal
+                            present: item.hasActionSignal,
+                            store: store
                         )
                         SupportFactPill(
                             label: store.tr(.supportModel),
-                            present: item.hasModelSignal
+                            present: item.hasModelSignal,
+                            store: store
                         )
                         SupportFactPill(
                             label: store.tr(.supportResources),
-                            present: item.hasResourceSignal
+                            present: item.hasResourceSignal,
+                            store: store
                         )
                     }
                     .font(.caption)
@@ -2791,10 +2801,10 @@ struct SupportHealthRow: View {
                     // produced a row — otherwise Support Health collapses to
                     // disposition labels alone.
                     HStack(spacing: 6) {
-                        SupportFactPill(label: store.tr(.supportGoal), present: false)
-                        SupportFactPill(label: store.tr(.supportWorkspace), present: false)
-                        SupportFactPill(label: store.tr(.supportActivity), present: false)
-                        SupportFactPill(label: store.tr(.supportProgress), present: false)
+                        SupportFactPill(label: store.tr(.supportGoal), present: false, store: store)
+                        SupportFactPill(label: store.tr(.supportWorkspace), present: false, store: store)
+                        SupportFactPill(label: store.tr(.supportActivity), present: false, store: store)
+                        SupportFactPill(label: store.tr(.supportProgress), present: false, store: store)
                     }
                     .font(.caption)
                 }
@@ -2957,6 +2967,7 @@ struct SupportHealthRow: View {
 private struct SupportFactPill: View {
     let label: String
     let present: Bool
+    @ObservedObject var store: StatusStore
 
     var body: some View {
         Label(
@@ -2965,6 +2976,11 @@ private struct SupportFactPill: View {
         )
         .foregroundStyle(present ? Color.secondary : Color.secondary.opacity(0.5))
         .labelStyle(.titleAndIcon)
+        // Presence was carried by the glyph and a 50% opacity drop alone, so
+        // VoiceOver read "Goal" identically whether the fact was there or not
+        // — the one thing the pill exists to say.
+        .accessibilityLabel(label)
+        .accessibilityValue(present ? store.tr(.a11yPresent) : store.tr(.a11yUnknown))
     }
 }
 

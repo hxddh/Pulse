@@ -189,12 +189,6 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertEqual(timeline.map(\.error), ["native_timeout", "locked"])
     }
 
-    func testJSONIsDefaultAndTSVRequiresExplicitCompatibilityReader() {
-        let tsv = "codex\tTask\t1\t2\ttool\t\tPulse\t/tmp\t100\t0\t0\ts\n"
-        XCTAssertTrue(ActivityHarvest.parse(tsv).isEmpty)
-        XCTAssertEqual(ActivityHarvest.parseLegacyTSV(tsv).count, 1)
-    }
-
     func testUpdateReplacementKeepsRollbackCopy() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("update-\(UUID().uuidString)")
         let target = root.appendingPathComponent("Pulse.app")

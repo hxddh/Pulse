@@ -5,7 +5,7 @@
 ```
   ┌─ ProcessProbe ──┐   ps -axo，进程 → AgentID，解析 TTY、Warp 与宿主 IDE 父进程
   │                 │
-  ├─ ActivityHarvest┤   Swift 原生 bounded reader；可选 legacy activity_scan.py → named JSON schema 2
+  ├─ ActivityHarvest┤   Swift 原生 bounded reader（唯一采集器）
   │                 │
   └─ AttentionReader┘   读 attention.tsv（hooks 写的）
            │
@@ -44,9 +44,8 @@ Antigravity。Focus 精度：Warp / 宿主仅 App、有绝对 cwd 时宿主工�
 JSON……每个 Agent 一个 bounded adapter，直接生成 Swift `Row` 和 `CollectorHealth`。
 不稳定的 SQLite/私有 schema 只标为 cache，不猜成结构化会话。
 
-旧版 `src/activity_scan.py` 仍随源码保留，只有设置
-`PULSE_LEGACY_PYTHON_HARVEST=1` 时才作为显式兼容诊断路径；没有 Python 时 native harvest
-仍完整运行，应用启动、自检和正常刷新都不依赖它。
+0.99 删除了旧版 `src/activity_scan.py`：它自 0.48 起就不是运行时通路，却仍占 11,470 行、
+一道门禁和一条逐字节同步检查，并让文档误以为存在一道并不存在的防线。现在只有一个采集器。
 
 两条硬约束，都是踩过坑之后加的：
 
@@ -179,9 +178,9 @@ rollback；不递归扫嵌套目录。未注册且不在上述根的孤儿可能
 
 ## Native 是运行时真源
 
-`NativeActivityHarvest.swift` 是正常运行时的采集真源，所有 32 个用户可见 Agent 都有
-Swift descriptor、权限边界、bounded file walk 和健康结果。`src/activity_scan.py` 只保留为
-可选 legacy adapter / fixture source；它不会在默认启动或刷新路径被 fork，也不能使自检失败。
+`NativeActivityHarvest.swift` 是唯一采集器，所有 32 个用户可见 Agent 都有
+Swift descriptor、权限边界、bounded file walk 和健康结果。0.99 起没有第二个实现，
+也没有任何路径会为了观测会话去 fork 解释器。
 
 hooks 仍可按用户选择安装。Claude / Codex 走原生 `pulse-hook`（无需 Python）；
 Waiting-none / 名单外工具按 Attention Protocol v1 自行 raise。缺少 Python 不影响
@@ -196,19 +195,17 @@ native harvest、hook install，或 self-test。
 | `matrix_check.py` | README 支持矩阵 == `AgentID.harvestSource` + `waitingSource` |
 | `make_agent_icons.py --check` | 每个 `AgentID` 都有图标，且与生成器逐字节一致 |
 | `appearance_check.py` | 没有把随外观变化的值冻进常量（0.27.1 因此丢了深色模式） |
-| `harvest_stats_check.py` | 把真实会话文件摆到真实位置，跑 **legacy Python** collector，验完整 TSV（**不覆盖 native**） |
 | `--native-fixture-test` | native 端到端墙：厂商真实布局 → 真扫描器 → 断言主行**取值**（CI + `package.sh`） |
 | `resource_budget_check.py` | native fixture 墙钟 + RSS 上限（env 可调） |
 | `package_check.py` | 打出来的 `.app` 能找到自己的资源 |
 
-八个都在 `package.sh` 和 CI 里。加上 `swift test`、`--selftest` 与 `--native-fixture-test`，
+七个都在 `package.sh` 和 CI 里。加上 `swift test`、`--selftest` 与 `--native-fixture-test`，
 这是全部自动防线。
 
-**这两道墙守的不是同一件事。** `harvest_stats_check.py` 跑的是 `src/activity_scan.py`
-—— legacy 通路，**看不见 native 解析回归**。它对 native 的检查只是符号存在性金丝雀，
-不是覆盖。主行/解析类回归属于 `--native-fixture-test` 与 `swift test`：那里用厂商真实
-布局断言主行取值。把这两件事搞混，正是 0.96.1 / 0.97.0 / 0.97.1 / 0.97.2 四连发都能
-全绿出厂的原因。
+**主行 / 解析类回归只属于 `--native-fixture-test` 与 `swift test`**：那里用厂商真实布局
+断言主行取值。0.99 之前还有第八道门禁 `harvest_stats_check.py`，它跑的是 legacy Python
+通路、看不见 native 回归，却被文档描述成端到端真实采集 —— 这正是 0.96.1 / 0.97.0 /
+0.97.1 / 0.97.2 四连发都能全绿出厂的原因。门禁连同它守护的那份代码一起删了。
 
 **门禁只能守它真正执行的东西。** `harvest_stats_check.py` 的 0.28.0 版本
 自称「跑真实 harvester」，实际只调 helper 再数源码字符串——而字符串计数

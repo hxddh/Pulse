@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`0.98.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.98.0) · macOS 14+
+**版本：`0.99.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v0.99.0) · macOS 14+
 
 ---
 
@@ -51,8 +51,7 @@ Pulse 把这件事变成余光可见：
 
 0.49.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
 observed、no_sessions、source_absent、permission_denied、schema_mismatch 或 failed，
-不会再把“没有看到”混成“没有运行”。旧版 JSON collector 仅在显式设置
-`PULSE_LEGACY_PYTHON_HARVEST=1` 时运行，不是安装或启动前置条件。Waiting 边沿写入 Pulse 自己的原子事件账本，重启后
+不会再把“没有看到”混成“没有运行”。0.99 起没有第二个采集器：旧版 Python collector 已删除。Waiting 边沿写入 Pulse 自己的原子事件账本，重启后
 仍能去重通知、恢复稍后处理和最近等待历史。首次扫描失败不会播种基线，也不会清空上一
 次有效内容。
 
@@ -166,7 +165,6 @@ python3 scripts/coverage_check.py           # 每个 AgentID 都有 harvest 接�
 python3 scripts/matrix_check.py             # README 支持矩阵 == 代码
 python3 scripts/make_agent_icons.py --check # 每个 AgentID 都有图标，且与生成器一致
 python3 scripts/appearance_check.py         # 没有把外观冻进常量（0.27.1 因此丢了深色模式）
-python3 scripts/harvest_stats_check.py      # harvest 真的产出会变化的事实，且不猜工具名
 python3 scripts/resource_budget_check.py    # native fixture 墙钟 + RSS
 python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
 ```

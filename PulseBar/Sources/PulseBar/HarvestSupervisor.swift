@@ -13,6 +13,10 @@ struct HarvestSupervisor: Equatable {
         var circuitOpenUntilMs: Int64 = 0
         var lastFailureAtMs: Int64 = 0
         var lastSuccessAtMs: Int64 = 0
+        /// Last time the global budget ended the scan before this adapter ran.
+        /// Not a failure — but invisible before 0.99, so budget starvation left
+        /// no trace at all in diagnostics.
+        var lastUnscannedAtMs: Int64 = 0
         var lastError = ""
 
         var isCircuitOpen: Bool { circuitOpenUntilMs > 0 }
@@ -91,10 +95,12 @@ struct HarvestSupervisor: Equatable {
                     state.circuitOpenUntilMs = nowMs + Self.circuitDurationMs
                 }
             case .unscanned:
-                // A global budget cutoff is not an adapter failure. Leave the
-                // existing retry state alone so one slow neighbor cannot make
-                // an untouched adapter look broken.
-                break
+                // A global budget cutoff is not an adapter failure, so the
+                // retry state is left alone — one slow neighbour must not make
+                // an untouched adapter look broken. It is still worth
+                // recording: 0.98 made the cutoff rotate, and this is how a
+                // diagnostic can show it actually did.
+                state.lastUnscannedAtMs = nowMs
             }
             states[agent] = state
         }
@@ -117,7 +123,17 @@ struct HarvestSupervisor: Equatable {
             .map(\.rawValue)
             .sorted()
         let deferredLabel = deferred.isEmpty ? "-" : deferred.joined(separator: ",")
-        return "open=\(open) retrying=\(retrying) deferred=\(deferredLabel)"
+        let starved = AgentID.allCases
+            .filter { agent in
+                let state = states[agent.surfaceID] ?? AgentState()
+                return state.lastUnscannedAtMs > 0
+                    && nowMs - state.lastUnscannedAtMs <= 10 * 60_000
+            }
+            .map(\.rawValue)
+            .sorted()
+        let starvedLabel = starved.isEmpty ? "-" : starved.joined(separator: ",")
+        return "open=\(open) retrying=\(retrying) deferred=\(deferredLabel) "
+            + "budgetCutoff10m=\(starvedLabel)"
     }
 
     /// Recent adapter failures for the safe support report — agent, error, age.

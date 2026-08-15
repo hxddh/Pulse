@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.98.md`](docs/plan-0.98.md) | The active plan (Ground Truth) |
+| [`docs/plan-0.99.md`](docs/plan-0.99.md) | The active plan (Quiet Data) |
+| [`docs/plan-0.98.md`](docs/plan-0.98.md) | Historical plan (Ground Truth) |
 | [`docs/plan-0.97.md`](docs/plan-0.97.md) | Historical plan (Hero Honesty) |
 | [`docs/plan-0.96.md`](docs/plan-0.96.md) | Historical plan (Return Truth) |
 | [`docs/plan-0.95.md`](docs/plan-0.95.md) | Historical plan (Extinguish Honesty) |
@@ -42,9 +43,9 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/plan-0.27.md`](docs/plan-0.27.md) | Historical plan (0.27) |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
-Everything is Swift under `PulseBar/`; `src/` retains optional legacy harvest
-and hook scripts. The old Vercel Native SDK shell was deleted in 0.22 —
-recover from git history if you ever need it.
+Everything is Swift under `PulseBar/`; `src/` retains only the optional hook
+scripts. The legacy Python collector was deleted in 0.99 and the Vercel Native
+SDK shell in 0.22 — recover either from git history if you ever need it.
 
 ## Invariants
 
@@ -74,7 +75,7 @@ cd PulseBar && swift build      # macOS 14+, Swift 5.9
 cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
-Gates, from the repo root — `package.sh` and CI both run all eight:
+Gates, from the repo root — `package.sh` and CI both run all seven:
 
 ```bash
 python3 scripts/version_check.py    # --fix aligns the followers
@@ -82,23 +83,22 @@ python3 scripts/coverage_check.py
 python3 scripts/matrix_check.py
 python3 scripts/make_agent_icons.py --check   # every AgentID has a mark
 python3 scripts/appearance_check.py          # no appearance frozen into a constant
-python3 scripts/harvest_stats_check.py       # LEGACY Python collector, end to end (not the runtime path)
 python3 scripts/resource_budget_check.py     # native fixture wall + RSS
 python3 scripts/package_check.py    # reads the built .app
 ```
 
-`NativeActivityHarvest.swift` is the runtime source of truth. The Python files
-are optional legacy/hook assets; `package.sh` may sync them for explicit
-compatibility diagnostics, but a missing Python runtime must never block the
-app, native harvest, or self-test.
+`NativeActivityHarvest.swift` is the collector. There is no second one: 0.99
+deleted `src/activity_scan.py`, its bundled copy and `harvest_stats_check.py`
+— 11,470 lines that never ran for a user, could not catch a native regression,
+and were documented as if they could. The remaining Python files are hook
+assets only, and a missing Python runtime must never block the app, harvest, or
+self-test.
 
-**Know which wall catches what.** `harvest_stats_check.py` runs the *legacy*
-Python collector; it cannot see a native parsing regression. The native wall is
-`PulseBar --native-fixture-test` (`NativeHarvestSelfTest.swift`) plus
-`swift test`, and it asserts hero **values** against vendor-shaped files. A
-wrong tray hero is fixed with a failing test there — never by adding a source
-string to the Python gate. Believing otherwise is what let 0.96.1, 0.97.0,
-0.97.1 and 0.97.2 each ship green with the hero still wrong.
+**The wall that catches a parsing regression** is `PulseBar --native-fixture-test`
+(`NativeHarvestSelfTest.swift`) plus `swift test`; both assert hero **values**
+against vendor-shaped files. A wrong tray hero is fixed with a failing test
+there. Believing a source-string gate could do that job is what let 0.96.1,
+0.97.0, 0.97.1 and 0.97.2 each ship green with the hero still wrong.
 
 **Version truth:** `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`.
 CHANGELOG's newest heading and the README badge follow it.
@@ -151,7 +151,7 @@ to users.
 
 ## Current state
 
-0.98.0 is the current source version. Without an Apple Developer ID, GitHub
+0.99.0 is the current source version. Without an Apple Developer ID, GitHub
 **Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
 never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.98.md`](docs/plan-0.98.md) (Ground Truth).
+plan is [`docs/plan-0.99.md`](docs/plan-0.99.md) (Quiet Data).

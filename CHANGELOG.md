@@ -2,6 +2,63 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.99.0 — Quiet Data / 数据静默
+
+0.90–0.97 让**显示**诚实，0.98 让**采集**诚实。从没人审过 Pulse **写到磁盘上的东西**，
+而 0.98 修好的两条规则在更上一层各还有一份没跟上的副本。
+详见 [`docs/plan-0.99.md`](docs/plan-0.99.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 数据静默
+
+- **账本说实话**：`AttentionLedger` 的注释写着「never stores prompts」，实际把会话标题
+  （0.98 起**定义为用户真实目标**）取 160 字存进 `attention-ledger.json`，保留 14 天 / 256 条。
+  标题过了 `ContentSanitizer` 所以不是泄漏，是**声明与实现不符**。注释改为陈述实情；
+  保留期与条数改由具名常量驱动；设置里「最近等待」下方写明保留期，清空入口就在旁边。
+- **chrome 词表真单源**：0.98 收敛了采集侧两份，`AgentRow.usefulTask` 的第三份漏了且已分叉
+  —— 大小写敏感（采集侧 lowercase）、缺 `Cascade session`。合成一份 `AgentRow.chromeTitles`，
+  采集侧与行侧共用，大小写不敏感。
+- **删除 legacy Python 采集器**：`src/activity_scan.py`（4978 行）、其逐字节副本（4978 行）
+  与 `harvest_stats_check.py`（1514 行）共 **11,470 行**，自 0.48 起就不是运行时通路，
+  却占一道门禁、一条 CI 逐字节同步检查，并让文档误以为存在一道并不存在的防线 ——
+  0.96.1–0.97.2 四连发全绿出厂正源于此。连同 `PULSE_LEGACY_PYTHON_HARVEST`、schema-2 wire
+  解析、子进程管道与 `RuntimeResolver` 一并移除。**hook 脚本保留**。八门禁 → 七门禁。
+- **coverage 门禁改看运行时**：它过去数 `activity_scan.py` 里的 `emit_row("…")` 字符串；
+  现在读 `NativeActivityHarvest.descriptors()` 与 `AgentID.harvestSource`。数字未变
+  （32 descriptor · 16 session · 16 cache），来源变成产品真正走的那张表。
+- **删代码不改行为**：native fixture 墙、`swift test`、`--selftest` 前后一致。
+- EXPERIENCE 场景 **AM**；QuietData 回归。
+
+### P1
+
+- **Details / Support 可听**：详情页事实行 VoiceOver 读得出「标签 + 值」，空值读「未知」
+  而不是一个破折号；Support 的事实徽章过去只用图标形状与 50% 透明度区分有无，
+  读屏用户听到的两种情况完全相同，现在会读出「有 / 未知」。
+- **`debug.log` 不落项目名**：无 session id 时 rowKey 就是工作区目录名。改为
+  `agent|<摘要>`，跨行仍可关联同一行，但目录名不再落盘。
+- **预算挤掉的 adapter 留痕**：0.98 让全局预算截断轮转，supervisor 却对 `.unscanned`
+  完全 no-op，诊断里看不出发生过。现在记时间戳并进摘要（仍不算作 adapter 故障）。
+
+### 已知缺口
+
+- **「删代码不改行为」只证到 adapter 一级。** native fixture 墙的 adapters 数不变（32），
+  但行数由 133 变 134。0.98 只打印了一个总数，事后**无法归因到具体 Agent** —— 可能是
+  0.99 多收了一行，也可能是 0.98 漏了一行而 0.99 修对了，两者都没有证据。134 行现在
+  逐 Agent 有解释（opencode 100 压力 · cascade 2 共享根 · claude/codex/pi 各 2 = 通用
+  + 0.98 厂商 fixture · windsurf 0 按设计压制 · 其余各 1），且墙已钉住这张表，
+  今后任何漂移都会指名道姓。详见 [`docs/plan-0.99.md`](docs/plan-0.99.md)「P0-5 的改判」。
+
+### 未做（等真机证据）
+
+解析类修复本版为空。`--harvest-explain` / `--harvest-shape` 的真机输出只能在装了 Agent 的
+机器上取，CI 的 fixture 取不到。**没有证据就动解析，等于 0.96.1–0.97.2 之后的第五张彩票。**
+
+### 验证
+
+- 账本保留期与条数由常量驱动且活跃等待不被上限挤掉 · 保留期文案引用真实数字 ·
+  chrome 词表大小写不敏感且采集侧与行侧一致 · `debug.log` key 不含项目名但稳定可关联 ·
+  supervisor 摘要含被预算挤掉的 adapter 且不计为故障 · 七门禁 + native 墙对 0.99.0。
+
 ## 0.98.0 — Ground Truth / 采集可证
 
 0.96.1、0.97.0、0.97.1、0.97.2 四连发修的是同一件事：托盘主行不是用户目标。每一版都加了

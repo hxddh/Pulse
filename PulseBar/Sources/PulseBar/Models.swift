@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.98.0"
+    static let semver = "0.99.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -626,22 +626,40 @@ struct AgentRow: Identifiable, Hashable {
     }
 
     /// Drop placeholder harvest titles that aren't real session detail.
+    /// Titles that are never a user goal — vendor placeholders, status words
+    /// and typographic filler.
+    ///
+    /// This is the **one** copy. It used to exist three times: here as a
+    /// `junk` set inside `usefulTask`, and twice inside the collector. 0.98
+    /// collapsed the collector's two after they had already drifted; this one
+    /// was missed and had drifted the same way — it was case-sensitive where
+    /// the collector lowercases, and it never learned `Cascade session`, which
+    /// 0.98 added one layer down. A vocabulary that decides "is this a goal?"
+    /// cannot be maintained in parallel; every layer asks `isChromeTitle`.
+    ///
+    /// Entries are lowercase; callers compare case-insensitively. Exact
+    /// matches only — `hasSuffix(" session")` would drop real Pi `/name`
+    /// titles like "Auth session".
+    static let chromeTitles: Set<String> = [
+        "-", "—", "none", "running", "active",
+        "new session", "new chat", "untitled", "agent session", "chat",
+        "amp session", "amp thread", "pi session", "grok session",
+        "cursor session", "opencode session", "gemini session", "goose session",
+        "copilot session", "continue session", "warp session",
+        "windsurf session", "cline session", "roo session",
+        "cascade session", "aider session", "droid session", "kimi session",
+    ]
+
+    static func isChromeTitle(_ value: String) -> Bool {
+        chromeTitles.contains(
+            value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
     var usefulTask: String? {
         guard let raw = taskLine else { return nil }
         let t = Self.displayTaskTitle(raw)
-        let junk: Set<String> = [
-            "-", "—", "Running", "Active", "none",
-            "Agent session", "Chat", "Amp session", "Amp thread",
-            // Placeholders that shipped as row titles in 0.25.
-            "New Session", "New session", "Untitled", "New Chat", "New chat",
-            "Pi session", "Cursor session", "Grok session",
-            // Fleet chrome — vendor default titles are identity, not goals.
-            "OpenCode session", "Gemini session", "Goose session",
-            "Copilot session", "Continue session", "Warp session",
-            "Windsurf session", "Cline session", "Roo session",
-            "Aider session", "Droid session", "Kimi session",
-        ]
-        if junk.contains(t) { return nil }
+        if Self.isChromeTitle(t) { return nil }
         let low = t.lowercased()
         let agent = agent.displayName.lowercased()
         if low == agent { return nil }

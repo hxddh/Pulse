@@ -2,14 +2,34 @@ import Foundation
 
 /// Durable attention state.
 ///
-/// `AttentionReader` is an append-only bridge owned by agents.  It is useful
-/// for the current scan, but it is not a delivery ledger: a tray restart could
+/// `AttentionReader` is an append-only bridge owned by agents. It is useful for
+/// the current scan, but it is not a delivery ledger: a tray restart could
 /// forget which Waiting edge had already been seen and either lose or duplicate
-/// a notification.  This small, versioned file keeps only Pulse-owned facts
-/// (row identity, timestamps and delivery state); it never stores prompts,
-/// paths, tool arguments or raw hook payloads.
+/// a notification. This small, versioned file records the Waiting edges Pulse
+/// itself has seen and delivered.
+///
+/// **What it stores, exactly.** Row identity, timestamps, delivery state — and
+/// the session `title`, capped at 160 characters, because the tray's recent-wait
+/// history renders it. That title is `AgentRow.usefulTask`: since 0.98 the hero
+/// is defined as the user's real goal, so the title is frequently the opening
+/// line of a prompt. It has passed `ContentSanitizer`, so credential-shaped
+/// content is already redacted, and nothing else from the transcript is kept —
+/// no message bodies, no tool arguments, no file paths, no raw hook payloads.
+///
+/// This comment used to claim the file "never stores prompts". That was written
+/// before the hero was a prompt, and it stayed while the meaning underneath it
+/// changed. The privacy story rests on this paragraph, so it states what the
+/// struct does rather than what it once intended.
+///
+/// Retention is `retentionDays` for resolved events and `maxEvents` total;
+/// active Waiting events are live state and are never evicted by the cap. The
+/// user can clear the whole history from Preferences.
 struct AttentionLedger: Codable {
     static let schemaVersion = 1
+    /// How long a resolved Waiting event stays on disk.
+    static let retentionDays = 14
+    /// Ceiling on stored events. Only the resolved trail is trimmed.
+    static let maxEvents = 256
 
     struct Event: Codable, Equatable, Identifiable {
         var id: String
@@ -189,11 +209,11 @@ struct AttentionLedger: Codable {
     }
 
     mutating func prune(nowMs: Int64) {
-        let retentionMs: Int64 = 14 * 24 * 60 * 60 * 1000
+        let retentionMs = Int64(Self.retentionDays) * 24 * 60 * 60 * 1000
         events = events.filter { event in
             event.isActive || event.resolvedAtMs <= 0 || nowMs - event.resolvedAtMs <= retentionMs
         }
-        if events.count > 256 {
+        if events.count > Self.maxEvents {
             // Active Waiting events are live product state, not history. A
             // burst of concurrent sessions must never evict the 257th active
             // event merely because the resolved-history retention target is
@@ -203,7 +223,7 @@ struct AttentionLedger: Codable {
             let resolved = events
                 .filter { !$0.isActive }
                 .sorted { $0.resolvedAtMs > $1.resolvedAtMs }
-            let resolvedLimit = max(0, 256 - active.count)
+            let resolvedLimit = max(0, Self.maxEvents - active.count)
             events = active + Array(resolved.prefix(resolvedLimit))
         }
     }

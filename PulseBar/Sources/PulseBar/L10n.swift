@@ -235,6 +235,8 @@ enum L10n {
         case .hotkeyTaken: return "Another app already owns this shortcut — pick a different one."
         case .recentWaits: return "Recent waits"
         case .clearHistory: return "Clear history"
+        case .historyRetention:
+            return "Kept on this Mac for %d days (max %d). Only the titles shown here — nothing else from the transcript."
         case .waitedFor: return "waited %@"
         case .cappedSessions: return "%d more session(s) not shown"
         case .emptyHint:
@@ -260,6 +262,8 @@ enum L10n {
         case .probeEvery: return "every %ds"
         case .probeParked: return "paused (display off)"
         case .probePaused: return "live updates off"
+        case .a11yUnknown: return "unknown"
+        case .a11yPresent: return "present"
         case .a11yIdle: return "Idle"
         case .a11yRunning: return "Running"
         case .a11yStalled: return "Stalled"
@@ -670,6 +674,8 @@ enum L10n {
         case .hotkeyTaken: return "该快捷键已被其他应用占用，请换一个。"
         case .recentWaits: return "最近的等待"
         case .clearHistory: return "清空记录"
+        case .historyRetention:
+            return "存在本机 %d 天，最多 %d 条。只存这里显示的标题，笔录里的其他内容一概不存。"
         case .waitedFor: return "等待 %@"
         case .cappedSessions: return "另有 %d 个会话未显示"
         case .emptyHint: return "Pulse 会读取本地会话和进程证据。hooks 不是必需项，只会额外增强 Waiting 信号。"
@@ -693,6 +699,8 @@ enum L10n {
         case .probeEvery: return "每 %d 秒"
         case .probeParked: return "已暂停（屏幕关闭）"
         case .probePaused: return "实时更新已关闭"
+        case .a11yUnknown: return "未知"
+        case .a11yPresent: return "有"
         case .a11yIdle: return "空闲"
         case .a11yRunning: return "运行中"
         case .a11yStalled: return "已停滞"
@@ -955,12 +963,14 @@ enum L10n {
         case muteAgents, muteHint, uninstallHooks
         case revealShortcut, hotkeyTaken
         case recentWaits, clearHistory, waitedFor, cappedSessions, emptyHint
+        case historyRetention
         case checkForUpdates, checkNow, openRelease, downloadAndVerify
         case updateDownloading, updateVerifying, updateVerified, updateVerifiedOpenOnly, updateVerifyFailed
         case updateIdle, updateChecking, updateCurrent, updateCurrentPrerelease, updateCurrentStable
         case updateAvailable, updateFailed
         case probeEvery, probeParked, probePaused
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
+        case a11yUnknown, a11yPresent
         case sectionNeedsYou, sectionRunning, sectionStalled, sectionRecent
         case groupByAgent, groupByProject, groupingLabel
         case jumpToOldest, interruptionsToday, playSound
