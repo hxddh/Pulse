@@ -2504,10 +2504,7 @@ final class StatusStore: ObservableObject {
             let queuedRows = pendingWaitingNotifications.values.filter { row in
                 row.waiting && !mutedAgents.contains(row.agent)
             }
-            let deliveryRows = Array(
-                Dictionary(uniqueKeysWithValues: (waitingEdges + queuedRows).map { ($0.rowKey, $0) })
-                    .values
-            )
+            let deliveryRows = Self.waitingDeliveryRows(edges: waitingEdges, queued: queuedRows)
             if notifyAuthorized == true {
                 postWaitingNotifications(deliveryRows)
             } else if notifyAuthorized != true {
@@ -2653,6 +2650,28 @@ final class StatusStore: ObservableObject {
     /// reported whether the request was accepted. This closes the rare but
     /// important gap where an app reinstall, identity transition, or system
     /// service error rejects an otherwise valid request.
+    /// One delivery row per Waiting session, fresh edge preferred.
+    ///
+    /// A row can legitimately be in both lists: an edge queued while
+    /// notification authorization was still unresolved, then re-emitted as a
+    /// new wait once the agent cleared and asked again — 0.96 made a new
+    /// `waitSinceMs` on the same key a new edge. The previous inline
+    /// `Dictionary(uniqueKeysWithValues:)` **traps** on a duplicate key, so
+    /// that sequence crashed the menu bar outright. `AttentionLedger` had
+    /// already learned this lesson in `snoozedUntil`; the same landmine sat
+    /// here in the notification path.
+    nonisolated static func waitingDeliveryRows(
+        edges: [AgentRow],
+        queued: [AgentRow]
+    ) -> [AgentRow] {
+        Array(
+            Dictionary(
+                (edges + queued).map { ($0.rowKey, $0) },
+                uniquingKeysWith: { fresh, _ in fresh }
+            ).values
+        )
+    }
+
     private func finishWaitingDelivery(
         keys: [String],
         rows: [AgentRow],

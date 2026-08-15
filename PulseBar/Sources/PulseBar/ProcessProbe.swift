@@ -400,21 +400,39 @@ enum ProcessProbe {
         return days * 86_400 + hours * 3_600 + minutes * 60 + seconds
     }
 
-    /// Parse `lsof -Fpn -a -d cwd -p ...` without depending on column spacing.
+    /// Parse `lsof -Ffpn -a -d cwd -p ...` without depending on column spacing.
+    ///
+    /// The `f` field must be requested. `lsof -F<chars>` emits **only** the
+    /// fields named, so the earlier `-Fpn` produced
+    ///
+    ///     p4432
+    ///     n/Users/me/code/Pulse
+    ///
+    /// with no `fcwd` line at all — and this parser, which only accepted an
+    /// `n` after seeing `fcwd`, returned nothing for every real invocation.
+    /// The caller then read an empty map as "lsof is unavailable", armed a
+    /// five-minute backoff, and negative-cached every pid, so no process row
+    /// ever recovered a working directory. The unit test passed because its
+    /// fixture was hand-written with the `fcwd` line the tool does not send.
+    ///
+    /// The parser stays tolerant of both shapes: `-d cwd` restricts the result
+    /// to one descriptor per process, so an `n` line following a `p` line is
+    /// unambiguous even when the `f` field is absent.
     static func parseWorkingDirectories(_ output: String) -> [Int: String] {
         var result: [Int: String] = [:]
         var pid: Int?
-        var sawCwd = false
+        var expectingPath = false
         for raw in output.split(whereSeparator: \.isNewline) {
             let line = String(raw)
             if line.hasPrefix("p"), let value = Int(line.dropFirst()) {
                 pid = value
-                sawCwd = false
-            } else if line == "fcwd" {
-                sawCwd = true
-            } else if line.hasPrefix("n"), sawCwd, let pid {
+                // Without an `f` field the next `n` belongs to this process.
+                expectingPath = true
+            } else if line.hasPrefix("f") {
+                expectingPath = line == "fcwd"
+            } else if line.hasPrefix("n"), expectingPath, let pid {
                 result[pid] = String(line.dropFirst())
-                sawCwd = false
+                expectingPath = false
             }
         }
         return result
@@ -425,6 +443,12 @@ enum ProcessProbe {
     static func usefulWorkingDirectory(_ raw: String) -> String {
         let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard path.hasPrefix("/"), path != "/" else { return "" }
+        // lsof annotates a directory it could not resolve in place, e.g.
+        // `/private/var/x (readlink: Permission denied)`. That is an error
+        // message with a path glued to the front, not a workspace. Match the
+        // annotation shape rather than any parenthesis — `~/Documents/Work
+        // (old)` is a perfectly ordinary directory.
+        guard !isLsofErrorAnnotated(path) else { return "" }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         guard path != home, path != home + "/" else { return "" }
         let excluded = [
@@ -433,6 +457,18 @@ enum ProcessProbe {
         ]
         guard !excluded.contains(where: path.hasPrefix) else { return "" }
         return path
+    }
+
+    /// `… (readlink: Permission denied)` / `… (stat: No such file or directory)`.
+    /// Anchored to a trailing parenthetical that names an lsof syscall, so a
+    /// directory literally called `Work (old)` still counts as a workspace.
+    static func isLsofErrorAnnotated(_ path: String) -> Bool {
+        guard path.hasSuffix(")"), let open = path.range(of: " (", options: .backwards) else {
+            return false
+        }
+        let inner = path[open.upperBound...].dropLast().lowercased()
+        let markers = ["readlink:", "stat:", "lstat:", "opendir:", "no such file", "permission denied"]
+        return markers.contains { inner.contains($0) }
     }
 
     private static func currentWorkingDirectories(pids: [Int]) -> [Int: String] {
@@ -460,7 +496,7 @@ enum ProcessProbe {
                 let list = unresolved.map(String.init).joined(separator: ",")
                 let output = shell(
                     "/usr/sbin/lsof",
-                    ["-Fpn", "-a", "-d", "cwd", "-p", list]
+                    ["-Ffpn", "-a", "-d", "cwd", "-p", list]
                 )
                 let paths = output.map(parseWorkingDirectories) ?? [:]
                 if paths.isEmpty {
