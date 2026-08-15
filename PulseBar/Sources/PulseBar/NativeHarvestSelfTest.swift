@@ -50,10 +50,26 @@ enum NativeHarvestSelfTest {
         }
 
         let granted = Set(AgentID.allCases.filter(\.requiresAppDataOptIn))
+        // This wall measures *parsing*, so it must not also be a stopwatch.
+        //
+        // With the production 0.75 s per-adapter budget the same binary
+        // produced claude=2 and claude=1 in two consecutive runs of the same
+        // job: the Claude fixtures include a deliberately oversized 1.4 MB
+        // transcript, and on a contended runner ingesting it can consume the
+        // slice before the second file is reached. That flake is what made the
+        // total read 133 once and 134 later — a number nobody could attribute
+        // because it was never stable in the first place.
+        //
+        // Timing is covered where it belongs: `resource_budget_check.py` caps
+        // the whole fixture run, and the explicit timeout scan below proves the
+        // per-adapter deadline still isolates a slow adapter. Here, give every
+        // adapter room to finish so a failure means a parser changed.
         let result = NativeActivityHarvest.scan(
             allowAppData: false,
             appDataAgents: granted,
-            home: home
+            home: home,
+            agentDeadlineSeconds: 10,
+            totalDeadlineSeconds: 300
         )
         let expected = ActivityHarvest.expectedCollectorIDs
         let healthIDs = Set(result.health.map(\.id))
@@ -148,7 +164,11 @@ enum NativeHarvestSelfTest {
             failures.append("corrupt JSON did not remain isolated beside valid Claude rows: \(String(describing: claudeHealth))")
         }
 
-        let denied = NativeActivityHarvest.scan(home: home)
+        let denied = NativeActivityHarvest.scan(
+            home: home,
+            agentDeadlineSeconds: 10,
+            totalDeadlineSeconds: 300
+        )
         if denied.rows.contains(where: { $0.id.surfaceID == .cursor || $0.id.surfaceID == .warpAgent }) {
             failures.append("protected Cursor/Warp rows crossed the denied app-data boundary")
         }

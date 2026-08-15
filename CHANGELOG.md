@@ -2,6 +2,47 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.99.1 — Probe Truth / 探针诚实
+
+修 0.99.0 之后读代码挖出的两个 bug，并纠正 0.99.0 里一条**错误的结论**。
+
+### 进程工作目录从来没解析成功过
+
+`lsof -F<chars>` 只输出点名的字段。探针要 `-Fpn`，解析器却只在见到 `fcwd` 后才接受 `n` 行
+—— 而 `-Fpn` 从不发这行。真实输出是 `p<pid>` 紧跟 `n<path>`，于是
+`parseWorkingDirectories` 对每一次真实调用都返回空，上层把它读成「lsof 不可用」，
+起五分钟 backoff 并给每个 pid 写负缓存。对已授权 app-data 的 Agent，代价是：
+仅进程行**没有工作区与项目名**、Attention 三级匹配的 **cwd 层永远不命中**、
+`hostWorkspace` Focus 层级（需要绝对 cwd）**永远够不到**，静默降级为「仅 App」。
+
+那条单元测试一直是绿的，因为它的 fixture 是**手写的**，带着工具不会发的 `fcwd` 行。
+
+- 改为 `-Ffpn`（把解析器需要的字段真的要过来）；解析器同时容忍两种形状。
+- lsof 就地错误注解（`… (readlink: Permission denied)`）不再被当作工作区；
+  按注解形状判断，真叫 `Work (old)` 的目录仍然算数。
+- 测试改用**实测输出**。
+
+### 等待通知去重会因重复 rowKey 崩溃
+
+`applyScan` 用 `Dictionary(uniqueKeysWithValues:)` 合并新边沿与排队行；重复 key 会 trap。
+同一行可能同时在两个列表里：通知授权未解析时被排队，随后 Agent 清了又问、以新的
+`waitSinceMs` 再次成为边沿（0.96 明确让这算新等待）。菜单栏 App 直接崩。
+抽成 `waitingDeliveryRows(edges:queued:)`，新边沿优先。
+
+### 更正 0.99.0 的「已知缺口」
+
+0.99.0 的发布说明写了：native fixture 行数由 133 变 134，**无法归因**。那个结论是错的。
+
+真正的原因是**这堵墙本身不稳定**：同一个二进制、同一份 fixture，在同一次 CI 作业里
+连跑两次得到 `claude=2` 和 `claude=1`。0.98 加的 Claude fixture 是一份刻意超限的 1.4 MB
+笔录，在繁忙的 runner 上，摄入它可能耗尽 0.75 s 的单 adapter 预算，第二个文件就没被读到。
+133 和 134 不是两个版本的差异，是**同一个抖动数字的两次采样**。
+
+0.99.0 里新加的逐 Agent 断言正是这样暴露它的 —— 它指名道姓说了 claude，而一个总数做不到。
+
+- fixture 墙不再兼任秒表：正确性扫描用宽裕的 deadline，让失败只意味着解析变了。
+  时间由 `resource_budget_check.py` 与显式的 timeout 扫描分别覆盖。
+
 ## 0.99.0 — Quiet Data / 数据静默
 
 0.90–0.97 让**显示**诚实，0.98 让**采集**诚实。从没人审过 Pulse **写到磁盘上的东西**，

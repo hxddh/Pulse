@@ -493,6 +493,44 @@ final class ProcessProbeTests: XCTestCase {
         XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[202], "/Users/me/code/Other")
     }
 
+    /// The shape `lsof` actually emits when the `f` field is not requested.
+    ///
+    /// This is the regression that shipped: the fixture above was written by
+    /// hand with an `fcwd` line, the parser required it, and `-Fpn` never sent
+    /// one — so every real lookup returned nothing, the caller read that as
+    /// "lsof unavailable", and no process row ever recovered a workspace.
+    func testWorkingDirectoryParserHandlesOutputWithoutTheFieldDescriptor() {
+        let output = """
+        p4432
+        n/Users/me/code/Pulse
+        """
+        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[4432], "/Users/me/code/Pulse")
+    }
+
+    /// A process whose cwd lsof could not read must not inherit the next
+    /// process's path.
+    func testWorkingDirectoryParserDoesNotLeakAPathToTheNextPid() {
+        let output = """
+        p101
+        p202
+        n/Users/me/code/Other
+        """
+        XCTAssertNil(ProcessProbe.parseWorkingDirectories(output)[101])
+        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[202], "/Users/me/code/Other")
+    }
+
+    /// With the `f` field present, a non-cwd descriptor's path is not a cwd.
+    func testWorkingDirectoryParserIgnoresNonCwdDescriptors() {
+        let output = """
+        p101
+        f3
+        n/Users/me/some/open/file.txt
+        fcwd
+        n/Users/me/code/Pulse
+        """
+        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[101], "/Users/me/code/Pulse")
+    }
+
     func testWorkingDirectoryFilterRejectsInfrastructurePaths() {
         XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/"), "")
         XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/Applications/Pulse.app"), "")
