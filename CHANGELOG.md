@@ -2,6 +2,55 @@
 
 All notable changes to Pulse are documented here.
 
+## 0.98.0 — Ground Truth / 采集可证
+
+0.96.1、0.97.0、0.97.1、0.97.2 四连发修的是同一件事：托盘主行不是用户目标。每一版都加了
+测试、八门禁全绿，然后下一版计划里再写一次「生产仍空」。问题不在下一条解析规则，在
+**采集侧没有真源**：主行靠比字符串长度选，采集器无法自证，端到端墙测的是不跑的那条通路。
+详见 [`docs/plan-0.98.md`](docs/plan-0.98.md)。
+**无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
+
+### P0 · 采集可证
+
+- **主行按来源选，不按长度**：`Fact` 带 `TaskOrigin`（`sessionName` > `userPrompt` >
+  `toolTitle` > `cacheTitle` > `fallbackText` > chrome）。merge 比较记录种类，同种类保留
+  先见到的那条；**`preferTask` 里不再有任何字符数比较**，六条特例随之退休。
+- **采集自证**：每个 adapter 输出 explain —— 读了几个文件 / 多少字节 / 窗口是否截断 /
+  解析出几条 fact / 主行来自哪种记录 / 没有主行时是哪一层丢的。进安全支持报告与
+  debug.log；只有计数和固定标签，无标题、无正文、无路径。
+- **截断计数报未知**：`records` 曾数 head+tail 窗口的换行符，>1MB 的笔录被静默少算，
+  托盘按精确值展示。窗口截断时改报未知（EXPERIENCE「数量不估算」）。
+- **扫描不再永久饥饿**：adapter 顺序曾是 `descriptors()` 字面顺序，预算用尽永远落在同一处，
+  尾部 Agent（droid / Command Code / Antigravity / Kimi / ZCode）每次刷新都标 `unscanned`
+  且 supervisor 视其为「非故障」而不补偿。下一次扫描从上次没走到的地方开始。
+- **装了 ≠ 没装**：`executableExists` 曾只读 `$PATH`；Finder/launchd 启动的 App 只有
+  `/usr/bin:/bin:/usr/sbin:/sbin`，homebrew / npm-global / `~/.local/bin` 全看不见，
+  于是「装了没会话」被报成「没装」。改为固定候选根 + `$PATH`。
+- **chrome 词表单源**：`isChromeTask` 与 `makeRows` 的两份副本已分叉
+  （`cascade` / `aider` / `droid` / `kimi session` 只在其一），收敛成一份。
+- **旗舰 fixture 保真**：native 墙改用厂商真实布局 —— Claude 带 1.4MB `tool_result` 长尾的
+  笔录、Codex `event_msg` 用户正文、Pi 官方 `--<cwd>--/<ts>_<uuid>.jsonl` 加 `/name`；
+  断言主行**取值**，不再只问「有没有行」。
+- **门禁诚实**：`harvest_stats_check.py` 跑的是 legacy Python collector，**看不见 native
+  回归**；其 native 段降级为符号金丝雀并明确标注。`--native-fixture-test` 成为 CI 里
+  具名的 native 端到端门禁。AGENTS.md / architecture.md 更正了原先的描述。
+- EXPERIENCE 场景 **AL**；GroundTruth 回归。
+
+### P1
+
+- 更新校验的 SHA-256 锚定到发布正文的 `### Download verification` 块，不再取全文首个
+  64 位十六进制串。
+- `--harvest-shape`：导出最新会话记录的**形状**（键名 + 值类型，无值），供修解析用；
+  `--harvest-explain` 打印每个 adapter 的 explain。默认不跑，输出短到可以先读再分享。
+- Command Code 的 `cmd` 可执行名过于通用，不再作为「已安装」证据。
+
+### 验证
+
+- 短用户句压过长厂商标题 · 无用户句时标题仍是主行 · `Cascade session` 占位不成行 ·
+  截断窗口 records 报未知 · launchd 最小 PATH 下仍认 `~/.local/bin` · 起点轮转 ·
+  explain 给出 heroOrigin / emptyReason / truncated · Claude 长 tool 尾仍留开场目标 ·
+  Codex `event_msg` 进主行 · Pi `/name` 压过首句；八门禁 + native 墙对 0.98.0。
+
 ## 0.97.2 — Hero Honesty follow-through / 主行诚实收口
 
 0.97.1 让 Pi JSONL 能进托盘，生产仍会把**错的那句**当主行：清空的 `/name` 粘住旧名；SQLite 最新一句因更长盖掉 `/resume` 首句；截断的 `<environment_context>` 变成 `cwd:`；`messages[]` 把 `tool_result` 当用户目标；Cursor 只读 `name` 丢掉 `subtitle`；`update_auth` 一类目标被当成工具 id 滤掉。

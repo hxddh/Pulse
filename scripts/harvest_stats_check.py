@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-"""Gate: the harvest emits its session facts, through the real collectors.
+"""Gate: the **legacy Python** collector emits its session facts end to end.
 
-The 0.28.0 version of this file claimed to "build a synthetic session tree and
-run the real harvester". It did not. It called `session_stats()` and
-`emit_row()` directly, hand-assembled tuples, and decided a collector was
-wired by counting the string `session_stats(` in the source.
+Scope, stated plainly because getting this wrong has cost real releases:
 
-Counting a string cannot tell live wiring from dead wiring, and two collectors
-were dead:
+  * This gate exercises `src/activity_scan.py`. It points `HOME` at a
+    temporary tree, lays out real session files where each legacy collector
+    actually looks, calls the collector, and reads the finished TSV. If a fact
+    does not survive from disk to column *in the legacy adapter*, it fails
+    here.
+  * `activity_scan.py` is **not** the runtime path. Since 0.48 the product
+    scans through `NativeActivityHarvest.swift`; the Python collector runs
+    only under `PULSE_LEGACY_PYTHON_HARVEST=1`. Behaviour of the native
+    collector is therefore **not** covered by this file.
+  * The native end-to-end wall is `PulseBar --native-fixture-test`
+    (`NativeHarvestSelfTest.swift`), which runs on macOS in CI and in
+    `package.sh`, plus the XCTest suite. Those assert hero *values* against
+    vendor-shaped files. When a tray hero regresses, that is where a failing
+    test belongs — not here.
 
-  * Cascade built its row with the stats dict at index 10 and then normalised
-    with `row[:9]`, throwing it away — while still paying for the file scan.
-  * Amp's pending path rewrote index 8 with the session id, which is exactly
-    where the stats dict sat on a thread row.
-
-Both shipped, and this gate was green the whole time. So it now points `HOME`
-at a temporary tree, lays out real session files where each collector actually
-looks, calls the collector, and reads the finished TSV. If a fact does not
-survive from disk to column, it fails here.
+The section below named `native_symbol_canaries` checks that a handful of
+native symbols still exist. Those are canaries against deletion, **not**
+coverage: this file's own history is the proof that counting a string cannot
+tell live wiring from dead wiring. The 0.28.0 version of this gate decided a
+collector was wired by counting `session_stats(` in the source, and shipped
+two dead collectors green — Cascade threw its stats dict away with `row[:9]`,
+and Amp overwrote index 8 with the session id. Do not add behaviour claims to
+that section; add them to the native fixture wall.
 
     python3 scripts/harvest_stats_check.py
 """
@@ -1404,11 +1412,13 @@ def main() -> int:
     if "PULSE_LEGACY_PYTHON_HARVEST" not in swift:
         return fail("legacy Python harvest must be explicit opt-in")
 
-    # The Swift path is now the product path. Static coverage must protect the
-    # native adapters themselves, not only the legacy Python fixture matrix;
-    # otherwise a new SQLite vendor can silently regress to process-only rows
-    # while the old collector tests stay green.
-    native_contract = {
+    # Deletion canaries only. These say a symbol still exists; they cannot say
+    # it is reached, correct, or that its output survives to a row — see this
+    # file's docstring for the two collectors that were dead while a check of
+    # exactly this shape stayed green. Native behaviour is asserted by
+    # `PulseBar --native-fixture-test` and the XCTest suite; never satisfy a
+    # hero/parse regression by adding a string here.
+    native_symbol_canaries = {
         "OpenCode SQLite": "collectOpenCodeDatabase",
         "Warp Agent SQLite": "collectWarpDatabase",
         "Pi SQLite": "collectPiDatabase",
@@ -1421,9 +1431,12 @@ def main() -> int:
         "per-agent deadline": "maxAgentSeconds",
         "global byte budget": "bytesRemaining = 48_000_000",
     }
-    for label, fragment in native_contract.items():
+    for label, fragment in native_symbol_canaries.items():
         if fragment not in native:
-            return fail(f"native collector lost its {label} contract")
+            return fail(
+                f"native collector lost its {label} symbol "
+                "(canary only — behaviour lives in --native-fixture-test)"
+            )
 
     support_model = (
         ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"
@@ -1484,7 +1497,7 @@ def main() -> int:
     if shallow:
         return fail(f"agents without two adapter-specific useful facts: {shallow}")
     print(
-        f"harvest stats OK — {COLUMNS} columns · 32 evidence contracts · "
+        f"legacy harvest stats OK — {COLUMNS} columns · 32 evidence contracts · "
         "32 quality scorecards · 32 end-to-end collector fixtures"
     )
     elapsed = time.monotonic() - started

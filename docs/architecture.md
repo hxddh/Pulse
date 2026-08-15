@@ -196,11 +196,19 @@ native harvest、hook install，或 self-test。
 | `matrix_check.py` | README 支持矩阵 == `AgentID.harvestSource` + `waitingSource` |
 | `make_agent_icons.py --check` | 每个 `AgentID` 都有图标，且与生成器逐字节一致 |
 | `appearance_check.py` | 没有把随外观变化的值冻进常量（0.27.1 因此丢了深色模式） |
-| `harvest_stats_check.py` | 把真实会话文件摆到真实位置，跑真实 collector，验完整 TSV |
+| `harvest_stats_check.py` | 把真实会话文件摆到真实位置，跑 **legacy Python** collector，验完整 TSV（**不覆盖 native**） |
+| `--native-fixture-test` | native 端到端墙：厂商真实布局 → 真扫描器 → 断言主行**取值**（CI + `package.sh`） |
 | `resource_budget_check.py` | native fixture 墙钟 + RSS 上限（env 可调） |
 | `package_check.py` | 打出来的 `.app` 能找到自己的资源 |
 
-八个都在 `package.sh` 和 CI 里。加上 `swift test` 与 `--selftest`，这是全部自动防线。
+八个都在 `package.sh` 和 CI 里。加上 `swift test`、`--selftest` 与 `--native-fixture-test`，
+这是全部自动防线。
+
+**这两道墙守的不是同一件事。** `harvest_stats_check.py` 跑的是 `src/activity_scan.py`
+—— legacy 通路，**看不见 native 解析回归**。它对 native 的检查只是符号存在性金丝雀，
+不是覆盖。主行/解析类回归属于 `--native-fixture-test` 与 `swift test`：那里用厂商真实
+布局断言主行取值。把这两件事搞混，正是 0.96.1 / 0.97.0 / 0.97.1 / 0.97.2 四连发都能
+全绿出厂的原因。
 
 **门禁只能守它真正执行的东西。** `harvest_stats_check.py` 的 0.28.0 版本
 自称「跑真实 harvester」，实际只调 helper 再数源码字符串——而字符串计数

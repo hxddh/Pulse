@@ -25,7 +25,10 @@ jobs:
         run: python3 scripts/make_agent_icons.py --check
       - name: No appearance frozen into a constant
         run: python3 scripts/appearance_check.py
-      - name: Harvest emits the session facts
+      # Scope note: this gate covers the LEGACY Python collector only. The
+      # native collector — the one that actually runs in the product — is
+      # covered by "Native fixture wall" in the macOS job below.
+      - name: Legacy harvest emits the session facts
         run: python3 scripts/harvest_stats_check.py
       - name: Python compiles
         run: python3 -m py_compile src/*.py scripts/*.py
@@ -70,6 +73,13 @@ jobs:
       # scripts/package_check.py against the assembled .app.
       - name: Package and verify the app bundle
         run: ./PulseBar/Scripts/package.sh
+
+      # The native end-to-end wall: real vendor-shaped files at real paths
+      # through the real scanner, asserting hero VALUES. This ran only as a
+      # side effect of the resource gate before 0.98, which is part of why
+      # four consecutive releases shipped a wrong tray hero with CI green.
+      - name: Native fixture wall
+        run: ./zig-out/package/Pulse.app/Contents/MacOS/PulseBar --native-fixture-test
 
       - name: Resource budget (native fixture)
         run: python3 scripts/resource_budget_check.py

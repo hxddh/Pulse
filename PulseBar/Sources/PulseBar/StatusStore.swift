@@ -164,6 +164,13 @@ final class StatusStore: ObservableObject {
     /// Per-Agent retry/backoff/circuit policy. A bad store must not consume the
     /// next scan budget for every other adapter.
     private var harvestSupervisor = HarvestSupervisor()
+    /// Where the next native harvest should start.
+    ///
+    /// The collector walks its adapters in a fixed order, so before 0.98 a
+    /// global budget cutoff always fell in the same place and the same tail
+    /// adapters were reported `unscanned` on every refresh. The scan returns
+    /// the first adapter it could not reach; the next one begins there.
+    fileprivate var harvestScanCursor = 0
     /// Deterministic event ages for visual fixtures only.
     private var previewWaitingEventTimes: [AgentID: Int64]?
     /// Prevent a preview panel opening from immediately replacing its fixture
@@ -512,7 +519,12 @@ final class StatusStore: ObservableObject {
                     + "waiting=\(waiting) "
                     + "score=\(item.usefulFactCount)/\(item.usefulFactTotal) "
                     + "privacyLimited=\(item.privacyLimited) "
-                    + "error=\(err) durationMs=\(dur)"
+                    + "error=\(err) durationMs=\(dur) "
+                    // How the adapter reached that result. Without this line an
+                    // `observed` adapter with a blank hero looked identical to a
+                    // healthy one, and finding out which layer lost the title
+                    // cost a release.
+                    + "explain=[\(health?.explain.summary ?? "-")]"
             )
         }
         return ContentSanitizer.redact(lines.joined(separator: "\n"))
@@ -2118,6 +2130,7 @@ final class StatusStore: ObservableObject {
             return supervisorPlan.attempted
         }()
         let scopedHarvest = agentFilter != nil
+        let startCursor = harvestScanCursor
 
         scanQueue.async {
             let t0 = Date()
@@ -2140,6 +2153,7 @@ final class StatusStore: ObservableObject {
 
             let outcome: HarvestOutcome
             var harvestMs: Int?
+            var nextCursor = startCursor
             if why == "skipped" {
                 outcome = .skipped
             } else {
@@ -2147,9 +2161,13 @@ final class StatusStore: ObservableObject {
                 let result = ActivityHarvest.scan(
                     allowAppData: allowAllAppData,
                     appDataAgents: appDataAgentPolicy,
-                    agentFilter: harvestFilter
+                    agentFilter: harvestFilter,
+                    startCursor: startCursor
                 )
                 harvestMs = Int(Date().timeIntervalSince(h0) * 1000)
+                // A scoped rescan covers a hand-picked subset; its cursor is
+                // meaningless to the full rotation.
+                nextCursor = scopedHarvest ? startCursor : result.nextCursor
                 let intentionalPartial = Self.isIntentionalSupervisorPartial(
                     health: result.health,
                     plan: supervisorPlan
@@ -2169,7 +2187,9 @@ final class StatusStore: ObservableObject {
                 "att=\(attention.count) procIds=\(procs.map(\.id.rawValue).joined(separator: ","))"
             )
             let completedHarvestMs = harvestMs
-            DispatchQueue.main.async { [completedHarvestMs] in
+            let completedCursor = nextCursor
+            DispatchQueue.main.async { [completedHarvestMs, completedCursor] in
+                AppServices.store.harvestScanCursor = completedCursor
                 switch outcome {
                 case .fresh(_, let health, _, _), .failed(let health, _, _):
                     AppServices.store.harvestSupervisor.record(
@@ -2275,7 +2295,8 @@ final class StatusStore: ObservableObject {
                 durationMs: cursor.durationMs,
                 rowCount: cursor.rowCount,
                 sourcePresent: cursor.sourcePresent,
-                errorKind: cursor.errorKind
+                errorKind: cursor.errorKind,
+                explain: cursor.explain
             )
         }
         collectorHealthByAgent = next

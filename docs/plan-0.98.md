@@ -57,7 +57,7 @@
 | --- | --- | --- |
 | P0-0 | `taskOrigin` | `Fact` 带 `.userPrompt / .sessionName / .toolTitle / .cacheTitle / .fallbackText` 与记录序号；`merge` 按 (等级, 新旧) 选主行 |
 | P0-1 | 删除字数启发式 | `preferTask` 不再出现 `count` 比较；0.96.1–0.97.2 的六条特例回归**全部仍绿** |
-| P0-2 | Harvest explain | 每 Agent 输出 `files/bytes/truncated/facts/heroOrigin/emptyReason`；进 `safeSupportReport()` 与 Support 深度；内容经 `ContentSanitizer`，不含提示正文与 tool 参数 |
+| P0-2 | Harvest explain | 每 Agent 输出 `files/bytes/truncated/facts/heroOrigin/emptyReason`；进 `safeSupportReport()`、`debug.log` 与 `--harvest-explain`。**不进托盘 UI**——那会变成第二块实时 HUD。只有计数与固定标签，无标题 / 正文 / 路径 |
 | P0-3 | 截断计数=未知 | `Fact.windowTruncated`；截断时 `records` 不进行；托盘不显示估算值 |
 | P0-4 | 扫描公平 | 起点游标按轮转；连续 3 轮，尾部 Agent 至少被 attempt 一次；unscanned 提升下轮优先级 |
 | P0-5 | PATH 真相 | 模拟 launchd 最小 PATH 时，`~/.local/bin/claude` 仍判 `sourcePresent`；health 为 `no_sessions` 而非 `source_absent` |
@@ -71,7 +71,7 @@
 
 | ID | 项 | 验收 |
 | --- | --- | --- |
-| P1-1 | 样本捐赠 | 设置里可导出**脱敏**的会话记录形状（键名 + 类型，无值），供修解析用；默认关闭，一次一个 Agent |
+| P1-1 | 样本捐赠 | `--harvest-shape` 导出**脱敏**的会话记录形状（键名 + 值类型，无值），供修解析用；默认不跑，输出短到可以先读再分享。做成 CLI 而非设置项：受众是修解析的人，且不给常驻 App 增加一个可能泄漏的按钮 |
 | P1-2 | SHA-256 锚定 | `sha256(in:)` 只在 `### Download verification` 代码块内匹配，不再取正文首个 64 位十六进制 |
 | P1-3 | `cmd` 探针 | Command Code 的 `cmd` 可执行名过于通用，收紧为路径特征 |
 
@@ -79,6 +79,23 @@
 
 假 Waiting、扩 hooks、composer 深链、cache→session、假 1.0、额度 HUD、托盘
 approve/deny、上传任何遥测、把 explain 做成第二块实时 HUD。
+
+---
+
+## 落地记录（0.98.0）
+
+| ID | 落点 |
+| --- | --- |
+| P0-0 / P0-1 | `NativeActivityHarvest.TaskOrigin`、`preferTask(_:_:)`、`effectiveOrigin` |
+| P0-2 | `ActivityHarvest.CollectorExplain`、`explainResult`、`safeSupportReport()`、`--harvest-explain` |
+| P0-3 | `readWindow` 返回 `truncated`；`ingestTranscriptFile` 的 `records` |
+| P0-4 | `scan(startCursor:)` + `Result.nextCursor` + `StatusStore.harvestScanCursor` |
+| P0-5 | `commandSearchPaths` / `executableExists(_:home:environment:)` |
+| P0-6 | `chromeTaskTitles` 单一常量 |
+| P0-7 | `NativeHarvestSelfTest` 的 Claude / Codex / Pi 厂商布局 fixture |
+| P0-8 | `harvest_stats_check.py` 改标 legacy-only；CI 新增具名 `Native fixture wall` |
+| P0-9 | `GroundTruthTests.swift`；EXPERIENCE 场景 **AL** |
+| P1-1..3 | `shapeReport` / `--harvest-shape`；`sha256(in:)` 锚定；Command Code `cmd` 收紧 |
 
 ---
 
