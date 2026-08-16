@@ -14,6 +14,11 @@ enum NativeHarvestSelfTest {
             isDirectory: true
         )
         defer { try? fm.removeItem(at: home) }
+        // 1.1: the fixture wall exercises the session digest, but must never
+        // fold into — or prune — the real user's store.
+        SessionDigestStore.pathOverride = home.appendingPathComponent("session-digests.json")
+        HarvestDigests.resetForTesting()
+        defer { SessionDigestStore.pathOverride = nil }
 
         do {
             try fm.createDirectory(at: home, withIntermediateDirectories: true)

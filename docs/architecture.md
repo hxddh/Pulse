@@ -44,6 +44,13 @@ Antigravity。Focus 精度：Warp / 宿主仅 App、有绝对 cwd 时宿主工�
 JSON……每个 Agent 一个 bounded adapter，直接生成 Swift `Row` 和 `CollectorHealth`。
 不稳定的 SQLite/私有 schema 只标为 cache，不猜成结构化会话。
 
+1.1 起采集器多了一份**持久的会话摘要**（`SessionDigest.swift` →
+`~/Library/Application Support/Pulse/session-digests.json`，`0600`）。窗口读取只看得到
+笔录的头尾；摘要记住读到的偏移，只折入新增字节，于是**中间那段被读一次**而不是永远跳过。
+存的只有计数与厂商工具名，不存正文、工具入参或笔录里的路径；有界、14 天清理。
+文件变短 / 文件标识变 / 头部指纹变（含同长度就地重写）→ 从头重来。
+本版摘要只用于把超窗口会话的 `records` 从未知变成精确值；窗口读取仍在，未被取代。
+
 0.99 删除了旧版 `src/activity_scan.py`：它自 0.48 起就不是运行时通路，却仍占 11,470 行、
 一道门禁和一条逐字节同步检查，并让文档误以为存在一道并不存在的防线。现在只有一个采集器。
 
