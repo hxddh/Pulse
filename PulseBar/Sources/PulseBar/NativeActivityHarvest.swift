@@ -378,8 +378,14 @@ enum NativeActivityHarvest {
         // scan spends its budget on them first. A complete pass rewinds to the
         // start, keeping the flagship agents at the head in the common case.
         let nextCursor = firstUnreachedIndex.map { (offset + $0) % max(1, filtered.count) } ?? 0
-        // One write per scan, after every adapter has folded what it read.
-        HarvestDigests.flush()
+        // One write per scan, after every adapter has folded what it read. A
+        // fixture home folds but does not persist: a test must not leave its
+        // temporary paths in the user's digest file.
+        let realHome = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        HarvestDigests.flush(
+            persist: SessionDigestStore.pathOverride != nil
+                || home.standardizedFileURL == realHome
+        )
         return Result(
             rows: rows,
             health: health,

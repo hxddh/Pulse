@@ -227,8 +227,19 @@ enum HarvestDigests {
         return updated
     }
 
-    static func flush(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+    /// Write the store out.
+    ///
+    /// `persist` is false for a scan of a fixture home. Those scans still fold
+    /// — the tests need real behaviour — but they must not leave fixture paths
+    /// in the user's own digest file, and a unit test must never write to
+    /// `~/Library/Application Support` as a side effect.
+    static func flush(persist: Bool, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
         guard isEnabled, dirty else { return }
+        guard persist else {
+            store.prune(nowMs: nowMs)
+            dirty = false
+            return
+        }
         store.prune(nowMs: nowMs)
         store.save()
         dirty = false

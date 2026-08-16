@@ -107,10 +107,23 @@ final class GroundTruthTests: XCTestCase {
         XCTAssertEqual(row.records, 12, "an untruncated file reports its real record count")
     }
 
-    /// EXPERIENCE: 数量不估算. A head+tail window cannot see the whole file, so
-    /// counting its newlines produces a silent undercount that the tray then
-    /// renders as an exact "N records".
-    func testTruncatedWindowReportsUnknownRecordCount() throws {
+    /// **This assertion was reversed in 1.1, deliberately.**
+    ///
+    /// 0.98 asserted that a file past the window reports `0` — unknown — because
+    /// counting the newlines of a head+tail window is a floor, and EXPERIENCE
+    /// forbids presenting a floor as a total (数量不估算).
+    ///
+    /// 1.1 did not weaken that rule; it removed the reason for it. The session
+    /// digest folds the bytes between the head and the tail once, as they go
+    /// past, so once it has reached the end of the file the count is the file's
+    /// count. That is not an estimate — it is the exact number, from having
+    /// actually read every record.
+    ///
+    /// The rule still binds while the digest is *behind*: a partial fold must
+    /// not stand in for a total, which is why the collector only takes the
+    /// digest's answer when `caughtUp` is true. `SessionDigestTests` pins that
+    /// half, and the slices-equal-whole invariant pins the counting itself.
+    func testALargeTranscriptReportsAnExactRecordCount() throws {
         let home = try makeHome("records-large")
         defer { try? FileManager.default.removeItem(at: home) }
         let filler = String(repeating: "padding ", count: 160)
@@ -127,8 +140,8 @@ final class GroundTruthTests: XCTestCase {
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
         let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
         XCTAssertEqual(
-            row.records, 0,
-            "a truncated read reports unknown rather than a floor presented as a total"
+            row.records, lines.count,
+            "the digest read the middle of the file, so the count is exact rather than unknown"
         )
     }
 
