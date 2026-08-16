@@ -327,6 +327,42 @@ enum SnapshotBuilder {
 
         // Hooks attention — prefer session / cwd match, else best row for agent.
         for att in input.attention {
+            // A wait raised on another machine is its own row, always. Matching
+            // it onto a local session would attach a remote question to a local
+            // process — and then Focus, snooze and dismiss would all act on the
+            // wrong thing.
+            if att.isRemote {
+                let key = remoteRowKey(att)
+                var row = rowsByKey[key] ?? AgentRow(rowKey: key, agent: att.id.surfaceID)
+                row.sessionID = att.session
+                row.cwd = att.cwd
+                row.project = AgentRow.shortProject(att.cwd)
+                row.host = att.host
+                row.observationSource = .remote
+                row.lastHeardMs = att.receivedAtMs > 0 ? att.receivedAtMs : att.effectiveMs
+                row.clockSuspect = att.clockSuspect
+                row.lostContact = att.lostContact
+                // No process table, no session file, no focus handle. Every
+                // one of these would be a claim about this Mac.
+                row.liveProcess = false
+                row.processCount = 0
+                row.focusTier = nil
+                if att.lostContact {
+                    row.waiting = false
+                    row.waitKind = ""
+                    row.waitMessage = ""
+                    row.waitSignal = nil
+                    row.waitSinceMs = 0
+                } else {
+                    row.waiting = true
+                    row.waitKind = att.kind
+                    row.waitSignal = .hooks
+                    row.waitMessage = att.message
+                    row.waitSinceMs = att.effectiveMs
+                }
+                rowsByKey[key] = row
+                continue
+            }
             switch matchAttentionRow(att, in: rowsByKey) {
             case .hit(let targetKey):
                 guard var best = rowsByKey[targetKey] else { continue }
@@ -406,7 +442,12 @@ enum SnapshotBuilder {
                 || row.progressTotal > 0
         }
         var all = Array(rowsByKey.values).filter {
-            $0.liveProcess || $0.waiting || $0.subRunning > 0 || hasHarvestEvidence($0)
+            // A remote row is kept on the strength of the event that created
+            // it. It has no process and no session store to point at, and a
+            // lost-contact row in particular carries no facts at all — which
+            // is the whole message.
+            $0.liveProcess || $0.waiting || $0.subRunning > 0 || $0.isRemote
+                || hasHarvestEvidence($0)
         }
 
         // Compare the same concrete session with the prior scan. Preserve a
@@ -509,13 +550,19 @@ enum SnapshotBuilder {
             if row.waiting, let until = snoozeUntilByKey[row.rowKey], until > context.nowMs {
                 all[i].snoozeRemainingSeconds = Double(until - context.nowMs) / 1000.0
             }
-            all[i].focusTier = TerminalFocus.focusTier(
-                tty: row.tty,
-                viaWarp: row.viaWarp,
-                hostApp: row.hostApp,
-                workspace: row.cwd,
-                env: context.terminal
-            )
+            // A remote row has no handle on this machine. `cwd` from another
+            // host may even exist here by coincidence, which would open the
+            // wrong folder — advertising Focus for it is worse than offering
+            // nothing.
+            all[i].focusTier = row.isRemote
+                ? nil
+                : TerminalFocus.focusTier(
+                    tty: row.tty,
+                    viaWarp: row.viaWarp,
+                    hostApp: row.hostApp,
+                    workspace: row.cwd,
+                    env: context.terminal
+                )
             let privacy = row.agent.requiresAppDataOptIn
                 && context.privacyLimitedAgents.contains(row.agent)
             all[i].refreshObservationQuality(privacyLimited: privacy)
@@ -859,6 +906,16 @@ enum SnapshotBuilder {
         case hit(String)
         case unmatched
         case ambiguous
+    }
+
+    /// Row identity for a remote wait. The host is part of the key because
+    /// snooze, dismiss and notification de-duplication all follow `rowKey`:
+    /// two machines running the same agent must not be able to silence each
+    /// other.
+    static func remoteRowKey(_ att: AttentionReader.Entry) -> String {
+        let agent = att.id.surfaceID.rawValue
+        let session = att.session.isEmpty ? "" : "|\(att.session)"
+        return "\(agent)\(session)@\(att.host)"
     }
 
     static func matchAttentionRow(

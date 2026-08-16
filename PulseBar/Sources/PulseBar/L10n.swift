@@ -410,6 +410,12 @@ enum L10n {
         case .supportCopySafeReport: return "Copy safe report"
         case .exportSafeReport: return "Export safe report…"
         case .supportCopyShapeReport: return "Copy vendor shape"
+        case .remoteEvidence: return "Remote host"
+        case .remoteLastHeard: return "Last heard %@ ago"
+        case .remoteLostContact: return "Lost contact"
+        case .remoteLostContactWhy: return "Nothing has arrived from this host since. Pulse cannot tell whether the wait is still open."
+        case .remoteClockSuspect: return "Ages measured from arrival — the sending clock disagrees"
+        case .remoteNoFocus: return "On another machine — Pulse can show it, not reach it"
         case .supportShapeReading: return "Reading sessions…"
         case .supportShapeHint: return "Key names and value kinds only — never your text. Share it to get a parsing bug fixed."
         case .snooze: return "Later"
@@ -846,6 +852,12 @@ enum L10n {
         case .supportCopySafeReport: return "复制安全报告"
         case .exportSafeReport: return "导出安全报告…"
         case .supportCopyShapeReport: return "复制厂商格式"
+        case .remoteEvidence: return "远端机器"
+        case .remoteLastHeard: return "最后听到 %@ 前"
+        case .remoteLostContact: return "失联"
+        case .remoteLostContactWhy: return "此后再没收到这台机器的消息。Pulse 无法判断这个等待是否还开着。"
+        case .remoteClockSuspect: return "按到达时间计龄 —— 发送方时钟对不上"
+        case .remoteNoFocus: return "在另一台机器上 —— Pulse 能看见，够不着"
         case .supportShapeReading: return "正在读会话…"
         case .supportShapeHint: return "只有键名与值的类型，不含你的任何文字。发它就能修解析。"
         case .snooze: return "稍后"
@@ -1010,6 +1022,8 @@ enum L10n {
         case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportAvailableCount, supportNotInstalledCount, supportNoRecentCount, supportPermissionDeniedCount, supportUnscannedCount, supportUsefulCoverage
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
         case supportCopyShapeReport, supportShapeReading, supportShapeHint
+        case remoteEvidence, remoteLastHeard, remoteLostContact, remoteLostContactWhy
+        case remoteClockSuspect, remoteNoFocus
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
         case installUpdate, updateInstalling, updateInstallFailed, updateInstallRequiresNotarized

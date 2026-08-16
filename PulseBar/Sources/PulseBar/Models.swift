@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "0.99.2"
+    static let semver = "1.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -245,6 +245,13 @@ enum ObservationSource: String, Equatable, Hashable {
     case session
     case cache
     case process
+    /// 1.0: raised by another machine through the Attention inbox.
+    ///
+    /// Deliberately its own tier rather than a thin `process` row. A remote row
+    /// has no process table, no session file and no activity clock behind it —
+    /// only the event that arrived. Calling it `process` would claim evidence
+    /// this Mac does not have.
+    case remote
 }
 
 /// Named fact keys for the 0.50 Signal Quality envelope.
@@ -344,6 +351,11 @@ struct ObservationQuality: Equatable, Hashable {
         let baseReason: String
         let baseNext: String
         switch evidence {
+        case .remote:
+            // Another machine's event is all there is. The gap is not something
+            // the user can close here, so the next step must not pretend it is.
+            baseReason = "remote_event_only"
+            baseNext = "wait_for_remote_host"
         case .process:
             baseReason = privacyLimited ? "privacy_limited" : "process_only"
             baseNext = privacyLimited ? "enable_app_data" : "open_agent_for_session"
@@ -423,6 +435,9 @@ struct ObservationQuality: Equatable, Hashable {
                 // Keep confidence honest for thin cache adapters.
             }
         case .process:
+            confidence = .low
+        case .remote:
+            // One event from a machine Pulse cannot probe. Never more than low.
             confidence = .low
         }
 
@@ -516,6 +531,23 @@ struct AgentRow: Identifiable, Hashable {
     var subTotal: Int = 0
     /// True when a live process was matched (not harvest-only).
     var liveProcess: Bool = false
+    /// The machine this row came from. Empty means this Mac.
+    ///
+    /// 1.0: a named host is a row Pulse cannot probe, cannot focus, and cannot
+    /// ask whether the agent is still alive. Everything a local row gets from
+    /// the process table, a remote row simply does not have — so it must never
+    /// borrow the local template and imply otherwise.
+    var host: String = ""
+    /// Last time anything arrived from a remote host for this row.
+    var lastHeardMs: Int64 = 0
+    /// Nothing has refreshed a remote wait inside the TTL. The lamp comes down;
+    /// the row stays. "I stopped hearing from it" is not "it finished".
+    var lostContact: Bool = false
+    /// The sender's clock disagreed with arrival, so ages are measured from
+    /// when the bytes landed here. Shown in Details rather than chosen quietly.
+    var clockSuspect: Bool = false
+
+    var isRemote: Bool { !host.isEmpty }
     /// How this row can be focused — resolved once per scan, never in a view body.
     var focusTier: FocusTier? = nil
     /// Sessions of this agent that exist but did not fit the per-agent cap.

@@ -491,6 +491,7 @@ final class StatusStore: ObservableObject {
             "probeCadence: \(probeIntervalDescription)",
             "launchAtLogin: \(launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
             "harvest: native (no external runtime)",
+            "remoteFleet: \(remoteFleetSummary)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
             "factCoverage: present=\(factPresent) possible=\(factPossible) limitedAgents=\(limitedAgents)",
@@ -534,6 +535,17 @@ final class StatusStore: ObservableObject {
             )
         }
         return ContentSanitizer.redact(lines.joined(separator: "\n"))
+    }
+
+    /// Remote sources, named. A fleet you cannot see is the problem 1.0 set
+    /// out to fix; a fleet Pulse silently failed to read would be the same
+    /// problem wearing a different coat.
+    var remoteFleetSummary: String {
+        let rows = cachedAll.filter(\.isRemote)
+        let hosts = Set(rows.map(\.host)).sorted().joined(separator: ",")
+        let lost = rows.filter(\.lostContact).count
+        let files = AttentionIO.readInbox().count
+        return "inbox=\(files) hosts=\(hosts.isEmpty ? "-" : hosts) rows=\(rows.count) lost=\(lost)"
     }
 
     func copySafeSupportReport() {
@@ -736,6 +748,8 @@ final class StatusStore: ObservableObject {
             case .cache: return tr(.cacheEvidence)
             case .process:
                 return "\(tr(.limitedData)) · \(tr(.qualityNextOpenAgent))"
+            case .remote:
+                return tr(.remoteEvidence)
             }
         }
         return "\(observationGapReason(gap)) · \(observationGapNextStep(gap))"
@@ -750,6 +764,7 @@ final class StatusStore: ObservableObject {
         case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
         case "waiting_unsupported": return tr(.supportWaitingNoneDetail)
         case "scan_timeout": return tr(.qualityReasonScanTimeout)
+        case "remote_event_only": return tr(.remoteEvidence)
         default: return tr(.qualityReasonNotEmitted)
         }
     }
@@ -761,6 +776,7 @@ final class StatusStore: ObservableObject {
         case "use_attention_bridge": return tr(.qualityNextAttentionBridge)
         case "retry_scan": return tr(.qualityNextRetryScan)
         case "open_agent_for_session": return tr(.qualityNextOpenAgent)
+        case "wait_for_remote_host": return tr(.remoteNoFocus)
         default: return tr(.qualityNextOpenAgent)
         }
     }
@@ -912,6 +928,7 @@ final class StatusStore: ObservableObject {
         case .session: return tr(.supportStructured)
         case .cache: return tr(.supportCache)
         case .process: return tr(.supportProcess)
+        case .remote: return tr(.remoteEvidence)
         case .none: return tr(.supportDetected)
         }
     }
@@ -3081,6 +3098,11 @@ final class StatusStore: ObservableObject {
     /// 0.92: story owns phase / tool gist / Changed; Waiting yields kind·duration
     /// to the chip; Limited opaque story carries age · strongest · nextStep once.
     func rowStoryLine(_ row: AgentRow) -> String {
+        // A remote row's story is the only honest thing there is to say about
+        // it: when we last heard, and whether we have stopped hearing. It
+        // takes precedence over every local template, none of which it can
+        // support with evidence.
+        if row.isRemote, let line = remoteStatusLine(row) { return line }
         if row.waiting {
             // Chip owns kind · duration; wait detail owns the message (0.92).
             // Story only surfaces the signal source when there is no message.
@@ -3244,7 +3266,28 @@ final class StatusStore: ObservableObject {
             return tr(.cacheEvidence)
         case .process:
             return tr(.limitedData)
+        case .remote:
+            // Name the machine. "Remote host" alone tells the user the one
+            // thing they already guessed and withholds the one they need.
+            return row.host.isEmpty ? tr(.remoteEvidence) : "\(tr(.remoteEvidence)) · \(row.host)"
         }
+    }
+
+    /// The line a remote row gets instead of "last activity".
+    ///
+    /// A local row's clock comes from the process table and the session file.
+    /// A remote row has neither: all Pulse can honestly report is when it last
+    /// heard anything, and — once that goes quiet — that it has stopped.
+    func remoteStatusLine(_ row: AgentRow, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> String? {
+        guard row.isRemote else { return nil }
+        var parts: [String] = []
+        if row.lastHeardMs > 0 {
+            let age = durationLabel(seconds: Double(max(0, nowMs - row.lastHeardMs)) / 1000.0)
+            parts.append(String(format: tr(.remoteLastHeard), age))
+        }
+        if row.lostContact { parts.append(tr(.remoteLostContact)) }
+        if row.clockSuspect { parts.append(tr(.remoteClockSuspect)) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// The single strongest progress fact for this row.

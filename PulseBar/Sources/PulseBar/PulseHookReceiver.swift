@@ -45,6 +45,13 @@ enum PulseHookReceiver {
     ) -> Bool {
         let normalized = AttentionProtocol.normalizeKind(kind)
         guard AttentionProtocol.acceptsWrite(kind: normalized) else { return false }
+        // v2 column 7. A hook running on this Mac leaves it empty; a bridge on
+        // another machine sets `PULSE_HOST` so its events keep their identity
+        // once the file is synced here — otherwise the identity would rest on
+        // the file name alone.
+        let host = AttentionProtocol.normalizeHost(
+            ProcessInfo.processInfo.environment["PULSE_HOST"] ?? ""
+        )
         let line = [
             cleanField(agent, limit: 48),
             cleanField(normalized, limit: 64),
@@ -52,6 +59,7 @@ enum PulseHookReceiver {
             cleanField(message, limit: 200),
             cleanField(session, limit: 80),
             cleanField(cwd, limit: 240),
+            cleanField(host, limit: 32),
         ].joined(separator: "\t")
         AttentionIO.appendRawLine(line)
         return true

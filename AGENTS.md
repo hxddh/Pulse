@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-0.99.2.md`](docs/plan-0.99.2.md) | The active plan (Live Wire) |
+| [`docs/plan-1.0.md`](docs/plan-1.0.md) | The active plan (Remote Fleet) |
+| [`docs/plan-0.99.2.md`](docs/plan-0.99.2.md) | Historical plan (Live Wire) |
 | [`docs/plan-0.99.md`](docs/plan-0.99.md) | Historical plan (Quiet Data) |
 | [`docs/plan-0.98.md`](docs/plan-0.98.md) | Historical plan (Ground Truth) |
 | [`docs/plan-0.97.md`](docs/plan-0.97.md) | Historical plan (Hero Honesty) |
@@ -152,7 +153,13 @@ to users.
 
 ## Current state
 
-0.99.2 is the current source version. Without an Apple Developer ID, GitHub
-**Latest** tracks the current semver while the binary stays `preview` / ad-hoc —
-never stamp `stable` or claim Gatekeeper-ready. See `CHANGELOG.md`. The active
-plan is [`docs/plan-0.99.2.md`](docs/plan-0.99.2.md) (Live Wire).
+1.0.0 is the current source version.
+
+**1.0 marks the product, not the signature.** It was previously reserved for
+"notarized", which is externally blocked without an Apple Developer ID — a
+number that could never be reached said nothing about the product. Channel
+honesty lives where it belongs, in `PulseDistributionChannel`: without an Apple
+Developer ID, GitHub **Latest** tracks the current semver while the binary stays
+`preview` / ad-hoc — **never stamp `stable` or claim Gatekeeper-ready.** See
+`CHANGELOG.md`. The active plan is [`docs/plan-1.0.md`](docs/plan-1.0.md)
+(Remote Fleet).

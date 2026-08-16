@@ -312,6 +312,8 @@ enum ActivityHarvest {
 /// Attention TSV reader — last event wins per (agent, session); done clears; stop has short grace.
 enum AttentionReader {
     static let ttlMs: Int64 = 30 * 60 * 1000
+    /// How long a remote row stays visible after it went quiet.
+    static let lostContactRetentionMs: Int64 = 2 * 30 * 60 * 1000
     /// Claude often emits idle_prompt then Stop; don't wipe Input/Permission for this long.
     static let stopGraceMs: Int64 = 20_000
 
@@ -322,11 +324,31 @@ enum AttentionReader {
         var tsMs: Int64
         var session: String = ""
         var cwd: String = ""
+        /// Empty means this Mac. A named host is a machine Pulse cannot probe,
+        /// cannot focus, and cannot ask whether the agent is still alive.
+        var host: String = ""
+        /// When the bytes reached this disk. Equal to `tsMs` for local events.
+        var receivedAtMs: Int64 = 0
+        /// The event's own clock disagreed with arrival badly enough that
+        /// `tsMs` is not being used for age or ordering.
+        var clockSuspect: Bool = false
+        /// A remote wait nothing has refreshed inside the TTL. The lamp comes
+        /// down — Pulse has no evidence it is still open — but the row stays,
+        /// because "I stopped hearing from it" is not "it finished".
+        var lostContact: Bool = false
 
-        /// Stable key for last-event-wins map.
+        var isRemote: Bool { !host.isEmpty }
+
+        /// The clock Pulse is willing to stand behind.
+        var effectiveMs: Int64 { clockSuspect ? receivedAtMs : tsMs }
+
+        /// Stable key for last-event-wins map. Two machines running the same
+        /// agent are two different waits; merging them would let one host's
+        /// `done` clear the other host's open permission.
         var mapKey: String {
             let surfaceID = id.surfaceID
-            return session.isEmpty ? surfaceID.rawValue : "\(surfaceID.rawValue)|\(session)"
+            let base = session.isEmpty ? surfaceID.rawValue : "\(surfaceID.rawValue)|\(session)"
+            return host.isEmpty ? base : "\(base)@\(host)"
         }
     }
 
@@ -365,13 +387,71 @@ enum AttentionReader {
         }
     }
 
+    /// Which clock an event's age may be measured against.
+    enum ClockVerdict: Equatable {
+        /// The event stamp is usable.
+        case trustEvent
+        /// The event stamp disagrees with arrival past the point of belief;
+        /// measure from arrival instead and say so.
+        case trustArrival
+        /// Neither clock says anything — there is nothing to measure.
+        case unusable
+    }
+
+    /// How far a remote stamp may run ahead of its own arrival before the
+    /// machine's clock, rather than the event, is the thing in question.
+    static let clockFutureToleranceMs: Int64 = 5 * 60 * 1000
+
+    /// A remote machine's clock is not ours.
+    ///
+    /// Before 1.0 an event outside the tolerance was dropped, which was right
+    /// for a local hook and wrong for a remote host: a box running 20 minutes
+    /// off had *every* wait silently disappear, with nothing anywhere saying
+    /// why. Arrival time is local and durable, so it can carry the event that
+    /// the sender's clock cannot.
+    static func clockVerdict(eventMs: Int64, arrivalMs: Int64, isRemote: Bool) -> ClockVerdict {
+        if eventMs > 0, !isRemote {
+            // Local: the old rule, unchanged. The caller still applies the
+            // future tolerance and TTL.
+            return .trustEvent
+        }
+        guard isRemote else { return .unusable }
+        guard arrivalMs > 0 else {
+            // No arrival stamp to fall back on.
+            return eventMs > 0 ? .trustEvent : .unusable
+        }
+        guard eventMs > 0 else { return .trustArrival }
+        if eventMs - arrivalMs > clockFutureToleranceMs { return .trustArrival }
+        if arrivalMs - eventMs > ttlMs { return .trustArrival }
+        return .trustEvent
+    }
+
     static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
-        parse(AttentionIO.readText(), nowMs: nowMs)
+        // Each source is parsed on its own: one host's `done` must never clear
+        // another host's open permission, and per-file parsing is what keeps
+        // that true without a single rule anywhere saying so.
+        AttentionIO.readSources().flatMap { source in
+            parse(
+                source.text,
+                nowMs: nowMs,
+                defaultHost: source.host,
+                receivedAtMs: source.isLocal ? 0 : source.receivedAtMs
+            )
+        }
     }
 
     /// Pure TSV → entries. Split out from `load` so the last-event-wins,
     /// stop-grace and TTL rules are testable without touching the filesystem.
-    static func parse(_ text: String, nowMs: Int64) -> [Entry] {
+    ///
+    /// `defaultHost` names the machine when a line does not (a remote box still
+    /// running a v1 hook); `receivedAtMs` is when the bytes reached this disk,
+    /// and is zero for events raised here.
+    static func parse(
+        _ text: String,
+        nowMs: Int64,
+        defaultHost: String = "",
+        receivedAtMs: Int64 = 0
+    ) -> [Entry] {
         guard !text.isEmpty else { return [] }
 
         var byKey: [String: Entry] = [:]
@@ -387,16 +467,25 @@ enum AttentionReader {
             let message = cols.count > 3 ? ContentSanitizer.redact(cols[3]) : ""
             let session = cols.count > 4 ? cols[4] : ""
             let cwd = cols.count > 5 ? ContentSanitizer.redact(cols[5]) : ""
-            let mapKey = session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
+            let named = cols.count > 6 ? AttentionProtocol.normalizeHost(cols[6]) : ""
+            let host = named.isEmpty ? defaultHost : named
+            let base = session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
+            let mapKey = host.isEmpty ? base : "\(base)@\(host)"
 
             if kind == .ignore { continue }
 
+            // Agent-level clears are scoped to the machine that sent them.
+            // Matching by key prefix would let one host's `done` wipe another
+            // host's open permission the moment both appear in one file.
+            func siblingKeys() -> [String] {
+                byKey.compactMap { key, entry in
+                    entry.id.surfaceID == id && entry.host == host ? key : nil
+                }
+            }
+
             if kind == .done {
                 if session.isEmpty {
-                    // Agent-level done clears all sessions for this agent.
-                    for k in byKey.keys where k == id.rawValue || k.hasPrefix("\(id.rawValue)|") {
-                        byKey[k] = nil
-                    }
+                    for k in siblingKeys() { byKey[k] = nil }
                 } else {
                     byKey[mapKey] = nil
                 }
@@ -409,8 +498,7 @@ enum AttentionReader {
                         && nowMs - existing.tsMs < stopGraceMs
                 }
                 if session.isEmpty {
-                    let keys = byKey.keys.filter { $0 == id.rawValue || $0.hasPrefix("\(id.rawValue)|") }
-                    for k in keys {
+                    for k in siblingKeys() {
                         if let existing = byKey[k], shouldKeep(existing) { continue }
                         byKey[k] = nil
                     }
@@ -425,9 +513,30 @@ enum AttentionReader {
             // A clock-skewed or malformed hook event must not become a
             // permanent Waiting row. Activity rows use the same small future
             // tolerance; keep it consistent here.
-            if tsMs <= 0 || tsMs > nowMs + 5 * 60 * 1000 { continue }
-            if nowMs - tsMs > ttlMs { continue }
-            byKey[mapKey] = Entry(
+            let arrival = receivedAtMs > 0 ? receivedAtMs : tsMs
+            let clock = clockVerdict(
+                eventMs: tsMs, arrivalMs: arrival, isRemote: !host.isEmpty
+            )
+            switch clock {
+            case .unusable:
+                continue
+            case .trustEvent, .trustArrival:
+                break
+            }
+            let suspect = clock == .trustArrival
+            let effective = suspect ? arrival : tsMs
+            if effective > nowMs + 5 * 60 * 1000 { continue }
+            let expired = nowMs - effective > ttlMs
+            // A local wait that expires is covered by the process probe, so it
+            // can simply go. A remote one has no such witness: dropping it
+            // silently would show "finished" when the only true statement is
+            // "nothing has been heard since". Keep it and mark it lost.
+            if expired && host.isEmpty { continue }
+            // Lost contact is a statement worth showing, not a permanent one.
+            // Past this window "nothing heard in over an hour" stops being news
+            // and the row goes; the ledger keeps the history.
+            if nowMs - effective > lostContactRetentionMs { continue }
+            var entry = Entry(
                 id: id,
                 kind: kind.label,
                 message: message,
@@ -435,6 +544,11 @@ enum AttentionReader {
                 session: session,
                 cwd: cwd
             )
+            entry.host = host
+            entry.receivedAtMs = arrival
+            entry.clockSuspect = suspect
+            entry.lostContact = expired
+            byKey[mapKey] = entry
         }
         return Array(byKey.values)
     }

@@ -1773,6 +1773,13 @@ private struct AgentRowButton: View {
         }
         parts.append(state)
         if !storyLine.isEmpty { parts.append(storyLine) }
+        // The tray line has room for "lost contact"; VoiceOver has room for
+        // what it means, and a two-word state that cannot be unpacked is the
+        // kind of thing this project keeps having to go back and fix.
+        if row.lostContact { parts.append(store.tr(.remoteLostContactWhy)) }
+        // There is no Focus button on a remote row. Silence would read as a
+        // missing control rather than an absent capability.
+        if row.isRemote { parts.append(store.tr(.remoteNoFocus)) }
         if !contextLine.isEmpty { parts.append(contextLine) }
         // Canonical dynamic summary — do not also append activityChange +
         // metrics; that duplicated Context / Changed facts for VoiceOver.
