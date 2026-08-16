@@ -351,6 +351,7 @@ private struct AgentDetailView: View {
         case .session: return store.tr(.supportStructured)
         case .cache: return store.tr(.supportCache)
         case .process: return store.tr(.supportProcess)
+        case .remote: return store.tr(.remoteEvidence)
         }
     }
 

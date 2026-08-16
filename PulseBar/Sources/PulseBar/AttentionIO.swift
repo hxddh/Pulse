@@ -31,6 +31,73 @@ enum AttentionIO {
 
     static let maxRetainedLines = 80
 
+    /// Inbox for machines that are not this one.
+    ///
+    /// Pulse writes no network code and runs no server: whatever the user
+    /// already uses to move files — rsync, syncthing, a mounted volume, a
+    /// `scp` in their own script — drops one TSV per host in here. One file
+    /// per host means remote writers never contend for the local flock.
+    static var inboxDirectory: URL {
+        path.deletingLastPathComponent().appendingPathComponent("attention.d", isDirectory: true)
+    }
+
+    /// A remote file is someone else's disk quota, not ours. Bound both the
+    /// number of hosts and the bytes read from each.
+    static let maxInboxFiles = 16
+    static let maxInboxBytesPerFile = 256 * 1024
+
+    /// One place events came from, with the local time they arrived.
+    ///
+    /// `receivedAtMs` is the file's own modification time. Pulse cannot trust
+    /// a remote machine's clock, and it keeps no cross-launch record of when
+    /// each line showed up — but the moment the bytes landed on *this* disk is
+    /// both local and durable, which is exactly what a skewed event stamp
+    /// needs to be checked against.
+    struct Source {
+        var host: String
+        var text: String
+        var receivedAtMs: Int64
+        var isLocal: Bool
+    }
+
+    /// The local file plus every inbox file, newest host first.
+    static func readSources() -> [Source] {
+        var sources = [
+            Source(host: "", text: readText(), receivedAtMs: 0, isLocal: true)
+        ]
+        sources.append(contentsOf: readInbox())
+        return sources
+    }
+
+    static func readInbox() -> [Source] {
+        let fm = FileManager.default
+        let directory = inboxDirectory
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
+        var found: [Source] = []
+        for name in names.sorted() where name.hasSuffix(".tsv") {
+            if found.count >= maxInboxFiles { break }
+            let url = directory.appendingPathComponent(name)
+            guard let handle = try? FileHandle(forReadingFrom: url) else { continue }
+            defer { try? handle.close() }
+            let data = (try? handle.read(upToCount: maxInboxBytesPerFile)) ?? Data()
+            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { continue }
+            let attributes = try? fm.attributesOfItem(atPath: url.path)
+            let modified = attributes?[.modificationDate] as? Date
+            // The file name is the fallback identity, so a remote box running
+            // an older v1 hook still shows up as itself rather than as "here".
+            let fallbackHost = AttentionProtocol.normalizeHost(String(name.dropLast(4)))
+            found.append(
+                Source(
+                    host: fallbackHost,
+                    text: text,
+                    receivedAtMs: Int64((modified?.timeIntervalSince1970 ?? 0) * 1000),
+                    isLocal: false
+                )
+            )
+        }
+        return found
+    }
+
     /// Keep unresolved raises when compacting the TSV. A suffix-only cap can
     /// drop a still-open permission/waiting line with no `done`.
     static func compactLines(_ lines: [String], cap: Int = maxRetainedLines) -> [String] {
