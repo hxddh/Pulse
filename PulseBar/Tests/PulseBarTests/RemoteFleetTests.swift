@@ -269,9 +269,19 @@ final class RemoteFleetTests: XCTestCase {
         row.observationSource = .remote
         row.lastHeardMs = now - 3 * minute
         row.waiting = true
+        // Against a fixed clock the line quotes the real gap.
         let line = try XCTUnwrap(store.remoteStatusLine(row, nowMs: now))
-        XCTAssertFalse(line.isEmpty)
-        XCTAssertEqual(store.rowStoryLine(row), line, "the remote story outranks every local template")
+        XCTAssertTrue(line.contains("3"), line)
+
+        // The story line reads the live clock, so compare it against the same
+        // clock rather than the fixture's.
+        var live = row
+        live.lastHeardMs = Int64(Date().timeIntervalSince1970 * 1000) - 3 * minute
+        XCTAssertEqual(
+            store.rowStoryLine(live),
+            store.remoteStatusLine(live),
+            "the remote story outranks every local template"
+        )
         XCTAssertTrue(store.rowSourceLabel(row)?.contains("devbox") == true, "name the machine")
     }
 }
