@@ -14,6 +14,9 @@ final class StatusStore: ObservableObject {
     @Published var quietStartMinute: Int = 22 * 60
     @Published var quietEndMinute: Int = 8 * 60
     @Published var launchAtLogin = false
+    /// Whether launchd was actually left in the state `launchAtLogin` claims.
+    /// `nil` until the toggle has been applied at least once this run.
+    @Published private(set) var loginItemApplied: Bool?
     @Published var language: AppLanguage = .auto
     @Published var hooksStatus: HooksSupport.Status = .unknown
     /// Native `pulse-hook` launcher present — Attention bridge path, not Claude/Codex install.
@@ -23,6 +26,9 @@ final class StatusStore: ObservableObject {
     @Published private(set) var isRefreshing = false
     /// Transient "Copied" confirmation on the diagnostics button.
     @Published private(set) var didCopyDiagnostics = false
+    /// The shape report walks the session stores, so the button says so.
+    @Published private(set) var isCopyingShapeReport = false
+    @Published private(set) var didCopyShapeReport = false
     /// Agents the user muted — no notifications, still shown in the tray.
     @Published var mutedAgents: Set<AgentID> = []
     @Published var hotkey: HotkeyChoice = .commandShiftP
@@ -483,6 +489,7 @@ final class StatusStore: ObservableObject {
             "appDataGrant: \(grantLabel)",
             "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)",
             "probeCadence: \(probeIntervalDescription)",
+            "launchAtLogin: \(launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
             "harvest: native (no external runtime)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
@@ -537,6 +544,41 @@ final class StatusStore: ObservableObject {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_600_000_000)
             self?.didCopyDiagnostics = false
+        }
+    }
+
+    /// The vendor-shape report, on the clipboard, from a button.
+    ///
+    /// `--harvest-shape` has been the one diagnostic that only a terminal could
+    /// produce, and it is exactly the evidence a parsing fix needs: which keys
+    /// an agent actually writes, rather than which keys someone inferred. Two
+    /// releases of parsing work have stayed deliberately empty waiting for it.
+    /// It walks the session stores, so it runs off the main thread and only
+    /// when asked.
+    @MainActor
+    func copyHarvestShapeReport() {
+        guard !isCopyingShapeReport else { return }
+        isCopyingShapeReport = true
+        let allowAll = allowAppData
+        let agents = harvestAppDataAgents
+        DispatchQueue.global(qos: .userInitiated).async {
+            let safe = ContentSanitizer.redact(
+                NativeActivityHarvest.shapeReport(
+                    allowAppData: allowAll,
+                    appDataAgents: agents
+                )
+            )
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(safe, forType: .string)
+                self.isCopyingShapeReport = false
+                self.didCopyShapeReport = true
+                DebugLog.write("harvest shape report copied bytes=\(safe.utf8.count)")
+                try? await Task.sleep(nanoseconds: 1_600_000_000)
+                self.didCopyShapeReport = false
+            }
         }
     }
 
@@ -1482,8 +1524,9 @@ final class StatusStore: ObservableObject {
         guard appliedLaunchAtLogin != launchAtLogin else { return }
         appliedLaunchAtLogin = launchAtLogin
         let enabled = launchAtLogin
-        DispatchQueue.global(qos: .utility).async {
-            LoginItem.setEnabled(enabled)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let applied = LoginItem.setEnabled(enabled)
+            Task { @MainActor in self?.loginItemApplied = applied }
         }
     }
 
@@ -4377,8 +4420,22 @@ enum DebugLog {
 }
 
 enum LoginItem {
-    static func setEnabled(_ enabled: Bool) {
-        let label = "com.pulse.app"
+    static let label = "com.pulse.app"
+
+    /// Whether launchd currently knows the agent. `launchctl list <label>`
+    /// exits non-zero when it does not.
+    static func isRegistered() -> Bool {
+        shell("/bin/launchctl", ["list", label]) == 0
+    }
+
+    /// Returns whether launchd ended up in the state the user asked for.
+    ///
+    /// Both `launchctl` calls used to be discarded with `_ =`, so the toggle
+    /// reported success whether or not anything was registered — the same
+    /// "claimed done, never verified" shape this project keeps having to undo.
+    @discardableResult
+    static func setEnabled(_ enabled: Bool) -> Bool {
+        let label = Self.label
         let home = FileManager.default.homeDirectoryForCurrentUser
         let plist = home.appendingPathComponent("Library/LaunchAgents/\(label).plist")
         if enabled {
@@ -4420,6 +4477,9 @@ enum LoginItem {
             _ = shell("/bin/launchctl", ["unload", "-w", plist.path])
             try? FileManager.default.removeItem(at: plist)
         }
+        let applied = isRegistered() == enabled
+        DebugLog.write("loginItem enabled=\(enabled) applied=\(applied)")
+        return applied
     }
 
     private static func shell(_ path: String, _ args: [String]) -> Int32 {

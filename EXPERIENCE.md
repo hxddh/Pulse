@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（0.99.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（0.99.2），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -494,6 +494,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AK | Hero Honesty（主行诚实） | Claude/Command Code `tool_result` 不当标题、长笔录开场目标仍在；`messages[]` 跳过 tool 信封；Codex `event_msg` 用户正文进主行、Desktop 信封剥掉、`continue` 不覆盖；tool `path` 不是 cwd；Goose `name` / Kimi `lastPrompt` / Cursor `subtitle` 可见；表头计数=舰队；Details 空 phase 不发明「等待权限」；审批 ask → Permission 芯片 |
 | AL | Ground Truth（采集可证） | 主行按记录种类选而非字符串长度（`sessionName` > `userPrompt` > `cacheTitle` > chrome），同种类保留先见到的；每个 adapter 输出 explain（files/bytes/truncated/facts/heroOrigin/emptyReason）进安全支持报告与 debug.log；窗口截断时 records 报未知不报估算值；预算用尽后下次扫描从上次没走到的 adapter 开始，尾部 Agent 不再永久 `unscanned`；launchd 最小 PATH 下 `~/.local/bin` 的 CLI 仍算「已安装」；chrome 词表单源；native 墙用厂商真实布局断言主行**取值**；explain / shape 导出不含标题、正文与路径 |
 | AM | Quiet Data（数据静默） | 账本注释所述 == 实际字段（≤160 字会话标题、14 天 / 256 条、已过 `ContentSanitizer`）；设置里「最近等待」下方写明保留期并可清空；chrome 词表全仓只有一份且大小写不敏感，`Cascade session` 在采集侧与行侧一致被拒；`debug.log` 的 rowKey 不含项目名但仍可跨行关联；预算挤掉的 adapter 进 supervisor 摘要；Details 事实行与 Support 事实徽章 VoiceOver 读得出标签与有无；只有一个采集器，任何路径都不为观测会话 fork 解释器 |
+| AN | Live Wire（通电） | `lsof` 退 1 但已打印的进程照常采用；只有调用失败 / 超时 / 退 0 却无输出 / 退 1 而被问的进程仍活着，才武装 5 分钟 backoff；已退出的 pid 不连坐其它 Agent；子进程超时后不向仍在运行的它索要退出码，SIGTERM 不死则 SIGKILL；仅进程行从探针拿到工作区与项目名，多个陈旧会话按活进程 cwd 消歧（无 cwd 时按新旧）；厂商格式报告可从支持窗口一键复制且不含任何正文；「登录时启动」的终态经 `launchctl list` 复核并进安全支持报告；Focus 打开工作区不在主线程无限等待 |
 
 ---
 

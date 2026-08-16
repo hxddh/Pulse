@@ -409,6 +409,9 @@ enum L10n {
         case .supportSafeReport: return "Preview safe report"
         case .supportCopySafeReport: return "Copy safe report"
         case .exportSafeReport: return "Export safe report…"
+        case .supportCopyShapeReport: return "Copy vendor shape"
+        case .supportShapeReading: return "Reading sessions…"
+        case .supportShapeHint: return "Key names and value kinds only — never your text. Share it to get a parsing bug fixed."
         case .snooze: return "Later"
         case .snoozed: return "snoozed"
         case .snoozedFor: return "Later · %@ left"
@@ -842,6 +845,9 @@ enum L10n {
         case .supportSafeReport: return "预览安全报告"
         case .supportCopySafeReport: return "复制安全报告"
         case .exportSafeReport: return "导出安全报告…"
+        case .supportCopyShapeReport: return "复制厂商格式"
+        case .supportShapeReading: return "正在读会话…"
+        case .supportShapeHint: return "只有键名与值的类型，不含你的任何文字。发它就能修解析。"
         case .snooze: return "稍后"
         case .snoozed: return "已稍后"
         case .snoozedFor: return "已稍后 · 剩 %@"
@@ -1003,6 +1009,7 @@ enum L10n {
         case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable, supportAvailable, supportNotInstalled, supportNoRecentSession, supportPermissionDenied, supportUnscanned
         case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportAvailableCount, supportNotInstalledCount, supportNoRecentCount, supportPermissionDeniedCount, supportUnscannedCount, supportUsefulCoverage
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
+        case supportCopyShapeReport, supportShapeReading, supportShapeHint
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
         case installUpdate, updateInstalling, updateInstallFailed, updateInstallRequiresNotarized
