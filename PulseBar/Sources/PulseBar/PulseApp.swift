@@ -2656,6 +2656,19 @@ struct SupportCoverageView: View {
                                 store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.supportCopySafeReport)
                             ) { store.copySafeSupportReport() }
                         }
+                        // The one diagnostic that used to need a terminal.
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(store.tr(.supportShapeHint))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button(shapeButtonTitle) { store.copyHarvestShapeReport() }
+                                .disabled(store.isCopyingShapeReport)
+                                .accessibilityLabel(store.tr(.supportCopyShapeReport))
+                                .accessibilityValue(store.tr(.supportShapeHint))
+                        }
                     }
                 }
             }
@@ -2687,6 +2700,11 @@ struct SupportCoverageView: View {
         .frame(minWidth: 580, minHeight: 280)
         .background(Color(nsColor: .windowBackgroundColor))
         .searchable(text: $query, prompt: store.tr(.supportSearch))
+    }
+
+    private var shapeButtonTitle: String {
+        if store.isCopyingShapeReport { return store.tr(.supportShapeReading) }
+        return store.didCopyShapeReport ? store.tr(.copied) : store.tr(.supportCopyShapeReport)
     }
 
     private var summaryLine: String {

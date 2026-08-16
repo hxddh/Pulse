@@ -494,12 +494,19 @@ enum ProcessProbe {
                 }
             } else {
                 let list = unresolved.map(String.init).joined(separator: ",")
-                let output = shell(
+                let invocation = run(
                     "/usr/sbin/lsof",
                     ["-Ffpn", "-a", "-d", "cwd", "-p", list]
                 )
-                let paths = output.map(parseWorkingDirectories) ?? [:]
-                if paths.isEmpty {
+                // `lsof` exits 1 when it could not find *anything* it was asked
+                // about — including a single PID that exited between the `ps`
+                // snapshot and this call — while still printing every process
+                // it did resolve. Reading the exit status as "the call failed"
+                // therefore threw away good answers for every other agent and
+                // armed the five-minute backoff, which is the same damage the
+                // field-selection bug did before 0.99.1. Judge the output.
+                let paths = workingDirectories(from: invocation)
+                if paths.isEmpty, shouldBackOff(invocation, pids: unresolved) {
                     cwdLookupBackoffUntil = now + cwdLookupBackoffSeconds
                     DebugLog.write(
                         "cwd lookup unavailable; retry in \(Int(cwdLookupBackoffSeconds))s"
@@ -559,15 +566,71 @@ enum ProcessProbe {
         return nil
     }
 
-    private static func shell(_ launchPath: String, _ arguments: [String]) -> String? {
+    /// One probe subprocess, exit status included. `nil` means the tool could
+    /// not be launched or had to be killed — the only states in which its
+    /// output says nothing at all.
+    struct Invocation: Equatable {
+        var stdout: String
+        var status: Int32
+    }
+
+    private static func run(_ launchPath: String, _ arguments: [String]) -> Invocation? {
         guard let result = ProcessIO.run(
             executable: launchPath,
             arguments: arguments,
             timeout: 1.5
-        ), !result.timedOut, result.status == 0 else {
+        ), !result.timedOut else {
             DebugLog.write("probe shell failed \(URL(fileURLWithPath: launchPath).lastPathComponent)")
             return nil
         }
-        return String(data: result.stdout, encoding: .utf8)
+        return Invocation(
+            stdout: String(data: result.stdout, encoding: .utf8) ?? "",
+            status: result.status
+        )
+    }
+
+    /// `ps` is only useful when it succeeded outright; a partial process table
+    /// would silently shrink the fleet.
+    private static func shell(_ launchPath: String, _ arguments: [String]) -> String? {
+        guard let invocation = run(launchPath, arguments) else { return nil }
+        guard invocation.status == 0 else {
+            DebugLog.write(
+                "probe \(URL(fileURLWithPath: launchPath).lastPathComponent) exit=\(invocation.status)"
+            )
+            return nil
+        }
+        return invocation.stdout
+    }
+
+    /// Every process `lsof` did resolve, whatever it exited with.
+    ///
+    /// The exit status answers "did you find everything I named", not "did you
+    /// work". Those are different questions, and reading the first as the
+    /// second is what kept the answer from ever being used.
+    static func workingDirectories(from invocation: Invocation?) -> [Int: String] {
+        guard let invocation else { return [:] }
+        return parseWorkingDirectories(invocation.stdout)
+    }
+
+    /// An empty `lsof` answer is only evidence that `lsof` is unusable when the
+    /// processes we asked about are still alive.
+    ///
+    /// Backoff exists to stop a denied lookup from becoming a recurring
+    /// cross-app privacy prompt. A PID that simply exited explains the silence
+    /// by itself, and punishing every future lookup for five minutes because
+    /// one agent finished is how a working feature stays invisible.
+    static func shouldBackOff(_ invocation: Invocation?, pids: [Int]) -> Bool {
+        guard let invocation else { return true }
+        if invocation.status == 0 { return true }
+        // Non-zero: `lsof` reported it could not resolve something. If nothing
+        // we asked about is alive, that is the whole explanation.
+        return pids.contains(where: processExists)
+    }
+
+    /// Liveness only — no signal is sent.
+    static func processExists(_ pid: Int) -> Bool {
+        guard pid > 0 else { return false }
+        if kill(pid_t(pid), 0) == 0 { return true }
+        return errno == EPERM
     }
 }

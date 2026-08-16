@@ -87,15 +87,26 @@ enum ProcessIO {
         let timedOut = exitDone.wait(timeout: .now() + timeout) == .timedOut
         if timedOut {
             task.terminate()
-            _ = exitDone.wait(timeout: .now() + 0.5)
+            if exitDone.wait(timeout: .now() + 0.5) == .timedOut {
+                // SIGTERM is a request. A child blocked in the kernel — `lsof`
+                // on a dead network mount is the textbook case — may never
+                // answer it, and leaving it running leaks a process for the
+                // lifetime of the app.
+                kill(task.processIdentifier, SIGKILL)
+                _ = exitDone.wait(timeout: .now() + 0.5)
+            }
         }
         _ = outDone.wait(timeout: .now() + 0.5)
         _ = errDone.wait(timeout: .now() + 0.5)
 
+        // `terminationStatus` is only defined once the child has exited;
+        // asking a still-running Process for it raises. Every caller here
+        // already treats `timedOut` as the failure signal, so report a status
+        // that cannot be mistaken for a clean exit instead.
         return Result(
             stdout: outBuffer.value,
             stderr: errBuffer.value,
-            status: task.terminationStatus,
+            status: task.isRunning ? -1 : task.terminationStatus,
             timedOut: timedOut
         )
     }

@@ -176,19 +176,17 @@ enum TerminalFocus {
     }
 
     /// `open -a App.app /path` — no Automation TCC; lands on the folder in that host.
+    /// Focus runs on the main thread from a click, so this call needs a
+    /// deadline: `open -a` normally returns immediately, but a host app that
+    /// is slow to launch — or stuck behind its own dialog — would otherwise
+    /// freeze the menu bar for as long as it likes.
     private static func openFolder(_ path: String, inApplicationAt app: URL) -> Bool {
-        let t = Process()
-        t.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        t.arguments = ["-a", app.path, path]
-        t.standardOutput = Pipe()
-        t.standardError = Pipe()
-        do {
-            try t.run()
-            t.waitUntilExit()
-            return t.terminationStatus == 0
-        } catch {
-            return false
-        }
+        guard let result = ProcessIO.run(
+            executable: "/usr/bin/open",
+            arguments: ["-a", app.path, path],
+            timeout: 5
+        ) else { return false }
+        return !result.timedOut && result.status == 0
     }
 
     private static func activateWarp() -> Bool {

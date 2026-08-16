@@ -155,6 +155,19 @@ def main() -> int:
             "Cursor private-worker daemon must be denied; it is infrastructure, not an active session"
         )
         return 1
+    # 0.99.2: `lsof` exits 1 when any named PID is gone while still printing
+    # every process it did resolve. Gating the output on `status == 0` threw
+    # those answers away and armed a five-minute backoff — the same damage the
+    # 0.99.1 field-selection bug did, one gate further down.
+    if "workingDirectories(from:" not in probe or "shouldBackOff(" not in probe:
+        print(
+            "ProcessProbe must read lsof output independently of its exit status; "
+            "keep workingDirectories(from:) and shouldBackOff()"
+        )
+        return 1
+    if re.search(r"lsof[\s\S]{0,400}?status == 0", probe):
+        print("lsof output must not be gated on a zero exit status")
+        return 1
     terminal_focus_source = (
         ROOT / "PulseBar/Sources/PulseBar/TerminalFocus.swift"
     ).read_text(encoding="utf-8")
