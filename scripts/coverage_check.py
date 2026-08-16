@@ -168,6 +168,37 @@ def main() -> int:
     if re.search(r"lsof[\s\S]{0,400}?status == 0", probe):
         print("lsof output must not be gated on a zero exit status")
         return 1
+    # 1.1: an agent may only claim `respondReach == .hookSite` when Pulse is
+    # actually registered at that agent's permission decision point. Reach is a
+    # statement about an installed hook, not a capability — and a capability
+    # claim nobody installed is exactly the shape of bug this project keeps
+    # having to undo.
+    respond = (ROOT / "PulseBar/Sources/PulseBar/RespondContract.swift").read_text(encoding="utf-8")
+    installer = (ROOT / "PulseBar/Sources/PulseBar/HooksInstaller.swift").read_text(encoding="utf-8")
+    reach_block = re.search(r"var respondReach: RespondReach \{(.*?)\n    \}", respond, re.S)
+    if not reach_block:
+        print("MISSING AgentID.respondReach")
+        return 1
+    reaching: list[str] = []
+    pending_cases: list[str] = []
+    for line in reach_block.group(1).splitlines():
+        line = line.strip()
+        if line.startswith("case ") or line.startswith("."):
+            pending_cases += re.findall(r"\.(\w+)", line)
+        elif line.startswith("return .hookSite"):
+            reaching += pending_cases
+            pending_cases = []
+        elif line.startswith("return "):
+            pending_cases = []
+    for name in reaching:
+        raw = swift_case_to_raw(name)
+        if '"PermissionRequest"' not in installer or f'agent: "{raw}", kind: "permission"' not in installer:
+            print(
+                f"{raw} claims respondReach .hookSite but no PermissionRequest hook installs it"
+            )
+            return 1
+    print(f"respond reach: {len(reaching)} at the decision point ({','.join(sorted(reaching)) or '-'})")
+
     terminal_focus_source = (
         ROOT / "PulseBar/Sources/PulseBar/TerminalFocus.swift"
     ).read_text(encoding="utf-8")
