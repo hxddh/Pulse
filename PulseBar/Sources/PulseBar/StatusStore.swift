@@ -764,6 +764,7 @@ final class StatusStore: ObservableObject {
         case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
         case "waiting_unsupported": return tr(.supportWaitingNoneDetail)
         case "scan_timeout": return tr(.qualityReasonScanTimeout)
+        case "remote_event_only": return tr(.remoteEvidence)
         default: return tr(.qualityReasonNotEmitted)
         }
     }
@@ -775,6 +776,7 @@ final class StatusStore: ObservableObject {
         case "use_attention_bridge": return tr(.qualityNextAttentionBridge)
         case "retry_scan": return tr(.qualityNextRetryScan)
         case "open_agent_for_session": return tr(.qualityNextOpenAgent)
+        case "wait_for_remote_host": return tr(.remoteNoFocus)
         default: return tr(.qualityNextOpenAgent)
         }
     }
@@ -926,6 +928,7 @@ final class StatusStore: ObservableObject {
         case .session: return tr(.supportStructured)
         case .cache: return tr(.supportCache)
         case .process: return tr(.supportProcess)
+        case .remote: return tr(.remoteEvidence)
         case .none: return tr(.supportDetected)
         }
     }

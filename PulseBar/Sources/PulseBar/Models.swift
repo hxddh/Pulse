@@ -351,6 +351,11 @@ struct ObservationQuality: Equatable, Hashable {
         let baseReason: String
         let baseNext: String
         switch evidence {
+        case .remote:
+            // Another machine's event is all there is. The gap is not something
+            // the user can close here, so the next step must not pretend it is.
+            baseReason = "remote_event_only"
+            baseNext = "wait_for_remote_host"
         case .process:
             baseReason = privacyLimited ? "privacy_limited" : "process_only"
             baseNext = privacyLimited ? "enable_app_data" : "open_agent_for_session"
@@ -430,6 +435,9 @@ struct ObservationQuality: Equatable, Hashable {
                 // Keep confidence honest for thin cache adapters.
             }
         case .process:
+            confidence = .low
+        case .remote:
+            // One event from a machine Pulse cannot probe. Never more than low.
             confidence = .low
         }
 
