@@ -1524,9 +1524,9 @@ final class StatusStore: ObservableObject {
         guard appliedLaunchAtLogin != launchAtLogin else { return }
         appliedLaunchAtLogin = launchAtLogin
         let enabled = launchAtLogin
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        DispatchQueue.global(qos: .utility).async {
             let applied = LoginItem.setEnabled(enabled)
-            Task { @MainActor in self?.loginItemApplied = applied }
+            Task { @MainActor [weak self] in self?.loginItemApplied = applied }
         }
     }
 
