@@ -154,7 +154,7 @@ to users.
 
 ## Current state
 
-1.0.0 is the current source version.
+1.0.1 is the current source version.
 
 **1.0 marks the product, not the signature.** It was previously reserved for
 "notarized", which is externally blocked without an Apple Developer ID — a
@@ -163,5 +163,6 @@ honesty lives where it belongs, in `PulseDistributionChannel`: without an Apple
 Developer ID, GitHub **Latest** tracks the current semver while the binary stays
 `preview` / ad-hoc — **never stamp `stable` or claim Gatekeeper-ready.** See
 `CHANGELOG.md`. The active plan is [`docs/plan-1.1.md`](docs/plan-1.1.md)
-(Respond); its foundations have landed but responding itself is blocked on
-P0-0 real-machine evidence, so 1.0.0 remains the released version.
+(Respond). Its foundations shipped as 1.0.1 — a patch, not 1.1, because
+responding itself is still blocked on P0-0 real-machine evidence and the
+version number must not claim otherwise.

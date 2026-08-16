@@ -2,6 +2,60 @@
 
 All notable changes to Pulse are documented here.
 
+## 1.0.1 — Respond groundwork / 回应的地基
+
+**这一版不含任何「从灯上回答」的能力，装上去看不到新东西。** 它把 1.1 的地基和取证
+工具落进 main，仅此而已 —— 说在前面，免得版本号本身造成误会。
+
+### 已经拉到位、但另一端没接的那根线
+
+`HooksInstaller` **已经**把 Pulse 注册在 Claude 的 `PermissionRequest` 上：
+
+```swift
+ensureClaudeEvent(&hooks, event: "PermissionRequest",
+                  command: hookCommand(agent: "claude", kind: "permission"), ...)
+let hookBody = ["type": "command", "command": command, "timeout": 5]
+```
+
+也就是说 Pulse 的代码**此刻就在权限决定发生的那一瞬间被执行**，在厂商给的 5 秒预算里，
+而 `PulseHookReceiver` 被设计成「soft-fail，永不阻塞厂商 Agent」——它什么都不答。
+
+**本版没有把它接上。** 厂商 hook 的回复能否携带决定，是一份没人验证过的契约；猜错的
+代价不是主行显示错了，是**批准了不该批准的东西**。
+
+### 取证工具
+
+`scripts/qa_respond_contract.sh`：**只读、不批准任何东西、不碰全局 `~/.claude`**，
+在临时项目里布置捕获，报告只输出键名与值的类型（没有正文、路径、代码）。它要回答的
+五个问题、以及每个问题决定哪一处设计，写在 `docs/plan-1.1.md`。其中 **Q2** 决定这一版
+最终是完整的「从灯上回答」，还是诚实地缩成「一键拒绝 + 去看看」。
+
+### 判决的形状（错了会让 Agent 动手，所以先定死）
+
+- **双绑定**：判决同时携带 request id 与请求全文的摘要。任一单独都可被重放 —— 同一个 id
+  之后被复用，或同样的文本明天再问一次。
+- **单次使用 + 过期**：走开的人不该发现自己的批准还挂在那儿。
+- **截断不可批准**：`decide(allow: true)` 对截断请求返回 `nil`。拒绝没读全的东西是安全的，
+  批准它收不回来 —— 这条拒绝写在模型里，不是灰掉一个按钮。
+
+### 谁在等
+
+无脑阻塞会**在用户本人面前冻住 Agent**，而他自己的提示本来就要弹出来了。`RespondHold`
+只在「你能答、且在这儿答比过去答更好」时阻塞 —— 远端 raise + 你人在这台 Mac 前，正是
+1.0 制造出来的场景。没人在场时不阻塞：那是没有观众的冻结。
+
+`UserPresence` 只读环境输入年龄，不需要任何权限，**不接触任何按键内容**。
+
+### 诚实的可达性
+
+`respondReach` 只说 **Pulse 在哪儿运行**，绝不说它能做什么。门禁拒绝任何声称
+`.hookSite` 却没有 `PermissionRequest` hook 背书的 Agent。
+
+### 仍然空着
+
+`docs/plan-1.1.md` 的 **P0-3（送达）与 P0-5（远端应答）** 是空的，阻塞于 P0-0 真机证据。
+这不是遗漏，是这个仓库从 0.96.1–0.97.2 换来的规矩。
+
 ## 1.0.0 — Remote Fleet / 我的舰队
 
 **Pulse 从「这台 Mac 的灯」变成「我所有 Agent 的灯」。**
