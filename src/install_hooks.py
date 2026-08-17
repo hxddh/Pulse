@@ -9,6 +9,16 @@ import sys
 from pathlib import Path
 
 
+def _is_pulse_entry(blob: str) -> bool:
+    """Only unambiguous markers own an entry. A bare ``--hook`` is not one:
+    uninstall rewrites the user's own settings, and ``mytool --hook-dir …``
+    must never be stripped. Legacy direct-binary entries are recognized by
+    ``--hook`` next to ``PulseBar`` (mirrors HooksInstaller.containsPulseMarker)."""
+    if "pulse-hook" in blob or "pulse_hook.py" in blob:
+        return True
+    return "--hook" in blob and "PulseBar" in blob
+
+
 def pulse_dir() -> Path:
     override = os.environ.get("PULSE_HOME")
     if override:
@@ -161,7 +171,7 @@ def uninstall_claude() -> str:
         if not target.exists():
             continue
         raw = target.read_text(encoding="utf-8")
-        if "pulse_hook.py" not in raw and "pulse-hook" not in raw and "--hook" not in raw:
+        if not _is_pulse_entry(raw):
             continue
         try:
             data = json.loads(raw)
@@ -176,13 +186,7 @@ def uninstall_claude() -> str:
             entries = hooks.get(event)
             if not isinstance(entries, list):
                 continue
-            kept = [
-                e
-                for e in entries
-                if "pulse_hook.py" not in json.dumps(e)
-                and "pulse-hook" not in json.dumps(e)
-                and "--hook" not in json.dumps(e)
-            ]
+            kept = [e for e in entries if not _is_pulse_entry(json.dumps(e))]
             removed += len(entries) - len(kept)
             if kept:
                 hooks[event] = kept

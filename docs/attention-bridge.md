@@ -8,10 +8,10 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 1. **什么都不做** —— harvest 会尽力从它们的会话文件里认出 `pending`
    （Cursor、Droid、Kimi、OpenCode…… 见 README 的支持矩阵）；
 2. **走这座桥** —— 想要 hooks 级别的准确度（明确的授权 / 输入等待，而不是猜），
-   让工具在等待时按 **Attention Protocol v1** 写一行 TSV。
+   让工具在等待时按 **Attention Protocol**（现行 v2；v1 六列行仍被接受）写一行 TSV。
 
-**契约正文：** [`attention-protocol.md`](attention-protocol.md)（header、六列、
-kind 白名单、raise / clear）。桥接进来的等待在 Tray 上标注为 `hooks`，与
+**契约正文：** [`attention-protocol.md`](attention-protocol.md)（header、七列
+（第七列 `host`，v1 六列行视为本机）、kind 白名单、raise / clear）。桥接进来的等待在 Tray 上标注为 `hooks`，与
 Claude / Codex 同级。
 
 ---

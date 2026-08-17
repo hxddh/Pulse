@@ -34,7 +34,10 @@ ensureClaudeEvent(&hooks, event: "PermissionRequest",
 let hookBody = ["type": "command", "command": command, "timeout": 5]
 ```
 
-也就是说 **Pulse 的代码此刻就在权限决定发生的那一瞬间被执行**，在厂商给的 5 秒预算内。
+也就是说 **Pulse 的代码此刻就在权限决定发生的那一瞬间被执行** —— 注意上面那个 `5`
+是 Pulse 自己写进 settings 的超时，不是厂商的限制：厂商 hook 默认超时是 600 秒，
+逐 hook 可配（见下方 P0-0 证据 Q4）。已装条目的 timeout 迁移是一项真实工作
+（`ensureClaudeEvent` 见 marker 即跳过，现有安装不会自动提额）。
 而 `PulseHookReceiver` 顶上写着：
 
 > unknown kinds soft-fail (exit 0, no write) so vendor agents are never blocked
@@ -60,12 +63,40 @@ let hookBody = ["type": "command", "command": command, "timeout": 5]
 | --- | --- | --- |
 | Q1 | `PermissionRequest` 时 hook 的 stdin 到底收到什么？有没有**请求 id**、有没有**完整的工具入参**？ | 没有稳定 id 就无法把决定绑回具体请求；没有完整入参就**永远不能给「同意」按钮** |
 | Q2 | hook 的 stdout 能否携带决定？schema 是什么？ | 决定这一版是「能回应」还是「只能拒绝并去看」 |
-| Q3 | hook 超时（默认 5 s）之后发生什么：厂商自己弹提示，还是报错/中断？ | fail-open 是这套设计的底座；若超时不是干净回落，阻塞方案直接作废 |
+| Q3 | hook 超时（Pulse 当前装的是 5 s；厂商默认 600 s）之后发生什么：厂商自己弹提示，还是报错/中断？ | fail-open 是这套设计的底座；若超时不是干净回落，阻塞方案直接作废 |
 | Q4 | `timeout` 可否调大？上限多少？调大后在场用户看到什么？ | 人需要的是几十秒，不是 4 秒 |
 | Q5 | 入参是否被截断？大 diff / 长命令怎么表示？ | 直接决定「同意」按钮的出现条件 |
 
 **Q2 若为否，本版的产品形态就变成「一键拒绝 + 去看看」**，而不是完整应答。那也是一个
 诚实且有用的版本，但必须由证据来决定，不能由期望来决定。
+
+### P0-0 · 证据·第一份（2026-08-17，容器取证）
+
+> **来源与证据等级，先说清楚。** 取证环境是一个装有 Claude Code **2.1.233** 的 Linux
+> 容器，不是用户的 macOS 真机。该环境下嵌套 Claude 走 SDK 权限回调
+> （transcript 标注 `entrypoint: sdk-cli`），交互式权限对话路径无法端到端复现。
+> 因此下面的答案分两个等级：**[binary]** = 从该版本正在发行的 CLI 二进制中提取的
+> 实际代码路径（比文档强 —— 它就是会执行的东西；比真机观察弱一档）；
+> **[live]** = 本容器实测。真机剩余步骤见后。
+
+| # | 答案 | 证据 |
+| --- | --- | --- |
+| Q1 | **有稳定 id，有完整入参。** stdin JSON 携带 `tool_name`、完整 `tool_input`、`tool_use_id`、`permission_suggestions`，外加通用信封 `session_id` / `cwd` / `permission_mode` / `transcript_path` | [binary] hook 输入构造：`{..., hook_event_name:"PermissionRequest", tool_name, tool_input, permission_suggestions}`；事件表描述原文 "Input to command is JSON with tool_name, tool_input, and tool_use_id"。[live] 通用信封字段在同机 UserPromptSubmit 捕获中实测确认 |
+| Q2 | **能。stdout 可携带判决，且用户自己的 deny/ask 规则覆盖 hook 的 allow。** 2.1.233 消费的形状是 `hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow"\|"deny", updatedInput?, updatedPermissions?, message?, interrupt? } }`；官方文档另载 `decision: "approve"\|"deny"` 字符串形。真机探测两种形状都试 | [binary] 消费代码：`case"PermissionRequest": if(hookSpecificOutput.decision){ permissionBehavior = decision.behavior==="allow" ? "allow" : "deny" … }`；allow 路径产出 `decisionReason:{type:"hook",hookName:"PermissionRequest"}`，deny 路径产出 "Permission denied by hook"；规则覆盖：`"PermissionRequest hook allowed … but deny/ask rule overrides"` —— **判断权不转移在厂商侧有第二道保险** |
+| Q3 | **干净回落。** headless 路径整体 try/catch，hook 失败仅记日志、返回 null、走厂商自己的权限流程。fail-open 底座成立 | [binary] `catch(s){ log("PermissionRequest hook failed for headless agent: …") } return null`，随后落到 "Action requires interactive approval…" 的默认拒绝/正常提示 |
+| Q4 | **可调，且「5 秒预算」是个误会。** 厂商 hook 默认超时是 **600 秒**（binary 常量 600000ms）；Pulse settings 里的 `timeout: 5` 是 `HooksInstaller` 自己写的。逐 hook `timeout` 字段被尊重。「让 Agent 等几十秒」没有厂商侧障碍。**hold 期间在场用户看到什么 UI，仍需真机**（见剩余步骤） | [binary] hook 执行默认 `timeoutMs = 600000`；per-hook timeout 来自 settings 条目 |
+| Q5 | **无截断机制。** `tool_input` 作为完整 JSON 对象经 stdin 全量写入 hook；未发现任何按大小截断的代码路径。极端大 diff 的实测留给真机 | [binary] stdin 写入的是完整 hook input 对象的序列化 |
+
+**结论：最悲观的分支（Q2=否 → 缩为「一键拒绝」）排除。可以按「完整应答」立项。**
+
+**真机剩余步骤**（收窄后的 P0-0，约 30 分钟）：
+1. 确认用户机器的 CLI 版本 ≥ 含 `PermissionRequest` 事件的版本（老版本装了 hook
+   永不触发 —— 静默无害，但前提塌掉）；
+2. 交互模式下实测 stdout 判决被采纳（两种形状各试一次：`decision.behavior` 对象形
+   与 `decision: "approve"` 字符串形）；
+3. hold 期间在场用户的 UI 观感（Q4 后半）；
+4. 超大 `tool_input`（长 diff）实测（Q5 收尾）；
+5. `Notification(permission_prompt)` 与 `PermissionRequest` 的触发顺序/重复关系。
 
 ---
 
@@ -73,8 +104,9 @@ let hookBody = ["type": "command", "command": command, "timeout": 5]
 
 ### 一、谁在等 —— 人还是 Agent
 
-厂商 timeout 是 5 秒；人看懂一个权限请求并决定，需要几十秒。要么让 Agent 真的等你，
-要么这个功能只在「决定已经在那儿」时有用（而第一次问永远等不到）。
+人看懂一个权限请求并决定，需要几十秒。厂商侧没有障碍 —— hook 默认超时 600 秒，
+逐 hook 可配（P0-0 证据 Q4；此前这里写的「厂商 timeout 是 5 秒」是个误会，那是
+Pulse 自己装的值）。所以「让 Agent 等你」技术上成立，剩下的是纯产品取舍：
 
 让 Agent 等的代价是真的：**你就坐在那台机器前面时，Agent 会先冻住 N 秒再弹出它自己的
 提示 —— 对在场用户是纯粹的倒退。**
@@ -96,10 +128,10 @@ Pulse 目前没有输入空闲检测，这是新增的一小块能力（`CGEvent
 
 ### 三、信任面发生等级跃迁 ← 本版的设计中心
 
-| 版本 | 能写入的人的最坏后果 |
+| | 能写入的人的最坏后果 |
 | --- | --- |
-| 1.0 | 让你的灯变红 —— 假警报，烦人 |
-| 1.1 | **代你批准一次工具调用** —— 在跑 Agent 的机器上执行任意动作，还是经由你自己的权限系统洗过的 |
+| 1.0（已发布） | 让你的灯变红 —— 假警报，烦人 |
+| Respond（本计划） | **代你批准一次工具调用** —— 在跑 Agent 的机器上执行任意动作，还是经由你自己的权限系统洗过的 |
 
 **这不是同一类风险。** 因此：
 
@@ -123,10 +155,9 @@ Pulse 目前没有输入空闲检测，这是新增的一小块能力（`CGEvent
 | P0-3 | 送达通路 | **由 P0-0 决定**。无证据则为空，不许凭猜填 |
 | P0-4 | 阻塞策略 | **由 P0-0 决定**。在场即放行的判定函数先落地并可测 |
 | P0-5 | 远端应答 | 默认关闭；逐 host opt-in；HMAC；决定不进同步目录除非显式开启 |
-| P0-6 | 场景 AP + 测试 | EXPERIENCE **AP**（Respond）；`RespondFoundationTests` |
+| P0-6 | 场景 + 测试 | EXPERIENCE 新场景（编号发布时分配 —— AP/AQ 已被 Full Transcript / Substance 占用）；`RespondFoundationTests` |
 | P0-7 | 交付物 | plan；CHANGELOG；semver；七门禁；草稿 PR；**等「发布」** |
 
-> 注：下方「本次 PR 落了什么」记录的是 1.0.1 那次发布，编号改动不影响其内容。
 
 ### 明确不做
 
@@ -139,7 +170,7 @@ Pulse 目前没有输入空闲检测，这是新增的一小块能力（`CGEvent
 
 ---
 
-## 本次 PR 落了什么（1.1 的第一步）
+## 1.0.1 落了什么（历史记录 —— 当时这份计划还叫 1.1）
 
 **没有任何「能回应」的功能落地，这是有意的。** 落的是不依赖未验证契约的部分：
 

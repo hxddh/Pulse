@@ -81,10 +81,29 @@ final class PulseHookReceiverTests: XCTestCase {
     }
 
     func testSelfTestDoesNotNeedPython() {
+        // Route seedAssets away from the real support dir: without this, the
+        // self-test rewrote the user's actual hook-runner.path to the xctest
+        // binary — breaking the machine's Waiting path until Pulse relaunches.
+        HooksInstaller.homeOverride = tempHome
+        defer { HooksInstaller.homeOverride = nil }
         let result = HooksSupport.selfTest()
         guard case .passed = result else {
             XCTFail("native self-test must pass without Python: \(result)")
             return
+        }
+    }
+
+    func testRunnerPathRefusesTestHarnessBinaries() throws {
+        // The guard behind the fix above: even when seeding runs in a test
+        // process, hook-runner.path must never point at xctest.
+        HooksInstaller.homeOverride = tempHome
+        defer { HooksInstaller.homeOverride = nil }
+        HooksInstaller.refreshRunnerPath()
+        if let written = try? String(contentsOf: HooksInstaller.runnerPathURL, encoding: .utf8) {
+            XCTAssertFalse(
+                written.lowercased().contains("xctest"),
+                "hook-runner.path must never point at a test harness binary"
+            )
         }
     }
 }
@@ -161,6 +180,65 @@ final class HooksInstallerTests: XCTestCase {
         let text = "a = 1\n\n[profile]\nx = 1\n"
         let end = HooksInstaller.rootTableEnd(text)
         XCTAssertEqual(String(text.prefix(end)).trimmingCharacters(in: .newlines), "a = 1")
+    }
+
+    func testInstallAndUninstallKeepUserHooksWithHookLikeTokens() throws {
+        // Regression: pulseMarkers used to include a bare "--hook", so a
+        // user's own `mytool --hook-dir …` entry was silently deleted by the
+        // strip that runs on every install, and by uninstall.
+        let settings = tempHome.appendingPathComponent(".claude/settings.json")
+        try FileManager.default.createDirectory(
+            at: settings.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        {
+          "hooks": {
+            "Stop": [
+              { "hooks": [ { "type": "command", "command": "/usr/local/bin/mytool --hook-dir /tmp claude stop" } ] }
+            ]
+          }
+        }
+        """.write(to: settings, atomically: true, encoding: .utf8)
+
+        try HooksInstaller.ensureLauncher()
+        _ = try HooksInstaller.install()
+        var text = try String(contentsOf: settings, encoding: .utf8)
+        XCTAssertTrue(text.contains("--hook-dir"), "install must not delete the user's own hook entry")
+        XCTAssertTrue(text.contains("pulse-hook"), "a user entry containing 'claude stop' must not suppress Pulse's own Stop entry")
+
+        _ = try HooksInstaller.uninstall()
+        text = try String(contentsOf: settings, encoding: .utf8)
+        XCTAssertTrue(text.contains("--hook-dir"), "uninstall must not delete the user's own hook entry")
+        XCTAssertFalse(text.contains("pulse-hook"))
+
+        // Legacy direct-binary entries are still ours.
+        XCTAssertTrue(HooksInstaller.containsPulseMarker(
+            #"/Applications/Pulse.app/Contents/MacOS/PulseBar --hook claude"#
+        ))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker("mytool --hook-dir /tmp"))
+    }
+
+    func testReinstallMigratesPulseEntriesToCurrentShape() throws {
+        // Regression: ensureClaudeEvent used to early-return on a marker hit,
+        // so an installed entry kept its old command and timeout forever.
+        try HooksInstaller.ensureLauncher()
+        _ = try HooksInstaller.install()
+
+        let previous = HooksInstaller.claudeHookTimeoutSeconds
+        defer { HooksInstaller.claudeHookTimeoutSeconds = previous }
+        HooksInstaller.claudeHookTimeoutSeconds = 45
+        _ = try HooksInstaller.install()
+
+        let settings = tempHome.appendingPathComponent(".claude/settings.json")
+        let data = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: settings)
+        ) as? [String: Any]
+        let hooks = data?["hooks"] as? [String: Any]
+        let permission = hooks?["PermissionRequest"] as? [[String: Any]]
+        XCTAssertEqual(permission?.count, 1, "re-install must not duplicate Pulse entries")
+        let body = (permission?.first?["hooks"] as? [[String: Any]])?.first
+        XCTAssertEqual(body?["timeout"] as? Int, 45, "re-install must migrate timeout to the current value")
     }
 
     func testInstallRefusesInvalidClaudeJSON() throws {

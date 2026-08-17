@@ -79,7 +79,21 @@ enum AttentionIO {
             let url = directory.appendingPathComponent(name)
             guard let handle = try? FileHandle(forReadingFrom: url) else { continue }
             defer { try? handle.close() }
-            let data = (try? handle.read(upToCount: maxInboxBytesPerFile)) ?? Data()
+            // Read the TAIL of an oversized file, not the head: the TSV is
+            // append-only, so the newest events are the last bytes. Reading
+            // the first 256KB meant a busy remote host's fresh raises were
+            // exactly the part that got dropped, while stale lines stayed
+            // visible. After seeking mid-file, drop the first (partial) line.
+            let size = (try? handle.seekToEnd()) ?? 0
+            if size > UInt64(maxInboxBytesPerFile) {
+                try? handle.seek(toOffset: size - UInt64(maxInboxBytesPerFile))
+            } else {
+                try? handle.seek(toOffset: 0)
+            }
+            var data = (try? handle.readToEnd()) ?? Data()
+            if size > UInt64(maxInboxBytesPerFile), let newline = data.firstIndex(of: 0x0A) {
+                data = data.subdata(in: (newline + 1)..<data.count)
+            }
             guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { continue }
             let attributes = try? fm.attributesOfItem(atPath: url.path)
             let modified = attributes?[.modificationDate] as? Date

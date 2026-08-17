@@ -505,7 +505,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 
 | 规格 | 文件 |
 | --- | --- |
-| Glance 标题 / 灯 | `PulseApp.swift` → `MenuBarLabel` |
+| Glance 标题 / 灯 | `StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
 | Tray 结构 | `PulseApp.swift` → `TrayPanel` |
 | Prefs 布局 | `PulseApp.swift` → `SettingsView` |
 | 状态合并 / 编码 | `SnapshotBuilder.swift` |

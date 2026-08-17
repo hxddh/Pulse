@@ -152,10 +152,13 @@ enum NativeActivityHarvest {
     }
 
     private final class ScanBudget {
-        private(set) var bytesRemaining = 48_000_000
+        private(set) var bytesRemaining: Int
         let deadline: Date
 
-        init(deadline: Date) { self.deadline = deadline }
+        init(deadline: Date, bytes: Int = 48_000_000) {
+            self.deadline = deadline
+            bytesRemaining = bytes
+        }
 
         var exhausted: Bool { Date() >= deadline || bytesRemaining <= 0 }
 
@@ -166,6 +169,12 @@ enum NativeActivityHarvest {
         private(set) var agentFilesRead = 0
         private(set) var agentBytesRead = 0
         private(set) var agentTruncated = false
+        /// The budget refused a whole-file read for this adapter. "Low but
+        /// not empty" is the dangerous state: `exhausted` stays false, so
+        /// without this flag the adapter would classify as `no_sessions` —
+        /// and mergePartialRows treats that as a trusted empty and clears the
+        /// previous good rows.
+        private(set) var agentBudgetDenied = false
 
         func reserve(_ bytes: Int) -> Bool {
             guard bytes > 0, !exhausted, bytes <= bytesRemaining else { return false }
@@ -176,11 +185,13 @@ enum NativeActivityHarvest {
 
         func noteFileRead() { agentFilesRead += 1 }
         func noteTruncated() { agentTruncated = true }
+        func noteBudgetDenied() { agentBudgetDenied = true }
 
         func resetAgentCounters() {
             agentFilesRead = 0
             agentBytesRead = 0
             agentTruncated = false
+            agentBudgetDenied = false
         }
     }
 
@@ -229,7 +240,8 @@ enum NativeActivityHarvest {
         agentDeadlineSeconds: TimeInterval? = nil,
         totalDeadlineSeconds: TimeInterval? = nil,
         agentFilter: Set<AgentID>? = nil,
-        startCursor: Int = 0
+        startCursor: Int = 0,
+        totalBudgetBytes: Int? = nil
     ) -> Result {
         let fm = FileManager.default
         let allDescriptors = descriptors(home: home)
@@ -251,7 +263,8 @@ enum NativeActivityHarvest {
         let offset = filtered.isEmpty ? 0 : ((startCursor % filtered.count) + filtered.count) % filtered.count
         let descriptors = Array(filtered[offset...] + filtered[..<offset])
         let budget = ScanBudget(
-            deadline: Date().addingTimeInterval(totalDeadlineSeconds ?? 5.8)
+            deadline: Date().addingTimeInterval(totalDeadlineSeconds ?? 5.8),
+            bytes: totalBudgetBytes ?? 48_000_000
         )
         var firstUnreachedIndex: Int?
         let perAgentSeconds = agentDeadlineSeconds ?? maxAgentSeconds
@@ -328,6 +341,13 @@ enum NativeActivityHarvest {
                 // a sibling source still produced useful rows. Keep those
                 // rows, but classify the adapter as partial so the previous
                 // snapshot is not treated as a clean replacement.
+                state = .failed
+            } else if agentRows.isEmpty, budget.agentBudgetDenied {
+                // The byte budget refused a read before this adapter saw its
+                // files. "Nothing observed" is then a statement about
+                // resources, not about sessions — reporting `no_sessions`
+                // here let mergePartialRows treat it as a trusted empty and
+                // clear the previous good rows.
                 state = .failed
             } else if !agentRows.isEmpty {
                 state = .observed
@@ -1114,7 +1134,11 @@ enum NativeActivityHarvest {
         error: inout Bool
     ) {
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size > 0, budget.reserve(min(size, maxFileBytes)) else { return }
+        guard size > 0 else { return }
+        guard budget.reserve(min(size, maxFileBytes)) else {
+            budget.noteBudgetDenied()
+            return
+        }
         var database: OpaquePointer?
         let status = sqlite3_open_v2(
             url.path,
@@ -1668,7 +1692,10 @@ enum NativeActivityHarvest {
         let window = max(headSize, cap)
         do {
             if size <= window {
-                guard budget.reserve(size) else { return nil }
+                guard budget.reserve(size) else {
+                    budget.noteBudgetDenied()
+                    return nil
+                }
                 budget.noteFileRead()
                 let whole = String(
                     decoding: try Data(contentsOf: url, options: [.mappedIfSafe]),
@@ -1676,7 +1703,10 @@ enum NativeActivityHarvest {
                 )
                 return (whole, false)
             }
-            guard budget.reserve(window) else { return nil }
+            guard budget.reserve(window) else {
+                budget.noteBudgetDenied()
+                return nil
+            }
             budget.noteFileRead()
             budget.noteTruncated()
             let handle = try FileHandle(forReadingFrom: url)
@@ -1689,7 +1719,12 @@ enum NativeActivityHarvest {
             if head.last != 0x0A {
                 var extra = 0
                 while extra < 2_000_000 {
-                    guard budget.reserve(64_000) else { break }
+                    guard budget.reserve(64_000) else {
+                        // The window itself was read; a refused head
+                        // extension is a truncation, not a denied file.
+                        budget.noteTruncated()
+                        break
+                    }
                     guard let chunk = try handle.read(upToCount: 64_000), !chunk.isEmpty else { break }
                     head.append(chunk)
                     extra += chunk.count
@@ -1728,7 +1763,11 @@ enum NativeActivityHarvest {
         // SQLite is queried by indexed metadata rather than copied into
         // memory. Reserve the same bounded budget as a large text window but
         // do not discard a real Cursor database merely because its cache grew.
-        guard size > 0, budget.reserve(min(size, maxFileBytes)) else { return }
+        guard size > 0 else { return }
+        guard budget.reserve(min(size, maxFileBytes)) else {
+            budget.noteBudgetDenied()
+            return
+        }
         var database: OpaquePointer?
         let openStatus = sqlite3_open_v2(
             url.path,
@@ -1894,7 +1933,7 @@ enum NativeActivityHarvest {
         return normalizedPath(folder)
     }
 
-    private static func normalizeTimestamp(_ value: Any?) -> Int64 {
+    static func normalizeTimestamp(_ value: Any?) -> Int64 {
         if let number = value as? NSNumber {
             let raw = number.doubleValue
             if raw > 10_000_000_000 { return Int64(raw) }
@@ -1904,17 +1943,37 @@ enum NativeActivityHarvest {
         if let raw = Double(text), raw.isFinite, raw > 0 {
             return raw > 10_000_000_000 ? Int64(raw) : Int64(raw * 1000)
         }
-        let iso = ISO8601DateFormatter()
-        if let date = iso.date(from: text) { return Int64(date.timeIntervalSince1970 * 1000) }
-        let formats = ["yyyy-MM-dd HH:mm:ss.SSSSSS", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss"]
-        let parser = DateFormatter()
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.timeZone = TimeZone(secondsFromGMT: 0)
-        for format in formats {
-            parser.dateFormat = format
+        for parser in isoParsers {
+            if let date = parser.date(from: text) { return Int64(date.timeIntervalSince1970 * 1000) }
+        }
+        for parser in fallbackParsers {
             if let date = parser.date(from: text) { return Int64(date.timeIntervalSince1970 * 1000) }
         }
         return 0
+    }
+
+    /// Fractional seconds first: `2024-12-03T14:00:01.000Z` is what Claude and
+    /// Pi actually write, and the default ISO8601DateFormatter rejects it —
+    /// every vendor timestamp used to fall through to file mtime, collapsing
+    /// per-record ordering (the 0.95 pending-follows-newest rule degraded to
+    /// OR). Cached because this runs on the per-line hot path; both formatter
+    /// types are immutable after creation and safe to share.
+    private static let isoParsers: [ISO8601DateFormatter] = {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        return [fractional, plain]
+    }()
+
+    private static let fallbackParsers: [DateFormatter] = [
+        "yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd HH:mm:ss.SSSSSS", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss",
+    ].map { format in
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = format
+        return parser
     }
 
     private static func fileMTime(_ url: URL) -> Int64 {

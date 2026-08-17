@@ -32,8 +32,14 @@ enum HooksInstaller {
         supportDir.appendingPathComponent(runnerPathName)
     }
 
-    /// Tokens that mean "Pulse owns this hook entry".
-    static let pulseMarkers = ["pulse-hook", "pulse_hook.py", "--hook"]
+    /// Tokens that unambiguously mean "Pulse owns this hook entry".
+    ///
+    /// A bare `--hook` is deliberately NOT in this list: strip/uninstall run
+    /// on the user's own settings, and a user entry like `mytool --hook-dir …`
+    /// must never be treated as ours. Legacy installs that pointed straight at
+    /// the binary (`…/PulseBar --hook claude`) are still recognized by the
+    /// `--hook` + `PulseBar` combination in `containsPulseMarker`.
+    static let pulseMarkers = ["pulse-hook", "pulse_hook.py"]
 
     static func hookCommand(agent: String, kind: String = "") -> String {
         let launcher = launcherURL.path
@@ -115,6 +121,12 @@ enum HooksInstaller {
             return Bundle.main.executableURL?.path ?? processPath
         }()
         guard !runner.isEmpty else { return }
+        // A test harness must never become the hook runner: pointing
+        // hook-runner.path at xctest breaks the real Waiting path until the
+        // next Pulse launch overwrites it, and a test suite run on a dev
+        // machine is exactly the situation where that used to happen.
+        let basename = (runner as NSString).lastPathComponent.lowercased()
+        guard !basename.contains("xctest") else { return }
         try? (runner + "\n").write(to: runnerPathURL, atomically: true, encoding: .utf8)
     }
 
@@ -155,36 +167,31 @@ enum HooksInstaller {
             &hooks,
             event: "Notification",
             command: hookCommand(agent: "claude"),
-            matcher: "permission_prompt|idle_prompt|agent_needs_input",
-            marker: nil
+            matcher: "permission_prompt|idle_prompt|agent_needs_input"
         )
         ensureClaudeEvent(
             &hooks,
             event: "Stop",
             command: hookCommand(agent: "claude", kind: "stop"),
-            matcher: nil,
-            marker: "claude stop"
+            matcher: nil
         )
         ensureClaudeEvent(
             &hooks,
             event: "SubagentStart",
             command: hookCommand(agent: "claude", kind: "subagent_start"),
-            matcher: nil,
-            marker: "subagent_start"
+            matcher: nil
         )
         ensureClaudeEvent(
             &hooks,
             event: "SubagentStop",
             command: hookCommand(agent: "claude", kind: "subagent_stop"),
-            matcher: nil,
-            marker: "subagent_stop"
+            matcher: nil
         )
         ensureClaudeEvent(
             &hooks,
             event: "PermissionRequest",
             command: hookCommand(agent: "claude", kind: "permission"),
-            matcher: nil,
-            marker: " claude permission"
+            matcher: nil
         )
         data["hooks"] = hooks
         let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
@@ -209,23 +216,32 @@ enum HooksInstaller {
         }
     }
 
+    /// One knob for every Claude hook entry Pulse writes. Respond will need to
+    /// raise this; a re-install migrates existing entries to the current value
+    /// (see `ensureClaudeEvent` — it rewrites Pulse-owned entries, it does not
+    /// skip them).
+    static var claudeHookTimeoutSeconds = 5
+
     private static func ensureClaudeEvent(
         _ hooks: inout [String: Any],
         event: String,
         command: String,
-        matcher: String?,
-        marker: String?
+        matcher: String?
     ) {
         var entries = hooks[event] as? [[String: Any]] ?? []
-        let blob = (try? String(data: JSONSerialization.data(withJSONObject: entries), encoding: .utf8)) ?? ""
-        let token = marker ?? "pulse-hook"
-        if blob.contains(token) || blob.contains("pulse-hook") {
-            return
+        // Idempotency by ownership, not token sniffing: earlier this matched
+        // loose strings like "claude stop" against the whole event blob, so a
+        // user's own entry containing that text suppressed ours — and an
+        // already-installed Pulse entry was never updated to a new command or
+        // timeout. Rewriting our own entries is the migration path.
+        entries.removeAll { entry in
+            let blob = (try? String(data: JSONSerialization.data(withJSONObject: entry), encoding: .utf8)) ?? ""
+            return containsPulseMarker(blob)
         }
         let hookBody: [String: Any] = [
             "type": "command",
             "command": command,
-            "timeout": 5,
+            "timeout": claudeHookTimeoutSeconds,
         ]
         var entry: [String: Any] = ["hooks": [hookBody]]
         if let matcher { entry["matcher"] = matcher }
@@ -375,7 +391,9 @@ enum HooksInstaller {
     }
 
     static func containsPulseMarker(_ text: String) -> Bool {
-        pulseMarkers.contains { text.contains($0) }
+        if pulseMarkers.contains(where: { text.contains($0) }) { return true }
+        // Legacy direct-binary entries only; never a bare `--hook` by itself.
+        return text.contains("--hook") && text.contains("PulseBar")
     }
 
     enum InstallError: LocalizedError {

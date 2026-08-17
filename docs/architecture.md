@@ -16,7 +16,7 @@
       StatusStore          定时器、通知策略、设置、I/O
            │
            ▼
-   MenuBarLabel / TrayPanel / SettingsView
+   StatusItem（StatusPanelController）/ TrayPanel / SettingsView
 ```
 
 ## 三个来源
