@@ -120,6 +120,14 @@ enum ActivityHarvest {
         var contextPercent: Int = 0
         var progressDone: Int = 0
         var progressTotal: Int = 0
+        /// 1.2 · from the session digest, which read the whole transcript.
+        /// The same tool run back to back at the tail of the session.
+        var loopTool: String = ""
+        var loopCount: Int = 0
+        /// Errors across the whole session, not just the read window.
+        var sessionErrors: Int = 0
+        /// `Edit 12 · Bash 5` — bounded, Details only.
+        var toolSummary: String = ""
 
         var isCompleted: Bool {
             let state = "\(phase) \(outcome)"

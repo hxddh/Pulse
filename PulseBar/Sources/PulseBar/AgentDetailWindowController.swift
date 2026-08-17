@@ -263,6 +263,23 @@ private struct AgentDetailView: View {
                 fact(store.tr(.supportProgress), value: progress(row))
                 fact(store.tr(.supportResources), value: resources(row))
                 fact(store.tr(.supportEvidence), value: evidence(row))
+                // 1.2: what the whole transcript says, not just its two ends.
+                // Details is where EXPERIENCE puts complete evidence, so the
+                // digest's session-wide facts belong here rather than spending
+                // one of the tray row's four slots.
+                fact(store.tr(.toolsUsed), value: row.toolSummary.isEmpty ? "—" : row.toolSummary)
+                if row.sessionErrors > 0 {
+                    fact(
+                        store.tr(.sessionErrorsLabel),
+                        value: String(format: store.tr(.sessionErrors), row.sessionErrors)
+                    )
+                }
+                if row.isLooping {
+                    fact(
+                        String(format: store.tr(.loopingTool), row.loopTool, row.loopCount),
+                        value: store.tr(.loopingHint)
+                    )
+                }
                 fact(store.tr(.session), value: row.sessionID.isEmpty ? "—" : short(row.sessionID))
             }
         }

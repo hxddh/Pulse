@@ -240,6 +240,15 @@ enum SnapshotBuilder {
             if act.contextPercent > 0 { row.contextPercent = act.contextPercent }
             if act.progressDone > 0 { row.progressDone = act.progressDone }
             if act.progressTotal > 0 { row.progressTotal = act.progressTotal }
+            // Digest facts: carried straight through. They were produced by
+            // reading the whole transcript, and nothing here can second-guess
+            // them without reading it again.
+            if !act.loopTool.isEmpty {
+                row.loopTool = act.loopTool
+                row.loopCount = act.loopCount
+            }
+            if act.sessionErrors > 0 { row.sessionErrors = act.sessionErrors }
+            if !act.toolSummary.isEmpty { row.toolSummary = act.toolSummary }
             row.observationSource = act.evidence
 
             // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.
