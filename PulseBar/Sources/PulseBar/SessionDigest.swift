@@ -49,11 +49,28 @@ struct SessionDigest: Codable, Equatable {
     var firstFoldedMs: Int64 = 0
     var lastFoldedMs: Int64 = 0
 
+    /// `size` as of the previous fold that actually took new bytes in.
+    ///
+    /// Two points make a rate. Keeping the older one is what lets the digest
+    /// say how fast a transcript is growing without storing a history — one
+    /// pair of numbers, overwritten every time real bytes arrive.
+    var previousSize: Int = 0
+    /// `lastFoldedMs` as of that same previous fold.
+    var previousFoldedMs: Int64 = 0
+
     /// The most tool names kept in order. A window on the recent past, not a
     /// log: enough to notice a loop, far too little to reconstruct a session.
     static let maxRecentTools = 12
     /// Distinct tool names kept per session.
     static let maxToolNames = 32
+    /// Below this gap the two fold stamps are too close together for their
+    /// ratio to mean anything: 4 KB arriving 40 ms apart is arithmetically
+    /// 6 MB/min, which is a number about the scan cadence, not the session.
+    static let minRateWindowMs: Int64 = 5_000
+    /// Ceiling on the reported rate. A clock that jumps backwards or a vendor
+    /// dumping a compacted context in one write must not produce a headline
+    /// figure; past this the honest statement is "fast", not a bigger number.
+    static let maxBytesPerMinute = 50_000_000
 
     /// Everything before `size` has been folded.
     var caughtUp: Bool { offset >= size }
@@ -62,6 +79,32 @@ struct SessionDigest: Codable, Equatable {
     var progressPercent: Int {
         guard size > 0 else { return 100 }
         return min(100, Int((Double(min(offset, size)) / Double(size)) * 100))
+    }
+
+    /// How fast the transcript has been growing lately, in bytes per minute.
+    /// 0 means "not known", never "stopped".
+    ///
+    /// This is the difference between *moving* and *parked*, which mtime
+    /// cannot express: mtime says the file was touched, a rate says how hard.
+    /// A session taking on 40 KB a minute and one that added 200 bytes since
+    /// lunch have the same mtime verdict and are not the same situation.
+    ///
+    /// Deliberately silent rather than wrong: too short a window, no growth,
+    /// or a file that shrank (compaction, which is routine) all report 0.
+    var bytesPerMinute: Int {
+        guard previousFoldedMs > 0, lastFoldedMs > previousFoldedMs else { return 0 }
+        let elapsedMs = lastFoldedMs - previousFoldedMs
+        guard elapsedMs >= Self.minRateWindowMs else { return 0 }
+        // A negative delta is a compaction or a rewritten file, not negative
+        // growth. There is nothing truthful to report about its speed.
+        let grown = size - previousSize
+        guard grown > 0 else { return 0 }
+        let perMinute = (Double(grown) * 60_000) / Double(elapsedMs)
+        guard perMinute.isFinite, perMinute >= 1 else { return 0 }
+        // Clamp in floating point, before the conversion: `Int(_: Double)`
+        // traps on a value outside Int's range, so capping afterwards would
+        // be a crash rather than a ceiling.
+        return Int(min(perMinute, Double(Self.maxBytesPerMinute)))
     }
 
     /// The same tool, over and over, at the tail of the run.
@@ -76,6 +119,47 @@ struct SessionDigest: Codable, Equatable {
             if name == last { run += 1 } else { break }
         }
         return run >= 3 ? (last, run) : nil
+    }
+
+    /// Spelled out because `init(from:)` below needs them, and because a
+    /// property missing from this list would silently stop being stored.
+    /// Encoding stays synthesized.
+    private enum CodingKeys: String, CodingKey {
+        case path, fileID, headHash, offset, size
+        case records, toolCounts, recentTools, errors, tokensIn, tokensOut
+        case firstFoldedMs, lastFoldedMs
+        case previousSize, previousFoldedMs
+    }
+}
+
+extension SessionDigest {
+    /// Decode tolerantly: a key that is not in the file takes the property's
+    /// default.
+    ///
+    /// Swift's synthesized decoder does **not** fall back to default values —
+    /// a missing key throws, and `SessionDigestStore.load` turns any throw
+    /// into an empty store. So adding one field to this struct would silently
+    /// discard every digest on disk and re-read every transcript from byte
+    /// zero. Written by hand so that growing the digest is a cheap, ordinary
+    /// thing to do.
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        let storedPath = try box.decodeIfPresent(String.self, forKey: .path) ?? ""
+        self.init(path: storedPath)
+        fileID = try box.decodeIfPresent(String.self, forKey: .fileID) ?? ""
+        headHash = try box.decodeIfPresent(String.self, forKey: .headHash) ?? ""
+        offset = try box.decodeIfPresent(Int.self, forKey: .offset) ?? 0
+        size = try box.decodeIfPresent(Int.self, forKey: .size) ?? 0
+        records = try box.decodeIfPresent(Int.self, forKey: .records) ?? 0
+        toolCounts = try box.decodeIfPresent([String: Int].self, forKey: .toolCounts) ?? [:]
+        recentTools = try box.decodeIfPresent([String].self, forKey: .recentTools) ?? []
+        errors = try box.decodeIfPresent(Int.self, forKey: .errors) ?? 0
+        tokensIn = try box.decodeIfPresent(Int.self, forKey: .tokensIn) ?? 0
+        tokensOut = try box.decodeIfPresent(Int.self, forKey: .tokensOut) ?? 0
+        firstFoldedMs = try box.decodeIfPresent(Int64.self, forKey: .firstFoldedMs) ?? 0
+        lastFoldedMs = try box.decodeIfPresent(Int64.self, forKey: .lastFoldedMs) ?? 0
+        previousSize = try box.decodeIfPresent(Int.self, forKey: .previousSize) ?? 0
+        previousFoldedMs = try box.decodeIfPresent(Int64.self, forKey: .previousFoldedMs) ?? 0
     }
 }
 
@@ -313,6 +397,14 @@ enum SessionDigestEngine {
         case .appended:
             break
         }
+        // The previous pass's numbers, held before they are overwritten. They
+        // become `previous*` only if this pass actually folds new bytes, so a
+        // rate is always measured between two real reads — a run of "nothing
+        // changed" passes must not stretch the window and dilute the answer.
+        // A `.rewritten` digest was reset just above, so both are 0 here and
+        // the rate correctly reports "not known" after a compaction.
+        let priorSize = digest.size
+        let priorFoldedMs = digest.lastFoldedMs
         digest.fileID = fileID
         digest.headHash = headHash
         digest.size = size
@@ -343,6 +435,10 @@ enum SessionDigestEngine {
         let text = String(decoding: complete, as: UTF8.self)
         SessionDigestFold.fold(&digest, lines: text.split(separator: "\n", omittingEmptySubsequences: false), nowMs: nowMs)
         digest.offset += complete.count
+        // Bytes were taken in, so this pass is a fixed point the next one can
+        // measure growth against.
+        digest.previousSize = priorSize
+        digest.previousFoldedMs = priorFoldedMs
         return digest
     }
 

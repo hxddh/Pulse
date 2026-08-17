@@ -256,7 +256,169 @@ final class SessionDigestTests: XCTestCase {
         XCTAssertEqual(digest.progressPercent, 100)
     }
 
+    // MARK: - Growth rate: moving, or merely touched
+
+    /// 2.1: mtime answers "was this touched" and nothing else. Two agents,
+    /// one taking on 60 KB a minute and one that appended a line an hour ago,
+    /// look identical to it. A rate separates them.
+    private func rated(previousSize: Int, size: Int, gapMs: Int64) -> SessionDigest {
+        var digest = SessionDigest(path: "/tmp/t.jsonl")
+        digest.previousSize = previousSize
+        digest.size = size
+        digest.previousFoldedMs = now
+        digest.lastFoldedMs = now + gapMs
+        return digest
+    }
+
+    func testGrowthRateIsBytesPerMinuteBetweenTwoFolds() {
+        XCTAssertEqual(rated(previousSize: 1_000, size: 61_000, gapMs: 60_000).bytesPerMinute, 60_000)
+        XCTAssertEqual(rated(previousSize: 0, size: 30_000, gapMs: 120_000).bytesPerMinute, 15_000)
+        XCTAssertEqual(rated(previousSize: 20_000, size: 20_000, gapMs: 60_000).bytesPerMinute, 0,
+                       "a file that did not grow has no growth rate")
+    }
+
+    /// The failure this bound exists to prevent: two folds 40 ms apart turn
+    /// 4 KB into megabytes per minute — a number about the scan cadence, not
+    /// about the session.
+    func testTooShortAGapIsRefusedRatherThanExtrapolated() {
+        XCTAssertEqual(rated(previousSize: 0, size: 4_096, gapMs: 40).bytesPerMinute, 0)
+        XCTAssertEqual(
+            rated(previousSize: 0, size: 4_096, gapMs: SessionDigest.minRateWindowMs - 1).bytesPerMinute,
+            0
+        )
+        XCTAssertEqual(
+            rated(previousSize: 0, size: 4_096, gapMs: SessionDigest.minRateWindowMs).bytesPerMinute,
+            49_152,
+            "at the boundary it answers, and the answer is arithmetic"
+        )
+    }
+
+    /// Compaction is routine, and a file that shrank has not grown by a
+    /// negative amount — it has stopped being measurable.
+    func testACompactedFileReportsNoRate() {
+        XCTAssertEqual(rated(previousSize: 900_000, size: 12_000, gapMs: 60_000).bytesPerMinute, 0)
+    }
+
+    func testOneFoldIsOnePointAndCannotBeARate() {
+        var digest = SessionDigest(path: "/tmp/t.jsonl")
+        digest.size = 50_000
+        digest.lastFoldedMs = now
+        XCTAssertEqual(digest.bytesPerMinute, 0, "0 means not known, never means stopped")
+    }
+
+    /// A backwards clock or a single huge write must not produce a headline
+    /// figure — and must not trap on the Double→Int conversion either.
+    func testTheReportedRateIsClamped() {
+        let absurd = rated(
+            previousSize: 0, size: Int.max / 2, gapMs: SessionDigest.minRateWindowMs
+        )
+        XCTAssertEqual(absurd.bytesPerMinute, SessionDigest.maxBytesPerMinute)
+    }
+
+    /// End to end, against a file that really grows: the previous pass's
+    /// numbers are stored *before* the new ones overwrite them, and only on a
+    /// pass that actually folded bytes.
+    func testGrowthRateComesFromTwoFoldsOfARealFile() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        // Padded so the first write is already past the 4 KB head hash: below
+        // that, growing the file also changes its head, which is a rewrite as
+        // far as continuity is concerned.
+        let line = #"{"type":"tool_use","name":"Bash","pad":"\#(String(repeating: "x", count: 256))"}"#
+        // Appended, never rewritten: `write(atomically:)` renames a fresh file
+        // into place, which is a new inode — continuity would call that a
+        // rewritten transcript and correctly start over, testing nothing.
+        try append(Array(repeating: line, count: 30), to: url)
+        let firstSize = try fileSize(url)
+
+        let first = try XCTUnwrap(
+            SessionDigestEngine.advance(nil, url: url, size: firstSize, nowMs: now)
+        )
+        XCTAssertEqual(first.previousFoldedMs, 0, "the first fold has nothing to compare against")
+        XCTAssertEqual(first.bytesPerMinute, 0)
+
+        try append(Array(repeating: line, count: 40), to: url)
+        let secondSize = try fileSize(url)
+        XCTAssertGreaterThan(secondSize, firstSize)
+
+        let second = try XCTUnwrap(
+            SessionDigestEngine.advance(first, url: url, size: secondSize, nowMs: now + 60_000)
+        )
+        XCTAssertEqual(second.previousSize, firstSize)
+        XCTAssertEqual(second.previousFoldedMs, now)
+        XCTAssertEqual(second.bytesPerMinute, secondSize - firstSize, "one minute of growth")
+
+        // Nothing new: no fold, so the measured window is not stretched.
+        XCTAssertNil(
+            SessionDigestEngine.advance(second, url: url, size: secondSize, nowMs: now + 600_000)
+        )
+    }
+
+    private func fileSize(_ url: URL) throws -> Int {
+        (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+    }
+
+    /// Extend the same file in place, the way a vendor extends a transcript.
+    private func append(_ lines: [String], to url: URL) throws {
+        let text = lines.joined(separator: "\n") + "\n"
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        _ = try handle.seekToEnd()
+        try handle.write(contentsOf: Data(text.utf8))
+    }
+
     // MARK: - What is kept on disk
+
+    /// Swift's synthesized decoder throws on a missing key even when the
+    /// property has a default, and `load()` turns a throw into an empty
+    /// store. Without a tolerant decoder, adding `previousSize` would have
+    /// silently discarded every digest on disk and re-read every transcript
+    /// from byte zero — a regression nothing in the UI would show.
+    func testADigestWrittenBeforeGrowthRateExistedStillDecodes() throws {
+        let json = """
+        {"path":"/tmp/old.jsonl","fileID":"1.2","headHash":"abc","offset":120,
+         "size":120,"records":9,"toolCounts":{"Bash":3},"recentTools":["Bash"],
+         "errors":1,"tokensIn":40,"tokensOut":8,
+         "firstFoldedMs":1700000000000,"lastFoldedMs":1700000060000}
+        """
+        let digest = try JSONDecoder().decode(SessionDigest.self, from: Data(json.utf8))
+        XCTAssertEqual(digest.records, 9)
+        XCTAssertEqual(digest.toolCounts["Bash"], 3)
+        XCTAssertTrue(digest.caughtUp)
+        XCTAssertEqual(digest.previousSize, 0)
+        XCTAssertEqual(digest.previousFoldedMs, 0)
+        XCTAssertEqual(digest.bytesPerMinute, 0, "unknown, not invented")
+    }
+
+    /// The same file one level up: a store from an older build keeps all of
+    /// its entries rather than being thrown away whole.
+    func testAnOlderStoreFileIsKeptRatherThanDiscarded() throws {
+        let json = """
+        {"entries":{"/tmp/a.jsonl":{"path":"/tmp/a.jsonl","offset":10,"size":10,"records":2},
+                    "/tmp/b.jsonl":{"path":"/tmp/b.jsonl"}}}
+        """
+        let store = try JSONDecoder().decode(SessionDigestStore.self, from: Data(json.utf8))
+        XCTAssertEqual(store.entries.count, 2)
+        XCTAssertEqual(store.entries["/tmp/a.jsonl"]?.records, 2)
+        XCTAssertEqual(store.entries["/tmp/b.jsonl"]?.records, 0)
+    }
+
+    func testTheNewFieldsSurviveARoundTrip() throws {
+        var digest = SessionDigest(path: "/tmp/t.jsonl")
+        digest.size = 90_000
+        digest.previousSize = 30_000
+        digest.previousFoldedMs = now
+        digest.lastFoldedMs = now + 60_000
+        digest.recentTools = ["Bash", "Edit"]
+        let data = try JSONEncoder().encode(digest)
+        let decoded = try JSONDecoder().decode(SessionDigest.self, from: data)
+        XCTAssertEqual(decoded, digest)
+        XCTAssertEqual(decoded.bytesPerMinute, 60_000)
+    }
 
     func testStaleDigestsArePrunedAndTheStoreIsBounded() {
         var store = SessionDigestStore()

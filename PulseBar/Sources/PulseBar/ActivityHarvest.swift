@@ -128,6 +128,38 @@ enum ActivityHarvest {
         var sessionErrors: Int = 0
         /// `Edit 12 · Bash 5` — bounded, Details only.
         var toolSummary: String = ""
+        /// 2.1 · the rest of what the digest already knew.
+        ///
+        /// 1.2 computed all of this and published three of them. The others
+        /// were held behind the same `caughtUp` gate as `records`, so a long
+        /// session still catching up — the one most worth watching — showed
+        /// nothing at all. They travel now; `digestProgressPercent` and
+        /// `digestCaughtUp` are how a row states its own completeness.
+        ///
+        /// Tokens for the **whole session**, summed as the digest read past
+        /// them. Deliberately not the same thing as `tokensIn`/`tokensOut`
+        /// above, which are the latest message's usage, and both are kept:
+        /// "this turn cost 8k" and "this session has spent 900k" are two
+        /// different questions.
+        var sessionTokensIn: Int = 0
+        var sessionTokensOut: Int = 0
+        /// The last few vendor tool names in order, oldest first, ≤ 12.
+        /// Names only — never an argument, a path, or a command.
+        var recentTools: [String] = []
+        /// How much of the transcript the digest has read, 0–100. 100 means
+        /// the facts above cover the whole file.
+        var digestProgressPercent: Int = 0
+        /// Whether the digest has reached the end of the file.
+        var digestCaughtUp: Bool = false
+        /// Recent growth of the transcript in bytes per minute; 0 = unknown.
+        var bytesPerMinute: Int = 0
+        /// When Pulse first folded this transcript (`digest.firstFoldedMs`).
+        ///
+        /// Separate from `startedMs`, which is the file's birth date: most
+        /// adapters cannot get one (vendors rewrite, copy or compact their
+        /// transcripts, and APFS birth times survive none of that), so this
+        /// is the more reliable answer to "how long has this been going".
+        var sessionStartedMs: Int64 = 0
 
         var isCompleted: Bool {
             let state = "\(phase) \(outcome)"

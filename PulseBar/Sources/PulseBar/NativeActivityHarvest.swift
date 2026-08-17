@@ -72,6 +72,16 @@ enum NativeActivityHarvest {
         var loopCount = 0
         var sessionErrors = 0
         var toolSummary = ""
+        /// 2.1: the rest of the digest's facts, carried under the same rule.
+        /// None of these is ever recomputed from the window text — the window
+        /// is the two ends of the file and could only contradict them.
+        var sessionTokensIn = 0
+        var sessionTokensOut = 0
+        var recentTools: [String] = []
+        var digestProgressPercent = 0
+        var digestCaughtUp = false
+        var bytesPerMinute = 0
+        var sessionStartedMs: Int64 = 0
 
         var task = ""
         /// Where `task` came from. Drives merge; never rendered.
@@ -1029,8 +1039,17 @@ enum NativeActivityHarvest {
         // window's answer exactly as it was.
         if ext == "jsonl" || ext == "ndjson" {
             let digest = HarvestDigests.advance(url: item, size: size)
-            if let digest, digest.caughtUp, digest.records > 0 {
-                records = digest.records
+            if let digest {
+                // `records` keeps that gate, and 2.1 keeps it for `records`
+                // alone: a partial fold is a floor, never a total.
+                if digest.caughtUp, digest.records > 0 { records = digest.records }
+                // 2.1: everything else is qualitative and was never a total.
+                // "It has called Bash eleven times and hit four errors" does
+                // not become false because there are more records still to
+                // read; it becomes *incomplete*, which the row states outright
+                // through `digestProgressPercent` / `digestCaughtUp`. Holding
+                // these back until catch-up meant a long, busy session — the
+                // one a person most needs to see — showed nothing at all.
                 digestFacts = digest
             }
         }
@@ -1048,6 +1067,16 @@ enum NativeActivityHarvest {
                 }
                 parsed[index].sessionErrors = digestFacts.errors
                 parsed[index].toolSummary = SessionDigestSummary.line(digestFacts.toolCounts)
+                // Carried, never re-derived. `recentTools` is already bounded
+                // and identifier-shaped by the fold; nothing here is parsed
+                // out of the window a second time.
+                parsed[index].recentTools = digestFacts.recentTools
+                parsed[index].sessionTokensIn = digestFacts.tokensIn
+                parsed[index].sessionTokensOut = digestFacts.tokensOut
+                parsed[index].digestProgressPercent = digestFacts.progressPercent
+                parsed[index].digestCaughtUp = digestFacts.caughtUp
+                parsed[index].bytesPerMinute = digestFacts.bytesPerMinute
+                parsed[index].sessionStartedMs = digestFacts.firstFoldedMs
             }
             parsed[index].windowTruncated = window.truncated
             parsed[index].structured = structured
@@ -3083,6 +3112,49 @@ enum NativeActivityHarvest {
         target.records = max(target.records, source.records)
         target.windowTruncated = target.windowTruncated || source.windowTruncated
         target.structured = target.structured || source.structured
+        mergeDigestFacts(&target, source)
+    }
+
+    /// Digest facts describe a whole file, not a fragment of one.
+    ///
+    /// Every fragment of the same transcript is stamped with the same digest,
+    /// so in the ordinary case these merges are no-ops. They exist for the
+    /// cases where they are not: a fragment shaped before the digest existed,
+    /// and two files that legitimately share one session id. Taking the
+    /// stronger side follows the tokens/progress rule already above — the
+    /// weaker side is always an emptier read of the same thing.
+    private static func mergeDigestFacts(_ target: inout Fact, _ source: Fact) {
+        // A longer run of the same tool is the more complete observation of
+        // the same tail; an empty target has loopCount 0 and always loses.
+        if source.loopCount > target.loopCount, !source.loopTool.isEmpty {
+            target.loopTool = source.loopTool
+            target.loopCount = source.loopCount
+        }
+        target.sessionErrors = max(target.sessionErrors, source.sessionErrors)
+        if target.toolSummary.isEmpty { target.toolSummary = source.toolSummary }
+        // Ordered, oldest first: the longer list is the one that saw more of
+        // the session. Merging them elementwise would invent an order neither
+        // side observed.
+        if source.recentTools.count > target.recentTools.count {
+            target.recentTools = source.recentTools
+        }
+        target.sessionTokensIn = max(target.sessionTokensIn, source.sessionTokensIn)
+        target.sessionTokensOut = max(target.sessionTokensOut, source.sessionTokensOut)
+        target.digestProgressPercent = max(
+            target.digestProgressPercent, source.digestProgressPercent
+        )
+        target.digestCaughtUp = target.digestCaughtUp || source.digestCaughtUp
+        target.bytesPerMinute = max(target.bytesPerMinute, source.bytesPerMinute)
+        // The one field here that is not a max. Everything else above is a
+        // count or a percentage, where "more" means "read more of the file";
+        // this is an *origin*, where the truthful answer is the earliest
+        // moment observed. Taking the max would make a session look younger
+        // every time a second fragment turned up — the opposite of the fact.
+        if target.sessionStartedMs == 0 {
+            target.sessionStartedMs = source.sessionStartedMs
+        } else if source.sessionStartedMs > 0 {
+            target.sessionStartedMs = min(target.sessionStartedMs, source.sessionStartedMs)
+        }
     }
 
     /// Merge two fragments' hero titles by the kind of record each came from.
@@ -3323,6 +3395,15 @@ enum NativeActivityHarvest {
             row.loopCount = max(0, fact.loopCount)
             row.sessionErrors = max(0, fact.sessionErrors)
             row.toolSummary = fact.toolSummary
+            row.sessionTokensIn = max(0, fact.sessionTokensIn)
+            row.sessionTokensOut = max(0, fact.sessionTokensOut)
+            // Bounded again here: the fold already caps the list, and a row is
+            // the boundary where that stops being an internal detail.
+            row.recentTools = Array(fact.recentTools.suffix(SessionDigest.maxRecentTools))
+            row.digestProgressPercent = max(0, min(100, fact.digestProgressPercent))
+            row.digestCaughtUp = fact.digestCaughtUp
+            row.bytesPerMinute = max(0, fact.bytesPerMinute)
+            row.sessionStartedMs = max(0, fact.sessionStartedMs)
             return row
         }
     }
