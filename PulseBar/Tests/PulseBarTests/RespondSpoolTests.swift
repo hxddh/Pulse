@@ -8,18 +8,22 @@ import XCTest
 final class RespondSpoolTests: XCTestCase {
 
     private let now: Int64 = 1_800_000_000_000
+    /// Stand-in for the Pulse support directory — the outbound secret lives
+    /// here, *beside* the spool root, exactly like production.
+    private var base: URL!
     private var root: URL!
 
     override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory
+        base = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-respond-spool-\(UUID().uuidString)", isDirectory: true)
+        root = base.appendingPathComponent("respond.d", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         RespondSpool.rootOverride = root
     }
 
     override func tearDownWithError() throws {
         RespondSpool.rootOverride = nil
-        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: base)
     }
 
     // MARK: - Helpers
@@ -254,5 +258,183 @@ final class RespondSpoolTests: XCTestCase {
         XCTAssertLessThanOrEqual(
             RespondSpool.sanitizeComponent(String(repeating: "x", count: 500)).count, 120
         )
+    }
+
+    // MARK: - Answered end (this machine runs the agent)
+
+    private func writeOutboundSecret(_ key: String = "sekrit\n") throws {
+        try Data(key.utf8).write(to: base.appendingPathComponent("respond-secret.key"))
+    }
+
+    private func canonical(
+        id: String, digest: String, agent: String = "claude", host: String = "devbox",
+        allow: Bool, decided: Int64, expires: Int64
+    ) -> String {
+        "v1\n\(id)\n\(digest)\n\(agent)\n\(host)\n\(allow ? "allow" : "deny")\n\(decided)\n\(expires)"
+    }
+
+    private func hmacHex(message: String, key: String = "sekrit") -> String {
+        HMAC<SHA256>.authenticationCode(
+            for: Data(message.utf8), using: SymmetricKey(data: Data(key.utf8))
+        ).map { String(format: "%02x", $0) }.joined()
+    }
+
+    @discardableResult
+    private func writeInboundVerdictFile(
+        id: String = "toolu_x",
+        digest: String,
+        allow: Bool = true,
+        decidedAtMs: Int64? = nil,
+        expiresAtMs: Int64? = nil,
+        hmacOverride: String? = nil
+    ) throws -> URL {
+        let directory = root.appendingPathComponent("verdicts", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let decided = decidedAtMs ?? now
+        let expires = expiresAtMs ?? (now + 90_000)
+        let object: [String: Any] = [
+            "v": 1,
+            "request_id": id,
+            "digest": digest,
+            "agent": "claude",
+            "host": "devbox",
+            "allow": allow,
+            "decided_at_ms": NSNumber(value: decided),
+            "expires_at_ms": NSNumber(value: expires),
+            "hmac": hmacOverride ?? hmacHex(
+                message: canonical(id: id, digest: digest, allow: allow, decided: decided, expires: expires)
+            ),
+        ]
+        let url = directory.appendingPathComponent("\(id).json")
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        return url
+    }
+
+    private func claim(
+        _ id: String, digest: String, truncated: Bool = false, nowMs: Int64? = nil
+    ) -> Bool? {
+        RespondSpool.claimVerdict(
+            requestID: id, digest: digest, agent: "claude", host: "devbox",
+            truncated: truncated, nowMs: nowMs ?? now
+        )
+    }
+
+    func testWriteOutboundRequestWritesTheSchemaVerbatimAt0600() throws {
+        let payload = Data("{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf x\"}}".utf8)
+        XCTAssertTrue(RespondSpool.writeOutboundRequest(
+            requestID: "toolu_x", agent: "claude", host: "devbox", session: "s1",
+            cwd: "/w", toolName: "Bash", payload: payload,
+            nowMs: now, expiresAtMs: now + 60_000
+        ))
+        let url = root.appendingPathComponent("requests/toolu_x.json")
+        let data = try Data(contentsOf: url)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["v"] as? Int, 1)
+        XCTAssertEqual(object["request_id"] as? String, "toolu_x")
+        XCTAssertEqual(object["agent"] as? String, "claude")
+        XCTAssertEqual(object["host"] as? String, "devbox")
+        XCTAssertEqual(object["session"] as? String, "s1")
+        XCTAssertEqual(object["cwd"] as? String, "/w")
+        XCTAssertEqual(object["tool_name"] as? String, "Bash")
+        XCTAssertEqual((object["raised_at_ms"] as? NSNumber)?.int64Value, now)
+        XCTAssertEqual((object["expires_at_ms"] as? NSNumber)?.int64Value, now + 60_000)
+        XCTAssertEqual(object["truncated"] as? Bool, false)
+        let b64 = try XCTUnwrap(object["payload_b64"] as? String)
+        XCTAssertEqual(Data(base64Encoded: b64), payload, "verbatim bytes must round-trip")
+        XCTAssertEqual(object["digest"] as? String, RespondDigest.of(payload))
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.int16Value, 0o600)
+    }
+
+    func testClaimVerdictAcceptsAValidVerdictExactlyOnce() throws {
+        try writeOutboundSecret()
+        let digest = RespondDigest.of(Data("payload".utf8))
+        try writeInboundVerdictFile(digest: digest, allow: true)
+        XCTAssertEqual(claim("toolu_x", digest: digest), true)
+        let directory = root.appendingPathComponent("verdicts")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: directory.appendingPathComponent("toolu_x.json").path),
+            "the rename is the claim"
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: directory.appendingPathComponent("toolu_x.json.used").path)
+        )
+        XCTAssertNil(claim("toolu_x", digest: digest), "exactly once — no second answer from one file")
+    }
+
+    func testClaimVerdictRejectsATamperedHmacAndKeepsItConsumed() throws {
+        try writeOutboundSecret()
+        let digest = RespondDigest.of(Data("payload".utf8))
+        try writeInboundVerdictFile(digest: digest, hmacOverride: String(repeating: "0", count: 64))
+        XCTAssertNil(claim("toolu_x", digest: digest))
+        let directory = root.appendingPathComponent("verdicts")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: directory.appendingPathComponent("toolu_x.json.used").path),
+            "a bad verdict stays consumed — never re-read on the next poll"
+        )
+        // A fresh, valid verdict can still land and be claimed: the rename
+        // replaces the .used remnant.
+        try writeInboundVerdictFile(digest: digest, allow: false)
+        XCTAssertEqual(claim("toolu_x", digest: digest), false)
+    }
+
+    func testClaimVerdictRejectsExpiredAndNotYetPlausibleTimestamps() throws {
+        try writeOutboundSecret()
+        let digest = RespondDigest.of(Data("payload".utf8))
+        // Expired past the 5-minute tolerance (boundary: now == expires + skew).
+        try writeInboundVerdictFile(id: "toolu_old", digest: digest, expiresAtMs: now - 300_000)
+        XCTAssertNil(claim("toolu_old", digest: digest))
+        // Decided too far in the future for any plausible clock.
+        try writeInboundVerdictFile(id: "toolu_future", digest: digest, decidedAtMs: now + 300_001)
+        XCTAssertNil(claim("toolu_future", digest: digest))
+        // Inside the tolerance both ways: accepted — skew must not make a
+        // slightly-off clock reject every genuine verdict.
+        try writeInboundVerdictFile(
+            id: "toolu_skew", digest: digest,
+            decidedAtMs: now + 299_999, expiresAtMs: now - 299_999
+        )
+        XCTAssertEqual(claim("toolu_skew", digest: digest), true)
+    }
+
+    func testClaimVerdictNeverReturnsAllowForATruncatedRequest() throws {
+        try writeOutboundSecret()
+        let digest = RespondDigest.of(Data("payload".utf8))
+        try writeInboundVerdictFile(id: "toolu_a", digest: digest, allow: true)
+        XCTAssertNil(
+            claim("toolu_a", digest: digest, truncated: true),
+            "an allow must never answer a request whose full content was not captured"
+        )
+        try writeInboundVerdictFile(id: "toolu_d", digest: digest, allow: false)
+        XCTAssertEqual(
+            claim("toolu_d", digest: digest, truncated: true), false,
+            "deny stays available — refusing the unverified is the safe direction"
+        )
+    }
+
+    func testWriteOutboundRequestCleansUpStaleSpoolFiles() throws {
+        let fm = FileManager.default
+        let requests = root.appendingPathComponent("requests", isDirectory: true)
+        let verdicts = root.appendingPathComponent("verdicts", isDirectory: true)
+        try fm.createDirectory(at: requests, withIntermediateDirectories: true)
+        try fm.createDirectory(at: verdicts, withIntermediateDirectories: true)
+        let hour: Int64 = 3_600_000
+        let stale = requests.appendingPathComponent("stale.json")
+        try JSONSerialization.data(
+            withJSONObject: ["expires_at_ms": NSNumber(value: now - 2 * hour)]
+        ).write(to: stale)
+        let used = verdicts.appendingPathComponent("old.json.used")
+        try Data("{}".utf8).write(to: used)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: Double(now - 2 * hour) / 1000)],
+            ofItemAtPath: used.path
+        )
+        XCTAssertTrue(RespondSpool.writeOutboundRequest(
+            requestID: "toolu_new", agent: "claude", host: "devbox", session: "",
+            cwd: "", toolName: "Bash", payload: Data("x".utf8),
+            nowMs: now, expiresAtMs: now + 60_000
+        ))
+        XCTAssertFalse(fm.fileExists(atPath: stale.path), "a request an hour past its expiry is gone")
+        XCTAssertFalse(fm.fileExists(atPath: used.path), "an hour-old .used remnant is gone")
+        XCTAssertTrue(fm.fileExists(atPath: requests.appendingPathComponent("toolu_new.json").path))
     }
 }

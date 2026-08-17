@@ -11,8 +11,9 @@ Attention Protocol 把「远端在等你」带到这台 Mac；本协议把**你�
 
 ## 目录布局
 
-**远端机器**（跑 Agent 的那台，装 `pulse_hook.py`，`<pulse_dir>` 即
-`PULSE_HOME` 或 `~/Library/Application Support/Pulse`）：
+**远端机器**（跑 Agent 的那台；headless Linux 装 `pulse_hook.py`，装了 Pulse
+的 Mac 走原生 `pulse-hook` → `PulseBar --hook` —— 两端实现同一协议，
+`<pulse_dir>` 即 `PULSE_HOME` 或 `~/Library/Application Support/Pulse`）：
 
 ```
 <pulse_dir>/respond-secret.key          # 存在且非空 = 该机器的 Respond 已 opt-in
@@ -87,7 +88,12 @@ exit 0、超时不打印任何东西** —— 厂商提示照常弹出，最坏�
 - stdout 判决形状单押 2.1.233 二进制取证到的
   `hookSpecificOutput.decision.behavior` 对象形 —— 若某版本 CLI 只认文档里的
   字符串形，判决被静默忽略（fail-open，无害但功能失效），这正是真机剩余
-  步骤第 2 条要确认的事。
+  步骤第 2 条要确认的事；
+- **在场门只存在于 Mac 被答端**：原生 receiver 在 hold 前检查输入空闲
+  （`PULSE_RESPOND_AWAY_SECONDS`，默认 120s，钳 [30,3600]）——人就坐在那台
+  Mac 前时立即放行厂商自己的提示，冻住 Agent 对在场用户是纯粹的倒退
+  （plan-respond「三个难点」第一条的取舍）。headless 机器没有输入空闲的
+  概念，`pulse_hook.py` 以密钥文件存在为 hold 意图。
 
 ## 与 Attention 的关系
 

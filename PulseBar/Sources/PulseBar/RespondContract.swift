@@ -67,7 +67,13 @@ struct PermissionRequest: Equatable {
 enum RespondDigest {
     /// Hex SHA-256 of the exact request text.
     static func of(_ text: String) -> String {
-        SHA256.hash(data: Data(text.utf8))
+        of(Data(text.utf8))
+    }
+
+    /// Hex SHA-256 of exact bytes — the outbound spool digests the verbatim
+    /// hook stdin before anything ever decodes it.
+    static func of(_ data: Data) -> String {
+        SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }
             .joined()
     }
