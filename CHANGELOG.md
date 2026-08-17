@@ -2,6 +2,57 @@
 
 All notable changes to Pulse are documented here.
 
+## 1.2.1 — Unblock / 解锁
+
+**装上去没有新能力 —— 这一版的产出是证据和修复，说在前面。**
+
+### Respond 的阻塞项拿到了第一份证据
+
+Respond（从灯上把你的判断送达）一直阻塞在 P0-0：「真机验证厂商契约」。本版从
+**正在发行的 Claude Code 2.1.233 二进制**里提取了实际代码路径，Q1–Q5 全部有了
+带证据等级的答案（贴在 `docs/plan-respond.md`）：
+
+- hook 收到**稳定的 `tool_use_id` 和完整 `tool_input`**；
+- stdout **能携带 allow/deny 判决**，且用户自己的 deny/ask 规则覆盖 hook 的
+  allow —— 判断权不转移在厂商侧有第二道保险；
+- 超时干净回落（fail-open 成立）；
+- 厂商 hook 默认超时是 **600 秒** —— 计划里「厂商只给 5 秒」是个误会，那个 5
+  是 Pulse 自己写进 settings 的值。
+
+**最悲观的分支（只能做「一键拒绝」）排除。** P0-0 剩余部分收窄为一次约 30 分钟
+的真机交互确认，步骤列在计划里。配套清理了过时的计划内容：5 秒前提、被占用的
+场景编号、AGENTS 里自相矛盾的 active plan、v1 协议措辞、指向死代码的落点表。
+
+### 深度 review 与门槛修复
+
+`docs/review-1.2.md` 是对 1.2.0 基线的全量审计。压在 Respond 运载路径上的
+八处缺陷本版修掉，各带回归测试：
+
+- **采集器（critical）**：全局字节预算「低但未空」时，被拒绝的读取会让 adapter
+  误报 `no_sessions`，merge 把它当可信空结果**清掉上一轮的好行** —— 一次触发
+  同时破「没看到 ≠ 没运行」和「harvest 失败不得清空扫描」两条不变量。现在
+  被拒读取分类为 `failed`，上一份快照保留。
+- **时间戳**：带毫秒的 ISO8601（Claude / Pi 的实际格式）解析失败返回 0，所有
+  厂商时间戳退化为文件 mtime，同文件碎片时序坍塌 —— 0.95 的「pending 跟随
+  最新碎片」退化回 OR 语义。现在能解析，且 formatter 改为缓存（原先逐行新建）。
+- **hooks 安装器**：`--hook` 裸 token 让每次安装都可能**删掉用户自己的** hook
+  条目（如 `mytool --hook-dir …`）；现在裸 `--hook` 只有与 `PulseBar` 同现才算
+  Pulse 自有，Swift 与 Python 双实现同步。
+- **hooks 安装器**：`ensureClaudeEvent` 见 marker 即跳过，已装条目永不更新；
+  现在按所有权重写自有条目 —— **重装即迁移**，超时收敛为单一旋钮
+  （Respond 提额靠它）。
+- **hook runner**：在开发机跑一次测试套件会把真机的 `hook-runner.path` 改写成
+  xctest 路径，断掉 Waiting 灯路直到 Pulse 重启。runner 路径现在拒绝测试载体
+  二进制，自测用例隔离 home。
+- **远端收件箱**：超限的 `attention.d` 文件从**头部**读 256KB —— TSV 尾部追加，
+  被丢的恰是最新事件。现在读尾部、丢首个半行。
+- **更新器**：`mountDMG` 用整行前缀匹配 `/Volumes/`，而 `hdiutil` 输出行首是
+  `/dev/disk…` —— 应用内「下载并验证」在每台机器上都停在 "mount point"。
+  现在按 tab 切列解析，`UpdateInstaller` 拿到第一批测试。
+- **扫描管线**：`refresh()` 的回调硬编码 `AppServices.store` 单例，非单例实例
+  的结果落错地方、`scanInFlight` 永久卡死 —— 也是扫描管线一直没有集成测试的
+  原因。现在结果落回发起扫描的实例。
+
 ## 1.2.0 — Substance / 行的实质
 
 1.1 让 Pulse 读完了整场会话，但**读到的东西只有一样上了界面**（精确记录数）。工具直方图、
