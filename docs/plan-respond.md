@@ -147,16 +147,16 @@ Pulse 目前没有输入空闲检测，这是新增的一小块能力（`CGEvent
 
 ### P0 · 必须完成
 
-| ID | 项 | 验收 |
-| --- | --- | --- |
-| P0-0 | **真机契约证据** | `qa_respond_contract.sh` 在装了 Claude 的机器上跑完，Q1–Q5 有答案贴回本文件。**阻塞 P0-3 / P0-4** |
-| P0-1 | 可达性诚实 | `AgentID.respondReach`：`.hookSite`（Pulse 在决定点被执行）/ `.none`。**被执行 ≠ 能答复** —— 类型文档与门禁都必须这么说 |
-| P0-2 | 决定模型 | 请求与判决的纯模型：id + 内容摘要双绑定、单次使用、过期；`canOfferAllow` 仅在完整请求可见时为真；拒绝无此限制 |
-| P0-3 | 送达通路 | **由 P0-0 决定**。无证据则为空，不许凭猜填 |
-| P0-4 | 阻塞策略 | **由 P0-0 决定**。在场即放行的判定函数先落地并可测 |
-| P0-5 | 远端应答 | 默认关闭；逐 host opt-in；HMAC；决定不进同步目录除非显式开启 |
-| P0-6 | 场景 + 测试 | EXPERIENCE 新场景（编号发布时分配 —— AP/AQ 已被 Full Transcript / Substance 占用）；`RespondFoundationTests` |
-| P0-7 | 交付物 | plan；CHANGELOG；semver；七门禁；草稿 PR；**等「发布」** |
+| ID | 项 | 验收 | 状态（2026-08-17） |
+| --- | --- | --- | --- |
+| P0-0 | **真机契约证据** | `qa_respond_contract.sh` 在装了 Claude 的机器上跑完，Q1–Q5 有答案贴回本文件 | **主体已闭**（见上方证据节）；剩真机交互确认清单，其中第 2 条（stdout 判决形状被采纳）是发布前必须 |
+| P0-1 | 可达性诚实 | `AgentID.respondReach`：`.hookSite`（Pulse 在决定点被执行）/ `.none`。**被执行 ≠ 能答复** —— 类型文档与门禁都必须这么说 | 已完成（1.0.1） |
+| P0-2 | 决定模型 | 请求与判决的纯模型：绑定升级为**四重**（id + 内容摘要 + agent + host）、单次使用、过期；`canOfferAllow` 仅在完整请求可见时为真；拒绝无此限制 | 已完成（host/agent 绑定本版补齐） |
+| P0-3 | 送达通路 | [`respond-protocol.md`](respond-protocol.md)：请求/判决 spool 文件、HMAC、`.used` 恰好一次、fail-open；远端 hold 端在 `pulse_hook.py`，由 `scripts/respond_hook_check.py`（CI 门禁，44 断言）实跑钉死 | **已建成** |
+| P0-4 | 阻塞策略 | **本机永不 hold**（在场时厂商提示更好，缺席时无人可答）；远端 hold = 密钥文件存在即 opt-in，上限 `PULSE_RESPOND_MAX_HOLD_SECONDS`（默认 60s，钳 [5,300]） | **已定死并实现** |
+| P0-5 | 远端应答 | 默认关闭；逐 host 密钥文件 opt-in；HMAC 常时比较；判决只落 Pulse 自己的 `respond.d`，同步方向由用户配置 | **已实现**（首个真实同步环路的实测仍在真机清单里） |
+| P0-6 | 场景 + 测试 | EXPERIENCE **场景 AR**；`RespondFoundationTests` + `RespondSpoolTests` + `StatusStoreRespondTests` + `respond_hook_check.py` | 已完成 |
+| P0-7 | 交付物 | plan；CHANGELOG；semver；门禁；草稿 PR；**等「发布」** | 本 PR |
 
 
 ### 明确不做

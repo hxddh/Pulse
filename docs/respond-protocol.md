@@ -77,6 +77,18 @@ HMAC-SHA256，密钥 = 密钥文件原始字节（去尾部换行），消息为
 exit 0、超时不打印任何东西** —— 厂商提示照常弹出，最坏情况回到 1.0 的世界：
 你得走过去。
 
+实现钉死的细则（两端一致，改一边必须改另一边）：
+
+- **判决文件名同请求一样 sanitize**（同一规则、两端同用）；
+- 钟差宽容是对称的：`now < expires + 5min` 且 `decided − 5min ≤ now` ——
+  未来判决与过期判决一样被拒；
+- 厂商事件**没有 `tool_use_id` 就不 hold**（无稳定 id 无法绑定判决）；
+- requests 与 verdicts 两个目录都受 64 文件上限（超出删最旧）；
+- stdout 判决形状单押 2.1.233 二进制取证到的
+  `hookSpecificOutput.decision.behavior` 对象形 —— 若某版本 CLI 只认文档里的
+  字符串形，判决被静默忽略（fail-open，无害但功能失效），这正是真机剩余
+  步骤第 2 条要确认的事。
+
 ## 与 Attention 的关系
 
 请求文件不取代 attention raise —— 灯照常亮（TSV 照写）。Respond 只是让

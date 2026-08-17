@@ -88,24 +88,27 @@ def install_claude() -> str:
     sub_stop = hook_cmd("claude", "subagent_stop")
     permission_cmd = hook_cmd("claude", "permission")
 
-    def ensure_event(event: str, command: str, matcher: str | None = None, marker: str | None = None) -> None:
-        entries = hooks.setdefault(event, [])
-        blob = json.dumps(entries)
-        token = marker or "pulse-hook"
-        if token in blob or "pulse-hook" in blob or "pulse_hook.py" in blob:
-            return
+    def ensure_event(event: str, command: str, matcher: str | None = None) -> None:
+        # Idempotency by ownership, not token sniffing (mirrors
+        # HooksInstaller.ensureClaudeEvent): rewrite Pulse-owned entries so a
+        # re-install migrates command and timeout; never touch user entries.
+        entries = [e for e in hooks.get(event, []) if not _is_pulse_entry(json.dumps(e))]
+        # PermissionRequest may deliberately hold for a remote Respond answer;
+        # every other event exits immediately and keeps the tight budget.
+        timeout = 90 if event == "PermissionRequest" else 5
         entry: dict = {
-            "hooks": [{"type": "command", "command": command, "timeout": 5}],
+            "hooks": [{"type": "command", "command": command, "timeout": timeout}],
         }
         if matcher:
             entry["matcher"] = matcher
         entries.append(entry)
+        hooks[event] = entries
 
     ensure_event("Notification", notify_cmd, "permission_prompt|idle_prompt|agent_needs_input")
-    ensure_event("Stop", stop_cmd, marker="claude stop")
-    ensure_event("SubagentStart", sub_start, marker="subagent_start")
-    ensure_event("SubagentStop", sub_stop, marker="subagent_stop")
-    ensure_event("PermissionRequest", permission_cmd, marker=" claude permission")
+    ensure_event("Stop", stop_cmd)
+    ensure_event("SubagentStart", sub_start)
+    ensure_event("SubagentStop", sub_stop)
+    ensure_event("PermissionRequest", permission_cmd)
     settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return str(settings)
 
