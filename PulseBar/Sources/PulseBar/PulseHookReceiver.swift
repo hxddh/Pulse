@@ -283,7 +283,42 @@ enum PulseHookReceiver {
                 if !trimmed.isEmpty { return String(trimmed.prefix(200)) }
             }
         }
-        return ""
+        return toolDescriptor(from: payload)
+    }
+
+    /// What is actually being asked, when the vendor sends no prose.
+    ///
+    /// Claude's `PermissionRequest` payload has **no** `message` field — the
+    /// ask *is* the tool call (`tool_name` + `tool_input`). Without this, the
+    /// most important event in the product reached the banner, the row and
+    /// Details with an empty reason, and all three degraded to the bare word
+    /// "Permission": the lamp said someone was waiting but never what for.
+    ///
+    /// Field priority mirrors the vendor's own permission label
+    /// (`command` → `file_path` → `url`), so Pulse names the same thing the
+    /// dialog on the other machine names. Everything here still passes through
+    /// `cleanField`, which redacts credentials and bounds the field.
+    static func toolDescriptor(from payload: [String: Any]) -> String {
+        let tool = (payload["tool_name"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tool.isEmpty else { return "" }
+        guard let input = payload["tool_input"] as? [String: Any] else { return tool }
+        for key in ["command", "file_path", "url", "path", "notebook_path", "pattern", "query"] {
+            guard let raw = input[key] as? String else { continue }
+            let target = condenseOneLine(raw)
+            guard !target.isEmpty else { continue }
+            return "\(tool): \(target)"
+        }
+        return tool
+    }
+
+    /// A banner, a tray row and a TSV field are all single-line: fold every
+    /// run of whitespace and bound the result before it ever reaches them.
+    static func condenseOneLine(_ raw: String, limit: Int = 140) -> String {
+        let folded = raw.split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard folded.count > limit else { return folded }
+        return String(folded.prefix(limit - 1)) + "…"
     }
 
     private static func session(from payload: [String: Any]) -> String {

@@ -164,7 +164,37 @@ def message_from_json(payload: dict) -> str:
         v = payload.get(key)
         if isinstance(v, str) and v.strip():
             return v.strip().replace("\t", " ").replace("\n", " ")[:200]
-    return ""
+    return tool_descriptor(payload)
+
+
+def condense_one_line(raw: str, limit: int = 140) -> str:
+    """A banner, a tray row and a TSV field are all single-line."""
+    folded = " ".join(raw.split())
+    return folded if len(folded) <= limit else folded[: limit - 1] + "…"
+
+
+def tool_descriptor(payload: dict) -> str:
+    """What is actually being asked, when the vendor sends no prose.
+
+    Claude's PermissionRequest payload has no ``message``: the ask *is* the
+    tool call. Field priority mirrors the vendor's own permission label
+    (command -> file_path -> url), and mirrors
+    ``PulseHookReceiver.toolDescriptor`` line for line — the two ends must
+    describe one approval the same way.
+    """
+    tool = str(payload.get("tool_name") or "").strip()
+    if not tool:
+        return ""
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return tool
+    for key in ("command", "file_path", "url", "path", "notebook_path", "pattern", "query"):
+        raw = tool_input.get(key)
+        if isinstance(raw, str):
+            target = condense_one_line(raw)
+            if target:
+                return f"{tool}: {target}"
+    return tool
 
 
 def session_from_json(payload: dict) -> str:

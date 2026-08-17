@@ -114,6 +114,65 @@ final class PulseHookReceiverTests: XCTestCase {
         }
     }
 
+    // MARK: - A permission ask must say what is being asked
+
+    /// Regression: Claude's PermissionRequest payload carries no `message`,
+    /// and the receiver only looked for prose keys — so the banner, the row
+    /// and Details all showed a bare "Permission" for the single most
+    /// important event in the product.
+    func testPermissionRequestNamesTheToolAndItsTarget() throws {
+        let stdin = #"""
+        {"hook_event_name":"PermissionRequest","tool_use_id":"toolu_a","tool_name":"Bash",
+         "tool_input":{"command":"npm run build"},"session_id":"c9","cwd":"/w"}
+        """#
+        _ = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
+        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+        XCTAssertTrue(text.contains("\tBash: npm run build\t"), text)
+    }
+
+    func testFilePathAndURLAreNamedWhenThereIsNoCommand() {
+        XCTAssertEqual(
+            PulseHookReceiver.toolDescriptor(from: [
+                "tool_name": "Edit", "tool_input": ["file_path": "/repo/src/main.swift"],
+            ]),
+            "Edit: /repo/src/main.swift"
+        )
+        XCTAssertEqual(
+            PulseHookReceiver.toolDescriptor(from: [
+                "tool_name": "WebFetch", "tool_input": ["url": "https://example.com/x"],
+            ]),
+            "WebFetch: https://example.com/x"
+        )
+        // A tool with nothing nameable is still better than silence.
+        XCTAssertEqual(
+            PulseHookReceiver.toolDescriptor(from: ["tool_name": "MultiEdit", "tool_input": ["edits": []]]),
+            "MultiEdit"
+        )
+        XCTAssertEqual(PulseHookReceiver.toolDescriptor(from: ["tool_input": ["command": "ls"]]), "")
+    }
+
+    func testDescriptorFoldsAndBoundsWhatItShows() {
+        XCTAssertEqual(
+            PulseHookReceiver.condenseOneLine("git commit \\\n  -m  'two   lines'"),
+            "git commit \\ -m 'two lines'"
+        )
+        let long = PulseHookReceiver.condenseOneLine(String(repeating: "x", count: 400))
+        XCTAssertEqual(long.count, 140)
+        XCTAssertTrue(long.hasSuffix("…"))
+    }
+
+    func testACredentialInsideACommandIsStillRedacted() throws {
+        let stdin = #"""
+        {"hook_event_name":"PermissionRequest","tool_use_id":"toolu_b","tool_name":"Bash",
+         "tool_input":{"command":"curl -H 'Authorization: Bearer abcdefgh12345678' https://x"},
+         "session_id":"c10"}
+        """#
+        _ = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
+        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+        XCTAssertTrue(text.contains("Bash: curl"), text)
+        XCTAssertFalse(text.contains("abcdefgh12345678"), "naming the ask must not leak the secret in it")
+    }
+
     // MARK: - Respond hold (Mac-to-Mac parity with pulse_hook.py)
 
     private func writeRespondSecret(_ key: String = "sekrit\n") throws {

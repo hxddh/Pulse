@@ -435,6 +435,33 @@ def case_hygiene() -> None:
         shutil.rmtree(home, ignore_errors=True)
 
 
+def case_permission_descriptor() -> None:
+    """A permission ask must say what is being asked.
+
+    Claude's PermissionRequest payload has no ``message``: without a
+    descriptor the lamp says someone is waiting but never what for. The
+    expected strings here are the same ones
+    `PulseHookReceiverTests.testFilePathAndURLAreNamedWhenThereIsNoCommand`
+    asserts on the Swift side — the two ends must name one approval alike.
+    """
+    print("extra: permission descriptor (Swift parity)")
+    cases = [
+        ({"tool_name": "Bash", "tool_input": {"command": "npm  run\nbuild"}}, "Bash: npm run build"),
+        ({"tool_name": "Edit", "tool_input": {"file_path": "/repo/src/main.swift"}},
+         "Edit: /repo/src/main.swift"),
+        ({"tool_name": "WebFetch", "tool_input": {"url": "https://example.com/x"}},
+         "WebFetch: https://example.com/x"),
+        ({"tool_name": "MultiEdit", "tool_input": {"edits": []}}, "MultiEdit"),
+        ({"tool_input": {"command": "ls"}}, ""),
+        ({"message": "prose wins", "tool_name": "Bash", "tool_input": {"command": "ls"}}, "prose wins"),
+    ]
+    for payload, expected in cases:
+        got = pulse_hook.message_from_json(payload)
+        check(f"descriptor {expected or '(empty)'}", got == expected, f"got {got!r}")
+    folded = pulse_hook.condense_one_line("x" * 400)
+    check("descriptor bounded to one line", len(folded) == 140 and folded.endswith("…"), folded[-3:])
+
+
 def main() -> int:
     print(f"respond_hook_check — hook: {HOOK}")
     case_no_key()
@@ -446,6 +473,7 @@ def main() -> int:
     case_second_use()
     case_timeout()
     case_hygiene()
+    case_permission_descriptor()
     print()
     if FAILURES:
         print(f"FAIL — {len(FAILURES)} of {PASSED + len(FAILURES)} checks failed:")

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "2.0.0"
+    static let semver = "2.1.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -579,8 +579,85 @@ struct AgentRow: Identifiable, Hashable {
     /// `Edit 12 · Bash 5` — bounded; Details only, never the tray row.
     var toolSummary: String = ""
 
+    /// 2.1 Evidence · the rest of what the digest already knew.
+    ///
+    /// Every field below is **carried, never recomputed**. They were produced
+    /// by reading the whole transcript; anything here that tried to re-derive
+    /// them from the read window would be guessing at bytes it never saw.
+    ///
+    /// Tokens across the whole session. Deliberately *not* merged into
+    /// `tokensIn` / `tokensOut`, which are the most recent message: 1.1 named
+    /// this fork and refused to let one overwrite the other. Both numbers are
+    /// true and they are not the same number, so whatever shows them has to
+    /// label them apart rather than let a reader watch two token counts
+    /// disagree.
+    var sessionTokensIn: Int = 0
+    var sessionTokensOut: Int = 0
+    /// The last few vendor tool names in order, oldest first (≤12).
+    /// "What it has been doing all along" — a fact the tray never had room for.
+    var recentTools: [String] = []
+    /// 0–100. 100 means the whole transcript has been folded.
+    var digestProgressPercent: Int = 0
+    /// True when nothing in the file is still unread.
+    ///
+    /// While this is false the counts above are partial, and any surface that
+    /// shows them owes the reader that sentence.
+    var digestCaughtUp: Bool = false
+    /// Transcript growth, in bytes per minute. 0 = unknown, never estimated.
+    /// The difference between "moving" and "parked", which no counter states.
+    var bytesPerMinute: Int = 0
+    /// The session's real start, in ms. More reliable than `startedMs`, which
+    /// some adapters can only fill from a file stamp. 0 = unknown.
+    var sessionStartedMs: Int64 = 0
+
     /// Enough repetition to be worth saying out loud.
     var isLooping: Bool { !loopTool.isEmpty && loopCount >= 3 }
+
+    /// Whether a transcript digest exists for this row at all.
+    ///
+    /// Matters because `digestCaughtUp == false` has two very different
+    /// causes: a digest that is genuinely behind, and no digest at all (a
+    /// cache-only adapter has no transcript to read). Saying "still catching
+    /// up · 0% read" for the second would be inventing a state.
+    var hasSessionDigest: Bool {
+        digestCaughtUp || digestProgressPercent > 0 || !recentTools.isEmpty
+            || sessionTokensIn > 0 || sessionTokensOut > 0
+    }
+
+    /// How long this session has really been going, in seconds; 0 when unknown.
+    ///
+    /// Uses the digest's own start rather than `startedMs`.
+    func sessionDurationSeconds(nowMs: Int64) -> Double {
+        guard sessionStartedMs > 0, nowMs > sessionStartedMs else { return 0 }
+        return Double(nowMs - sessionStartedMs) / 1000.0
+    }
+
+    /// The most tool names a timeline will render before it starts eliding.
+    static let maxTimelineTools = 12
+
+    /// `Read → Edit → Bash → Edit` — the path it took, not a count of it.
+    ///
+    /// Older entries are dropped from the **front**, because the useful end of
+    /// a walk is the end you are standing on. When anything was dropped the
+    /// string says so with a leading `…`, so a truncated timeline is never
+    /// mistaken for the whole session.
+    static func toolTimeline(_ tools: [String], limit: Int = AgentRow.maxTimelineTools) -> String {
+        let cleaned = tools
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty, limit > 0 else { return "" }
+        let shown = cleaned.suffix(limit).joined(separator: " → ")
+        return cleaned.count > limit ? "… → " + shown : shown
+    }
+
+    /// `840 B` / `12 KB` / `1.4 MB`. Empty when the rate is unknown — an
+    /// invented "0 KB" would read as "parked", which is a different claim.
+    static func compactBytes(_ n: Int) -> String {
+        guard n > 0 else { return "" }
+        if n < 1024 { return "\(n) B" }
+        if n < 1024 * 1024 { return "\(n / 1024) KB" }
+        return String(format: "%.1f MB", Double(n) / (1024.0 * 1024.0))
+    }
     /// A bounded, cross-scan change signal. Static counters answer "how much";
     /// this answers the more useful operational question: "what just moved?"
     var activityChange: AgentActivityChange? = nil

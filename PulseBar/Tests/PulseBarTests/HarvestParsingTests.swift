@@ -371,6 +371,20 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
     }
 
+    func testALaterSilentEventDoesNotEraseTheReason() throws {
+        // One approval makes Claude raise both Notification and
+        // PermissionRequest; only one carries text and the order is not ours.
+        // Last-write-wins alone turned a named ask back into a bare kind.
+        let text = tsv([
+            ["claude", "permission", "\(now - 2000)", "Bash: npm run build", "c1", "/w"],
+            ["claude", "permission", "\(now - 1000)", "", "c1", "/w"],
+        ])
+        let entries = AttentionReader.parse(text, nowMs: now)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].message, "Bash: npm run build")
+        XCTAssertEqual(entries[0].tsMs, now - 1000, "the newer event still owns the clock")
+    }
+
     func testNormalizeTimestampParsesVendorISO8601() {
         // Regression: the fractional-second form is what Claude and Pi
         // actually write; it used to parse to 0, so every record fell back to
