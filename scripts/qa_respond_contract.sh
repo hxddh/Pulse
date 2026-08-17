@@ -53,7 +53,7 @@ Q4  Does raising "timeout" in the hook entry work? Up to what value?
     And what does a user sitting at the keyboard see while it waits?
 QUESTIONS
   say ""
-  say "Paste this whole report into docs/plan-respond.md under P0-0."
+  say "Paste this whole report into docs/plan-2.0.md under P0-0."
   exit 0
 fi
 
@@ -138,7 +138,7 @@ When done:
 
 To probe Q2 (does stdout carry a decision?), edit the capture hook and make it
 print a candidate reply before exiting — the shapes worth trying are in
-docs/plan-respond.md (P0-0 evidence section). Do that **only** in this scratch
+docs/plan-2.0.md (P0-0 evidence section). Do that **only** in this scratch
 project, and only with a command you would be happy to see run.
 EOF
 

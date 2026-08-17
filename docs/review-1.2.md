@@ -1,7 +1,7 @@
 # Pulse 深度 review（基线 1.2.0）与下个大版本评估
 
 > **状态：待办。** 本文是审计记录 + 方向评估，不是计划书。发现按子系统列出，
-> 修复归属由后续计划分配；下个大版本的计划仍是 [`plan-respond.md`](plan-respond.md)，
+> 修复归属由后续计划分配；下个大版本的计划仍是 [`plan-2.0.md`](plan-2.0.md)，
 > 本次 review 为它补上了 P0-0 的第一份证据（见该文件）。
 
 范围：`PulseBar/Sources`（22.6k 行 Swift）全部 72 文件、29 个测试文件、七个门禁脚本、
@@ -18,7 +18,7 @@ Respond 与 hooks / Fleet 与基建四条线逐行审读；重点发现均已对
 诚实化，1.1 读完整场会话之后，这条线剩下的是信号搬运，不再有台阶。计划里唯一
 换动词的方向 —— Respond（从「让你去看」到「把你的判断送达」）—— 一直阻塞在
 P0-0「真机契约证据」上。**本次 review 取到了这份证据的主体：契约成立，
-最悲观的分支（Q2=否，只能做「一键拒绝」）可以排除**，详见 plan-respond.md 的
+最悲观的分支（Q2=否，只能做「一键拒绝」）可以排除**，详见 plan-2.0.md 的
 证据一节。同时，本次在四个子系统里发现 1 条 critical、约 10 条 major 缺陷，
 其中若干条恰好压在 Respond 的运载路径上（hooks 安装器、hook runner、判决管线的
 前身），应作为大版本的发布门槛先修。
@@ -98,7 +98,7 @@ WaitingNotificationCoordinator、RowPresenter、SupportHealthSnapshot。PulseApp
 
 ## 3. Respond 与 hooks 基础设施
 
-**契约与模型层的结论见 plan-respond.md 证据节。** 代码发现：
+**契约与模型层的结论见 plan-2.0.md 证据节。** 代码发现：
 
 | # | 位置 | 发现 |
 | --- | --- | --- |
@@ -108,7 +108,7 @@ WaitingNotificationCoordinator、RowPresenter、SupportHealthSnapshot。PulseApp
 | R-4 | `RespondContract.swift:87-90` | 判决只绑 `requestID + digest`，不绑 agent/host —— P0-5 多主机场景下隐式依赖厂商 id 全局唯一。加绑成本为零。 |
 | R-5 | `RespondContract.swift:98` + hook 进程模型 | 「单次使用」只在托盘进程内存里成立；hook 是独立短命进程，跨进程恰好一次消费（flock + 原子 rename）完全未建 —— **这是 P0-3 的实质**。`RespondDecisionStore`/`RespondHold`/`UserPresence` 目前全部零调用方（dead code by design，地基先行）。 |
 | R-6 | `RespondContract.swift:54,69-73` | digest 对 `fullRequest` 字符串计算，但 `tool_input` JSON 的规范化序列化未定义 —— 键序不稳定则两端失配（fail-closed，安全但伤可靠性）。需定义 canonical 形式与 redaction 策略字节一致。 |
-| R-7 | `scripts/qa_respond_contract.sh:56,141` | 引用已改名的 `plan-1.1.md`，且所谓 "shapes worth trying" 在任何文档里都不存在（本次证据已把候选形状写进 plan-respond.md）；:15 声称 redact 但 capture 落盘的是原文，只有 shape 报告脱敏。 |
+| R-7 | `scripts/qa_respond_contract.sh:56,141` | 引用已改名的 `plan-1.1.md`，且所谓 "shapes worth trying" 在任何文档里都不存在（本次证据已把候选形状写进 plan-2.0.md）；:15 声称 redact 但 capture 落盘的是原文，只有 shape 报告脱敏。 |
 
 正面记录：拒改非法 JSON 并保留原文件、marker 缺失 fail-open、Swift/Python 双实现镜像、
 attention 协议 v2 实现与文档互证完整（host 列、收件箱有界、20s stop 宽限、
@@ -145,10 +145,10 @@ redact/去 tab 到位。
 ### 为什么是 Respond
 
 - **它是计划里唯一换动词的方向**，且 1.0 之后逻辑闭合：看见的边界消失后，
-  「够得着」就是唯一的边界（plan-respond.md 的原话）。远端场景里这个反差最刺眼 ——
+  「够得着」就是唯一的边界（plan-2.0.md 的原话）。远端场景里这个反差最刺眼 ——
   Pulse 能说出「devbox 上的 Claude 等授权 6 分钟了」，然后你得 ssh 过去。
 - **唯一的阻塞项 P0-0 已经从「能不能」收窄为「一次 30 分钟的真机确认」。**
-  本次取证（见 plan-respond.md）确认：PermissionRequest hook 收到稳定 `tool_use_id`
+  本次取证（见 plan-2.0.md）确认：PermissionRequest hook 收到稳定 `tool_use_id`
   与完整 `tool_input`，stdout 可携带 allow/deny 判决，超时干净回落（fail-open 成立），
   厂商默认超时 600s —— plan 里「厂商只给 5 秒」的前提是错的，那个 5 是 Pulse
   自己写进 settings 的。「让 Agent 等你几十秒」没有厂商侧障碍。
