@@ -411,6 +411,11 @@ enum L10n {
         case .exportSafeReport: return "Export safe report…"
         case .supportCopyShapeReport: return "Copy vendor shape"
         case .remoteEvidence: return "Remote host"
+        case .loopingTool: return "%1$@ · %2$d in a row"
+        case .loopingHint: return "Busy, but not getting closer — the same tool back to back"
+        case .sessionErrors: return "%d errors this session"
+        case .toolsUsed: return "Tools"
+        case .sessionErrorsLabel: return "Errors"
         case .remoteLastHeard: return "Last heard %@ ago"
         case .remoteLostContact: return "Lost contact"
         case .remoteLostContactWhy: return "Nothing has arrived from this host since. Pulse cannot tell whether the wait is still open."
@@ -853,6 +858,11 @@ enum L10n {
         case .exportSafeReport: return "导出安全报告…"
         case .supportCopyShapeReport: return "复制厂商格式"
         case .remoteEvidence: return "远端机器"
+        case .loopingTool: return "%1$@ · 连续 %2$d 次"
+        case .loopingHint: return "在动，但没在推进 —— 同一个工具连着调"
+        case .sessionErrors: return "本场会话 %d 次错误"
+        case .toolsUsed: return "用过的工具"
+        case .sessionErrorsLabel: return "错误"
         case .remoteLastHeard: return "最后听到 %@ 前"
         case .remoteLostContact: return "失联"
         case .remoteLostContactWhy: return "此后再没收到这台机器的消息。Pulse 无法判断这个等待是否还开着。"
@@ -1023,6 +1033,7 @@ enum L10n {
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
         case supportCopyShapeReport, supportShapeReading, supportShapeHint
         case remoteEvidence, remoteLastHeard, remoteLostContact, remoteLostContactWhy
+        case loopingTool, loopingHint, sessionErrors, toolsUsed, sessionErrorsLabel
         case remoteClockSuspect, remoteNoFocus
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch

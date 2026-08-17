@@ -65,6 +65,14 @@ enum NativeActivityHarvest {
     }
 
     private struct Fact {
+        /// 1.2: facts the session digest produced by reading the whole file.
+        /// A window can never see them, so they arrive here already computed
+        /// and are only ever copied — never re-derived from the window text.
+        var loopTool = ""
+        var loopCount = 0
+        var sessionErrors = 0
+        var toolSummary = ""
+
         var task = ""
         /// Where `task` came from. Drives merge; never rendered.
         var taskOrigin = TaskOrigin.none
@@ -989,6 +997,7 @@ enum NativeActivityHarvest {
         // count, and EXPERIENCE forbids estimating one ("数量不估算"). A
         // truncated read reports unknown rather than a silent undercount that
         // the tray then renders as an exact "N records".
+        var digestFacts: SessionDigest?
         var records = (ext == "jsonl" || ext == "ndjson") && !window.truncated
             ? text.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
             : 0
@@ -1002,6 +1011,7 @@ enum NativeActivityHarvest {
             let digest = HarvestDigests.advance(url: item, size: size)
             if let digest, digest.caughtUp, digest.records > 0 {
                 records = digest.records
+                digestFacts = digest
             }
         }
         for index in parsed.indices {
@@ -1011,6 +1021,14 @@ enum NativeActivityHarvest {
             }
             parsed[index].startedMs = birth > 0 && birth <= mtime + 1000 ? birth : 0
             parsed[index].records = records
+            if let digestFacts {
+                if let loop = digestFacts.repeatedTool {
+                    parsed[index].loopTool = loop.name
+                    parsed[index].loopCount = loop.count
+                }
+                parsed[index].sessionErrors = digestFacts.errors
+                parsed[index].toolSummary = SessionDigestSummary.line(digestFacts.toolCounts)
+            }
             parsed[index].windowTruncated = window.truncated
             parsed[index].structured = structured
             if id.waitingSource == .none, parsed[index].skill == "pending" {
@@ -3214,7 +3232,7 @@ enum NativeActivityHarvest {
             if id.waitingSource == .none, skill == "pending" {
                 skill = ""
             }
-            return ActivityHarvest.Row(
+            var row = ActivityHarvest.Row(
                 id: id,
                 task: ContentSanitizer.redact(task),
                 project: ContentSanitizer.redact(project),
@@ -3240,6 +3258,13 @@ enum NativeActivityHarvest {
                 progressDone: max(0, fact.progressDone),
                 progressTotal: max(0, fact.progressTotal)
             )
+            // Digest facts are carried, never recomputed: they came from
+            // reading the whole file and the window has no way to check them.
+            row.loopTool = fact.loopTool
+            row.loopCount = max(0, fact.loopCount)
+            row.sessionErrors = max(0, fact.sessionErrors)
+            row.toolSummary = fact.toolSummary
+            return row
         }
     }
 

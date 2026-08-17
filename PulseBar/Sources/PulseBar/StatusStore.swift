@@ -3104,6 +3104,15 @@ final class StatusStore: ObservableObject {
         // takes precedence over every local template, none of which it can
         // support with evidence.
         if row.isRemote, let line = remoteStatusLine(row) { return line }
+        // 1.2: an agent calling the same tool back to back is busy without
+        // being any closer to done. The lamp cannot say that — it is running
+        // and its clock is moving — and a window could never see it, because
+        // the repetition is spread through the part of the transcript that was
+        // never read. It outranks the ordinary story: "what it is doing" is
+        // less useful than "it has been doing this five times".
+        if row.isLooping, !row.waiting {
+            return String(format: tr(.loopingTool), row.loopTool, row.loopCount)
+        }
         if row.waiting {
             // Chip owns kind · duration; wait detail owns the message (0.92).
             // Story only surfaces the signal source when there is no message.

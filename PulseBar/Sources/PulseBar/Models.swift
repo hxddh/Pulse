@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "1.1.0"
+    static let semver = "1.2.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -567,6 +567,20 @@ struct AgentRow: Identifiable, Hashable {
     var contextPercent: Int = 0
     var progressDone: Int = 0
     var progressTotal: Int = 0
+    /// 1.2 · facts only a full read of the transcript can produce.
+    ///
+    /// An agent calling the same tool back to back is busy without being any
+    /// closer to done — a state the lamp cannot express, because it is running
+    /// and its clock is moving. Naming it is the whole point.
+    var loopTool: String = ""
+    var loopCount: Int = 0
+    /// Errors across the whole session, not just the read window.
+    var sessionErrors: Int = 0
+    /// `Edit 12 · Bash 5` — bounded; Details only, never the tray row.
+    var toolSummary: String = ""
+
+    /// Enough repetition to be worth saying out loud.
+    var isLooping: Bool { !loopTool.isEmpty && loopCount >= 3 }
     /// A bounded, cross-scan change signal. Static counters answer "how much";
     /// this answers the more useful operational question: "what just moved?"
     var activityChange: AgentActivityChange? = nil

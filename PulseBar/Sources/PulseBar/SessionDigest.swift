@@ -203,6 +203,23 @@ enum SessionDigestFold {
     }
 }
 
+/// Rendering a digest's tool counts as one short, bounded line.
+enum SessionDigestSummary {
+    /// Most-used first: `Edit 12 · Bash 5 · Read 3`.
+    ///
+    /// Bounded because this reaches the Details window, and a session with
+    /// thirty distinct tools would otherwise produce a paragraph.
+    static let maxEntries = 4
+
+    static func line(_ counts: [String: Int], limit: Int = maxEntries) -> String {
+        counts
+            .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
+            .prefix(limit)
+            .map { "\($0.key) \($0.value)" }
+            .joined(separator: " · ")
+    }
+}
+
 /// The collector's digests, held between scans.
 ///
 /// Scans run on one serial queue (`StatusStore.scanQueue`) and the CLI paths
