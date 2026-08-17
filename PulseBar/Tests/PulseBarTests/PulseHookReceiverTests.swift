@@ -1,18 +1,25 @@
+import CryptoKit
 import XCTest
 @testable import PulseBar
 
 final class PulseHookReceiverTests: XCTestCase {
     private var tempHome: URL!
+    private let now: Int64 = 1_800_000_000_000
 
     override func setUpWithError() throws {
         tempHome = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-hook-recv-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
         AttentionIO.pathOverride = tempHome.appendingPathComponent("attention.tsv")
+        // Every test in this class must be isolated from the developer's real
+        // Respond spool: a run() with a permission payload would otherwise
+        // read (and on an opted-in machine, write) the real one.
+        RespondSpool.rootOverride = tempHome.appendingPathComponent("respond.d", isDirectory: true)
     }
 
     override func tearDownWithError() throws {
         AttentionIO.pathOverride = nil
+        RespondSpool.rootOverride = nil
         try? FileManager.default.removeItem(at: tempHome)
     }
 
@@ -105,6 +112,173 @@ final class PulseHookReceiverTests: XCTestCase {
                 "hook-runner.path must never point at a test harness binary"
             )
         }
+    }
+
+    // MARK: - Respond hold (Mac-to-Mac parity with pulse_hook.py)
+
+    private func writeRespondSecret(_ key: String = "sekrit\n") throws {
+        try Data(key.utf8).write(to: tempHome.appendingPathComponent("respond-secret.key"))
+    }
+
+    private func writeVerdictFile(
+        id: String, digest: String, host: String, allow: Bool, key: String = "sekrit"
+    ) throws {
+        let directory = tempHome.appendingPathComponent("respond.d/verdicts", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let decided = now
+        let expires = now + 90_000
+        let message = "v1\n\(id)\n\(digest)\nclaude\n\(host)\n\(allow ? "allow" : "deny")\n\(decided)\n\(expires)"
+        let hmac = HMAC<SHA256>.authenticationCode(
+            for: Data(message.utf8), using: SymmetricKey(data: Data(key.utf8))
+        ).map { String(format: "%02x", $0) }.joined()
+        let object: [String: Any] = [
+            "v": 1, "request_id": id, "digest": digest, "agent": "claude", "host": host,
+            "allow": allow,
+            "decided_at_ms": NSNumber(value: decided),
+            "expires_at_ms": NSNumber(value: expires),
+            "hmac": hmac,
+        ]
+        try JSONSerialization.data(withJSONObject: object)
+            .write(to: directory.appendingPathComponent("\(id).json"))
+    }
+
+    private func permissionPayload(id: String = "toolu_x") -> [String: Any] {
+        [
+            "hook_event_name": "PermissionRequest",
+            "tool_use_id": id,
+            "tool_name": "Bash",
+            "tool_input": ["command": "ls"],
+            "session_id": "s1",
+            "cwd": "/w",
+        ]
+    }
+
+    func testHoldForVerdictClaimsAnExistingVerdictImmediately() throws {
+        try writeRespondSecret()
+        let digest = RespondDigest.of(Data("x".utf8))
+        try writeVerdictFile(id: "toolu_h", digest: digest, host: "agentbox", allow: false)
+        var sleeps = 0
+        let allow = PulseHookReceiver.holdForVerdict(
+            requestID: "toolu_h", digest: digest, agent: "claude", host: "agentbox",
+            truncated: false, deadlineMs: now + 60_000,
+            clockMs: { self.now }, sleepMs: { _ in sleeps += 1 }
+        )
+        XCTAssertEqual(allow, false)
+        XCTAssertEqual(sleeps, 0, "a verdict already on disk must not cost a single sleep")
+    }
+
+    func testHoldForVerdictTimesOutOnAFakeClockWithoutRealWaiting() {
+        var clock = now
+        var sleeps = 0
+        let allow = PulseHookReceiver.holdForVerdict(
+            requestID: "toolu_none", digest: "d", agent: "claude", host: "agentbox",
+            truncated: false, deadlineMs: now + 60_000,
+            clockMs: { clock },
+            sleepMs: { ms in
+                sleeps += 1
+                clock += Int64(ms)
+            }
+        )
+        XCTAssertNil(allow)
+        XCTAssertEqual(sleeps, 60_000 / 250, "60 s deadline at 250 ms per poll")
+    }
+
+    func testRespondDecisionJSONAnswersWithTheFrozenShape() throws {
+        try writeRespondSecret()
+        let payload = permissionPayload()
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        let digest = RespondDigest.of(raw)
+        // The verdict is already there: the first poll claims it.
+        try writeVerdictFile(id: "toolu_x", digest: digest, host: "agentbox", allow: true)
+        var sleeps = 0
+        let decision = PulseHookReceiver.respondDecisionJSON(
+            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
+            idleSeconds: 10_000,
+            environment: ["PULSE_HOST": "agentbox"],
+            clockMs: { self.now }, sleepMs: { _ in sleeps += 1 }
+        )
+        XCTAssertEqual(
+            decision,
+            "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\","
+                + "\"decision\":{\"behavior\":\"allow\",\"message\":\"Answered via Pulse from agentbox\"}}}"
+        )
+        XCTAssertEqual(sleeps, 0)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: tempHome.appendingPathComponent("respond.d/requests/toolu_x.json").path
+            ),
+            "the request must be spooled for the sync tool before the hold"
+        )
+    }
+
+    func testRespondDecisionJSONTimesOutSilently() throws {
+        try writeRespondSecret()
+        let payload = permissionPayload()
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        var clock = now
+        let decision = PulseHookReceiver.respondDecisionJSON(
+            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
+            idleSeconds: 10_000, environment: [:],
+            clockMs: { clock },
+            sleepMs: { ms in clock += Int64(ms) }
+        )
+        XCTAssertNil(decision, "a timeout leaves the vendor's own prompt in charge")
+    }
+
+    /// The regression the presence gate exists to prevent: freezing an agent
+    /// in front of the person whose own prompt was about to appear anyway.
+    func testRespondHoldIsSkippedWhenSomeoneIsAtThisMac() throws {
+        try writeRespondSecret()
+        let payload = permissionPayload()
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        let decision = PulseHookReceiver.respondDecisionJSON(
+            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
+            idleSeconds: 0, environment: [:],
+            clockMs: { self.now },
+            sleepMs: { _ in XCTFail("a present user must never cost a sleep") }
+        )
+        XCTAssertNil(decision)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: tempHome.appendingPathComponent("respond.d/requests/toolu_x.json").path
+            ),
+            "a present user's request must not even be spooled"
+        )
+    }
+
+    func testRespondStaysSilentWithoutTheOptInKey() throws {
+        let payload = permissionPayload()
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        XCTAssertNil(PulseHookReceiver.respondDecisionJSON(
+            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
+            idleSeconds: 10_000, environment: [:],
+            clockMs: { self.now },
+            sleepMs: { _ in XCTFail("no key must mean no hold") }
+        ))
+    }
+
+    func testHoldAndAwayEnvKnobsAreClamped() {
+        XCTAssertEqual(PulseHookReceiver.maxHoldSeconds(environment: [:]), 60)
+        XCTAssertEqual(
+            PulseHookReceiver.maxHoldSeconds(environment: ["PULSE_RESPOND_MAX_HOLD_SECONDS": "1"]), 5
+        )
+        XCTAssertEqual(
+            PulseHookReceiver.maxHoldSeconds(environment: ["PULSE_RESPOND_MAX_HOLD_SECONDS": "900"]), 300
+        )
+        XCTAssertEqual(
+            PulseHookReceiver.maxHoldSeconds(environment: ["PULSE_RESPOND_MAX_HOLD_SECONDS": "abc"]), 60
+        )
+        XCTAssertEqual(
+            PulseHookReceiver.awayAfterSeconds(environment: [:]),
+            RespondHold.defaultAwayAfterSeconds
+        )
+        XCTAssertEqual(
+            PulseHookReceiver.awayAfterSeconds(environment: ["PULSE_RESPOND_AWAY_SECONDS": "5"]), 30
+        )
+        XCTAssertEqual(
+            PulseHookReceiver.awayAfterSeconds(environment: ["PULSE_RESPOND_AWAY_SECONDS": "99999"]),
+            3600
+        )
     }
 }
 
@@ -225,9 +399,9 @@ final class HooksInstallerTests: XCTestCase {
         try HooksInstaller.ensureLauncher()
         _ = try HooksInstaller.install()
 
-        let previous = HooksInstaller.claudeHookTimeoutSeconds
-        defer { HooksInstaller.claudeHookTimeoutSeconds = previous }
-        HooksInstaller.claudeHookTimeoutSeconds = 45
+        let previous = HooksInstaller.permissionRequestTimeoutSeconds
+        defer { HooksInstaller.permissionRequestTimeoutSeconds = previous }
+        HooksInstaller.permissionRequestTimeoutSeconds = 45
         _ = try HooksInstaller.install()
 
         let settings = tempHome.appendingPathComponent(".claude/settings.json")

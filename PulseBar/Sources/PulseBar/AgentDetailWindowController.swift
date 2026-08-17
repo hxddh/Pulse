@@ -64,6 +64,9 @@ private struct AgentDetailView: View {
                         identity(row)
                         storyCard(row)
                         if row.waiting { waitingCard(row) }
+                        if let inbound = store.respondRequest(for: row) {
+                            respondCard(row, inbound)
+                        }
                         facts(row)
                         qualityCard(row)
                         rawEvidence(row)
@@ -152,6 +155,54 @@ private struct AgentDetailView: View {
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(GlanceKind.waiting.lampColor.opacity(0.10))
+        )
+    }
+
+    /// Respond (scene AR). The full request lives HERE, not in the tray row:
+    /// Allow may only appear next to the complete text it would approve —
+    /// approving a 200-character summary is the blind approve the invariant
+    /// forbids. Deny carries no such requirement.
+    private func respondCard(_ row: AgentRow, _ inbound: RespondSpool.InboundRequest) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(
+                "\(store.tr(.respondHeading)) · \(inbound.toolName.isEmpty ? row.agent.displayName : inbound.toolName)",
+                systemImage: "arrowshape.turn.up.left"
+            )
+            .font(.headline)
+            Text(store.tr(.respondFullRequest))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                Text(inbound.request.fullRequest)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 180)
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
+            if store.respondVerdictSent(row) {
+                Text(store.tr(.respondSentNote))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 12) {
+                    Button(store.tr(.respondDeny)) { store.respondDeny(row) }
+                    if inbound.request.canOfferAllow {
+                        Button(store.tr(.respondAllow)) { store.respondAllow(row) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
         )
     }
 

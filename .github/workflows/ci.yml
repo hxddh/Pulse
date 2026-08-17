@@ -27,6 +27,8 @@ jobs:
         run: python3 scripts/appearance_check.py
       - name: Python compiles
         run: python3 -m py_compile src/*.py scripts/*.py
+      - name: Respond hook contract (hold, HMAC, exactly-once)
+        run: python3 scripts/respond_hook_check.py
 
       # The legacy Python collector was deleted in 0.99. Nothing in the product
       # may fork an interpreter to observe a session again.

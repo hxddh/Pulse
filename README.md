@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`1.2.1`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v1.2.1) · macOS 14+
+**版本：`2.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v2.0.0) · macOS 14+
 
 ---
 
@@ -21,15 +21,21 @@ Pulse 把这件事变成余光可见：
 点开托盘看到的是**可解释的观测**：每行明确标出结构化会话、本地缓存或仅进程；
 有可靠 Focus 句柄时整行可聚焦（TTY 标签 / 宿主工作区 / Warp 或宿主 App），否则保持为信息，不制造无效动作。
 
-**明确不做**：额度 / 费用 / 重置倒计时、桌面宠物、统计大盘、托盘内批准或拒绝。
+**2.0 起可以回应**：远端机器（devbox）的权限请求同步到本机后，托盘行上可
+「拒绝」，Details 的完整请求旁可「同意」—— 判决 HMAC 逐 host 密钥签名、单次
+使用、绑定请求原文摘要，经你自己的同步工具送回；**没有密钥文件时这一切不存在**。
+详见 [`docs/respond-protocol.md`](docs/respond-protocol.md)。
+
+**明确不做**：额度 / 费用 / 重置倒计时、桌面宠物、统计大盘、规则引擎 /
+always-allow / 自动批准，以及对着截断摘要的盲批。
 详见 [`EXPERIENCE.md`](EXPERIENCE.md)。
 
 ---
 
 ## 安装
 
-从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG
-（当前源码对应 [v0.97.0](https://github.com/hxddh/Pulse/releases/tag/v0.97.0)），拖进「应用程序」。
+从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG，
+拖进「应用程序」。
 
 > **没有 Apple Developer ID 时**：GitHub **Latest** 会跟到当前 semver（避免停在旧包），
 > 但 DMG 仍是 ad-hoc / 未公证，About 标 `preview`，**不是** Gatekeeper-ready。首次打开

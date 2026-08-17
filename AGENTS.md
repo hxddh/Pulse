@@ -11,7 +11,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
 | [`docs/review-1.2.md`](docs/review-1.2.md) | You want the defect list at the 1.2.0 baseline, or the next-major evaluation |
-| [`docs/plan-respond.md`](docs/plan-respond.md) | The next candidate plan (Respond) — first installment of P0-0 evidence is in the plan; what remains is a short interactive real-machine confirmation. Version numbers are assigned at release, not reserved. |
+| [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
+| [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
 | [`docs/plan-1.2.md`](docs/plan-1.2.md) | Historical plan (Substance) |
 | [`docs/plan-1.1.md`](docs/plan-1.1.md) | Historical plan (Full Transcript) |
 | [`docs/plan-1.0.md`](docs/plan-1.0.md) | Historical plan (Remote Fleet) |
@@ -61,8 +62,14 @@ compiles and ships.
 - **No fake Waiting.** Waiting comes from hooks or harvest `skill=pending`,
   never from inference. An agent with no Waiting path shows Running and says so.
 - **No quota, cost, or reset HUD.** That is a different product.
-- **No approve/deny in the tray.** Pulse tells you to go look; it does not act
-  for you.
+- **No judgment transfer, and no blind approve.** Respond (scene AR) delivers
+  the user's own decision to a remote permission request: per-host shared-key
+  opt-in, single-use HMAC verdicts bound to request id + content digest +
+  agent + host, and **Allow exists only where the full request is shown**
+  (`canOfferAllow`). Everything else stays forbidden: rules engines,
+  always-allow, auto-approve, approving from a truncated summary, and any
+  local hold that would freeze an agent in front of the person using it.
+  Every failure falls open to the vendor's own prompt.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
   isolation. One broken collector cannot blind the other 32.
@@ -157,7 +164,7 @@ to users.
 
 ## Current state
 
-1.2.0 is the current source version.
+2.0.0 is the current source version.
 
 **1.0 marks the product, not the signature.** It was previously reserved for
 "notarized", which is externally blocked without an Apple Developer ID — a
@@ -165,12 +172,15 @@ number that could never be reached said nothing about the product. Channel
 honesty lives where it belongs, in `PulseDistributionChannel`: without an Apple
 Developer ID, GitHub **Latest** tracks the current semver while the binary stays
 `preview` / ad-hoc — **never stamp `stable` or claim Gatekeeper-ready.** See
-`CHANGELOG.md`. Substance (1.2.0) shipped; its plan is historical. The next
-candidate plan is [`docs/plan-respond.md`](docs/plan-respond.md), still
-unnumbered: its foundations shipped as 1.0.1, and the first installment of
-P0-0 evidence (vendor-binary code paths from Claude Code 2.1.233, provenance-
-labelled) landed in the plan on 2026-08-17 — the worst-case branch (deny-only)
-is excluded, and what remains of P0-0 is a short interactive confirmation on a
-real machine, listed in the plan. Reserving a number for blocked work is what
+`CHANGELOG.md`. **2.0 changed the verb**: Respond delivers the user's decision
+to a remote permission request ([`docs/plan-2.0.md`](docs/plan-2.0.md),
+[`docs/respond-protocol.md`](docs/respond-protocol.md)). It ships inert —
+per-host key file is the opt-in — and one item of the P0-0 checklist remains
+open on a real machine: interactive confirmation that the emitted decision
+shape is honoured (wrong shape = verdict silently ignored, fail-open; never a
+wrong approval). A defect list at the 1.2.0 baseline lives in
+[`docs/review-1.2.md`](docs/review-1.2.md) — several mediums there are still
+open (rowKey stability U-6, remote mtime freshness F-2, update signing F-4,
+and the S1/S2 structural splits). Reserving a number for blocked work is what
 forced two renames, so Respond still takes its number at release. A full-source
 review at this baseline is [`docs/review-1.2.md`](docs/review-1.2.md).

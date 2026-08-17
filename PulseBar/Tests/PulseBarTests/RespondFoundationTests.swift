@@ -13,12 +13,13 @@ final class RespondFoundationTests: XCTestCase {
 
     private func request(
         id: String = "req-1",
+        agent: AgentID = .claude,
         full: String = "Bash: ls -la /Users/me/code",
         truncated: Bool = false,
         host: String = ""
     ) -> PermissionRequest {
         PermissionRequest(
-            id: id, agent: .claude, host: host, session: "s1",
+            id: id, agent: agent, host: host, session: "s1",
             fullRequest: full, truncated: truncated, receivedAtMs: now
         )
     }
@@ -89,6 +90,36 @@ final class RespondFoundationTests: XCTestCase {
         var store = RespondDecisionStore()
         _ = store.decide(request(id: "req-1"), allow: true, nowMs: now)
         XCTAssertNil(store.take(for: request(id: "req-2"), nowMs: now))
+    }
+
+    /// Same id, same content, different machine: a verdict decided for devbox
+    /// must never be replayable onto another host that happened to raise a
+    /// request with the same vendor id. Id uniqueness across machines is a
+    /// vendor accident, not a guarantee Pulse may lean on.
+    func testAVerdictDoesNotCarryOverToTheSameRequestOnAnotherHost() throws {
+        var store = RespondDecisionStore()
+        let verdict = try XCTUnwrap(
+            store.decide(request(host: "devbox"), allow: true, nowMs: now)
+        )
+        XCTAssertEqual(verdict.host, "devbox")
+        XCTAssertNil(
+            store.take(for: request(host: "buildbox"), nowMs: now),
+            "a verdict is bound to the machine it was decided for"
+        )
+    }
+
+    /// Same id, same content, different agent: the verdict names who it
+    /// answers, and a different agent presenting the same id is a new ask.
+    func testAVerdictDoesNotCarryOverToAnotherAgentWithTheSameId() throws {
+        var store = RespondDecisionStore()
+        let verdict = try XCTUnwrap(
+            store.decide(request(agent: .claude), allow: true, nowMs: now)
+        )
+        XCTAssertEqual(verdict.agent, AgentID.claude.rawValue)
+        XCTAssertNil(
+            store.take(for: request(agent: .codex), nowMs: now),
+            "a verdict is bound to the agent it was decided for"
+        )
     }
 
     func testAnUncollectedVerdictExpires() {

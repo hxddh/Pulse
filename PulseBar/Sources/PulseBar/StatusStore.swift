@@ -81,6 +81,12 @@ final class StatusStore: ObservableObject {
     @Published private(set) var lookContinuityNotice = ""
     /// Ordered Look Closure events (new wait → ended wait → moved).
     @Published private(set) var lookContinuityItems: [LookDeltaItem] = []
+    /// Respond (scene AR): inbound full permission requests matched to rows,
+    /// and the rows whose verdict this session already wrote. State only —
+    /// matching and actions live in StatusStore+Respond.swift, which is also
+    /// the only writer (internal set because extensions live in another file).
+    @Published var respondInboundByRowKey: [String: RespondSpool.InboundRequest] = [:]
+    @Published var respondVerdictSentRowKeys: Set<String> = []
     /// Row keys marked “moved while away” until the notice is acknowledged.
     @Published private(set) var lookMovedRowKeys: Set<String> = []
     /// When the tray was last dismissed, for the missed-wait count.
@@ -2241,6 +2247,12 @@ final class StatusStore: ObservableObject {
             }
 
             let attention = AttentionReader.load()
+            // Respond (scene AR): read the inbound full-request spool off the
+            // main thread, alongside the other file sources. Cleanup here too
+            // — both are bounded (≤16 hosts × 32 files).
+            let scanNowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            RespondSpool.cleanup(nowMs: scanNowMs)
+            let respondInbound = RespondSpool.readInboundRequests(nowMs: scanNowMs)
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DebugLog.write(
                 "scan done #\(ticket) \(ms)ms harvest=\(why) scoped=\(scopedHarvest) procs=\(procs.count) " +
@@ -2275,6 +2287,7 @@ final class StatusStore: ObservableObject {
                     clearRefreshing: showSpinner,
                     reason: reason
                 )
+                self.refreshRespondInbound(respondInbound)
             }
         }
     }

@@ -135,6 +135,13 @@ enum L10n {
         case .settingsTitle: return "Pulse Settings"
         case .recent: return "Recent"
         case .dismissWait: return "Dismiss"
+        case .respondHeading: return "Respond"
+        case .respondDeny: return "Deny"
+        case .respondReview: return "Review & respond"
+        case .respondAllow: return "Allow"
+        case .respondFullRequest: return "Full request"
+        case .respondSentNote: return "Verdict written — your sync tool delivers it"
+        case .respondExpired: return "Request expired — the agent fell back to its own prompt"
         case .hooksNudge: return "Install hooks so Claude/Codex can signal Waiting"
         case .waitingSignalNudge:
             return "Live agent has no Waiting path — open Waiting signals and raise via pulse-hook (Attention Protocol)"
@@ -590,6 +597,13 @@ enum L10n {
         case .settingsTitle: return "Pulse 偏好设置"
         case .recent: return "最近"
         case .dismissWait: return "忽略等待"
+        case .respondHeading: return "回应"
+        case .respondDeny: return "拒绝"
+        case .respondReview: return "查看并回应"
+        case .respondAllow: return "同意"
+        case .respondFullRequest: return "完整请求"
+        case .respondSentNote: return "判决已写出，等你的同步工具送达"
+        case .respondExpired: return "请求已过期 —— Agent 已回落到它自己的提示"
         case .hooksNudge: return "安装 hooks 后，Claude/Codex 才能点亮「需要你」"
         case .waitingSignalNudge:
             return "有 Agent 在跑但无 Waiting 路径 — 打开「等待信号」，用 pulse-hook 按协议上报"
@@ -953,6 +967,7 @@ enum L10n {
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
         case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait, details
+        case respondDeny, respondReview, respondAllow, respondFullRequest, respondSentNote, respondHeading, respondExpired
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone

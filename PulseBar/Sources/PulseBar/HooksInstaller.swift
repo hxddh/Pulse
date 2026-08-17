@@ -216,11 +216,16 @@ enum HooksInstaller {
         }
     }
 
-    /// One knob for every Claude hook entry Pulse writes. Respond will need to
-    /// raise this; a re-install migrates existing entries to the current value
-    /// (see `ensureClaudeEvent` — it rewrites Pulse-owned entries, it does not
+    /// One knob for every Claude hook entry Pulse writes. A re-install
+    /// migrates existing entries to the current values (see
+    /// `ensureClaudeEvent` — it rewrites Pulse-owned entries, it does not
     /// skip them).
     static var claudeHookTimeoutSeconds = 5
+    /// PermissionRequest is the one event where the hook may deliberately
+    /// wait (a remote Respond hold). The vendor default is 600s; 90 caps the
+    /// hold well below that while leaving room for a human answer. Every
+    /// other event keeps the tight budget — the receiver exits immediately.
+    static var permissionRequestTimeoutSeconds = 90
 
     private static func ensureClaudeEvent(
         _ hooks: inout [String: Any],
@@ -238,10 +243,13 @@ enum HooksInstaller {
             let blob = (try? String(data: JSONSerialization.data(withJSONObject: entry), encoding: .utf8)) ?? ""
             return containsPulseMarker(blob)
         }
+        let timeout = event == "PermissionRequest"
+            ? permissionRequestTimeoutSeconds
+            : claudeHookTimeoutSeconds
         let hookBody: [String: Any] = [
             "type": "command",
             "command": command,
-            "timeout": claudeHookTimeoutSeconds,
+            "timeout": timeout,
         ]
         var entry: [String: Any] = ["hooks": [hookBody]]
         if let matcher { entry["matcher"] = matcher }

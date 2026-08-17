@@ -1541,6 +1541,17 @@ private struct AgentRowButton: View {
                         .buttonStyle(.borderless)
                         .font(.system(size: 11, weight: .medium))
                     }
+                    // Respond (scene AR): only on a remote row with a matched
+                    // full request. Deny is safe from here; Allow lives only
+                    // in Details next to the complete request text.
+                    if store.respondRequest(for: row) != nil, !store.respondVerdictSent(row) {
+                        Button(store.tr(.respondDeny)) { store.respondDeny(row) }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 11, weight: .medium))
+                        Button(store.tr(.respondReview)) { store.openRespond(row) }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 11, weight: .medium))
+                    }
                     if row.canFocusTerminal {
                         Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
                             .buttonStyle(.borderless)
