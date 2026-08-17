@@ -1285,7 +1285,7 @@ final class StatusStore: ObservableObject {
             case "status-waiting":
                 fixtureRow.waiting = true
                 fixtureRow.waitKind = "Permission"
-                fixtureRow.waitMessage = "Run the signed packaging step"
+                fixtureRow.waitMessage = "Bash: ./scripts/release.sh 2.0.0 --commit"
                 fixtureRow.waitSignal = .hooks
                 fixtureRow.waitSinceMs = now - 8 * 60 * 1000
             case "status-stalled":
@@ -1439,7 +1439,7 @@ final class StatusStore: ObservableObject {
         var waiting = row("claude-preview", .claude, task: "Approve the release build")
         waiting.waiting = true
         waiting.waitKind = "Permission"
-        waiting.waitMessage = "Run the signed packaging step"
+        waiting.waitMessage = "Bash: ./scripts/release.sh 2.0.0 --commit"
         waiting.waitSignal = .hooks
         waiting.waitSinceMs = now - 8 * 60 * 1000
 

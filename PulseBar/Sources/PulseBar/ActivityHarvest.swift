@@ -556,6 +556,17 @@ enum AttentionReader {
             entry.receivedAtMs = arrival
             entry.clockSuspect = suspect
             entry.lostContact = expired
+            // A later event with nothing to say must not erase what an earlier
+            // one said. One approval makes Claude raise both `Notification`
+            // and `PermissionRequest`, only one of them carries text, and
+            // their order is not ours to control — last-write-wins alone
+            // turned "Bash: npm run build" back into a bare "Permission".
+            // Carrying the text forward can leave it attached to a newer kind
+            // for the same waiting session; that is strictly more information
+            // than the blank it replaces, and `done`/`stop` still clear it.
+            if entry.message.isEmpty, let previous = byKey[mapKey], !previous.message.isEmpty {
+                entry.message = previous.message
+            }
             byKey[mapKey] = entry
         }
         return Array(byKey.values)
