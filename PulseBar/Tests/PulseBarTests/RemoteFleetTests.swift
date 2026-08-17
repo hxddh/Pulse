@@ -284,4 +284,38 @@ final class RemoteFleetTests: XCTestCase {
         )
         XCTAssertTrue(store.rowSourceLabel(row)?.contains("devbox") == true, "name the machine")
     }
+
+    // MARK: - Inbox reads keep the newest bytes
+
+    func testAnOversizedInboxFileKeepsItsNewestEvents() throws {
+        // Regression: the inbox used to read the FIRST 256KB of an
+        // append-only TSV, so once a busy remote host's file grew past the
+        // budget, its fresh raises were exactly the bytes that got dropped.
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-inbox-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temp.appendingPathComponent("attention.d"),
+            withIntermediateDirectories: true
+        )
+        AttentionIO.pathOverride = temp.appendingPathComponent("attention.tsv")
+        defer {
+            AttentionIO.pathOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+        }
+
+        let oldest = line("claude", "permission", ms: now - 60 * minute,
+                          message: "stale ask", session: "old-1")
+        let newest = line("claude", "permission", ms: now - minute,
+                          message: "fresh ask", session: "new-1")
+        let padding = String(repeating: "# sync noise\n", count: (AttentionIO.maxInboxBytesPerFile / 13) + 200)
+        let file = temp.appendingPathComponent("attention.d/devbox.tsv")
+        try (oldest + "\n" + padding + newest + "\n")
+            .write(to: file, atomically: true, encoding: .utf8)
+
+        let sources = AttentionIO.readInbox()
+        let devbox = try XCTUnwrap(sources.first { $0.host == "devbox" })
+        XCTAssertTrue(devbox.text.contains("fresh ask"), "the newest event must survive truncation")
+        XCTAssertFalse(devbox.text.contains("stale ask"), "the oldest bytes are the ones to drop")
+        XCTAssertFalse(devbox.text.hasPrefix("ync noise"), "a partial first line must not survive the seek")
+    }
 }

@@ -2192,7 +2192,7 @@ final class StatusStore: ObservableObject {
         let scopedHarvest = agentFilter != nil
         let startCursor = harvestScanCursor
 
-        scanQueue.async {
+        scanQueue.async { [weak self] in
             let t0 = Date()
             let procs = ProcessProbe.scan(
                 allowAppData: allowAllAppData,
@@ -2248,18 +2248,24 @@ final class StatusStore: ObservableObject {
             )
             let completedHarvestMs = harvestMs
             let completedCursor = nextCursor
+            // Land results on the store that started the flight, not the
+            // AppServices singleton: a hardwired singleton sent every other
+            // instance's results to the wrong store and left its
+            // `scanInFlight` stuck forever — which is also why the scan
+            // pipeline could never be exercised from a test.
             DispatchQueue.main.async { [completedHarvestMs, completedCursor] in
-                AppServices.store.harvestScanCursor = completedCursor
+                guard let self else { return }
+                self.harvestScanCursor = completedCursor
                 switch outcome {
                 case .fresh(_, let health, _, _), .failed(let health, _, _):
-                    AppServices.store.harvestSupervisor.record(
+                    self.harvestSupervisor.record(
                         health,
                         nowMs: Int64(Date().timeIntervalSince1970 * 1000)
                     )
                 case .skipped:
                     break
                 }
-                AppServices.store.applyScan(
+                self.applyScan(
                     procs: procs,
                     harvest: outcome,
                     processSignature: signature,

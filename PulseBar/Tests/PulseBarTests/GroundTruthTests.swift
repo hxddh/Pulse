@@ -25,6 +25,40 @@ final class GroundTruthTests: XCTestCase {
         try text.write(to: url, atomically: true, encoding: .utf8)
     }
 
+    // MARK: - A starved budget is not an empty source
+
+    /// Regression: when the global byte budget ran low (but not to zero),
+    /// `reserve` refused the file read silently, the adapter classified as
+    /// `no_sessions`, and mergePartialRows treated that as a trusted empty —
+    /// clearing the previous good rows. A refused read must classify as
+    /// `failed` so the last snapshot survives.
+    func testABudgetDenialNeverReportsNoSessions() throws {
+        let home = try makeHome("budget")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let lines = [
+            #"{"sessionId":"gt-b","title":"Real session","cwd":"/tmp/gt-budget"}"#,
+            #"{"sessionId":"gt-b","role":"user","content":"Do the thing"}"#,
+        ].joined(separator: "\n") + "\n"
+        try write(lines, to: home, ".openhands/session.jsonl")
+
+        // Sanity: a normal budget observes the session.
+        let healthy = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        XCTAssertEqual(healthy.health.first { $0.id == .openhands }?.state, .observed)
+
+        // Low-but-not-empty: the budget is alive, the file just does not fit.
+        let starved = NativeActivityHarvest.scan(
+            home: home,
+            agentFilter: [.openhands],
+            totalBudgetBytes: 8
+        )
+        let health = try XCTUnwrap(starved.health.first { $0.id == .openhands })
+        XCTAssertNotEqual(
+            health.state, .noSessions,
+            "a refused read says something about resources, not about sessions"
+        )
+        XCTAssertEqual(health.state, .failed, "failed keeps the previous rows through the partial merge")
+    }
+
     // MARK: - Hero selection is ordinal, not lexical
 
     /// The regression that cost four releases: a long vendor headline beat a

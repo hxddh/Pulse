@@ -370,4 +370,34 @@ final class AttentionReaderTests: XCTestCase {
         let text = "# header\nclaude\tpermission\n\n"
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
     }
+
+    func testNormalizeTimestampParsesVendorISO8601() {
+        // Regression: the fractional-second form is what Claude and Pi
+        // actually write; it used to parse to 0, so every record fell back to
+        // file mtime and per-record ordering inside one file collapsed.
+        XCTAssertEqual(
+            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01.000Z"),
+            1_733_234_401_000
+        )
+        XCTAssertEqual(
+            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01Z"),
+            1_733_234_401_000
+        )
+        XCTAssertEqual(
+            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01.250Z"),
+            1_733_234_401_250
+        )
+        // T-separated without zone, and the legacy space-separated forms.
+        XCTAssertEqual(
+            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01.000"),
+            1_733_234_401_000
+        )
+        XCTAssertEqual(
+            NativeActivityHarvest.normalizeTimestamp("2024-12-03 14:00:01"),
+            1_733_234_401_000
+        )
+        // Numbers keep their seconds/milliseconds heuristic.
+        XCTAssertEqual(NativeActivityHarvest.normalizeTimestamp(1_733_234_401), 1_733_234_401_000)
+        XCTAssertEqual(NativeActivityHarvest.normalizeTimestamp("garbage"), 0)
+    }
 }

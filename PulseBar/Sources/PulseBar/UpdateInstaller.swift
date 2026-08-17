@@ -179,12 +179,31 @@ struct UpdateInstaller {
     private static func mountDMG(_ dmg: URL) throws -> URL {
         let result = run("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", dmg.path])
         guard result.status == 0 else { throw InstallError.replacementFailed("hdiutil attach") }
-        let paths = result.output.split(whereSeparator: \.isNewline).compactMap { line -> String? in
-            let value = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.hasPrefix("/Volumes/") ? value : nil
+        guard let path = mountPoint(fromAttachOutput: result.output) else {
+            throw InstallError.replacementFailed("mount point")
         }
-        guard let path = paths.last else { throw InstallError.replacementFailed("mount point") }
         return URL(fileURLWithPath: path)
+    }
+
+    /// `hdiutil attach` prints `/dev/diskNsM<TAB>hint<TAB>/Volumes/Name` — the
+    /// mount point is a tab-separated column, never the start of the line.
+    /// The old whole-line `hasPrefix("/Volumes/")` matched nothing, ever, so
+    /// every in-app download ended at "mount point". Volume names keep their
+    /// spaces ("Pulse 1.2.0"), so split on tabs, then fall back to the last
+    /// `/Volumes/` substring for any hdiutil that pads with spaces instead.
+    static func mountPoint(fromAttachOutput output: String) -> String? {
+        var candidates: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let columns = line.split(separator: "\t")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            if let column = columns.last(where: { $0.hasPrefix("/Volumes/") }) {
+                candidates.append(column)
+            } else if let range = line.range(of: "/Volumes/") {
+                let tail = line[range.lowerBound...].trimmingCharacters(in: .whitespaces)
+                if !tail.isEmpty { candidates.append(tail) }
+            }
+        }
+        return candidates.last
     }
 
     private static func fmEnumerateApps(at root: URL) throws -> [URL] {
