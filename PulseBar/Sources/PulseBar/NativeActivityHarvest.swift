@@ -378,6 +378,14 @@ enum NativeActivityHarvest {
         // scan spends its budget on them first. A complete pass rewinds to the
         // start, keeping the flagship agents at the head in the common case.
         let nextCursor = firstUnreachedIndex.map { (offset + $0) % max(1, filtered.count) } ?? 0
+        // One write per scan, after every adapter has folded what it read. A
+        // fixture home folds but does not persist: a test must not leave its
+        // temporary paths in the user's digest file.
+        let realHome = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        HarvestDigests.flush(
+            persist: SessionDigestStore.pathOverride != nil
+                || home.standardizedFileURL == realHome
+        )
         return Result(
             rows: rows,
             health: health,
@@ -981,9 +989,21 @@ enum NativeActivityHarvest {
         // count, and EXPERIENCE forbids estimating one ("数量不估算"). A
         // truncated read reports unknown rather than a silent undercount that
         // the tray then renders as an exact "N records".
-        let records = (ext == "jsonl" || ext == "ndjson") && !window.truncated
+        var records = (ext == "jsonl" || ext == "ndjson") && !window.truncated
             ? text.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
             : 0
+        // 1.1: the window above is the two ends of the file. The digest is the
+        // rest — folded once, as it goes past, and kept between scans. When it
+        // has reached the end of the file its count is the file's count, so a
+        // long transcript stops reporting unknown for the rest of its life.
+        // Until then nothing is claimed: an in-progress catch-up leaves the
+        // window's answer exactly as it was.
+        if ext == "jsonl" || ext == "ndjson" {
+            let digest = HarvestDigests.advance(url: item, size: size)
+            if let digest, digest.caughtUp, digest.records > 0 {
+                records = digest.records
+            }
+        }
         for index in parsed.indices {
             parsed[index].sourcePath = item.path
             if parsed[index].activityMs <= 0 {

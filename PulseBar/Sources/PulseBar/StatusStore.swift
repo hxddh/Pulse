@@ -492,6 +492,7 @@ final class StatusStore: ObservableObject {
             "launchAtLogin: \(launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
             "harvest: native (no external runtime)",
             "remoteFleet: \(remoteFleetSummary)",
+            "sessionDigests: \(HarvestDigests.summary)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
             "factCoverage: present=\(factPresent) possible=\(factPossible) limitedAgents=\(limitedAgents)",

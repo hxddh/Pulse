@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/plan-1.1.md`](docs/plan-1.1.md) | The active plan (Respond) — **blocked on P0-0 real-machine evidence** |
+| [`docs/plan-1.1.md`](docs/plan-1.1.md) | The active plan (Full Transcript) |
+| [`docs/plan-1.2.md`](docs/plan-1.2.md) | Next plan (Respond) — **blocked on P0-0 real-machine evidence** |
 | [`docs/plan-1.0.md`](docs/plan-1.0.md) | Historical plan (Remote Fleet) |
 | [`docs/plan-0.99.2.md`](docs/plan-0.99.2.md) | Historical plan (Live Wire) |
 | [`docs/plan-0.99.md`](docs/plan-0.99.md) | Historical plan (Quiet Data) |
@@ -154,7 +155,7 @@ to users.
 
 ## Current state
 
-1.0.1 is the current source version.
+1.1.0 is the current source version.
 
 **1.0 marks the product, not the signature.** It was previously reserved for
 "notarized", which is externally blocked without an Apple Developer ID — a
@@ -163,6 +164,6 @@ honesty lives where it belongs, in `PulseDistributionChannel`: without an Apple
 Developer ID, GitHub **Latest** tracks the current semver while the binary stays
 `preview` / ad-hoc — **never stamp `stable` or claim Gatekeeper-ready.** See
 `CHANGELOG.md`. The active plan is [`docs/plan-1.1.md`](docs/plan-1.1.md)
-(Respond). Its foundations shipped as 1.0.1 — a patch, not 1.1, because
-responding itself is still blocked on P0-0 real-machine evidence and the
-version number must not claim otherwise.
+(Full Transcript). Respond moved to [`docs/plan-1.2.md`](docs/plan-1.2.md):
+its foundations shipped as 1.0.1, but responding itself is still blocked on
+P0-0 real-machine evidence and no version number may claim otherwise.
