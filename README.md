@@ -34,8 +34,8 @@ always-allow / 自动批准，以及对着截断摘要的盲批。
 
 ## 安装
 
-从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG
-（当前源码对应 [v0.97.0](https://github.com/hxddh/Pulse/releases/tag/v0.97.0)），拖进「应用程序」。
+从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG，
+拖进「应用程序」。
 
 > **没有 Apple Developer ID 时**：GitHub **Latest** 会跟到当前 semver（避免停在旧包），
 > 但 DMG 仍是 ad-hoc / 未公证，About 标 `preview`，**不是** Gatekeeper-ready。首次打开
