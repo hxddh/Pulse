@@ -405,7 +405,8 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 1. **先状态，后细节** —— Waiting > Running > meta
 2. **有数据才显示** —— 没有就不占位
 3. **一行一个意思** —— 不把原因、任务、项目、tokens 揉进同一行。
-   静态行 ≤ 4 个事实；放不下的走展开，不往行里塞
+   同一行内的事实按信息量取（动态优先、无值不显示、条数随内容浮动但不增行高，
+   见 §4）；放不下的走展开，不往行里塞
 4. **同一事实在面板里只出现一次**（0.25 起的硬规则）。优先级：
    **行内 > 分组表头 > 头部**。
    - 头部只说行内说不清的事：被折叠了多少、跨几个项目。**只有一个项目时保持沉默**
@@ -514,7 +515,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | W | Go-Look Closure（打断闭环） | 点 Waiting 通知 /「去看看」→ 托盘打开且**该行**选中并滚入视口；有 Focus 句柄时仍可激活宿主，但不因 Focus 成功丢行身份；多 Waiting 摘要用精确 `rowKey`，不 smear |
 | X | Fleet Coverage（ZCode） | `ZCode.app` / `~/.zcode` 可探测；证据为 best-effort cache；无原生 Waiting；Settings Attention 样本与 `raise-zcode.sh` 可亮红；不扩 Claude/Codex hooks |
 | Y | Contract Honesty（契约诚实） | Support / 样本 / L10n 的 Waiting-none 名单派生自 `AgentID.waitingNoneAgents`；Waiting-none 深度仍露出 cache thin/partial；Support → Waiting signals 点名该 Agent；规格写 32 Agent；未公证不标 Gatekeeper-ready |
-| Z | Tray Legibility（托盘可读） | 默认行同时可见次行（路径·最近动作含执行命令·最近活动·始于）+ 运动信号 + **观测行**（model·tokens·最强进度，最多 4 事实）；无事实整行消失；核心运动事实不藏 Details；不发明进度占位 |
+| Z | Tray Legibility（托盘可读） | 默认行同时可见次行（路径·最近动作含执行命令·最近活动·始于）+ 运动信号 + **观测行**（model·tokens·最强进度；**2.1 起条数不再封顶在 4，改为按信息量取**，见 §4 与场景 AS）；无事实整行消失；核心运动事实不藏 Details；不发明进度占位 |
 | AA | Tray Substance（托盘实质） | Claude 笔录带 `message.model`/`usage` 时观测行有 model+tokens；Codex `last_token_usage` 可见；Cursor `unifiedMode` 可见且非假 local；tool-hero+分组去路径时次行仍有最近动作或路径；LS/Task 等工具可作最近动作 |
 | AB | Tray Fleet Substance（舰队托盘实质） | Gemini `functionCall`+`usageMetadata` / Goose `depending`→Working（非 Waiting）/ Cursor `modelDetails` / Pi `agent_usage` model+tokens 进默认行；有 model 的 cache 行观测非空且仍 Limited；quiet live 无 phase 时 Now 空、观测可有 model/tokens |
 | AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到 Waiting signals；一屏完成「确保 pulse-hook（不装 Claude/Codex）→ 打开文件夹 → 写样本 → 托盘红灯可清除」；可复制 raise 命令；Application Support 有 bridge kit；不伪造原生 Waiting、不扩 hooks 安装器 |
@@ -533,7 +534,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AP | Full Transcript（全见） | 超过窗口的会话记录数不再报未知：摘要读完整份文件后给精确值，没读完则保持原行为；追加中的半行不计数；文件变短 / 标识变 / 头部指纹变（含同长度就地重写）一律从头重来；分片折叠结果 == 一次性折叠结果；摘要只存计数与厂商工具名，不存正文、工具入参或笔录里的路径，有界并按期清理；安全支持报告有 `sessionDigests:`；窗口读取本版仍在，不得声称已省掉
 | AQ | Substance（行的实质） | 连续调用同一工具 ≥3 次时叙事行说 `Edit · 连续 5 次`，因为「在动但没在推进」是灯表达不了、窗口也看不到的状态；Waiting 与远端行的叙事优先于它；**不改灯色**（状态编码仍是 4 种，打转不是 stalled）；Details 给整场会话证据：用过的工具按次数排序最多 4 项（长尾直接丢弃，不做「其它 N 个」）、错误总量、打转说明；摘要事实只搬运不重算，不得从窗口文本复核
 | AR | Respond（回应） | 远端等待行在存在匹配的完整请求（`respond.d` 请求文件，digest 复核通过）时多出两个动作：**拒绝**（永远可用 —— 拒绝没读全的东西是安全的）与**查看并回应**（打开 Details 的完整请求区，「同意」只出现在那里且仅当 `canOfferAllow` —— 对着 200 字截断摘要没有同意按钮）；判决单次使用、90 秒过期、HMAC 逐 host 密钥签名、绑定 request id + 内容摘要 + agent + host，密钥文件不存在则这一切不出现；本机行**永不** hold、永无这两个按钮（在场时厂商提示更好，缺席时无人可答）；hook 端任何失败静默回落厂商提示；判决送达与否 Pulse 不谎报 —— 界面只说「判决已写出，等你的同步工具送达」
-| AS | Evidence（证据） | 摘要算出的事实不再停在支持报告：Details 有**会话证据**卡 —— 最近动作时间线（`Read → Edit → Bash`）、**整场会话** token（与 facts 里「最近一条消息」的 token 明确区分，不让两个数字打架）、活跃度（笔录增长速率，未知就说未知）、会话时长、读取完整度；**定性事实在追平前也显示，但必须标注「仍在追平 · 已读 N%」** —— 披露过的部分值不是估算，藏起来才是浪费，而记录数仍然只在读完后才给（数量不估算）；**行的事实按信息量取而不按条数**（本版改写了「最多 4 个」，见 §4 —— 那个数字是从一次事故里反弹出来的，不是推导出来的），动态事实优先、无值不显示、不增行高 |
+| AS | Evidence（证据） | 摘要算出的事实不再停在支持报告：Details 有**会话证据**卡 —— 最近动作时间线（`Read → Edit → Bash`）、**整场会话** token（与 facts 里「最近一条消息」的 token 明确区分，不让两个数字打架）、活跃度（笔录增长速率，未知就说未知）、会话时长、读取完整度；**定性事实在追平前也显示，但必须标注「仍在追平 · 已读 N%」** —— 披露过的部分值不是估算，藏起来才是浪费，而记录数仍然只在读完后才给（数量不估算）；**行的事实按信息量取而不按条数**（本版改写了「最多 4 个」，见 §4 —— 那个数字是从一次事故里反弹出来的，不是推导出来的）：分层排序为 故障 → 推进 → 动静 → 触及 → 常量（model/mode/skill 定位但从不推进，最后竞争）→ 总量；**笔录增长速率排在 token 前**（它是行上唯一能区分「在干活」与「杵着」的），且仅对 live 且非停滞非 recent 的行发（完成会话上的速率是历史冒充运动）；**整场 token 不上行** —— 同一数量换个跨度平铺是歧义不是信息，它留在 Details 由标签分开说；「已读 N%」只在同一行确实有计数需要被限定时才出现（没有被限定对象的免责声明不算信息）；条数在拥挤（≥5 行）时收敛，这是**行高护栏不是配额** |
 
 ---
 

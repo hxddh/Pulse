@@ -68,6 +68,7 @@ private struct AgentDetailView: View {
                             respondCard(row, inbound)
                         }
                         facts(row)
+                        evidenceCard(row)
                         qualityCard(row)
                         rawEvidence(row)
                         actions(row)
@@ -334,6 +335,86 @@ private struct AgentDetailView: View {
                 fact(store.tr(.session), value: row.sessionID.isEmpty ? "—" : short(row.sessionID))
             }
         }
+    }
+
+    /// 2.1 Evidence — everything the session digest knows and the tray row has
+    /// no slot for.
+    ///
+    /// The four-fact cap on a tray row is not a budget to be negotiated, it is
+    /// the reason the row stays scannable. `EXPERIENCE.md` puts *complete
+    /// evidence* here instead, and this is that: the walk it took, what the
+    /// whole session cost, whether it is still moving, how long it has been
+    /// going, and — the honest half — how much of the transcript has actually
+    /// been read.
+    ///
+    /// `@MainActor` is explicit because only `body` gets it implicitly; a
+    /// helper reaching into `StatusStore` without it does not compile.
+    @MainActor
+    private func evidenceCard(_ row: AgentRow) -> some View {
+        let timeline = store.evidenceTimeline(row)
+        let tokens = store.evidenceSessionTokens(row)
+        let length = store.evidenceSessionLength(row)
+        let read = store.evidenceReadState(row)
+        return Group {
+            if store.hasSessionEvidence(row) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(store.tr(.evidenceHeading))
+                        .font(.headline)
+                    Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                        if !timeline.isEmpty {
+                            fact(store.tr(.evidenceTimeline), value: timeline)
+                        }
+                        if !tokens.isEmpty {
+                            fact(store.tr(.evidenceSessionTokens), value: tokens)
+                        }
+                        // Always present once the card is up: "—" is the
+                        // answer when nothing measured the rate, and the note
+                        // below says so out loud.
+                        fact(store.tr(.evidenceRate), value: store.evidenceRate(row))
+                        if !length.isEmpty {
+                            fact(store.tr(.evidenceSessionLength), value: length)
+                        }
+                        if !read.isEmpty {
+                            fact(store.tr(.evidenceRead), value: read)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        if !timeline.isEmpty {
+                            note(store.tr(.evidenceTimelineHint))
+                        }
+                        // Two token numbers on one page disagree unless each
+                        // says its scope. 1.1 named this fork and declined to
+                        // let either overwrite the other; showing both without
+                        // this sentence would have been the worse outcome.
+                        if !tokens.isEmpty {
+                            note(store.tr(.evidenceSessionTokensHint))
+                        }
+                        note(store.evidenceRateNote(row))
+                    }
+                    // Letting qualitative facts out before the read completes
+                    // is this version's choice; saying so is the price of it.
+                    if store.evidenceCountsArePartial(row) {
+                        Text(store.tr(.evidenceReadPartialHint))
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.primary.opacity(0.04))
+                )
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// One label/value pair.

@@ -423,6 +423,24 @@ enum L10n {
         case .sessionErrors: return "%d errors this session"
         case .toolsUsed: return "Tools"
         case .sessionErrorsLabel: return "Errors"
+        case .evidenceHeading: return "Session evidence"
+        case .evidenceTimeline: return "Recent actions"
+        case .evidenceTimelineHint: return "The path it took, oldest first."
+        case .evidenceSessionTokens: return "Tokens (whole session)"
+        case .evidenceSessionTokensHint:
+            return "Session totals. The tokens under Resources are the latest message only — both are true, and they are not the same number."
+        case .evidenceRate: return "Transcript growth"
+        case .evidenceRatePerMinute: return "%@/min"
+        case .evidenceRateHint: return "Moving or parked — the thing a counter cannot tell you."
+        case .evidenceRateUnknown: return "Growth rate unknown for this session."
+        case .evidenceSessionLength: return "Session length"
+        case .evidenceRead: return "Transcript read"
+        case .evidenceReadCaughtUp: return "Whole transcript read"
+        case .evidenceReadCatchingUp: return "Still catching up · %d%% read"
+        case .evidenceReadCompact: return "%d%% read"
+        case .evidenceReadPartialHint:
+            return "Counts on this page are partial until the read reaches 100%."
+        case .evidenceRateFact: return "transcript +%@/min"
         case .remoteLastHeard: return "Last heard %@ ago"
         case .remoteLostContact: return "Lost contact"
         case .remoteLostContactWhy: return "Nothing has arrived from this host since. Pulse cannot tell whether the wait is still open."
@@ -877,6 +895,24 @@ enum L10n {
         case .sessionErrors: return "本场会话 %d 次错误"
         case .toolsUsed: return "用过的工具"
         case .sessionErrorsLabel: return "错误"
+        case .evidenceHeading: return "会话证据"
+        case .evidenceTimeline: return "最近动作"
+        case .evidenceTimelineHint: return "它这一路的走法，早的在前。"
+        case .evidenceSessionTokens: return "Token（整场会话）"
+        case .evidenceSessionTokensHint:
+            return "整场会话的累计。上面「资源」里的 token 只是最近一条消息 —— 两个都对，但不是一回事。"
+        case .evidenceRate: return "笔录增长"
+        case .evidenceRatePerMinute: return "%@/分钟"
+        case .evidenceRateHint: return "在动还是挂着 —— 计数答不了的那个问题。"
+        case .evidenceRateUnknown: return "这场会话的增长速度未知。"
+        case .evidenceSessionLength: return "会话时长"
+        case .evidenceRead: return "读取完整度"
+        case .evidenceReadCaughtUp: return "已读完整份笔录"
+        case .evidenceReadCatchingUp: return "仍在追平 · 已读 %d%%"
+        case .evidenceReadCompact: return "已读 %d%%"
+        case .evidenceReadPartialHint:
+            return "读到 100% 之前，这页上的计数都还是阶段性的。"
+        case .evidenceRateFact: return "笔录 +%@/分钟"
         case .remoteLastHeard: return "最后听到 %@ 前"
         case .remoteLostContact: return "失联"
         case .remoteLostContactWhy: return "此后再没收到这台机器的消息。Pulse 无法判断这个等待是否还开着。"
@@ -1049,6 +1085,13 @@ enum L10n {
         case supportCopyShapeReport, supportShapeReading, supportShapeHint
         case remoteEvidence, remoteLastHeard, remoteLostContact, remoteLostContactWhy
         case loopingTool, loopingHint, sessionErrors, toolsUsed, sessionErrorsLabel
+        case evidenceHeading, evidenceTimeline, evidenceTimelineHint
+        case evidenceSessionTokens, evidenceSessionTokensHint
+        case evidenceRate, evidenceRatePerMinute, evidenceRateHint, evidenceRateUnknown
+        case evidenceRateFact
+        case evidenceSessionLength
+        case evidenceRead, evidenceReadCaughtUp, evidenceReadCatchingUp, evidenceReadPartialHint
+        case evidenceReadCompact
         case remoteClockSuspect, remoteNoFocus
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch

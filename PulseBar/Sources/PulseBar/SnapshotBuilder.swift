@@ -249,6 +249,19 @@ enum SnapshotBuilder {
             }
             if act.sessionErrors > 0 { row.sessionErrors = act.sessionErrors }
             if !act.toolSummary.isEmpty { row.toolSummary = act.toolSummary }
+            // 2.1 Evidence: same discipline, more facts. Copied verbatim —
+            // no truncation, no re-ordering, no re-derivation. The digest read
+            // the transcript; the builder did not, so it has nothing to add
+            // and everything to lose by second-guessing.
+            if act.sessionTokensIn > 0 { row.sessionTokensIn = act.sessionTokensIn }
+            if act.sessionTokensOut > 0 { row.sessionTokensOut = act.sessionTokensOut }
+            if !act.recentTools.isEmpty { row.recentTools = act.recentTools }
+            if act.digestProgressPercent > 0 { row.digestProgressPercent = act.digestProgressPercent }
+            // `false` is a real answer here — "still catching up" must be able
+            // to survive a merge, so this one is assigned unconditionally.
+            row.digestCaughtUp = act.digestCaughtUp
+            if act.bytesPerMinute > 0 { row.bytesPerMinute = act.bytesPerMinute }
+            if act.sessionStartedMs > 0 { row.sessionStartedMs = act.sessionStartedMs }
             row.observationSource = act.evidence
 
             // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.

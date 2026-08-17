@@ -350,6 +350,99 @@ final class StatusStore: ObservableObject {
         return "—"
     }
 
+    // MARK: - 2.1 Evidence · the rest of what the digest already knew
+    //
+    // EXPERIENCE puts *complete evidence* in Details, and caps a tray row at
+    // four facts. 1.1 computed a session-wide picture and 1.2 spent three of
+    // those slots' worth of it; the remainder belongs here, where a label and
+    // a sentence can go next to each number. Everything below formats a fact
+    // the digest already produced — none of it recomputes anything.
+
+    /// `Read → Edit → Bash → Edit` — what it has been doing all along.
+    func evidenceTimeline(_ row: AgentRow) -> String {
+        AgentRow.toolTimeline(row.recentTools)
+    }
+
+    /// Whole-session token totals, kept visibly apart from the latest-message
+    /// pair the facts grid shows under Resources. Two token numbers that
+    /// disagree are a bug report waiting to happen unless each says its scope.
+    func evidenceSessionTokens(_ row: AgentRow) -> String {
+        let input = AgentRow.compactToken(row.sessionTokensIn)
+        let output = AgentRow.compactToken(row.sessionTokensOut)
+        guard !input.isEmpty || !output.isEmpty else { return "" }
+        return String(
+            format: tr(.compactTokens),
+            input.isEmpty ? "0" : input,
+            output.isEmpty ? "0" : output
+        )
+    }
+
+    /// `12 KB/min`. Empty when unknown — never a fabricated zero, which would
+    /// read as "parked" rather than "not measured".
+    func evidenceRate(_ row: AgentRow) -> String {
+        let size = AgentRow.compactBytes(row.bytesPerMinute)
+        guard !size.isEmpty else { return "" }
+        return String(format: tr(.evidenceRatePerMinute), size)
+    }
+
+    /// The sentence under the rate: what it is for, or that it is missing.
+    func evidenceRateNote(_ row: AgentRow) -> String {
+        row.bytesPerMinute > 0 ? tr(.evidenceRateHint) : tr(.evidenceRateUnknown)
+    }
+
+    /// How long this session has really been going. Empty when unknown, so the
+    /// row disappears rather than showing an age nothing measured.
+    func evidenceSessionLength(
+        _ row: AgentRow,
+        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> String {
+        let seconds = row.sessionDurationSeconds(nowMs: nowMs)
+        guard seconds >= 60 else { return "" }
+        return durationLabel(seconds: seconds)
+    }
+
+    /// "Whole transcript read" vs "Still catching up · 78% read".
+    ///
+    /// This version lets qualitative digest facts reach the row before the
+    /// read is complete, so the surface owes the reader the other half of that
+    /// sentence: the counts beside it are not yet totals. Empty when there is
+    /// no digest at all — a cache-only row has no transcript to be behind on.
+    func evidenceReadState(_ row: AgentRow) -> String {
+        guard row.hasSessionDigest else { return "" }
+        if row.digestCaughtUp { return tr(.evidenceReadCaughtUp) }
+        return String(
+            format: tr(.evidenceReadCatchingUp),
+            max(0, min(100, row.digestProgressPercent))
+        )
+    }
+
+    /// True while the counts on the evidence card are still partial.
+    func evidenceCountsArePartial(_ row: AgentRow) -> Bool {
+        row.hasSessionDigest && !row.digestCaughtUp
+    }
+
+    /// `78% read` — the same caveat sized for a tray row.
+    ///
+    /// The Details wording carries its own `·`, which on a row would split into
+    /// what looks like two separate facts. A separator inside a fact is a fact
+    /// that lies about how many facts there are.
+    func evidenceReadCompact(_ row: AgentRow) -> String {
+        guard evidenceCountsArePartial(row) else { return "" }
+        return String(
+            format: tr(.evidenceReadCompact),
+            max(0, min(100, row.digestProgressPercent))
+        )
+    }
+
+    /// Anything worth drawing a card for.
+    func hasSessionEvidence(_ row: AgentRow) -> Bool {
+        !evidenceTimeline(row).isEmpty
+            || !evidenceSessionTokens(row).isEmpty
+            || row.bytesPerMinute > 0
+            || !evidenceSessionLength(row).isEmpty
+            || !evidenceReadState(row).isEmpty
+    }
+
     /// Claude/Codex live but hooks not wired — tray nudge only.
     var needsHooksNudge: Bool {
         guard hooksStatus == .missing || hooksStatus == .unknown else { return false }
@@ -3533,56 +3626,149 @@ final class StatusStore: ObservableObject {
         return false
     }
 
-    /// EXPERIENCE 观测行 — default tray surface, max 4 facts.
-    /// Example: model · in/out tokens · strongest progress · records.
-    /// Never invents chrome when empty; never Details-only (0.80).
+    /// How many facts the observation line may carry right now.
+    ///
+    /// **This is a line-height guard, not a ration.** The old rule was a flat
+    /// "at most four", and the tray view already clamps this text to one line
+    /// when the panel is crowded and two lines when it is not — so the bound
+    /// here exists only to keep the string inside that clamp. It does not
+    /// decide which facts deserve to exist; `rowObservationLine` does, by
+    /// asking what each one carries.
+    ///
+    /// Crowding uses the same threshold as folding (`TrayFold.crowdedFrom`),
+    /// because it is the same judgement: screen is scarce, converge.
+    private var observationFactBudget: Int {
+        snapshot.rows.count >= TrayFold.crowdedFrom ? 4 : 6
+    }
+
+    /// EXPERIENCE 观测行 — the default tray surface.
+    ///
+    /// **Facts are chosen by what they carry, not by a fixed count.**
+    ///
+    /// The previous rule was "at most four", and the four a row got were
+    /// whichever four the code reached first — which, because the code walked
+    /// the struct in declaration order, meant model and mode almost always
+    /// took the first two. Both are true for the entire life of a session and
+    /// neither ever moves. A row could be full and still fail to answer the
+    /// only question anyone opens the tray for: *is this thing getting
+    /// anywhere?* The four-fact number itself was a rebound from the opposite
+    /// accident — ten facts crammed into two lines — and a number that came
+    /// out of an accident is not a number to defend.
+    ///
+    /// So the ordering is by **motion**, not by struct layout:
+    ///
+    /// 1. **Faults** — an error changes what you do next. It outranks every
+    ///    measure of throughput, because throughput on a broken run is noise.
+    /// 2. **Advance** — progress and sub-agents in flight: the nearest thing
+    ///    the data has to "closer to done".
+    /// 3. **Motion** — transcript growth and the latest call's tokens: moving
+    ///    or parked, which no cumulative counter can answer.
+    /// 4. **Reach** — files touched, context consumed. Real, but they creep.
+    /// 5. **Standing facts** — model, mode, workflow skill. They orient; they
+    ///    never advance, so they compete last rather than first.
+    /// 6. **Volume, then caveats** — total records, and the "still reading"
+    ///    note, which earns space only when there are counts to qualify.
+    ///
+    /// A fact whose value is zero, unknown, or already spoken by a neighbouring
+    /// line never enters the list at all — `EXPERIENCE.md`: a position that
+    /// carries no information either gets real information or gets deleted.
+    ///
+    /// Two things stay forbidden and are enforced below rather than trusted:
+    /// the same quantity restated in a second scope (session tokens *and*
+    /// latest-call tokens side by side is ambiguity, not density — so the
+    /// cumulative total stays in Details, where a label disambiguates it, and
+    /// where it also stays clear of the no-cost-HUD invariant), and any flat
+    /// enumeration where every candidate is emitted regardless of what it
+    /// says.
     func rowObservationLine(_ row: AgentRow) -> String {
         guard !row.waiting, !row.isProcessOnly else { return "" }
-        var facts: [String] = []
-        let model = readableModel(row.model)
-        if !model.isEmpty { facts.append(String(format: tr(.modelFact), model)) }
-        let mode = readableMode(row.mode)
-        if !mode.isEmpty { facts.append(mode) }
+        let change = row.activityChange
+
+        // 1 · Faults.
+        var faults: [String] = []
+        // The whole-session count and the read-window count are the same fact
+        // measured over different spans. Emit the better-scoped one; never both.
+        if row.errors > 0 || row.sessionErrors > 0,
+           !isErrorChange(change), change == nil {
+            if row.sessionErrors > 0 {
+                faults.append(String(format: tr(.sessionErrors), row.sessionErrors))
+            } else {
+                faults.append(row.errors == 1
+                    ? tr(.errorFactOne)
+                    : String(format: tr(.errorsFact), row.errors))
+            }
+        }
+
+        // 2 · Advance.
+        var advance: [String] = []
+        if row.subTotal > 0 {
+            advance.append(row.subRunning > 0
+                ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
+                : String(format: tr(.subagentsObserved), row.subTotal))
+        }
+        if row.progressTotal > 0, !isProgressChange(change) {
+            advance.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
+        } else if row.progressDone > 0, !isProgressChange(change) {
+            advance.append(String(format: tr(.turnsFact), row.progressDone))
+        }
+
+        // 3 · Motion.
+        var motion: [String] = []
+        // Growth outranks token size: it is the only fact here that separates
+        // "working" from "sitting there". Live and not stalled only — a rate
+        // on a finished session is history dressed as motion.
+        if row.liveProcess, !row.isStalled, !row.isRecentOnly, row.bytesPerMinute > 0 {
+            let size = AgentRow.compactBytes(row.bytesPerMinute)
+            if !size.isEmpty {
+                motion.append(String(format: tr(.evidenceRateFact), size))
+            }
+        }
         let input = AgentRow.compactToken(row.tokensIn)
         let output = AgentRow.compactToken(row.tokensOut)
         if !input.isEmpty || !output.isEmpty {
-            facts.append(String(
+            motion.append(String(
                 format: tr(.compactTokens),
                 input.isEmpty ? "0" : input,
                 output.isEmpty ? "0" : output
             ))
         }
-        let change = row.activityChange
-        // Errors already ride the motion line as an urgent companion when a
-        // change is present — do not spend an observation slot on the same fact.
-        if row.errors > 0, !isErrorChange(change), change == nil {
-            facts.append(row.errors == 1
-                ? tr(.errorFactOne)
-                : String(format: tr(.errorsFact), row.errors))
-        } else if row.subTotal > 0 {
-            facts.append(row.subRunning > 0
-                ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
-                : String(format: tr(.subagentsObserved), row.subTotal))
-        } else if row.progressTotal > 0, !isProgressChange(change) {
-            facts.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
-        } else if row.progressDone > 0, !isProgressChange(change) {
-            facts.append(String(format: tr(.turnsFact), row.progressDone))
-        } else if row.files > 0, !isFilesChange(change) {
-            facts.append(String(format: tr(.filesFact), row.files))
-        } else if row.contextPercent > 0 {
-            facts.append(String(format: tr(.contextFact), row.contextPercent))
+
+        // 4 · Reach.
+        var reach: [String] = []
+        if row.files > 0, !isFilesChange(change) {
+            reach.append(String(format: tr(.filesFact), row.files))
         }
+        if row.contextPercent > 0 {
+            reach.append(String(format: tr(.contextFact), row.contextPercent))
+        }
+
+        // 5 · Standing facts.
+        var standing: [String] = []
+        let model = readableModel(row.model)
+        if !model.isEmpty { standing.append(String(format: tr(.modelFact), model)) }
+        let mode = readableMode(row.mode)
+        if !mode.isEmpty { standing.append(mode) }
         let skill = readableSkill(row.skill)
-        if facts.count < 4, !skill.isEmpty { facts.append(skill) }
-        // Records are last-resort filler when no stronger progress-class fact
-        // earned a slot (0.80 — never crowd model/tokens/context).
-        let hasProgressClass = row.errors > 0 || row.subTotal > 0
-            || row.progressTotal > 0 || row.progressDone > 0
-            || row.files > 0 || row.contextPercent > 0
-        if facts.count < 4, !hasProgressClass, row.records > 0 {
-            facts.append(String(row.records) + tr(.recordsSuffix))
+        if !skill.isEmpty { standing.append(skill) }
+
+        // 6 · Volume, then caveats.
+        var volume: [String] = []
+        // Records answer "how much has happened", never "is it advancing", so
+        // they stay last-resort filler behind anything of the progress class
+        // (0.80 — never crowd the facts that move).
+        let hasProgressClass = !faults.isEmpty || !advance.isEmpty || !reach.isEmpty
+        if !hasProgressClass, row.records > 0 {
+            volume.append(String(row.records) + tr(.recordsSuffix))
         }
-        return facts.prefix(4).joined(separator: " · ")
+        // The read-progress caveat is a qualifier, not a fact: it is only
+        // information when there is a count on this line for it to qualify.
+        if !faults.isEmpty || !advance.isEmpty || !volume.isEmpty {
+            let caveat = evidenceReadCompact(row)
+            if !caveat.isEmpty { volume.append(caveat) }
+        }
+
+        let facts = faults + advance + motion + reach + standing + volume
+        return facts.prefix(observationFactBudget).joined(separator: " · ")
     }
 
     /// The most recent tool a live row recorded — not necessarily one still

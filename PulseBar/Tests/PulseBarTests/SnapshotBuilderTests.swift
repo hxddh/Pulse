@@ -1197,4 +1197,83 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.snapshot.hiddenCount, 3)
     }
 
+    // MARK: - 2.1 Evidence · digest facts are carried, never re-derived
+
+    /// The rule 1.2 set down and this version inherits: the digest read the
+    /// whole transcript, the builder read nothing. It copies. Any re-ordering,
+    /// clamping or re-counting here would be the builder guessing at bytes it
+    /// never saw — and it would do so silently, which is worse.
+    func testEvidenceFieldsAreCarriedVerbatimOntoTheRow() throws {
+        var act = ActivityHarvest.Row(
+            id: .claude, task: "Fix the auth module", project: "", cwd: "/Users/me/code/Pulse",
+            skill: "", tool: "", harvestMs: now,
+            subRunning: 0, subTotal: 0, sessionID: "s1", evidence: .session
+        )
+        act.sessionTokensIn = 412_000
+        act.sessionTokensOut = 98_500
+        act.recentTools = ["Read", "Edit", "Bash", "Edit"]
+        act.digestProgressPercent = 78
+        act.digestCaughtUp = false
+        act.bytesPerMinute = 12_800
+        act.sessionStartedMs = now - 3_600_000
+
+        let r = build(harvest: [act])
+        let row = try XCTUnwrap(r.rows.first { $0.agent == .claude })
+        XCTAssertEqual(row.sessionTokensIn, 412_000)
+        XCTAssertEqual(row.sessionTokensOut, 98_500)
+        XCTAssertEqual(row.recentTools, ["Read", "Edit", "Bash", "Edit"])
+        XCTAssertEqual(row.digestProgressPercent, 78)
+        XCTAssertFalse(row.digestCaughtUp)
+        XCTAssertEqual(row.bytesPerMinute, 12_800)
+        XCTAssertEqual(row.sessionStartedMs, now - 3_600_000)
+    }
+
+    /// The session totals must not land on `tokensIn` / `tokensOut`. Those are
+    /// the latest message, and 1.1 refused to let either overwrite the other.
+    func testSessionTokensDoNotOverwriteTheLatestMessageTokens() throws {
+        var act = ActivityHarvest.Row(
+            id: .claude, task: "Fix the auth module", project: "", cwd: "/tmp/p",
+            skill: "", tool: "", harvestMs: now,
+            subRunning: 0, subTotal: 0, sessionID: "s1", evidence: .session
+        )
+        act.tokensIn = 1_200
+        act.tokensOut = 300
+        act.sessionTokensIn = 412_000
+        act.sessionTokensOut = 98_500
+
+        let r = build(harvest: [act])
+        let row = try XCTUnwrap(r.rows.first { $0.agent == .claude })
+        XCTAssertEqual(row.tokensIn, 1_200)
+        XCTAssertEqual(row.tokensOut, 300)
+        XCTAssertEqual(row.sessionTokensIn, 412_000)
+        XCTAssertEqual(row.sessionTokensOut, 98_500)
+    }
+
+    /// A full read is a real answer, and so is a partial one. `true` must
+    /// survive the merge as readily as `false`.
+    func testCaughtUpSurvivesTheMerge() throws {
+        var act = ActivityHarvest.Row(
+            id: .codex, task: "Ship the release", project: "", cwd: "/tmp/p",
+            skill: "", tool: "", harvestMs: now,
+            subRunning: 0, subTotal: 0, sessionID: "s2", evidence: .session
+        )
+        act.digestCaughtUp = true
+        act.digestProgressPercent = 100
+
+        let r = build(harvest: [act])
+        let row = try XCTUnwrap(r.rows.first { $0.agent == .codex })
+        XCTAssertTrue(row.digestCaughtUp)
+        XCTAssertEqual(row.digestProgressPercent, 100)
+    }
+
+    /// An adapter with no transcript to read has no digest, and a row with no
+    /// digest must not read as "0% caught up".
+    func testARowWithoutADigestClaimsNothingAboutReadProgress() throws {
+        let r = build(harvest: [harvest(.cursor, task: "Refactor", session: "c1")])
+        let row = try XCTUnwrap(r.rows.first { $0.agent == .cursor })
+        XCTAssertFalse(row.hasSessionDigest)
+        XCTAssertTrue(row.recentTools.isEmpty)
+        XCTAssertEqual(row.bytesPerMinute, 0)
+    }
+
 }
