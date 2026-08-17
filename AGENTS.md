@@ -61,8 +61,14 @@ compiles and ships.
 - **No fake Waiting.** Waiting comes from hooks or harvest `skill=pending`,
   never from inference. An agent with no Waiting path shows Running and says so.
 - **No quota, cost, or reset HUD.** That is a different product.
-- **No approve/deny in the tray.** Pulse tells you to go look; it does not act
-  for you.
+- **No judgment transfer, and no blind approve.** Respond (scene AR) delivers
+  the user's own decision to a remote permission request: per-host shared-key
+  opt-in, single-use HMAC verdicts bound to request id + content digest +
+  agent + host, and **Allow exists only where the full request is shown**
+  (`canOfferAllow`). Everything else stays forbidden: rules engines,
+  always-allow, auto-approve, approving from a truncated summary, and any
+  local hold that would freeze an agent in front of the person using it.
+  Every failure falls open to the vendor's own prompt.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
   isolation. One broken collector cannot blind the other 32.

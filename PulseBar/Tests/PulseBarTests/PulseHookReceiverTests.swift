@@ -225,9 +225,9 @@ final class HooksInstallerTests: XCTestCase {
         try HooksInstaller.ensureLauncher()
         _ = try HooksInstaller.install()
 
-        let previous = HooksInstaller.claudeHookTimeoutSeconds
-        defer { HooksInstaller.claudeHookTimeoutSeconds = previous }
-        HooksInstaller.claudeHookTimeoutSeconds = 45
+        let previous = HooksInstaller.permissionRequestTimeoutSeconds
+        defer { HooksInstaller.permissionRequestTimeoutSeconds = previous }
+        HooksInstaller.permissionRequestTimeoutSeconds = 45
         _ = try HooksInstaller.install()
 
         let settings = tempHome.appendingPathComponent(".claude/settings.json")

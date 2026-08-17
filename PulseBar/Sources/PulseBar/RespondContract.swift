@@ -77,15 +77,24 @@ enum RespondDigest {
 struct RespondVerdict: Equatable {
     var requestID: String
     var digest: String
+    /// Which agent and which machine this verdict is for. Vendor request ids
+    /// look globally unique, but nothing *guarantees* they are — and a
+    /// security property must never rest on a vendor's id scheme. Without
+    /// these bindings, a verdict synced back to the wrong host (or picked up
+    /// by a different agent that happened to reuse the id) would answer a
+    /// request the user never saw.
+    var agent: String
+    var host: String
     var allow: Bool
     var decidedAtMs: Int64
     var expiresAtMs: Int64
 
     func isUsable(nowMs: Int64) -> Bool { nowMs < expiresAtMs }
 
-    /// Both bindings must hold. Either one alone is replayable.
+    /// All four bindings must hold. Any one alone is replayable.
     func answers(_ request: PermissionRequest) -> Bool {
         requestID == request.id && digest == request.digest
+            && agent == request.agent.rawValue && host == request.host
     }
 }
 
@@ -118,10 +127,18 @@ struct RespondDecisionStore: Equatable {
         let verdict = RespondVerdict(
             requestID: request.id,
             digest: request.digest,
+            agent: request.agent.rawValue,
+            host: request.host,
             allow: allow,
             decidedAtMs: nowMs,
             expiresAtMs: nowMs + max(0, ttlMs)
         )
+        // Replacement matches on requestID alone, deliberately. The new
+        // verdict carries its own (possibly different) digest, so nothing
+        // stale survives the swap — and `answers(_:)` re-checks all four
+        // bindings at consumption time. Matching on digest here would only
+        // let two verdicts for "the same request, different content" coexist,
+        // which is exactly the ambiguity this store exists to prevent.
         pending.removeAll { $0.requestID == verdict.requestID }
         pending.append(verdict)
         if pending.count > Self.maxPending {
