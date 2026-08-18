@@ -492,6 +492,58 @@ final class SessionDigestTests: XCTestCase {
         XCTAssertTrue(digest.caughtUp)
     }
 
+    /// The descriptor check narrows the race; it does not close it. A writer
+    /// that finished its first `write` before the caller stat'd and its second
+    /// after the descriptor was asked leaves a file that has *not* moved and a
+    /// tail that is still half a record. Only the shape of the tail can tell
+    /// those apart.
+    func testATornRecordIsNotCountedEvenWhenTheFileHasStoppedMoving() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let whole = #"{"type":"user"}"# + "\n"
+        let torn = #"{"type":"tool_use","na"#
+        try (whole + torn).write(to: url, atomically: true, encoding: .utf8)
+
+        // Truthful size, settled file — and still not a record.
+        let digest = try XCTUnwrap(
+            SessionDigestEngine.advance(
+                nil, url: url, size: whole.utf8.count + torn.utf8.count, nowMs: now
+            )
+        )
+        XCTAssertEqual(digest.records, 1, "half a JSON record is not a record")
+        XCTAssertEqual(digest.offset, whole.utf8.count)
+        XCTAssertFalse(digest.caughtUp, "not caught up beats a count that is one too high")
+    }
+
+    /// A transcript that was never JSON has no shape to check. Refusing its
+    /// last line would leave it permanently short of caught up over a
+    /// distinction nothing on disk can settle.
+    func testAPlainTextTailIsStillTakenAtFaceValue() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = "started the run\nstill going"
+        try text.write(to: url, atomically: true, encoding: .utf8)
+
+        let digest = try XCTUnwrap(
+            SessionDigestEngine.advance(nil, url: url, size: text.utf8.count, nowMs: now)
+        )
+        XCTAssertEqual(digest.records, 2)
+        XCTAssertTrue(digest.caughtUp)
+    }
+
+    func testWholenessIsJudgedOnlyForWhatClaimedToBeARecord() {
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array(#"{"a":1}"#.utf8)))
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array(#"[1,2]"#.utf8)))
+        XCTAssertFalse(SessionDigestFold.isWholeRecord(Array(#"{"a":1"#.utf8)))
+        XCTAssertFalse(SessionDigestFold.isWholeRecord(Array(#"{"#.utf8)))
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array("plain text".utf8)))
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array("".utf8)), "nothing to disbelieve")
+        XCTAssertTrue(
+            SessionDigestFold.isWholeRecord(Array(("  " + #"{"a":1}"# + "  ").utf8)),
+            "surrounding whitespace is not a tear"
+        )
+    }
+
     // MARK: - 2.2 · private before it exists, not private afterwards
 
     /// Regression (B-13): the store wrote with `write(to:.atomic)` and only

@@ -210,6 +210,24 @@ enum SessionDigestFold {
         return size > digest.offset ? .appended : .unchanged
     }
 
+    /// Is this trailing fragment a record in its own right, or the front half
+    /// of one still being written?
+    ///
+    /// Only answerable for the structured case, which is the one that matters:
+    /// a transcript record begins `{` or `[`, and half of it never parses.
+    /// A fragment that never claimed to be JSON is taken at face value —
+    /// refusing it would leave plain-text transcripts permanently short of
+    /// caught up over a distinction nothing on disk can settle.
+    static func isWholeRecord<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
+        let data = Data(bytes)
+        let line = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = line.first else { return true }
+        guard first == "{" || first == "[" else { return true }
+        guard let encoded = line.data(using: .utf8) else { return false }
+        return (try? JSONSerialization.jsonObject(with: encoded)) != nil
+    }
+
     /// Fold transcript lines into the digest. Pure, so the counting rules can
     /// be held to fixtures without touching a filesystem.
     static func fold(_ digest: inout SessionDigest, lines: [Substring], nowMs: Int64) {
@@ -436,6 +454,15 @@ enum SessionDigestEngine {
         // tail without a closing newline is a final record rather than half
         // of one. If it has moved, cut at the last newline and let the next
         // pass finish the sentence.
+        //
+        // The descriptor narrows that race but does not close it: a writer
+        // that finished its first `write` before the caller stat'd and its
+        // second after this `seekToEnd` looks identical to a settled file.
+        // So the tail must also *look* whole. A JSONL record that starts `{`
+        // and does not parse is the torn half itself — count it and `records`
+        // is permanently one too high for a number the row states as exact —
+        // while a line that was never JSON is left alone, since a newline is
+        // the only thing that could ever have proved it whole.
         let afterLastNewline = chunk.lastIndex(of: UInt8(ascii: "\n"))
             .map { chunk.index(after: $0) }
         let hasUnterminatedTail = afterLastNewline != chunk.endIndex
@@ -444,7 +471,11 @@ enum SessionDigestEngine {
         let complete: Data
         if !hasUnterminatedTail {
             complete = chunk
-        } else if reachedClaimedEnd, liveEnd == size {
+        } else if reachedClaimedEnd,
+                  liveEnd == size,
+                  SessionDigestFold.isWholeRecord(
+                      chunk[(afterLastNewline ?? chunk.startIndex)...]
+                  ) {
             complete = chunk
         } else if let afterLastNewline, afterLastNewline > chunk.startIndex {
             complete = chunk[..<afterLastNewline]
