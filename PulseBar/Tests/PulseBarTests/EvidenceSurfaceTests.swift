@@ -483,8 +483,7 @@ final class BestEffortWorkspaceTests: XCTestCase {
         let env = TerminalFocus.Environment(
             warpRunning: true,
             ttyHostRunning: true,
-            allowTTYAutomation: true,
-            runningHosts: [.cursor]
+            allowTTYAutomation: true
         )
         let verified = TerminalFocus.focusTier(
             tty: "", viaWarp: false, hostApp: .cursor,
