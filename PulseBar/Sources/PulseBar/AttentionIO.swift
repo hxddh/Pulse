@@ -259,12 +259,17 @@ enum AttentionIO {
     private static func withExclusiveLock(_ body: (Int32) -> Void) {
         let dir = path.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let fd = path.path.withCString { open($0, O_RDWR | O_CREAT, 0o644) }
+        // 0600, not 0644: every line in this file is either a command an
+        // agent asked to run or the directory it asked from. The creation
+        // mode only covers new installs, so an existing file is brought down
+        // through the descriptor already in hand — see `PrivateFile.tighten`.
+        let fd = path.path.withCString { open($0, O_RDWR | O_CREAT, 0o600) }
         guard fd >= 0 else {
             DebugLog.write("attention open failed errno=\(errno)")
             return
         }
         defer { close(fd) }
+        PrivateFile.tighten(fileDescriptor: fd)
         if flock(fd, LOCK_EX) != 0 {
             DebugLog.write("attention flock failed errno=\(errno)")
             return

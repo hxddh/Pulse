@@ -87,6 +87,16 @@ final class StatusStore: ObservableObject {
     /// the only writer (internal set because extensions live in another file).
     @Published var respondInboundByRowKey: [String: RespondSpool.InboundRequest] = [:]
     @Published var respondVerdictSentRowKeys: Set<String> = []
+    /// What happened the last time the user pressed a button on this row.
+    ///
+    /// A click that reached nothing used to be indistinguishable from a dead
+    /// button. `TerminalFocus.focus` returns whether it actually got
+    /// anywhere and every caller threw that away; a verdict that could not be
+    /// written went to `debug.log` and nowhere else. Both are honest failures
+    /// with a real cause, and both deserve one short sentence on the row that
+    /// offered the action — especially Deny, which the product documents as
+    /// always available precisely because refusing is the safe move.
+    @Published var rowActionNotices: [String: String] = [:]
     /// Row keys marked “moved while away” until the notice is acknowledged.
     @Published private(set) var lookMovedRowKeys: Set<String> = []
     /// When the tray was last dismissed, for the missed-wait count.
@@ -250,7 +260,30 @@ final class StatusStore: ObservableObject {
     static var suppressBackgroundScansForTesting = false
 
     private var scanInFlight = false
-    private var pendingRefreshReason: String?
+    /// A refresh that arrived while one was already in flight.
+    ///
+    /// Only the reason used to survive the wait, so a scoped rescan replayed
+    /// as a full scan — and a full scan is precisely what a scoped rescan is
+    /// not. The scope exists to force an agent the supervisor would otherwise
+    /// defer, so toggling that agent's data source during an in-flight scan
+    /// could leave it unread until its backoff expired: "I enabled it and
+    /// nothing happened."
+    struct PendingRefresh {
+        var reason: String
+        /// nil means a full scan, which absorbs any scoped request merged in.
+        var agentFilter: Set<AgentID>?
+
+        mutating func absorb(reason: String, agentFilter: Set<AgentID>?) {
+            self.reason = reason
+            guard let agentFilter, let existing = self.agentFilter else {
+                self.agentFilter = nil
+                return
+            }
+            self.agentFilter = existing.union(agentFilter)
+        }
+    }
+
+    private var pendingRefresh: PendingRefresh?
     private let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
@@ -372,18 +405,30 @@ final class StatusStore: ObservableObject {
         AgentRow.toolTimeline(row.recentTools)
     }
 
+    /// The token pair, carrying only the halves that were actually reported.
+    ///
+    /// `compactToken` returns "" for 0, and every call site used to turn that
+    /// "" back into a literal `0` — so an agent that publishes output tokens
+    /// and not input rendered `↑0 ↓4.2k`, stating that the turn consumed no
+    /// input. Nothing measured that. Unknown is absent, the same rule the CPU
+    /// fact has followed since 2.2, and when neither side was reported the
+    /// fact disappears instead of printing a pair of zeros.
+    func tokenPair(input rawIn: Int, output rawOut: Int, scope: TokenScope = .compact) -> String {
+        let input = AgentRow.compactToken(rawIn)
+        let output = AgentRow.compactToken(rawOut)
+        if !input.isEmpty, !output.isEmpty {
+            return String(format: tr(scope.both), input, output)
+        }
+        if !input.isEmpty { return String(format: tr(scope.inputOnly), input) }
+        if !output.isEmpty { return String(format: tr(scope.outputOnly), output) }
+        return ""
+    }
+
     /// Whole-session token totals, kept visibly apart from the latest-message
     /// pair the facts grid shows under Resources. Two token numbers that
     /// disagree are a bug report waiting to happen unless each says its scope.
     func evidenceSessionTokens(_ row: AgentRow) -> String {
-        let input = AgentRow.compactToken(row.sessionTokensIn)
-        let output = AgentRow.compactToken(row.sessionTokensOut)
-        guard !input.isEmpty || !output.isEmpty else { return "" }
-        return String(
-            format: tr(.compactTokens),
-            input.isEmpty ? "0" : input,
-            output.isEmpty ? "0" : output
-        )
+        tokenPair(input: row.sessionTokensIn, output: row.sessionTokensOut)
     }
 
     /// `12 KB/min`. Empty when unknown — never a fabricated zero, which would
@@ -1257,11 +1302,8 @@ final class StatusStore: ObservableObject {
         }
         if row.files > 0 { facts.append(String(format: tr(.filesFact), row.files)) }
         if row.contextPercent > 0 { facts.append(String(format: tr(.contextFact), row.contextPercent)) }
-        let input = AgentRow.compactToken(row.tokensIn)
-        let output = AgentRow.compactToken(row.tokensOut)
-        if !input.isEmpty || !output.isEmpty {
-            facts.append(String(format: tr(.reportedTokens), input.isEmpty ? "0" : input, output.isEmpty ? "0" : output))
-        }
+        let tokens = tokenPair(input: row.tokensIn, output: row.tokensOut, scope: .reported)
+        if !tokens.isEmpty { facts.append(tokens) }
         // Record count is a collector diagnostic, not execution progress. It
         // belongs in Adapter diagnostics; letting it occupy the observed-fact
         // line made a session with only a transcript look more informative than
@@ -1906,7 +1948,7 @@ final class StatusStore: ObservableObject {
     func applyLookContinuity(prior: TrayLookFingerprint, closedAt: Date) {
         let now = captureLookFingerprint(at: Date())
         let keyDelta = Self.lookContinuityKeyDelta(prior: prior, current: now)
-        let liveByKey = Dictionary(uniqueKeysWithValues: cachedAll.map { ($0.rowKey, $0) })
+        let liveByKey = Self.byRowKey(cachedAll)
         var items: [LookDeltaItem] = []
 
         // Priority: new waits → ended waits → moved sessions.
@@ -1984,7 +2026,7 @@ final class StatusStore: ObservableObject {
         prior: TrayLookFingerprint,
         current: TrayLookFingerprint
     ) -> (movedKeys: [String], newWaitKeys: [String]) {
-        let priorByKey = Dictionary(uniqueKeysWithValues: prior.rows.map { ($0.rowKey, $0) })
+        let priorByKey = Dictionary(prior.rows.map { ($0.rowKey, $0) }, uniquingKeysWith: { first, _ in first })
         var movedKeys: [String] = []
         var newWaitKeys: [String] = []
         for snap in current.rows {
@@ -2377,8 +2419,15 @@ final class StatusStore: ObservableObject {
     func refresh(reason: String, agentFilter: Set<AgentID>? = nil) {
         if Self.suppressBackgroundScansForTesting { return }
         if scanInFlight {
-            pendingRefreshReason = reason
-            DebugLog.write("refresh coalesce pending=\(reason)")
+            if var pending = pendingRefresh {
+                pending.absorb(reason: reason, agentFilter: agentFilter)
+                pendingRefresh = pending
+            } else {
+                pendingRefresh = PendingRefresh(reason: reason, agentFilter: agentFilter)
+            }
+            let scope = pendingRefresh?.agentFilter?
+                .map(\.rawValue).sorted().joined(separator: ",") ?? "all"
+            DebugLog.write("refresh coalesce pending=\(reason) scope=\(scope)")
             return
         }
         scanInFlight = true
@@ -2508,9 +2557,9 @@ final class StatusStore: ObservableObject {
 
     fileprivate func finishScanFlight() {
         scanInFlight = false
-        if let pending = pendingRefreshReason {
-            pendingRefreshReason = nil
-            refresh(reason: pending)
+        if let pending = pendingRefresh {
+            pendingRefresh = nil
+            refresh(reason: pending.reason, agentFilter: pending.agentFilter)
         }
     }
 
@@ -2859,13 +2908,11 @@ final class StatusStore: ObservableObject {
     private func postWaitingNotifications(_ rows: [AgentRow]) {
         guard notifyAuthorized == true, notifyOnWaiting else { return }
         let candidates = Array(
-            Dictionary(uniqueKeysWithValues: rows.compactMap { row -> (String, AgentRow)? in
-                guard row.waiting,
-                      !mutedAgents.contains(row.agent),
-                      !attentionLedger.isAcknowledged(rowKey: row.rowKey),
-                      !waitingDeliveryInFlight.contains(row.rowKey)
-                else { return nil }
-                return (row.rowKey, row)
+            Self.byRowKey(rows.filter { row in
+                row.waiting
+                    && !mutedAgents.contains(row.agent)
+                    && !attentionLedger.isAcknowledged(rowKey: row.rowKey)
+                    && !waitingDeliveryInFlight.contains(row.rowKey)
             }).values
         )
         guard !candidates.isEmpty else { return }
@@ -2961,6 +3008,19 @@ final class StatusStore: ObservableObject {
     /// that sequence crashed the menu bar outright. `AttentionLedger` had
     /// already learned this lesson in `snoozedUntil`; the same landmine sat
     /// here in the notification path.
+    /// Index rows by their key, keeping the first of any pair that collides.
+    ///
+    /// `Dictionary(uniqueKeysWithValues:)` **traps** on a duplicate key, and
+    /// this one already crashed the menu bar once — the fix landed in
+    /// `waitingDeliveryRows` and the same construct stayed in four other
+    /// places, each safe only because the builder happens to hand back a
+    /// dictionary's values today. That is a property of the current
+    /// implementation, not a guarantee, and the failure mode is the app
+    /// disappearing from the menu bar rather than a wrong pixel.
+    nonisolated static func byRowKey(_ rows: [AgentRow]) -> [String: AgentRow] {
+        Dictionary(rows.map { ($0.rowKey, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
     nonisolated static func waitingDeliveryRows(
         edges: [AgentRow],
         queued: [AgentRow]
@@ -3026,7 +3086,7 @@ final class StatusStore: ObservableObject {
             if !notifyOnWaiting { pendingWaitingNotifications.removeAll() }
             return
         }
-        let current = Dictionary(uniqueKeysWithValues: cachedAll.map { ($0.rowKey, $0) })
+        let current = Self.byRowKey(cachedAll)
         let rows = pendingWaitingNotifications.values.compactMap { pending -> AgentRow? in
             guard let row = current[pending.rowKey], row.waiting else { return nil }
             return row
@@ -3458,14 +3518,9 @@ final class StatusStore: ObservableObject {
         if !model.isEmpty {
             bits.append(String(format: tr(.modelFact), model))
         } else {
-            let input = AgentRow.compactToken(row.tokensIn)
-            let output = AgentRow.compactToken(row.tokensOut)
-            if !input.isEmpty || !output.isEmpty {
-                bits.append(String(
-                    format: tr(.compactTokens),
-                    input.isEmpty ? "0" : input,
-                    output.isEmpty ? "0" : output
-                ))
+            let tokens = tokenPair(input: row.tokensIn, output: row.tokensOut)
+            if !tokens.isEmpty {
+                bits.append(tokens)
             } else if let evidence = row.processEvidence {
                 bits.append(
                     evidence == .pathSignature
@@ -3610,18 +3665,12 @@ final class StatusStore: ObservableObject {
         }
         if row.files > 0, !isFilesChange(change) { facts.append(String(format: tr(.filesFact), row.files)) }
         if row.contextPercent > 0 { facts.append(String(format: tr(.contextFact), row.contextPercent)) }
-        let input = AgentRow.compactToken(row.tokensIn)
-        let output = AgentRow.compactToken(row.tokensOut)
-        if !input.isEmpty || !output.isEmpty {
-            let scope: L10n.Key = [.claude, .codex].contains(row.agent)
-                ? .latestCallTokens
-                : .reportedTokens
-            facts.append(String(
-                format: tr(scope),
-                input.isEmpty ? "0" : input,
-                output.isEmpty ? "0" : output
-            ))
-        }
+        let tokens = tokenPair(
+            input: row.tokensIn,
+            output: row.tokensOut,
+            scope: [.claude, .codex].contains(row.agent) ? .latestCall : .reported
+        )
+        if !tokens.isEmpty { facts.append(tokens) }
         if row.records > 0 { facts.append("\(row.records)\(tr(.recordsSuffix))") }
         return facts.prefix(2).joined(separator: " · ")
     }
@@ -3640,17 +3689,17 @@ final class StatusStore: ObservableObject {
             : rowSignalChange(row).trimmingCharacters(in: .whitespacesAndNewlines)
         var bits: [String] = []
         if !lifecycle.isEmpty { bits.append(lifecycle) }
-        if !changed.isEmpty {
-            bits.append(changed)
-            // Urgent companion only — durable model/tokens belong on observation.
-            if row.errors > 0, !isErrorChange(row.activityChange) {
-                bits.append(row.errors == 1
-                    ? tr(.errorFactOne)
-                    : String(format: tr(.errorsFact), row.errors))
-            }
+        if !changed.isEmpty { bits.append(changed) }
+        // A process-only row has no observation line, so the fault has nowhere
+        // else to go and this line carries it. Everywhere else the observation
+        // line owns it — one owner, because two owners with different
+        // conditions is how the count went missing.
+        if row.isProcessOnly, !isErrorChange(row.activityChange) {
+            let fault = faultFact(row)
+            if !fault.isEmpty { bits.append(fault) }
         }
         if row.isStalled {
-            let metric = rowSignalMetric(row).trimmingCharacters(in: .whitespacesAndNewlines)
+            let metric = stalledRowMetric(row).trimmingCharacters(in: .whitespacesAndNewlines)
             if !metric.isEmpty, !bits.contains(metric) { bits.append(metric) }
         }
         // Process-only age · nextStep live on opaque story (0.92) — signal yields.
@@ -3690,11 +3739,13 @@ final class StatusStore: ObservableObject {
         }
     }
 
-    /// A compact, priority-ordered metric for the one-line live signal. The
-    /// full `rowMetrics` string remains available to accessibility and the
-    /// expanded detail surface; this version keeps the default tray glance
-    /// from truncating its only numeric evidence after a long change label.
-    private func rowSignalMetric(_ row: AgentRow) -> String {
+    /// The one metric a **stalled** row is allowed to carry on the signal
+    /// line: how long it has been still, or — for a row that is only a
+    /// process — how old that process is.
+    ///
+    /// Named for the whole signal line when it was written, which is how it
+    /// grew a full fact ranking that its one caller could never reach.
+    private func stalledRowMetric(_ row: AgentRow) -> String {
         guard !row.waiting else { return "" }
         if row.isProcessOnly, row.processStartedMs > 0 {
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
@@ -3715,38 +3766,33 @@ final class StatusStore: ObservableObject {
             }
             return tr(.noActivityYet)
         }
-        let change = row.activityChange
-        if row.errors > 0, !isErrorChange(change) {
-            return row.errors == 1
-                ? tr(.errorFactOne)
-                : String(format: tr(.errorsFact), row.errors)
-        }
-        if let outcome = readableFailure(row.outcome), !isFailureChange(change) {
-            return outcome
-        }
-        if row.progressTotal > 0, !isProgressChange(change) {
-            return String(format: tr(.progressFact), row.progressDone, row.progressTotal)
-        }
-        if row.progressDone > 0, !isProgressChange(change) {
-            return String(format: tr(.turnsFact), row.progressDone)
-        }
-        if row.subTotal > 0 {
-            return row.subRunning > 0
-                ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
-                : String(format: tr(.subagentsObserved), row.subTotal)
-        }
-        if row.files > 0, !isFilesChange(change) {
-            return String(format: tr(.filesFact), row.files)
-        }
-        if row.contextPercent > 0 {
-            return String(format: tr(.contextFact), row.contextPercent)
-        }
-        let input = AgentRow.compactToken(row.tokensIn)
-        let output = AgentRow.compactToken(row.tokensOut)
-        if !input.isEmpty || !output.isEmpty {
-            return String(format: tr(.compactTokens), input.isEmpty ? "0" : input, output.isEmpty ? "0" : output)
-        }
+        // Nothing follows. Its only caller asks for this string exactly when
+        // `row.isStalled`, so every branch past that point was unreachable —
+        // and it was a second, drifting copy of `rowObservationLine`'s fact
+        // ranking (errors → outcome → progress → subagents → files → context
+        // → tokens) that no screen could ever show. Two rankings, one of them
+        // dead, is how the two lines disagree about what matters.
         return ""
+    }
+
+    /// The fault fact, at the best scope available, or "" when there is none.
+    ///
+    /// `sessionErrors` counts the whole session and `errors` counts the read
+    /// window: the same fact over different spans, so only one is ever
+    /// emitted. The choice used to be made independently at each call site,
+    /// and the signal line's urgent companion only ever knew about `errors` —
+    /// so a session carrying seven errors, none of them inside the current
+    /// window, showed no fault at all for as long as anything else was
+    /// moving. Faults are the top tier precisely because they must not be
+    /// crowded out by motion.
+    func faultFact(_ row: AgentRow) -> String {
+        if row.sessionErrors > 0 {
+            return String(format: tr(.sessionErrors), row.sessionErrors)
+        }
+        guard row.errors > 0 else { return "" }
+        return row.errors == 1
+            ? tr(.errorFactOne)
+            : String(format: tr(.errorsFact), row.errors)
     }
 
     private func isErrorChange(_ change: AgentActivityChange?) -> Bool {
@@ -3827,19 +3873,21 @@ final class StatusStore: ObservableObject {
         guard !row.waiting, !row.isProcessOnly else { return "" }
         let change = row.activityChange
 
-        // 1 · Faults.
+        // 1 · Faults. This line owns the fault total, and it is the only line
+        // that ranks faults above everything else.
+        //
+        // It used to stand aside whenever the row carried *any* change, on
+        // the theory that the signal line would say it instead. The signal
+        // line could not: its companion was nested inside a change block that
+        // `storyOwnsChange` empties for every row with a real title, which is
+        // most of them. So on an ordinary moving session the error count
+        // appeared on no line at all — the top tier, missing exactly while
+        // the session was active. The only genuine duplication is an error
+        // *change*, where the delta is the news and the total repeats it.
         var faults: [String] = []
-        // The whole-session count and the read-window count are the same fact
-        // measured over different spans. Emit the better-scoped one; never both.
-        if row.errors > 0 || row.sessionErrors > 0,
-           !isErrorChange(change), change == nil {
-            if row.sessionErrors > 0 {
-                faults.append(String(format: tr(.sessionErrors), row.sessionErrors))
-            } else {
-                faults.append(row.errors == 1
-                    ? tr(.errorFactOne)
-                    : String(format: tr(.errorsFact), row.errors))
-            }
+        if !isErrorChange(change) {
+            let fault = faultFact(row)
+            if !fault.isEmpty { faults.append(fault) }
         }
 
         // 2 · Advance.
@@ -3874,15 +3922,8 @@ final class StatusStore: ObservableObject {
                 motion.append(String(format: tr(.evidenceRateFact), size))
             }
         }
-        let input = AgentRow.compactToken(row.tokensIn)
-        let output = AgentRow.compactToken(row.tokensOut)
-        if !input.isEmpty || !output.isEmpty {
-            motion.append(String(
-                format: tr(.compactTokens),
-                input.isEmpty ? "0" : input,
-                output.isEmpty ? "0" : output
-            ))
-        }
+        let tokens = tokenPair(input: row.tokensIn, output: row.tokensOut)
+        if !tokens.isEmpty { motion.append(tokens) }
 
         // 4 · Reach.
         var reach: [String] = []
@@ -4280,14 +4321,34 @@ final class StatusStore: ObservableObject {
         refresh(reason: "dismissWaiting")
     }
 
-    func primaryAction(_ row: AgentRow) {
-        if row.canFocusTerminal {
-            _ = TerminalFocus.focus(row: row)
+    func rowActionNotice(_ row: AgentRow) -> String? {
+        rowActionNotices[row.rowKey]
+    }
+
+    /// Say what happened, briefly. Long enough to read, short enough that it
+    /// never settles in and becomes row furniture.
+    func noteRowAction(_ rowKey: String, _ message: String) {
+        rowActionNotices[rowKey] = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
+            guard let self, self.rowActionNotices[rowKey] == message else { return }
+            self.rowActionNotices.removeValue(forKey: rowKey)
         }
     }
 
+    func primaryAction(_ row: AgentRow) {
+        guard row.canFocusTerminal else { return }
+        focusTerminal(row)
+    }
+
+    /// The focus handle was derived by the scan that produced this row, and a
+    /// window can close between then and the click. When nothing was reached,
+    /// say so and rescan: the next row either carries a handle that works or
+    /// stops offering one.
     func focusTerminal(_ row: AgentRow) {
-        _ = TerminalFocus.focus(row: row)
+        guard !TerminalFocus.focus(row: row) else { return }
+        noteRowAction(row.rowKey, tr(.focusFailed))
+        refresh(reason: "focus-failed")
     }
 
     func focusFirstWaiting() {
@@ -4744,6 +4805,41 @@ final class StatusStore: ObservableObject {
 
     func isInQuietHours(now: Date = Date()) -> Bool {
         currentSettings.isInQuietHours(now: now)
+    }
+}
+
+/// Which sentence a token pair belongs to.
+///
+/// The scope is not decoration: "latest model call" and "the agent's own
+/// running total" are different numbers, and a pair printed without saying
+/// which one it is has been a bug report waiting to happen since 2.1. Each
+/// scope carries three phrasings, because a pair with one unmeasured half is
+/// a different sentence — not the same sentence with a zero in it.
+enum TokenScope {
+    case compact, reported, latestCall
+
+    var both: L10n.Key {
+        switch self {
+        case .compact: return .compactTokens
+        case .reported: return .reportedTokens
+        case .latestCall: return .latestCallTokens
+        }
+    }
+
+    var inputOnly: L10n.Key {
+        switch self {
+        case .compact: return .compactTokensIn
+        case .reported: return .reportedTokensIn
+        case .latestCall: return .latestCallTokensIn
+        }
+    }
+
+    var outputOnly: L10n.Key {
+        switch self {
+        case .compact: return .compactTokensOut
+        case .reported: return .reportedTokensOut
+        case .latestCall: return .latestCallTokensOut
+        }
     }
 }
 

@@ -559,8 +559,11 @@ enum SnapshotBuilder {
         // Compare the same concrete session with the prior scan. Preserve a
         // meaningful change briefly so a 5-second polling interval does not
         // turn it into a one-frame flash.
+        // Not `uniqueKeysWithValues`: that construct traps on a duplicate
+        // key, and a trap here is the menu bar vanishing.
         let previousByKey = Dictionary(
-            uniqueKeysWithValues: previous.rows.map { ($0.rowKey, $0) }
+            previous.rows.map { ($0.rowKey, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
         let changeLifetimeMs: Int64 = 3 * 60 * 1000
         for index in all.indices {

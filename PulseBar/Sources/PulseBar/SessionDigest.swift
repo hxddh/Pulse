@@ -537,11 +537,13 @@ struct SessionDigestStore: Codable, Equatable {
         return store
     }
 
-    /// Test seam: handed the temporary file's path after it is created and
-    /// filled, before it is renamed into place — so a test can prove the bytes
-    /// were never readable by anyone else, rather than only that they ended up
-    /// private.
-    static var inspectTemporaryFileForTesting: ((String) -> Void)?
+    /// Test seam, kept here because the digest's own privacy test names it.
+    /// The implementation moved to `PrivateFile`, which every file carrying
+    /// the user's words now shares.
+    static var inspectTemporaryFileForTesting: ((String) -> Void)? {
+        get { PrivateFile.inspectTemporaryFileForTesting }
+        set { PrivateFile.inspectTemporaryFileForTesting = newValue }
+    }
 
     func save() {
         guard let data = try? JSONEncoder().encode(self) else { return }
@@ -549,34 +551,9 @@ struct SessionDigestStore: Codable, Equatable {
     }
 
     /// Write `data` so that it is 0600 from the moment it exists.
-    ///
-    /// Counts and tool names only, but it is still a record of when someone
-    /// was working, so it belongs to this user alone. `write(to:.atomic)`
-    /// followed by `chmod` cannot promise that: the temporary file it creates
-    /// takes the process umask — 0644 on a stock Mac — and stays world
-    /// readable for the whole write plus the rename. Creating the temporary
-    /// file with the permissions we want, before a single byte goes into it,
-    /// closes the window instead of narrowing it. `rename(2)` then publishes
-    /// it atomically and carries the mode across, whether or not a previous
-    /// digest file was there — the same shape `RespondSpool.atomicWrite0600`
-    /// already uses for verdicts, and for the same reason.
     @discardableResult
     static func writePrivately(_ data: Data, to url: URL) -> Bool {
-        let fm = FileManager.default
-        let directory = url.deletingLastPathComponent()
-        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        let temporary = directory.appendingPathComponent(".tmp-\(UUID().uuidString)")
-        guard fm.createFile(
-            atPath: temporary.path,
-            contents: data,
-            attributes: [.posixPermissions: 0o600]
-        ) else { return false }
-        inspectTemporaryFileForTesting?(temporary.path)
-        guard rename(temporary.path, url.path) == 0 else {
-            try? fm.removeItem(at: temporary)
-            return false
-        }
-        return true
+        PrivateFile.write(data, to: url)
     }
 
     mutating func prune(nowMs: Int64) {

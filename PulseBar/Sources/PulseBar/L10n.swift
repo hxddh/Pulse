@@ -176,6 +176,13 @@ enum L10n {
         case .respondAllow: return "Allow"
         case .respondFullRequest: return "Full request"
         case .respondSentNote: return "Verdict written — your sync tool delivers it"
+        case .respondWriteFailed:
+            return "The verdict could not be written — the remote agent falls back to its own prompt"
+        case .respondRefused:
+            return "Not enough of this request is here to approve it"
+        case .respondRequestGone:
+            return "That request is no longer here — it expired or was already answered"
+        case .focusFailed: return "Could not open it — that window may be gone. Rescanning."
         case .respondExpired: return "Request expired — the agent fell back to its own prompt"
         case .hooksNudge: return "Install hooks so Claude/Codex can signal Waiting"
         case .waitingSignalNudge:
@@ -225,6 +232,12 @@ enum L10n {
         case .lastActive: return "Last active %@"
         case .latestCallTokens: return "Latest model call · %@ input · %@ output"
         case .reportedTokens: return "Agent reported · %@ input · %@ output"
+        case .latestCallTokensIn: return "Latest model call · %@ input"
+        case .latestCallTokensOut: return "Latest model call · %@ output"
+        case .reportedTokensIn: return "Agent reported · %@ input"
+        case .reportedTokensOut: return "Agent reported · %@ output"
+        case .compactTokensIn: return "↑%@"
+        case .compactTokensOut: return "↓%@"
         case .compactTokens: return "↑%@ ↓%@"
         case .subagentsActive: return "%d of %d subagents active"
         case .subagentsObserved: return "%d subagents observed"
@@ -693,6 +706,10 @@ enum L10n {
         case .respondAllow: return "同意"
         case .respondFullRequest: return "完整请求"
         case .respondSentNote: return "判决已写出，等你的同步工具送达"
+        case .respondWriteFailed: return "判决没能写出 —— 远端会回到它自己的提示"
+        case .respondRefused: return "请求没到齐，不能在这里同意"
+        case .respondRequestGone: return "这个请求已经不在了 —— 过期，或者已经答过"
+        case .focusFailed: return "没能打开 —— 那个窗口可能已经不在了，正在重扫"
         case .respondExpired: return "请求已过期 —— Agent 已回落到它自己的提示"
         case .hooksNudge: return "安装 hooks 后，Claude/Codex 才能点亮「需要你」"
         case .waitingSignalNudge:
@@ -742,6 +759,12 @@ enum L10n {
         case .lastActive: return "最近活动：%@"
         case .latestCallTokens: return "最近一次模型调用 · 输入 %@ · 输出 %@"
         case .reportedTokens: return "Agent 上报 · 输入 %@ · 输出 %@"
+        case .latestCallTokensIn: return "最近一次模型调用 · 输入 %@"
+        case .latestCallTokensOut: return "最近一次模型调用 · 输出 %@"
+        case .reportedTokensIn: return "Agent 上报 · 输入 %@"
+        case .reportedTokensOut: return "Agent 上报 · 输出 %@"
+        case .compactTokensIn: return "↑%@"
+        case .compactTokensOut: return "↓%@"
         case .compactTokens: return "↑%@ ↓%@"
         case .subagentsActive: return "%d / %d 个 subagent 活跃"
         case .subagentsObserved: return "已观测 %d 个 subagent"
@@ -1101,6 +1124,7 @@ enum L10n {
         case refresh, refreshing, clearWaiting, settings, quit
         case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait, details
         case respondDeny, respondReview, respondAllow, respondFullRequest, respondSentNote, respondHeading, respondExpired
+        case respondWriteFailed, respondRefused, respondRequestGone, focusFailed
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone
@@ -1129,6 +1153,9 @@ enum L10n {
         case signalCompleted, signalFailed, signalCancelled
         case terminalDetectedNoDetails, appDetectedNoDetails
         case lastAction, lastActive, latestCallTokens, reportedTokens, compactTokens
+        case latestCallTokensIn, latestCallTokensOut
+        case reportedTokensIn, reportedTokensOut
+        case compactTokensIn, compactTokensOut
         case subagentsActive, subagentsObserved, subChipActive, subChipObserved, rowStoryHeading
         case actionPlanning, actionCommand, actionEditing, actionImage
         case actionResearch, actionReading, actionAutomation, setupWaitingSignals

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// How hard Pulse should be looking right now.
@@ -29,12 +30,36 @@ enum ProbeSchedule {
         /// No point probing what nobody can see.
         var parked: Bool { displayAsleep || screenLocked }
 
+        /// The machine as it actually is right now.
+        ///
+        /// This used to answer "awake and unlocked" unconditionally, and
+        /// `PowerMonitor` seeds itself from it — so Pulse relaunched while the
+        /// screen was locked or the displays were asleep never parked. The
+        /// notification that would have told it is the one that already fired,
+        /// and the next one to arrive says *unlocked*, which is exactly when
+        /// polling should resume. Crash recovery and update replacement are
+        /// the two relaunches nobody is watching, and they are the ones that
+        /// would poll at full cadence all night.
+        ///
+        /// Both queries fail closed to the old assumption: a headless runner,
+        /// a session dictionary without the key, or an unavailable display all
+        /// mean "carry on as before" rather than a park nobody asked for.
         static var current: Power {
             Power(
-                displayAsleep: false,
-                screenLocked: false,
+                displayAsleep: displaysAreAsleep,
+                screenLocked: screenIsLocked,
                 lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
             )
+        }
+
+        private static var displaysAreAsleep: Bool {
+            CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        }
+
+        private static var screenIsLocked: Bool {
+            guard let raw = CGSessionCopyCurrentDictionary() else { return false }
+            let session = raw as NSDictionary
+            return (session["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false
         }
     }
 
