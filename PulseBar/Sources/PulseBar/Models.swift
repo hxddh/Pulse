@@ -525,6 +525,23 @@ struct AgentRow: Identifiable, Hashable {
     var skill: String = ""
     var waitSinceMs: Int64 = 0
     var pid: Int = 0
+    /// Real CPU share of this agent's processes, sampled across two probe
+    /// ticks; **-1 means unknown**, which is not the same answer as 0.
+    ///
+    /// This is the one fact that separates "thinking" from "stuck". Transcript
+    /// growth (2.1) reports output, and the minutes spent compiling, running a
+    /// test suite or waiting inside one long tool call produce no output at
+    /// all — indistinguishable from a dead session when only files are
+    /// watched. Deliberately not `ps %cpu`, which averages over the process's
+    /// whole life and would answer a question about *now* with a number about
+    /// the last three hours.
+    var cpuPercent: Double = -1
+    /// Resident memory of this agent's processes in bytes; 0 = not observed.
+    var rssBytes: Int = 0
+    /// Whether the CPU sample is a real answer rather than "not yet known".
+    var hasCPUSample: Bool { cpuPercent >= 0 }
+    /// Busy enough that a quiet transcript means thinking, not stalling.
+    var isComputing: Bool { cpuPercent >= 15 }
     var tty: String = ""
     var harvestMs: Int64 = 0
     var subRunning: Int = 0
@@ -606,6 +623,14 @@ struct AgentRow: Identifiable, Hashable {
     /// Transcript growth, in bytes per minute. 0 = unknown, never estimated.
     /// The difference between "moving" and "parked", which no counter states.
     var bytesPerMinute: Int = 0
+    /// The workspace path was reconstructed from a dash-encoded vendor
+    /// directory name and the disk could not confirm it.
+    ///
+    /// Display only. `focusTier` refuses to advertise workspace precision for
+    /// such a path: an existence check at click time cannot tell the correct
+    /// decode from a wrong one that happens to exist, and opening the wrong
+    /// workspace under someone's hands is the failure the flag exists for.
+    var cwdBestEffort: Bool = false
     /// The session's real start, in ms. More reliable than `startedMs`, which
     /// some adapters can only fill from a file stamp. 0 = unknown.
     var sessionStartedMs: Int64 = 0

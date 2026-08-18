@@ -394,6 +394,25 @@ final class StatusStore: ObservableObject {
         return String(format: tr(.evidenceRatePerMinute), size)
     }
 
+    /// Real CPU share, or an em dash. **Never renders unknown as 0%**: the
+    /// difference between "measured, and it is idle" and "no second sample
+    /// yet" is the whole reason the probe reports -1.
+    func evidenceCPU(_ row: AgentRow) -> String {
+        guard row.hasCPUSample else { return "—" }
+        return String(format: tr(.cpuFact), Int(row.cpuPercent.rounded()))
+    }
+
+    /// The sentence under compute: what it distinguishes, or why it is absent.
+    func evidenceCPUNote(_ row: AgentRow) -> String {
+        row.hasCPUSample ? tr(.evidenceCPUHint) : tr(.evidenceCPUUnknown)
+    }
+
+    /// Resident memory, or nil so the row disappears rather than showing 0.
+    func evidenceMemory(_ row: AgentRow) -> String? {
+        let size = AgentRow.compactBytes(row.rssBytes)
+        return size.isEmpty ? nil : size
+    }
+
     /// The sentence under the rate: what it is for, or that it is missing.
     func evidenceRateNote(_ row: AgentRow) -> String {
         row.bytesPerMinute > 0 ? tr(.evidenceRateHint) : tr(.evidenceRateUnknown)
@@ -3295,7 +3314,13 @@ final class StatusStore: ObservableObject {
         if let phase = readablePhase(row.phase, waiting: row.waiting), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
             bits.append(phase)
         } else if row.isStalled {
-            bits.append(tr(.stalled))
+            // "Stalled" is about the activity clock, which only moves when
+            // the transcript does. A session compiling or running a test
+            // suite writes nothing for minutes while its process is pinned —
+            // 2.2 can finally tell that apart, so say the true thing rather
+            // than the one the clock alone implied. Not a lamp change: this
+            // is still not healthy-green, it is a stall with an explanation.
+            bits.append(row.isComputing ? tr(.stalledButComputing) : tr(.stalled))
         }
 
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3764,6 +3789,14 @@ final class StatusStore: ObservableObject {
 
         // 3 · Motion.
         var motion: [String] = []
+        // CPU leads the tier, ahead of growth: while a compile or a test run
+        // is under way the transcript produces nothing, so this is the only
+        // fact left that can tell thinking from stopped. Same liveness guard —
+        // a finished process cannot be busy — and unknown (-1) says nothing
+        // rather than claiming idleness it never measured.
+        if row.liveProcess, !row.isRecentOnly, row.isComputing {
+            motion.append(String(format: tr(.cpuFact), Int(row.cpuPercent.rounded())))
+        }
         // Growth outranks token size: it is the only fact here that separates
         // "working" from "sitting there". Live and not stalled only — a rate
         // on a finished session is history dressed as motion.

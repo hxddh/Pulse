@@ -480,6 +480,12 @@ enum L10n {
         case .evidenceReadPartialHint:
             return "Counts on this page are partial until the read reaches 100%."
         case .evidenceRateFact: return "transcript +%@/min"
+        case .cpuFact: return "CPU %d%%"
+        case .stalledButComputing: return "Quiet transcript, busy process — computing"
+        case .evidenceCPU: return "Compute"
+        case .evidenceCPUUnknown: return "Not sampled yet — two ticks are needed before this is an answer."
+        case .evidenceCPUHint: return "Busy with a quiet transcript is thinking, not stuck."
+        case .evidenceMemory: return "Resident memory"
         case .remoteLastHeard: return "Last heard %@ ago"
         case .remoteLostContact: return "Lost contact"
         case .remoteLostContactWhy: return "Nothing has arrived from this host since. Pulse cannot tell whether the wait is still open."
@@ -964,6 +970,12 @@ enum L10n {
         case .evidenceReadPartialHint:
             return "读到 100% 之前，这页上的计数都还是阶段性的。"
         case .evidenceRateFact: return "笔录 +%@/分钟"
+        case .cpuFact: return "CPU %d%%"
+        case .stalledButComputing: return "笔录不动，进程在跑 —— 它在算"
+        case .evidenceCPU: return "计算量"
+        case .evidenceCPUUnknown: return "还没采到 —— 要两拍才能得出答案，不是 0。"
+        case .evidenceCPUHint: return "在算但笔录不动 = 在想，不是卡住。"
+        case .evidenceMemory: return "常驻内存"
         case .remoteLastHeard: return "最后听到 %@ 前"
         case .remoteLostContact: return "失联"
         case .remoteLostContactWhy: return "此后再没收到这台机器的消息。Pulse 无法判断这个等待是否还开着。"
@@ -1143,6 +1155,8 @@ enum L10n {
         case evidenceSessionTokens, evidenceSessionTokensHint
         case evidenceRate, evidenceRatePerMinute, evidenceRateHint, evidenceRateUnknown
         case evidenceRateFact
+        case cpuFact, evidenceCPU, evidenceCPUUnknown, evidenceCPUHint, evidenceMemory
+        case stalledButComputing
         case evidenceSessionLength
         case evidenceRead, evidenceReadCaughtUp, evidenceReadCatchingUp, evidenceReadPartialHint
         case evidenceReadCompact

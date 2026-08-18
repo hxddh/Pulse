@@ -331,6 +331,8 @@ enum SnapshotBuilder {
             // to survive a merge, so this one is assigned unconditionally.
             row.digestCaughtUp = act.digestCaughtUp
             if act.bytesPerMinute > 0 { row.bytesPerMinute = act.bytesPerMinute }
+            // Carried, never re-derived: only the collector saw the disk.
+            row.cwdBestEffort = act.cwdBestEffort
             if act.sessionStartedMs > 0 { row.sessionStartedMs = act.sessionStartedMs }
             row.observationSource = act.evidence
 
@@ -377,6 +379,8 @@ enum SnapshotBuilder {
                 row.viaWarp = hit.viaWarp
                 row.hostApp = hit.hostApp
                 row.pid = hit.pid
+                row.cpuPercent = hit.cpuPercent
+                row.rssBytes = hit.rssBytes
                 row.tty = hit.tty
                 row.processEvidence = hit.evidence
                 row.cwd = hit.cwd
@@ -404,6 +408,10 @@ enum SnapshotBuilder {
                     row.viaWarp = hit.viaWarp || row.viaWarp
                     if row.hostApp == nil { row.hostApp = hit.hostApp }
                     if hit.pid != 0 { row.pid = hit.pid }
+                    // A real sample replaces "unknown"; unknown never
+                    // overwrites a real one.
+                    if hit.cpuPercent >= 0 { row.cpuPercent = hit.cpuPercent }
+                    if hit.rssBytes > 0 { row.rssBytes = hit.rssBytes }
                     if !hit.tty.isEmpty { row.tty = hit.tty }
                     row.processEvidence = hit.evidence
                     if row.cwd.isEmpty, !hit.cwd.isEmpty {
@@ -659,6 +667,7 @@ enum SnapshotBuilder {
                     viaWarp: row.viaWarp,
                     hostApp: row.hostApp,
                     workspace: row.cwd,
+                    workspaceVerified: !row.cwdBestEffort,
                     env: context.terminal
                 )
             let privacy = row.agent.requiresAppDataOptIn
