@@ -28,13 +28,13 @@ final class DefectSweepTests: XCTestCase {
 
     @MainActor
     func testOnlyTheMeasuredSideOfTheTokenPairIsPrinted() {
-        let store = store()
+        let s = store()
         // The failure this replaces: `compactToken` returns "" for 0 and every
         // call site turned that back into a literal 0, so an agent publishing
         // output tokens and not input claimed the turn consumed no input.
-        XCTAssertEqual(store.tokenPair(input: 0, output: 4_200), "↓4.2k")
-        XCTAssertEqual(store.tokenPair(input: 1_200, output: 0), "↑1.2k")
-        XCTAssertEqual(store.tokenPair(input: 1_200, output: 4_200), "↑1.2k ↓4.2k")
+        XCTAssertEqual(s.tokenPair(input: 0, output: 4_200), "↓4.2k")
+        XCTAssertEqual(s.tokenPair(input: 1_200, output: 0), "↑1.2k")
+        XCTAssertEqual(s.tokenPair(input: 1_200, output: 4_200), "↑1.2k ↓4.2k")
     }
 
     @MainActor
@@ -47,9 +47,9 @@ final class DefectSweepTests: XCTestCase {
         // Two token numbers that disagree are a bug report waiting to happen
         // unless each says its span — losing the scope on the one-sided
         // phrasing would have reintroduced exactly that.
-        let store = store()
-        let latest = store.tokenPair(input: 0, output: 900, scope: .latestCall)
-        let reported = store.tokenPair(input: 0, output: 900, scope: .reported)
+        let s = store()
+        let latest = s.tokenPair(input: 0, output: 900, scope: .latestCall)
+        let reported = s.tokenPair(input: 0, output: 900, scope: .reported)
         XCTAssertTrue(latest.contains("Latest model call"), latest)
         XCTAssertTrue(reported.contains("Agent reported"), reported)
         XCTAssertNotEqual(latest, reported)
@@ -57,18 +57,18 @@ final class DefectSweepTests: XCTestCase {
 
     @MainActor
     func testTheRowNeverShowsAZeroItDidNotMeasure() {
-        let store = store()
+        let s = store()
         var row = liveRow()
         row.tokensOut = 4_200
-        XCTAssertFalse(store.rowObservationLine(row).contains("↑0"), store.rowObservationLine(row))
-        XCTAssertTrue(store.rowObservationLine(row).contains("↓4.2k"))
+        XCTAssertFalse(s.rowObservationLine(row).contains("↑0"), s.rowObservationLine(row))
+        XCTAssertTrue(s.rowObservationLine(row).contains("↓4.2k"))
     }
 
     // MARK: D-2 · a fault is not crowded out by motion
 
     @MainActor
     func testTheErrorCountSurvivesAnActiveChange() {
-        let store = store()
+        let s = store()
         var row = liveRow()
         row.sessionErrors = 7
         row.activityChange = .toolChanged
@@ -77,62 +77,62 @@ final class DefectSweepTests: XCTestCase {
         // change, the signal line's companion sat inside a block
         // `storyOwnsChange` empties for every titled row, and the story line
         // never mentions errors. Seven errors therefore appeared on no line.
-        XCTAssertTrue(store.rowObservationLine(row).contains("7"), store.rowObservationLine(row))
+        XCTAssertTrue(s.rowObservationLine(row).contains("7"), s.rowObservationLine(row))
     }
 
     @MainActor
     func testAnErrorChangeIsNotAlsoStatedAsATotal() {
-        let store = store()
+        let s = store()
         var row = liveRow()
         row.sessionErrors = 7
         row.activityChange = .errors(2)
         row.activityChangedMs = row.harvestMs
         // The delta is the news; repeating the total is the same fact twice.
-        XCTAssertFalse(store.rowObservationLine(row).contains("7"), store.rowObservationLine(row))
+        XCTAssertFalse(s.rowObservationLine(row).contains("7"), s.rowObservationLine(row))
     }
 
     @MainActor
     func testAQuietRowStillStatesItsErrors() {
-        let store = store()
+        let s = store()
         var row = liveRow()
         row.sessionErrors = 7
-        XCTAssertTrue(store.rowObservationLine(row).contains("7"))
+        XCTAssertTrue(s.rowObservationLine(row).contains("7"))
     }
 
     @MainActor
     func testOnlyOneLineOwnsTheFault() {
-        let store = store()
+        let s = store()
         var row = liveRow()
         row.sessionErrors = 7
         row.activityChange = .toolChanged
         row.activityChangedMs = row.harvestMs
         XCTAssertFalse(
-            store.rowSignalLine(row).contains("7"),
+            s.rowSignalLine(row).contains("7"),
             "the observation line owns it; two owners is what lost it"
         )
     }
 
     @MainActor
     func testAProcessOnlyRowKeepsItsFaultOnTheSignalLine() {
-        let store = store()
+        let s = store()
         var row = AgentRow(rowKey: "codex|p1", agent: .codex)
         row.liveProcess = true
         row.observationSource = .process
         row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.sessionErrors = 3
         XCTAssertTrue(row.isProcessOnly, "no title and no live tool")
-        XCTAssertEqual(store.rowObservationLine(row), "", "this row has no observation line")
-        XCTAssertTrue(store.rowSignalLine(row).contains("3"), store.rowSignalLine(row))
+        XCTAssertEqual(s.rowObservationLine(row), "", "this row has no observation line")
+        XCTAssertTrue(s.rowSignalLine(row).contains("3"), s.rowSignalLine(row))
     }
 
     @MainActor
     func testTheBetterScopedCountWins() {
-        let store = store()
+        let s = store()
         var row = liveRow()
         row.errors = 2
         row.sessionErrors = 9
         // Same fact over different spans: emit the wider one, never both.
-        let fault = store.faultFact(row)
+        let fault = s.faultFact(row)
         XCTAssertTrue(fault.contains("9"), fault)
         XCTAssertFalse(fault.contains("2"), fault)
     }
@@ -243,15 +243,15 @@ final class DefectSweepTests: XCTestCase {
 
     @MainActor
     func testAnActionNoticeIsAttachedToItsOwnRow() {
-        let store = store()
+        let s = store()
         let row = liveRow()
-        XCTAssertNil(store.rowActionNotice(row))
-        store.noteRowAction(row.rowKey, store.tr(.focusFailed))
-        XCTAssertEqual(store.rowActionNotice(row), store.tr(.focusFailed))
+        XCTAssertNil(s.rowActionNotice(row))
+        s.noteRowAction(row.rowKey, s.tr(.focusFailed))
+        XCTAssertEqual(s.rowActionNotice(row), s.tr(.focusFailed))
 
         var other = liveRow()
         other.rowKey = "codex|s2"
-        XCTAssertNil(store.rowActionNotice(other), "a notice belongs to the row that was clicked")
+        XCTAssertNil(s.rowActionNotice(other), "a notice belongs to the row that was clicked")
     }
 
     @MainActor
