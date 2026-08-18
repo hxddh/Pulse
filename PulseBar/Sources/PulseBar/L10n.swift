@@ -40,6 +40,31 @@ enum L10n {
         }
     }
 
+    /// Vendor wait kinds arrive as protocol tokens (`Permission` / `Input` /
+    /// `Waiting`), which are English words by coincidence, not by translation.
+    /// They reach the user in the glance tooltip, the banner body and the row
+    /// chip, so they belong here rather than in whichever surface happened to
+    /// need them first — `SnapshotBuilder` is pure and has no store, and it was
+    /// printing the raw token into a Chinese tooltip.
+    ///
+    /// An unknown kind is passed through: inventing a translation for a token
+    /// this build has never seen would be worse than showing what the agent
+    /// actually said.
+    static func waitKind(_ kind: String, _ lang: ResolvedLanguage) -> String {
+        switch kind {
+        case "Permission": return t(.kindPermission, lang)
+        case "Input": return t(.kindInput, lang)
+        case "Waiting": return t(.kindWaiting, lang)
+        case "": return t(.needsYou, lang)
+        default: return kind
+        }
+    }
+
+    /// Joins a list of agent display names the way the language does it.
+    static func joinNames(_ names: [String], _ lang: ResolvedLanguage) -> String {
+        names.joined(separator: lang == .zh ? "、" : ", ")
+    }
+
     /// English copy.
     private static func en(_ key: Key) -> String {
         switch key {
@@ -96,6 +121,16 @@ enum L10n {
         case .attentionBridgeWriteSample: return "Write sample Waiting"
         case .attentionBridgeWriteSampleHint:
             return "Appends Attention bridge lines for every Waiting-none Agent. Does not expand the Claude/Codex hook installer."
+        case .attentionBridgeWriteSampleHintNamed:
+            return "Appends Attention bridge lines for all %d Waiting-none Agents (%@). Does not expand the Claude/Codex hook installer."
+        case .attentionBridgeHintNamed:
+            return "Opaque agents (%@) have no native Waiting path — raise via pulse-hook / Attention Protocol v1 (docs/attention-protocol.md). Hook installer stays Claude/Codex only."
+        case .attentionBridgeFocusHintNamed:
+            return "%@ has no native Waiting path — raise here via pulse-hook / Attention Protocol"
+        case .waitingReachSteps:
+            return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting · 4) Tray should go red and stay clearable. Never invents native Waiting."
+        case .waitingReachStepsNamed:
+            return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting for %@ · 4) Tray should go red and stay clearable. Never invents native Waiting."
         case .attentionBridgeClearSample: return "Clear sample Waiting"
         case .activityPrefix: return "Doing"
         case .signalHooks: return "hooks"
@@ -399,6 +434,10 @@ enum L10n {
         case .supportNoRecentSession: return "No recent session"
         case .supportPermissionDenied: return "Permission denied"
         case .supportUnscanned: return "Unscanned"
+        // Order: available, needs action, limited, not installed, no recent
+        // session, permission denied, unscanned.
+        case .supportSummaryLine:
+            return "Available %d · Needs action %d · Limited %d · Not installed %d · No recent session %d · Permission denied %d · Unscanned %d"
         case .supportNeedsActionCount: return "Action · %d"
         case .supportLimitedCount: return "Limited · %d"
         case .supportHealthyCount: return "Healthy · %d"
@@ -577,6 +616,16 @@ enum L10n {
         case .attentionBridgeWriteSample: return "写入样本 Waiting"
         case .attentionBridgeWriteSampleHint:
             return "为全部无 Waiting 路径的 Agent 追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
+        case .attentionBridgeWriteSampleHintNamed:
+            return "为全部 %d 个无 Waiting 路径的 Agent（%@）追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
+        case .attentionBridgeHintNamed:
+            return "无原生 Waiting 路径的 Agent（%@）请用 pulse-hook / Attention Protocol v1 上报（docs/attention-protocol.md）。hooks 安装器仍只覆盖 Claude / Codex。"
+        case .attentionBridgeFocusHintNamed:
+            return "%@ 无原生 Waiting 路径 — 在此用 pulse-hook / Attention Protocol 上报"
+        case .waitingReachSteps:
+            return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
+        case .waitingReachStepsNamed:
+            return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 为 %@ 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
         case .attentionBridgeClearSample: return "清除样本 Waiting"
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"
@@ -871,6 +920,8 @@ enum L10n {
         case .supportNoRecentSession: return "无近期会话"
         case .supportPermissionDenied: return "权限不足"
         case .supportUnscanned: return "未扫描"
+        case .supportSummaryLine:
+            return "可用 %d · 需要处理 %d · 信息受限 %d · 未安装 %d · 无近期会话 %d · 权限不足 %d · 未扫描 %d"
         case .supportNeedsActionCount: return "待处理 · %d"
         case .supportLimitedCount: return "受限 · %d"
         case .supportHealthyCount: return "健康 · %d"
@@ -1008,6 +1059,8 @@ enum L10n {
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone
         case attentionBridgeWriteSample, attentionBridgeWriteSampleHint, attentionBridgeClearSample
+        case attentionBridgeWriteSampleHintNamed, attentionBridgeHintNamed, attentionBridgeFocusHintNamed
+        case waitingReachSteps, waitingReachStepsNamed
         case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, agentDataAccessAgentDetail, agentDataAccessSkipHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
@@ -1080,6 +1133,7 @@ enum L10n {
         case supportFilterIssues, supportFilterRunning, supportFilterInstalled
         case supportFilterNoData, supportFilterAll, supportNoFilterResults
         case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable, supportAvailable, supportNotInstalled, supportNoRecentSession, supportPermissionDenied, supportUnscanned
+        case supportSummaryLine
         case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportAvailableCount, supportNotInstalledCount, supportNoRecentCount, supportPermissionDeniedCount, supportUnscannedCount, supportUsefulCoverage
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
         case supportCopyShapeReport, supportShapeReading, supportShapeHint

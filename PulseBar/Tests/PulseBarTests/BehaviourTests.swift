@@ -602,3 +602,124 @@ final class L10nTests: XCTestCase {
         XCTAssertNotEqual(L10n.t(.durMin, .en), L10n.t(.durMin, .zh), "zh tray showed English units")
     }
 }
+
+/// The tray opens on "who needs me", never on the last visit's rummaging.
+/// EXPERIENCE §4: "展开状态不持久化". The panel is built once and only ordered in
+/// and out, so nothing resets `@State` on its own (U-3).
+@MainActor
+final class TrayGlanceResetTests: XCTestCase {
+    func testEachOpenGivesTheTrayANewIdentity() {
+        let store = StatusStore()
+        let atLaunch = store.traySessionToken
+        store.trayWillAppear()
+        let firstOpen = store.traySessionToken
+        store.trayWillAppear()
+        let secondOpen = store.traySessionToken
+        XCTAssertNotEqual(atLaunch, firstOpen)
+        XCTAssertNotEqual(firstOpen, secondOpen, "every open discards the previous view state")
+    }
+
+    /// `showAllAgents` lives on the store rather than in `@State`, so the view
+    /// identity alone cannot reset it.
+    func testOpeningTheTrayCollapsesTheExpandedList() {
+        let store = StatusStore()
+        store.toggleShowAllAgents()
+        XCTAssertTrue(store.showAllAgents)
+        store.trayWillAppear()
+        XCTAssertFalse(store.showAllAgents)
+    }
+
+    /// The host view is what carries the identity into SwiftUI; keep it wired.
+    func testTheTrayHostIsBuiltFromTheSameStore() {
+        let store = StatusStore()
+        _ = TrayPanelHost(store: store)
+    }
+}
+
+/// Scene AH: "Clear waiting" leaves no late notification (U-7).
+@MainActor
+final class ClearWaitingDeliveryTests: XCTestCase {
+    func testClearWaitingWithdrawsBannersAlreadyHandedToNotificationCenter() {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-clear-waiting-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        AttentionIO.pathOverride = dir.appendingPathComponent("attention.tsv")
+        defer {
+            AttentionIO.pathOverride = nil
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        // clearWaiting() ends in refresh(); a real scan here would fold and
+        // flush digests into the developer's own store.
+        StatusStore.suppressBackgroundScansForTesting = true
+        defer { StatusStore.suppressBackgroundScansForTesting = false }
+
+        let store = StatusStore()
+        var withdrawals = 0
+        store.withdrawWaitingBanners = { withdrawals += 1 }
+        store.clearWaiting()
+        XCTAssertEqual(
+            withdrawals, 1,
+            "emptying our own queue does not stop a request Notification Center already accepted"
+        )
+    }
+}
+
+/// Every user-facing string goes through the table (U-9).
+@MainActor
+final class LocalizedCopyTests: XCTestCase {
+    func testTheSupportSummaryLineIsATableEntry() {
+        let en = String(format: L10n.t(.supportSummaryLine, .en), 1, 2, 3, 4, 5, 6, 7)
+        let zh = String(format: L10n.t(.supportSummaryLine, .zh), 1, 2, 3, 4, 5, 6, 7)
+        XCTAssertTrue(en.contains("Available 1"), en)
+        XCTAssertTrue(zh.contains("可用 1"), zh)
+        XCTAssertFalse(zh.contains("Available"), "the zh support header was English copy")
+    }
+
+    func testAttentionBridgeHintsAreLocalizedAndStillNameTheAgents() {
+        let store = StatusStore()
+        let names = StatusStore.attentionSampleAgents.map(\.displayName)
+        XCTAssertFalse(names.isEmpty)
+
+        store.language = .zh
+        let zhHint = store.attentionBridgeHintText()
+        XCTAssertEqual(
+            zhHint,
+            String(format: L10n.t(.attentionBridgeHintNamed, .zh), L10n.joinNames(names, .zh))
+        )
+        XCTAssertTrue(zhHint.contains(names[0]), "agent product names stay English inside zh copy")
+
+        store.language = .en
+        XCTAssertNotEqual(store.attentionBridgeHintText(), zhHint)
+        XCTAssertTrue(store.attentionBridgeWriteSampleHintText().contains("\(names.count)"))
+    }
+
+    func testFocusedBridgeCopyNamesTheAgentInBothLanguages() {
+        let store = StatusStore()
+        let agent = StatusStore.attentionSampleAgents[0]
+        store.settingsFocusWaitingAgent = agent
+
+        store.language = .zh
+        let zhSteps = store.waitingReachStepsText()
+        XCTAssertTrue(zhSteps.contains(agent.displayName))
+        XCTAssertTrue(store.attentionBridgeFocusHintText().contains(agent.displayName))
+
+        store.language = .en
+        XCTAssertNotEqual(store.waitingReachStepsText(), zhSteps)
+
+        store.settingsFocusWaitingAgent = nil
+        XCTAssertEqual(store.waitingReachStepsText(), L10n.t(.waitingReachSteps, .en))
+    }
+
+    /// One table for the tooltip, the chip and the banner.
+    func testWaitKindTranslationIsSharedWithTheBuilder() {
+        let store = StatusStore()
+        store.language = .zh
+        XCTAssertEqual(store.localizedWaitKind("Permission"), L10n.t(.kindPermission, .zh))
+        XCTAssertEqual(store.localizedWaitKind(""), L10n.t(.needsYou, .zh))
+        XCTAssertEqual(
+            store.localizedWaitKind("Somethingelse"), "Somethingelse",
+            "an unknown vendor kind is passed through, not invented"
+        )
+    }
+}

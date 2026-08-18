@@ -240,6 +240,15 @@ final class StatusStore: ObservableObject {
     private let scanQueue = DispatchQueue(label: "com.pulse.scan", qos: .userInitiated)
     private var scanTicket: UInt64 = 0
     private var lastAppliedTicket: UInt64 = 0
+    /// Tests exercising store behaviour must not start a real background scan.
+    ///
+    /// A scan is not read-only: it folds session digests and flushes them, so
+    /// an unguarded `refresh()` inside a unit test writes the developer's own
+    /// `session-digests.json` — the same class of accident 1.1 fixed when a
+    /// fixture scan leaked into the real digest store. Same shape as
+    /// `AttentionIO.pathOverride` and `HooksInstaller.homeOverride`.
+    static var suppressBackgroundScansForTesting = false
+
     private var scanInFlight = false
     private var pendingRefreshReason: String?
     private let relativeFormatter: RelativeDateTimeFormatter = {
@@ -1647,6 +1656,30 @@ final class StatusStore: ObservableObject {
         }
     }
 
+    /// A new glance is about to start — discard the last one's navigation.
+    ///
+    /// EXPERIENCE §4: "展开状态不持久化：每次打开托盘都是一次新的扫视，应该从
+    /// 「谁需要我」开始". The panel is built once and only ordered in and out, so
+    /// SwiftUI keeps every `@State` it ever had: a search typed at 11:00 was
+    /// still filtering the list at 15:00, and a group folded to see past it
+    /// stayed folded over the next wait. Bumping this token gives `TrayPanel` a
+    /// new identity, which is the one mechanism that resets *all* of its state
+    /// — including any added later — rather than the subset someone remembered
+    /// to list in a reset function.
+    ///
+    /// Called before the panel is ordered in, so the reset lands in the same
+    /// layout pass rather than a frame after the user is already reading.
+    @Published private(set) var traySessionToken: Int = 0
+
+    func trayWillAppear() {
+        traySessionToken &+= 1
+        // Store-owned, and just as much "last time's rummaging" as the folds.
+        if showAllAgents {
+            showAllAgents = false
+            applyRowWindow()
+        }
+    }
+
     /// Tray panel appeared — probe faster while the user is looking at it.
     func trayDidAppear() {
         trayOpen = true
@@ -2255,6 +2288,7 @@ final class StatusStore: ObservableObject {
     }
 
     func refresh(reason: String, agentFilter: Set<AgentID>? = nil) {
+        if Self.suppressBackgroundScansForTesting { return }
         if scanInFlight {
             pendingRefreshReason = reason
             DebugLog.write("refresh coalesce pending=\(reason)")
@@ -2613,8 +2647,15 @@ final class StatusStore: ObservableObject {
         for (oldKey, newKey) in result.remappedRowKeys {
             migrateRowIdentity(from: oldKey, to: newKey)
         }
+        // Write only when the set actually moved. A non-empty `clearedPendingKeys`
+        // is not evidence of a change — it lists what the builder saw clear,
+        // most of which the store never held — and taking it as one rewrote
+        // `dismissed-pending.json` every two to five seconds for as long as any
+        // session was running (U-5). `subtract` can only remove, so the count
+        // settles the question.
+        let dismissedCountBefore = dismissedPendingKeys.count
         dismissedPendingKeys.subtract(result.clearedPendingKeys)
-        if !result.clearedPendingKeys.isEmpty {
+        if dismissedPendingKeys.count != dismissedCountBefore {
             persistDismissedPendingKeys()
         }
         cachedAll = result.rows
@@ -3002,19 +3043,32 @@ final class StatusStore: ObservableObject {
         attentionLedger.save()
     }
 
+    /// Withdraw banners that were already handed to Notification Center.
+    ///
+    /// Injected so the clear path can be tested without a bundled app: an
+    /// unbundled test process has no `UNUserNotificationCenter` at all.
+    var withdrawWaitingBanners: () -> Void = { PulseNotify.withdrawWaitingNotifications() }
+
     func clearWaiting() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         // 0.95: extinguish delivery synchronously so a queued banner cannot
         // fire after the user already cleared Waiting.
         pendingWaitingNotifications.removeAll()
+        // 2.2: emptying our own queue only covers the requests we had not
+        // submitted yet. `center.add` is asynchronous — a request accepted a
+        // moment before the click is already past that queue and still lands
+        // on screen after the user cleared Waiting. Scene AH promises no late
+        // notification, so take back what was already submitted too (U-7).
+        withdrawWaitingBanners()
+        var dismissedChanged = false
         for row in cachedAll where row.waiting {
             attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
             if row.waitSignal == .pending || row.skill == "pending" {
-                dismissedPendingKeys.insert(row.rowKey)
+                dismissedChanged = dismissedPendingKeys.insert(row.rowKey).inserted || dismissedChanged
             }
         }
         attentionLedger.save()
-        persistDismissedPendingKeys()
+        if dismissedChanged { persistDismissedPendingKeys() }
         AttentionIO.clearAll()
         refresh(reason: "clearWaiting")
     }
@@ -3034,14 +3088,10 @@ final class StatusStore: ObservableObject {
         )
     }
 
+    /// One table for the whole app: `SnapshotBuilder` needs the same mapping
+    /// for the glance tooltip and cannot reach a store.
     func localizedWaitKind(_ kind: String) -> String {
-        switch kind {
-        case "Permission": return tr(.kindPermission)
-        case "Input": return tr(.kindInput)
-        case "Waiting": return tr(.kindWaiting)
-        case "": return tr(.needsYou)
-        default: return kind
-        }
+        L10n.waitKind(kind, lang)
     }
 
     /// The row that has been blocked longest, if any.
@@ -4268,46 +4318,38 @@ final class StatusStore: ObservableObject {
 
     /// Localized sample hint listing every Waiting-none display name from the
     /// enum — never a hand-maintained seven-name string.
+    ///
+    /// The list is derived from `AgentID.waitingNoneAgents`, so these four
+    /// sentences cannot be plain table lookups — but the *sentences* still
+    /// belong in `L10n` (EXPERIENCE §4: every user-facing string goes through
+    /// the table). They used to switch on `lang` inline, which is the same
+    /// defect one indirection later.
     func attentionBridgeWriteSampleHintText() -> String {
         let names = Self.attentionSampleAgents.map(\.displayName)
-        let joined = lang == .zh ? names.joined(separator: "、") : names.joined(separator: ", ")
-        let n = names.count
-        if lang == .zh {
-            return "为全部\(n)个无 Waiting 路径的 Agent（\(joined)）追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
-        }
-        return "Appends Attention bridge lines for all \(n) Waiting-none Agents (\(joined)). Does not expand the Claude/Codex hook installer."
+        return String(
+            format: tr(.attentionBridgeWriteSampleHintNamed),
+            names.count,
+            L10n.joinNames(names, lang)
+        )
     }
 
     func attentionBridgeHintText() -> String {
         let names = Self.attentionSampleAgents.map(\.displayName)
-        let joined = lang == .zh ? names.joined(separator: "、") : names.joined(separator: ", ")
-        if lang == .zh {
-            return "无原生 Waiting 路径的 Agent（\(joined)）请用 pulse-hook / Attention Protocol v1 上报（docs/attention-protocol.md）。hooks 安装器仍只覆盖 Claude / Codex。"
-        }
-        return "Opaque agents (\(joined)) have no native Waiting path — raise via pulse-hook / Attention Protocol v1 (docs/attention-protocol.md). Hook installer stays Claude/Codex only."
+        return String(format: tr(.attentionBridgeHintNamed), L10n.joinNames(names, lang))
     }
 
     func attentionBridgeFocusHintText() -> String {
-        if let agent = settingsFocusWaitingAgent {
-            if lang == .zh {
-                return "\(agent.displayName) 无原生 Waiting 路径 — 在此用 pulse-hook / Attention Protocol 上报"
-            }
-            return "\(agent.displayName) has no native Waiting path — raise here via pulse-hook / Attention Protocol"
+        guard let agent = settingsFocusWaitingAgent else {
+            return tr(.attentionBridgeFocusHint)
         }
-        return tr(.attentionBridgeFocusHint)
+        return String(format: tr(.attentionBridgeFocusHintNamed), agent.displayName)
     }
 
     func waitingReachStepsText() -> String {
-        if let agent = settingsFocusWaitingAgent {
-            if lang == .zh {
-                return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 为 \(agent.displayName) 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
-            }
-            return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting for \(agent.displayName) · 4) Tray should go red and stay clearable. Never invents native Waiting."
+        guard let agent = settingsFocusWaitingAgent else {
+            return tr(.waitingReachSteps)
         }
-        if lang == .zh {
-            return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
-        }
-        return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting · 4) Tray should go red and stay clearable. Never invents native Waiting."
+        return String(format: tr(.waitingReachStepsNamed), agent.displayName)
     }
 
     func attentionRaiseCommand(for agent: AgentID) -> String {

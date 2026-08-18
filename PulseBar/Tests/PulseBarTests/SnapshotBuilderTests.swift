@@ -1276,4 +1276,162 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(row.bytesPerMinute, 0)
     }
 
+    // MARK: Row key stability (U-6)
+
+    /// The suffix used to be "how many rows of this agent came before me",
+    /// which is a fact about the array, not about the session. Two scans that
+    /// enumerate the same two sessions in opposite order must still address
+    /// the same rows — snooze, soft-dismiss, notification de-duplication and
+    /// the Look fingerprint are all stored against `rowKey`.
+    func testRowKeysSurviveADifferentHarvestOrder() throws {
+        let a = harvest(.codex, task: "Fix auth", project: "/w/Repo", cwd: "/w/Repo/api")
+        let b = harvest(.codex, task: "Write docs", project: "/w/Repo", cwd: "/w/Repo/docs")
+
+        let forward = build(harvest: [a, b])
+        let backward = build(harvest: [b, a])
+
+        let forwardKeys = Dictionary(
+            uniqueKeysWithValues: forward.rows.map { ($0.cwd, $0.rowKey) }
+        )
+        let backwardKeys = Dictionary(
+            uniqueKeysWithValues: backward.rows.map { ($0.cwd, $0.rowKey) }
+        )
+        XCTAssertEqual(forwardKeys.count, 2)
+        XCTAssertEqual(forwardKeys, backwardKeys, "row identity must not depend on harvest order")
+    }
+
+    /// A snooze set while two sessions shared a project must survive the
+    /// sibling going stale. Under the ordinal suffix the survivor silently
+    /// changed key, and the snooze went with it.
+    func testARowKeepsItsKeyWhenASiblingSessionDisappears() throws {
+        let a = harvest(.codex, task: "Fix auth", project: "/w/Repo", cwd: "/w/Repo/api")
+        let b = harvest(.codex, task: "Write docs", project: "/w/Repo", cwd: "/w/Repo/docs")
+
+        let both = build(harvest: [a, b])
+        let alone = build(harvest: [a])
+
+        let pairKey = try XCTUnwrap(both.rows.first { $0.cwd == "/w/Repo/api" }?.rowKey)
+        let soloKey = try XCTUnwrap(alone.rows.first { $0.cwd == "/w/Repo/api" }?.rowKey)
+        XCTAssertEqual(pairKey, soloKey)
+    }
+
+    /// A snooze outlives a relaunch, so the key has to as well. `hashValue` is
+    /// seeded per process; this digest is not, and the literal below is the
+    /// wall that keeps it that way.
+    func testTheIdentityDigestIsTheSameInEveryProcess() {
+        XCTAssertEqual(SnapshotBuilder.stableIdentityHash("pulse"), "b3f797f2")
+        XCTAssertEqual(
+            SnapshotBuilder.stableIdentityHash("c:/w/Repo/api"),
+            SnapshotBuilder.stableIdentityHash("c:/w/Repo/api")
+        )
+        XCTAssertNotEqual(
+            SnapshotBuilder.stableIdentityHash("c:/w/Repo/api"),
+            SnapshotBuilder.stableIdentityHash("c:/w/Repo/docs")
+        )
+    }
+
+    /// Sessions a moving title cannot be told apart by anything else still get
+    /// two rows, and the same two keys next time.
+    func testTitleOnlySessionsStillGetStableDistinctKeys() {
+        let a = harvest(.codex, task: "A", project: "/a/Repo")
+        let b = harvest(.codex, task: "B", project: "/a/Repo")
+        let first = build(harvest: [a, b])
+        let second = build(harvest: [b, a])
+        XCTAssertEqual(Set(first.rows.map(\.rowKey)).count, 2)
+        XCTAssertEqual(Set(first.rows.map(\.rowKey)), Set(second.rows.map(\.rowKey)))
+    }
+
+    /// A session id already makes the key unique; it must not gain a suffix.
+    func testASessionIdKeyIsLeftAlone() throws {
+        let r = build(harvest: [harvest(.claude, task: "Fix", session: "s-1", cwd: "/w/Repo")])
+        XCTAssertEqual(
+            r.rows.first?.rowKey,
+            ActivityHarvest.sessionKey(id: .claude, sessionID: "s-1", project: "", cwd: "/w/Repo")
+        )
+    }
+
+    // MARK: Soft-dismiss bookkeeping (U-5)
+
+    /// `clearedPendingKeys` is what the store should forget, not a census of
+    /// every row that is not pending. Reporting the latter made the store
+    /// rewrite `dismissed-pending.json` every scan for an unchanged set.
+    func testClearedPendingOnlyNamesKeysTheStoreIsActuallyHolding() {
+        let running = harvest(.cursor, task: "Refactor", session: "s1")
+        let idle = build(harvest: [running])
+        XCTAssertTrue(
+            idle.clearedPendingKeys.isEmpty,
+            "a plain running session has no soft dismiss to clear"
+        )
+
+        let key = ActivityHarvest.sessionKey(id: .cursor, sessionID: "s1", project: "", cwd: "")
+        let held = build(harvest: [running], context: context(dismissed: [key]))
+        XCTAssertEqual(held.clearedPendingKeys, [key])
+    }
+
+    // MARK: Lost contact is not a resolved wait (U-8)
+
+    func testARemoteWaitThatWentQuietIsNotRecordedAsResolved() throws {
+        let raised = AttentionReader.Entry(
+            id: .claude,
+            kind: "Permission",
+            message: "Approve deploy",
+            tsMs: now - 60_000,
+            session: "remote-1",
+            cwd: "/srv/app",
+            host: "builder",
+            receivedAtMs: now - 60_000
+        )
+        var quiet = raised
+        quiet.lostContact = true
+
+        let lit = build(attention: [raised])
+        XCTAssertTrue(lit.rows.contains { $0.waiting && $0.isRemote })
+
+        let gone = build(
+            attention: [quiet],
+            previous: .init(rows: lit.rows, waitingKeys: lit.waitingKeys)
+        )
+        let row = try XCTUnwrap(gone.rows.first { $0.isRemote })
+        XCTAssertTrue(row.lostContact)
+        XCTAssertFalse(row.waiting, "the lamp comes down — Pulse has no evidence it is still open")
+        XCTAssertTrue(
+            gone.resolvedWaits.isEmpty,
+            "lost contact is not an answered wait; the history must say what the row says"
+        )
+    }
+
+    /// The same transition, but the host answered: that one is resolved.
+    func testARemoteWaitThatClearedIsStillRecordedAsResolved() {
+        let raised = AttentionReader.Entry(
+            id: .claude,
+            kind: "Permission",
+            message: "Approve deploy",
+            tsMs: now - 60_000,
+            session: "remote-2",
+            cwd: "/srv/app",
+            host: "builder",
+            receivedAtMs: now - 60_000
+        )
+        let lit = build(attention: [raised])
+        let cleared = build(previous: .init(rows: lit.rows, waitingKeys: lit.waitingKeys))
+        XCTAssertEqual(cleared.resolvedWaits.count, 1)
+    }
+
+    // MARK: Tooltip copy (U-9)
+
+    /// `Permission` is a protocol token. A Chinese tray showing a bare English
+    /// word in the glance tooltip is the same defect as any other untranslated
+    /// string — EXPERIENCE §4 admits no exceptions.
+    func testTheGlanceTooltipTranslatesTheWaitKind() {
+        let entry = attention(.claude, kind: "Permission", message: "", session: "s1")
+        let zh = build(attention: [entry], context: context(lang: .zh))
+        XCTAssertTrue(
+            zh.snapshot.tooltip.contains(L10n.t(.kindPermission, .zh)),
+            "tooltip was \(zh.snapshot.tooltip)"
+        )
+        XCTAssertFalse(zh.snapshot.tooltip.contains("Permission"))
+
+        let en = build(attention: [entry], context: context(lang: .en))
+        XCTAssertTrue(en.snapshot.tooltip.contains(L10n.t(.kindPermission, .en)))
+    }
 }

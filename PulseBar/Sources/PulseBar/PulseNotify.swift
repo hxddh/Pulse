@@ -137,6 +137,33 @@ enum PulseNotify {
         }
     }
 
+    /// Every Waiting banner identifier this process has handed to Notification
+    /// Center, so "Clear waiting" can take them back.
+    ///
+    /// `center.add` is asynchronous: a request accepted a moment before the
+    /// user clears Waiting has already left the store's own queue and would
+    /// still land on screen. Bounded — one entry per interrupted session, and
+    /// the oldest drop out well before the list could grow into a leak.
+    private static var issuedWaitingIDs: [String] = []
+    private static let maxIssuedWaitingIDs = 128
+
+    private static func rememberWaitingID(_ id: String) {
+        issuedWaitingIDs.removeAll { $0 == id }
+        issuedWaitingIDs.append(id)
+        if issuedWaitingIDs.count > maxIssuedWaitingIDs {
+            issuedWaitingIDs.removeFirst(issuedWaitingIDs.count - maxIssuedWaitingIDs)
+        }
+    }
+
+    /// Withdraw Waiting banners, submitted or already shown.
+    static func withdrawWaitingNotifications() {
+        let ids = issuedWaitingIDs
+        issuedWaitingIDs.removeAll()
+        guard let center, !ids.isEmpty else { return }
+        center.removePendingNotificationRequests(withIdentifiers: ids)
+        center.removeDeliveredNotifications(withIdentifiers: ids)
+    }
+
     static func postIdle(title: String, body: String) {
         post(id: "pulse-idle", title: title, body: body, agent: "", session: "", rowKey: "")
     }
@@ -167,6 +194,7 @@ enum PulseNotify {
             if !agent.isEmpty { return "pulse-waiting-\(agent)" }
             return "pulse-waiting"
         }()
+        rememberWaitingID(id)
         post(
             id: id,
             title: title,
@@ -194,6 +222,7 @@ enum PulseNotify {
         let safe = String(seed.unicodeScalars.map { scalar in
             CharacterSet.alphanumerics.contains(scalar) ? String(scalar) : "-"
         }.joined().prefix(96))
+        rememberWaitingID("pulse-waiting-summary-\(safe)")
         post(
             id: "pulse-waiting-summary-\(safe)",
             title: title,

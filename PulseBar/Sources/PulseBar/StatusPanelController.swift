@@ -21,7 +21,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private let rootView = NSView()
     private let shadowView = NSView()
     private let effectView = NSVisualEffectView()
-    private let hosting: NSHostingController<TrayPanel>
+    private let hosting: NSHostingController<TrayPanelHost>
     private var subscriptions = Set<AnyCancellable>()
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -40,7 +40,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 
     init(store: StatusStore) {
         self.store = store
-        hosting = NSHostingController(rootView: TrayPanel(store: store))
+        hosting = NSHostingController(rootView: TrayPanelHost(store: store))
         panel = PulseStatusPanel(
             contentRect: .init(
                 x: 0,
@@ -89,7 +89,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 
     func show() {
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
-        resizeToFit()
+        // Every open is a fresh glance. Do it before the first layout pass so
+        // the panel is never ordered in showing the previous visit's search
+        // text or folded groups (EXPERIENCE §4); `settleLayout` below flushes
+        // the rebuilt tree, so the reset and the measurement agree.
+        store.trayWillAppear()
+        settleLayout()
         positionPanel(below: buttonWindow.convertToScreen(button.frame))
         panel.makeKeyAndOrderFront(nil)
         StatusPanelChrome.apply(
@@ -324,6 +329,18 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             self?.resizeToFit()
         }
+    }
+
+    /// Measure, then measure again.
+    ///
+    /// SwiftUI reports the content height through a preference, so the first
+    /// layout pass produces the number and the second one applies it. State
+    /// that carried over made one pass look sufficient; a tray that is rebuilt
+    /// on every open (see `TrayPanelHost`) would otherwise be ordered in at its
+    /// minimum height and visibly grow.
+    private func settleLayout() {
+        resizeToFit()
+        resizeToFit()
     }
 
     private func resizeToFit() {
