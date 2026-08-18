@@ -536,4 +536,109 @@ final class SupportHealthTests: XCTestCase {
         let gap = quality.missing.first { $0.nextStep == "enable_app_data" }!
         XCTAssertEqual(store.observationGapNextStep(gap), store.tr(.supportEnableData))
     }
+
+    // MARK: collector explain on screen (M-4)
+
+    @MainActor
+    func testReadingLineNamesWhatTheAdapterActuallyRead() {
+        let store = StatusStore()
+        store.language = .en
+        var item = health()
+        item.collectorExplain = ActivityHarvest.CollectorExplain(
+            filesRead: 3,
+            bytesRead: 41 * 1024,
+            truncated: false,
+            factsParsed: 7,
+            heroOrigin: "user_prompt",
+            emptyReason: ""
+        )
+        let reading = store.supportReadingDetail(item)
+        XCTAssertTrue(reading.contains("3"), reading)
+        XCTAssertTrue(reading.contains("7"), reading)
+        XCTAssertFalse(reading.contains("floors"), "nothing was truncated, so nothing is a floor")
+        XCTAssertEqual(
+            store.supportCollectorOutcomeDetail(item),
+            String(format: store.tr(.supportExplainHero), store.tr(.supportOriginUserPrompt))
+        )
+    }
+
+    @MainActor
+    func testATruncatedWindowSaysTheCountsAreFloors() {
+        let store = StatusStore()
+        store.language = .en
+        var item = health()
+        item.collectorExplain = ActivityHarvest.CollectorExplain(
+            filesRead: 2,
+            bytesRead: 1024,
+            truncated: true,
+            factsParsed: 4
+        )
+        // A number read from a head+tail window is a floor. Printing it beside
+        // no truncation marker would be the estimate-as-total this project
+        // forbids everywhere else.
+        XCTAssertTrue(
+            store.supportReadingDetail(item).contains(store.tr(.supportExplainTruncated)),
+            store.supportReadingDetail(item)
+        )
+    }
+
+    @MainActor
+    func testAnEmptyAdapterSaysWhichLayerLostIt() {
+        let store = StatusStore()
+        store.language = .en
+        var item = health(goal: false)
+        for (tag, key) in [
+            ("no_source", L10n.Key.supportEmptyNoSource),
+            ("deadline", .supportEmptyDeadline),
+            ("no_readable_file", .supportEmptyNoReadableFile),
+            ("no_parsable_record", .supportEmptyNoParsableRecord),
+            ("facts_without_display_signal", .supportEmptyNoDisplaySignal),
+            ("no_user_goal_in_records", .supportEmptyNoUserGoal),
+        ] {
+            item.collectorExplain = ActivityHarvest.CollectorExplain(emptyReason: tag)
+            XCTAssertEqual(
+                store.supportCollectorOutcomeDetail(item),
+                String(format: store.tr(.supportExplainEmpty), store.tr(key)),
+                tag
+            )
+        }
+    }
+
+    @MainActor
+    func testAnUnknownTagIsShownRatherThanSwallowed() {
+        let store = StatusStore()
+        store.language = .en
+        // A reason added by a future adapter must be visible the day it ships.
+        // Falling back to "" would hide it until somebody noticed the blank.
+        XCTAssertEqual(store.collectorEmptyReasonLabel("some_future_reason"), "some_future_reason")
+        XCTAssertEqual(store.collectorOriginLabel("some_future_origin"), "some_future_origin")
+    }
+
+    @MainActor
+    func testNothingReadPrintsNothingRatherThanZeros() {
+        let store = StatusStore()
+        store.language = .en
+        var item = health()
+        item.collectorExplain = ActivityHarvest.CollectorExplain()
+        XCTAssertEqual(store.supportReadingDetail(item), "")
+        XCTAssertEqual(store.supportCollectorOutcomeDetail(item), "")
+    }
+
+    @MainActor
+    func testExplainIsTranslatedInBothLanguages() {
+        let store = StatusStore()
+        var item = health()
+        item.collectorExplain = ActivityHarvest.CollectorExplain(
+            filesRead: 1,
+            bytesRead: 2048,
+            factsParsed: 1,
+            emptyReason: "deadline"
+        )
+        store.language = .en
+        let en = store.supportCollectorOutcomeDetail(item)
+        store.language = .zh
+        let zh = store.supportCollectorOutcomeDetail(item)
+        XCTAssertFalse(en.isEmpty)
+        XCTAssertNotEqual(en, zh, "the diagnostics disclosure is user-facing copy, not a log line")
+    }
 }

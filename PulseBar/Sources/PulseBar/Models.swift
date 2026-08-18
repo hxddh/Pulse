@@ -1234,6 +1234,14 @@ struct AgentSupportHealth: Identifiable, Equatable {
     var activityAgeSeconds: Double = 0
     /// True when any live row for this Agent is currently marked stalled.
     var hasStalledLive: Bool = false
+    /// How the adapter reached the result above: how much it read, whether the
+    /// window was truncated, and — when there is no hero title — which layer
+    /// lost it. Diagnostic only; it carries counts and fixed tags, never
+    /// titles, prompts or vendor paths, and it is never promoted to a tray
+    /// fact. It has been collected since 1.2 and until now only reached
+    /// debug.log, which meant the one question Support Health exists to answer
+    /// — "why is this row empty?" — still cost a terminal to ask.
+    var collectorExplain: ActivityHarvest.CollectorExplain = ActivityHarvest.CollectorExplain()
 
     var id: AgentID { agent }
 

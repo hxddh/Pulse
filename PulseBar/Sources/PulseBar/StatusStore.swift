@@ -814,7 +814,8 @@ final class StatusStore: ObservableObject {
                     guard let newest = clocks.max() else { return 0 }
                     return max(0, Date().timeIntervalSince1970 - Double(newest) / 1000.0)
                 }(),
-                hasStalledLive: rows.contains { $0.liveProcess && $0.isStalled }
+                hasStalledLive: rows.contains { $0.liveProcess && $0.isStalled },
+                collectorExplain: health?.explain ?? ActivityHarvest.CollectorExplain()
             )
         }
     }
@@ -1064,6 +1065,9 @@ final class StatusStore: ObservableObject {
     func supportHealthDetail(_ health: AgentSupportHealth) -> String {
         [
             supportAdapterDetail(health),
+            // The outcome sentence rides along so VoiceOver hears the reason a
+            // row is empty, not only that it is.
+            supportCollectorOutcomeDetail(health),
             supportCoverageDetail(health),
             supportTimelineDetail(health),
             supportMissingDetail(health),
@@ -1110,6 +1114,70 @@ final class StatusStore: ObservableObject {
             facts.append(tr(.supportCollectorUnscannedDetail))
         }
         return facts.joined(separator: " · ")
+    }
+
+    /// What the adapter actually read this pass: files opened, bytes spent,
+    /// facts produced, and whether any window was truncated. Empty when the
+    /// adapter never got to read anything, so the line disappears instead of
+    /// printing a row of zeros.
+    ///
+    /// This is the half of `CollectorExplain` that says how much work happened.
+    /// `supportCollectorOutcomeDetail` says what came of it.
+    func supportReadingDetail(_ health: AgentSupportHealth) -> String {
+        let explain = health.collectorExplain
+        var facts: [String] = []
+        if explain.filesRead > 0 {
+            facts.append(String(format: tr(.supportExplainFiles), explain.filesRead))
+        }
+        let size = AgentRow.compactBytes(explain.bytesRead)
+        if !size.isEmpty { facts.append(size) }
+        if explain.factsParsed > 0 {
+            facts.append(String(format: tr(.supportExplainFacts), explain.factsParsed))
+        }
+        // Said last and said plainly: once a window is truncated every count
+        // above it is a floor. Printing the numbers without this would be the
+        // estimate-as-total the whole project forbids.
+        if explain.truncated { facts.append(tr(.supportExplainTruncated)) }
+        return facts.joined(separator: " · ")
+    }
+
+    /// What came of the read: where the headline came from, or which layer
+    /// lost it. The second one is the question Support Health exists to
+    /// answer and the one that used to require reading debug.log.
+    func supportCollectorOutcomeDetail(_ health: AgentSupportHealth) -> String {
+        let explain = health.collectorExplain
+        if !explain.emptyReason.isEmpty {
+            return String(format: tr(.supportExplainEmpty), collectorEmptyReasonLabel(explain.emptyReason))
+        }
+        guard !explain.heroOrigin.isEmpty else { return "" }
+        return String(format: tr(.supportExplainHero), collectorOriginLabel(explain.heroOrigin))
+    }
+
+    /// The adapter's fixed tag, in words. An unknown tag is passed through
+    /// rather than swallowed — a new reason must be visible the day it ships,
+    /// not the release after somebody notices the blank.
+    func collectorEmptyReasonLabel(_ raw: String) -> String {
+        switch raw {
+        case "no_source": return tr(.supportEmptyNoSource)
+        case "deadline": return tr(.supportEmptyDeadline)
+        case "no_readable_file": return tr(.supportEmptyNoReadableFile)
+        case "no_parsable_record": return tr(.supportEmptyNoParsableRecord)
+        case "facts_without_display_signal": return tr(.supportEmptyNoDisplaySignal)
+        case "no_user_goal_in_records": return tr(.supportEmptyNoUserGoal)
+        default: return raw
+        }
+    }
+
+    func collectorOriginLabel(_ raw: String) -> String {
+        switch raw {
+        case "chrome": return tr(.supportOriginChrome)
+        case "fallback_text": return tr(.supportOriginFallbackText)
+        case "cache_title": return tr(.supportOriginCacheTitle)
+        case "tool_title": return tr(.supportOriginToolTitle)
+        case "user_prompt": return tr(.supportOriginUserPrompt)
+        case "session_name": return tr(.supportOriginSessionName)
+        default: return raw
+        }
     }
 
     func supportCoverageDetail(_ health: AgentSupportHealth) -> String {

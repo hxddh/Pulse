@@ -452,6 +452,23 @@ enum L10n {
         case .supportRunAgent: return "Run this agent once"
         case .supportEnableData: return "Choose its data source"
         case .supportAdapterDiagnostics: return "Adapter diagnostics"
+        case .supportExplainFiles: return "read %d files"
+        case .supportExplainFacts: return "%d facts"
+        case .supportExplainTruncated: return "window truncated — counts are floors"
+        case .supportExplainHero: return "headline from %@"
+        case .supportExplainEmpty: return "no headline: %@"
+        case .supportEmptyNoSource: return "this agent's store is not on this Mac"
+        case .supportEmptyDeadline: return "the scan hit its deadline before finishing"
+        case .supportEmptyNoReadableFile: return "no file could be opened"
+        case .supportEmptyNoParsableRecord: return "files were read but no record parsed"
+        case .supportEmptyNoDisplaySignal: return "records parsed but none carried a displayable signal"
+        case .supportEmptyNoUserGoal: return "records parsed but none contained a user goal"
+        case .supportOriginChrome: return "a vendor placeholder"
+        case .supportOriginFallbackText: return "free text"
+        case .supportOriginCacheTitle: return "a cache title"
+        case .supportOriginToolTitle: return "a tool label"
+        case .supportOriginUserPrompt: return "a user turn"
+        case .supportOriginSessionName: return "a name you gave the session"
         case .supportSafeReport: return "Preview safe report"
         case .supportCopySafeReport: return "Copy safe report"
         case .exportSafeReport: return "Export safe report…"
@@ -942,6 +959,23 @@ enum L10n {
         case .supportRunAgent: return "先运行一次这个 Agent"
         case .supportEnableData: return "选择它的数据来源"
         case .supportAdapterDiagnostics: return "适配器诊断"
+        case .supportExplainFiles: return "读了 %d 个文件"
+        case .supportExplainFacts: return "解析出 %d 条事实"
+        case .supportExplainTruncated: return "窗口被截断 —— 上面的计数只是下限"
+        case .supportExplainHero: return "标题来自%@"
+        case .supportExplainEmpty: return "没有标题：%@"
+        case .supportEmptyNoSource: return "这台 Mac 上没有它的数据目录"
+        case .supportEmptyDeadline: return "还没读完就到了扫描时限"
+        case .supportEmptyNoReadableFile: return "一个文件都没能打开"
+        case .supportEmptyNoParsableRecord: return "文件读到了，但没解析出记录"
+        case .supportEmptyNoDisplaySignal: return "记录解析出来了，但没有一条带可显示的信号"
+        case .supportEmptyNoUserGoal: return "记录解析出来了，但里面没有用户的目标"
+        case .supportOriginChrome: return "厂商占位文案"
+        case .supportOriginFallbackText: return "自由文本"
+        case .supportOriginCacheTitle: return "缓存标题"
+        case .supportOriginToolTitle: return "工具标签"
+        case .supportOriginUserPrompt: return "一次用户提问"
+        case .supportOriginSessionName: return "你给这场会话起的名字"
         case .supportSafeReport: return "预览安全报告"
         case .supportCopySafeReport: return "复制安全报告"
         case .exportSafeReport: return "导出安全报告…"
@@ -1148,6 +1182,12 @@ enum L10n {
         case supportSummaryLine
         case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportAvailableCount, supportNotInstalledCount, supportNoRecentCount, supportPermissionDeniedCount, supportUnscannedCount, supportUsefulCoverage
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
+        case supportExplainFiles, supportExplainFacts, supportExplainTruncated
+        case supportExplainHero, supportExplainEmpty
+        case supportEmptyNoSource, supportEmptyDeadline, supportEmptyNoReadableFile
+        case supportEmptyNoParsableRecord, supportEmptyNoDisplaySignal, supportEmptyNoUserGoal
+        case supportOriginChrome, supportOriginFallbackText, supportOriginCacheTitle
+        case supportOriginToolTitle, supportOriginUserPrompt, supportOriginSessionName
         case supportCopyShapeReport, supportShapeReading, supportShapeHint
         case remoteEvidence, remoteLastHeard, remoteLostContact, remoteLostContactWhy
         case loopingTool, loopingHint, sessionErrors, toolsUsed, sessionErrorsLabel

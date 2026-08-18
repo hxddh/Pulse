@@ -2946,11 +2946,31 @@ struct SupportHealthRow: View {
                 }
 
                 DisclosureGroup(isExpanded: $diagnosticsExpanded) {
-                    Text(store.supportAdapterDetail(item))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 3)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(store.supportAdapterDetail(item))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // How the adapter got there. Collected since 1.2 and
+                        // until now only written to debug.log, which left "why
+                        // is this row empty" answerable only from a terminal.
+                        let reading = store.supportReadingDetail(item)
+                        if !reading.isEmpty {
+                            Text(reading)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        let outcome = store.supportCollectorOutcomeDetail(item)
+                        if !outcome.isEmpty {
+                            Text(outcome)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 3)
                 } label: {
                     Text(store.tr(.supportAdapterDiagnostics))
                 }
