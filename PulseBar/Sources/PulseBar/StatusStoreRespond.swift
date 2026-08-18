@@ -77,12 +77,24 @@ extension StatusStore {
         AgentDetailWindowController.shared.show(store: self, row: row)
     }
 
+    /// Every exit from here is visible.
+    ///
+    /// Refusal and a failed write used to leave through `debug.log` alone, so
+    /// pressing Deny — the button this product promises is always available,
+    /// because refusing something you have not fully read is the safe move —
+    /// looked exactly like pressing a button that does nothing. Failure is
+    /// still fail-open: the remote agent falls back to its own prompt, which
+    /// is what the sentence says.
     private func writeRespondVerdict(_ row: AgentRow, allow: Bool) {
-        guard let inbound = respondInboundByRowKey[row.rowKey] else { return }
+        guard let inbound = respondInboundByRowKey[row.rowKey] else {
+            noteRowAction(row.rowKey, tr(.respondRequestGone))
+            return
+        }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         var decisions = RespondDecisionStore()
         guard let verdict = decisions.decide(inbound.request, allow: allow, nowMs: nowMs) else {
             DebugLog.write("respond refuse allow=\(allow) key=\(row.rowKey) canOfferAllow=false")
+            noteRowAction(row.rowKey, tr(.respondRefused))
             return
         }
         let written = RespondSpool.writeVerdict(verdict)
@@ -91,6 +103,8 @@ extension StatusStore {
         )
         if written {
             respondVerdictSentRowKeys.insert(row.rowKey)
+        } else {
+            noteRowAction(row.rowKey, tr(.respondWriteFailed))
         }
     }
 }

@@ -197,6 +197,15 @@ private struct AgentDetailView: View {
                     }
                 }
                 .buttonStyle(.bordered)
+                // A verdict that could not be written is still fail-open, but
+                // it is not silence: the window that offered the button says
+                // what happened to it.
+                if let notice = store.rowActionNotice(row) {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .padding(14)

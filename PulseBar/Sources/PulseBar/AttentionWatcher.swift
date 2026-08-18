@@ -24,7 +24,7 @@ final class AttentionWatcher: @unchecked Sendable {
         let dir = file.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: file.path) {
-            try? AttentionIO.header.write(to: file, atomically: true, encoding: .utf8)
+            PrivateFile.write(Data(AttentionIO.header.utf8), to: file)
         }
         let inbox = AttentionIO.inboxDirectory
         try? FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
@@ -145,7 +145,7 @@ final class AttentionWatcher: @unchecked Sendable {
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try? AttentionIO.header.write(to: fileURL, atomically: true, encoding: .utf8)
+            PrivateFile.write(Data(AttentionIO.header.utf8), to: fileURL)
         }
         let fd = open(watchPath, O_EVTONLY)
         guard fd >= 0 else { return }

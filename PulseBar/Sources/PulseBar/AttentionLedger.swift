@@ -228,24 +228,22 @@ struct AttentionLedger: Codable {
         }
     }
 
+    /// This file holds session titles — the user's own words, up to 160
+    /// characters — alongside project names and wait kinds. It used to be
+    /// written through a temporary file that took the process umask and then
+    /// renamed, setting no mode at any point, so the most prose-carrying file
+    /// Pulse writes was the one local account boundary it did not respect.
+    /// `PrivateFile` gives it the same 0600-from-the-first-byte treatment the
+    /// respond spool beside it has always had.
     func save(to url: URL = fileURL) {
-        let fm = FileManager.default
-        let directory = url.deletingLastPathComponent()
-        do {
-            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            let data = try encoder.encode(self)
-            let temporary = url.appendingPathExtension("tmp")
-            try data.write(to: temporary, options: .atomic)
-            if fm.fileExists(atPath: url.path) {
-                _ = try fm.replaceItemAt(url, withItemAt: temporary)
-            } else {
-                try fm.moveItem(at: temporary, to: url)
-            }
-        } catch {
-            try? fm.removeItem(at: url.appendingPathExtension("tmp"))
-            DebugLog.write("attention ledger save failed \(error.localizedDescription)")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self) else {
+            DebugLog.write("attention ledger encode failed")
+            return
+        }
+        if !PrivateFile.write(data, to: url) {
+            DebugLog.write("attention ledger save failed")
         }
     }
 }

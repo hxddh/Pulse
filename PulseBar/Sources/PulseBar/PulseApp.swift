@@ -1598,6 +1598,19 @@ private struct AgentRowButton: View {
                 .padding(.trailing, TrayChrome.padX)
                 .padding(.bottom, 8)
             }
+
+            // What the last click actually did, when it did not do the thing.
+            // A button that reached nothing and a button that is broken look
+            // identical unless the row says which one happened.
+            if let notice = store.rowActionNotice(row) {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 48)
+                    .padding(.trailing, TrayChrome.padX)
+                    .padding(.bottom, 8)
+            }
         }
         // Inset rounded, not a full-bleed rectangle.
         //

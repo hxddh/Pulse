@@ -624,6 +624,26 @@ def respond_decision_json(
     )
 
 
+def open_private(path):
+    """attention.tsv, read/write, 0600 from creation.
+
+    Every line here is either a command an agent asked to run or the directory
+    it asked from, so it belongs to this user alone — the same rule the respond
+    spool beside it has always followed. A creation mode only covers a file
+    that does not exist yet, so an install that already has an attention.tsv
+    is brought down through the descriptor we already hold. A file owned by
+    somebody else is left exactly as it is.
+    """
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        info = os.fstat(fd)
+        if info.st_uid == os.getuid() and (info.st_mode & 0o777) != 0o600:
+            os.fchmod(fd, 0o600)
+    except OSError:
+        pass
+    return os.fdopen(fd, "r+", encoding="utf-8")
+
+
 def append_event(agent: str, kind: str, message: str, session: str = "", cwd: str = "") -> None:
     path = attention_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -639,7 +659,7 @@ def append_event(agent: str, kind: str, message: str, session: str = "", cwd: st
             clean_field(cwd, 240),
         )
     )
-    with path.open("a+", encoding="utf-8") as f:
+    with open_private(path) as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
             f.seek(0)
