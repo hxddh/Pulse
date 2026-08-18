@@ -225,7 +225,7 @@ final class ProcessProbeCPUTests: XCTestCase {
                 previousCPUSeconds: 0,
                 previousAtMs: 1_000_000,
                 currentCPUSeconds: 4,
-                currentAtMs: 1_002_000
+                currentAtMs: 1_001_000
             ),
             400,
             accuracy: 0.0001
