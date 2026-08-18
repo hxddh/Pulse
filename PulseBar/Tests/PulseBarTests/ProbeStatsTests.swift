@@ -232,6 +232,37 @@ final class ProcessProbeCPUTests: XCTestCase {
         )
     }
 
+    func testAPidYoungerThanTheWindowIsADifferentProcess() {
+        // pid reuse where the new occupant has burned *more* CPU than the one
+        // it replaced: the counter never goes backwards, so the rewind check
+        // sees nothing wrong and would happily divide two unrelated totals.
+        // The process's own age settles it — it did not exist when the earlier
+        // reading was taken.
+        XCTAssertFalse(
+            ProcessProbe.isSameProcess(elapsedSeconds: 2, windowMs: 30_000)
+        )
+        XCTAssertTrue(
+            ProcessProbe.isSameProcess(elapsedSeconds: 600, windowMs: 3_000)
+        )
+    }
+
+    func testTruncatedAgeDoesNotThrowAwayAGenuineSample() {
+        // `ps etime` truncates to whole seconds, so a process 3.9 s old reports
+        // 3. Without slack a 3.5 s window would discard its sample every time
+        // and CPU would read "unknown" forever on a healthy machine.
+        XCTAssertTrue(
+            ProcessProbe.isSameProcess(elapsedSeconds: 3, windowMs: 3_500)
+        )
+    }
+
+    func testWithNoEarlierReadingThereIsNothingToDoubt() {
+        // windowMs is measured against a missing sample, so it is not a window
+        // at all. Rejecting here would be answering a question nobody asked.
+        XCTAssertTrue(
+            ProcessProbe.isSameProcess(elapsedSeconds: 0, windowMs: 0)
+        )
+    }
+
     func testAbsurdValuesAreClampedRatherThanPrinted() {
         XCTAssertEqual(
             ProcessProbe.cpuPercent(

@@ -388,7 +388,18 @@ enum ProcessProbe {
             // would put several hundred entries a tick through a bounded
             // store, and evict the agents we actually care about.
             if p.cpuSeconds >= 0 {
-                let previous = cpuSamples[p.pid]
+                // A pid the store already knows is only the same *program* if
+                // the process behind it is at least as old as the gap since
+                // that reading. The rewind check below catches a reused pid
+                // whose occupant has burned less CPU than its predecessor; it
+                // is blind to one that has burned more, and dividing two
+                // unrelated totals would print a number about nothing.
+                let previous = cpuSamples[p.pid].flatMap { sample in
+                    isSameProcess(
+                        elapsedSeconds: p.elapsedSeconds,
+                        windowMs: sampledAtMs - sample.atMs
+                    ) ? sample : nil
+                }
                 if let previous {
                     procs[index].cpuPercent = cpuPercent(
                         previousCPUSeconds: previous.cpuSeconds,
@@ -593,6 +604,25 @@ enum ProcessProbe {
         let minutes = values.count == 3 ? values[1] : values[0]
         let seconds = values.count == 3 ? values[2] : values[1]
         return days * 86_400 + hours * 3_600 + minutes * 60 + seconds
+    }
+
+    /// Can the process wearing this pid now be the one sampled `windowMs` ago?
+    ///
+    /// A process younger than the window started after that reading, so the
+    /// pid has been recycled and its predecessor's accumulated CPU describes a
+    /// different program. `cpuPercent` already refuses a counter that went
+    /// backwards, which covers a replacement that has burned *less* CPU than
+    /// the process it replaced; this covers the other half.
+    ///
+    /// `ps etime` has one-second resolution and truncates, so the reported age
+    /// is a floor. One second of slack keeps a genuine sample from being
+    /// thrown away on rounding — the cost is that a pid recycled within a
+    /// second of the window length still slips through, which is a far smaller
+    /// hole than the one it closes and cannot be shrunk further with a field
+    /// this coarse.
+    static func isSameProcess(elapsedSeconds: Double, windowMs: Int64) -> Bool {
+        guard windowMs > 0 else { return true }
+        return (elapsedSeconds + 1) * 1_000 >= Double(windowMs)
     }
 
     /// CPU actually burned between two readings, as a percentage of one core.
