@@ -408,4 +408,97 @@ final class GroundTruthTests: XCTestCase {
         XCTAssertTrue(health.explain.truncated)
         XCTAssertTrue(health.explain.summary.contains("truncated"))
     }
+
+    // MARK: - 2.2 · which sessions the read budget is spent on
+
+    /// Regression (B-8 / `H-M2`): the bounded walk read transcripts in
+    /// whatever order the filesystem handed them back, and stopped when it hit
+    /// its cap. Filesystem order is neither time order nor stable, so on a
+    /// heavy user's machine — Claude and Codex cross the cap within a couple
+    /// of months — "was the session you are actually running scanned?" was a
+    /// question about directory layout. Pi was fixed for exactly this in 0.97
+    /// and the fix was never generalised.
+    ///
+    /// The rows read must therefore be the newest ones, contiguously: a gap
+    /// in the sequence means something older displaced something newer.
+    func testTheReadBudgetIsSpentOnTheNewestSessions() throws {
+        let home = try makeHome("mtime-order")
+        defer { try? FileManager.default.removeItem(at: home) }
+        HarvestDigests.resetForTesting()
+
+        let total = 500
+        let clock = Date()
+        for index in 0..<total {
+            let id = String(format: "gt-order-%03d", index)
+            let relative = ".openhands/sessions/\(id).jsonl"
+            try write(
+                #"{"sessionId":"\#(id)","role":"user","content":"Session \#(id)","cwd":"/tmp/gt-order"}"# + "\n",
+                to: home,
+                relative
+            )
+            // 0 is the newest, `total - 1` the oldest; all inside the
+            // freshness window so nothing is skipped for age.
+            try FileManager.default.setAttributes(
+                [.modificationDate: clock.addingTimeInterval(-60 * Double(index))],
+                ofItemAtPath: home.appendingPathComponent(relative).path
+            )
+        }
+
+        // Generous deadlines: this asserts which files were chosen, not how
+        // fast the runner is.
+        let result = NativeActivityHarvest.scan(
+            home: home,
+            agentDeadlineSeconds: 60,
+            totalDeadlineSeconds: 120,
+            agentFilter: [.openhands]
+        )
+        let indices = result.rows
+            .filter { $0.id == .openhands }
+            .compactMap { Int($0.sessionID.dropFirst("gt-order-".count)) }
+            .sorted()
+
+        XCTAssertFalse(indices.isEmpty, "the adapter read something")
+        XCTAssertLessThan(
+            indices.count, total,
+            "the per-agent file cap must actually bite, or this proves nothing"
+        )
+        XCTAssertEqual(indices.first, 0, "the newest session is never the one left out")
+        XCTAssertEqual(
+            indices, Array(0..<indices.count),
+            "the sessions read are exactly the newest N — a gap means an older file took a live one's place"
+        )
+    }
+
+    // MARK: - 2.2 · Waiting is never inferred from prose
+
+    /// Regression (B-11 / `H-M5`): the free-text fallback parser raised
+    /// `skill=pending` from a `"status": "waiting"` regex match. It runs on
+    /// `.md` / `.txt` / `.log` files and on JSON no real parser could read,
+    /// where it cannot tell a session's own state from one quoted inside it —
+    /// so a design note describing the attention bridge lit a red lamp.
+    ///
+    /// Waiting comes from hooks or a structured `skill=pending`, never from
+    /// inference. The fallback may still supply display fields.
+    func testAQuotedStatusInProseNeverLightsWaiting() throws {
+        let home = try makeHome("prose-pending")
+        defer { try? FileManager.default.removeItem(at: home) }
+        // Deliberately not a JSON document and with no line that parses as
+        // one: this is the path where only the regex fallback runs.
+        let note = """
+        # Attention bridge notes
+
+        A raised event carries "sessionId": "gt-prose-1" and "cwd": "/tmp/gt-prose"
+        alongside "status": "waiting" — written here as documentation of the
+        wire format, not as a statement about this machine.
+        """
+        try write(note, to: home, ".openhands/notes.md")
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        XCTAssertEqual(row.cwd, "/tmp/gt-prose", "display fields still travel")
+        XCTAssertNotEqual(
+            row.skill, "pending",
+            "a status quoted in prose is not this session's status"
+        )
+    }
 }
