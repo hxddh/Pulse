@@ -63,7 +63,7 @@ compaction / pid 复用一律归零重来。
 | M-1 | CPU 采样 | 同一次 `ps` 取 `cputime` + `rss`；两拍相减得真实占用；不足两拍报未知；pid 复用归零 |
 | M-2 | 上界面 | 行按 2.1 的信息量规则参与排序（**动静**层，与增长速率同层）；Details 给 CPU 与常驻内存 |
 | M-3 | 「在算」不再像「卡住」 | 停滞判定考虑 CPU：活动时钟不动但 CPU 持续在跑 → 叙事说明它在算，不冒充健康也不误报停滞 |
-| M-4 | 采集诊断上界面 | `CollectorExplain` 本就是为「一贴即成 bug report」设计的，现在只写 debug.log；进 Support Health 逐 Agent 展示 |
+| M-4 | 采集诊断上界面 | ✅ `CollectorExplain` 进 Support Health 的「适配器诊断」折叠区：读了多少（文件 / 字节 / 事实、窗口截断即声明计数是下限）＋ 结果如何（标题出处，或哪一层把它丢了）。什么都没读就什么都不显示，未知 tag 原样打出 |
 
 ### 明确不做
 
