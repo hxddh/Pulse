@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import PulseBar
 
@@ -442,5 +443,154 @@ final class SessionDigestTests: XCTestCase {
 
     func testTheSupportSummarySaysNothingWhenThereIsNothing() {
         XCTAssertEqual(HarvestDigests.summary, "none")
+    }
+
+    // MARK: - 2.2 · the last block is not exempt from the half-record rule
+
+    /// Regression (B-10 / `H-M4`): the comment promised "Never fold a half
+    /// written record" and the code exempted the last block from it.
+    ///
+    /// `size` is stat'd before the read. A writer that splits one long record
+    /// across two `write` calls leaves the file ending mid-record at exactly
+    /// that size, so the fold "reached the end of the file" and swallowed the
+    /// fragment: the front half counted as one record now, the back half as
+    /// another record next pass. `records` is reported as an exact number, so
+    /// this was a wrong number that never corrected itself.
+    func testTheClaimedEndOfAFileIsNotProofItsTailIsWhole() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let whole = #"{"type":"user"}"# + "\n" + #"{"type":"assistant"}"# + "\n"
+        let halfRecord = #"{"type":"tool_use","na"#
+        try (whole + halfRecord).write(to: url, atomically: true, encoding: .utf8)
+
+        // What the caller measured a moment ago, before the writer appended
+        // the last few bytes. `advance` reads exactly that much and therefore
+        // believes it is standing at the end of the file.
+        let staleSize = whole.utf8.count + halfRecord.utf8.count - 4
+        let digest = try XCTUnwrap(
+            SessionDigestEngine.advance(nil, url: url, size: staleSize, nowMs: now)
+        )
+        XCTAssertEqual(digest.records, 2, "the half record waits for its other half")
+        XCTAssertEqual(digest.offset, whole.utf8.count, "stop at the last newline")
+        XCTAssertFalse(digest.caughtUp, "and say so, rather than claim a total")
+    }
+
+    /// The exception the rule keeps, because it can be proved rather than
+    /// assumed: a transcript whose final record carries no trailing newline is
+    /// complete when the descriptor says the file has not moved since the
+    /// caller measured it.
+    func testAFinalRecordWithoutANewlineIsFoldedWhenTheFileHasStoppedMoving() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = #"{"type":"user"}"# + "\n" + #"{"type":"assistant"}"#
+        try text.write(to: url, atomically: true, encoding: .utf8)
+
+        let digest = try XCTUnwrap(
+            SessionDigestEngine.advance(nil, url: url, size: text.utf8.count, nowMs: now)
+        )
+        XCTAssertEqual(digest.records, 2, "nothing was appended while this ran")
+        XCTAssertTrue(digest.caughtUp)
+    }
+
+    /// The descriptor check narrows the race; it does not close it. A writer
+    /// that finished its first `write` before the caller stat'd and its second
+    /// after the descriptor was asked leaves a file that has *not* moved and a
+    /// tail that is still half a record. Only the shape of the tail can tell
+    /// those apart.
+    func testATornRecordIsNotCountedEvenWhenTheFileHasStoppedMoving() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let whole = #"{"type":"user"}"# + "\n"
+        let torn = #"{"type":"tool_use","na"#
+        try (whole + torn).write(to: url, atomically: true, encoding: .utf8)
+
+        // Truthful size, settled file — and still not a record.
+        let digest = try XCTUnwrap(
+            SessionDigestEngine.advance(
+                nil, url: url, size: whole.utf8.count + torn.utf8.count, nowMs: now
+            )
+        )
+        XCTAssertEqual(digest.records, 1, "half a JSON record is not a record")
+        XCTAssertEqual(digest.offset, whole.utf8.count)
+        XCTAssertFalse(digest.caughtUp, "not caught up beats a count that is one too high")
+    }
+
+    /// A transcript that was never JSON has no shape to check. Refusing its
+    /// last line would leave it permanently short of caught up over a
+    /// distinction nothing on disk can settle.
+    func testAPlainTextTailIsStillTakenAtFaceValue() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let text = "started the run\nstill going"
+        try text.write(to: url, atomically: true, encoding: .utf8)
+
+        let digest = try XCTUnwrap(
+            SessionDigestEngine.advance(nil, url: url, size: text.utf8.count, nowMs: now)
+        )
+        XCTAssertEqual(digest.records, 2)
+        XCTAssertTrue(digest.caughtUp)
+    }
+
+    func testWholenessIsJudgedOnlyForWhatClaimedToBeARecord() {
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array(#"{"a":1}"#.utf8)))
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array(#"[1,2]"#.utf8)))
+        XCTAssertFalse(SessionDigestFold.isWholeRecord(Array(#"{"a":1"#.utf8)))
+        XCTAssertFalse(SessionDigestFold.isWholeRecord(Array(#"{"#.utf8)))
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array("plain text".utf8)))
+        XCTAssertTrue(SessionDigestFold.isWholeRecord(Array("".utf8)), "nothing to disbelieve")
+        XCTAssertTrue(
+            SessionDigestFold.isWholeRecord(Array(("  " + #"{"a":1}"# + "  ").utf8)),
+            "surrounding whitespace is not a tear"
+        )
+    }
+
+    // MARK: - 2.2 · private before it exists, not private afterwards
+
+    /// Regression (B-13): the store wrote with `write(to:.atomic)` and only
+    /// then chmod'd to 0600. The temporary file that atomic write creates
+    /// takes the process umask — 0644 on a stock Mac — so the digest was
+    /// readable by every other local account for the whole write and rename.
+    ///
+    /// The final mode alone cannot tell the two implementations apart, which
+    /// is why the store hands the temporary file's path to a test seam: the
+    /// assertion is about the mode the bytes were *born* with.
+    func testTheDigestIsPrivateBeforeItsBytesExist() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-digest-perm-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("session-digests.json")
+
+        // The condition the old code lost under: nothing masked off for it.
+        let previousMask = umask(0)
+        defer { umask(previousMask) }
+
+        var temporaryModes: [Int] = []
+        SessionDigestStore.inspectTemporaryFileForTesting = { path in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+            temporaryModes.append((attributes?[.posixPermissions] as? NSNumber)?.intValue ?? -1)
+        }
+        SessionDigestStore.pathOverride = url
+        defer {
+            SessionDigestStore.inspectTemporaryFileForTesting = nil
+            SessionDigestStore.pathOverride = nil
+        }
+
+        var store = SessionDigestStore()
+        var entry = SessionDigest(path: "/tmp/private.jsonl")
+        entry.records = 3
+        entry.lastFoldedMs = now
+        store.entries["/tmp/private.jsonl"] = entry
+        store.save()
+
+        XCTAssertEqual(temporaryModes, [0o600], "0600 at creation, not after the bytes are visible")
+        let published = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual((published[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path),
+            ["session-digests.json"],
+            "the temporary file is renamed into place, never left behind"
+        )
+        XCTAssertEqual(SessionDigestStore.load().entries["/tmp/private.jsonl"]?.records, 3)
     }
 }

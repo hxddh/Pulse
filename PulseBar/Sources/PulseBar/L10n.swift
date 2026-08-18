@@ -40,6 +40,31 @@ enum L10n {
         }
     }
 
+    /// Vendor wait kinds arrive as protocol tokens (`Permission` / `Input` /
+    /// `Waiting`), which are English words by coincidence, not by translation.
+    /// They reach the user in the glance tooltip, the banner body and the row
+    /// chip, so they belong here rather than in whichever surface happened to
+    /// need them first — `SnapshotBuilder` is pure and has no store, and it was
+    /// printing the raw token into a Chinese tooltip.
+    ///
+    /// An unknown kind is passed through: inventing a translation for a token
+    /// this build has never seen would be worse than showing what the agent
+    /// actually said.
+    static func waitKind(_ kind: String, _ lang: ResolvedLanguage) -> String {
+        switch kind {
+        case "Permission": return t(.kindPermission, lang)
+        case "Input": return t(.kindInput, lang)
+        case "Waiting": return t(.kindWaiting, lang)
+        case "": return t(.needsYou, lang)
+        default: return kind
+        }
+    }
+
+    /// Joins a list of agent display names the way the language does it.
+    static func joinNames(_ names: [String], _ lang: ResolvedLanguage) -> String {
+        names.joined(separator: lang == .zh ? "、" : ", ")
+    }
+
     /// English copy.
     private static func en(_ key: Key) -> String {
         switch key {
@@ -96,6 +121,16 @@ enum L10n {
         case .attentionBridgeWriteSample: return "Write sample Waiting"
         case .attentionBridgeWriteSampleHint:
             return "Appends Attention bridge lines for every Waiting-none Agent. Does not expand the Claude/Codex hook installer."
+        case .attentionBridgeWriteSampleHintNamed:
+            return "Appends Attention bridge lines for all %d Waiting-none Agents (%@). Does not expand the Claude/Codex hook installer."
+        case .attentionBridgeHintNamed:
+            return "Opaque agents (%@) have no native Waiting path — raise via pulse-hook / Attention Protocol v1 (docs/attention-protocol.md). Hook installer stays Claude/Codex only."
+        case .attentionBridgeFocusHintNamed:
+            return "%@ has no native Waiting path — raise here via pulse-hook / Attention Protocol"
+        case .waitingReachSteps:
+            return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting · 4) Tray should go red and stay clearable. Never invents native Waiting."
+        case .waitingReachStepsNamed:
+            return "1) Ensure pulse-hook (not Claude/Codex install) · 2) Reveal Attention folder · 3) Write sample Waiting for %@ · 4) Tray should go red and stay clearable. Never invents native Waiting."
         case .attentionBridgeClearSample: return "Clear sample Waiting"
         case .activityPrefix: return "Doing"
         case .signalHooks: return "hooks"
@@ -399,6 +434,10 @@ enum L10n {
         case .supportNoRecentSession: return "No recent session"
         case .supportPermissionDenied: return "Permission denied"
         case .supportUnscanned: return "Unscanned"
+        // Order: available, needs action, limited, not installed, no recent
+        // session, permission denied, unscanned.
+        case .supportSummaryLine:
+            return "Available %d · Needs action %d · Limited %d · Not installed %d · No recent session %d · Permission denied %d · Unscanned %d"
         case .supportNeedsActionCount: return "Action · %d"
         case .supportLimitedCount: return "Limited · %d"
         case .supportHealthyCount: return "Healthy · %d"
@@ -413,6 +452,23 @@ enum L10n {
         case .supportRunAgent: return "Run this agent once"
         case .supportEnableData: return "Choose its data source"
         case .supportAdapterDiagnostics: return "Adapter diagnostics"
+        case .supportExplainFiles: return "read %d files"
+        case .supportExplainFacts: return "%d facts"
+        case .supportExplainTruncated: return "window truncated — counts are floors"
+        case .supportExplainHero: return "headline from %@"
+        case .supportExplainEmpty: return "no headline: %@"
+        case .supportEmptyNoSource: return "this agent's store is not on this Mac"
+        case .supportEmptyDeadline: return "the scan hit its deadline before finishing"
+        case .supportEmptyNoReadableFile: return "no file could be opened"
+        case .supportEmptyNoParsableRecord: return "files were read but no record parsed"
+        case .supportEmptyNoDisplaySignal: return "records parsed but none carried a displayable signal"
+        case .supportEmptyNoUserGoal: return "records parsed but none contained a user goal"
+        case .supportOriginChrome: return "a vendor placeholder"
+        case .supportOriginFallbackText: return "free text"
+        case .supportOriginCacheTitle: return "a cache title"
+        case .supportOriginToolTitle: return "a tool label"
+        case .supportOriginUserPrompt: return "a user turn"
+        case .supportOriginSessionName: return "a name you gave the session"
         case .supportSafeReport: return "Preview safe report"
         case .supportCopySafeReport: return "Copy safe report"
         case .exportSafeReport: return "Export safe report…"
@@ -441,6 +497,12 @@ enum L10n {
         case .evidenceReadPartialHint:
             return "Counts on this page are partial until the read reaches 100%."
         case .evidenceRateFact: return "transcript +%@/min"
+        case .cpuFact: return "CPU %d%%"
+        case .stalledButComputing: return "Quiet transcript, busy process — computing"
+        case .evidenceCPU: return "Compute"
+        case .evidenceCPUUnknown: return "Not sampled yet — two ticks are needed before this is an answer."
+        case .evidenceCPUHint: return "Busy with a quiet transcript is thinking, not stuck."
+        case .evidenceMemory: return "Resident memory"
         case .remoteLastHeard: return "Last heard %@ ago"
         case .remoteLostContact: return "Lost contact"
         case .remoteLostContactWhy: return "Nothing has arrived from this host since. Pulse cannot tell whether the wait is still open."
@@ -577,6 +639,16 @@ enum L10n {
         case .attentionBridgeWriteSample: return "写入样本 Waiting"
         case .attentionBridgeWriteSampleHint:
             return "为全部无 Waiting 路径的 Agent 追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
+        case .attentionBridgeWriteSampleHintNamed:
+            return "为全部 %d 个无 Waiting 路径的 Agent（%@）追加 Attention 桥样本。不会把 hook 安装器扩到 Claude/Codex 以外。"
+        case .attentionBridgeHintNamed:
+            return "无原生 Waiting 路径的 Agent（%@）请用 pulse-hook / Attention Protocol v1 上报（docs/attention-protocol.md）。hooks 安装器仍只覆盖 Claude / Codex。"
+        case .attentionBridgeFocusHintNamed:
+            return "%@ 无原生 Waiting 路径 — 在此用 pulse-hook / Attention Protocol 上报"
+        case .waitingReachSteps:
+            return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
+        case .waitingReachStepsNamed:
+            return "① 确保 pulse-hook（不装 Claude/Codex）· ② 打开 Attention 文件夹 · ③ 为 %@ 写入样本 Waiting · ④ 托盘应亮红并可清除。不会伪造原生 Waiting。"
         case .attentionBridgeClearSample: return "清除样本 Waiting"
         case .activityPrefix: return "刚才"
         case .signalHooks: return "hooks"
@@ -871,6 +943,8 @@ enum L10n {
         case .supportNoRecentSession: return "无近期会话"
         case .supportPermissionDenied: return "权限不足"
         case .supportUnscanned: return "未扫描"
+        case .supportSummaryLine:
+            return "可用 %d · 需要处理 %d · 信息受限 %d · 未安装 %d · 无近期会话 %d · 权限不足 %d · 未扫描 %d"
         case .supportNeedsActionCount: return "待处理 · %d"
         case .supportLimitedCount: return "受限 · %d"
         case .supportHealthyCount: return "健康 · %d"
@@ -885,6 +959,23 @@ enum L10n {
         case .supportRunAgent: return "先运行一次这个 Agent"
         case .supportEnableData: return "选择它的数据来源"
         case .supportAdapterDiagnostics: return "适配器诊断"
+        case .supportExplainFiles: return "读了 %d 个文件"
+        case .supportExplainFacts: return "解析出 %d 条事实"
+        case .supportExplainTruncated: return "窗口被截断 —— 上面的计数只是下限"
+        case .supportExplainHero: return "标题来自%@"
+        case .supportExplainEmpty: return "没有标题：%@"
+        case .supportEmptyNoSource: return "这台 Mac 上没有它的数据目录"
+        case .supportEmptyDeadline: return "还没读完就到了扫描时限"
+        case .supportEmptyNoReadableFile: return "一个文件都没能打开"
+        case .supportEmptyNoParsableRecord: return "文件读到了，但没解析出记录"
+        case .supportEmptyNoDisplaySignal: return "记录解析出来了，但没有一条带可显示的信号"
+        case .supportEmptyNoUserGoal: return "记录解析出来了，但里面没有用户的目标"
+        case .supportOriginChrome: return "厂商占位文案"
+        case .supportOriginFallbackText: return "自由文本"
+        case .supportOriginCacheTitle: return "缓存标题"
+        case .supportOriginToolTitle: return "工具标签"
+        case .supportOriginUserPrompt: return "一次用户提问"
+        case .supportOriginSessionName: return "你给这场会话起的名字"
         case .supportSafeReport: return "预览安全报告"
         case .supportCopySafeReport: return "复制安全报告"
         case .exportSafeReport: return "导出安全报告…"
@@ -913,6 +1004,12 @@ enum L10n {
         case .evidenceReadPartialHint:
             return "读到 100% 之前，这页上的计数都还是阶段性的。"
         case .evidenceRateFact: return "笔录 +%@/分钟"
+        case .cpuFact: return "CPU %d%%"
+        case .stalledButComputing: return "笔录不动，进程在跑 —— 它在算"
+        case .evidenceCPU: return "计算量"
+        case .evidenceCPUUnknown: return "还没采到 —— 要两拍才能得出答案，不是 0。"
+        case .evidenceCPUHint: return "在算但笔录不动 = 在想，不是卡住。"
+        case .evidenceMemory: return "常驻内存"
         case .remoteLastHeard: return "最后听到 %@ 前"
         case .remoteLostContact: return "失联"
         case .remoteLostContactWhy: return "此后再没收到这台机器的消息。Pulse 无法判断这个等待是否还开着。"
@@ -1008,6 +1105,8 @@ enum L10n {
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone
         case attentionBridgeWriteSample, attentionBridgeWriteSampleHint, attentionBridgeClearSample
+        case attentionBridgeWriteSampleHintNamed, attentionBridgeHintNamed, attentionBridgeFocusHintNamed
+        case waitingReachSteps, waitingReachStepsNamed
         case general, liveUpdates, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, agentDataAccessAgentDetail, agentDataAccessSkipHint, notifications, notifyWaiting, launchAtLogin, language
         case quietHours, quietHoursHint, quietStart, quietEnd
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
@@ -1080,8 +1179,15 @@ enum L10n {
         case supportFilterIssues, supportFilterRunning, supportFilterInstalled
         case supportFilterNoData, supportFilterAll, supportNoFilterResults
         case supportNeedsAction, supportLimited, supportHealthy, supportUnavailable, supportAvailable, supportNotInstalled, supportNoRecentSession, supportPermissionDenied, supportUnscanned
+        case supportSummaryLine
         case supportNeedsActionCount, supportLimitedCount, supportHealthyCount, supportUnavailableCount, supportAvailableCount, supportNotInstalledCount, supportNoRecentCount, supportPermissionDeniedCount, supportUnscannedCount, supportUsefulCoverage
         case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportSafeReport, supportCopySafeReport, exportSafeReport
+        case supportExplainFiles, supportExplainFacts, supportExplainTruncated
+        case supportExplainHero, supportExplainEmpty
+        case supportEmptyNoSource, supportEmptyDeadline, supportEmptyNoReadableFile
+        case supportEmptyNoParsableRecord, supportEmptyNoDisplaySignal, supportEmptyNoUserGoal
+        case supportOriginChrome, supportOriginFallbackText, supportOriginCacheTitle
+        case supportOriginToolTitle, supportOriginUserPrompt, supportOriginSessionName
         case supportCopyShapeReport, supportShapeReading, supportShapeHint
         case remoteEvidence, remoteLastHeard, remoteLostContact, remoteLostContactWhy
         case loopingTool, loopingHint, sessionErrors, toolsUsed, sessionErrorsLabel
@@ -1089,6 +1195,8 @@ enum L10n {
         case evidenceSessionTokens, evidenceSessionTokensHint
         case evidenceRate, evidenceRatePerMinute, evidenceRateHint, evidenceRateUnknown
         case evidenceRateFact
+        case cpuFact, evidenceCPU, evidenceCPUUnknown, evidenceCPUHint, evidenceMemory
+        case stalledButComputing
         case evidenceSessionLength
         case evidenceRead, evidenceReadCaughtUp, evidenceReadCatchingUp, evidenceReadPartialHint
         case evidenceReadCompact

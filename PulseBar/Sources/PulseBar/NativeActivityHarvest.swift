@@ -108,6 +108,9 @@ enum NativeActivityHarvest {
         var subRunning = 0
         var subTotal = 0
         var explicitPending = false
+        /// `cwd` was decoded from a `-`-encoded directory name that the
+        /// filesystem could not confirm. See `resolveDashEncodedPath`.
+        var cwdBestEffort = false
         var score = 0
         var context = ""
         var sourcePath = ""
@@ -254,6 +257,8 @@ enum NativeActivityHarvest {
         totalBudgetBytes: Int? = nil
     ) -> Result {
         let fm = FileManager.default
+        // One pass, one set of answers about the disk.
+        dashPathCache.removeAll()
         let allDescriptors = descriptors(home: home)
         let filtered: [Descriptor]
         if let agentFilter {
@@ -397,17 +402,25 @@ enum NativeActivityHarvest {
             }
         }
 
-        // Windsurf shell rows only
-        // when Cascade produced none — shared ~/.windsurf roots must not double
-        // the same pending session as two red lamps (0.95 Extinguish Honesty).
-        if agentFilter == nil || agentFilter!.contains(.cascade) {
-            if rows.contains(where: { $0.id == .cascade }) {
-                rows.removeAll { $0.id == .windsurf }
-                for index in health.indices where health[index].id == .windsurf {
-                    if health[index].state == .observed || health[index].rowCount > 0 {
-                        health[index].state = .noSessions
-                        health[index].rowCount = 0
-                    }
+        // Windsurf shell rows only when Cascade produced none — shared
+        // ~/.windsurf roots must not double the same pending session as two
+        // red lamps (0.95 Extinguish Honesty).
+        //
+        // This copy exists so the health lines agree with the rows this pass
+        // reports; it is no longer the rule. The rule is
+        // `ActivityHarvest.dedupeSharedRoots`, applied where the tray's rows
+        // are actually assembled — a cursor rotation, a tripped collector or
+        // a scoped rescan all deliver one of the pair without the other, and
+        // this block, which can only see one scan, is blind to every one of
+        // them. It also no longer skips itself when the scan is scoped: a
+        // filter that happens to exclude Cascade was never a reason to let a
+        // duplicate through.
+        if rows.contains(where: { $0.id == .cascade }) {
+            rows.removeAll { $0.id == .windsurf }
+            for index in health.indices where health[index].id == .windsurf {
+                if health[index].state == .observed || health[index].rowCount > 0 {
+                    health[index].state = .noSessions
+                    health[index].rowCount = 0
                 }
             }
         }
@@ -837,7 +850,20 @@ enum NativeActivityHarvest {
 
         var visited = 0
         var deferredPiSqlite: [URL] = []
-        var piTranscripts: [(url: URL, values: URLResourceValues, ext: String)] = []
+        // Stat during the walk, read afterwards, newest first.
+        //
+        // The enumerator hands files back in filesystem order, which is not
+        // time order and is not stable. With the `visited` cap above in place
+        // that made "was the session you are actually running scanned?" a
+        // question about where the directory happened to put its entries —
+        // and a heavy Claude or Codex user crosses that cap within a couple
+        // of months, at which point the live session can sit permanently on
+        // the wrong side of it. Pi hit this first and was fixed alone in
+        // 0.97; nothing about the reasoning was Pi-specific, so it is the
+        // default here. Collecting candidates first is what keeps the stat
+        // cost from becoming a read cost: the walk opens nothing, the ranked
+        // list is cut to `maxFilesPerAgent`, and only those files are read.
+        var transcripts: [(url: URL, values: URLResourceValues, ext: String)] = []
         while let item = enumerator.nextObject() as? URL {
             if Date() >= deadline || budget.exhausted { break }
             visited += 1
@@ -915,47 +941,37 @@ enum NativeActivityHarvest {
                 if !isChat { continue }
             }
             guard ["json", "jsonl", "ndjson", "txt", "md", "log"].contains(ext) else { continue }
-            if id == .pi {
-                // Stat only during the walk. Reading every historical JSONL at
-                // 8 MB exhausted the 48 MB budget (and the 0.75s adapter)
-                // before the live /resume file. Newest mtime first, cheap
-                // head+tail, then SQLite.
-                piTranscripts.append((item, values, ext))
-                continue
-            }
+            transcripts.append((item, values, ext))
+        }
+        // Newest mtime first, then a stable path tiebreak so two files
+        // written in the same millisecond do not swap places between scans.
+        // The cap is per root, as Pi's already was — an adapter with two
+        // roots may read more files than one with a single root, and that is
+        // deliberate: each root gets its own newest-first slice rather than
+        // the first root starving the second.
+        let ranked = transcripts.sorted { lhs, rhs in
+            let a = lhs.values.contentModificationDate ?? .distantPast
+            let b = rhs.values.contentModificationDate ?? .distantPast
+            if a != b { return a > b }
+            return lhs.url.path > rhs.url.path
+        }
+        for item in ranked.prefix(maxFilesPerAgent) {
+            if Date() >= deadline || budget.exhausted { break }
+            if facts.count >= maxFactsPerAgent { break }
             ingestTranscriptFile(
-                item,
-                values: values,
-                ext: ext,
+                item.url,
+                values: item.values,
+                ext: item.ext,
                 id: id,
                 home: home,
                 into: &facts,
                 error: &error,
                 budget: budget
             )
-            if facts.count >= maxFactsPerAgent { break }
         }
         if id == .pi {
-            let ranked = piTranscripts.sorted { lhs, rhs in
-                let a = lhs.values.contentModificationDate ?? .distantPast
-                let b = rhs.values.contentModificationDate ?? .distantPast
-                if a != b { return a > b }
-                return lhs.url.path > rhs.url.path
-            }
-            for item in ranked {
-                if Date() >= deadline || budget.exhausted { break }
-                if facts.count >= maxFactsPerAgent { break }
-                ingestTranscriptFile(
-                    item.url,
-                    values: item.values,
-                    ext: item.ext,
-                    id: id,
-                    home: home,
-                    into: &facts,
-                    error: &error,
-                    budget: budget
-                )
-            }
+            // Pi's JSONL carries the /resume title; its sibling SQLite must
+            // not run before those transcripts or the row loses its hero.
             for db in deferredPiSqlite {
                 if Date() >= deadline || budget.exhausted { break }
                 if facts.count >= maxFactsPerAgent { break }
@@ -1103,11 +1119,12 @@ enum NativeActivityHarvest {
             if id == .claude {
                 let encoded = item.deletingLastPathComponent().lastPathComponent
                 let decoded = decodeClaudeProjectDir(encoded)
-                if !decoded.isEmpty,
+                if !decoded.path.isEmpty,
                    parsed[index].cwd.isEmpty || looksLikeFilePathCwd(parsed[index].cwd) {
-                    parsed[index].cwd = decoded
+                    parsed[index].cwd = decoded.path
+                    parsed[index].cwdBestEffort = !decoded.verified
                     if parsed[index].project.isEmpty {
-                        parsed[index].project = lastPathComponent(decoded)
+                        parsed[index].project = lastPathComponent(decoded.path)
                     }
                 }
             }
@@ -2304,8 +2321,18 @@ enum NativeActivityHarvest {
                 let sid = firstString(payload, keys: ["session_id", "sessionId", "thread_id"])
                 if !sid.isEmpty { f.sessionID = sid }
             }
-            f.records += 1
         }
+        // No record count from here. `candidates` above is the head 8 lines
+        // plus the last 2,048 of the window — a Codex rollout of any age has
+        // more lines than that, and even the untruncated case says nothing
+        // about the file. A count taken from it is an estimate wearing an
+        // exact number's clothes ("数量不估算"), and this one carried no
+        // truncation flag to warn anybody. `records` has exactly one honest
+        // origin: a window that really was the whole file, or a digest that
+        // has folded its way to the end — both applied in
+        // `ingestTranscriptFile`, which is also what quietly overwrote this
+        // counter and kept the defect off the tray by accident rather than
+        // by design. Removing it makes that a rule instead of luck.
         if f.sessionID.isEmpty { f.sessionID = sessionIDFromPath(URL(fileURLWithPath: path)) }
         f.activityMs = latestTimestamp > 0 ? latestTimestamp : fileMTime(URL(fileURLWithPath: path))
         if f.project.isEmpty, !f.cwd.isEmpty { f.project = lastPathComponent(f.cwd) }
@@ -2428,8 +2455,11 @@ enum NativeActivityHarvest {
                 generic.project = ""
             }
             if generic.hasUsefulSignal { merge(&f, generic) }
-            f.records += 1
         }
+        // Same rule as Codex above: this loop walks the read *window*, which
+        // for Pi is 96 KB of head plus 400 KB of tail. Counting its lines
+        // would be a floor presented as a total. `ingestTranscriptFile` gives
+        // `records` its one honest value.
 
         // Pi /resume shows the latest session_info.name (empty clears),
         // else the first user message. Latest turn is only a fallback when
@@ -2458,7 +2488,11 @@ enum NativeActivityHarvest {
         if !headerID.isEmpty { f.sessionID = headerID }
         if f.sessionID.isEmpty { f.sessionID = piSessionID(from: URL(fileURLWithPath: path)) }
         if !headerCwd.isEmpty { f.cwd = headerCwd }
-        if f.cwd.isEmpty { f.cwd = piCwdFromPath(path) }
+        if f.cwd.isEmpty {
+            let decoded = piCwdFromPath(path)
+            f.cwd = decoded.path
+            if !decoded.path.isEmpty { f.cwdBestEffort = !decoded.verified }
+        }
         if f.project.isEmpty, !f.cwd.isEmpty { f.project = lastPathComponent(f.cwd) }
         f.activityMs = latestTimestamp > 0 ? latestTimestamp : fileMTime(URL(fileURLWithPath: path))
         f.task = clean(f.task, limit: 160)
@@ -2661,14 +2695,18 @@ enum NativeActivityHarvest {
     }
 
     /// `--Users-me-Pulse--` → `/Users/me/Pulse` (Pi encodes `/` as `-`).
-    private static func piCwdFromPath(_ path: String) -> String {
+    ///
+    /// Same ambiguity, same resolution, as `decodeClaudeProjectDir`.
+    private static func piCwdFromPath(_ path: String) -> (path: String, verified: Bool) {
         let parent = URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent
-        guard parent.hasPrefix("--"), parent.hasSuffix("--"), parent.count > 4 else { return "" }
+        guard parent.hasPrefix("--"), parent.hasSuffix("--"), parent.count > 4 else { return ("", false) }
         var encoded = parent
         encoded.removeFirst(2)
         encoded.removeLast(2)
-        guard !encoded.isEmpty else { return "" }
-        return normalizedPath("/" + encoded.replacingOccurrences(of: "-", with: "/"))
+        let parts = encoded.split(separator: "-", omittingEmptySubsequences: true).map(String.init)
+        guard !parts.isEmpty else { return ("", false) }
+        let resolved = resolveDashEncodedPath(parts)
+        return (normalizedPath(resolved.path), resolved.verified)
     }
 
     /// Empty SQLite Pi rows (cwd + file_read, no prompt) must not occupy the
@@ -3019,7 +3057,14 @@ enum NativeActivityHarvest {
         f.tool = regexValue(text, patterns: [#"(?i)\"(?:lastTool|lastAction|toolName)\"\s*:\s*\"([^\"]+)\""#])
         f.phase = semanticPhase(regexValue(text, patterns: [#"(?i)\"(?:phase|stage|status|state)\"\s*:\s*\"([^\"]+)\""#]))
         f.outcome = regexValue(text, patterns: [#"(?i)\"(?:outcome|result|finalStatus)\"\s*:\s*\"([^\"]+)\""#])
-        if pendingPhase(f.phase) || pendingPhase(f.outcome) { f.skill = "pending" }
+        // Display fields only. This is the *free-text* fallback: it runs on
+        // `.txt` / `.md` / `.log` files and on JSON the real parsers could not
+        // read, with regexes that cannot tell a session's own status from a
+        // status quoted inside it. A `"status": "waiting"` sample pasted into
+        // a design note is enough to light a red lamp — and Waiting comes
+        // from hooks or a structured `skill=pending`, never from inference.
+        // Nothing here may set `skill`; the fields above are what a row shows,
+        // not what it claims about needing you.
         if f.project.isEmpty, !f.cwd.isEmpty { f.project = lastPathComponent(f.cwd) }
         f.task = clean(f.task, limit: 160)
         f.cwd = clean(f.cwd, limit: 240)
@@ -3062,10 +3107,16 @@ enum NativeActivityHarvest {
         }
         func prefer(_ old: inout String, _ new: String) { if old.isEmpty, !new.isEmpty { old = new } }
         prefer(&target.project, source.project)
+        // The confidence travels with the path it describes: whichever
+        // fragment supplies `cwd` supplies `cwdBestEffort` with it, so a
+        // confirmed path is never inherited by an unconfirmed one or vice
+        // versa.
         if looksLikeFilePathCwd(target.cwd), !source.cwd.isEmpty, !looksLikeFilePathCwd(source.cwd) {
             target.cwd = source.cwd
-        } else {
-            prefer(&target.cwd, source.cwd)
+            target.cwdBestEffort = source.cwdBestEffort
+        } else if target.cwd.isEmpty, !source.cwd.isEmpty {
+            target.cwd = source.cwd
+            target.cwdBestEffort = source.cwdBestEffort
         }
         prefer(&target.sessionID, source.sessionID)
         // Last non-empty tool / model wins — Claude assistant envelopes arrive
@@ -3284,15 +3335,97 @@ enum NativeActivityHarvest {
         return waitingAsks.contains(normalized) || pendingPhase(ask)
     }
 
-    /// Best-effort: `-Users-me-code-Pulse` → `/Users/me/code/Pulse` (Claude projects dir).
-    private static func decodeClaudeProjectDir(_ name: String) -> String {
+    /// `-Users-me-code-Pulse` → the workspace it was made from (Claude's
+    /// projects directory). Empty `path` means the name is not one.
+    private static func decodeClaudeProjectDir(_ name: String) -> (path: String, verified: Bool) {
         let s = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard s.hasPrefix("-"), !s.contains("/") else { return "" }
+        guard s.hasPrefix("-"), !s.contains("/") else { return ("", false) }
         let parts = s.split(separator: "-", omittingEmptySubsequences: true).map(String.init)
-        guard parts.count >= 2 else { return "" }
+        guard parts.count >= 2 else { return ("", false) }
+        let resolved = resolveDashEncodedPath(parts)
+        if resolved.verified { return resolved }
+        // Nothing on disk vouched for it, so the old shape check still stands
+        // guard: an unconfirmed decode is only worth showing when it at least
+        // looks like a home directory.
         let head = parts[0].lowercased()
-        guard head == "users" || head == "home" else { return "" }
-        return "/" + parts.joined(separator: "/")
+        guard head == "users" || head == "home" else { return ("", false) }
+        return resolved
+    }
+
+    /// How many `-` separated pieces a project directory name may have before
+    /// resolving it stops being worth the stat calls.
+    private static let maxDashPathSegments = 32
+    /// Hard ceiling on directory probes for one name. The search backtracks,
+    /// so a pathological name (`-a-a-a-a-…`) could otherwise walk a large
+    /// tree; past this the answer is "could not confirm", which is a fine
+    /// answer.
+    private static let maxDashPathProbes = 256
+
+    /// Resolved project directories, for the duration of one scan.
+    ///
+    /// One project directory holds every session file for that workspace, and
+    /// the answer cannot change mid-pass, so without this the same name is
+    /// re-probed once per transcript. `scan()` clears it, so a resolution
+    /// never outlives the pass that made it. Scans run on one serial queue
+    /// (`StatusStore.scanQueue`) and the CLI paths are single-threaded — the
+    /// same convention `HarvestDigests` relies on and states.
+    private static var dashPathCache: [String: (path: String, verified: Bool)] = [:]
+
+    /// Turn `["Users", "me", "my", "project"]` back into a real directory.
+    ///
+    /// Claude (`~/.claude/projects/-Users-me-my-project`) and Pi
+    /// (`--Users-me-my-project--`) both write a workspace path with every `/`
+    /// replaced by `-`, and neither escapes a `-` that was already in the
+    /// path. `-Users-me-my-project` is therefore `/Users/me/my-project` and
+    /// `/Users/me/my/project` at the same time, and expanding every `-`
+    /// silently chose the second — for a hyphenated project name, which is
+    /// most of them. That wrong path is not cosmetic: it is what Focus opens
+    /// a terminal or an IDE on.
+    ///
+    /// The workspace the name was made from exists, so the filesystem can
+    /// settle what the encoding threw away. Walk the pieces left to right and
+    /// keep the first combination that exists as a directory, trying the
+    /// plain piece before any `-`-joined merge so every name that already
+    /// resolved correctly still resolves to exactly the same place.
+    /// Backtrack when a prefix leads nowhere. When nothing matches — the
+    /// workspace was deleted, the volume is not mounted — hand back the naive
+    /// decode marked unverified: worth showing, never worth landing on.
+    private static func resolveDashEncodedPath(_ segments: [String]) -> (path: String, verified: Bool) {
+        let naive = "/" + segments.joined(separator: "/")
+        guard !segments.isEmpty, segments.count <= maxDashPathSegments else {
+            return (naive, false)
+        }
+        let key = segments.joined(separator: "-")
+        if let cached = dashPathCache[key] { return cached }
+
+        let fm = FileManager.default
+        var probes = 0
+        func isDirectory(_ path: String) -> Bool {
+            probes += 1
+            var isDir: ObjCBool = false
+            return fm.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+        }
+        func resolve(prefix: String, from index: Int) -> String? {
+            if index == segments.count { return prefix }
+            var end = index + 1
+            while end <= segments.count {
+                if probes >= maxDashPathProbes { return nil }
+                let candidate = prefix + "/" + segments[index..<end].joined(separator: "-")
+                if isDirectory(candidate), let whole = resolve(prefix: candidate, from: end) {
+                    return whole
+                }
+                end += 1
+            }
+            return nil
+        }
+        let result: (path: String, verified: Bool)
+        if let resolved = resolve(prefix: "", from: 0) {
+            result = (path: resolved, verified: true)
+        } else {
+            result = (path: naive, verified: false)
+        }
+        if dashPathCache.count < 512 { dashPathCache[key] = result }
+        return result
     }
 
     /// Tool `input.path` is a file, not a workspace. Adopting it as cwd made
@@ -3391,6 +3524,8 @@ enum NativeActivityHarvest {
             )
             // Digest facts are carried, never recomputed: they came from
             // reading the whole file and the window has no way to check them.
+            // Only meaningful while there is a path to qualify.
+            row.cwdBestEffort = !cwd.isEmpty && fact.cwdBestEffort
             row.loopTool = fact.loopTool
             row.loopCount = max(0, fact.loopCount)
             row.sessionErrors = max(0, fact.sessionErrors)

@@ -40,6 +40,21 @@ final class AttentionWatcher: @unchecked Sendable {
         teardownLocked()
     }
 
+    /// Whether each watch currently holds a live source. Two answers, not one:
+    /// the defect being fixed was precisely that one of them could go dark
+    /// while the other looked healthy.
+    var isWatchingFile: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return source != nil
+    }
+
+    var isWatchingInbox: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return inboxSource != nil
+    }
+
     /// The fd is owned by the source's cancel handler — closing it here would
     /// race cancellation and could close a descriptor GCD still holds.
     private func teardownLocked() {
@@ -51,7 +66,9 @@ final class AttentionWatcher: @unchecked Sendable {
         inboxSource = nil
     }
 
-    private func armInbox() {
+    /// Arms the inbox directory only. Symmetric with `arm()` — neither may
+    /// touch the other's source.
+    func armInbox() {
         lock.lock()
         inboxSource?.setEventHandler {}
         inboxSource?.cancel()
@@ -60,6 +77,17 @@ final class AttentionWatcher: @unchecked Sendable {
         lock.unlock()
 
         guard !watchPath.isEmpty else { return }
+        // A directory that was moved or deleted cannot be reopened, and the
+        // watch would stay dead for the life of the process. Recreating it is
+        // what `start()` does, and the inbox is Pulse's own directory.
+        var isDirectory: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: watchPath, isDirectory: &isDirectory)
+            || !isDirectory.boolValue {
+            try? FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: watchPath, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
         let fd = open(watchPath, O_EVTONLY)
         guard fd >= 0 else { return }
 
@@ -91,13 +119,34 @@ final class AttentionWatcher: @unchecked Sendable {
         src.resume()
     }
 
-    private func arm() {
+    /// Arms the attention.tsv watch only.
+    ///
+    /// This used to call `teardownLocked()`, which cancels the inbox source as
+    /// well. Deleting or atomically replacing attention.tsv — what every hook
+    /// write does — therefore re-armed the file and silently killed the
+    /// `attention.d/` watch until the next relaunch, so a remote raise fell
+    /// back to the polling tick instead of waking the app (U-4). The inbox
+    /// source belongs to `armInbox()`; only `stop()` tears both down.
+    func arm() {
         lock.lock()
-        teardownLocked()
+        source?.setEventHandler {}
+        source?.cancel()
+        source = nil
         let watchPath = path
         lock.unlock()
 
         guard !watchPath.isEmpty else { return }
+        // Re-arming after a delete only works if something is there to open.
+        // Without this the watcher died permanently the first time the file
+        // was removed rather than replaced.
+        let fileURL = URL(fileURLWithPath: watchPath)
+        if !FileManager.default.fileExists(atPath: watchPath) {
+            try? FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? AttentionIO.header.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
         let fd = open(watchPath, O_EVTONLY)
         guard fd >= 0 else { return }
 

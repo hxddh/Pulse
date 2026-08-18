@@ -119,11 +119,21 @@ enum TerminalFocus {
     ///
     /// Workspace advertising uses path shape only (absolute, non-trivial).
     /// Existence is verified at click time; missing folders fall back to app activate.
+    ///
+    /// `workspaceVerified` is the other half of that check, and the click-time
+    /// one cannot stand in for it. A vendor directory named
+    /// `-Users-me-my-project` decodes to both `/Users/me/my-project` and
+    /// `/Users/me/my/project`; when the collector could not settle which one
+    /// exists it hands the naive decode over for display only. Landing on it
+    /// would pass an existence test and still open **the wrong workspace**
+    /// under someone's hands — so an unverified path drops to app precision,
+    /// which is honest about what it knows.
     static func focusTier(
         tty rawTTY: String,
         viaWarp: Bool,
         hostApp: HostAppKind? = nil,
         workspace: String = "",
+        workspaceVerified: Bool = true,
         env: Environment
     ) -> FocusTier? {
         // Warp activation uses NSWorkspace and needs no Automation permission.
@@ -131,7 +141,7 @@ enum TerminalFocus {
         if viaWarp, env.warpRunning { return .warp }
         // Host IDE — prefer workspace open when cwd looks like a real absolute path.
         if let hostApp {
-            if isAbsoluteWorkspacePath(workspace) {
+            if workspaceVerified, isAbsoluteWorkspacePath(workspace) {
                 return .hostWorkspace(hostApp)
             }
             return .hostApp(hostApp)

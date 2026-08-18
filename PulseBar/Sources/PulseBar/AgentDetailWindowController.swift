@@ -371,6 +371,13 @@ private struct AgentDetailView: View {
                         // answer when nothing measured the rate, and the note
                         // below says so out loud.
                         fact(store.tr(.evidenceRate), value: store.evidenceRate(row))
+                        // Compute sits beside output on purpose: together they
+                        // say which of the three states this session is in —
+                        // producing, thinking, or stopped.
+                        fact(store.tr(.evidenceCPU), value: store.evidenceCPU(row))
+                        if let memory = store.evidenceMemory(row) {
+                            fact(store.tr(.evidenceMemory), value: memory)
+                        }
                         if !length.isEmpty {
                             fact(store.tr(.evidenceSessionLength), value: length)
                         }
@@ -390,6 +397,7 @@ private struct AgentDetailView: View {
                             note(store.tr(.evidenceSessionTokensHint))
                         }
                         note(store.evidenceRateNote(row))
+                        note(store.evidenceCPUNote(row))
                     }
                     // Letting qualitative facts out before the read completes
                     // is this version's choice; saying so is the price of it.

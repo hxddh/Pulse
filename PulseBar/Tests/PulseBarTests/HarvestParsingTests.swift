@@ -414,4 +414,145 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertEqual(NativeActivityHarvest.normalizeTimestamp(1_733_234_401), 1_733_234_401_000)
         XCTAssertEqual(NativeActivityHarvest.normalizeTimestamp("garbage"), 0)
     }
+
+    // MARK: - 2.2 · `incomplete` is not `complete`
+
+    /// Regression (B-13): `isCompleted` matched substrings, so the vendor
+    /// word **`incomplete`** satisfied `contains("complete")` and a run that
+    /// had explicitly not finished was classified as finished. A row that
+    /// says "done" about work still going is the one direction of this error
+    /// that costs the user something.
+    func testIncompleteIsNotMistakenForCompleted() {
+        var row = ActivityHarvest.Row(id: .codex, task: "", project: "", cwd: "", skill: "")
+        for state in ["incomplete", "not_completed", "never completed"] {
+            row.phase = state
+            row.outcome = ""
+            XCTAssertFalse(row.isCompleted, "\(state) is the opposite of completed")
+            row.phase = ""
+            row.outcome = state
+            XCTAssertFalse(row.isCompleted, "\(state) is the opposite of completed")
+        }
+        // The shapes vendors actually write still classify.
+        row.outcome = ""
+        for phase in ["turn_complete", "task_complete", "completed", "complete", "cancelled", "canceled"] {
+            row.phase = phase
+            XCTAssertTrue(row.isCompleted, phase)
+        }
+        row.phase = ""
+        row.outcome = "failed"
+        XCTAssertTrue(row.isCompleted)
+    }
+
+    // MARK: - 2.2 · one shared root, one lamp — across scans
+
+    /// Regression (B-9 / `H-M3`): Cascade and Windsurf read the same
+    /// `~/.windsurf` tree, and the rule that Windsurf yields to Cascade lived
+    /// inside a single complete scan. A rotating adapter cursor, a tripped
+    /// collector or a scoped rescan all deliver Windsurf's fresh rows while
+    /// Cascade's rows are merely *retained* — and the same pending session
+    /// then lit two red lamps, which is precisely what 0.95 exists to prevent.
+    func testWindsurfDoesNotLightBesideARetainedCascadeRow() {
+        let cascade = ActivityHarvest.Row(
+            id: .cascade,
+            task: "Approve the edit",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "pending",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "shared-1"
+        )
+        let windsurf = ActivityHarvest.Row(
+            id: .windsurf,
+            task: "Approve the edit",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "pending",
+            harvestMs: 1_700_000_000_500,
+            sessionID: "shared-1"
+        )
+        // This pass reached Windsurf only; Cascade was never reported, so its
+        // row survives the partial merge.
+        let health = [ActivityHarvest.CollectorHealth(
+            id: .windsurf,
+            state: .observed,
+            durationMs: 8,
+            rowCount: 1,
+            sourcePresent: true,
+            errorKind: ""
+        )]
+
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [windsurf],
+            health: health,
+            previous: [cascade]
+        )
+        XCTAssertEqual(
+            merged.map(\.id), [.cascade],
+            "one session, one lamp — the shell adapter yields to Cascade"
+        )
+    }
+
+    /// The other half of the same rule: with no Cascade row anywhere, the
+    /// Windsurf shell row is the only evidence there is and must stay.
+    func testWindsurfSurvivesWhenCascadeHasNoRow() {
+        let windsurf = ActivityHarvest.Row(
+            id: .windsurf,
+            task: "Approve the edit",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "pending",
+            harvestMs: 1_700_000_000_500,
+            sessionID: "shared-2"
+        )
+        let health = [ActivityHarvest.CollectorHealth(
+            id: .windsurf,
+            state: .observed,
+            durationMs: 8,
+            rowCount: 1,
+            sourcePresent: true,
+            errorKind: ""
+        )]
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [windsurf], health: health, previous: []
+        )
+        XCTAssertEqual(merged.map(\.sessionID), ["shared-2"])
+    }
+
+    // MARK: - 2.2 · the stop grace uses the clock the reader trusts
+
+    /// Regression (B-13): `clockVerdict` refuses a remote stamp that
+    /// disagrees with arrival and measures the wait from arrival instead —
+    /// but the Stop grace window alone still measured against the raw stamp.
+    /// On a box whose clock runs half an hour behind, the `Stop` that Claude
+    /// emits right after a permission prompt therefore wiped that permission
+    /// instantly: the lamp went out while the agent was still waiting.
+    func testAStopRespectsTheSameClockTheReaderStandsBehind() throws {
+        let now: Int64 = 1_700_000_000_000
+        let skewed = now - 40 * 60 * 1000
+        let text = [
+            "claude\tpermission\t\(skewed)\tBash: npm run build\tsession-9\t/Users/me/Pulse\tbox",
+            "claude\tstop\t\(skewed + 1)\t\tsession-9\t\tbox",
+        ].joined(separator: "\n") + "\n"
+
+        let entries = AttentionReader.parse(
+            text, nowMs: now, defaultHost: "box", receivedAtMs: now
+        )
+        let entry = try XCTUnwrap(entries.first, "the permission survived its own Stop")
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entry.kind, "Permission")
+        XCTAssertTrue(entry.clockSuspect, "the stamp was refused, arrival carries the event")
+        XCTAssertEqual(entry.effectiveMs, now)
+    }
+
+    /// And the grace still expires on the clock it is measured against: a
+    /// permission that really has been open past the window is cleared.
+    func testAStopStillClearsAPermissionPastTheGraceWindow() {
+        let now: Int64 = 1_700_000_000_000
+        let old = now - 60_000
+        let text = [
+            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse",
+            "claude\tstop\t\(old + 1)\t\tsession-10\t",
+        ].joined(separator: "\n") + "\n"
+        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+    }
 }

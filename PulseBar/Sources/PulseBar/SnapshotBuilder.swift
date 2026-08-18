@@ -109,6 +109,54 @@ enum SnapshotBuilder {
         L10n.t(key, lang)
     }
 
+    /// Short, process-independent digest of a row's identity.
+    ///
+    /// `Hasher` / `hashValue` are seeded per launch, so they would give the
+    /// same session a different row key after every restart — the exact defect
+    /// this exists to remove. FNV-1a over the UTF-8 bytes is stable across
+    /// launches, machines and Swift versions, and eight hex digits are plenty
+    /// to separate the handful of sessions that ever share one project.
+    static func stableIdentityHash(_ text: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(format: "%08x", UInt32(truncatingIfNeeded: hash ^ (hash >> 32)))
+    }
+
+    /// The row key for a harvest row whose `sessionKey` cannot stand alone.
+    ///
+    /// Only fields that cannot change while the session is alive take part:
+    /// the working directory it was started in and its start time. `tool`,
+    /// `phase`, `progress` and friends move as the agent works, and a key that
+    /// moves with them would lose a snooze mid-wait. `task` is the last resort
+    /// rather than a first-class part of the seed — a vendor may rename a
+    /// session once, early, which is still far steadier than array order.
+    ///
+    /// When even that is empty the row has no durable identity of its own, so
+    /// the old ordinal remains: two rows that nothing on disk tells apart must
+    /// still become two rows rather than merge into one.
+    static func stableRowKey(
+        base: String,
+        act: ActivityHarvest.Row,
+        ordinal: Int,
+        taken: [String: AgentRow]
+    ) -> String {
+        var seed: [String] = []
+        if !act.cwd.isEmpty { seed.append("c:\(act.cwd)") }
+        if act.startedMs > 0 { seed.append("s:\(act.startedMs)") }
+        if seed.isEmpty, !act.task.isEmpty { seed.append("t:\(act.task)") }
+        guard !seed.isEmpty else {
+            return taken[base] == nil ? base : "\(base)#\(ordinal)"
+        }
+        let stable = "\(base)#\(stableIdentityHash(seed.joined(separator: "\u{1}")))"
+        guard taken[stable] != nil else { return stable }
+        var twin = 2
+        while taken["\(stable)~\(twin)"] != nil { twin += 1 }
+        return "\(stable)~\(twin)"
+    }
+
     static func build(_ input: Input, previous: Previous, context: Context) -> Result {
         var result = Result()
 
@@ -208,10 +256,32 @@ enum SnapshotBuilder {
                 project: act.project,
                 cwd: act.cwd
             )
-            // Avoid colliding keys when second session lacks project — uniquify.
+            // Avoid colliding keys when a second session lacks a session id.
+            //
+            // The suffix used to be `#\(count + 1)` — the number of rows this
+            // agent had already contributed *in this scan* — and it was only
+            // applied to whichever colliding row arrived second. Both halves
+            // depended on harvest order: the same two sessions swapped keys
+            // when the collector enumerated them the other way round, and the
+            // survivor of a pair silently reverted to the bare key when its
+            // sibling went stale. Snooze, soft-dismiss, notification
+            // de-duplication and the Look fingerprint are all stored against
+            // `rowKey`, so every drift dropped a snooze or replayed a Waiting
+            // edge (U-6).
+            //
+            // A session id already makes the key unique and stable; when the
+            // collector has none, the discriminator comes from the row's own
+            // durable identity instead of from its position in the array.
             var finalKey = key
-            if rowsByKey[finalKey] != nil, rowsByKey[finalKey]?.sessionID != act.sessionID || act.sessionID.isEmpty {
-                finalKey = "\(key)#\(count + 1)"
+            let needsDiscriminator = act.sessionID.isEmpty
+                || (rowsByKey[key] != nil && rowsByKey[key]?.sessionID != act.sessionID)
+            if needsDiscriminator {
+                finalKey = stableRowKey(
+                    base: key,
+                    act: act,
+                    ordinal: count + 1,
+                    taken: rowsByKey
+                )
             }
             observedHarvestKeys.insert(finalKey)
 
@@ -261,6 +331,8 @@ enum SnapshotBuilder {
             // to survive a merge, so this one is assigned unconditionally.
             row.digestCaughtUp = act.digestCaughtUp
             if act.bytesPerMinute > 0 { row.bytesPerMinute = act.bytesPerMinute }
+            // Carried, never re-derived: only the collector saw the disk.
+            row.cwdBestEffort = act.cwdBestEffort
             if act.sessionStartedMs > 0 { row.sessionStartedMs = act.sessionStartedMs }
             row.observationSource = act.evidence
 
@@ -272,8 +344,14 @@ enum SnapshotBuilder {
                     row.waitSignal = .pending
                     row.waitSinceMs = act.harvestMs > 0 ? act.harvestMs : context.nowMs
                 }
-            } else {
+            } else if context.dismissedPendingKeys.contains(finalKey) {
                 // Pending cleared — the soft dismiss has served its purpose.
+                //
+                // Only a key the store is actually holding belongs here. This
+                // used to report every non-pending row on every scan, so the
+                // store received a large non-empty set two to five seconds
+                // apart, subtracted nothing from its tombstones, and rewrote
+                // `dismissed-pending.json` anyway (U-5).
                 result.clearedPendingKeys.insert(finalKey)
             }
 
@@ -301,6 +379,8 @@ enum SnapshotBuilder {
                 row.viaWarp = hit.viaWarp
                 row.hostApp = hit.hostApp
                 row.pid = hit.pid
+                row.cpuPercent = hit.cpuPercent
+                row.rssBytes = hit.rssBytes
                 row.tty = hit.tty
                 row.processEvidence = hit.evidence
                 row.cwd = hit.cwd
@@ -328,6 +408,10 @@ enum SnapshotBuilder {
                     row.viaWarp = hit.viaWarp || row.viaWarp
                     if row.hostApp == nil { row.hostApp = hit.hostApp }
                     if hit.pid != 0 { row.pid = hit.pid }
+                    // A real sample replaces "unknown"; unknown never
+                    // overwrites a real one.
+                    if hit.cpuPercent >= 0 { row.cpuPercent = hit.cpuPercent }
+                    if hit.rssBytes > 0 { row.rssBytes = hit.rssBytes }
                     if !hit.tty.isEmpty { row.tty = hit.tty }
                     row.processEvidence = hit.evidence
                     if row.cwd.isEmpty, !hit.cwd.isEmpty {
@@ -583,6 +667,7 @@ enum SnapshotBuilder {
                     viaWarp: row.viaWarp,
                     hostApp: row.hostApp,
                     workspace: row.cwd,
+                    workspaceVerified: !row.cwdBestEffort,
                     env: context.terminal
                 )
             let privacy = row.agent.requiresAppDataOptIn
@@ -751,9 +836,13 @@ enum SnapshotBuilder {
                     : "\(w.agent.displayName) · \(dur)"
                 let counted = dur.isEmpty ? "1" : "1 · \(dur)"
                 snap.title = GlanceTitle.fit(named, counted, "1")
+                // `waitKind` is a protocol token (`Permission` / `Input`), not
+                // user copy. Printing it raw put a bare English word in the
+                // Chinese tooltip; the row chip and the banner had already
+                // learned to translate it.
                 let reason = w.waitKind.isEmpty
                     ? (w.waitMessage.isEmpty ? t(.needsYou, lang) : w.waitMessage)
-                    : w.waitKind
+                    : L10n.waitKind(w.waitKind, lang)
                 snap.tooltip = dur.isEmpty
                     ? "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason)"
                     : "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason) · \(dur)"
@@ -858,10 +947,19 @@ enum SnapshotBuilder {
         }
         let newcomers = result.waitingKeys.subtracting(previousWaiting)
         result.newlyWaiting = all.filter { newcomers.contains($0.rowKey) }
+        // "Lost contact ≠ finished." A remote row whose host stopped reporting
+        // drops its red lamp and keeps its place with a reason — and the row
+        // says exactly that. Recording it as a resolved wait wrote the opposite
+        // into the history the user reads later, so the two disagreed about the
+        // same event (U-8). An answered wait resolves; an unreachable one waits
+        // on, out of contact.
+        let currentByKey = Dictionary(all.map { ($0.rowKey, $0) }, uniquingKeysWith: { first, _ in first })
         result.resolvedWaits = previous.rows.filter { row in
             guard row.waiting else { return false }
             let liveKey = result.remappedRowKeys[row.rowKey] ?? row.rowKey
-            return !result.waitingKeys.contains(liveKey)
+            guard !result.waitingKeys.contains(liveKey) else { return false }
+            if currentByKey[liveKey]?.lostContact == true { return false }
+            return true
         }
 
         if waitingCount > 0 {

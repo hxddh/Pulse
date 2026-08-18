@@ -153,6 +153,18 @@ enum ActivityHarvest {
         var digestCaughtUp: Bool = false
         /// Recent growth of the transcript in bytes per minute; 0 = unknown.
         var bytesPerMinute: Int = 0
+        /// The `cwd` above was reconstructed from a vendor directory name
+        /// that encodes `/` as `-`, and the filesystem could not confirm it.
+        ///
+        /// Claude and Pi both name a project directory `-Users-me-my-project`,
+        /// which is `/Users/me/my-project` and `/Users/me/my/project` at the
+        /// same time — the encoding does not escape a literal `-`. The
+        /// decoder now settles the ambiguity against the disk; when nothing
+        /// it tries exists, the naive decode is kept for display only and
+        /// this flag says so. **Never land Focus on a best-effort cwd**: the
+        /// wrong workspace opening under someone's hands is the failure this
+        /// exists to prevent.
+        var cwdBestEffort: Bool = false
         /// When Pulse first folded this transcript (`digest.firstFoldedMs`).
         ///
         /// Separate from `startedMs`, which is the file's birth date: most
@@ -161,16 +173,29 @@ enum ActivityHarvest {
         /// is the more reliable answer to "how long has this been going".
         var sessionStartedMs: Int64 = 0
 
+        /// Whether the vendor said this run reached a terminal state.
+        ///
+        /// Whole tokens, never substrings. `state.contains("complete")` read
+        /// **`incomplete`** as completed — the exact inversion of the fact,
+        /// and the one direction that matters: a row that says "done" about a
+        /// run still going is worse than saying nothing. Splitting on every
+        /// non-alphanumeric keeps the shapes vendors actually write
+        /// (`turn_complete`, `task_complete`, `completed`, `cancelled`,
+        /// `failed`) matching, while `incomplete` stays a single token that
+        /// matches none of them. An explicit negation anywhere in the pair
+        /// vetoes the whole thing, so `not_completed` cannot slip through the
+        /// same door from the other side.
         var isCompleted: Bool {
-            let state = "\(phase) \(outcome)"
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let tokens = "\(phase) \(outcome)"
                 .lowercased()
-            return state.contains("turn_complete")
-                || state.contains("completed")
-                || state.contains("complete")
-                || state.contains("cancelled")
-                || state.contains("canceled")
-                || state.contains("failed")
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+            let negations: Set<String> = ["not", "never"]
+            guard !tokens.contains(where: { negations.contains($0) }) else { return false }
+            let terminal: Set<String> = [
+                "complete", "completed", "cancelled", "canceled", "failed",
+            ]
+            return tokens.contains(where: { terminal.contains($0) })
         }
     }
 
@@ -250,7 +275,24 @@ enum ActivityHarvest {
         guard !reported.isEmpty else { return previous }
 
         let retained = previous.filter { !reported.contains(normalize($0.id)) }
-        return current + retained
+        return dedupeSharedRoots(current + retained)
+    }
+
+    /// Cascade and Windsurf read the same `~/.windsurf` tree — one session,
+    /// never two lamps (0.95 "Extinguish Honesty").
+    ///
+    /// That rule used to live inside one complete scan, which is the one case
+    /// where it was never needed. Three ordinary paths walk around it: the
+    /// adapter cursor rotates and only one of the pair gets a turn, the
+    /// supervisor trips a collector, or the store asks for a scoped rescan.
+    /// In all three, this pass's fresh Windsurf rows meet the *retained*
+    /// Cascade rows — after the in-scan check has already run — and the same
+    /// pending session lights twice. The check therefore belongs here, on the
+    /// union the tray actually receives, and the collector keeps its own copy
+    /// only so its health lines stay consistent with the rows it reports.
+    static func dedupeSharedRoots(_ rows: [Row]) -> [Row] {
+        guard rows.contains(where: { $0.id.surfaceID == .cascade }) else { return rows }
+        return rows.filter { $0.id.surfaceID != .windsurf }
     }
 
     static func mapAgent(_ raw: String) -> AgentID? {
@@ -533,9 +575,18 @@ enum AttentionReader {
             }
             if kind == .stop {
                 func shouldKeep(_ existing: Entry) -> Bool {
+                    // `effectiveMs`, not the raw stamp: this is the same
+                    // choice `clockVerdict` already made a few lines below,
+                    // and the two must agree. A remote box whose clock runs
+                    // half an hour behind produced a Permission the reader
+                    // deliberately measured from arrival — and then the Stop
+                    // that Claude emits right after it wiped that Permission
+                    // instantly, because the grace window alone was still
+                    // measured against the stamp everything else had refused
+                    // to trust.
                     (existing.kind == "Permission" || existing.kind == "Input" || existing.kind == "Waiting")
-                        && existing.tsMs > 0
-                        && nowMs - existing.tsMs < stopGraceMs
+                        && existing.effectiveMs > 0
+                        && nowMs - existing.effectiveMs < stopGraceMs
                 }
                 if session.isEmpty {
                     for k in siblingKeys() {

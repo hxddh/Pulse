@@ -1354,4 +1354,110 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.task, "Refactor auth")
         XCTAssertEqual(row.cwd, "/Users/me/app")
     }
+
+    // MARK: - 2.2 · a record count is exact or it is not offered
+
+    /// Regression (B-12 / `H-M6`): the Codex parser walked the head 8 lines
+    /// plus the last 2,048 of its window and counted them as `records` — a
+    /// window figure carrying no truncation flag, published where the tray
+    /// renders an exact "N records". Only a later unconditional assignment in
+    /// `ingestTranscriptFile` kept it off screen, which is luck, not a rule.
+    ///
+    /// The rule now: `records` comes from a window that really was the whole
+    /// file, or from a digest that has folded to the end. Nothing else offers
+    /// one. This rollout has far more lines than the parser ever looks at, so
+    /// a parser-derived count would show 2,056 here instead of the truth.
+    func testCodexRecordsCountTheFileNotTheParserWindow() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory
+            .appendingPathComponent("pulse-native-codex-records-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".codex/sessions/2026/08/18", isDirectory: true)
+            .appendingPathComponent("rollout-records.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        HarvestDigests.resetForTesting()
+
+        var lines = [
+            #"{"type":"session_meta","payload":{"session_id":"rec-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"Count the records honestly"},"timestamp":1700000001}"#,
+        ]
+        // Past the parser's 8 + 2,048 candidate window, and well under the
+        // 8 MB read window, so the file really is read whole.
+        for index in 0..<2_500 {
+            lines.append(
+                #"{"type":"event_msg","payload":{"type":"token_count","info":{}},"index":\#(index),"timestamp":1700000002}"#
+            )
+        }
+        try (lines.joined(separator: "\n") + "\n").write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(
+            home: home,
+            agentDeadlineSeconds: 30,
+            totalDeadlineSeconds: 60,
+            agentFilter: [.codex]
+        )
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
+        XCTAssertEqual(row.task, "Count the records honestly")
+        XCTAssertEqual(
+            row.records, lines.count,
+            "the whole file was read, so the count is the file's — never the parser's candidate slice"
+        )
+    }
+
+    // MARK: - 2.2 · a workspace path the disk agrees with
+
+    /// Regression (B-13): Claude and Pi name a project directory by replacing
+    /// every `/` with `-`, and neither escapes a `-` the path already had.
+    /// Expanding every `-` therefore turned `/Users/me/my-project` into
+    /// `/Users/me/my/project` — and that is the path Focus opens a terminal
+    /// or an IDE on.
+    ///
+    /// The workspace the name came from exists, so the filesystem settles it.
+    func testAHyphenatedWorkspaceIsRestoredFromTheDiskNotFromTheDashes() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory
+            .appendingPathComponent("pulse-native-cwdok-\(UUID().uuidString)")
+        let workspace = home.appendingPathComponent("work/my-project", isDirectory: true)
+        try fm.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        // Exactly what Claude Code writes for this workspace.
+        let encoded = workspace.path.replacingOccurrences(of: "/", with: "-")
+        let session = home
+            .appendingPathComponent(".claude/projects/\(encoded)", isDirectory: true)
+            .appendingPathComponent("sess-cwd.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #"{"type":"user","sessionId":"cwd-1","message":{"role":"user","content":"Land in the right folder"}}"#
+            .write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
+        XCTAssertEqual(
+            row.cwd, workspace.path,
+            "the hyphen belongs to the folder name, and the disk says so"
+        )
+        XCTAssertEqual(row.project, "my-project")
+        XCTAssertFalse(row.cwdBestEffort, "a confirmed path is safe to land Focus on")
+    }
+
+    /// The other half: nothing on disk matches, so the naive decode is kept
+    /// for display and marked best-effort. Focus must not land on it.
+    func testAWorkspaceTheDiskCannotConfirmIsMarkedBestEffort() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory
+            .appendingPathComponent("pulse-native-cwdbe-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".claude/projects/-Users-me-code-PulseNoSuchDir", isDirectory: true)
+            .appendingPathComponent("sess-be.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"type":"user","sessionId":"cwd-2","message":{"role":"user","content":"Show it anyway"}}"#
+            .write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
+        XCTAssertEqual(row.cwd, "/Users/me/code/PulseNoSuchDir", "still worth showing")
+        XCTAssertTrue(row.cwdBestEffort, "and it says the disk never confirmed it")
+    }
 }

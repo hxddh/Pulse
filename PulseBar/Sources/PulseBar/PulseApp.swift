@@ -530,6 +530,29 @@ private struct SectionHeader: View {
     }
 }
 
+/// Owns nothing but the tray's identity.
+///
+/// `StatusPanelController` builds the hosting controller once and then only
+/// orders the window in and out, so SwiftUI keeps `TrayPanel`'s `@State`
+/// forever: fold, search text, session filters and keyboard selection all
+/// survived closing the panel, and the next glance opened in the middle of the
+/// last one's rummaging — the opposite of EXPERIENCE §4.
+///
+/// Re-identifying the subtree per open resets *every* piece of that state,
+/// including any added later. An explicit reset callback would have to list
+/// them, and the list is exactly the thing that rots: the defect it replaces
+/// arrived when `filterPhase` / `filterOutcome` / `filterAgentRaw` were added
+/// next to a `folded` set nobody was clearing either.
+@MainActor
+struct TrayPanelHost: View {
+    @ObservedObject var store: StatusStore
+
+    var body: some View {
+        TrayPanel(store: store)
+            .id(store.traySessionToken)
+    }
+}
+
 @MainActor
 struct TrayPanel: View {
     @ObservedObject var store: StatusStore
@@ -2726,13 +2749,19 @@ struct SupportCoverageView: View {
     }
 
     private var summaryLine: String {
-        let usable = availableCount
-        switch store.lang {
-        case .zh:
-            return "可用 \(usable) · 需要处理 \(needsActionCount) · 信息受限 \(limitedCount) · 未安装 \(notInstalledCount) · 无近期会话 \(noRecentCount) · 权限不足 \(permissionDeniedCount) · 未扫描 \(unscannedCount)"
-        case .en:
-            return "Available \(usable) · Needs action \(needsActionCount) · Limited \(limitedCount) · Not installed \(notInstalledCount) · No recent session \(noRecentCount) · Permission denied \(permissionDeniedCount) · Unscanned \(unscannedCount)"
-        }
+        // One sentence, one table entry. It was two inline literals switched on
+        // `store.lang`, which is the one thing EXPERIENCE §4 forbids for
+        // user-facing copy: the translation drifts where nobody is looking.
+        String(
+            format: store.tr(.supportSummaryLine),
+            availableCount,
+            needsActionCount,
+            limitedCount,
+            notInstalledCount,
+            noRecentCount,
+            permissionDeniedCount,
+            unscannedCount
+        )
     }
 }
 
@@ -2917,11 +2946,31 @@ struct SupportHealthRow: View {
                 }
 
                 DisclosureGroup(isExpanded: $diagnosticsExpanded) {
-                    Text(store.supportAdapterDetail(item))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 3)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(store.supportAdapterDetail(item))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // How the adapter got there. Collected since 1.2 and
+                        // until now only written to debug.log, which left "why
+                        // is this row empty" answerable only from a terminal.
+                        let reading = store.supportReadingDetail(item)
+                        if !reading.isEmpty {
+                            Text(reading)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        let outcome = store.supportCollectorOutcomeDetail(item)
+                        if !outcome.isEmpty {
+                            Text(outcome)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 3)
                 } label: {
                     Text(store.tr(.supportAdapterDiagnostics))
                 }

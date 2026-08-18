@@ -400,3 +400,104 @@ final class EvidenceSurfaceTests: XCTestCase {
         XCTAssertEqual(store(.zh).evidenceTimeline(row), "Read → Edit → Bash")
     }
 }
+
+/// 2.2 Momentum — compute is the fact that separates thinking from stopped.
+@MainActor
+final class ComputeSurfaceTests: XCTestCase {
+    private func liveRow() -> AgentRow {
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.liveProcess = true
+        row.processCount = 1
+        row.task = "Build the thing"
+        return row
+    }
+
+    func testUnknownComputeIsNeverRenderedAsZero() {
+        let store = StatusStore()
+        var row = liveRow()
+        XCTAssertEqual(row.cpuPercent, -1, "no sample yet is the default")
+        XCTAssertFalse(row.hasCPUSample)
+        XCTAssertEqual(store.evidenceCPU(row), "—", "unknown must not read as 0%")
+
+        row.cpuPercent = 0
+        XCTAssertTrue(row.hasCPUSample, "measured idle is an answer")
+        XCTAssertNotEqual(store.evidenceCPU(row), "—")
+    }
+
+    func testTheNoteSaysWhyComputeIsMissing() {
+        let store = StatusStore()
+        var row = liveRow()
+        let unknown = store.evidenceCPUNote(row)
+        row.cpuPercent = 42
+        XCTAssertNotEqual(store.evidenceCPUNote(row), unknown, "two states, two sentences")
+        XCTAssertFalse(unknown.isEmpty)
+    }
+
+    func testComputeLeadsTheMotionTierAheadOfGrowth() {
+        let store = StatusStore()
+        var row = liveRow()
+        row.cpuPercent = 180
+        row.bytesPerMinute = 4096
+        let line = store.rowObservationLine(row)
+        guard let cpu = line.range(of: "CPU"), let transcript = line.range(of: "+") else {
+            return XCTFail("both motion facts should be present: \(line)")
+        }
+        XCTAssertLessThan(
+            cpu.lowerBound, transcript.lowerBound,
+            "with a quiet transcript CPU is the only fact left that can speak"
+        )
+    }
+
+    func testAnIdleOrUnsampledProcessSpendsNoSlotOnCPU() {
+        let store = StatusStore()
+        var row = liveRow()
+        XCTAssertFalse(store.rowObservationLine(row).contains("CPU"), "unknown says nothing")
+        row.cpuPercent = 3
+        XCTAssertFalse(store.rowObservationLine(row).contains("CPU"), "idle is not worth a slot")
+    }
+
+    func testMemoryDisappearsRatherThanShowingZero() {
+        let store = StatusStore()
+        var row = liveRow()
+        XCTAssertNil(store.evidenceMemory(row))
+        row.rssBytes = 512 * 1024 * 1024
+        XCTAssertNotNil(store.evidenceMemory(row))
+    }
+
+    func testAStalledSessionThatIsBusySaysSo() {
+        let store = StatusStore()
+        var row = liveRow()
+        row.isStalled = true
+        row.harvestMs = 1
+        let quiet = store.rowStoryLine(row)
+        row.cpuPercent = 200
+        let busy = store.rowStoryLine(row)
+        XCTAssertNotEqual(quiet, busy, "a pinned process is not the same story as a dead one")
+    }
+}
+
+/// A workspace the disk could not confirm must not be offered as a landing.
+@MainActor
+final class BestEffortWorkspaceTests: XCTestCase {
+    func testAnUnverifiedWorkspaceDropsToAppPrecision() {
+        let env = TerminalFocus.Environment(
+            warpRunning: true,
+            ttyHostRunning: true,
+            allowTTYAutomation: true
+        )
+        let verified = TerminalFocus.focusTier(
+            tty: "", viaWarp: false, hostApp: .cursor,
+            workspace: "/Users/me/my-project", workspaceVerified: true, env: env
+        )
+        let guessed = TerminalFocus.focusTier(
+            tty: "", viaWarp: false, hostApp: .cursor,
+            workspace: "/Users/me/my/project", workspaceVerified: false, env: env
+        )
+        if case .hostWorkspace = verified {} else {
+            XCTFail("a confirmed path still lands on the workspace: \(String(describing: verified))")
+        }
+        if case .hostApp = guessed {} else {
+            XCTFail("an unconfirmed decode must not open a folder: \(String(describing: guessed))")
+        }
+    }
+}

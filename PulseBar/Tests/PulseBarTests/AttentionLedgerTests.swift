@@ -90,3 +90,70 @@ final class AttentionLedgerTests: XCTestCase {
         XCTAssertNil(ledger.snoozedUntil["codex"])
     }
 }
+
+/// The inbox watch is how a remote raise wakes Pulse at once instead of on the
+/// next poll. Re-arming attention.tsv used to tear it down (U-4).
+final class AttentionWatcherReArmTests: XCTestCase {
+    private var home: URL!
+
+    override func setUpWithError() throws {
+        home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-watcher-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        AttentionIO.pathOverride = home.appendingPathComponent("attention.tsv")
+    }
+
+    override func tearDownWithError() throws {
+        AttentionIO.pathOverride = nil
+        try? FileManager.default.removeItem(at: home)
+    }
+
+    func testReArmingTheFileWatchLeavesTheInboxWatchAlone() {
+        let watcher = AttentionWatcher()
+        defer { watcher.stop() }
+        watcher.start {}
+        XCTAssertTrue(watcher.isWatchingFile)
+        XCTAssertTrue(watcher.isWatchingInbox)
+
+        // What the delete/rename handler does after an atomic replace — which
+        // is what every hook write looks like from the outside.
+        watcher.arm()
+        XCTAssertTrue(watcher.isWatchingFile)
+        XCTAssertTrue(
+            watcher.isWatchingInbox,
+            "attention.d/ must keep waking Pulse after attention.tsv is replaced"
+        )
+    }
+
+    func testReArmingTheInboxLeavesTheFileWatchAlone() {
+        let watcher = AttentionWatcher()
+        defer { watcher.stop() }
+        watcher.start {}
+        watcher.armInbox()
+        XCTAssertTrue(watcher.isWatchingFile)
+        XCTAssertTrue(watcher.isWatchingInbox)
+    }
+
+    /// A deleted file cannot be reopened, so the watch would have stayed dead
+    /// for the life of the process.
+    func testAFileThatWasDeletedIsRecreatedAndWatchedAgain() throws {
+        let watcher = AttentionWatcher()
+        defer { watcher.stop() }
+        watcher.start {}
+        let file = try XCTUnwrap(AttentionIO.pathOverride)
+        try FileManager.default.removeItem(at: file)
+
+        watcher.arm()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(watcher.isWatchingFile)
+        XCTAssertTrue(watcher.isWatchingInbox)
+    }
+
+    func testStopTearsDownBothWatches() {
+        let watcher = AttentionWatcher()
+        watcher.start {}
+        watcher.stop()
+        XCTAssertFalse(watcher.isWatchingFile)
+        XCTAssertFalse(watcher.isWatchingInbox)
+    }
+}

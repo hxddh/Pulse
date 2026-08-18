@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（2.1.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（2.2.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -527,14 +527,15 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AI | Return Truth（回看诚实） | 重开托盘后用新扫描算 Look；同行新 `waitSinceMs` 算新等待且优先于 ended；ended 不进 moved；Glance 超 8 格降为 `1 · 4m` / `1`；样本行出现后再 Go-Look；进程收养重键；Attention 压缩保留未决；Details 可行动缺口优先、quiet/cache 不重复观测/身份 |
 | AJ | Pi 会话标题 | 与 Pi `/resume` 一致：最新 `session_info.name`（空则清除）否则**第一条**用户句；官方 `--<cwd>--/<timestamp>_<uuid>.jsonl`；env 标签不吞后半句，未闭合 env 不当标题；compaction `retainedTail`；sibling `.db` 不挡 JSONL；SQLite 最新句不盖 JSONL；`Auth session` 不是 chrome；官方头-only 不发明项目名主行 |
 | AK | Hero Honesty（主行诚实） | Claude/Command Code `tool_result` 不当标题、长笔录开场目标仍在；`messages[]` 跳过 tool 信封；Codex `event_msg` 用户正文进主行、Desktop 信封剥掉、`continue` 不覆盖；tool `path` 不是 cwd；Goose `name` / Kimi `lastPrompt` / Cursor `subtitle` 可见；表头计数=舰队；Details 空 phase 不发明「等待权限」；审批 ask → Permission 芯片 |
-| AL | Ground Truth（采集可证） | 主行按记录种类选而非字符串长度（`sessionName` > `userPrompt` > `cacheTitle` > chrome），同种类保留先见到的；每个 adapter 输出 explain（files/bytes/truncated/facts/heroOrigin/emptyReason）进安全支持报告与 debug.log；窗口截断时 records 报未知不报估算值；预算用尽后下次扫描从上次没走到的 adapter 开始，尾部 Agent 不再永久 `unscanned`；launchd 最小 PATH 下 `~/.local/bin` 的 CLI 仍算「已安装」；chrome 词表单源；native 墙用厂商真实布局断言主行**取值**；explain / shape 导出不含标题、正文与路径 |
+| AL | Ground Truth（采集可证） | 主行按记录种类选而非字符串长度（`sessionName` > `userPrompt` > `cacheTitle` > chrome），同种类保留先见到的；每个 adapter 输出 explain（files/bytes/truncated/facts/heroOrigin/emptyReason）进安全支持报告与 debug.log，**并进 Support Health 的「适配器诊断」折叠区**（2.2：「为什么这行是空的」不该要开终端才能问 —— 读了多少 ＋ 结果如何/哪一层丢了它，都用人话；窗口截断时同一行声明计数只是下限；什么都没读就整行消失而不是打一排 0；本版不认识的 tag 原样打出，不静默吞掉）；窗口截断时 records 报未知不报估算值；预算用尽后下次扫描从上次没走到的 adapter 开始，尾部 Agent 不再永久 `unscanned`；launchd 最小 PATH 下 `~/.local/bin` 的 CLI 仍算「已安装」；chrome 词表单源；native 墙用厂商真实布局断言主行**取值**；explain / shape 导出不含标题、正文与路径 |
 | AM | Quiet Data（数据静默） | 账本注释所述 == 实际字段（≤160 字会话标题、14 天 / 256 条、已过 `ContentSanitizer`）；设置里「最近等待」下方写明保留期并可清空；chrome 词表全仓只有一份且大小写不敏感，`Cascade session` 在采集侧与行侧一致被拒；`debug.log` 的 rowKey 不含项目名但仍可跨行关联；预算挤掉的 adapter 进 supervisor 摘要；Details 事实行与 Support 事实徽章 VoiceOver 读得出标签与有无；只有一个采集器，任何路径都不为观测会话 fork 解释器 |
 | AN | Live Wire（通电） | `lsof` 退 1 但已打印的进程照常采用；只有调用失败 / 超时 / 退 0 却无输出 / 退 1 而被问的进程仍活着，才武装 5 分钟 backoff；已退出的 pid 不连坐其它 Agent；子进程超时后不向仍在运行的它索要退出码，SIGTERM 不死则 SIGKILL；仅进程行从探针拿到工作区与项目名，多个陈旧会话按活进程 cwd 消歧（无 cwd 时按新旧）；厂商格式报告可从支持窗口一键复制且不含任何正文；「登录时启动」的终态经 `launchctl list` 复核并进安全支持报告；Focus 打开工作区不在主线程无限等待 |
 | AO | Remote Fleet（我的舰队） | 远端 raise 经 `attention.d/<host>.tsv` 点亮独立行；`host` 空=本机，v1 六列行仍有效；两台机器的同名 Agent 是两行两个 rowKey，一台的 `done` 不清另一台；远端行**永不**报进程、**没有** Focus、叙事行说「最后听到」；TTL 后进**失联**（撤红灯、留行、给原因），一小时后才消失；发送方时钟对不上时按到达时间计龄并在行上说明，不再静默丢弃；远端等待不认领本机会话；安全支持报告有 `remoteFleet:`；Pulse 不联网、不带服务器、不上传任何东西
-| AP | Full Transcript（全见） | 超过窗口的会话记录数不再报未知：摘要读完整份文件后给精确值，没读完则保持原行为；追加中的半行不计数；文件变短 / 标识变 / 头部指纹变（含同长度就地重写）一律从头重来；分片折叠结果 == 一次性折叠结果；摘要只存计数与厂商工具名，不存正文、工具入参或笔录里的路径，有界并按期清理；安全支持报告有 `sessionDigests:`；窗口读取本版仍在，不得声称已省掉
+| AP | Full Transcript（全见） | 超过窗口的会话记录数不再报未知：摘要读完整份文件后给精确值，没读完则保持原行为；追加中的半行不计数 —— 不只看 stat 说的结尾（那是读之前量的），还问打开着的描述符文件现在到哪儿，**且末尾那截自己得像个记录**（`{` 开头却解析不出来的就是被撕开的前半截；从来不是 JSON 的行没有形状可查，照旧采信）；文件变短 / 标识变 / 头部指纹变（含同长度就地重写）一律从头重来；分片折叠结果 == 一次性折叠结果；摘要只存计数与厂商工具名，不存正文、工具入参或笔录里的路径，有界并按期清理；安全支持报告有 `sessionDigests:`；窗口读取本版仍在，不得声称已省掉
 | AQ | Substance（行的实质） | 连续调用同一工具 ≥3 次时叙事行说 `Edit · 连续 5 次`，因为「在动但没在推进」是灯表达不了、窗口也看不到的状态；Waiting 与远端行的叙事优先于它；**不改灯色**（状态编码仍是 4 种，打转不是 stalled）；Details 给整场会话证据：用过的工具按次数排序最多 4 项（长尾直接丢弃，不做「其它 N 个」）、错误总量、打转说明；摘要事实只搬运不重算，不得从窗口文本复核
 | AR | Respond（回应） | 远端等待行在存在匹配的完整请求（`respond.d` 请求文件，digest 复核通过）时多出两个动作：**拒绝**（永远可用 —— 拒绝没读全的东西是安全的）与**查看并回应**（打开 Details 的完整请求区，「同意」只出现在那里且仅当 `canOfferAllow` —— 对着 200 字截断摘要没有同意按钮）；判决单次使用、90 秒过期、HMAC 逐 host 密钥签名、绑定 request id + 内容摘要 + agent + host，密钥文件不存在则这一切不出现；本机行**永不** hold、永无这两个按钮（在场时厂商提示更好，缺席时无人可答）；hook 端任何失败静默回落厂商提示；判决送达与否 Pulse 不谎报 —— 界面只说「判决已写出，等你的同步工具送达」
 | AS | Evidence（证据） | 摘要算出的事实不再停在支持报告：Details 有**会话证据**卡 —— 最近动作时间线（`Read → Edit → Bash`）、**整场会话** token（与 facts 里「最近一条消息」的 token 明确区分，不让两个数字打架）、活跃度（笔录增长速率，未知就说未知）、会话时长、读取完整度；**定性事实在追平前也显示，但必须标注「仍在追平 · 已读 N%」** —— 披露过的部分值不是估算，藏起来才是浪费，而记录数仍然只在读完后才给（数量不估算）；**行的事实按信息量取而不按条数**（本版改写了「最多 4 个」，见 §4 —— 那个数字是从一次事故里反弹出来的，不是推导出来的）：分层排序为 故障 → 推进 → 动静 → 触及 → 常量（model/mode/skill 定位但从不推进，最后竞争）→ 总量；**笔录增长速率排在 token 前**（它是行上唯一能区分「在干活」与「杵着」的），且仅对 live 且非停滞非 recent 的行发（完成会话上的速率是历史冒充运动）；**整场 token 不上行** —— 同一数量换个跨度平铺是歧义不是信息，它留在 Details 由标签分开说；「已读 N%」只在同一行确实有计数需要被限定时才出现（没有被限定对象的免责声明不算信息）；条数在拥挤（≥5 行）时收敛，这是**行高护栏不是配额** |
+| AT | Momentum（动量） | 进程真实 CPU 占用进入观测行的**动静**层并**排在增长速率之前** —— 笔录不动时它是唯一还能说话的事实；取值是两拍累计 CPU 时间相减，**不是 `ps %cpu`**（那是生命周期平均值，用它回答「此刻」就是撒谎）；**未知是 -1 不是 0**，界面渲染成「—」并说明还没采到（「测到了它闲着」与「还没采到」是两个答案）；pid 复用两个方向都要挡住 —— 累计值倒退挡一半，**进程比上次采样还年轻**挡另一半（新占用者烧得比前任多时计数器并不倒退）；空闲（<15%）不占位；停滞行在进程确实在跑时改说「笔录不动，进程在跑 —— 它在算」，**不改灯色**（仍不是健康绿，只是给停滞一个解释）；Details 给计算量与常驻内存；**未经磁盘确认的工作区路径不再提供工作区落地**，降级到仅 App —— 点击时的存在性检查分不出「解对了」和「解错但碰巧存在」 |
 
 ---
 

@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 /// What Pulse has learned by reading a session transcript all the way through.
@@ -209,6 +210,24 @@ enum SessionDigestFold {
         return size > digest.offset ? .appended : .unchanged
     }
 
+    /// Is this trailing fragment a record in its own right, or the front half
+    /// of one still being written?
+    ///
+    /// Only answerable for the structured case, which is the one that matters:
+    /// a transcript record begins `{` or `[`, and half of it never parses.
+    /// A fragment that never claimed to be JSON is taken at face value —
+    /// refusing it would leave plain-text transcripts permanently short of
+    /// caught up over a distinction nothing on disk can settle.
+    static func isWholeRecord<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
+        let data = Data(bytes)
+        let line = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = line.first else { return true }
+        guard first == "{" || first == "[" else { return true }
+        guard let encoded = line.data(using: .utf8) else { return false }
+        return (try? JSONSerialization.jsonObject(with: encoded)) != nil
+    }
+
     /// Fold transcript lines into the digest. Pure, so the counting rules can
     /// be held to fixtures without touching a filesystem.
     static func fold(_ digest: inout SessionDigest, lines: [Substring], nowMs: Int64) {
@@ -417,14 +436,49 @@ enum SessionDigestEngine {
         let want = min(maxBytes, size - digest.offset)
         guard let chunk = try? handle.read(upToCount: want), !chunk.isEmpty else { return nil }
 
-        // Never fold a half-written record: an append-only transcript is being
-        // extended while this runs, and counting a partial line would put a
-        // wrong number on a row and never correct itself.
+        // Never fold a half-written record: an append-only transcript is
+        // being extended while this runs, and counting a partial line would
+        // put a wrong number on a row and never correct itself.
+        //
+        // Reaching the *claimed* end of the file used to be treated as proof
+        // that the tail was whole. It is not: `size` was stat'd before the
+        // read, and a writer that splits one long record across two `write`
+        // calls lands exactly there — the front half is folded as one record
+        // now, the back half as another record next pass, and `records` is
+        // permanently one too many for a number the row states as exact.
+        //
+        // So the last block obeys the same rule as every other block, with
+        // one exception that can be *proved* rather than assumed: ask the
+        // open descriptor where the file ends now. If it has not moved since
+        // the caller measured it, nothing was appended while this ran, and a
+        // tail without a closing newline is a final record rather than half
+        // of one. If it has moved, cut at the last newline and let the next
+        // pass finish the sentence.
+        //
+        // The descriptor narrows that race but does not close it: a writer
+        // that finished its first `write` before the caller stat'd and its
+        // second after this `seekToEnd` looks identical to a settled file.
+        // So the tail must also *look* whole. A JSONL record that starts `{`
+        // and does not parse is the torn half itself — count it and `records`
+        // is permanently one too high for a number the row states as exact —
+        // while a line that was never JSON is left alone, since a newline is
+        // the only thing that could ever have proved it whole.
+        let afterLastNewline = chunk.lastIndex(of: UInt8(ascii: "\n"))
+            .map { chunk.index(after: $0) }
+        let hasUnterminatedTail = afterLastNewline != chunk.endIndex
+        let reachedClaimedEnd = digest.offset + chunk.count >= size
+        let liveEnd = (try? handle.seekToEnd()).map { Int($0) } ?? -1
         let complete: Data
-        if digest.offset + chunk.count >= size {
+        if !hasUnterminatedTail {
             complete = chunk
-        } else if let lastNewline = chunk.lastIndex(of: UInt8(ascii: "\n")) {
-            complete = chunk[..<chunk.index(after: lastNewline)]
+        } else if reachedClaimedEnd,
+                  liveEnd == size,
+                  SessionDigestFold.isWholeRecord(
+                      chunk[(afterLastNewline ?? chunk.startIndex)...]
+                  ) {
+            complete = chunk
+        } else if let afterLastNewline, afterLastNewline > chunk.startIndex {
+            complete = chunk[..<afterLastNewline]
         } else {
             // One record longer than the whole slice. Wait for more rather
             // than guess where it ends.
@@ -483,18 +537,46 @@ struct SessionDigestStore: Codable, Equatable {
         return store
     }
 
+    /// Test seam: handed the temporary file's path after it is created and
+    /// filled, before it is renamed into place — so a test can prove the bytes
+    /// were never readable by anyone else, rather than only that they ended up
+    /// private.
+    static var inspectTemporaryFileForTesting: ((String) -> Void)?
+
     func save() {
         guard let data = try? JSONEncoder().encode(self) else { return }
-        let url = Self.fileURL
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        try? data.write(to: url, options: [.atomic])
-        // Counts and tool names only, but it is still a record of when someone
-        // was working. Keep it to this user.
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: url.path
-        )
+        Self.writePrivately(data, to: Self.fileURL)
+    }
+
+    /// Write `data` so that it is 0600 from the moment it exists.
+    ///
+    /// Counts and tool names only, but it is still a record of when someone
+    /// was working, so it belongs to this user alone. `write(to:.atomic)`
+    /// followed by `chmod` cannot promise that: the temporary file it creates
+    /// takes the process umask — 0644 on a stock Mac — and stays world
+    /// readable for the whole write plus the rename. Creating the temporary
+    /// file with the permissions we want, before a single byte goes into it,
+    /// closes the window instead of narrowing it. `rename(2)` then publishes
+    /// it atomically and carries the mode across, whether or not a previous
+    /// digest file was there — the same shape `RespondSpool.atomicWrite0600`
+    /// already uses for verdicts, and for the same reason.
+    @discardableResult
+    static func writePrivately(_ data: Data, to url: URL) -> Bool {
+        let fm = FileManager.default
+        let directory = url.deletingLastPathComponent()
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let temporary = directory.appendingPathComponent(".tmp-\(UUID().uuidString)")
+        guard fm.createFile(
+            atPath: temporary.path,
+            contents: data,
+            attributes: [.posixPermissions: 0o600]
+        ) else { return false }
+        inspectTemporaryFileForTesting?(temporary.path)
+        guard rename(temporary.path, url.path) == 0 else {
+            try? fm.removeItem(at: temporary)
+            return false
+        }
+        return true
     }
 
     mutating func prune(nowMs: Int64) {
