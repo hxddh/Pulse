@@ -292,7 +292,7 @@ final class PulseHookReceiverTests: XCTestCase {
         let raw = try JSONSerialization.data(withJSONObject: payload)
         let decision = PulseHookReceiver.respondDecisionJSON(
             agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 0, environment: [:],
+            idleSeconds: 0, promptIsFrontmost: true, environment: [:],
             clockMs: { self.now },
             sleepMs: { _ in XCTFail("a present user must never cost a sleep") }
         )
@@ -303,6 +303,40 @@ final class PulseHookReceiverTests: XCTestCase {
             ),
             "a present user's request must not even be spooled"
         )
+    }
+
+    /// 2.4: present, but looking at something that is not this agent's
+    /// window. 2.0 read "someone is touching this Mac" as "the prompt is in
+    /// front of them" and let the request straight through — which is why the
+    /// product's own headline scene (a meeting, a document) got no help at all.
+    func testRespondHoldsWhenThePromptIsNotInFrontOfYou() throws {
+        try writeRespondSecret()
+        let payload = permissionPayload()
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        let digest = RespondDigest.of(raw)
+        try writeVerdictFile(id: "toolu_x", digest: digest, host: "agentbox", allow: false)
+        let decision = PulseHookReceiver.respondDecisionJSON(
+            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
+            idleSeconds: 0, promptIsFrontmost: false,
+            environment: ["PULSE_HOST": "agentbox"],
+            clockMs: { self.now }, sleepMs: { _ in }
+        )
+        XCTAssertNotNil(decision)
+        XCTAssertTrue(decision?.contains("\"behavior\":\"deny\"") == true, decision ?? "nil")
+    }
+
+    /// Not knowing is not proof. The cost of a wrong hold is a frozen agent in
+    /// front of a present user, so an unanswerable question behaves like 2.3.
+    func testAnUnknownFrontmostLetsThePresentUserThrough() throws {
+        try writeRespondSecret()
+        let payload = permissionPayload()
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        XCTAssertNil(PulseHookReceiver.respondDecisionJSON(
+            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
+            idleSeconds: 0, promptIsFrontmost: nil, environment: [:],
+            clockMs: { self.now },
+            sleepMs: { _ in XCTFail("an unproven hold must never cost a sleep") }
+        ))
     }
 
     func testRespondStaysSilentWithoutTheOptInKey() throws {

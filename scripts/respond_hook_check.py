@@ -140,7 +140,9 @@ class FakeClock:
         self.ms += max(1, int(seconds * 1000))
 
 
-def fresh_home(tag: str, *, key: bytes | None = KEY, hold: str = "5"):
+def fresh_home(
+    tag: str, *, key: bytes | None = KEY, local_key: bytes | None = None, hold: str = "5"
+):
     home = Path(tempfile.mkdtemp(prefix=f"pulse-respond-check-{tag}-"))
     env = dict(os.environ)
     env["PULSE_HOME"] = str(home)
@@ -148,6 +150,8 @@ def fresh_home(tag: str, *, key: bytes | None = KEY, hold: str = "5"):
     env["PULSE_RESPOND_MAX_HOLD_SECONDS"] = hold
     if key is not None:
         (home / "respond-secret.key").write_bytes(key + b"\n")
+    if local_key is not None:
+        (home / "respond-local.key").write_bytes(local_key + b"\n")
     return home, env
 
 
@@ -462,6 +466,64 @@ def case_permission_descriptor() -> None:
     check("descriptor bounded to one line", len(folded) == 140 and folded.endswith("…"), folded[-3:])
 
 
+def case_local_key_only() -> None:
+    print("case 10: local key alone -> opted in, and it verifies a local verdict")
+    rid = "toolu_local_1"
+    stdin = payload_bytes(rid)
+    digest = hashlib.sha256(stdin).hexdigest()
+    local = b"local-key-for-this-mac-only"
+    # No shared key at all: this is the single-Mac install, where Respond did
+    # nothing whatsoever before 2.4.
+    home, env = fresh_home("local", key=None, local_key=local)
+    try:
+        now = int(time.time() * 1000)
+        vpath = place_verdict(
+            home, rid, make_verdict(rid, digest, False, now, now + 90_000, key=local)
+        )
+        proc, elapsed = run_hook(env, stdin)
+        check("exit 0", proc.returncode == 0, f"rc={proc.returncode}")
+        decision = None
+        try:
+            decision = json.loads(proc.stdout.decode("utf-8"))
+        except ValueError:
+            pass
+        check("stdout is JSON", decision is not None, repr(proc.stdout[:200]))
+        hso = (decision or {}).get("hookSpecificOutput", {})
+        check(
+            "behavior is deny",
+            hso.get("decision", {}).get("behavior") == "deny",
+            str(hso),
+        )
+        check("verdict consumed exactly once (.used)",
+              not vpath.exists() and vpath.with_name(vpath.name + ".used").exists())
+        check("request file written", (home / "respond.d" / "requests" / f"{rid}.json").exists())
+        check("answered promptly (first poll)", elapsed < 4.0, f"{elapsed:.1f}s")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def case_local_key_cannot_be_forged() -> None:
+    print("case 11: a verdict signed with neither held key -> not adopted")
+    rid = "toolu_local_forged"
+    stdin = payload_bytes(rid)
+    digest = hashlib.sha256(stdin).hexdigest()
+    home, env = fresh_home("localforged", key=None, local_key=b"the-real-local-key", hold="2")
+    try:
+        now = int(time.time() * 1000)
+        # What a compromised sync share could put in verdicts/: a well-formed
+        # allow signed with a key this machine does not hold.
+        place_verdict(
+            home, rid,
+            make_verdict(rid, digest, True, now, now + 90_000, key=b"not-a-key-we-hold"),
+        )
+        proc, elapsed = run_hook(env, stdin)
+        check("exit 0", proc.returncode == 0, f"rc={proc.returncode}")
+        check("stdout empty (fell open)", proc.stdout == b"", repr(proc.stdout[:120]))
+        check("held to the deadline", elapsed >= 1.5, f"{elapsed:.1f}s")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def main() -> int:
     print(f"respond_hook_check — hook: {HOOK}")
     case_no_key()
@@ -474,6 +536,8 @@ def main() -> int:
     case_timeout()
     case_hygiene()
     case_permission_descriptor()
+    case_local_key_only()
+    case_local_key_cannot_be_forged()
     print()
     if FAILURES:
         print(f"FAIL — {len(FAILURES)} of {PASSED + len(FAILURES)} checks failed:")

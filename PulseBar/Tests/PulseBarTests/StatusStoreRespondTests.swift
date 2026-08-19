@@ -52,12 +52,14 @@ final class StatusStoreRespondTests: XCTestCase {
         XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_1")
     }
 
-    func testALocalRowNeverGetsARespondControl() {
+    /// A request that arrived from another machine must not land on a row
+    /// this Mac is observing: the hook waiting for that verdict is over there.
+    func testARemoteRequestNeverAttachesToALocalRow() {
         var local = remoteRow(key: "claude|s1", host: "", session: "s1")
         local.observationSource = .session
         local.host = ""
         let matched = StatusStore.matchRespondInbound([inbound()], rows: [local])
-        XCTAssertTrue(matched.isEmpty, "local rows never hold; offering an answer would be a lie")
+        XCTAssertTrue(matched.isEmpty, "the hook holding for this one is on another machine")
     }
 
     func testAnotherHostsRowDoesNotCollect() {
@@ -87,5 +89,63 @@ final class StatusStoreRespondTests: XCTestCase {
             rows: [remoteRow(session: "s1")]
         )
         XCTAssertEqual(matched.count, 1, "a v1 remote hook may not know its session id")
+    }
+
+    // MARK: 2.4 · this Mac's own requests
+
+    private func localRow(
+        key: String = "claude|s1",
+        agent: AgentID = .claude,
+        session: String = "s1"
+    ) -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: agent)
+        row.observationSource = .session
+        row.sessionID = session
+        row.waiting = true
+        return row
+    }
+
+    private func localInbound(
+        id: String = "toolu_local",
+        agent: AgentID = .claude,
+        session: String = "s1"
+    ) -> RespondSpool.InboundRequest {
+        var request = inbound(id: id, agent: agent, host: "thismac", session: session)
+        request.isLocal = true
+        return request
+    }
+
+    func testThisMacsOwnRequestAttachesToItsLocalRow() {
+        let matched = StatusStore.matchRespondInbound([localInbound()], rows: [localRow()])
+        XCTAssertEqual(
+            matched["claude|s1"]?.request.id,
+            "toolu_local",
+            "the whole point of 2.4: on one Mac, Respond used to attach to nothing"
+        )
+    }
+
+    func testALocalRequestNeverAttachesToARemoteRow() {
+        let matched = StatusStore.matchRespondInbound([localInbound()], rows: [remoteRow()])
+        XCTAssertTrue(matched.isEmpty, "the hook holding for this one is here, not on devbox")
+    }
+
+    func testALocalRequestStillHonoursAgentAndSession() {
+        XCTAssertTrue(
+            StatusStore.matchRespondInbound(
+                [localInbound(agent: .codex)], rows: [localRow(agent: .claude)]
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            StatusStore.matchRespondInbound(
+                [localInbound(session: "s2")], rows: [localRow(session: "s1")]
+            ).isEmpty
+        )
+    }
+
+    func testLocalAndRemoteRequestsDoNotCrossOver() {
+        let rows = [localRow(), remoteRow()]
+        let matched = StatusStore.matchRespondInbound([localInbound(), inbound()], rows: rows)
+        XCTAssertEqual(matched["claude|s1"]?.request.id, "toolu_local")
+        XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_1")
     }
 }

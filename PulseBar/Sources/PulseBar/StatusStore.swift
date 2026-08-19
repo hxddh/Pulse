@@ -35,6 +35,11 @@ final class StatusStore: ObservableObject {
     @Published var hotkeyEnabled = false
     /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
     @Published var allowTerminalAutomation = false
+    /// Answer this Mac's own agents from Pulse, when the prompt is not in
+    /// front of you. **The key file is the source of truth**, not this flag —
+    /// a persisted setting could drift from the file the hook actually reads,
+    /// and the hook is the half that decides whether an agent waits.
+    @Published var respondLocalEnabled = false
     @Published var trayGrouping: TrayGrouping = .status
     @Published var playSoundOnWaiting = false
     /// Minutes of silence before a live row reads as stalled; 0 turns it off.
@@ -1429,6 +1434,7 @@ final class StatusStore: ObservableObject {
         knownWaitingKeys = attentionLedger.activeKeys
         waitingNotifySeeded = attentionLedger.baselineEstablished
         dismissedPendingKeys = Self.loadDismissedPendingKeys()
+        respondLocalEnabled = RespondSpool.localHasSecret()
         restoreAttentionHistory()
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
@@ -2515,7 +2521,15 @@ final class StatusStore: ObservableObject {
             // — both are bounded (≤16 hosts × 32 files).
             let scanNowMs = Int64(Date().timeIntervalSince1970 * 1000)
             RespondSpool.cleanup(nowMs: scanNowMs)
+            // Both trees. `requests.d/<host>/` is what a partner Mac's sync
+            // tool delivered; `requests/` is what an agent on *this* Mac
+            // raised and is still holding for. Until 2.4 only the first was
+            // read, which is why Respond did nothing on a single-Mac install.
             let respondInbound = RespondSpool.readInboundRequests(nowMs: scanNowMs)
+                + RespondSpool.readLocalRequests(
+                    nowMs: scanNowMs,
+                    host: PulseHookReceiver.respondHost()
+                )
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DebugLog.write(
                 "scan done #\(ticket) \(ms)ms harvest=\(why) scoped=\(scopedHarvest) procs=\(procs.count) " +
@@ -2979,6 +2993,9 @@ final class StatusStore: ObservableObject {
                     session: waiting.sessionID,
                     rowKey: waiting.rowKey,
                     eventID: attentionLedger.eventID(for: waiting.rowKey) ?? "",
+                    // Only offer Deny on the banner when a full request is
+                    // really attached to this row.
+                    canRespond: canRespondFromBanner(waiting),
                     completion: { success in
                         // Each individual request owns one event; commit that
                         // event independently so one rejected request never
@@ -4792,6 +4809,16 @@ final class StatusStore: ObservableObject {
         if choice != .off, !hotkeyRegistered {
             DebugLog.write("hotkey \(hotkey.rawValue) registration FAILED — likely taken")
         }
+    }
+
+    /// Create or remove `respond-local.key`, then read back what actually
+    /// happened. The hook's rule is "no key, no hold", so a failed write must
+    /// leave the switch off rather than promising something no agent will do.
+    func setRespondLocalEnabled(_ enabled: Bool) {
+        RespondSpool.setLocalAnsweringEnabled(enabled)
+        let actual = RespondSpool.localHasSecret()
+        if respondLocalEnabled != actual { respondLocalEnabled = actual }
+        DebugLog.write("respond local answering requested=\(enabled) actual=\(actual)")
     }
 
     func toggleMute(_ agent: AgentID) {

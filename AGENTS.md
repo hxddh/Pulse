@@ -62,14 +62,18 @@ compiles and ships.
 - **No fake Waiting.** Waiting comes from hooks or harvest `skill=pending`,
   never from inference. An agent with no Waiting path shows Running and says so.
 - **No quota, cost, or reset HUD.** That is a different product.
-- **No judgment transfer, and no blind approve.** Respond (scene AR) delivers
-  the user's own decision to a remote permission request: per-host shared-key
-  opt-in, single-use HMAC verdicts bound to request id + content digest +
-  agent + host, and **Allow exists only where the full request is shown**
-  (`canOfferAllow`). Everything else stays forbidden: rules engines,
-  always-allow, auto-approve, approving from a truncated summary, and any
-  local hold that would freeze an agent in front of the person using it.
-  Every failure falls open to the vendor's own prompt.
+- **No judgment transfer, and no blind approve.** Respond (scenes AR, AU)
+  delivers the user's own decision to a permission request: key-file opt-in,
+  single-use HMAC verdicts bound to request id + content digest + agent +
+  host, and **Allow exists only where the full request is shown**
+  (`canOfferAllow`) — which is why the banner offers Deny and never Allow.
+  Everything else stays forbidden: rules engines, always-allow, auto-approve,
+  approving from a truncated summary, and **any hold that would freeze an
+  agent in front of the person using it** — 2.4 sharpened that last one rather
+  than relaxing it, because "someone is touching this Mac" was never the same
+  question as "the prompt is in front of them", and where the answer cannot be
+  established the request goes straight through. Every failure falls open to
+  the vendor's own prompt.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
   isolation. One broken collector cannot blind the other 32.

@@ -2300,6 +2300,16 @@ struct SettingsView: View {
             Text(store.tr(.allowTerminalAutomationHint))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            // Off by default, and the switch is a key file: turning it off
+            // stops every hold immediately, because the hook's rule is "no
+            // key, no hold".
+            Toggle(store.tr(.respondLocal), isOn: Binding(
+                get: { store.respondLocalEnabled },
+                set: { store.setRespondLocalEnabled($0) }
+            ))
+            Text(store.tr(.respondLocalHint))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 

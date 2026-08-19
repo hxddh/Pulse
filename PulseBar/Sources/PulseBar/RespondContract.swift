@@ -173,27 +173,45 @@ struct RespondDecisionStore: Equatable {
 ///
 /// The naive version of this feature holds every request so the user can
 /// answer from the tray. That is a regression for the case that matters most:
-/// someone sitting at this Mac, whose agent now freezes for N seconds before
-/// showing the prompt that was already going to appear in front of them.
+/// someone whose agent now freezes for N seconds before showing the prompt
+/// that was already going to appear in front of them.
 ///
-/// Holding only pays when the user can answer *and* answering here is better
-/// than answering there — which is precisely the case 1.0 created: a request
-/// raised on another machine, seen by someone sitting at this one.
+/// 2.0 approximated "the prompt is in front of them" with **"is anyone
+/// touching this Mac"**, and additionally refused to hold for a local agent at
+/// all. Both were wrong in the product's own headline scene — someone in a
+/// meeting, or writing a document, is touching this Mac while six terminal
+/// windows sit behind a full-screen app. `isPresent` says yes; the prompt is
+/// nowhere near them; and because the agent is local, Respond declined to
+/// help. That combination is why the one verb change this product has ever
+/// shipped was unreachable for anyone with a single Mac.
+///
+/// The question is now asked directly. Holding pays exactly when the user
+/// **cannot already see** the prompt.
 enum RespondHold {
     /// How long without input before Pulse stops assuming you are here.
     static let defaultAwayAfterSeconds: Double = 120
 
+    /// - Parameter promptIsFrontmost: `nil` for "could not be established".
+    ///   Not knowing is not proof, and the cost of a wrong hold is a frozen
+    ///   agent in front of a present user — so unknown lets the request
+    ///   straight through, which is exactly what 2.3 did.
+    /// `promptIsFrontmost` is an autoclosure: an absent user is decided
+    /// without ever asking the window server, so the common case costs
+    /// nothing. Forwarding another autoclosure into it stays lazy, because
+    /// `@autoclosure` captures the expression rather than its value.
     static func shouldHold(
-        isRemote: Bool,
         idleSeconds: Double,
+        promptIsFrontmost: @autoclosure () -> Bool?,
         awayAfterSeconds: Double = defaultAwayAfterSeconds
     ) -> Bool {
-        // Nobody is here to answer. Holding would only freeze the agent for
-        // an audience of no one.
-        guard idleSeconds < awayAfterSeconds else { return false }
-        // The vendor's prompt is already in front of the user on this machine.
-        // Pulse has nothing better to offer, and a delay would be pure cost.
-        return isRemote
+        // Nobody is here. The prompt would appear to an empty chair, and
+        // whoever comes back can answer from Pulse instead of hunting for the
+        // window it appeared in. This half is 2.0's rule, unchanged.
+        if idleSeconds >= awayAfterSeconds { return true }
+        // Someone is here. Hold only where it can be *shown* that they are
+        // looking somewhere else.
+        guard let visible = promptIsFrontmost() else { return false }
+        return !visible
     }
 }
 

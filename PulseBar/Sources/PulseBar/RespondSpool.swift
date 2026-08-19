@@ -92,11 +92,15 @@ enum RespondSpool {
     /// back before the evidence disappears.
     static let cleanupGraceMs: Int64 = 60 * 60 * 1000
 
-    /// One remote permission request, ready for the decision store.
+    /// One permission request, ready for the decision store.
     struct InboundRequest: Equatable {
         var request: PermissionRequest
         var toolName: String
         var expiresAtMs: Int64
+        /// Raised by an agent on **this** Mac, and read back out of the flat
+        /// outbound tree rather than arriving through a sync tool. It attaches
+        /// to a local row, and its verdict is signed with the local key.
+        var isLocal: Bool = false
     }
 
     // MARK: - Reading requests
@@ -131,6 +135,35 @@ enum RespondSpool {
                 else { continue }
                 found.append(inbound)
             }
+        }
+        return found
+    }
+
+    /// This Mac's own held requests, read back out of the flat outbound tree.
+    ///
+    /// The hook writes here whether the answer will come from this Mac or
+    /// another one — it cannot know, and does not need to. What makes these
+    /// *local* is that nothing carried them anywhere: the same machine wrote
+    /// them and is now reading them. Until 2.4 nobody read this directory at
+    /// all, which is why Respond did nothing on a single-Mac install.
+    ///
+    /// Same bounds as the inbound tree, and the same refusal to guess: a file
+    /// claiming a host that is not this one is skipped rather than adopted.
+    static func readLocalRequests(nowMs: Int64, host: String) -> [InboundRequest] {
+        guard !host.isEmpty else { return [] }
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: outboundRequestsDirectory.path)
+        else { return [] }
+        var found: [InboundRequest] = []
+        var touched = 0
+        for name in names.sorted() where name.hasSuffix(".json") {
+            if touched >= maxFilesPerHost { break }
+            touched += 1
+            let url = outboundRequestsDirectory.appendingPathComponent(name)
+            guard var inbound = parseRequestFile(at: url, hostDirectory: host, nowMs: nowMs)
+            else { continue }
+            inbound.isLocal = true
+            found.append(inbound)
         }
         return found
     }
@@ -212,36 +245,25 @@ enum RespondSpool {
     /// that the verdict is untampered and that it was minted by someone who
     /// holds this host's key. The verdict goes into `verdicts.d` only — never
     /// `requests.d`, which syncs the other way (see the type doc).
+    /// - Parameter local: the request was raised by an agent on this Mac and
+    ///   read back out of the flat outbound tree. The verdict then goes back
+    ///   into the flat tree the waiting hook is already polling, signed with
+    ///   the local key.
+    ///
+    ///   It is signed rather than trusted, and that is not ceremony: `verdicts/`
+    ///   is exactly the directory a partner Mac's answers **sync into**, so an
+    ///   unsigned file accepted there would let a compromised share inject an
+    ///   allow — weakening the remote path to add the local one. The local key
+    ///   never leaves this machine, so nothing arriving over a share can carry
+    ///   its signature. An attacker who can read it already runs as this user
+    ///   and could simply start the agent.
     @discardableResult
-    static func writeVerdict(_ verdict: RespondVerdict) -> Bool {
-        // An empty host is a local decision; the spool exists for machines
-        // that are not this one.
+    static func writeVerdict(_ verdict: RespondVerdict, local: Bool = false) -> Bool {
         guard !verdict.host.isEmpty else { return false }
+        if local { return writeLocalVerdict(verdict) }
         // No key, no verdict on disk — fail closed (see the type doc).
         guard let key = secret(for: verdict.host) else { return false }
-        let message = canonicalMessage(
-            requestID: verdict.requestID, digest: verdict.digest,
-            agent: verdict.agent, host: verdict.host, allow: verdict.allow,
-            decidedAtMs: verdict.decidedAtMs, expiresAtMs: verdict.expiresAtMs
-        )
-        let mac = HMAC<SHA256>.authenticationCode(
-            for: message, using: SymmetricKey(data: key)
-        )
-        let hex = mac.map { String(format: "%02x", $0) }.joined()
-        let body = VerdictFile(
-            v: 1,
-            requestID: verdict.requestID,
-            digest: verdict.digest,
-            agent: verdict.agent,
-            host: verdict.host,
-            allow: verdict.allow,
-            decidedAtMs: verdict.decidedAtMs,
-            expiresAtMs: verdict.expiresAtMs,
-            hmac: hex
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(body) else { return false }
+        guard let data = signedVerdictData(verdict, key: key) else { return false }
         let directory = verdictsDirectory
             .appendingPathComponent(sanitizeComponent(verdict.host), isDirectory: true)
         // A verdict can cause an agent to act; the whole tree stays user-only.
@@ -252,6 +274,45 @@ enum RespondSpool {
         let destination = directory
             .appendingPathComponent(sanitizeComponent(verdict.requestID) + ".json")
         return atomicWrite0600(data, to: destination)
+    }
+
+    /// The same record, the same canonical message, the same 0600 atomic
+    /// write — only the key and the destination differ.
+    private static func writeLocalVerdict(_ verdict: RespondVerdict) -> Bool {
+        guard let key = localKey() else { return false }
+        guard let data = signedVerdictData(verdict, key: key) else { return false }
+        try? FileManager.default.createDirectory(
+            at: outboundVerdictsDirectory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let destination = outboundVerdictsDirectory
+            .appendingPathComponent(sanitizeComponent(verdict.requestID) + ".json")
+        return atomicWrite0600(data, to: destination)
+    }
+
+    private static func signedVerdictData(_ verdict: RespondVerdict, key: Data) -> Data? {
+        let message = canonicalMessage(
+            requestID: verdict.requestID, digest: verdict.digest,
+            agent: verdict.agent, host: verdict.host, allow: verdict.allow,
+            decidedAtMs: verdict.decidedAtMs, expiresAtMs: verdict.expiresAtMs
+        )
+        let mac = HMAC<SHA256>.authenticationCode(
+            for: message, using: SymmetricKey(data: key)
+        )
+        let body = VerdictFile(
+            v: 1,
+            requestID: verdict.requestID,
+            digest: verdict.digest,
+            agent: verdict.agent,
+            host: verdict.host,
+            allow: verdict.allow,
+            decidedAtMs: verdict.decidedAtMs,
+            expiresAtMs: verdict.expiresAtMs,
+            hmac: mac.map { String(format: "%02x", $0) }.joined()
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try? encoder.encode(body)
     }
 
     // MARK: - Cleanup
@@ -343,6 +404,50 @@ enum RespondSpool {
         keyBytes(at: outboundSecretURL)
     }
 
+    /// `<pulse_dir>/respond-local.key` — beside the shared key, and **never
+    /// carried anywhere**. Where `respond-secret.key` is provisioned by the
+    /// user and copied to a partner Mac, this one is generated here and stays
+    /// here.
+    static var localSecretURL: URL {
+        root.deletingLastPathComponent().appendingPathComponent("respond-local.key")
+    }
+
+    /// Answering this Mac's own agents is opt-in, and the key file's existence
+    /// *is* the switch — the same shape as the per-host opt-in, and the same
+    /// kill switch: no key, no hold, so an install that never turns this on
+    /// sees no change in agent behaviour at all.
+    static func localHasSecret() -> Bool {
+        localKey() != nil
+    }
+
+    private static func localKey() -> Data? {
+        keyBytes(at: localSecretURL)
+    }
+
+    /// The hook holds only if it can verify *some* verdict.
+    static func hasAnyKey() -> Bool {
+        outboundHasSecret() || localHasSecret()
+    }
+
+    /// Turn local answering on or off by creating or removing the key.
+    ///
+    /// Written as hex text on purpose: `keyBytes` trims trailing newline bytes
+    /// so a user's `echo`-created key still matches its copy on the other Mac,
+    /// and raw random bytes ending in 0x0A would be silently trimmed into a
+    /// different key than the one written.
+    @discardableResult
+    static func setLocalAnsweringEnabled(_ enabled: Bool) -> Bool {
+        guard enabled else {
+            try? FileManager.default.removeItem(at: localSecretURL)
+            return !localHasSecret()
+        }
+        if localHasSecret() { return true }
+        let hex = (0..<32)
+            .map { _ in String(format: "%02x", UInt8.random(in: UInt8.min...UInt8.max)) }
+            .joined()
+        return PrivateFile.write(Data(hex.utf8), to: localSecretURL)
+    }
+
     /// Write this machine's own permission request for the answering Mac,
     /// mirroring `pulse_hook.py respond_decision_json`'s record: the payload
     /// is the **verbatim** hook stdin (base64), the digest is over those
@@ -423,7 +528,14 @@ enum RespondSpool {
         // `.used` remnant, so a fresh verdict can still land after a bad one.
         guard rename(verdictURL.path, usedURL.path) == 0 else { return nil }
         // From here on, every failure leaves the file consumed on purpose.
-        guard let key = outboundKey() else { return nil }
+        //
+        // Two keys may be held: the shared one this Mac was provisioned with
+        // for its partner, and the local one Pulse generated for answering
+        // this Mac's own agents. Either proves the verdict was minted by
+        // someone holding a key that lives on this machine; neither can be
+        // forged from a synced directory alone.
+        let keys = [outboundKey(), localKey()].compactMap { $0 }
+        guard !keys.isEmpty else { return nil }
         guard let data = boundedRead(usedURL, limit: maxBytesPerFile),
               let verdict = try? JSONDecoder().decode(VerdictFile.self, from: data),
               verdict.v == 1,
@@ -444,9 +556,12 @@ enum RespondSpool {
             agent: verdict.agent, host: verdict.host, allow: verdict.allow,
             decidedAtMs: verdict.decidedAtMs, expiresAtMs: verdict.expiresAtMs
         )
-        guard HMAC<SHA256>.isValidAuthenticationCode(
-            mac, authenticating: message, using: SymmetricKey(data: key)
-        ) else { return nil }
+        let verified = keys.contains { key in
+            HMAC<SHA256>.isValidAuthenticationCode(
+                mac, authenticating: message, using: SymmetricKey(data: key)
+            )
+        }
+        guard verified else { return nil }
         if verdict.allow && truncated { return nil }
         return verdict.allow
     }

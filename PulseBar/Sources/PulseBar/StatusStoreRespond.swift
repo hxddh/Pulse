@@ -25,6 +25,11 @@ extension StatusStore {
 
     /// Pure matcher, so the attachment rules can be pinned by tests without
     /// seeding a snapshot.
+    ///
+    /// The two kinds never cross. A request read out of the local tree only
+    /// attaches to a row this Mac is actually observing, and a request that
+    /// arrived from a partner Mac only attaches to a remote row of that host —
+    /// otherwise a verdict would go back to a hook that is not the one holding.
     static func matchRespondInbound(
         _ inbound: [RespondSpool.InboundRequest],
         rows: [AgentRow]
@@ -34,8 +39,13 @@ extension StatusStore {
             let request = candidate.request
             guard !request.host.isEmpty else { continue }
             let match = rows.first { row in
-                guard row.observationSource == .remote else { return false }
-                guard row.agent == request.agent, row.host == request.host else { return false }
+                if candidate.isLocal {
+                    guard row.observationSource != .remote else { return false }
+                } else {
+                    guard row.observationSource == .remote else { return false }
+                    guard row.host == request.host else { return false }
+                }
+                guard row.agent == request.agent else { return false }
                 if !request.session.isEmpty, !row.sessionID.isEmpty {
                     return row.sessionID == request.session
                 }
@@ -64,6 +74,23 @@ extension StatusStore {
     /// be regretted the way approving it can.
     func respondDeny(_ row: AgentRow) {
         writeRespondVerdict(row, allow: false)
+    }
+
+    /// Deny straight off the banner, where the interruption actually arrived.
+    ///
+    /// Keyed by row rather than by an `AgentRow` because the notification only
+    /// ever carried the key. A request that has since expired or been claimed
+    /// simply finds nothing to answer, which `writeRespondVerdict` already
+    /// reports honestly.
+    func respondDeny(rowKey: String) {
+        guard let row = allRowsForDisplay.first(where: { $0.rowKey == rowKey }) else { return }
+        respondDeny(row)
+    }
+
+    /// Is there a full request attached to this row right now? Decides whether
+    /// the banner is allowed to offer Deny at all.
+    func canRespondFromBanner(_ row: AgentRow) -> Bool {
+        respondInboundByRowKey[row.rowKey] != nil && !respondVerdictSentRowKeys.contains(row.rowKey)
     }
 
     /// Allow goes through the model's own gate: `decide(allow: true)` returns
@@ -97,9 +124,10 @@ extension StatusStore {
             noteRowAction(row.rowKey, tr(.respondRefused))
             return
         }
-        let written = RespondSpool.writeVerdict(verdict)
+        let written = RespondSpool.writeVerdict(verdict, local: inbound.isLocal)
         DebugLog.write(
-            "respond verdict allow=\(allow) host=\(inbound.request.host) written=\(written)"
+            "respond verdict allow=\(allow) host=\(inbound.request.host) "
+                + "local=\(inbound.isLocal) written=\(written)"
         )
         if written {
             respondVerdictSentRowKeys.insert(row.rowKey)
