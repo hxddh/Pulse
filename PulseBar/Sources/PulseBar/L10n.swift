@@ -176,6 +176,10 @@ enum L10n {
         case .respondAllow: return "Allow"
         case .respondFullRequest: return "Full request"
         case .respondSentNote: return "Verdict written — your sync tool delivers it"
+        case .respondWaitingNote: return "Verdict written — waiting for the agent to take it"
+        case .respondTakenNote: return "The agent took your answer"
+        case .respondExpiredUnclaimedNote:
+            return "Nobody took it in time — the agent fell back to its own prompt"
         case .respondLocal: return "Answer this Mac's agents from Pulse"
         case .respondLocalHint:
             return "When a permission request arrives and its window is not in front of you — you are away, or looking at something else — Pulse holds the agent briefly so you can refuse it from the banner or answer it here. The agent's own prompt still appears if you do not. Off by default."
@@ -709,6 +713,9 @@ enum L10n {
         case .respondAllow: return "同意"
         case .respondFullRequest: return "完整请求"
         case .respondSentNote: return "判决已写出，等你的同步工具送达"
+        case .respondWaitingNote: return "判决已写出，等 agent 来取"
+        case .respondTakenNote: return "agent 已经取走你的回答"
+        case .respondExpiredUnclaimedNote: return "到点也没人来取 —— agent 已回到它自己的提示"
         case .respondLocal: return "本机 Agent 也在 Pulse 里回答"
         case .respondLocalHint:
             return "权限请求到来时，如果它的窗口不在你眼前 —— 你不在，或者正看着别处 —— Pulse 会短暂拦住 agent，让你在横幅上直接拒绝，或在这里回答。你不答，agent 自己的提示照常出现。默认关闭。"
@@ -1132,6 +1139,7 @@ enum L10n {
         case respondDeny, respondReview, respondAllow, respondFullRequest, respondSentNote, respondHeading, respondExpired
         case respondWriteFailed, respondRefused, respondRequestGone, focusFailed
         case respondLocal, respondLocalHint
+        case respondWaitingNote, respondTakenNote, respondExpiredUnclaimedNote
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone

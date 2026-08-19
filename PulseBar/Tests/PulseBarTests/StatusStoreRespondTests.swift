@@ -142,6 +142,20 @@ final class StatusStoreRespondTests: XCTestCase {
         )
     }
 
+    /// E-2: the matcher used to run over `snapshot.rows`, which the tray
+    /// window has already clipped. A permission request on an agent pushed
+    /// out of the visible list lost every Respond control it had.
+    func testARowOutsideTheVisibleWindowStillGetsItsControls() {
+        // The window is a display budget; the hook holding for this request
+        // has no idea what the tray decided to draw.
+        let hidden = localRow(key: "claude|s9", session: "s9")
+        let matched = StatusStore.matchRespondInbound(
+            [localInbound(id: "toolu_hidden", session: "s9")],
+            rows: [hidden]
+        )
+        XCTAssertEqual(matched["claude|s9"]?.request.id, "toolu_hidden")
+    }
+
     func testLocalAndRemoteRequestsDoNotCrossOver() {
         let rows = [localRow(), remoteRow()]
         let matched = StatusStore.matchRespondInbound([localInbound(), inbound()], rows: rows)

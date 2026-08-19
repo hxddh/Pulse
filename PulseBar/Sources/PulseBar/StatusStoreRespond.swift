@@ -12,14 +12,65 @@ extension StatusStore {
     /// agent: local rows never hold (the vendor prompt is already in front of
     /// the user), so offering an answer on one would promise something the
     /// hook will not collect.
-    func refreshRespondInbound(_ inbound: [RespondSpool.InboundRequest]) {
-        let byRowKey = Self.matchRespondInbound(inbound, rows: snapshot.rows)
+    /// - Parameter rows: **every** row this scan produced, not the windowed
+    ///   `snapshot.rows`. The window is a display budget; a request whose row
+    ///   fell outside it is still a request the hook is holding for.
+    func refreshRespondInbound(
+        _ inbound: [RespondSpool.InboundRequest],
+        rows: [AgentRow]
+    ) {
+        let byRowKey = Self.matchRespondInbound(inbound, rows: rows)
         if byRowKey != respondInboundByRowKey {
             respondInboundByRowKey = byRowKey
         }
-        // A verdict note only makes sense while its request is still around.
-        respondVerdictSentRowKeys = respondVerdictSentRowKeys.filter {
-            byRowKey[$0] != nil
+        // The note used to vanish the moment the request file was swept —
+        // which is exactly when the receipt becomes worth reading. Keep a
+        // decided row for a short while on its own clock instead.
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        respondDecided = respondDecided.filter { nowMs - $0.value.decidedAtMs < Self.decidedNoteLifetimeMs }
+        for key in respondDecided.keys {
+            respondDecided[key]?.fate = fateOf(rowKey: key, nowMs: nowMs)
+        }
+        respondVerdictSentRowKeys = Set(respondDecided.keys)
+    }
+
+    /// How long a decided row keeps saying what became of its verdict.
+    /// Long enough to read on the next scan or two, short enough that a row
+    /// does not carry yesterday's receipt.
+    static let decidedNoteLifetimeMs: Int64 = 120 * 1000
+
+    /// A verdict this Mac wrote, and what has become of it.
+    struct DecidedVerdict: Equatable {
+        var requestID: String
+        var isLocal: Bool
+        var decidedAtMs: Int64
+        var allow: Bool
+        var fate: RespondSpool.VerdictFate = .waiting
+    }
+
+    private func fateOf(rowKey: String, nowMs: Int64) -> RespondSpool.VerdictFate {
+        guard let decided = respondDecided[rowKey] else { return .unknown }
+        // A remote verdict's claim happens on the other machine. Reading a
+        // fate here would be inventing one — see `VerdictFate`.
+        guard decided.isLocal else { return .waiting }
+        let fate = RespondSpool.localVerdictFate(requestID: decided.requestID, nowMs: nowMs)
+        // `.unknown` after a sweep is not news; keep the last real answer
+        // rather than downgrading a receipt the user already earned.
+        if fate == .unknown { return decided.fate }
+        return fate
+    }
+
+    /// The sentence for a row whose verdict is already written.
+    ///
+    /// This is the whole point of 2.5: "Pulse wrote a file" and "the agent
+    /// took it" are different facts, and only the second one is a receipt.
+    func respondFateNote(_ row: AgentRow) -> String? {
+        guard let decided = respondDecided[row.rowKey] else { return nil }
+        switch decided.fate {
+        case .taken: return tr(.respondTakenNote)
+        case .expired: return tr(.respondExpiredUnclaimedNote)
+        case .waiting, .unknown:
+            return decided.isLocal ? tr(.respondWaitingNote) : tr(.respondSentNote)
         }
     }
 
@@ -130,6 +181,12 @@ extension StatusStore {
                 + "local=\(inbound.isLocal) written=\(written)"
         )
         if written {
+            respondDecided[row.rowKey] = DecidedVerdict(
+                requestID: verdict.requestID,
+                isLocal: inbound.isLocal,
+                decidedAtMs: nowMs,
+                allow: allow
+            )
             respondVerdictSentRowKeys.insert(row.rowKey)
         } else {
             noteRowAction(row.rowKey, tr(.respondWriteFailed))
