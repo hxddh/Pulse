@@ -566,6 +566,45 @@ enum RespondSpool {
         return verdict.allow
     }
 
+    /// What became of a verdict this Mac wrote for one of its own agents.
+    ///
+    /// Not a guess: `claimVerdict` collects a verdict by **renaming** it to
+    /// `<id>.json.used` before reading it, so the claim leaves a mark on disk.
+    /// Reading that mark is the difference between Pulse reporting what it
+    /// did and Pulse reporting what happened.
+    ///
+    /// Only meaningful for a **local** verdict. A remote one is written into
+    /// `verdicts.d/<host>/`, carried away by the user's sync tool, and
+    /// renamed on the *other* machine — whether that rename ever comes back
+    /// depends on a tool Pulse does not control, so there is nothing here to
+    /// read and nothing honest to say beyond "written".
+    enum VerdictFate: Equatable {
+        /// Written, still sitting there, still in time.
+        case waiting
+        /// The hook took it. This is the receipt.
+        case taken
+        /// Its deadline passed with the file untouched — the agent fell back
+        /// to the vendor's own prompt, which is the designed failure.
+        case expired
+        /// Nothing on disk under that id: never written here, or swept.
+        case unknown
+    }
+
+    static func localVerdictFate(requestID: String, nowMs: Int64) -> VerdictFate {
+        let fm = FileManager.default
+        let name = sanitizeComponent(requestID) + ".json"
+        let pending = outboundVerdictsDirectory.appendingPathComponent(name)
+        // `.used` first: a fresh verdict can land while an older `.used`
+        // remnant is still around, and "taken" is the newer fact only when
+        // nothing is waiting.
+        if !fm.fileExists(atPath: pending.path) {
+            let used = outboundVerdictsDirectory.appendingPathComponent(name + ".used")
+            return fm.fileExists(atPath: used.path) ? .taken : .unknown
+        }
+        guard let expiry = expiryMs(of: pending) else { return .waiting }
+        return nowMs >= expiry ? .expired : .waiting
+    }
+
     /// Housekeeping for the answered end, frozen with
     /// `pulse_hook.py cleanup_respond_dirs`: requests go one hour past their
     /// own expiry (mtime fallback for the unreadable), `.used` remnants go

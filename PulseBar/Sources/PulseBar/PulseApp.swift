@@ -1574,6 +1574,13 @@ private struct AgentRowButton: View {
                         Button(store.tr(.respondReview)) { store.openRespond(row) }
                             .buttonStyle(.borderless)
                             .font(.system(size: 11, weight: .medium))
+                    } else if let fate = store.respondFateNote(row) {
+                        // The receipt, on the row that asked. Without it a
+                        // decided row simply goes quiet, which is the same
+                        // silence 2.3 spent a version removing.
+                        Text(fate)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
                     if row.canFocusTerminal {
                         Button(store.focusActionTitle(row)) { store.focusTerminal(row) }

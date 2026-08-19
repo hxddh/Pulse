@@ -185,8 +185,9 @@ private struct AgentDetailView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.primary.opacity(0.05))
             )
-            if store.respondVerdictSent(row) {
-                Text(store.tr(.respondSentNote))
+            if let fate = store.respondFateNote(row) {
+                // What became of it, not what Pulse did with it.
+                Text(fate)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
