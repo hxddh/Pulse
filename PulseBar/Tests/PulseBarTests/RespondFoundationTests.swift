@@ -154,30 +154,50 @@ final class RespondFoundationTests: XCTestCase {
 
     // MARK: - Who is actually waiting
 
-    /// The case 1.0 created: a request from another machine, and someone
-    /// sitting at this one who can answer it.
-    func testARemoteRequestIsHeldWhileTheUserIsHere() {
-        XCTAssertTrue(RespondHold.shouldHold(isRemote: true, idleSeconds: 3))
+    /// The case 2.0 created: someone here, and a prompt they cannot see
+    /// because they are looking at something else.
+    func testARequestIsHeldWhenItsWindowIsNotInFrontOfYou() {
+        XCTAssertTrue(RespondHold.shouldHold(idleSeconds: 3, promptIsFrontmost: false))
     }
 
     /// The regression this rule exists to prevent: freezing an agent in front
     /// of the person whose own prompt was about to appear anyway.
-    func testALocalRequestIsNeverHeldWhileTheUserIsAtTheKeyboard() {
-        XCTAssertFalse(RespondHold.shouldHold(isRemote: false, idleSeconds: 1))
+    func testNothingIsHeldWhenThePromptIsAlreadyInFrontOfYou() {
+        XCTAssertFalse(RespondHold.shouldHold(idleSeconds: 1, promptIsFrontmost: true))
     }
 
-    func testNothingIsHeldWhenNobodyIsThereToAnswer() {
-        XCTAssertFalse(
-            RespondHold.shouldHold(isRemote: true, idleSeconds: 10 * 60),
-            "holding for an absent user is a freeze with no audience"
+    /// 2.0 asked "is anyone touching this Mac" and treated yes as "the prompt
+    /// is in front of them". In the product's own headline scene — a meeting,
+    /// a document — both are true at once and only one of them matters.
+    func testTouchingTheMacIsNotTheSameAsSeeingThePrompt() {
+        XCTAssertTrue(
+            RespondHold.shouldHold(idleSeconds: 0, promptIsFrontmost: false),
+            "present, and looking somewhere else"
         )
-        XCTAssertFalse(RespondHold.shouldHold(isRemote: false, idleSeconds: 10 * 60))
+    }
+
+    func testAnAbsentUserIsHeldForRegardless() {
+        // Whoever comes back answers from Pulse rather than hunting for the
+        // window the prompt appeared in.
+        XCTAssertTrue(RespondHold.shouldHold(idleSeconds: 10 * 60, promptIsFrontmost: true))
+        XCTAssertTrue(RespondHold.shouldHold(idleSeconds: 10 * 60, promptIsFrontmost: nil))
+    }
+
+    func testNotKnowingIsNotProof() {
+        // The cost of a wrong hold is a frozen agent in front of a present
+        // user, so an unanswerable question lets the request straight through
+        // — exactly what 2.3 did.
+        XCTAssertFalse(RespondHold.shouldHold(idleSeconds: 1, promptIsFrontmost: nil))
     }
 
     func testTheAwayThresholdIsTheBoundary() {
         let threshold = RespondHold.defaultAwayAfterSeconds
-        XCTAssertTrue(RespondHold.shouldHold(isRemote: true, idleSeconds: threshold - 0.1))
-        XCTAssertFalse(RespondHold.shouldHold(isRemote: true, idleSeconds: threshold))
+        XCTAssertFalse(
+            RespondHold.shouldHold(idleSeconds: threshold - 0.1, promptIsFrontmost: true)
+        )
+        XCTAssertTrue(
+            RespondHold.shouldHold(idleSeconds: threshold, promptIsFrontmost: true)
+        )
     }
 
     // MARK: - Digest

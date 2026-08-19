@@ -183,6 +183,7 @@ enum PulseHookReceiver {
         payload: [String: Any],
         rawStdin: Data,
         idleSeconds: @autoclosure () -> Double,
+        promptIsFrontmost: @autoclosure () -> Bool? = PromptVisibility.promptIsFrontmost(),
         environment: [String: String] = ProcessInfo.processInfo.environment,
         clockMs: () -> Int64,
         sleepMs: (Int) -> Void
@@ -191,14 +192,24 @@ enum PulseHookReceiver {
         // Without the verbatim request bytes there is nothing the user could
         // actually review, so there is nothing Pulse may hold for.
         guard !rawStdin.isEmpty else { return nil }
-        guard RespondSpool.outboundHasSecret() else { return nil }
+        // Either key will do: the shared one provisioned for a partner Mac,
+        // or the local one Pulse generates when answering this Mac's own
+        // agents is switched on. No key at all means this install never opted
+        // in, and an agent's behaviour must not change for those people.
+        guard RespondSpool.hasAnyKey() else { return nil }
         let requestID = ((payload["tool_use_id"] as? String) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // No stable id → a verdict could not be bound to this request.
         guard !requestID.isEmpty else { return nil }
-        // Someone is at this Mac: the vendor's own prompt is about to appear
-        // in front of them, and a hold would be pure cost. Straight through.
-        guard idleSeconds() >= awayAfterSeconds(environment: environment) else { return nil }
+        // Hold only where the user cannot already see the vendor's prompt:
+        // nobody here at all, or here but looking at something that is not
+        // this agent's window. Both reads are autoclosures so a request that
+        // was never going to be held costs neither of them.
+        guard RespondHold.shouldHold(
+            idleSeconds: idleSeconds(),
+            promptIsFrontmost: promptIsFrontmost(),
+            awayAfterSeconds: awayAfterSeconds(environment: environment)
+        ) else { return nil }
         let host = respondHost(environment: environment)
         let digest = RespondDigest.of(rawStdin)
         let now = clockMs()

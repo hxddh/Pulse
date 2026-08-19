@@ -30,6 +30,16 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
                 AppServices.store.snooze(rowKey: rowKey)
                 return
             }
+            // Refusing from the banner. This is the whole point of Answer
+            // Here: the interruption arrives where you are, and the safe
+            // answer can be given without going anywhere. **Allow is
+            // deliberately absent** — a banner cannot show the complete
+            // request, and `canOfferAllow` exists so nothing approves what it
+            // could not show.
+            if action == PulseNotify.respondDenyActionID {
+                AppServices.store.respondDeny(rowKey: rowKey)
+                return
+            }
             // Prefer the concrete rowKey (summary posts it as rowKeys.first too).
             // Never open the tray without an identity when one was carried.
             if !rowKey.isEmpty {
@@ -59,7 +69,12 @@ enum PulseNotify {
 
     static let focusActionID = "pulse.focus"
     static let snoozeActionID = "pulse.snooze"
+    static let respondDenyActionID = "pulse.respond.deny"
     static let waitingCategoryID = "pulse.waiting"
+    /// The same banner plus Deny, used only when a full request really is
+    /// attached to this row. A Deny button on a banner that cannot deliver one
+    /// would be the dead button 2.3 spent a version removing.
+    static let waitingRespondCategoryID = "pulse.waiting.respond"
 
     /// Buttons on the waiting banner.
     ///
@@ -81,13 +96,24 @@ enum PulseNotify {
             title: L10n.t(.snooze, lang),
             options: []
         )
+        let deny = UNNotificationAction(
+            identifier: respondDenyActionID,
+            title: L10n.t(.respondDeny, lang),
+            options: [.destructive]
+        )
         let category = UNNotificationCategory(
             identifier: waitingCategoryID,
             actions: [focus, snooze],
             intentIdentifiers: [],
             options: []
         )
-        center.setNotificationCategories([category])
+        let respondCategory = UNNotificationCategory(
+            identifier: waitingRespondCategoryID,
+            actions: [deny, focus, snooze],
+            intentIdentifiers: [],
+            options: []
+        )
+        center.setNotificationCategories([category, respondCategory])
     }
 
     /// Reports whether the user actually granted permission. Dropping this
@@ -175,6 +201,7 @@ enum PulseNotify {
         session: String = "",
         rowKey: String = "",
         eventID: String = "",
+        canRespond: Bool = false,
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
         let id: String = {
@@ -203,6 +230,7 @@ enum PulseNotify {
             session: session,
             rowKey: rowKey,
             eventID: eventID,
+            canRespond: canRespond,
             completion: completion
         )
     }
@@ -245,6 +273,7 @@ enum PulseNotify {
         rowKey: String,
         eventID: String = "",
         rowKeys: [String] = [],
+        canRespond: Bool = false,
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
         // Delivery is asynchronous. The caller owns the durable ledger and
@@ -271,7 +300,7 @@ enum PulseNotify {
         // Only waiting banners carry actions; "everything went idle" has
         // nothing to focus and nothing to defer.
         if !rowKey.isEmpty || !agent.isEmpty {
-            content.categoryIdentifier = waitingCategoryID
+            content.categoryIdentifier = canRespond ? waitingRespondCategoryID : waitingCategoryID
         }
         var info: [String: Any] = [:]
         if !agent.isEmpty { info["agent"] = agent }
