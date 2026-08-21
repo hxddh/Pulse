@@ -2317,6 +2317,16 @@ struct SettingsView: View {
             Text(store.tr(.respondLocalHint))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            // On by default: an evidence axis nobody switches on is worth
+            // nothing. Off means not one git command runs.
+            Toggle(store.tr(.measureWorkspaceEffect), isOn: $store.measureWorkspaceEffect)
+                .onChange(of: store.measureWorkspaceEffect) { _, _ in
+                    store.saveSettings()
+                    store.refresh(reason: "workspaceEffect")
+                }
+            Text(store.tr(.measureWorkspaceEffectHint))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 

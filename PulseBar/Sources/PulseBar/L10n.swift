@@ -177,6 +177,13 @@ enum L10n {
         case .respondFullRequest: return "Full request"
         case .respondSentNote: return "Verdict written — your sync tool delivers it"
         case .respondWaitingNote: return "Verdict written — waiting for the agent to take it"
+        case .effectFiles: return "%d files touched"
+        case .effectLines: return "+%1$d −%2$d"
+        case .movingNothingLanded: return "Moving, but nothing has landed yet"
+        case .workspaceShared: return "Sharing this checkout with %d other"
+        case .measureWorkspaceEffect: return "Measure what lands in the working copy"
+        case .measureWorkspaceEffectHint:
+            return "Read-only counts from git — files touched, lines added and removed — so a row can say what an agent actually got done, not only what it says it is doing. Never reads file contents, branch names or paths, and never writes. A repository too slow to answer is reported as unknown."
         case .respondTakenNote: return "The agent took your answer"
         case .respondExpiredUnclaimedNote:
             return "Nobody took it in time — the agent fell back to its own prompt"
@@ -714,6 +721,13 @@ enum L10n {
         case .respondFullRequest: return "完整请求"
         case .respondSentNote: return "判决已写出，等你的同步工具送达"
         case .respondWaitingNote: return "判决已写出，等 agent 来取"
+        case .effectFiles: return "动了 %d 个文件"
+        case .effectLines: return "+%1$d −%2$d"
+        case .movingNothingLanded: return "在动，盘上还没有东西落地"
+        case .workspaceShared: return "这个工作副本上还有 %d 个"
+        case .measureWorkspaceEffect: return "测量工作副本里落地了什么"
+        case .measureWorkspaceEffectHint:
+            return "从 git 只读取计数 —— 动了几个文件、加了删了多少行 —— 好让行能说出 agent 到底干成了什么，而不只是它说自己在干什么。不读文件内容、分支名和路径，也从不写入。仓库慢到答不上来就报「不知道」。"
         case .respondTakenNote: return "agent 已经取走你的回答"
         case .respondExpiredUnclaimedNote: return "到点也没人来取 —— agent 已回到它自己的提示"
         case .respondLocal: return "本机 Agent 也在 Pulse 里回答"
@@ -1140,6 +1154,8 @@ enum L10n {
         case respondWriteFailed, respondRefused, respondRequestGone, focusFailed
         case respondLocal, respondLocalHint
         case respondWaitingNote, respondTakenNote, respondExpiredUnclaimedNote
+        case effectFiles, effectLines, movingNothingLanded, workspaceShared
+        case measureWorkspaceEffect, measureWorkspaceEffectHint
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone

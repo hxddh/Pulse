@@ -53,6 +53,10 @@ struct PulseSettings: Equatable {
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
     var allowTerminalAutomation = false
+    /// Read what has landed in each agent's working copy. On by default: it
+    /// runs read-only git plumbing, reads no file contents and writes
+    /// nothing, and an evidence axis nobody switches on is worth nothing.
+    var measureWorkspaceEffect = true
     /// Muted agents still appear in the tray; they just stop notifying.
     var mutedAgents: Set<AgentID> = []
     /// How the tray groups rows. Status is the default because "who needs me"
@@ -115,6 +119,7 @@ struct PulseSettings: Equatable {
             case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .commandShiftP
             case "hotkeyEnabled": s.hotkeyEnabled = on
             case "terminalAutomation": s.allowTerminalAutomation = on
+            case "workspaceEffect": s.measureWorkspaceEffect = on
             case "mute":
                 s.mutedAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
             case "lang": s.language = AppLanguage(rawValue: raw) ?? .auto
@@ -162,6 +167,7 @@ struct PulseSettings: Equatable {
             hotkey=\(hotkey.rawValue)
             hotkeyEnabled=\(hotkeyEnabled ? 1 : 0)
             terminalAutomation=\(allowTerminalAutomation ? 1 : 0)
+            workspaceEffect=\(measureWorkspaceEffect ? 1 : 0)
             grouping=\(trayGrouping.rawValue)
             waitSound=\(playSoundOnWaiting ? 1 : 0)
             stallMin=\(stallMinutes)
@@ -191,7 +197,8 @@ struct PulseSettings: Equatable {
             + "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) "
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
             + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) "
-            + "terminalAutomation=\(allowTerminalAutomation) muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
+            + "terminalAutomation=\(allowTerminalAutomation) workspaceEffect=\(measureWorkspaceEffect) "
+            + "muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
             + "appData=\(allowAppData) "
             + "appDataAgents=\(appDataAgents.count) "
             + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "

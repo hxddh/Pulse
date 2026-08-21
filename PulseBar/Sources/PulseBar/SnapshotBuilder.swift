@@ -43,6 +43,11 @@ enum SnapshotBuilder {
         /// Agents whose protected App Data the user has not granted. Used only
         /// to label ObservationQuality gaps — never to invent facts.
         var privacyLimitedAgents: Set<AgentID>
+        /// What has landed on disk, keyed by the row's **working directory**.
+        /// The store resolves a directory to its repository root and measures
+        /// per root; the builder gets a straight lookup and stays a pure
+        /// function of what it is handed.
+        var workspaceEffects: [String: WorkspaceEffect.Measurement]
 
         init(
             nowMs: Int64,
@@ -54,7 +59,8 @@ enum SnapshotBuilder {
             showAllAgents: Bool = false,
             snoozedUntilMs: [String: Int64] = [:],
             stalledSeconds: Double = AgentRow.stalledSeconds,
-            privacyLimitedAgents: Set<AgentID> = []
+            privacyLimitedAgents: Set<AgentID> = [],
+            workspaceEffects: [String: WorkspaceEffect.Measurement] = [:]
         ) {
             self.nowMs = nowMs
             self.terminal = terminal
@@ -66,6 +72,7 @@ enum SnapshotBuilder {
             self.snoozedUntilMs = snoozedUntilMs
             self.stalledSeconds = stalledSeconds
             self.privacyLimitedAgents = privacyLimitedAgents
+            self.workspaceEffects = workspaceEffects
         }
     }
 
@@ -633,6 +640,28 @@ enum SnapshotBuilder {
                 all[index].activityChange = priorChange
                 all[index].activityChangedMs = old.activityChangedMs
             }
+        }
+
+        // What has landed on disk, and who else is standing in it.
+        //
+        // Both come from the same injected table, so the builder stays pure:
+        // running git is the store's job. A row whose workspace was never
+        // confirmed is deliberately left unmeasured — a path that decoded
+        // wrong but happens to exist would otherwise report somebody else's
+        // repository as this agent's work (the same reasoning 2.2 used to
+        // stop offering such a path to Focus).
+        for i in all.indices where !all[i].isRemote && !all[i].cwdBestEffort {
+            guard let effect = context.workspaceEffects[all[i].cwd] else { continue }
+            all[i].workspaceRoot = effect.root
+            all[i].changedPaths = effect.changedPaths
+            all[i].insertions = effect.insertions
+            all[i].deletions = effect.deletions
+        }
+        let peers = WorkspaceEffect.collisionCounts(all)
+        for i in all.indices where !all[i].workspaceRoot.isEmpty {
+            // Everyone *else* in this working copy — the row does not collide
+            // with itself.
+            all[i].workspacePeers = max(0, (peers[all[i].workspaceRoot] ?? 0) - 1)
         }
 
         // Resolve focus once per scan. Doing this per row inside the SwiftUI body
