@@ -631,6 +631,24 @@ struct AgentRow: Identifiable, Hashable {
     /// decode from a wrong one that happens to exist, and opening the wrong
     /// workspace under someone's hands is the failure the flag exists for.
     var cwdBestEffort: Bool = false
+    /// Canonical repository root for this row's working directory. Empty when
+    /// the path is not a working copy, was never confirmed, or the axis is
+    /// off. Never displayed — it exists so two agents in the same checkout
+    /// can be told apart from two agents in different ones.
+    var workspaceRoot: String = ""
+    /// What has actually landed on disk. **-1 is not 0**: "measured, and
+    /// nothing has changed" is the fact this axis exists to state, and "not
+    /// measured" must never wear its clothes.
+    var changedPaths: Int = -1
+    var insertions: Int = -1
+    var deletions: Int = -1
+    /// How many other live local rows share this working copy. 0 = nobody.
+    /// The one fact no single agent can see: each knows only itself.
+    var workspacePeers: Int = 0
+
+    var hasWorkspaceEffect: Bool { changedPaths >= 0 }
+    /// Measured, and the working copy is exactly as it was.
+    var workspaceUntouched: Bool { changedPaths == 0 }
     /// The session's real start, in ms. More reliable than `startedMs`, which
     /// some adapters can only fill from a file stamp. 0 = unknown.
     var sessionStartedMs: Int64 = 0

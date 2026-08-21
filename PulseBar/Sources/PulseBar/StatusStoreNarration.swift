@@ -217,6 +217,15 @@ extension StatusStore {
             // than the one the clock alone implied. Not a lamp change: this
             // is still not healthy-green, it is a stall with an explanation.
             bits.append(row.isComputing ? tr(.stalledButComputing) : tr(.stalled))
+        } else if row.liveProcess, !row.isRecentOnly,
+                  row.hasWorkspaceEffect, row.workspaceUntouched,
+                  row.isComputing || row.bytesPerMinute > 0 {
+            // Busy — burning CPU, or filling a transcript — and the working
+            // copy is exactly as it was. Every earlier signal would call this
+            // healthy; only the disk can say it has produced nothing yet.
+            // **Not a lamp change**: it is running, and running is what the
+            // lamp says.
+            bits.append(tr(.movingNothingLanded))
         }
 
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -458,6 +467,13 @@ extension StatusStore {
         var bits: [String] = []
         if !lifecycle.isEmpty { bits.append(lifecycle) }
         if !changed.isEmpty { bits.append(changed) }
+        // The one fact no single agent can see: somebody else is editing this
+        // very working copy. Each agent knows only itself, so this is
+        // invisible from inside either of them — and it is quietly destroying
+        // one of their two sets of changes.
+        if row.workspacePeers > 0 {
+            bits.append(String(format: tr(.workspaceShared), row.workspacePeers))
+        }
         // A process-only row has no observation line, so the fault has nowhere
         // else to go and this line carries it. Everywhere else the observation
         // line owns it — one owner, because two owners with different
@@ -660,6 +676,19 @@ extension StatusStore {
 
         // 2 · Advance.
         var advance: [String] = []
+        // What actually landed. This outranks every other advance fact
+        // because it is the only one that is not the agent's own account of
+        // itself: a transcript can talk for an hour with nothing on disk, and
+        // until 2.6 that looked exactly like progress. Unknown says nothing —
+        // `hasWorkspaceEffect` is false for a path that was never confirmed,
+        // a directory that is not a working copy, and a repository too slow
+        // to ask.
+        if row.hasWorkspaceEffect, row.changedPaths > 0 {
+            advance.append(String(format: tr(.effectFiles), row.changedPaths))
+            if row.insertions > 0 || row.deletions > 0 {
+                advance.append(String(format: tr(.effectLines), row.insertions, row.deletions))
+            }
+        }
         if row.subTotal > 0 {
             advance.append(row.subRunning > 0
                 ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)

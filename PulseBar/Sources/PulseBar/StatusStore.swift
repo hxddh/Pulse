@@ -40,6 +40,11 @@ final class StatusStore: ObservableObject {
     /// a persisted setting could drift from the file the hook actually reads,
     /// and the hook is the half that decides whether an agent waits.
     @Published var respondLocalEnabled = false
+    /// Measure what has landed in each agent's working copy. On by default —
+    /// an evidence axis nobody switches on is worth nothing — and bounded,
+    /// read-only and content-free by construction. Off means not one git
+    /// command runs.
+    @Published var measureWorkspaceEffect = true
     @Published var trayGrouping: TrayGrouping = .status
     @Published var playSoundOnWaiting = false
     /// Minutes of silence before a live row reads as stalled; 0 turns it off.
@@ -197,6 +202,11 @@ final class StatusStore: ObservableObject {
     /// Per-Agent retry/backoff/circuit policy. A bad store must not consume the
     /// next scan budget for every other adapter.
     private var harvestSupervisor = HarvestSupervisor()
+    /// Per-repository-root measurements, their cadence, and the slow-repo
+    /// circuit. Lives here because measuring forks git; the builder only ever
+    /// sees the resulting table.
+    private var workspaceEffects = WorkspaceEffectStore()
+    private var workspaceEffectsByDirectory: [String: WorkspaceEffect.Measurement] = [:]
     /// Where the next native harvest should start.
     ///
     /// The collector walks its adapters in a fixed order, so before 0.98 a
@@ -2443,6 +2453,19 @@ final class StatusStore: ObservableObject {
         }()
         let scopedHarvest = agentFilter != nil
         let startCursor = harvestScanCursor
+        let measureEffects = measureWorkspaceEffect
+        // Only directories a scan already confirmed. `cwdBestEffort` paths are
+        // excluded for the same reason 2.2 stopped offering them to Focus: a
+        // path that decoded wrong but happens to exist would report somebody
+        // else's repository as this agent's work.
+        let knownWorkspaces = measureEffects
+            ? Array(Set(cachedAll.filter { !$0.isRemote && !$0.cwdBestEffort }.map(\.cwd)))
+            : []
+        // Captured by value: `WorkspaceEffectStore` is a struct, so the scan
+        // queue works on its own copy and hands the advanced one back on
+        // main. Mutating a captured `var` from a concurrently-executing
+        // closure would be a race the type system is right to refuse.
+        let priorEffectStore = workspaceEffects
 
         scanQueue.async { [weak self] in
             let t0 = Date()
@@ -2492,6 +2515,18 @@ final class StatusStore: ObservableObject {
                     : .fresh(result.rows, result.health, complete, intentionalPartial || scopedHarvest)
             }
 
+            // What has landed on disk. Off the main thread with the other
+            // file work, bounded per root and capped per tick — a status lamp
+            // that blocks on somebody's monorepo is the energy-hog failure the
+            // cadence design exists to prevent.
+            var effectStore = priorEffectStore
+            let effects: [String: WorkspaceEffect.Measurement] = knownWorkspaces.isEmpty
+                ? [:]
+                : effectStore.refresh(
+                    directories: knownWorkspaces,
+                    nowMs: Int64(Date().timeIntervalSince1970 * 1000)
+                )
+            let advancedEffectStore = effectStore
             let attention = AttentionReader.load()
             // Respond (scene AR): read the inbound full-request spool off the
             // main thread, alongside the other file sources. Cleanup here too
@@ -2526,6 +2561,14 @@ final class StatusStore: ObservableObject {
             DispatchQueue.main.async { [completedHarvestMs, completedCursor] in
                 guard let self else { return }
                 self.harvestScanCursor = completedCursor
+                self.workspaceEffects = advancedEffectStore
+                if measureEffects {
+                    self.workspaceEffectsByDirectory = effects
+                } else {
+                    // Switched off: forget what was measured rather than let
+                    // a row keep quoting a number nobody is refreshing.
+                    self.workspaceEffectsByDirectory = [:]
+                }
                 switch outcome {
                 case .fresh(_, let health, _, _), .failed(let health, _, _):
                     self.harvestSupervisor.record(
@@ -2771,7 +2814,8 @@ final class StatusStore: ObservableObject {
                     AgentID.allCases.filter {
                         $0.requiresAppDataOptIn && !isAppDataAllowed(for: $0)
                     }
-                )
+                ),
+                workspaceEffects: workspaceEffectsByDirectory
             )
         )
 
@@ -3733,6 +3777,7 @@ final class StatusStore: ObservableObject {
             hotkey: hotkey,
             hotkeyEnabled: hotkeyEnabled,
             allowTerminalAutomation: allowTerminalAutomation,
+            measureWorkspaceEffect: measureWorkspaceEffect,
             mutedAgents: mutedAgents,
             trayGrouping: trayGrouping,
             playSoundOnWaiting: playSoundOnWaiting,
@@ -3756,6 +3801,7 @@ final class StatusStore: ObservableObject {
         hotkey = s.hotkey
         hotkeyEnabled = s.hotkeyEnabled
         allowTerminalAutomation = s.allowTerminalAutomation
+        measureWorkspaceEffect = s.measureWorkspaceEffect
         mutedAgents = s.mutedAgents
         trayGrouping = s.trayGrouping
         playSoundOnWaiting = s.playSoundOnWaiting
