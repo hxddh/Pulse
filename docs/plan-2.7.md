@@ -8,12 +8,16 @@
 `RealGitTests` 在 runner 上建真仓库、跑真 git、对账计数 —— 与
 `testTheRealParentLookupAgreesWithTheKernel` 用同一个模式。
 
-**它第一跑就抓住了一个已发布的真缺陷（G-5）**：`--no-optional-locks` 命令行 flag 对
-`git diff` 的隐式 index 刷新**不生效**（对 `status` 生效），容器 git 2.43 与 runner
-git 2.54 行为一致 —— 也就是说 2.6.0 的每一次测量都在真实改写 index 的 stat 缓存并
-短暂持有 `index.lock`。修法：每条命令的**环境变量**带 `GIT_OPTIONAL_LOCKS=0`（它对
-两者都生效），flag 保留作双保险；index 逐字节不动由测试对真仓库断言（SHA-256 前后
-一致），fixture 永远看不见这类缺陷，这正是实证轴存在的理由。
+**它第一跑就抓住了一个已发布的真缺陷（G-5）**：porcelain 的 `git diff` 在 stat 缓存
+失配时改写 index，且 `--no-optional-locks` 与 `GIT_OPTIONAL_LOCKS=0` **都拦不住**
+（optional-locks 机制盖住 `status` 的隐式刷新、盖不住 `diff` 的；先前一轮容器测量
+以为环境变量有效，是测量顺序造成的假象 —— 第一次 diff 写回后 stat 已一致，之后
+自然「不再写」）。也就是说 2.6.0 的每一次测量都在真实改写 index 并短暂持有
+`index.lock`。修法：行数改用 **plumbing 的 `diff-index --shortstat HEAD`** —— 它从不
+刷新、对 stat 脏条目做内容核对、输出同一种 shortstat，解析器一字不改；三个变体各用
+全新仓库隔离验证（真实改动 / stat 脏但内容相同 / 删除文件全部正确）。index 逐字节
+不动由 RealGitTests 对真仓库断言（SHA-256 前后一致）—— fixture 永远看不见这类缺陷，
+这正是实证轴存在的理由。
 
 ### P0 · 审计 —— 2.6 新面挖出四条
 

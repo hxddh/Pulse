@@ -14,16 +14,19 @@ import Foundation
 /// copy belongs to no vendor, so one implementation covers all 32 agents and
 /// every agent added after them.
 ///
-/// Three commands, every one run with `GIT_OPTIONAL_LOCKS=0` in the
-/// environment **and** `--no-optional-locks` on the command line. Both,
-/// because they are not equivalent in practice: the first real-machine run
-/// of RealGitTests caught `git diff` rewriting the index despite the flag,
-/// and a container rehearsal reproduced it on a second git version — the
-/// flag covers `status`'s implicit refresh but not `diff`'s, while the
-/// environment variable covers both. Without either, a "measurement" writes
-/// the index stat cache and contends for `index.lock` with the user's own
-/// git commands. This is why the read-only guarantee is asserted against a
-/// real repository rather than promised in a comment.
+/// Three commands. The line counts come from the **plumbing** `diff-index`,
+/// not the porcelain `diff`, and that choice was made for us: the first
+/// real-machine run of RealGitTests caught porcelain `diff` rewriting the
+/// index on a stale stat cache, and fresh-repo isolation showed that neither
+/// `--no-optional-locks` nor `GIT_OPTIONAL_LOCKS=0` stops it — the optional-
+/// locks machinery covers `status`'s implicit refresh but not `diff`'s.
+/// `diff-index` never refreshes; it content-checks stat-dirty entries and
+/// prints the same shortstat, so the parser is unchanged. The optional-locks
+/// environment stays on every invocation for `status`'s sake. Without all of
+/// this, a "measurement" writes the index stat cache and contends for
+/// `index.lock` with the user's own git commands — which is why the
+/// read-only guarantee is asserted against a real repository, byte for byte,
+/// rather than promised in a comment. A fixture could never have seen it.
 enum WorkspaceEffect {
     /// Counts only. No path, no branch, no diff text ever leaves this type —
     /// those are content, and this axis is about magnitude.
@@ -195,7 +198,7 @@ enum WorkspaceEffect {
         // Line counts are a second, softer fact: a working copy with only
         // untracked files has changed paths and no diff against HEAD, and
         // that is not a failure.
-        if let shortstat = text(runner(root, ["diff", "--shortstat", "HEAD"])),
+        if let shortstat = text(runner(root, ["diff-index", "--shortstat", "HEAD"])),
            let parsed = parseShortstat(shortstat) {
             measurement.insertions = parsed.insertions
             measurement.deletions = parsed.deletions

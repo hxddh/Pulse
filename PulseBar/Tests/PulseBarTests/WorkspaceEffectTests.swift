@@ -153,7 +153,12 @@ final class WorkspaceEffectTests: XCTestCase {
         }
         _ = WorkspaceEffect.measure(root: "/repo", nowMs: now)
         _ = WorkspaceEffect.repositoryRoot(of: "/repo")
-        let allowed: Set<String> = ["status", "diff", "rev-parse"]
+        // `diff` is deliberately absent: the porcelain command rewrites the
+        // index on a stale stat cache and nothing in the optional-locks
+        // machinery stops it — RealGitTests caught it on the first real run.
+        // The plumbing `diff-index` prints the same shortstat and never
+        // refreshes.
+        let allowed: Set<String> = ["status", "diff-index", "rev-parse"]
         for command in commands {
             XCTAssertTrue(allowed.contains(command.first ?? ""), "\(command)")
         }
