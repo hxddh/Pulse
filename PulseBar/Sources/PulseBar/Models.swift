@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "2.6.0"
+    static let semver = "2.7.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -645,6 +645,11 @@ struct AgentRow: Identifiable, Hashable {
     /// How many other live local rows share this working copy. 0 = nobody.
     /// The one fact no single agent can see: each knows only itself.
     var workspacePeers: Int = 0
+
+    /// HEAD moved within the recent-commit window. A clean tree after a
+    /// commit is the opposite of "nothing has landed" — the agent landed its
+    /// work so thoroughly that the tree is clean.
+    var workspaceHeadMovedRecently: Bool = false
 
     var hasWorkspaceEffect: Bool { changedPaths >= 0 }
     /// Measured, and the working copy is exactly as it was.

@@ -45,6 +45,15 @@ final class StatusStore: ObservableObject {
     /// read-only and content-free by construction. Off means not one git
     /// command runs.
     @Published var measureWorkspaceEffect = true
+    /// Write this Mac's own fleet snapshot for other machines to read. Off by
+    /// default — content leaving the machine is the user's call, every time.
+    /// Reading other hosts' snapshots is always on: it is passive, local and
+    /// bounded, and the directory simply does not exist until a sync tool
+    /// puts something there.
+    @Published var broadcastFleet = false
+    /// Last time the local snapshot was written, so the file is refreshed on
+    /// the snapshot's own cadence rather than every 2-second tick.
+    private var lastFleetWriteMs: Int64 = 0
     @Published var trayGrouping: TrayGrouping = .status
     @Published var playSoundOnWaiting = false
     /// Minutes of silence before a live row reads as stalled; 0 turns it off.
@@ -2546,6 +2555,12 @@ final class StatusStore: ObservableObject {
                     nowMs: scanNowMs,
                     host: PulseHookReceiver.respondHost()
                 )
+            // The rest of the fleet, not just its doorbell: every other
+            // machine's snapshot, bounded, and absent until the user's own
+            // sync tooling puts something in fleet.d/.
+            let fleetReports = FleetSnapshot.readReports(
+                selfHost: PulseHookReceiver.respondHost(), nowMs: scanNowMs
+            )
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DebugLog.write(
                 "scan done #\(ticket) \(ms)ms harvest=\(why) scoped=\(scopedHarvest) procs=\(procs.count) " +
@@ -2587,7 +2602,8 @@ final class StatusStore: ObservableObject {
                     harvestMs: completedHarvestMs,
                     clearRefreshing: showSpinner,
                     reason: reason,
-                    respondInbound: respondInbound
+                    respondInbound: respondInbound,
+                    fleet: fleetReports
                 )
             }
         }
@@ -2695,7 +2711,8 @@ final class StatusStore: ObservableObject {
         harvestMs: Int? = nil,
         clearRefreshing: Bool = false,
         reason: String = "",
-        respondInbound: [RespondSpool.InboundRequest] = []
+        respondInbound: [RespondSpool.InboundRequest] = [],
+        fleet: [FleetSnapshot.Report] = []
     ) {
         defer { finishScanFlight() }
 
@@ -2797,7 +2814,8 @@ final class StatusStore: ObservableObject {
                 procs: procs,
                 harvest: acts,
                 harvestUnreliable: harvestUnreliable,
-                attention: attention
+                attention: attention,
+                fleet: fleet
             ),
             previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: waitingKeysForEdges),
             context: SnapshotBuilder.Context(
@@ -2925,6 +2943,22 @@ final class StatusStore: ObservableObject {
         }
 
         recordResolvedWaits(result.resolvedWaits, at: now)
+
+        // This Mac's own snapshot, for the machines that read what our sync
+        // tool carries. Opt-in, on its own cadence, and written off the main
+        // thread — the tray never waits on a disk.
+        if broadcastFleet {
+            let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+            if nowMs - lastFleetWriteMs >= FleetSnapshot.writeIntervalMs {
+                lastFleetWriteMs = nowMs
+                let snapshot = FleetSnapshot.build(
+                    host: PulseHookReceiver.respondHost(),
+                    rows: result.rows,
+                    sentAtMs: nowMs
+                )
+                scanQueue.async { FleetSnapshot.write(snapshot) }
+            }
+        }
 
         snapshot = snap
         if clearRefreshing { isRefreshing = false }
@@ -3778,6 +3812,7 @@ final class StatusStore: ObservableObject {
             hotkeyEnabled: hotkeyEnabled,
             allowTerminalAutomation: allowTerminalAutomation,
             measureWorkspaceEffect: measureWorkspaceEffect,
+            broadcastFleet: broadcastFleet,
             mutedAgents: mutedAgents,
             trayGrouping: trayGrouping,
             playSoundOnWaiting: playSoundOnWaiting,
@@ -3802,6 +3837,7 @@ final class StatusStore: ObservableObject {
         hotkeyEnabled = s.hotkeyEnabled
         allowTerminalAutomation = s.allowTerminalAutomation
         measureWorkspaceEffect = s.measureWorkspaceEffect
+        broadcastFleet = s.broadcastFleet
         mutedAgents = s.mutedAgents
         trayGrouping = s.trayGrouping
         playSoundOnWaiting = s.playSoundOnWaiting
@@ -3914,6 +3950,20 @@ final class StatusStore: ObservableObject {
         let actual = RespondSpool.localHasSecret()
         if respondLocalEnabled != actual { respondLocalEnabled = actual }
         DebugLog.write("respond local answering requested=\(enabled) actual=\(actual)")
+    }
+
+    /// Turning the broadcast off also removes this Mac's file: a snapshot
+    /// nobody is refreshing must age out on the readers, not keep riding the
+    /// sync tool looking authoritative.
+    func setBroadcastFleet(_ enabled: Bool) {
+        broadcastFleet = enabled
+        saveSettings()
+        if !enabled {
+            let own = FleetSnapshot.directory
+                .appendingPathComponent(FleetSnapshot.sanitize(PulseHookReceiver.respondHost()) + ".json")
+            scanQueue.async { try? FileManager.default.removeItem(at: own) }
+            lastFleetWriteMs = 0
+        }
     }
 
     func toggleMute(_ agent: AgentID) {

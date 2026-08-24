@@ -12,10 +12,11 @@ final class WorkspaceEffectTests: XCTestCase {
     private let now: Int64 = 1_800_000_000_000
 
     override func tearDown() {
-        WorkspaceEffect.runner = { directory, arguments in
+        WorkspaceEffect.runner = { directory, command in
             ProcessIO.run(
                 executable: WorkspaceEffect.executable,
-                arguments: ["--no-optional-locks", "-C", directory] + arguments,
+                arguments: WorkspaceEffect.arguments(for: command, in: directory),
+                environment: WorkspaceEffect.environment(),
                 timeout: WorkspaceEffect.timeout,
                 outputLimit: WorkspaceEffect.outputLimit
             )
@@ -132,6 +133,14 @@ final class WorkspaceEffectTests: XCTestCase {
             XCTAssertEqual(argv.first, "--no-optional-locks", "\(argv)")
             XCTAssertEqual(argv[1], "-C")
         }
+        // The flag alone was NOT enough: the first real-machine run caught
+        // `git diff` rewriting the index despite it. The environment variable
+        // is the half that covers diff, so it is asserted, not assumed.
+        XCTAssertEqual(WorkspaceEffect.environment()["GIT_OPTIONAL_LOCKS"], "0")
+        XCTAssertNotNil(
+            WorkspaceEffect.environment()["PATH"],
+            "the parent environment is inherited, not replaced"
+        )
     }
 
     func testOnlyReadingCommandsAreEverRun() {
@@ -144,7 +153,12 @@ final class WorkspaceEffectTests: XCTestCase {
         }
         _ = WorkspaceEffect.measure(root: "/repo", nowMs: now)
         _ = WorkspaceEffect.repositoryRoot(of: "/repo")
-        let allowed: Set<String> = ["status", "diff", "rev-parse"]
+        // `diff` is deliberately absent: the porcelain command rewrites the
+        // index on a stale stat cache and nothing in the optional-locks
+        // machinery stops it — RealGitTests caught it on the first real run.
+        // The plumbing `diff-index` prints the same shortstat and never
+        // refreshes.
+        let allowed: Set<String> = ["status", "diff-index", "rev-parse"]
         for command in commands {
             XCTAssertTrue(allowed.contains(command.first ?? ""), "\(command)")
         }
@@ -267,6 +281,104 @@ final class WorkspaceEffectTests: XCTestCase {
         _ = store.refresh(directories: ["/plain/folder"], nowMs: now)
         _ = store.refresh(directories: ["/plain/folder"], nowMs: now + 60_000)
         XCTAssertEqual(revParseCalls, 1, "a folder does not become a repository")
+    }
+
+    // MARK: 2.7 audit — a commit is something landing (G-1)
+
+    func testAMovedHeadIsRememberedForTheCommitWindow() {
+        var store = WorkspaceEffectStore()
+        store.record(
+            WorkspaceEffect.Measurement(
+                root: "/repo", changedPaths: 3, measuredAtMs: now,
+                head: String(repeating: "a", count: 40)
+            ),
+            tookMs: 5, nowMs: now
+        )
+        let later = now + WorkspaceEffectStore.freshnessMs
+        store.record(
+            WorkspaceEffect.Measurement(
+                root: "/repo", changedPaths: 0, measuredAtMs: later,
+                head: String(repeating: "b", count: 40)
+            ),
+            tookMs: 5, nowMs: later
+        )
+        XCTAssertTrue(store.headMovedRecently(root: "/repo", nowMs: later))
+        XCTAssertTrue(
+            store.headMovedRecently(
+                root: "/repo", nowMs: later + WorkspaceEffect.recentCommitWindowMs - 1
+            ),
+            "a commit counts as landing for the whole window, not one tick"
+        )
+        XCTAssertFalse(
+            store.headMovedRecently(
+                root: "/repo", nowMs: later + WorkspaceEffect.recentCommitWindowMs
+            )
+        )
+    }
+
+    func testAFailedHeadReadIsNotEvidenceOfACommit() {
+        var store = WorkspaceEffectStore()
+        store.record(
+            WorkspaceEffect.Measurement(root: "/repo", changedPaths: 3, measuredAtMs: now, head: ""),
+            tookMs: 5, nowMs: now
+        )
+        store.record(
+            WorkspaceEffect.Measurement(
+                root: "/repo", changedPaths: 0, measuredAtMs: now + 10_000,
+                head: String(repeating: "b", count: 40)
+            ),
+            tookMs: 5, nowMs: now + 10_000
+        )
+        XCTAssertFalse(store.headMovedRecently(root: "/repo", nowMs: now + 10_000))
+    }
+
+    // MARK: 2.7 audit — bounds the first version forgot (G-2, G-3)
+
+    func testDirectoryResolutionObeysThePerTickCap() {
+        var revParses = 0
+        WorkspaceEffect.runner = { [failed] _, command in
+            if command.first == "rev-parse", command.contains("--show-toplevel") { revParses += 1 }
+            return failed
+        }
+        var store = WorkspaceEffectStore()
+        _ = store.refresh(directories: (0..<40).map { "/dir\($0)" }, nowMs: now)
+        XCTAssertEqual(
+            revParses, WorkspaceEffectStore.maxRootsPerTick,
+            "a burst of new sessions must not fan out unbounded forks in one tick"
+        )
+    }
+
+    func testTheDirectoryCacheIsBounded() {
+        WorkspaceEffect.runner = { [failed] _, _ in failed }
+        var store = WorkspaceEffectStore()
+        for batch in 0..<300 {
+            _ = store.refresh(directories: ["/never-a-repo-\(batch)"], nowMs: now + Int64(batch))
+        }
+        let table = store.refresh(directories: ["/never-a-repo-0"], nowMs: now + 10_000)
+        XCTAssertTrue(table.isEmpty, "still functional after far more directories than the cap")
+    }
+
+    // MARK: 2.7 audit — stale must not wear fresh clothes (G-4)
+
+    func testAMeasurementOlderThanTheServeAgeIsServedAsUnknown() {
+        WorkspaceEffect.runner = { [ok] _, command in
+            command.first == "rev-parse" && command.contains("--show-toplevel")
+                ? ok("/repo\n") : ok(" M a\n")
+        }
+        var store = WorkspaceEffectStore()
+        store.record(
+            WorkspaceEffect.Measurement(root: "/repo", changedPaths: 9, measuredAtMs: now),
+            tookMs: WorkspaceEffect.slowMeasurementMs,   // backed off, so no re-measure
+            nowMs: now
+        )
+        let table = store.refresh(
+            directories: ["/repo"],
+            nowMs: now + WorkspaceEffectStore.maxServeAgeMs + WorkspaceEffect.backoffMs + 1_000
+        )
+        XCTAssertNotEqual(
+            table["/repo"]?.changedPaths, 9,
+            "this tick must not quote an hours-old number as current"
+        )
     }
 
     func testABackedOffRootReportsUnknownRatherThanAStaleNumber() {
