@@ -6,9 +6,14 @@
 
 2.6 的发布说明写「git 的实际行为只有真机能证」。**CI 的 macOS runner 就是一台真机。**
 `RealGitTests` 在 runner 上建真仓库、跑真 git、对账计数 —— 与
-`testTheRealParentLookupAgreesWithTheKernel` 用同一个模式。容器侧已先用 git 2.43
-彩排过全部预期，包括最关键的一条：**不加 `--no-optional-locks` 时 index 真的会被
-`git status` 重写；加了之后逐字节不动**（测试断言 index 的 SHA-256 前后一致）。
+`testTheRealParentLookupAgreesWithTheKernel` 用同一个模式。
+
+**它第一跑就抓住了一个已发布的真缺陷（G-5）**：`--no-optional-locks` 命令行 flag 对
+`git diff` 的隐式 index 刷新**不生效**（对 `status` 生效），容器 git 2.43 与 runner
+git 2.54 行为一致 —— 也就是说 2.6.0 的每一次测量都在真实改写 index 的 stat 缓存并
+短暂持有 `index.lock`。修法：每条命令的**环境变量**带 `GIT_OPTIONAL_LOCKS=0`（它对
+两者都生效），flag 保留作双保险；index 逐字节不动由测试对真仓库断言（SHA-256 前后
+一致），fixture 永远看不见这类缺陷，这正是实证轴存在的理由。
 
 ### P0 · 审计 —— 2.6 新面挖出四条
 

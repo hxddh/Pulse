@@ -12,10 +12,11 @@ final class WorkspaceEffectTests: XCTestCase {
     private let now: Int64 = 1_800_000_000_000
 
     override func tearDown() {
-        WorkspaceEffect.runner = { directory, arguments in
+        WorkspaceEffect.runner = { directory, command in
             ProcessIO.run(
                 executable: WorkspaceEffect.executable,
-                arguments: ["--no-optional-locks", "-C", directory] + arguments,
+                arguments: WorkspaceEffect.arguments(for: command, in: directory),
+                environment: WorkspaceEffect.environment(),
                 timeout: WorkspaceEffect.timeout,
                 outputLimit: WorkspaceEffect.outputLimit
             )
@@ -132,6 +133,14 @@ final class WorkspaceEffectTests: XCTestCase {
             XCTAssertEqual(argv.first, "--no-optional-locks", "\(argv)")
             XCTAssertEqual(argv[1], "-C")
         }
+        // The flag alone was NOT enough: the first real-machine run caught
+        // `git diff` rewriting the index despite it. The environment variable
+        // is the half that covers diff, so it is asserted, not assumed.
+        XCTAssertEqual(WorkspaceEffect.environment()["GIT_OPTIONAL_LOCKS"], "0")
+        XCTAssertNotNil(
+            WorkspaceEffect.environment()["PATH"],
+            "the parent environment is inherited, not replaced"
+        )
     }
 
     func testOnlyReadingCommandsAreEverRun() {

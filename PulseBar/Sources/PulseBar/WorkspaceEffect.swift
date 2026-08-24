@@ -14,11 +14,16 @@ import Foundation
 /// copy belongs to no vendor, so one implementation covers all 32 agents and
 /// every agent added after them.
 ///
-/// Three commands, all `--no-optional-locks`. That flag is not optional:
-/// `git status` refreshes and **writes back** the index stat cache by
-/// default, which would break the read-only rule and contend for
-/// `index.lock` with the user's own git commands. The flag exists precisely
-/// for bystanders like editors and status bars.
+/// Three commands, every one run with `GIT_OPTIONAL_LOCKS=0` in the
+/// environment **and** `--no-optional-locks` on the command line. Both,
+/// because they are not equivalent in practice: the first real-machine run
+/// of RealGitTests caught `git diff` rewriting the index despite the flag,
+/// and a container rehearsal reproduced it on a second git version — the
+/// flag covers `status`'s implicit refresh but not `diff`'s, while the
+/// environment variable covers both. Without either, a "measurement" writes
+/// the index stat cache and contends for `index.lock` with the user's own
+/// git commands. This is why the read-only guarantee is asserted against a
+/// real repository rather than promised in a comment.
 enum WorkspaceEffect {
     /// Counts only. No path, no branch, no diff text ever leaves this type —
     /// those are content, and this axis is about magnitude.
@@ -133,13 +138,17 @@ enum WorkspaceEffect {
 
     /// The exact argv for one command, so the read-only guarantee is a
     /// testable property of this type rather than a promise in a comment.
-    ///
-    /// `--no-optional-locks` leads every invocation. Without it `git status`
-    /// refreshes and **writes back** the index stat cache, which would break
-    /// the read-only rule and contend for `index.lock` with the user's own
-    /// git commands.
     static func arguments(for command: [String], in directory: String) -> [String] {
         ["--no-optional-locks", "-C", directory] + command
+    }
+
+    /// The environment every command runs under. `GIT_OPTIONAL_LOCKS=0` is
+    /// the half that actually covers `git diff` — see the type doc for the
+    /// real-machine evidence. The parent environment is inherited so git can
+    /// still find HOME and PATH-dependent helpers.
+    static func environment() -> [String: String] {
+        ProcessInfo.processInfo.environment
+            .merging(["GIT_OPTIONAL_LOCKS": "0"]) { _, override in override }
     }
 
     /// Test seam: every command this type runs goes through here, so the
@@ -148,6 +157,7 @@ enum WorkspaceEffect {
         ProcessIO.run(
             executable: executable,
             arguments: arguments(for: command, in: directory),
+            environment: environment(),
             timeout: timeout,
             outputLimit: outputLimit
         )
