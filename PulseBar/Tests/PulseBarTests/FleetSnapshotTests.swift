@@ -10,6 +10,12 @@ import XCTest
 final class FleetSnapshotTests: XCTestCase {
 
     private let now: Int64 = 1_800_000_000_000
+    /// The disk tests must use the wall clock: a report's age is measured
+    /// against the file's real mtime, and a fixed fake "now" made every file
+    /// look 140 days old — the reader correctly dropped it, the test then
+    /// indexed into an empty array, and the crash took the whole test process
+    /// (and every suite after it) down with it.
+    private var wallNow: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     private var directory: URL!
 
     override func setUpWithError() throws {
@@ -83,16 +89,17 @@ final class FleetSnapshotTests: XCTestCase {
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
 
-        let reports = FleetSnapshot.readReports(selfHost: "thismac", nowMs: now)
+        let reports = FleetSnapshot.readReports(selfHost: "thismac", nowMs: wallNow)
+        let report = try XCTUnwrap(reports.first, "one fresh file, one report")
         XCTAssertEqual(reports.count, 1)
-        XCTAssertEqual(reports[0].host, "devbox")
-        XCTAssertEqual(reports[0].rows.first?.changedPaths, 7)
-        XCTAssertGreaterThan(reports[0].receivedAtMs, 0, "age comes from this disk's clock")
+        XCTAssertEqual(report.host, "devbox")
+        XCTAssertEqual(report.rows.first?.changedPaths, 7)
+        XCTAssertGreaterThan(report.receivedAtMs, 0, "age comes from this disk's clock")
     }
 
     func testOurOwnFileIsNeverReadBack() {
         FleetSnapshot.write(FleetSnapshot.build(host: "thismac", rows: [localRow()], sentAtMs: now))
-        XCTAssertTrue(FleetSnapshot.readReports(selfHost: "thismac", nowMs: now).isEmpty)
+        XCTAssertTrue(FleetSnapshot.readReports(selfHost: "thismac", nowMs: wallNow).isEmpty)
     }
 
     func testAFileClaimingAnotherHostIsRefused() throws {
@@ -102,14 +109,14 @@ final class FleetSnapshotTests: XCTestCase {
         file.host = "impostor"
         let encoder = JSONEncoder()
         try encoder.encode(file).write(to: directory.appendingPathComponent("devbox.json"))
-        XCTAssertTrue(FleetSnapshot.readReports(selfHost: "thismac", nowMs: now).isEmpty)
+        XCTAssertTrue(FleetSnapshot.readReports(selfHost: "thismac", nowMs: wallNow).isEmpty)
     }
 
     func testAnAncientFileIsGoneNotLost() throws {
         FleetSnapshot.write(FleetSnapshot.build(host: "devbox", rows: [localRow()], sentAtMs: now))
         let reports = FleetSnapshot.readReports(
             selfHost: "thismac",
-            nowMs: now + FleetSnapshot.dropAfterMs + 60_000
+            nowMs: wallNow + FleetSnapshot.dropAfterMs + 60_000
         )
         XCTAssertTrue(reports.isEmpty, "an hour of silence is absence, not a row")
     }
