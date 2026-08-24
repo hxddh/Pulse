@@ -646,6 +646,11 @@ struct AgentRow: Identifiable, Hashable {
     /// The one fact no single agent can see: each knows only itself.
     var workspacePeers: Int = 0
 
+    /// HEAD moved within the recent-commit window. A clean tree after a
+    /// commit is the opposite of "nothing has landed" — the agent landed its
+    /// work so thoroughly that the tree is clean.
+    var workspaceHeadMovedRecently: Bool = false
+
     var hasWorkspaceEffect: Bool { changedPaths >= 0 }
     /// Measured, and the working copy is exactly as it was.
     var workspaceUntouched: Bool { changedPaths == 0 }

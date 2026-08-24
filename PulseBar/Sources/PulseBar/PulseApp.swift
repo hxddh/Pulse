@@ -2327,6 +2327,16 @@ struct SettingsView: View {
             Text(store.tr(.measureWorkspaceEffectHint))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            // Off by default: this is the one switch that sends content OFF
+            // this machine. Turning it off also deletes this Mac's snapshot,
+            // so a dead broadcast cannot keep riding the sync tool.
+            Toggle(store.tr(.fleetBroadcast), isOn: Binding(
+                get: { store.broadcastFleet },
+                set: { store.setBroadcastFleet($0) }
+            ))
+            Text(store.tr(.fleetBroadcastHint))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 

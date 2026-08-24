@@ -219,6 +219,11 @@ extension StatusStore {
             bits.append(row.isComputing ? tr(.stalledButComputing) : tr(.stalled))
         } else if row.liveProcess, !row.isRecentOnly,
                   row.hasWorkspaceEffect, row.workspaceUntouched,
+                  // A clean tree right after a commit is not "nothing landed"
+                  // — it is everything landing. Agents that commit as they go
+                  // were being accused of idling at their most productive
+                  // moment (G-1).
+                  !row.workspaceHeadMovedRecently,
                   row.isComputing || row.bytesPerMinute > 0 {
             // Busy — burning CPU, or filling a transcript — and the working
             // copy is exactly as it was. Every earlier signal would call this

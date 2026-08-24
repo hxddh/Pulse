@@ -182,6 +182,9 @@ enum L10n {
         case .movingNothingLanded: return "Moving, but nothing has landed yet"
         case .workspaceShared: return "Sharing this checkout with %d other"
         case .measureWorkspaceEffect: return "Measure what lands in the working copy"
+        case .fleetBroadcast: return "Share this Mac's fleet snapshot"
+        case .fleetBroadcastHint:
+            return "Writes a small file under fleet.d for your own sync tool to carry to your other Macs: which agents run here, their task titles and counts. No paths, no branches, no prompt text. Off means nothing is written; other machines' rows fade to lost contact and disappear."
         case .measureWorkspaceEffectHint:
             return "Read-only counts from git — files touched, lines added and removed — so a row can say what an agent actually got done, not only what it says it is doing. Never reads file contents, branch names or paths, and never writes. A repository too slow to answer is reported as unknown."
         case .respondTakenNote: return "The agent took your answer"
@@ -726,6 +729,9 @@ enum L10n {
         case .movingNothingLanded: return "在动，盘上还没有东西落地"
         case .workspaceShared: return "这个工作副本上还有 %d 个"
         case .measureWorkspaceEffect: return "测量工作副本里落地了什么"
+        case .fleetBroadcast: return "共享这台 Mac 的舰队快照"
+        case .fleetBroadcastHint:
+            return "往 fleet.d 写一个小文件，由你自己的同步工具带到你的其它 Mac：这台机器上哪些 agent 在跑、它们的标题和计数。不带路径、不带分支、不带提示词正文。关掉就什么都不写；其它机器上的行会先失联、再消失。"
         case .measureWorkspaceEffectHint:
             return "从 git 只读取计数 —— 动了几个文件、加了删了多少行 —— 好让行能说出 agent 到底干成了什么，而不只是它说自己在干什么。不读文件内容、分支名和路径，也从不写入。仓库慢到答不上来就报「不知道」。"
         case .respondTakenNote: return "agent 已经取走你的回答"
@@ -1156,6 +1162,7 @@ enum L10n {
         case respondWaitingNote, respondTakenNote, respondExpiredUnclaimedNote
         case effectFiles, effectLines, movingNothingLanded, workspaceShared
         case measureWorkspaceEffect, measureWorkspaceEffectHint
+        case fleetBroadcast, fleetBroadcastHint
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone

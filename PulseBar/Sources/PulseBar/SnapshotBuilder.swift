@@ -83,6 +83,9 @@ enum SnapshotBuilder {
         /// True when the harvest failed outright — only then can we claim Error.
         var harvestUnreliable: Bool = false
         var attention: [AttentionReader.Entry] = []
+        /// Every other machine's snapshot, read from `fleet.d/`. Injected like
+        /// everything else, so staleness rules stay pure-function testable.
+        var fleet: [FleetSnapshot.Report] = []
     }
 
     /// What the previous scan left behind, for edge detection.
@@ -531,6 +534,68 @@ enum SnapshotBuilder {
             rowsByKey[key] = row
         }
 
+        // Fleet snapshots — the rest of each remote machine, not just its
+        // doorbell. Every fact here is past tense: the snapshot's age decides
+        // whether it may be quoted at all, and Waiting NEVER comes from a
+        // snapshot — the attention protocol is its only source, so a fleet
+        // row that also has a raise gets its wait from the loop above and its
+        // substance from here.
+        for report in input.fleet {
+            let age = context.nowMs - report.receivedAtMs
+            guard report.receivedAtMs > 0, age <= FleetSnapshot.dropAfterMs else { continue }
+            let lost = age >= FleetSnapshot.staleAfterMs
+            let clockSuspect = report.sentAtMs > report.receivedAtMs + FleetSnapshot.clockSkewMs
+            for fleetRow in report.rows {
+                // Unknown agent → skip, never guess — the same rule the
+                // respond spool follows for the same reason.
+                guard let agent = AgentID(rawValue: fleetRow.agent)?.surfaceID else { continue }
+                let key = remoteRowKey(
+                    agentRaw: agent.rawValue, session: fleetRow.session, host: report.host
+                )
+                var row = rowsByKey[key] ?? AgentRow(rowKey: key, agent: agent)
+                row.host = report.host
+                row.observationSource = .remote
+                row.sessionID = fleetRow.session
+                if row.task.isEmpty { row.task = fleetRow.task }
+                if row.project.isEmpty { row.project = FleetSnapshot.leaf(of: fleetRow.project) }
+                row.lastHeardMs = max(row.lastHeardMs, report.receivedAtMs)
+                row.clockSuspect = row.clockSuspect || clockSuspect
+                // Substance is quoted only while the snapshot is fresh. A
+                // stale snapshot's counts are numbers nobody is refreshing,
+                // and quoting them would be exactly the staleness lie the
+                // fleet rules exist to prevent.
+                if !lost {
+                    if row.tool.isEmpty { row.tool = fleetRow.tool }
+                    if row.model.isEmpty { row.model = fleetRow.model }
+                    if row.phase.isEmpty { row.phase = fleetRow.phase }
+                    if fleetRow.cpuPercent >= 0 { row.cpuPercent = fleetRow.cpuPercent }
+                    if fleetRow.changedPaths >= 0 {
+                        row.changedPaths = fleetRow.changedPaths
+                        row.insertions = fleetRow.insertions
+                        row.deletions = fleetRow.deletions
+                    }
+                    if fleetRow.activityAtMs > 0 {
+                        // The sender's clock, bounded by our own receipt so a
+                        // fast remote clock cannot date activity in the future.
+                        row.harvestMs = max(row.harvestMs, clockSuspect
+                            ? report.receivedAtMs
+                            : min(fleetRow.activityAtMs, report.receivedAtMs))
+                    }
+                }
+                // A wait already on this row (attention) stays exactly as it
+                // is; a fleet-only row is a running-info row, never a lamp.
+                if !row.waiting { row.lostContact = lost }
+                // No process table, no focus handle, no workspace on this
+                // Mac. Every one of these would be a claim about hardware
+                // this machine cannot see — and an empty workspaceRoot keeps
+                // remote rows out of collision counting by construction.
+                row.liveProcess = false
+                row.focusTier = nil
+                row.workspaceRoot = ""
+                rowsByKey[key] = row
+            }
+        }
+
         // A harvest row is still useful without a matching process: a session
         // store can outlive its CLI process and should remain observable. Do
         // not manufacture a process count merely to keep it in the tray; the
@@ -656,6 +721,7 @@ enum SnapshotBuilder {
             all[i].changedPaths = effect.changedPaths
             all[i].insertions = effect.insertions
             all[i].deletions = effect.deletions
+            all[i].workspaceHeadMovedRecently = effect.headMovedRecently
         }
         let peers = WorkspaceEffect.collisionCounts(all)
         for i in all.indices where !all[i].workspaceRoot.isEmpty {
@@ -1065,9 +1131,16 @@ enum SnapshotBuilder {
     /// two machines running the same agent must not be able to silence each
     /// other.
     static func remoteRowKey(_ att: AttentionReader.Entry) -> String {
-        let agent = att.id.surfaceID.rawValue
-        let session = att.session.isEmpty ? "" : "|\(att.session)"
-        return "\(agent)\(session)@\(att.host)"
+        remoteRowKey(agentRaw: att.id.surfaceID.rawValue, session: att.session, host: att.host)
+    }
+
+    /// One key format for every remote row, whichever protocol produced it.
+    /// A fleet snapshot and an attention raise describing the same session on
+    /// the same machine must land on the same row — two keys would put a
+    /// "running" row and its own "waiting" row side by side.
+    static func remoteRowKey(agentRaw: String, session: String, host: String) -> String {
+        let sessionPart = session.isEmpty ? "" : "|\(session)"
+        return "\(agentRaw)\(sessionPart)@\(host)"
     }
 
     static func matchAttentionRow(
