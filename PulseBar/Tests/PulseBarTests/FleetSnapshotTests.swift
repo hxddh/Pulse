@@ -225,6 +225,50 @@ final class FleetSnapshotTests: XCTestCase {
         XCTAssertEqual(rows[0].project, "repo")
     }
 
+    // MARK: - 2.8: the current step rides, ages, and degrades additively
+
+    func testTheCurrentStepRidesTheSnapshotAndItsAbsenceIsAbsent() {
+        var planning = localRow()
+        planning.planStep = "Running the gates"
+        planning.progressDone = 2
+        planning.progressTotal = 4
+        let file = FleetSnapshot.build(host: "thismac", rows: [planning], sentAtMs: now)
+        XCTAssertEqual(file.rows[0].step, "Running the gates")
+        XCTAssertEqual(file.rows[0].stepDone, 2)
+        XCTAssertEqual(file.rows[0].stepTotal, 4)
+        let bare = FleetSnapshot.build(host: "thismac", rows: [localRow()], sentAtMs: now)
+        XCTAssertNil(bare.rows[0].step, "no plan, no key — a 2.7 reader still sees the 2.7 shape")
+        XCTAssertNil(bare.rows[0].stepTotal)
+    }
+
+    func testAFreshReportCarriesTheRemoteStepAndAStaleOneDropsIt() {
+        var fleetRow = report().rows[0]
+        fleetRow.step = "Running the gates"
+        fleetRow.stepDone = 2
+        fleetRow.stepTotal = 4
+        let fresh = build(fleet: [report(rows: [fleetRow])])
+        XCTAssertEqual(fresh[0].planStep, "Running the gates")
+        XCTAssertEqual(fresh[0].progressDone, 2)
+        XCTAssertEqual(fresh[0].progressTotal, 4)
+        let stale = build(fleet: [report(ageMs: FleetSnapshot.staleAfterMs + 1_000, rows: [fleetRow])])
+        XCTAssertEqual(stale[0].planStep, "", "a step nobody is refreshing is not quoted")
+        XCTAssertEqual(stale[0].progressTotal, 0)
+    }
+
+    func testATwoSevenFileWithoutStepKeysStillDecodes() throws {
+        let body = """
+        {"v":1,"host":"devbox","sent_at_ms":\(now),"rows":[{"agent":"claude","session":"s1",\
+        "task":"Old","project":"repo","tool":"","model":"","phase":"",\
+        "activity_at_ms":\(now),"cpu_percent":-1,"changed_paths":-1,"insertions":-1,"deletions":-1}]}
+        """
+        try XCTUnwrap(body.data(using: .utf8))
+            .write(to: directory.appendingPathComponent("devbox.json"))
+        let reports = FleetSnapshot.readReports(selfHost: "thismac", nowMs: wallNow)
+        let report = try XCTUnwrap(reports.first, "additive fields must not orphan 2.7 files")
+        XCTAssertEqual(report.rows.first?.task, "Old")
+        XCTAssertNil(report.rows.first?.step)
+    }
+
     func testTheBroadcastSettingRoundTripsAndDefaultsOff() {
         var settings = PulseSettings()
         XCTAssertFalse(settings.broadcastFleet, "content leaving the machine is opt-in")
