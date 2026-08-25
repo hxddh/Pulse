@@ -5,7 +5,7 @@
 0.96.1 宣称修好了 Pi 会话标题，测的却不是官方格式。生产仍空：真实文件在
 `~/.pi/agent/sessions/--<cwd>--/<timestamp>_<uuid>.jsonl`，用户正文是字符串、
 会话标题在 `session_info.name`，压缩后只剩 `retainedTail`。同构的撒谎还在旗舰
-路径上：**Claude / Command Code 把 `tool_result` 当用户目标；长笔录只看最后 256
+路径上：**Claude / Command Code 把 `tool_result` 当用户目标；长会话记录只看最后 256
 行；Codex 不读 `event_msg` 用户正文、不剥 Desktop 信封、`continue` 覆盖真目标。**
 托盘表头按 12 行窗口计数；Details 无 phase 时发明「等待权限」。
 

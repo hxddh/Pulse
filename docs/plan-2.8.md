@@ -2,13 +2,13 @@
 
 ## 为什么是这条轴
 
-到 2.7 为止，行上的一切事实都在回答「它是什么状态」：灯色、CPU、笔录增长速率、
+到 2.7 为止，行上的一切事实都在回答「它是什么状态」：灯色、CPU、会话记录增长速率、
 token、错误计数、盘上 +142 −38。这些花了五个版本做到诚实，但全是**元数据**。
 一个人打开弹窗真正想问的是：**它干到第几步了？顺利吗？要不要我管？** 目前只有
 Waiting 回答了第三问，前两问一片空白。
 
-更关键的发现：**最有价值的信号正在被当噪音扔掉。** 笔录里躺着结构化的进展数据 ——
-Claude Code 每次更新待办清单，整份清单（每项内容、状态、当前项）都写进笔录；
+更关键的发现：**最有价值的信号正在被当噪音扔掉。** 会话记录里躺着结构化的进展数据 ——
+Claude Code 每次更新待办清单，整份清单（每项内容、状态、当前项）都写进会话记录；
 Codex 的 `update_plan` 同理；agent 自己刚说的话在最后几行里；最近一次报错的原文
 就在 `is_error` 的 tool_result 里。而 `NativeActivityHarvest` 现在**主动过滤**
 这些结构（它们当年污染过主行标题，被整类踢出去，连同里面的进度一起 —— 见
@@ -18,7 +18,7 @@ Codex 的 `update_plan` 同理；agent 自己刚说的话在最后几行里；�
 
 ### P0-A 计划/待办成为一等事实
 
-- Claude 家族笔录（`/.claude/`、`/.commandcode/` 等走 `usesTranscriptUserPrompt`
+- Claude 家族会话记录（`/.claude/`、`/.commandcode/` 等走 `usesTranscriptUserPrompt`
   的路径）：倒序扫窗口，找**最后一条** `TodoWrite` 的 `input.todos` —— 每项
   `{content, status, activeForm}`。
 - Codex rollout：`response_item` / `function_call` / `name == "update_plan"`，
@@ -32,7 +32,7 @@ Codex 的 `update_plan` 同理；agent 自己刚说的话在最后几行里；�
     `content`；全部完成则为空 —— 没有「当前」就不发明一个）。
   - `planSteps` —— 整份清单（capped 8 项、每项 100 字符、逐项过 sanitizer），
     只进 Details。
-- 哪家笔录里没有这个结构，事实就如实缺席 —— 不猜（0 与空串，不是估算）。
+- 哪家会话记录里没有这个结构，事实就如实缺席 —— 不猜（0 与空串，不是估算）。
 
 ### P0-B 它刚说的话 · 最近的错误
 
