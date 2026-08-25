@@ -612,6 +612,11 @@ enum L10n {
         case .contextFact: return "Context %d%%"
         case .progressFact: return "%d/%d complete"
         case .turnsFact: return "%d turns"
+        case .currentStepFact: return "Step · %@"
+        case .detailStep: return "Current step"
+        case .detailPlan: return "Plan (agent's own)"
+        case .detailLastWord: return "Last word"
+        case .detailLastError: return "Last error"
         }
     }
 
@@ -1145,6 +1150,11 @@ enum L10n {
         case .contextFact: return "上下文 %d%%"
         case .progressFact: return "完成 %d/%d"
         case .turnsFact: return "%d 轮"
+        case .currentStepFact: return "当前步骤 · %@"
+        case .detailStep: return "当前步骤"
+        case .detailPlan: return "计划（agent 自述）"
+        case .detailLastWord: return "刚说的话"
+        case .detailLastError: return "最近错误"
         }
     }
 
@@ -1285,6 +1295,7 @@ enum L10n {
         case nowActivity, outcomeActivity
         case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
         case filesFact, contextFact, progressFact, turnsFact
+        case currentStepFact, detailStep, detailPlan, detailLastWord, detailLastError
         case trayScanIncomplete
     }
 }

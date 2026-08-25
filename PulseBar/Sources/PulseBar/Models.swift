@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "2.7.0"
+    static let semver = "2.8.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -584,6 +584,15 @@ struct AgentRow: Identifiable, Hashable {
     var contextPercent: Int = 0
     var progressDone: Int = 0
     var progressTotal: Int = 0
+    /// 2.8 Progress · the agent's own plan and words, read from the
+    /// structures it writes for itself (TodoWrite / update_plan). Self-report
+    /// tier — the same epistemic level as `task` and `tool`, and under the
+    /// same rules: sanitized, aged out when stale, and **never** a source of
+    /// Waiting.
+    var planStep: String = ""
+    var planSteps: [ActivityHarvest.PlanStep] = []
+    var lastWord: String = ""
+    var lastErrorText: String = ""
     /// 1.2 · facts only a full read of the transcript can produce.
     ///
     /// An agent calling the same tool back to back is busy without being any

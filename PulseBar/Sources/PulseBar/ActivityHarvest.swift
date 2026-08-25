@@ -86,6 +86,20 @@ enum ActivityHarvest {
         }
     }
 
+    /// One item of the agent's own plan (2.8). `text` is sanitized and
+    /// bounded at parse time; `state` is the vendor's word, mapped — never
+    /// inferred from position or from anything else on the row.
+    struct PlanStep: Equatable, Hashable {
+        enum State: Int, Equatable, Hashable {
+            case pending
+            case current
+            case done
+        }
+
+        var text: String
+        var state: State
+    }
+
     struct Row {
         var id: AgentID
         var task: String
@@ -120,6 +134,27 @@ enum ActivityHarvest {
         var contextPercent: Int = 0
         var progressDone: Int = 0
         var progressTotal: Int = 0
+        /// 2.8 · the agent's own plan, read from the structure it writes for
+        /// itself (Claude's TodoWrite, Codex's update_plan) — the latest one
+        /// in the window, because a plan is a state, not an event. All of it
+        /// is self-report: the same epistemic tier as `task` and `tool`,
+        /// sanitized the same way, and never a source of Waiting.
+        ///
+        /// The current step's text (`activeForm` when the vendor provides
+        /// one, else the in-progress item's content). Empty when every item
+        /// is done — a finished list has no "current" and we do not invent
+        /// one.
+        var planStep: String = ""
+        /// The whole checklist, bounded — Details only, never the tray line.
+        var planSteps: [PlanStep] = []
+        /// The first line of the latest assistant message: what the agent
+        /// just said, which is the cheapest honest answer to "is it going
+        /// well". Empty when the window holds no assistant text.
+        var lastWord: String = ""
+        /// The first line of the latest failed tool result. An error count
+        /// without the error's text tells the user "something broke, go
+        /// guess".
+        var lastErrorText: String = ""
         /// 1.2 · from the session digest, which read the whole transcript.
         /// The same tool run back to back at the tail of the session.
         var loopTool: String = ""

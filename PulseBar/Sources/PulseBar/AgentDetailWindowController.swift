@@ -323,6 +323,20 @@ private struct AgentDetailView: View {
                 fact(store.tr(.lastAction), value: row.tool.isEmpty ? "—" : store.detailLastAction(row))
                 fact(store.tr(.supportModel), value: row.model.isEmpty ? "—" : row.model)
                 fact(store.tr(.supportProgress), value: progress(row))
+                // 2.8 self-report: the agent's own step, words, and last
+                // failure. Present only when the transcript actually said
+                // them — an absent fact is absent, not "—" here, because
+                // most vendors have no such structure and a wall of dashes
+                // would say "broken" about what is merely unsupported.
+                if !row.planStep.isEmpty {
+                    fact(store.tr(.detailStep), value: row.planStep)
+                }
+                if !row.lastWord.isEmpty {
+                    fact(store.tr(.detailLastWord), value: row.lastWord)
+                }
+                if !row.lastErrorText.isEmpty {
+                    fact(store.tr(.detailLastError), value: row.lastErrorText)
+                }
                 fact(store.tr(.supportResources), value: resources(row))
                 fact(store.tr(.supportEvidence), value: evidence(row))
                 // 1.2: what the whole transcript says, not just its two ends.
@@ -343,6 +357,29 @@ private struct AgentDetailView: View {
                     )
                 }
                 fact(store.tr(.session), value: row.sessionID.isEmpty ? "—" : short(row.sessionID))
+            }
+            // 2.8: the agent's whole checklist, exactly as it wrote it —
+            // bounded upstream, semantic colours only, and labelled as the
+            // self-report it is.
+            if !row.planSteps.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(store.tr(.detailPlan))
+                        .font(.subheadline)
+                    ForEach(Array(row.planSteps.enumerated()), id: \.offset) { _, step in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(step.state == .done ? "✓" : step.state == .current ? "▸" : "·")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(step.state == .current ? .primary : .secondary)
+                            Text(step.text)
+                                .font(.caption)
+                                .foregroundStyle(step.state == .current ? .primary : .secondary)
+                                .strikethrough(step.state == .done)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .padding(.top, 2)
             }
         }
     }

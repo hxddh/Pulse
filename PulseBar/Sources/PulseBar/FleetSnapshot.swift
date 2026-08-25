@@ -60,6 +60,13 @@ enum FleetSnapshot {
         var changedPaths: Int = -1
         var insertions: Int = -1
         var deletions: Int = -1
+        /// 2.8 · the agent's current step and plan counts, one sentence and
+        /// two numbers — the full checklist is content and stays home.
+        /// Optionals so a 2.7 file (no such keys) still decodes, and an old
+        /// reader ignores the unknown keys: additive in both directions.
+        var step: String?
+        var stepDone: Int?
+        var stepTotal: Int?
 
         enum CodingKeys: String, CodingKey {
             case agent, session, task, project, tool, model, phase
@@ -67,6 +74,9 @@ enum FleetSnapshot {
             case cpuPercent = "cpu_percent"
             case changedPaths = "changed_paths"
             case insertions, deletions
+            case step
+            case stepDone = "step_done"
+            case stepTotal = "step_total"
         }
     }
 
@@ -122,7 +132,12 @@ enum FleetSnapshot {
                     cpuPercent: row.cpuPercent,
                     changedPaths: row.changedPaths,
                     insertions: row.insertions,
-                    deletions: row.deletions
+                    deletions: row.deletions,
+                    step: row.planStep.isEmpty
+                        ? nil
+                        : clip(ContentSanitizer.redact(row.planStep), to: maxTaskLength),
+                    stepDone: row.progressTotal > 0 ? row.progressDone : nil,
+                    stepTotal: row.progressTotal > 0 ? row.progressTotal : nil
                 )
             }
         return File(host: host, sentAtMs: sentAtMs, rows: Array(outgoing))

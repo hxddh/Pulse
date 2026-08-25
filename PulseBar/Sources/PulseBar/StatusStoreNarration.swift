@@ -206,6 +206,15 @@ extension StatusStore {
         }
 
         var bits: [String] = []
+        // 2.8: the agent's own current step is the strongest "what is it
+        // doing" a row can carry — it names the work, not the state. It is
+        // self-report of *now*, so it ages exactly like phase does: past 30
+        // minutes of transcript silence it would be a stale plan wearing
+        // fresh clothes. It informs, and must never imply Waiting.
+        let planStep = row.planStep.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !planStep.isEmpty, row.lastActivitySeconds <= 30 * 60 {
+            bits.append(String(format: tr(.currentStepFact), planStep))
+        }
         // Prefer explicit lifecycle — never promote last tool under a Now label.
         if let phase = readablePhase(row.phase, waiting: row.waiting), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
             bits.append(phase)

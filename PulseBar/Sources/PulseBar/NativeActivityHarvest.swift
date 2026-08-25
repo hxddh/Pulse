@@ -105,6 +105,12 @@ enum NativeActivityHarvest {
         var contextPercent = 0
         var progressDone = 0
         var progressTotal = 0
+        /// 2.8 · the agent's own plan and words, self-report tier. See
+        /// `ActivityHarvest.Row` for what each means and why they exist.
+        var planStep = ""
+        var planSteps: [ActivityHarvest.PlanStep] = []
+        var lastWord = ""
+        var lastErrorText = ""
         var subRunning = 0
         var subTotal = 0
         var explicitPending = false
@@ -2087,6 +2093,10 @@ enum NativeActivityHarvest {
                 }
             }
         }
+        // 2.8: after the seed, so a prompt-only fact still gets the plan.
+        if usesTranscriptUserPrompt(path) {
+            applyTranscriptSelfReport(&merged, text: text)
+        }
         return merged
     }
 
@@ -2120,6 +2130,157 @@ enum NativeActivityHarvest {
         }
         guard !candidates.isEmpty else { return nil }
         return candidates.first(where: { meaningfulPiPrompt($0) }) ?? candidates[0]
+    }
+
+    // MARK: - Self-report (2.8): the agent's own plan, words, and errors
+
+    /// The plan checklist is bounded for display, but the counts must come
+    /// from the whole list — a capped list quoting its own length would be an
+    /// estimate wearing an exact number's clothes.
+    static let maxPlanSteps = 8
+    static let maxPlanStepLength = 100
+    static let maxSelfReportLength = 160
+
+    /// The most valuable structure in a transcript is the one the agent
+    /// writes for itself: its todo list. It used to be filtered out wholesale
+    /// because plan-step titles once polluted the tray hero — the pollution
+    /// was real, but the cure threw away the progress with it. This reads the
+    /// structure on purpose, into fields that are not the hero.
+    ///
+    /// One reversed pass over the window, three independent finds, each
+    /// "latest wins": the last `todos` array (a plan is a state, not an
+    /// event), the last assistant text line, the last failed tool result.
+    /// Substring prefilters keep megabyte tool-result lines O(1) until one
+    /// actually needs decoding.
+    private static func applyTranscriptSelfReport(_ facts: inout [Fact], text: String) {
+        guard !facts.isEmpty else { return }
+        var plan: (steps: [ActivityHarvest.PlanStep], current: String, done: Int, total: Int)?
+        var word: String?
+        var errorText: String?
+        var decoded = 0
+        for line in text.split(whereSeparator: \.isNewline).reversed() {
+            if plan != nil, word != nil, errorText != nil { break }
+            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard raw.hasPrefix("{") else { continue }
+            let wantsPlan = plan == nil && raw.contains("\"todos\"")
+            let wantsWord = word == nil && raw.contains("\"assistant\"")
+            let wantsError = errorText == nil && raw.contains("\"is_error\"")
+            guard wantsPlan || wantsWord || wantsError else { continue }
+            decoded += 1
+            if decoded > 512 { break }
+            guard let data = raw.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let message = object["message"] as? [String: Any]
+            let content = (message?["content"] as? [Any]) ?? (object["content"] as? [Any]) ?? []
+            if wantsPlan {
+                for item in content {
+                    guard let block = item as? [String: Any],
+                          firstString(block, keys: ["type"]).lowercased() == "tool_use",
+                          let input = block["input"] as? [String: Any],
+                          let todos = input["todos"] as? [Any]
+                    else { continue }
+                    if let parsed = planFacts(from: todos) { plan = parsed }
+                }
+            }
+            if wantsWord,
+               firstString(message ?? object, keys: ["role", "type"]).lowercased() == "assistant" {
+                for item in content {
+                    guard let block = item as? [String: Any],
+                          firstString(block, keys: ["type"]).lowercased() == "text"
+                    else { continue }
+                    let line = selfReportLine(firstString(block, keys: ["text"]))
+                    if !line.isEmpty { word = line; break }
+                }
+            }
+            if wantsError {
+                for item in content {
+                    guard let block = item as? [String: Any],
+                          firstString(block, keys: ["type"]).lowercased() == "tool_result",
+                          anyTruthy(block, keys: ["is_error", "isError"])
+                    else { continue }
+                    let body: String
+                    if let text = block["content"] as? String {
+                        body = text
+                    } else {
+                        body = userMessageText(block["content"])
+                    }
+                    let line = selfReportLine(body)
+                    if !line.isEmpty { errorText = line; break }
+                }
+            }
+        }
+        guard plan != nil || word != nil || errorText != nil else { return }
+        for index in facts.indices {
+            if let plan {
+                facts[index].planSteps = plan.steps
+                facts[index].planStep = plan.current
+                facts[index].progressDone = plan.done
+                facts[index].progressTotal = plan.total
+            }
+            if let word { facts[index].lastWord = word }
+            if let errorText { facts[index].lastErrorText = errorText }
+        }
+    }
+
+    /// Vendor todo/plan items → bounded steps plus whole-list counts.
+    /// Understands Claude's `{content, status, activeForm}` and Codex's
+    /// `{step, status}`. The current step's display text prefers
+    /// `activeForm` ("Running tests") over the imperative `content`
+    /// ("Run tests") because it is the one written to describe *now*.
+    static func planFacts(
+        from items: [Any]
+    ) -> (steps: [ActivityHarvest.PlanStep], current: String, done: Int, total: Int)? {
+        var steps: [ActivityHarvest.PlanStep] = []
+        var current = ""
+        for item in items {
+            guard let dict = item as? [String: Any] else { continue }
+            let text = clean(
+                ContentSanitizer.redact(firstString(dict, keys: ["content", "step", "text", "title"])),
+                limit: maxPlanStepLength
+            )
+            guard !text.isEmpty else { continue }
+            let status = firstString(dict, keys: ["status", "state"]).lowercased()
+            let state: ActivityHarvest.PlanStep.State
+            switch status {
+            case "completed", "complete", "done":
+                state = .done
+            case "in_progress", "inprogress", "active", "current":
+                state = .current
+            default:
+                state = .pending
+            }
+            if state == .current, current.isEmpty {
+                let active = clean(
+                    ContentSanitizer.redact(firstString(dict, keys: ["activeForm", "active_form"])),
+                    limit: maxPlanStepLength
+                )
+                current = active.isEmpty ? text : active
+            }
+            steps.append(ActivityHarvest.PlanStep(text: text, state: state))
+        }
+        guard !steps.isEmpty else { return nil }
+        let done = steps.filter { $0.state == .done }.count
+        let total = steps.count
+        // Bound for display only, after the counts: drop oldest finished
+        // items first — they are the least informative — then truncate.
+        var bounded = steps
+        while bounded.count > maxPlanSteps, bounded.first?.state == .done {
+            bounded.removeFirst()
+        }
+        bounded = Array(bounded.prefix(maxPlanSteps))
+        return (bounded, current, done, total)
+    }
+
+    /// One sanitized line of the agent's own text — first non-empty line,
+    /// bounded. Used for both "what it just said" and "what just failed".
+    static func selfReportLine(_ raw: String) -> String {
+        for line in ContentSanitizer.redact(raw).split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            return clean(trimmed, limit: maxSelfReportLength)
+        }
+        return ""
     }
 
     private static func transcriptUserPrompt(from dict: [String: Any]) -> String {
@@ -2275,6 +2436,14 @@ enum NativeActivityHarvest {
                 case "task_complete", "turn_complete":
                     f.phase = "turn_complete"
                     f.outcome = "completed"
+                case "agent_message":
+                    // What the agent just said — the candidates walk oldest
+                    // to newest, so the last assignment is the latest word.
+                    let line = selfReportLine(firstString(payload, keys: ["message", "text", "content"]))
+                    if !line.isEmpty { f.lastWord = line }
+                case "error", "stream_error":
+                    let line = selfReportLine(firstString(payload, keys: ["message", "text", "error"]))
+                    if !line.isEmpty { f.lastErrorText = line }
                 case "token_count":
                     if let info = payload["info"] as? [String: Any] {
                         // Prefer the latest turn (`last_token_usage`); fall back
@@ -2311,6 +2480,19 @@ enum NativeActivityHarvest {
                     // Never promote tool-call argument titles into `task`.
                     // Those are plan steps / MCP labels, not the user's goal —
                     // they used to become the tray hero (e.g. update_plan titles).
+                    // 2.8: but the plan itself is a first-class fact now —
+                    // read it into the fields built for it, which are not the
+                    // hero. `arguments` is a JSON string, not an object.
+                    if name == "update_plan",
+                       let data = firstString(payload, keys: ["arguments"]).data(using: .utf8),
+                       let arguments = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let items = arguments["plan"] as? [Any],
+                       let plan = planFacts(from: items) {
+                        f.planSteps = plan.steps
+                        f.planStep = plan.current
+                        f.progressDone = plan.done
+                        f.progressTotal = plan.total
+                    }
                 } else if responseType == "message",
                           firstString(payload, keys: ["role"]).lowercased() == "assistant" {
                     let phase = firstString(payload, keys: ["phase", "status"])
@@ -3526,6 +3708,12 @@ enum NativeActivityHarvest {
             // reading the whole file and the window has no way to check them.
             // Only meaningful while there is a path to qualify.
             row.cwdBestEffort = !cwd.isEmpty && fact.cwdBestEffort
+            // 2.8 self-report facts — already sanitized and bounded at parse
+            // time; the caps here are the row boundary restating its rule.
+            row.planStep = clean(fact.planStep, limit: maxPlanStepLength)
+            row.planSteps = Array(fact.planSteps.prefix(maxPlanSteps))
+            row.lastWord = clean(fact.lastWord, limit: maxSelfReportLength)
+            row.lastErrorText = clean(fact.lastErrorText, limit: maxSelfReportLength)
             row.loopTool = fact.loopTool
             row.loopCount = max(0, fact.loopCount)
             row.sessionErrors = max(0, fact.sessionErrors)

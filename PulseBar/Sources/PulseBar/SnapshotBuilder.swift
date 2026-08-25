@@ -320,6 +320,13 @@ enum SnapshotBuilder {
             if act.contextPercent > 0 { row.contextPercent = act.contextPercent }
             if act.progressDone > 0 { row.progressDone = act.progressDone }
             if act.progressTotal > 0 { row.progressTotal = act.progressTotal }
+            // 2.8 self-report: the agent's own plan and words. Copied like
+            // task/tool — same epistemic tier, same rules. Display decides
+            // freshness; the builder only carries.
+            if !act.planStep.isEmpty { row.planStep = act.planStep }
+            if !act.planSteps.isEmpty { row.planSteps = act.planSteps }
+            if !act.lastWord.isEmpty { row.lastWord = act.lastWord }
+            if !act.lastErrorText.isEmpty { row.lastErrorText = act.lastErrorText }
             // Digest facts: carried straight through. They were produced by
             // reading the whole transcript, and nothing here can second-guess
             // them without reading it again.
@@ -569,6 +576,16 @@ enum SnapshotBuilder {
                     if row.model.isEmpty { row.model = fleetRow.model }
                     if row.phase.isEmpty { row.phase = fleetRow.phase }
                     if fleetRow.cpuPercent >= 0 { row.cpuPercent = fleetRow.cpuPercent }
+                    // 2.8: the remote agent's own current step — substance,
+                    // so it lives inside the freshness gate with the rest.
+                    if let step = fleetRow.step, !step.isEmpty {
+                        row.planStep = String(ContentSanitizer.redact(step)
+                            .prefix(NativeActivityHarvest.maxPlanStepLength))
+                    }
+                    if let total = fleetRow.stepTotal, total > 0 {
+                        row.progressDone = max(0, min(fleetRow.stepDone ?? 0, total))
+                        row.progressTotal = total
+                    }
                     if fleetRow.changedPaths >= 0 {
                         row.changedPaths = fleetRow.changedPaths
                         row.insertions = fleetRow.insertions
