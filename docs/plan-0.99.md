@@ -114,7 +114,7 @@ adapters 一致，rows 多 1。**这一条没通过，不改成通过。**
 
 > **后续更正（0.99.1）：以上两种可能都不对。** 逐 Agent 断言上线后，同一个二进制在同一次
 > CI 作业里连跑两次得到 `claude=2` 与 `claude=1` —— 这堵墙本身不稳定。0.98 加的 Claude
-> fixture 是刻意超限的 1.4 MB 笔录，繁忙 runner 上摄入它会耗尽 0.75 s 的单 adapter 预算，
+> fixture 是刻意超限的 1.4 MB 会话记录，繁忙 runner 上摄入它会耗尽 0.75 s 的单 adapter 预算，
 > 第二个文件读不到。**133 与 134 是同一个抖动数字的两次采样，不是版本差异。**
 > 修法是让 fixture 墙不再兼任秒表（正确性扫描用宽裕 deadline，时间交给
 > `resource_budget_check.py` 与显式 timeout 扫描）。逐 Agent 断言是发现它的原因 ——

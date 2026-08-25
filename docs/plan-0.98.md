@@ -41,7 +41,7 @@
 | --- | --- | --- |
 | 主行选择 | `preferTask` 末规则仍是 `new.count >= old.count + 8`，「长的赢」外面糊了 6 条特例（chrome / filename / 200 字 tool dump / Pi JSONL vs SQLite …）。四连发都在给这条加特例 | Fact 带 `taskOrigin` + 记录序号，按 (来源等级, 新旧) 选，**删掉字数比较** |
 | 采集不可解释 | health 只有 observed / no_sessions / …。`observed` + 主行空时，用户和维护者都拿不到任何线索 | 每 Agent 输出 explain：扫了几个文件、读了多少字节、窗口是否截断、解析出几条 fact、主行来自哪种记录、为什么为空 |
-| `records` 撒谎 | `ingestTranscriptFile` 用 `readWindow` 的**窗口**数换行符，>1MB 的笔录被静默少算，托盘按精确值展示「N 条」 | 窗口截断时 `records = 0`（未知），不外推 |
+| `records` 撒谎 | `ingestTranscriptFile` 用 `readWindow` 的**窗口**数换行符，>1MB 的会话记录被静默少算，托盘按精确值展示「N 条」 | 窗口截断时 `records = 0`（未知），不外推 |
 | 扫描饥饿 | `descriptors()` 顺序固定，全局 5.8s 用尽后**永远是同一批尾部 Agent**（droid / commandCode / antigravity / kimi / zcode）标 unscanned；supervisor 对 unscanned 显式 no-op，不会补偿 | 起点游标轮转；unscanned 进入下一轮优先队列 |
 | PATH 真相 | `executableExists` 读 `ProcessInfo.environment["PATH"]`。Finder/launchd 启动的 App 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，homebrew / npm-global / `~/.local/bin` 全看不见 | 固定候选目录 + 一次性登录 shell PATH；否则「装了没会话」被说成「没装」 |
 | chrome 词表分叉 | `isChromeTask` 22 条，`makeRows` 内联副本 18 条，少了 `cascade/aider/droid/kimi session` | 收敛成一份 |
