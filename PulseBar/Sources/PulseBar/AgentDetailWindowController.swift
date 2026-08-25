@@ -328,14 +328,19 @@ private struct AgentDetailView: View {
                 // them — an absent fact is absent, not "—" here, because
                 // most vendors have no such structure and a wall of dashes
                 // would say "broken" about what is merely unsupported.
-                if !row.planStep.isEmpty {
-                    fact(store.tr(.detailStep), value: row.planStep)
-                }
-                if !row.lastWord.isEmpty {
-                    fact(store.tr(.detailLastWord), value: row.lastWord)
-                }
-                if !row.lastErrorText.isEmpty {
-                    fact(store.tr(.detailLastError), value: row.lastErrorText)
+                // Freshness-gated with the same rule as the story line: the
+                // tray withdrew a 30-minute-silent plan as "now", and Details
+                // labelling it "Current step" would put it right back.
+                if row.selfReportFresh {
+                    if !row.planStep.isEmpty {
+                        fact(store.tr(.detailStep), value: row.planStep)
+                    }
+                    if !row.lastWord.isEmpty {
+                        fact(store.tr(.detailLastWord), value: row.lastWord)
+                    }
+                    if !row.lastErrorText.isEmpty {
+                        fact(store.tr(.detailLastError), value: row.lastErrorText)
+                    }
                 }
                 fact(store.tr(.supportResources), value: resources(row))
                 fact(store.tr(.supportEvidence), value: evidence(row))
@@ -360,8 +365,8 @@ private struct AgentDetailView: View {
             }
             // 2.8: the agent's whole checklist, exactly as it wrote it —
             // bounded upstream, semantic colours only, and labelled as the
-            // self-report it is.
-            if !row.planSteps.isEmpty {
+            // self-report it is. Same freshness gate as the step above.
+            if row.selfReportFresh, !row.planSteps.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(store.tr(.detailPlan))
                         .font(.subheadline)

@@ -2262,11 +2262,21 @@ enum NativeActivityHarvest {
         guard !steps.isEmpty else { return nil }
         let done = steps.filter { $0.state == .done }.count
         let total = steps.count
-        // Bound for display only, after the counts: drop oldest finished
-        // items first — they are the least informative — then truncate.
+        // Bound for display only, after the counts. Drop finished items
+        // first (oldest first, wherever they sit — the original leading-
+        // prefix loop stopped at the first non-done item and could then
+        // truncate the current step away; Codex review on #74), then the
+        // furthest-future pending items. The current item is never dropped:
+        // a checklist whose `▸` is missing while `planStep` names one would
+        // be the view contradicting its own summary.
         var bounded = steps
-        while bounded.count > maxPlanSteps, bounded.first?.state == .done {
-            bounded.removeFirst()
+        while bounded.count > maxPlanSteps,
+              let index = bounded.firstIndex(where: { $0.state == .done }) {
+            bounded.remove(at: index)
+        }
+        while bounded.count > maxPlanSteps,
+              let index = bounded.lastIndex(where: { $0.state == .pending }) {
+            bounded.remove(at: index)
         }
         bounded = Array(bounded.prefix(maxPlanSteps))
         return (bounded, current, done, total)

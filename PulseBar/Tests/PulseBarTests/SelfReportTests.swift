@@ -103,6 +103,34 @@ final class SelfReportTests: XCTestCase {
         )
     }
 
+    func testTheCurrentItemSurvivesBoundingWhereverItSits() throws {
+        // Codex review on #74: the old leading-prefix loop stopped at the
+        // first non-done item, so eight pendings ahead of the current step
+        // truncated the current step away — a checklist with no ▸ while
+        // planStep names one.
+        let items = (0..<9).map { #"{"content":"Ahead \#($0)","status":"pending"}"# }
+            + [#"{"content":"The live one","status":"in_progress","activeForm":"Doing the live one"}"#]
+        let row = try claudeRow([userLine, todoLine(items.joined(separator: ","))])
+        XCTAssertEqual(row.progressTotal, 10)
+        XCTAssertEqual(row.planStep, "Doing the live one")
+        XCTAssertEqual(row.planSteps.count, NativeActivityHarvest.maxPlanSteps)
+        XCTAssertTrue(
+            row.planSteps.contains { $0.state == .current },
+            "the checklist must not contradict its own planStep"
+        )
+    }
+
+    func testSelfReportFreshnessIsOneRuleForEverySurface() {
+        // Codex review on #74: Details showed "Current step" past the 30
+        // minutes where the story line had already withdrawn it. Both now
+        // read this one property.
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 5 * 60 * 1000
+        XCTAssertTrue(row.selfReportFresh)
+        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 31 * 60 * 1000
+        XCTAssertFalse(row.selfReportFresh, "Details and the story line share this gate")
+    }
+
     func testATranscriptWithoutTodosInventsNothing() throws {
         let row = try claudeRow([
             userLine,

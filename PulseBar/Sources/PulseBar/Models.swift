@@ -593,6 +593,12 @@ struct AgentRow: Identifiable, Hashable {
     var planSteps: [ActivityHarvest.PlanStep] = []
     var lastWord: String = ""
     var lastErrorText: String = ""
+    /// Whether the self-report above may be quoted as *now*. One rule for
+    /// every surface: past 30 minutes of transcript silence, a plan labelled
+    /// "Current step" — on the story line or in Details — would be stale
+    /// wearing fresh clothes. The tray withdrew it; Details must not keep
+    /// presenting it (Codex review on #74 caught Details skipping this gate).
+    var selfReportFresh: Bool { lastActivitySeconds <= 30 * 60 }
     /// 1.2 · facts only a full read of the transcript can produce.
     ///
     /// An agent calling the same tool back to back is busy without being any
