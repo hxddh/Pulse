@@ -524,6 +524,67 @@ def case_local_key_cannot_be_forged() -> None:
         shutil.rmtree(home, ignore_errors=True)
 
 
+def case_activity_events() -> None:
+    """2.9: activity events are state for the tray's now — never attention,
+    never a hold, one bounded 0600 file per session, latest event wins."""
+    print("case 12: activity events -> state file, no attention, no hold")
+    home, env = fresh_home("activity")
+    try:
+        pre = json.dumps({
+            "hook_event_name": "PreToolUse",
+            "session_id": "sess-a",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/repo/src/Main.swift"},
+            "cwd": "/repo",
+        }).encode()
+        started = time.monotonic()
+        proc = subprocess.run(
+            [sys.executable, str(HOOK), AGENT, "activity"],
+            input=pre, capture_output=True, env=env, timeout=120,
+        )
+        elapsed = time.monotonic() - started
+        check("exit 0", proc.returncode == 0, f"rc={proc.returncode}")
+        check("stdout empty", proc.stdout == b"", repr(proc.stdout[:120]))
+        check("no hold", elapsed < 3.0, f"{elapsed:.1f}s")
+        state = home / "activity.d" / "claude-sess-a.json"
+        check("state file written", state.exists(), str(state))
+        record = json.loads(state.read_text()) if state.exists() else {}
+        check("event is tool", record.get("event") == "tool", str(record))
+        check("tool and target", record.get("tool") == "Edit"
+              and record.get("target") == "/repo/src/Main.swift", str(record))
+        check("state file is 0600", state.exists()
+              and (state.stat().st_mode & 0o777) == 0o600)
+        check("no attention write", not (home / "attention.tsv").exists())
+        check("no respond request", not (home / "respond.d" / "requests").exists())
+
+        # Latest wins: a second event on the same session replaces the state.
+        prompt = json.dumps({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "sess-a",
+            "prompt": "Fix the login bug\nwith key Bearer abc123secretvalue",
+            "cwd": "/repo",
+        }).encode()
+        subprocess.run(
+            [sys.executable, str(HOOK), AGENT],
+            input=prompt, capture_output=True, env=env, timeout=120,
+        )
+        record = json.loads(state.read_text())
+        check("latest event wins", record.get("event") == "prompt", str(record))
+        check("prompt sanitized", "abc123secretvalue" not in record.get("prompt", ""),
+              record.get("prompt", ""))
+
+        # No identity, no file — and event-name-only dispatch works (no kind arg).
+        anon = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash"}).encode()
+        subprocess.run(
+            [sys.executable, str(HOOK), AGENT],
+            input=anon, capture_output=True, env=env, timeout=120,
+        )
+        files = sorted(p.name for p in (home / "activity.d").glob("*.json"))
+        check("session-less event writes nothing", files == ["claude-sess-a.json"], str(files))
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def main() -> int:
     print(f"respond_hook_check — hook: {HOOK}")
     case_no_key()
@@ -538,6 +599,7 @@ def main() -> int:
     case_permission_descriptor()
     case_local_key_only()
     case_local_key_cannot_be_forged()
+    case_activity_events()
     print()
     if FAILURES:
         print(f"FAIL — {len(FAILURES)} of {PASSED + len(FAILURES)} checks failed:")

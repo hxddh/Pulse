@@ -86,6 +86,9 @@ enum SnapshotBuilder {
         /// Every other machine's snapshot, read from `fleet.d/`. Injected like
         /// everything else, so staleness rules stay pure-function testable.
         var fleet: [FleetSnapshot.Report] = []
+        /// 2.9: push-fresh activity events from the hook's spool. Local
+        /// sessions only; never a wait, never a new row.
+        var activity: [ActivitySpool.Event] = []
     }
 
     /// What the previous scan left behind, for edge detection.
@@ -610,6 +613,23 @@ enum SnapshotBuilder {
                 row.focusTier = nil
                 row.workspaceRoot = ""
                 rowsByKey[key] = row
+            }
+        }
+
+        // 2.9 activity events: push-fresh "now" from the hook, applied to
+        // the matching local session row. Never a wait, and never a new row —
+        // an event without a row means the harvest has not met this session
+        // yet, and a row invented from one line would have no other evidence.
+        // The stamp feeds `activityChangedMs` (the live-signal clock), not
+        // `harvestMs`: the session moved now, but its facts are still as old
+        // as their harvest.
+        for event in input.activity {
+            guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
+            for (key, row) in rowsByKey
+            where !row.isRemote && row.agent == agent && row.sessionID == event.session {
+                var updated = row
+                updated.applyActivity(event, nowMs: context.nowMs)
+                rowsByKey[key] = updated
             }
         }
 

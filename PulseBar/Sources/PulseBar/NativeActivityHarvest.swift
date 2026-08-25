@@ -397,7 +397,8 @@ enum NativeActivityHarvest {
                 errorKind: agentTimedOut
                     ? "native_timeout"
                     : (visitError ? "native_read_failed" : ""),
-                explain: explain
+                explain: explain,
+                factClasses: ActivityHarvest.factClasses(of: agentRows)
             ))
             if budget.exhausted, descriptorIndex + 1 < descriptors.count {
                 firstUnreachedIndex = firstUnreachedIndex ?? (descriptorIndex + 1)
@@ -427,6 +428,11 @@ enum NativeActivityHarvest {
                 if health[index].state == .observed || health[index].rowCount > 0 {
                     health[index].state = .noSessions
                     health[index].rowCount = 0
+                    // 2.9 Codex review on #78: the yield was measured before
+                    // this cleanup, so without clearing it Support Health
+                    // could report "no sessions" and a list of measured
+                    // facts about the same adapter in the same breath.
+                    health[index].factClasses = []
                 }
             }
         }
@@ -2094,9 +2100,13 @@ enum NativeActivityHarvest {
             }
         }
         // 2.8: after the seed, so a prompt-only fact still gets the plan.
-        if usesTranscriptUserPrompt(path) {
-            applyTranscriptSelfReport(&merged, text: text)
-        }
+        // 2.9: no path whitelist — the scanner matches shapes strictly
+        // (`todos` arrays, assistant text blocks, `is_error` results), so any
+        // vendor whose records carry the same structures yields the same
+        // facts, and one that does not yields nothing. Codex and Pi never
+        // reach here (their parsers returned above); this is the generic
+        // JSONL walker's tail.
+        applyTranscriptSelfReport(&merged, text: text)
         return merged
     }
 

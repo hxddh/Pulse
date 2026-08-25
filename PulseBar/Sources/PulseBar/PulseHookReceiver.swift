@@ -27,6 +27,14 @@ enum PulseHookReceiver {
             if !kindArg.isEmpty, !kindArg.hasPrefix("{") { return kindArg }
             return parseKind(from: payload)
         }()
+        // Activity events branch off before the attention pipeline entirely:
+        // state for the tray's "now", not a wait, not a hold. Write one small
+        // file and leave — parity with pulse_hook.write_activity.
+        let plain = kindSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if plain == "activity" || plain == "prompt" {
+            writeActivity(agent: agentRaw, kind: plain, payload: payload)
+            return 0
+        }
         let kind = AttentionProtocol.normalizeKind(kindSource.isEmpty ? "waiting" : kindSource)
         guard AttentionProtocol.acceptsWrite(kind: kind) else {
             DebugLog.write("attention reject unknown kind=\(kind) agent=\(agentRaw)")
@@ -87,6 +95,47 @@ enum PulseHookReceiver {
         ].joined(separator: "\t")
         AttentionIO.appendRawLine(line)
         return true
+    }
+
+    // MARK: - Activity events (2.9, parity with pulse_hook.write_activity)
+
+    /// One state file per session, latest event wins. No identity, no file:
+    /// a session-less event cannot be matched to a row, and a guessed
+    /// filename would collide across sessions.
+    static func writeActivity(
+        agent: String,
+        kind: String,
+        payload: [String: Any],
+        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) {
+        let session = session(from: payload)
+        guard !session.isEmpty else { return }
+        let tool = cleanField(
+            (payload["tool_name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+            limit: 64
+        )
+        let descriptor = toolDescriptor(from: payload)
+        var target = ""
+        if !tool.isEmpty, descriptor.hasPrefix(tool + ": ") {
+            target = cleanField(String(descriptor.dropFirst(tool.count + 2)), limit: 160)
+        }
+        var prompt = ""
+        if kind == "prompt" {
+            prompt = cleanField(
+                condenseOneLine(payload["prompt"] as? String ?? "", limit: 160),
+                limit: 160
+            )
+        }
+        _ = ActivitySpool.write(ActivitySpool.Event(
+            agent: agent,
+            session: session,
+            event: kind == "activity" ? "tool" : "prompt",
+            tool: tool,
+            target: target,
+            prompt: prompt,
+            cwd: cwd(from: payload),
+            tsMs: nowMs
+        ))
     }
 
     // MARK: - Respond hold (Mac-to-Mac parity with pulse_hook.py)
@@ -276,6 +325,10 @@ enum PulseHookReceiver {
             let nested = string(payload, keys: ["notification_type", "notificationType"])
             return nested.isEmpty ? "waiting" : nested
         case "PermissionRequest": return "permission"
+        // 2.9 activity events — never attention, never a hold; they branch
+        // off in `run` before the attention pipeline.
+        case "PreToolUse": return "activity"
+        case "UserPromptSubmit": return "prompt"
         default: break
         }
         let t = string(payload, keys: ["type", "event", "method"])

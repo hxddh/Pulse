@@ -206,6 +206,23 @@ extension StatusStore {
         }
 
         var bits: [String] = []
+        // 2.9: a fresh activity event is the only fact on the row that has
+        // earned the present tense — the hook said this tool started seconds
+        // ago and nothing has ended it. Past the window it says nothing and
+        // the polled story below takes back over.
+        if row.liveActionFresh, !row.liveTool.isEmpty {
+            var action = row.liveTool
+            let target = row.liveTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !target.isEmpty {
+                // A path shows as its leaf — rows stay scannable, Details
+                // keeps the full target.
+                let leaf = target.hasPrefix("/")
+                    ? URL(fileURLWithPath: target).lastPathComponent
+                    : target
+                action += " · " + String(leaf.prefix(60))
+            }
+            bits.append(String(format: tr(.nowActivity), action))
+        }
         // 2.8: the agent's own current step is the strongest "what is it
         // doing" a row can carry — it names the work, not the state. It is
         // self-report of *now*, so it ages exactly like phase does: past 30
@@ -353,6 +370,10 @@ extension StatusStore {
         if row.isProcessOnly || (row.quality.isLimited && row.usefulTask == nil && row.tool.isEmpty) {
             return false
         }
+        // 2.9: a fresh activity event puts the true present tense in the
+        // story — the signal line yielding is what stops the same "now"
+        // being said twice.
+        if row.liveActionFresh, !row.liveTool.isEmpty { return true }
         if row.isStalled { return true }
         if let _ = readablePhase(row.phase, waiting: row.waiting), !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
             return true

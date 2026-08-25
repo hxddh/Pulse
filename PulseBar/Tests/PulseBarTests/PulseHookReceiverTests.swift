@@ -402,6 +402,9 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertTrue(claude.contains("pulse-hook"))
         XCTAssertFalse(claude.contains("pulse_hook.py"), "fresh install must prefer native launcher")
         XCTAssertTrue(claude.contains("PermissionRequest"))
+        // 2.9: the hook finally speaks about work, not just waits.
+        XCTAssertTrue(claude.contains("PreToolUse"))
+        XCTAssertTrue(claude.contains("UserPromptSubmit"))
 
         let codex = try String(
             contentsOf: tempHome.appendingPathComponent(".codex/config.toml"),
