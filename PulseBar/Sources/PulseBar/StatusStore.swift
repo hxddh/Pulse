@@ -2635,7 +2635,7 @@ final class StatusStore: ObservableObject {
                     reason: reason,
                     respondInbound: respondInbound,
                     fleet: fleetReports,
-                    activity: activityEvents
+                    activityEvents: activityEvents
                 )
             }
         }
@@ -2790,7 +2790,7 @@ final class StatusStore: ObservableObject {
         reason: String = "",
         respondInbound: [RespondSpool.InboundRequest] = [],
         fleet: [FleetSnapshot.Report] = [],
-        activity: [ActivitySpool.Event] = []
+        activityEvents: [ActivitySpool.Event] = []
     ) {
         defer { finishScanFlight() }
 
@@ -2894,7 +2894,7 @@ final class StatusStore: ObservableObject {
                 harvestUnreliable: harvestUnreliable,
                 attention: attention,
                 fleet: fleet,
-                activity: activity
+                activity: activityEvents
             ),
             previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: waitingKeysForEdges),
             context: SnapshotBuilder.Context(
