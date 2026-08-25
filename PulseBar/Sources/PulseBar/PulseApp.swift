@@ -3018,6 +3018,17 @@ struct SupportHealthRow: View {
                                 .foregroundStyle(.tertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        // 2.9: declared vs measured. Drift is the one line
+                        // here that must not whisper — it is the difference
+                        // between "the agent is idle" and "Pulse stopped
+                        // seeing", and it was invisible until now.
+                        let yield = store.supportYieldDetail(item)
+                        if !yield.isEmpty {
+                            Text(yield)
+                                .font(.caption2)
+                                .foregroundStyle(item.looksDrifted ? Color.orange : Color.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 3)

@@ -73,6 +73,20 @@ enum ActivityHarvest {
         var errorKind: String
         /// How this adapter reached the result above. Diagnostic only.
         var explain: CollectorExplain = CollectorExplain()
+        /// 2.9 · which fact classes this adapter actually produced this
+        /// scan. The declared tier (`harvestSource`) is a promise; this is
+        /// the measurement, and Support Health shows both so "the agent is
+        /// idle" and "Pulse stopped seeing" stop wearing the same clothes.
+        var factClasses: Set<String> = []
+
+        /// Declared structured, produced rows — and none of the core classes
+        /// came out. The honest reading is drift (a vendor format change),
+        /// not idleness: an idle structured session still yields its task.
+        var looksDrifted: Bool {
+            state == .observed
+                && id.harvestSource == .structuredSession
+                && factClasses.intersection(["task", "tool", "tokens"]).isEmpty
+        }
 
         static func unscanned(_ id: AgentID) -> CollectorHealth {
             CollectorHealth(
@@ -84,6 +98,30 @@ enum ActivityHarvest {
                 errorKind: ""
             )
         }
+    }
+
+    /// 2.9 · the measurement measuring itself: which classes of fact a set
+    /// of rows actually carries. Names only, never values — this feeds the
+    /// support surface, not telemetry.
+    static func factClasses(of rows: [Row]) -> Set<String> {
+        var classes: Set<String> = []
+        for row in rows {
+            if !row.task.isEmpty { classes.insert("task") }
+            if !row.tool.isEmpty { classes.insert("tool") }
+            if row.tokensIn > 0 || row.tokensOut > 0
+                || row.sessionTokensIn > 0 || row.sessionTokensOut > 0 {
+                classes.insert("tokens")
+            }
+            if row.progressTotal > 0 { classes.insert("progress") }
+            if !row.planStep.isEmpty || !row.planSteps.isEmpty { classes.insert("plan") }
+            if !row.lastWord.isEmpty { classes.insert("word") }
+            if !row.lastErrorText.isEmpty || row.errors > 0 || row.sessionErrors > 0 {
+                classes.insert("error")
+            }
+            if !row.model.isEmpty { classes.insert("model") }
+            if !row.cwd.isEmpty { classes.insert("workspace") }
+        }
+        return classes
     }
 
     /// One item of the agent's own plan (2.8). `text` is sanitized and

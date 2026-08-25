@@ -331,6 +331,17 @@ private struct AgentDetailView: View {
                 // Freshness-gated with the same rule as the story line: the
                 // tray withdrew a 30-minute-silent plan as "now", and Details
                 // labelling it "Current step" would put it right back.
+                // 2.9: the push-fresh action, full target — the row shows the
+                // leaf, Details owes the whole path. Gated by its own
+                // second-grade window, not the 30-minute one.
+                if row.liveActionFresh, !row.liveTool.isEmpty {
+                    fact(
+                        store.tr(.detailLiveAction),
+                        value: row.liveTarget.isEmpty
+                            ? row.liveTool
+                            : row.liveTool + " · " + row.liveTarget
+                    )
+                }
                 if row.selfReportFresh {
                     if !row.planStep.isEmpty {
                         fact(store.tr(.detailStep), value: row.planStep)

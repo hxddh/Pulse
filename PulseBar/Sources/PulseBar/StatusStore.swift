@@ -861,7 +861,9 @@ final class StatusStore: ObservableObject {
                     return max(0, Date().timeIntervalSince1970 - Double(newest) / 1000.0)
                 }(),
                 hasStalledLive: rows.contains { $0.liveProcess && $0.isStalled },
-                collectorExplain: health?.explain ?? ActivityHarvest.CollectorExplain()
+                collectorExplain: health?.explain ?? ActivityHarvest.CollectorExplain(),
+                factClasses: health?.factClasses ?? [],
+                looksDrifted: health?.looksDrifted ?? false
             )
         }
     }
@@ -1190,6 +1192,21 @@ final class StatusStore: ObservableObject {
     /// What came of the read: where the headline came from, or which layer
     /// lost it. The second one is the question Support Health exists to
     /// answer and the one that used to require reading debug.log.
+    /// 2.9 · declared vs measured: which fact classes actually came out of
+    /// the latest scan, and the one degradation worth naming out loud —
+    /// a structured adapter that produced rows but zero core facts. Names
+    /// only; no values, no paths.
+    func supportYieldDetail(_ item: AgentSupportHealth) -> String {
+        if item.looksDrifted {
+            return tr(.supportYieldDrifted)
+        }
+        guard !item.factClasses.isEmpty else { return "" }
+        let order = ["task", "tool", "tokens", "progress", "plan", "word", "error", "model", "workspace"]
+        let present = order.filter { item.factClasses.contains($0) }
+        guard !present.isEmpty else { return "" }
+        return String(format: tr(.supportYield), present.joined(separator: " · "))
+    }
+
     func supportCollectorOutcomeDetail(_ health: AgentSupportHealth) -> String {
         let explain = health.collectorExplain
         if !explain.emptyReason.isEmpty {
@@ -1447,11 +1464,21 @@ final class StatusStore: ObservableObject {
         }
         refresh(reason: "start")
         rescheduleTimer()
-        attentionWatcher.start { [weak self] in
-            Task { @MainActor in
-                self?.refresh(reason: "attention")
+        attentionWatcher.start(
+            onChange: { [weak self] in
+                Task { @MainActor in
+                    self?.refresh(reason: "attention")
+                }
+            },
+            onActivity: { [weak self] in
+                // An event per vendor tool call must never cost a full
+                // harvest — this path reads one bounded directory and
+                // patches the rows in place.
+                Task { @MainActor in
+                    self?.applyActivityLight()
+                }
             }
-        }
+        )
         powerMonitor.start { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -2561,6 +2588,10 @@ final class StatusStore: ObservableObject {
             let fleetReports = FleetSnapshot.readReports(
                 selfHost: PulseHookReceiver.respondHost(), nowMs: scanNowMs
             )
+            // 2.9: push-fresh activity events. Read here so a full rebuild
+            // carries them; the watcher's light path keeps them second-fresh
+            // between scans.
+            let activityEvents = ActivitySpool.readEvents(nowMs: scanNowMs)
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DebugLog.write(
                 "scan done #\(ticket) \(ms)ms harvest=\(why) scoped=\(scopedHarvest) procs=\(procs.count) " +
@@ -2603,7 +2634,8 @@ final class StatusStore: ObservableObject {
                     clearRefreshing: showSpinner,
                     reason: reason,
                     respondInbound: respondInbound,
-                    fleet: fleetReports
+                    fleet: fleetReports,
+                    activity: activityEvents
                 )
             }
         }
@@ -2702,6 +2734,51 @@ final class StatusStore: ObservableObject {
         collectorScanIncomplete = !complete && !intentionalPartial
     }
 
+    // MARK: - 2.9 activity light path
+
+    /// The watcher's cheap wake: read the bounded spool off the main thread,
+    /// then patch matching rows in place. No harvest, no rebuild — the next
+    /// full scan re-applies the same events through the builder, so this
+    /// path can never drift from it.
+    func applyActivityLight() {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        scanQueue.async { [weak self] in
+            let events = ActivitySpool.readEvents(nowMs: nowMs)
+            guard !events.isEmpty else { return }
+            DispatchQueue.main.async {
+                self?.applyActivityEvents(events, nowMs: nowMs)
+            }
+        }
+    }
+
+    func applyActivityEvents(_ events: [ActivitySpool.Event], nowMs: Int64) {
+        var byKey: [String: ActivitySpool.Event] = [:]
+        for event in events {
+            guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
+            byKey[agent.rawValue + "|" + event.session] = event
+        }
+        guard !byKey.isEmpty else { return }
+        func patch(_ rows: inout [AgentRow]) -> Bool {
+            var changed = false
+            for index in rows.indices where !rows[index].isRemote && !rows[index].sessionID.isEmpty {
+                let key = rows[index].agent.rawValue + "|" + rows[index].sessionID
+                guard let event = byKey[key] else { continue }
+                var row = rows[index]
+                row.applyActivity(event, nowMs: nowMs)
+                if row != rows[index] {
+                    rows[index] = row
+                    changed = true
+                }
+            }
+            return changed
+        }
+        _ = patch(&cachedAll)
+        var next = snapshot
+        if patch(&next.rows) {
+            snapshot = next
+        }
+    }
+
     fileprivate func applyScan(
         procs: [ProcessProbe.Hit],
         harvest: HarvestOutcome,
@@ -2712,7 +2789,8 @@ final class StatusStore: ObservableObject {
         clearRefreshing: Bool = false,
         reason: String = "",
         respondInbound: [RespondSpool.InboundRequest] = [],
-        fleet: [FleetSnapshot.Report] = []
+        fleet: [FleetSnapshot.Report] = [],
+        activity: [ActivitySpool.Event] = []
     ) {
         defer { finishScanFlight() }
 
@@ -2815,7 +2893,8 @@ final class StatusStore: ObservableObject {
                 harvest: acts,
                 harvestUnreliable: harvestUnreliable,
                 attention: attention,
-                fleet: fleet
+                fleet: fleet,
+                activity: activity
             ),
             previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: waitingKeysForEdges),
             context: SnapshotBuilder.Context(

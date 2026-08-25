@@ -193,6 +193,21 @@ enum HooksInstaller {
             command: hookCommand(agent: "claude", kind: "permission"),
             matcher: nil
         )
+        // 2.9 activity events: the hook finally speaks about work, not just
+        // waits. Both handlers write a bounded per-session state file and
+        // exit — never attention, never a hold (see ActivitySpool).
+        ensureClaudeEvent(
+            &hooks,
+            event: "PreToolUse",
+            command: hookCommand(agent: "claude", kind: "activity"),
+            matcher: nil
+        )
+        ensureClaudeEvent(
+            &hooks,
+            event: "UserPromptSubmit",
+            command: hookCommand(agent: "claude", kind: "prompt"),
+            matcher: nil
+        )
         data["hooks"] = hooks
         let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
         var text = String(data: out, encoding: .utf8) ?? "{}"

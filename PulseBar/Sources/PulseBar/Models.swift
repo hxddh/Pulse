@@ -599,6 +599,38 @@ struct AgentRow: Identifiable, Hashable {
     /// wearing fresh clothes. The tray withdrew it; Details must not keep
     /// presenting it (Codex review on #74 caught Details skipping this gate).
     var selfReportFresh: Bool { lastActivitySeconds <= 30 * 60 }
+    /// 2.9 · push-fresh action from the hook's activity spool. `liveTool` /
+    /// `liveTarget` are what a `PreToolUse` event said is running right now;
+    /// a prompt event clears them (the previous tool finished with its turn).
+    var liveTool: String = ""
+    var liveTarget: String = ""
+    var liveAtMs: Int64 = 0
+    /// Present tense is allowed only for second-grade evidence — past the
+    /// window, the polled story takes back over and this says nothing.
+    var liveActionFresh: Bool {
+        guard liveAtMs > 0 else { return false }
+        let age = Date().timeIntervalSince1970 * 1000 - Double(liveAtMs)
+        return age <= Double(ActivitySpool.liveWindowMs)
+    }
+
+    /// One application rule shared by the builder and the watcher's light
+    /// path — two implementations would drift. The stamp feeds
+    /// `activityChangedMs` (the live-signal clock), never `harvestMs`: the
+    /// session moved now, but its harvested facts are still as old as their
+    /// harvest. A prompt event clears the tool — the previous tool finished
+    /// with its turn, and claiming it as "now" would be stale.
+    mutating func applyActivity(_ event: ActivitySpool.Event, nowMs: Int64) {
+        let stamp = min(event.tsMs, nowMs)
+        if event.event == "tool" {
+            liveTool = event.tool
+            liveTarget = event.target
+        } else {
+            liveTool = ""
+            liveTarget = ""
+        }
+        liveAtMs = max(liveAtMs, stamp)
+        activityChangedMs = max(activityChangedMs, stamp)
+    }
     /// 1.2 · facts only a full read of the transcript can produce.
     ///
     /// An agent calling the same tool back to back is busy without being any
@@ -1280,6 +1312,12 @@ struct AgentSupportHealth: Identifiable, Equatable {
     /// debug.log, which meant the one question Support Health exists to answer
     /// — "why is this row empty?" — still cost a terminal to ask.
     var collectorExplain: ActivityHarvest.CollectorExplain = ActivityHarvest.CollectorExplain()
+    /// 2.9 · measured fact classes from the latest scan (names only). The
+    /// declared tier is a promise; this is what actually came out.
+    var factClasses: Set<String> = []
+    /// Declared structured, produced rows, zero core facts — drift, not
+    /// idleness. See `CollectorHealth.looksDrifted`.
+    var looksDrifted: Bool = false
 
     var id: AgentID { agent }
 

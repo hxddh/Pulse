@@ -9,16 +9,24 @@ final class AttentionWatcher: @unchecked Sendable {
     /// file-moving tool does. An in-place append to an existing inbox file does
     /// not fire it; that arrives on the next scan tick instead of instantly.
     private var inboxSource: DispatchSourceFileSystemObject?
+    /// 2.9: the activity spool gets its own source and its own callback —
+    /// an event per vendor tool call must wake the cheap spool read, never
+    /// the full refresh the attention sources are wired to.
+    private var activitySource: DispatchSourceFileSystemObject?
     private var onChange: (() -> Void)?
+    private var onActivity: (() -> Void)?
     private var lastFire: TimeInterval = 0
+    private var lastActivityFire: TimeInterval = 0
     private var path: String = ""
     private var inboxPath: String = ""
+    private var activityPath: String = ""
     private let lock = NSLock()
 
-    func start(onChange: @escaping () -> Void) {
+    func start(onChange: @escaping () -> Void, onActivity: (() -> Void)? = nil) {
         stop()
         lock.lock()
         self.onChange = onChange
+        self.onActivity = onActivity
         lock.unlock()
         let file = AttentionIO.path
         let dir = file.deletingLastPathComponent()
@@ -32,6 +40,12 @@ final class AttentionWatcher: @unchecked Sendable {
         inboxPath = inbox.path
         arm()
         armInbox()
+        if onActivity != nil {
+            let activity = ActivitySpool.directory
+            try? FileManager.default.createDirectory(at: activity, withIntermediateDirectories: true)
+            activityPath = activity.path
+            armActivity()
+        }
     }
 
     func stop() {
@@ -64,6 +78,67 @@ final class AttentionWatcher: @unchecked Sendable {
         inboxSource?.setEventHandler {}
         inboxSource?.cancel()
         inboxSource = nil
+        activitySource?.setEventHandler {}
+        activitySource?.cancel()
+        activitySource = nil
+    }
+
+    var isWatchingActivity: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return activitySource != nil
+    }
+
+    /// Arms the activity spool directory only. The throttle is deliberately
+    /// looser than the attention sources' (1s vs 0.35s): tool calls arrive
+    /// seconds apart and the payoff per wake is one bounded directory read,
+    /// so coalescing costs nothing a person could notice.
+    func armActivity() {
+        lock.lock()
+        activitySource?.setEventHandler {}
+        activitySource?.cancel()
+        activitySource = nil
+        let watchPath = activityPath
+        lock.unlock()
+
+        guard !watchPath.isEmpty else { return }
+        var isDirectory: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: watchPath, isDirectory: &isDirectory)
+            || !isDirectory.boolValue {
+            try? FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: watchPath, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+        let fd = open(watchPath, O_EVTONLY)
+        guard fd >= 0 else { return }
+
+        let src = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .rename, .delete],
+            queue: .main
+        )
+        src.setEventHandler { [weak self] in
+            guard let self else { return }
+            let now = Date().timeIntervalSince1970
+            self.lock.lock()
+            let due = now - self.lastActivityFire > 1.0
+            if due { self.lastActivityFire = now }
+            let cb = self.onActivity
+            let flags = src.data
+            self.lock.unlock()
+            if due { cb?() }
+            if flags.contains(.delete) || flags.contains(.rename) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    self?.armActivity()
+                }
+            }
+        }
+        src.setCancelHandler { close(fd) }
+        lock.lock()
+        activitySource = src
+        lock.unlock()
+        src.resume()
     }
 
     /// Arms the inbox directory only. Symmetric with `arm()` — neither may

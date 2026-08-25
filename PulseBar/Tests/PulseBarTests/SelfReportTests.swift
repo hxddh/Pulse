@@ -178,6 +178,31 @@ final class SelfReportTests: XCTestCase {
         XCTAssertLessThanOrEqual(row.lastWord.count, NativeActivityHarvest.maxSelfReportLength)
     }
 
+    func testTheSelfReportScanIsNotGatedByAVendorWhitelist() throws {
+        // 2.9: Amp is deliberately NOT in usesTranscriptUserPrompt — before
+        // this, the reverse scan never ran on its transcripts even when the
+        // exact same shapes were right there. The scanner matches shapes,
+        // not vendor names.
+        let session = home
+            .appendingPathComponent(".amp/threads", isDirectory: true)
+            .appendingPathComponent("t1.jsonl")
+        try FileManager.default.createDirectory(
+            at: session.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let lines = [
+            #"{"sessionId":"amp-1","cwd":"/work/repo"}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"TodoWrite","input":{"todos":[{"content":"Run the tests","status":"in_progress"}]}}]}}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Tests are green."}]}}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.amp])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .amp })
+        XCTAssertEqual(row.progressTotal, 1)
+        XCTAssertEqual(row.planStep, "Run the tests")
+        XCTAssertEqual(row.lastWord, "Tests are green.")
+    }
+
     // MARK: - Codex: update_plan and event messages
 
     func testCodexUpdatePlanAndAgentMessageBecomeFacts() throws {

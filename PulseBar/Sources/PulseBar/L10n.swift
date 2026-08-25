@@ -617,6 +617,10 @@ enum L10n {
         case .detailPlan: return "Plan (agent's own)"
         case .detailLastWord: return "Last word"
         case .detailLastError: return "Last error"
+        case .detailLiveAction: return "Right now"
+        case .supportYield: return "Measured facts: %@"
+        case .supportYieldDrifted:
+            return "Structured adapter yielded rows but no core facts — the vendor format may have drifted"
         }
     }
 
@@ -1155,6 +1159,10 @@ enum L10n {
         case .detailPlan: return "计划（agent 自述）"
         case .detailLastWord: return "刚说的话"
         case .detailLastError: return "最近错误"
+        case .detailLiveAction: return "此刻"
+        case .supportYield: return "实测事实：%@"
+        case .supportYieldDrifted:
+            return "声明结构化、本拍有行却零核心事实 —— 厂商格式可能已漂移"
         }
     }
 
@@ -1296,6 +1304,7 @@ enum L10n {
         case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
         case filesFact, contextFact, progressFact, turnsFact
         case currentStepFact, detailStep, detailPlan, detailLastWord, detailLastError
+        case detailLiveAction, supportYield, supportYieldDrifted
         case trayScanIncomplete
     }
 }
