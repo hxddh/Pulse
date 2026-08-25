@@ -212,7 +212,7 @@ extension StatusStore {
         // minutes of transcript silence it would be a stale plan wearing
         // fresh clothes. It informs, and must never imply Waiting.
         let planStep = row.planStep.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !planStep.isEmpty, row.lastActivitySeconds <= 30 * 60 {
+        if !planStep.isEmpty, row.selfReportFresh {
             bits.append(String(format: tr(.currentStepFact), planStep))
         }
         // Prefer explicit lifecycle — never promote last tool under a Now label.
