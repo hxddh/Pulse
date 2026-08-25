@@ -102,6 +102,11 @@ def parse_kind_from_json(payload: dict) -> str:
         return str(payload.get("notification_type") or "waiting")
     if event == "PermissionRequest":
         return "permission"
+    # 2.9 activity events: never attention, never a hold — see write_activity.
+    if event == "PreToolUse":
+        return "activity"
+    if event == "UserPromptSubmit":
+        return "prompt"
     t = payload.get("type") or payload.get("event") or payload.get("method") or ""
     if t:
         return str(t)
@@ -499,6 +504,72 @@ def hold_for_verdict(
     return None
 
 
+ACTIVITY_MAX_FILES = 64
+ACTIVITY_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+
+def activity_dir() -> Path:
+    return pulse_dir() / "activity.d"
+
+
+def sanitize_session_token(value: str) -> str:
+    """Filename-safe session identity — the filename decides who this is."""
+    kept = "".join(c if (c.isalnum() or c in "-_") else "-" for c in value)
+    return kept[:80]
+
+
+def write_activity(agent: str, kind: str, payload: dict) -> None:
+    """One state file per session under activity.d/, overwritten per event.
+
+    This is the 2.9 quality axis: Pulse's hook already stands in the vendor's
+    event stream, so "what is it doing right now" can be push-fresh instead
+    of poll-stale. Activity is a state, not a ledger — the latest event
+    replaces the previous one, the directory stays bounded, and nothing here
+    ever touches attention.tsv or holds the agent: an activity event is not a
+    wait and must never be allowed to become one.
+    """
+    session = session_from_json(payload)
+    if not session:
+        # No identity, no state file. A session-less event cannot be matched
+        # to a row, and a guessed filename would collide across sessions.
+        return
+    tool = redact_sensitive(str(payload.get("tool_name") or "").strip())[:64]
+    descriptor = tool_descriptor(payload)
+    target = ""
+    if tool and descriptor.startswith(tool + ": "):
+        target = redact_sensitive(descriptor[len(tool) + 2 :])[:160]
+    prompt = ""
+    if kind == "prompt":
+        prompt = condense_one_line(
+            redact_sensitive(str(payload.get("prompt") or "")), 160
+        )
+    record = {
+        "v": 1,
+        "agent": agent,
+        "session": session,
+        "event": "tool" if kind == "activity" else "prompt",
+        "tool": tool,
+        "target": target,
+        "prompt": prompt,
+        "cwd": cwd_from_json(payload),
+        "ts_ms": _wall_ms(),
+    }
+    directory = activity_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    _write_private_json(directory / (agent + "-" + sanitize_session_token(session) + ".json"), record)
+    now_ms = _wall_ms()
+    try:
+        for stale in directory.glob("*.json"):
+            try:
+                if now_ms - int(stale.stat().st_mtime * 1000) > ACTIVITY_MAX_AGE_MS:
+                    stale.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+    _prune_oldest(directory, ACTIVITY_MAX_FILES)
+
+
 def _write_private_json(path: Path, record: dict) -> None:
     """0600 from the first byte, atomically renamed into place."""
     tmp = path.with_name("." + path.name + "." + str(os.getpid()) + ".tmp")
@@ -740,6 +811,17 @@ def main(argv: list[str]) -> int:
     # Codex sometimes nests event
     if isinstance(payload.get("msg"), dict) and not payload.get("type"):
         payload = {**payload, **payload["msg"]}
+
+    # Activity events branch off before the attention pipeline entirely:
+    # they are state for the tray's "now", not a wait, not a hold, and they
+    # must stay cheap — write one small file and leave.
+    plain = (kind_arg or parse_kind_from_json(payload) or "").strip().lower()
+    if plain in ("activity", "prompt"):
+        try:
+            write_activity(agent, plain, payload)
+        except Exception:
+            pass
+        return 0
 
     kind = normalize_kind(kind_arg or parse_kind_from_json(payload) or "waiting")
     if not accepts_write(kind):
