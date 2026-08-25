@@ -17,6 +17,13 @@ final class AttentionWatcher: @unchecked Sendable {
     private var onActivity: (() -> Void)?
     private var lastFire: TimeInterval = 0
     private var lastActivityFire: TimeInterval = 0
+    /// A trailing fire is armed when an event lands inside the throttle
+    /// window. Without it, the second of two tool events one second apart
+    /// was consumed silently and the row kept showing the previous tool
+    /// until the next probe tick (Codex review on #78) — a leading-edge
+    /// throttle alone drops exactly the freshest state this source exists
+    /// to deliver.
+    private var activityTrailingArmed = false
     private var path: String = ""
     private var inboxPath: String = ""
     private var activityPath: String = ""
@@ -124,10 +131,26 @@ final class AttentionWatcher: @unchecked Sendable {
             self.lock.lock()
             let due = now - self.lastActivityFire > 1.0
             if due { self.lastActivityFire = now }
+            let armTrailing = !due && !self.activityTrailingArmed
+            if armTrailing { self.activityTrailingArmed = true }
             let cb = self.onActivity
             let flags = src.data
             self.lock.unlock()
             if due { cb?() }
+            if armTrailing {
+                // Trailing edge: whatever landed inside the window is read
+                // once the window closes, so the latest state file is never
+                // left waiting for the next probe tick.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.05) { [weak self] in
+                    guard let self else { return }
+                    self.lock.lock()
+                    self.activityTrailingArmed = false
+                    self.lastActivityFire = Date().timeIntervalSince1970
+                    let trailing = self.onActivity
+                    self.lock.unlock()
+                    trailing?()
+                }
+            }
             if flags.contains(.delete) || flags.contains(.rename) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                     self?.armActivity()

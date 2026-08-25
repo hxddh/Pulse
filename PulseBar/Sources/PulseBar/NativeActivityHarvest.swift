@@ -428,6 +428,11 @@ enum NativeActivityHarvest {
                 if health[index].state == .observed || health[index].rowCount > 0 {
                     health[index].state = .noSessions
                     health[index].rowCount = 0
+                    // 2.9 Codex review on #78: the yield was measured before
+                    // this cleanup, so without clearing it Support Health
+                    // could report "no sessions" and a list of measured
+                    // facts about the same adapter in the same breath.
+                    health[index].factClasses = []
                 }
             }
         }
