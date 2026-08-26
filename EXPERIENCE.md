@@ -637,7 +637,11 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Prefs 布局 | `SettingsViews.swift` → `SettingsView` |
 | 状态合并 / 编码 | `SnapshotBuilder.swift` |
 | 主行来源 / 采集 explain | `NativeActivityHarvest.swift` |
-| 通知策略 / 定时器 | `StatusStore.swift` |
+| 状态与设置面 | `StatusStore.swift`（4.0-γ 起只剩状态声明与小胶水；行为按职责住进 `StatusStore{Engine,Waiting,Look,Support,Evidence,Settings,Maintenance,Bridge,Fixture}.swift`，逐成员原样搬运、全量测试为冻结契约） |
+| 扫描引擎 | `StatusStoreEngine.swift`（start / refresh / harvest 应用 / 活动轻路径） |
+| 通知策略 / 等待动作 | `StatusStoreWaiting.swift` |
+| 会话事实簇 | `SessionFacts.swift`（`SessionRemote` / `SessionSelfReport` / `SessionLiveAction` / `SessionDigestFacts` / `SessionEffect`——AgentRow 组合它们并保留转发访问器，读写两侧零改动） |
+| 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` · `TranscriptReader.swift` |
 | 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |
 | 设置与迁移 | `PulseSettings.swift` |
 | 文案 | `L10n.swift` |
