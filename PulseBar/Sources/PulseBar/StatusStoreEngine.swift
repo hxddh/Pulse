@@ -400,7 +400,12 @@ extension StatusStore {
             }
             return changed
         }
-        _ = patch(&cachedAll)
+        // 5.0-α: the light path patches the observed source (events are
+        // keyed to local observed sessions; a managed session's stream is
+        // first-party and needs no spool echo), then re-merges.
+        if observedSessions.patchSessions(patch) {
+            cachedAll = sessionSources.merged()
+        }
         var next = snapshot
         if patch(&next.rows) {
             snapshot = next
@@ -559,7 +564,11 @@ extension StatusStore {
         if dismissedPendingKeys.count != dismissedCountBefore {
             persistDismissedPendingKeys()
         }
-        cachedAll = result.rows
+        // 5.0-α: the builder's rows enter through the observed source and
+        // the store caches the coordinator's merge — with only the observed
+        // source registered this is a verbatim passthrough.
+        observedSessions.replaceSessions(result.rows)
+        cachedAll = sessionSources.merged()
         // Before any notification decision, not after the scan that made it.
         // The banner's Deny is chosen from these matches, and a permission
         // request only ever gets one banner — deciding from the previous
