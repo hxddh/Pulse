@@ -138,7 +138,9 @@ extension StatusStore {
     var workbenchDispatchRoots: [String] {
         var seen = Set<String>()
         var roots: [String] = []
-        for row in allRows where !row.isRemote && !row.workspaceRoot.isEmpty {
+        // Managed rows excluded: their root is a Pulse-created worktree, and
+        // a worktree of a worktree is nesting nobody asked for.
+        for row in allRows where !row.isRemote && !row.isManaged && !row.workspaceRoot.isEmpty {
             if seen.insert(row.workspaceRoot).inserted {
                 roots.append(row.workspaceRoot)
             }

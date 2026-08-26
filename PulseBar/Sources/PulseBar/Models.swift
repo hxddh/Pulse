@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "4.0.0"
+    static let semver = "5.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -691,6 +691,11 @@ struct AgentRow: Identifiable, Hashable {
     /// never in fleet snapshots or any channel that leaves the machine.
     /// Empty for remote rows, cache-tier rows, and process-only rows.
     var transcriptPath: String = ""
+    /// 5.0-β · non-empty when this row is a Pulse-run managed session
+    /// (scene BG). The workbench swaps the inspector for the live
+    /// conversation; every other surface treats the row as ordinary.
+    var managedID: String = ""
+    var isManaged: Bool { !managedID.isEmpty }
     /// Canonical repository root for this row's working directory. Empty when
     /// the path is not a working copy, was never confirmed, or the axis is
     /// off. Never displayed — it exists so two agents in the same checkout

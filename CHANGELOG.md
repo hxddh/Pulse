@@ -2,6 +2,63 @@
 
 All notable changes to Pulse are documented here.
 
+## 5.0.0 — Runtime / 双引擎
+
+4.0 发布当天的判词仍是「半成品」。这次先把镜子摆正：对照 2026 年顶尖同类
+（Conductor / Nimbalyst / Vibe Kanban / Claude Squad / Sculptor / Omnara），
+**每一家都拥有它展示的会话** —— 由它启动 agent、独占结构化输出流，完整对话、
+直接回复、隔离并行、验收合并是架构的自然结果；Pulse 是全市场唯一的纯旁观者，
+观察靠磁盘考古、动作靠敲键盘，天花板是架构性的。5.0 的质变由市场定义：
+**Pulse 拥有它派出的会话，同时保留对一切既有会话的旁观。**
+
+### 引擎边界（5.0-α，重构本体）
+
+`SessionSource` 成为会话生产者的统一契约：`ObservedSessionSource` 收编现有
+harvest/builder 整条管线为第一个 conformer，`SessionSourceCoordinator` 归
+store 持有并拥有合并（各源内部顺序保留、注册序定优先、rowKey 冲突先注册者
+胜 —— 旁观管线对它也见到的 key 保持 ground truth）。单源即逐字节透传，全量
+测试冻结行为；合并契约由 SessionSourceTests 钉死。这就是 3.0 起「接缝跟着
+用法走」一直欠着的那条真接缝 —— 第二个生产者到场，接缝落地。
+
+### 受管会话（5.0-β，质变本体）
+
+派活默认走受管：Pulse 以 `claude -p --output-format stream-json`（续回合
+`--resume`，会话 ID 过 3.0 同一道形状门）**纯管道**回合制驱动子进程 ——
+无 PTY、无 AppleScript、无 TCC，prompt 作 argv 单参数上车（没有 shell 就
+没有转义面）。跑在 Pulse 自建的独立 worktree（`git worktree add` +
+`pulse/<slug>` 分支，Application Support 命名空间，用户自己的工作副本一寸
+不动）。
+
+事实从此是**第一手的**：流事件经与观察侧**同一个** TranscriptReader 解析
+（一个解析器两处供货，永不漂移）；result 事件收束回合（成本 / token 逐回合
+累计、错误 subtype 如实）；无 result 的退出不冒充成功（静默退出 = 失败，带
+stderr 尾巴）；未知事件与非 JSON 行分开计数明说。检视器换成实时对话：回复框
+= 真回合，取消 = SIGTERM→2s→SIGKILL，退出全员收割（无孤儿烧 token）。受管的
+「等你回复」只在指挥台呈现，**不点亮托盘红灯** —— Waiting 唯一来源仍是
+attention 协议。终端派活退居选项（仍需 4.0 的 Automation opt-in）。
+
+### 验收落地（5.0-γ）
+
+受管 worktree 上的三个动词，全部只因用户点击：**提交**（信息是用户写的，
+空信息在 git 之前拒绝）、**推送**（只推 `pulse/` 前缀分支，用用户自己的
+git 凭据，失败原文回显）、**开 PR**（origin 解析为 GitHub 才给 compare
+链接；其余不装按钮 —— 猜的 URL 不是诚实）。**原则重划（照 3.0-β 重划
+「只有计数」的先例）：「永不代动仓库」是对旁观会话的规矩** —— Pulse 自建
+命名空间里，用户点击就是行动者；每个动词跑前过命名空间门（`isPulseWorktree`），
+旁观仓库与用户工作副本在构造上不可触。真链条（改 → 提交 → 推送 → 分支带
+内容抵达 origin）由本地 bare origin 在 CI 上实证。
+
+### 边界不动
+
+旁观会话的一切诚实规矩一字不动；托盘规矩不动；跨机器仍只运计数与短名；
+能耗硬约束（流是事件驱动，比轮询更省）。真机验证脚本
+`scripts/qa_managed_session.sh`（真 claude 二进制、真回合、进程收割）。
+
+### 之后
+
+队列 / 多任务看板、远端派活（复用 respond 签名通道）、受管权限的
+Respond 通道排 5.1。
+
 ## 4.0.0 — Operator / 操作台
 
 3.0 发布当天得到的判词是「半成品：没有质变、没有重构、能力平庸」。判词成立：

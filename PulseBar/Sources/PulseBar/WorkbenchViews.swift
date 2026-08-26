@@ -28,8 +28,15 @@ struct WorkbenchView: View {
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 380)
         } detail: {
             if let row = selectedRow {
-                SessionInspectorView(store: store, row: row)
-                    .id(row.rowKey)
+                // 5.0-β: a managed row's inspector is the live conversation;
+                // observed rows keep the 4.0 inspector unchanged.
+                if row.isManaged {
+                    ManagedSessionInspector(store: store, row: row)
+                        .id(row.rowKey)
+                } else {
+                    SessionInspectorView(store: store, row: row)
+                        .id(row.rowKey)
+                }
             } else {
                 emptyState
             }
@@ -59,21 +66,20 @@ struct WorkbenchView: View {
             }
         }
         .listStyle(.sidebar)
-        // 4.0-β (scene BF): the dispatch verb. Present only when actuation
-        // is granted — a button that would beg for a setting is noise.
+        // The dispatch verb. 5.0-β: managed dispatch is pipes-only and needs
+        // no Automation grant, so the button is always present; the
+        // terminal-mode option inside the sheet stays behind the 4.0 opt-in.
         .safeAreaInset(edge: .bottom) {
-            if store.allowWorkbenchActuation {
-                HStack {
-                    Button {
-                        showDispatch = true
-                    } label: {
-                        Label(store.tr(.workbenchDispatch), systemImage: "plus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    Spacer()
+            HStack {
+                Button {
+                    showDispatch = true
+                } label: {
+                    Label(store.tr(.workbenchDispatch), systemImage: "plus.circle")
                 }
-                .padding(10)
+                .buttonStyle(.borderless)
+                Spacer()
             }
+            .padding(10)
         }
         .sheet(isPresented: $showDispatch) {
             DispatchSheet(store: store)
@@ -489,6 +495,11 @@ private struct DispatchSheet: View {
     @State private var selectedRoot: String?
     @State private var task = ""
     @State private var failed = false
+    /// 5.0-β: managed is the default — the terminal path stays for those
+    /// who want the session under their own hands.
+    @State private var runManaged = true
+    @State private var useWorktree = true
+    @State private var managedError: String?
 
     private var roots: [String] { store.workbenchDispatchRoots }
 
@@ -516,10 +527,31 @@ private struct DispatchSheet: View {
                 TextField(store.tr(.workbenchDispatchTask), text: $task, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(2...5)
-                Text(store.tr(.workbenchDispatchHint))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // 5.0-β: managed by default — Pulse owns the session, the
+                // conversation is live in the workbench. The terminal path
+                // (off) requires the 4.0 actuation grant, so without it the
+                // toggle does not render and managed stays the only mode.
+                if store.allowWorkbenchActuation {
+                    Toggle(store.tr(.managedRunInPulse), isOn: $runManaged)
+                }
+                if runManaged {
+                    Toggle(store.tr(.managedUseWorktree), isOn: $useWorktree)
+                    Text(store.tr(.managedDispatchHint))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(store.tr(.workbenchDispatchHint))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let managedError {
+                    Text(managedError)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if failed {
                     Text(store.tr(.workbenchDispatchFailed))
                         .font(.caption)
@@ -532,14 +564,24 @@ private struct DispatchSheet: View {
                 if !roots.isEmpty {
                     Button(store.tr(.workbenchDispatchStart)) {
                         guard let root = selectedRoot else { return }
-                        if store.dispatchSession(root: root, task: task) {
+                        if runManaged {
+                            let taskText = task
+                            if let error = store.dispatchManagedSession(
+                                repoRoot: root, task: taskText, useWorktree: useWorktree
+                            ) {
+                                managedError = error
+                            } else {
+                                dismiss()
+                            }
+                        } else if store.dispatchSession(root: root, task: task) {
                             dismiss()
                         } else {
                             failed = true
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(selectedRoot == nil)
+                    .disabled(selectedRoot == nil
+                              || task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && runManaged)
                 }
             }
         }
@@ -702,7 +744,7 @@ private struct TranscriptSection: View {
 /// the same read-only plumbing the measurement uses. Local rows with a
 /// disk-confirmed root only; a remote row's path describes another machine.
 @MainActor
-private struct WorkspaceDiffSection: View {
+struct WorkspaceDiffSection: View {
     @ObservedObject var store: StatusStore
     let row: AgentRow
 
