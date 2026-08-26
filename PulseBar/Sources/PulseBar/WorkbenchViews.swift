@@ -270,39 +270,12 @@ struct SessionInspectorView: View {
         }
     }
 
-    /// The Respond card, workbench edition — same rules as Details (scene
-    /// AR): Allow only next to the complete text it would approve, Deny
-    /// always available, the fate note replacing the buttons once a verdict
-    /// is written. The store methods are the tested ones; nothing re-decides
-    /// here.
+    /// The Respond card, workbench edition. 7.0-α: the body is the shared
+    /// `SessionRespondCard` — same rules as Details (scene AR): Allow only
+    /// next to the complete text it would approve, Deny always available,
+    /// the fate note replacing the buttons once a verdict is written.
     private func respondSection(_ inbound: RespondSpool.InboundRequest) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("\(store.tr(.respondFullRequest)) · \(inbound.toolName.isEmpty ? row.agent.displayName : inbound.toolName)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            ScrollView {
-                Text(inbound.request.fullRequest)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 200)
-            .padding(8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-            if let fate = store.respondFateNote(row) {
-                Text(fate)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 12) {
-                    Button(store.tr(.respondDeny)) { store.respondDeny(row) }
-                    if inbound.request.canOfferAllow {
-                        Button(store.tr(.respondAllow)) { store.respondAllow(row) }
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-        }
+        SessionRespondCard(store: store, row: row, inbound: inbound, compact: false)
     }
 
     /// 4.0-β (scene BE): delivery. The reply is the user's words, the click

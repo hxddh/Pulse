@@ -220,7 +220,20 @@ struct TrayPanel: View {
 
     /// Row key the keyboard has selected, if any.
     @State fileprivate var selectedKey: String?
+    /// 7.0-β: rows opened in place. Keys, not indices — the list reorders
+    /// under live scans and an index would expand a different session.
+    @State fileprivate var expandedRowKeys: Set<String> = []
     @FocusState fileprivate var listFocused: Bool
+
+    fileprivate func toggleExpanded(_ key: String) {
+        withAnimation(.easeOut(duration: 0.16)) {
+            if expandedRowKeys.contains(key) {
+                expandedRowKeys.remove(key)
+            } else {
+                expandedRowKeys.insert(key)
+            }
+        }
+    }
 
     fileprivate func toggleFold(_ id: String) {
         // A panel that repaints itself every couple of seconds cannot afford
@@ -286,6 +299,9 @@ struct TrayPanel: View {
         let visible = visibleRows(groups)
         guard visible.contains(where: { $0.rowKey == key }) else { return }
         selectedKey = key
+        // A reveal means "I need to deal with this row" — arrive with the
+        // in-place card already open (scene BM).
+        expandedRowKeys.insert(key)
         listFocused = true
         store.clearPendingRevealRowKey()
     }
@@ -842,7 +858,9 @@ struct TrayPanel: View {
                                         store: store,
                                         pathInHeading: group.statesPath && showHeading(group, of: groups),
                                         selected: selectedKey == row.rowKey,
-                                        compact: filteredRows.count >= TrayFold.crowdedFrom
+                                        compact: filteredRows.count >= TrayFold.crowdedFrom,
+                                        expanded: expandedRowKeys.contains(row.rowKey),
+                                        onToggleExpand: { toggleExpanded(row.rowKey) }
                                     )
                                     .id(row.rowKey)
                                     .transition(.opacity)
@@ -1040,6 +1058,11 @@ private struct AgentRowButton: View {
     /// Preserve the core hierarchy when the list is crowded; only secondary
     /// execution context is sacrificed.
     var compact = false
+    /// 7.0-β: the row opens in place. State lives in `TrayPanel` (a set of
+    /// row keys), not here — rows are recreated on every scan and `@State`
+    /// would forget the user's click within seconds.
+    var expanded = false
+    var onToggleExpand: (() -> Void)?
     @State private var hovering = false
 
     private var highlight: Color {
@@ -1193,14 +1216,21 @@ private struct AgentRowButton: View {
                         : (row.canFocusTerminal ? store.primaryActionTitle(row) : "")
                 )
 
-                if hasSecondaryActions {
-                    secondaryActionsMenu
-                        .opacity(hovering || selected ? 1 : 0)
-                        .allowsHitTesting(hovering || selected)
-                        .accessibilityHidden(false)
-                        .padding(.top, 6)
-                        .padding(.trailing, TrayChrome.padX)
+                // Chevron and overflow are siblings of the row button, never
+                // nested inside it — the Menu-in-Button click-bubbling lesson.
+                HStack(spacing: 4) {
+                    if onToggleExpand != nil {
+                        expandChevron
+                    }
+                    if hasSecondaryActions {
+                        secondaryActionsMenu
+                            .opacity(hovering || selected ? 1 : 0)
+                            .allowsHitTesting(hovering || selected)
+                            .accessibilityHidden(false)
+                    }
                 }
+                .padding(.top, 6)
+                .padding(.trailing, TrayChrome.padX)
             }
 
             // Actions stay visible where they are urgent, and appear on hover
@@ -1270,6 +1300,16 @@ private struct AgentRowButton: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 48)
+                    .padding(.trailing, TrayChrome.padX)
+                    .padding(.bottom, 8)
+            }
+
+            // 7.0-β: the in-place mini-inspector (scene BM). Same cards as
+            // the workbench, compact face — understanding and acting no
+            // longer require leaving the popup.
+            if expanded {
+                TrayExpandedCard(store: store, row: row)
                     .padding(.leading, 48)
                     .padding(.trailing, TrayChrome.padX)
                     .padding(.bottom, 8)
@@ -1345,6 +1385,26 @@ private struct AgentRowButton: View {
         return GlanceKind.idle.lampColor
     }
 
+    /// 7.0-β: the in-place disclosure. Always visible (an affordance nobody
+    /// hovers to discover is not an affordance), quiet until hovered.
+    private var expandChevron: some View {
+        Button {
+            onToggleExpand?()
+        } label: {
+            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 20)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.primary.opacity(hovering || expanded ? 0.08 : 0.03))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(store.tr(expanded ? .trayCollapseRow : .trayExpandRow))
+    }
+
     /// Always-present action access for keyboard and VoiceOver users.
     ///
     /// Hover actions remain a fast pointer path, but are no longer the only
@@ -1391,31 +1451,43 @@ private struct AgentRowButton: View {
         }
     }
 
-    /// Session title is the row hero; process-only rows de-rank to a status phrase.
+    /// The row hero, chosen by `TrayRowLead` (scene BL): waiting and
+    /// process-only rows keep their 2.x rules; live rows lead with the
+    /// agent's fresh words over a title the user has already read. This
+    /// property only maps the chosen source to its string.
     private var heroTitle: String {
-        if row.waiting {
-            if let t = row.usefulTask { return Self.truncate(t, Self.heroLimit) }
-            let short = AgentRow.shortProject(row.project)
-            if !short.isEmpty { return short }
-            return store.tr(.needsYou)
-        }
-        if row.isProcessOnly {
-            return row.canFocusTerminal
-                ? store.tr(.terminalDetectedNoDetails)
-                : store.tr(.appDetectedNoDetails)
-        }
-        if let t = row.usefulTask {
-            return Self.truncate(t, Self.heroLimit)
-        }
-        // Humanize the live tool — never show update_plan / Bash raw.
-        if let toolTitle = store.heroToolTitle(row) {
-            return Self.truncate(toolTitle, Self.heroLimit)
-        }
         let short = AgentRow.shortProject(row.project)
-        if !short.isEmpty { return short }
-        // Agent product name is already on the identity line — do not reuse it
-        // as the hero (EXPERIENCE: no agent-as-hero).
-        return row.canFocusTerminal ? store.tr(.terminalSession) : store.tr(.appSession)
+        switch TrayRowLead.source(
+            waiting: row.waiting,
+            isProcessOnly: row.isProcessOnly,
+            canFocusTerminal: row.canFocusTerminal,
+            hasTask: row.usefulTask != nil,
+            hasProject: !short.isEmpty,
+            freshWords: row.selfReportFresh && !row.lastWord.isEmpty,
+            hasToolTitle: store.heroToolTitle(row) != nil
+        ) {
+        case .waitTask, .task:
+            return Self.truncate(row.usefulTask ?? "", Self.heroLimit)
+        case .waitProject, .project:
+            return short
+        case .needsYou:
+            return store.tr(.needsYou)
+        case .processTerminal:
+            return store.tr(.terminalDetectedNoDetails)
+        case .processApp:
+            return store.tr(.appDetectedNoDetails)
+        case .freshWords:
+            return Self.truncate(row.lastWord, Self.heroLimit)
+        case .toolTitle:
+            // Humanize the live tool — never show update_plan / Bash raw.
+            return Self.truncate(store.heroToolTitle(row) ?? "", Self.heroLimit)
+        case .terminalSession:
+            return store.tr(.terminalSession)
+        case .appSession:
+            // Agent product name is already on the identity line — do not
+            // reuse it as the hero (EXPERIENCE: no agent-as-hero).
+            return store.tr(.appSession)
+        }
     }
 
     /// Second line: where this session is, and how long since it moved.
