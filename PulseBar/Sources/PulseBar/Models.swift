@@ -691,6 +691,11 @@ struct AgentRow: Identifiable, Hashable {
     /// never in fleet snapshots or any channel that leaves the machine.
     /// Empty for remote rows, cache-tier rows, and process-only rows.
     var transcriptPath: String = ""
+    /// 5.0-β · non-empty when this row is a Pulse-run managed session
+    /// (scene BG). The workbench swaps the inspector for the live
+    /// conversation; every other surface treats the row as ordinary.
+    var managedID: String = ""
+    var isManaged: Bool { !managedID.isEmpty }
     /// Canonical repository root for this row's working directory. Empty when
     /// the path is not a working copy, was never confirmed, or the axis is
     /// off. Never displayed — it exists so two agents in the same checkout

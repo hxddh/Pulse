@@ -668,6 +668,24 @@ enum L10n {
             return "Opens a Terminal window in this repository and starts claude with your task. The new session appears here once Pulse observes it."
         case .workbenchDispatchFailed: return "Terminal did not accept the command — check Automation permission"
         case .workbenchDispatchNoRoots: return "No observed repositories yet — dispatch needs a root the fleet has actually worked in"
+        case .managedBadge: return "Pulse-run"
+        case .managedConversation: return "Conversation"
+        case .managedReplyPlaceholder: return "Reply — sends the next turn…"
+        case .managedSend: return "Send"
+        case .managedCancel: return "Stop turn"
+        case .managedRunning: return "Turn running"
+        case .managedIdle: return "Turn finished — the next word is yours"
+        case .managedCancelled: return "Turn stopped"
+        case .managedFailed: return "Turn failed: %@"
+        case .managedCost: return "$%.2f · %d turns"
+        case .managedUnknownEvents: return "%d stream lines unrecognized"
+        case .managedWorktreeNote: return "Running in an isolated worktree Pulse created — your own checkout never moves"
+        case .managedNoClaude: return "claude CLI not found on this machine"
+        case .managedNotARepo: return "Not a git repository — a worktree needs one"
+        case .managedWorktreeFailed: return "Worktree creation failed: %@"
+        case .managedRunInPulse: return "Run in Pulse (managed)"
+        case .managedUseWorktree: return "Isolated worktree"
+        case .managedDispatchHint: return "Pulse runs claude itself and owns the stream: the full conversation lives here, replies are real turns, and stopping is one click. Your words start it; every turn after is also yours."
         }
     }
 
@@ -1257,6 +1275,24 @@ enum L10n {
             return "在该仓库打开终端窗口并带任务启动 claude。新会话被 Pulse 观测到后会出现在这里。"
         case .workbenchDispatchFailed: return "终端没有接受命令 —— 检查自动化权限"
         case .workbenchDispatchNoRoots: return "还没有观测到的仓库 —— 派活需要舰队实际工作过的根目录"
+        case .managedBadge: return "Pulse 派出"
+        case .managedConversation: return "对话"
+        case .managedReplyPlaceholder: return "回复 —— 发送即下一回合…"
+        case .managedSend: return "发送"
+        case .managedCancel: return "终止本回合"
+        case .managedRunning: return "回合进行中"
+        case .managedIdle: return "回合已结束 —— 下一句是你的"
+        case .managedCancelled: return "回合已终止"
+        case .managedFailed: return "回合失败：%@"
+        case .managedCost: return "$%.2f · %d 回合"
+        case .managedUnknownEvents: return "%d 行流事件未识别"
+        case .managedWorktreeNote: return "运行在 Pulse 自建的独立 worktree 里 —— 你自己的工作副本一寸不动"
+        case .managedNoClaude: return "本机未找到 claude CLI"
+        case .managedNotARepo: return "不是 git 仓库 —— worktree 需要一个"
+        case .managedWorktreeFailed: return "worktree 创建失败：%@"
+        case .managedRunInPulse: return "在 Pulse 里运行（受管）"
+        case .managedUseWorktree: return "独立 worktree"
+        case .managedDispatchHint: return "Pulse 自己运行 claude 并独占输出流：完整对话就在这里，回复是真实回合，终止一键可达。开局的话是你写的，之后每一回合也都是。"
         }
     }
 
@@ -1415,6 +1451,12 @@ enum L10n {
         case workbenchDispatch, workbenchDispatchRepo, workbenchDispatchTask
         case workbenchDispatchStart, workbenchDispatchHint
         case workbenchDispatchFailed, workbenchDispatchNoRoots
+        case managedBadge, managedConversation, managedReplyPlaceholder
+        case managedSend, managedCancel, managedRunning, managedIdle
+        case managedCancelled, managedFailed, managedCost, managedUnknownEvents
+        case managedWorktreeNote, managedNoClaude, managedNotARepo
+        case managedWorktreeFailed, managedRunInPulse, managedUseWorktree
+        case managedDispatchHint
         case trayScanIncomplete
     }
 }

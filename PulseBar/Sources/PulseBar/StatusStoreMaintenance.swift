@@ -267,6 +267,9 @@ extension StatusStore {
 
     func quit() {
         markCleanShutdown()
+        // 5.0-β: no orphaned managed agents burning tokens after the tray
+        // icon is gone.
+        managedSessions.terminateAllForShutdown()
         attentionWatcher.stop()
         GlobalHotKey.uninstall()
         NSApp.terminate(nil)

@@ -407,7 +407,17 @@ sanitizer、一个字节都不出机器。托盘一个像素不变。
   仓库根（采集端见过、磁盘确认过的 workspaceRoot，不许手输任意路径）、写
   任务句，Pulse 在新终端窗口 `cd <根> && claude '<任务>'`（同一套 POSIX
   引号纪律）。新会话被采集端观测到后才出现为行 —— Pulse 不假装提前看见。
-  同一个 opt-in，关掉按钮即刻消失。
+  5.0 起终端模式退居选项（需 4.0 的 Automation opt-in），受管模式为默认。
+- **受管会话（5.0-β，场景 BG）**：派活的默认形态 —— Pulse 自己以
+  `claude -p --output-format stream-json`（续回合 `--resume`）**纯管道**驱动
+  子进程：无 PTY、无 AppleScript、无 TCC。跑在 Pulse 自建的独立 worktree
+  （Application Support 命名空间，用户自己的工作副本一寸不动）。事实是
+  **第一手的**（Pulse 拥有流），对话面板完整、实时、可回复（回复=下一回合，
+  文本走同一个 TranscriptReader 解析与消毒 —— 观察与受管永不各养一个解析器）；
+  取消 = SIGTERM→SIGKILL；退出杀全部子进程；成本与 token 逐回合累计如实显示；
+  流里认不出的事件计数明说。受管的「等你回复」只在指挥台呈现，**不点亮托盘
+  红灯**（Waiting 唯一来源仍是 attention 协议）。真机验证
+  `scripts/qa_managed_session.sh`。
 
 ## 6. Preferences（设置窗）
 
@@ -625,6 +635,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BD | Transcript（会话全文） | **检视器展示会话本身**：采集端把结构化 JSONL 的来源路径记成行的本地读取句柄（`transcriptPath` —— 不消毒因为永不渲染、只用来开文件；永不进 fleet 快照、永不上托盘、永不出机器；cache/SQLite/仅进程/远端行没有对话可渲染，构造上就没有句柄）；**点击才加载**，尾部 512KB / ≤300 条双界，头被截断或条数被截断都**自称截断**并给出窗口与全文大小；撕裂首行是前半截记录不是记录，跳过不计数；**按形状解析**（Claude `message.content[]`、Codex `event_msg`/`response_item`、通用 `role`+`content`），簿记行（token 计数等）静默略过是正常不是未识别，真解析不出的行计数「N 行未识别」；逐条 `ContentSanitizer` + 每条 2000 字符界；工具行带名与靶（file_path/command/pattern 首个字符串），**失败的工具结果永远保留**（is_error 标橙，厂商没写正文也保留行）而静默成功丢弃；打开即滚到最新一条（用户为此而来）；读不到文件说「不可用」，读到了但窗口内无对话说「没有对话内容」—— 两个不同的答案不穿同一件衣服 |
 | BE | Delivery（送达） | **回答的动词从复制变成发送**：等待卡在满足精确门时给回复框 + 「发送到终端」—— Pulse 先经 tty 精确选中该会话的标签页（Terminal/iTerm 既有脚本），**选中失败一个字都不敲**，选中后经 System Events 敲入折叠为单行的回复（每个换行都是终端的提交键，所以折叠不拒收；≤2000 字符逐字键入）并回车；**键入厂商盲**（敲的是活会话，不是某家 CLI 的 resume 旗），Codex/任何家的提问等待一样能答；**权限等待永拒键入**（y/n 面前的 keystroke 是穿马甲的盲目同意，Respond 或聚焦才是那的动词）；App 级聚焦（Warp/IDE/无 tty）不给发送键，保留 3.0 剪贴板回退 —— 键落对处保证不了就不许键落；opt-in 默认关（keystroke 是比选标签页高一档的授权，开关本身即同意书），关掉立即全停；三个失败出口三句话（没找到标签页-什么都没敲 / 敲入失败-查权限 / 没内容），成功也有回执「已送达」；AppleScript 转义与折叠由测试钉死，真机行为由 `qa_workbench_actuation.sh` 十分钟验证 |
 | BF | Dispatch（派活） | **第三个动词：在舰队工作过的地方起新会话** —— 侧栏「派活」开表单：仓库根只从**采集端见过且磁盘确认**的 workspaceRoot 里选（不接受手输任意路径 —— 派活的地基是观测事实）、任务句可空（空=裸起会话）；命令 `cd <根> && claude '<任务>'` 走与 resume/送达同一套 POSIX 单引号纪律（根与任务都不许裸上 shell，相对路径与 `/`、`/tmp` 直接拒绝），在**新** Terminal 窗口执行；新会话**被观测到才出现**为行，Pulse 不假装派出即看见；与送达同一个 opt-in，关掉按钮即刻消失；终端不接受命令时表单原地说失败，不静默关闭 |
+| BG | Managed（受管会话） | **Pulse 拥有它派出的会话**（市场对比后的质变定义，docs/plan-5.0.md）：派活默认走受管 —— `claude -p --output-format stream-json --verbose`（续回合 `--resume <sid>`，sid 过 3.0 的同一道形状门，坏 id 拒绝回合而不是私开新会话）**纯管道**回合制驱动，prompt 作 argv 单参数上车（没有 shell 就没有转义面）；跑在 Pulse 自建 worktree（`git worktree add` + `pulse/<slug>` 分支，Application Support 命名空间，**只有命名空间内的路径承认是 Pulse 的**，用户工作副本一寸不动）；流事件经**与观察侧同一个** TranscriptReader 解析（assistant/user 消息形状复用，一个解析器两处供货，永不漂移）；result 事件收束回合（成本/token 累计、错误 subtype 如实、`idle` 是「下一句是你的」而**不是**托盘 Waiting）；无 result 的退出不冒充成功（静默退出=失败，带 stderr 尾巴）；未知事件与非 JSON 行分开计数明说；取消 SIGTERM→2s→SIGKILL、退出全员收割（无孤儿烧 token）；行进托盘走既有规矩、检视器换成实时对话（回复框=真回合、运行中可终止、对话≤1000 条自称截断）；worktree diff 用同一张只读 plumbing 卡；受管行的 worktree 不进派活仓库列表（不套娃）；claude CLI 不在、不是 git 仓库、worktree 失败各有各的句子，表单原地说，不静默 |
 
 ---
 
@@ -642,6 +653,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 通知策略 / 等待动作 | `StatusStoreWaiting.swift` |
 | 会话事实簇 | `SessionFacts.swift`（`SessionRemote` / `SessionSelfReport` / `SessionLiveAction` / `SessionDigestFacts` / `SessionEffect`——AgentRow 组合它们并保留转发访问器，读写两侧零改动） |
 | 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` · `TranscriptReader.swift` |
+| 引擎边界 / 受管会话 | `SessionSource.swift` · `ManagedSession.swift` · `ManagedSessionRunner.swift` · `ManagedSessionSource.swift` · `ManagedWorktree.swift` · `ManagedSessionViews.swift` |
 | 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |
 | 设置与迁移 | `PulseSettings.swift` |
 | 文案 | `L10n.swift` |

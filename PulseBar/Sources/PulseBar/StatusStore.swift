@@ -204,6 +204,9 @@ final class StatusStore: ObservableObject {
     /// The observed pipeline registers first and stays ground truth for any
     /// rowKey it also produces; the managed runtime (5.0-β) registers after.
     let observedSessions = ObservedSessionSource()
+    /// 5.0-β — registered on first dispatch (after observed, so the
+    /// coordinator's ground-truth rule holds by construction).
+    let managedSessions = ManagedSessionSource()
     private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
     var cachedAll: [AgentRow] = []
     var lastGoodHarvest: [ActivityHarvest.Row] = []
