@@ -4,6 +4,7 @@
 
 import Foundation
 import AppKit
+import CryptoKit
 
 enum TokenScope {
     case compact, reported, latestCall
