@@ -223,7 +223,9 @@ final class StatusStore: ObservableObject {
     /// global budget cutoff always fell in the same place and the same tail
     /// adapters were reported `unscanned` on every refresh. The scan returns
     /// the first adapter it could not reach; the next one begins there.
-    fileprivate var harvestScanCursor = 0
+    // Internal since the 4.0-γ split: the engine extension is the only
+    // reader and writer (StatusStoreEngine.swift).
+    var harvestScanCursor = 0
     /// Deterministic event ages for visual fixtures only.
     var previewWaitingEventTimes: [AgentID: Int64]?
     /// Prevent a preview panel opening from immediately replacing its fixture
