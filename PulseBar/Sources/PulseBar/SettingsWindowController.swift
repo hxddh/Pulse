@@ -32,7 +32,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         win.title = store.tr(.settingsTitle)
         win.identifier = NSUserInterfaceItemIdentifier("pulse-settings")
         win.styleMask = [.titled, .closable, .miniaturizable]
-        // Spec width band is 420–460 (EXPERIENCE.md §5); the form grew a
+        // Spec width band is 420–460 (EXPERIENCE.md §6); the form grew a
         // notifications and a shortcuts section in 0.22.
         // Keep the quiet-hours and waiting-signal controls from ending as a
         // half-visible row on first launch. The form still scrolls on smaller

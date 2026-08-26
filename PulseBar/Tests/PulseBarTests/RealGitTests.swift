@@ -129,6 +129,30 @@ final class RealGitTests: XCTestCase {
         XCTAssertEqual(before, after, "a bystander must not write the index")
     }
 
+    // MARK: - The workbench's patch (3.0-β), against a real repository
+
+    func testTheRealPatchCarriesTheChangeAndLeavesTheIndexAlone() throws {
+        try write("a\nB\nc\n", to: "f1.txt")
+        // Same forced-stale setup as the measurement's read-only test: this
+        // is exactly the state where porcelain diff would rewrite the index.
+        let f1 = repo.appendingPathComponent("f1.txt")
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 946_684_800)],
+            ofItemAtPath: f1.path
+        )
+        let index = repo.appendingPathComponent(".git/index")
+        let before = SHA256.hash(data: try Data(contentsOf: index))
+
+        let patch = try XCTUnwrap(WorkspaceEffect.patch(root: repo.path))
+        XCTAssertTrue(patch.text.contains("-b"), patch.text)
+        XCTAssertTrue(patch.text.contains("+B"), patch.text)
+        XCTAssertFalse(patch.truncated)
+
+        let after = SHA256.hash(data: try Data(contentsOf: index))
+        XCTAssertEqual(before, after,
+                       "the workbench's diff must be as read-only as the measurement")
+    }
+
     // MARK: - A commit is something landing (G-1), against real commits
 
     func testARealCommitIsNoticedBetweenTwoMeasurements() throws {

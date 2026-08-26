@@ -415,6 +415,10 @@ struct TrayPanel: View {
                         if !query.isEmpty {
                             Button(store.tr(.clearSearch)) { query = "" }
                         }
+                        // 3.0-β: the workbench — the tray answers "who needs
+                        // me", the window answers everything after that.
+                        Button(store.tr(.openWorkbench)) { store.openWorkbench() }
+                            .keyboardShortcut("w", modifiers: [.command, .shift])
                         Button(store.tr(.supportHealth)) { store.openSupportHealth() }
                         Button(store.tr(.settings)) { store.openSettings() }
                             .keyboardShortcut(",", modifiers: .command)

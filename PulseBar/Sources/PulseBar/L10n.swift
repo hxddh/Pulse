@@ -621,6 +621,16 @@ enum L10n {
         case .supportYield: return "Measured facts: %@"
         case .supportYieldDrifted:
             return "Structured adapter yielded rows but no core facts — the vendor format may have drifted"
+        case .workbenchTitle: return "Pulse Workbench"
+        case .openWorkbench: return "Open Workbench"
+        case .workbenchSelectHint: return "Select a session"
+        case .workbenchNoSessions: return "No sessions yet — the fleet appears here as agents run"
+        case .workbenchWait: return "Waiting on you"
+        case .workbenchDiff: return "Changes on disk"
+        case .workbenchDiffLoad: return "Show diff"
+        case .workbenchDiffClean: return "Working tree clean"
+        case .workbenchDiffTruncated: return "Diff cut at 96 KB — the counts above are complete"
+        case .workbenchDiffUnavailable: return "Diff unavailable"
         }
     }
 
@@ -1163,6 +1173,16 @@ enum L10n {
         case .supportYield: return "实测事实：%@"
         case .supportYieldDrifted:
             return "声明结构化、本拍有行却零核心事实 —— 厂商格式可能已漂移"
+        case .workbenchTitle: return "Pulse 指挥台"
+        case .openWorkbench: return "打开指挥台"
+        case .workbenchSelectHint: return "选择一个会话"
+        case .workbenchNoSessions: return "还没有会话 —— agent 跑起来后这里就是舰队"
+        case .workbenchWait: return "等你处理"
+        case .workbenchDiff: return "盘上改动"
+        case .workbenchDiffLoad: return "查看 diff"
+        case .workbenchDiffClean: return "工作树干净"
+        case .workbenchDiffTruncated: return "diff 在 96 KB 处截断 —— 上方计数完整"
+        case .workbenchDiffUnavailable: return "diff 不可用"
         }
     }
 
@@ -1305,6 +1325,9 @@ enum L10n {
         case filesFact, contextFact, progressFact, turnsFact
         case currentStepFact, detailStep, detailPlan, detailLastWord, detailLastError
         case detailLiveAction, supportYield, supportYieldDrifted
+        case workbenchTitle, openWorkbench, workbenchSelectHint, workbenchNoSessions
+        case workbenchWait, workbenchDiff, workbenchDiffLoad, workbenchDiffClean
+        case workbenchDiffTruncated, workbenchDiffUnavailable
         case trayScanIncomplete
     }
 }
