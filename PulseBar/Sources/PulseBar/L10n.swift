@@ -715,6 +715,9 @@ enum L10n {
         case .managedRunCheckExit: return "exit %d"
         case .managedRunCheckTimeout: return "Check timed out"
         case .managedTurnEffect: return "This turn on disk: +%d −%d"
+        case .trayOpenInWorkbench: return "Open in Workbench"
+        case .trayExpandRow: return "Expand row"
+        case .trayCollapseRow: return "Collapse row"
         }
     }
 
@@ -1351,6 +1354,9 @@ enum L10n {
         case .managedRunCheckExit: return "退出码 %d"
         case .managedRunCheckTimeout: return "检查超时"
         case .managedTurnEffect: return "本回合落盘：+%d −%d"
+        case .trayOpenInWorkbench: return "在指挥台打开"
+        case .trayExpandRow: return "展开此行"
+        case .trayCollapseRow: return "收起此行"
         }
     }
 
@@ -1524,6 +1530,7 @@ enum L10n {
         case managedAttemptOrdinal, managedViewAttempt, managedCurrentAttempt
         case managedRunCheck, managedRunCheckPlaceholder, managedRunCheckExit
         case managedRunCheckTimeout, managedTurnEffect
+        case trayOpenInWorkbench, trayExpandRow, trayCollapseRow
         case trayScanIncomplete
     }
 }

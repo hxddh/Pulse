@@ -192,51 +192,14 @@ struct ManagedSessionInspector: View {
         }
     }
 
-    /// 6.0-β (scene BJ): a live permission ask. Every Respond rule holds —
-    /// Allow only beside the complete input (a truncated one loses the
-    /// button, never the Deny), and the hint says out loud that silence
-    /// denies: a headless run has no safe prompt to fall back to.
+    /// 6.0-β (scene BJ): a live permission ask. 7.0-α: the card body is the
+    /// shared `SessionPermissionCard` — the popup renders the same truth
+    /// compact; only the workbench chrome (padding, tint) lives here.
     private func permissionCard(_ request: ManagedPermission.Request) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(
-                "\(store.tr(.managedPermissionHeading)) · \(request.toolName)",
-                systemImage: "hand.raised"
-            )
-            .font(.headline)
-            .foregroundStyle(.orange)
-            ScrollView {
-                Text(request.inputJSON)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 220)
-            .padding(8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-            if request.truncated {
-                Text(store.tr(.managedPermissionTruncated))
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-            HStack(spacing: 12) {
-                Button(store.tr(.respondDeny)) {
-                    store.managedPermissionDecide(id: request.id, allow: false)
-                }
-                if request.canOfferAllow {
-                    Button(store.tr(.respondAllow)) {
-                        store.managedPermissionDecide(id: request.id, allow: true)
-                    }
-                }
-            }
-            .buttonStyle(.bordered)
-            Text(store.tr(.managedPermissionHint))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        SessionPermissionCard(store: store, request: request, compact: false)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// 5.0-γ (scene BH): acceptance, on the user's click, inside Pulse's own

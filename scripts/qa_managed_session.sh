@@ -68,6 +68,25 @@ step "8. Compare and check (scene BK)" \
   EXPECT: exit code and output tail appear verbatim; a failing command shows
   orange, nothing pretends."
 
+
+# ---- 7.0 addition ----
+step "9. Popup rebirth (scenes BL/BM)" \
+"  - With a managed session mid-turn, open the tray (no Workbench).
+  EXPECT: the row's hero line is the agent's LATEST WORDS while fresh, not the
+  static task title; waiting rows still lead with the task.
+  - Click the row's chevron.
+  EXPECT: the row expands in place — demoted title, full last words, plan
+  (≤4 + '… N'), cost/±lines chips only where measured (no zeros invented).
+  - Trigger a permission ask (e.g. 'git push --dry-run') and answer it FROM
+  THE POPUP's orange card. EXPECT: same Deny/Allow rules as the workbench
+  (truncated input withdraws Allow); the turn unblocks on Allow.
+  - Reply to an idle managed session from the popup's reply box.
+  EXPECT: a real turn starts; 终止本回合 works from the popup too.
+  - Click 「在指挥台打开」. EXPECT: the workbench opens with THIS session
+  selected.
+  - Let a notification arrive for a waiting row and click it.
+  EXPECT: the tray opens with that row selected AND already expanded."
+
 echo
-echo "All eight held → 5.0-β + 6.0 verified on this machine."
+echo "All nine held → 5.0-β + 6.0 + 7.0 verified on this machine."
 echo "Anything failed → copy the step number and what happened instead."

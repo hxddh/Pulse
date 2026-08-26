@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（6.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（7.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -151,7 +151,11 @@ Prefs 只改开关与连接。
 - **身份行** = 6px 状态灯（等待红 / 运行绿 / 最近灰 / 异常橙）+ Agent 产品名 + 运行时证据等级（仅缓存 / 仅进程时出现）+ 非常态芯片。
   32 个图标不是识别测试；产品名必须可直接扫读。更多操作只在悬停 / 键盘选中时显形，
   但 VoiceOver 动作始终存在
-- **主行** = 会话标题（真实用户目标；Claude/Command Code 跳过 `tool_result`；
+- **主行（7.0 起按价值取，场景 BL）**：活跃会话行里，**自述新鲜的最新原话
+  压过静态标题** —— 标题用户已读过二十遍，agent 刚说的话才是新闻；被降位的
+  标题住进展开卡与指挥台，一眼可及。等待行与仅进程行**一条规则不变**（等待
+  行的主行仍是用户必须认出的那件事）。选择逻辑是纯函数 `TrayRowLead`，
+  优先级由测试钉死。无新鲜原话时回落到原有链条 —— 会话标题（真实用户目标；Claude/Command Code 跳过 `tool_result`；
   Codex 剥 Desktop 信封；Pi 与 `/resume` 一致：最新 `session_info.name`（空则清除）否则第一条用户句；
   剥 `<environment_context>` 留后半句，未闭合 env 不当标题；不是 `Pi session` /
   `Read Foo.swift` / 工具回包；无标题时依次退到**人话工具名** → 项目名 →
@@ -270,6 +274,25 @@ Support Health 对每个 Agent 标明 Focus 事实（工作区 / 仅 App / TTY /
 稍后到期要重新发一次通知；等待自己结束了，稍后状态一并清掉。
 
 禁止：`-` / `—` 占位、空的等待行、把 Agent 名当 hero。
+
+#### 行内展开（7.0，场景 BM）
+
+**弹窗是用户每天住的表面，理解与行动就地完成。** 每行常驻一个 chevron
+（悬停前安静、VoiceOver 始终可及）；点开在行下原位展开迷你检视器：
+
+- 内容按价值序：被降位的任务标题 → 完整原话（收起态的主行会截断）→
+  错误原文 → 计划清单（≤4 项 + 「… N」）→ 价值芯片（成本·回合 / 本回合
+  落盘 / 会话累计 ±行 / token —— **没测到的芯片不出现，不渲染零**）。
+- **动作就地**：受管权限卡（紧凑面，Respond 纪律逐条不变 —— 同意只在完整
+  入参旁、截断收回同意、超时即拒）→ Respond 卡（等待且有完整请求时）→
+  受管回复框（真回合）→ 忽略等待 / 稍后 / 在指挥台打开。
+- 展开状态按 rowKey 记在面板里（列表随扫描重排，按下标展开会展开别人），
+  **不跨面板打开持久化**（每次打开托盘仍从「谁需要我」开始）；通知 /
+  Go-Look 落到某行时**带着展开态抵达**（reveal 的意思就是「我要处理它」）。
+- 这些卡与指挥台是**同一组视图**（`SessionCards.swift`）：托盘紧凑面、
+  指挥台完整面，一处写两处到。「只有计数」自 7.0 起收窄为**跨机器**的铁律
+  （fleet 快照照旧只运计数与一句话）；托盘密度由价值层级管理，不再由禁令
+  管理 —— 每格仍须携带信息，逐条自述仍逐处过 sanitizer。
 
 #### 观测质量与降级
 
@@ -433,6 +456,10 @@ sanitizer、一个字节都不出机器。托盘一个像素不变。
   纪律逐条成立；**超时与一切失败 = 拒绝**（headless 无可回落的安全提示）。
 - **完成度（6.0-γ，场景 BK）**：同题 N 路并行 + 互列对比、每会话运行检查
   （worktree 里跑、退出码原文）、逐回合落盘 `+x −y`、工具结果 `↳` 配对。
+- **一套卡片（7.0-α，场景 BM）**：权限卡、Respond 卡、受管回复、计划、价值
+  芯片是**同一组视图**（`SessionCards.swift`），指挥台渲染完整面、托盘渲染
+  紧凑面 —— 写一次的事实两处都到，两个表面在构造上不再漂移。指挥台仍是读
+  整场对话与落地动词的地方。
 
 ## 6. Preferences（设置窗）
 
@@ -644,7 +671,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | AX | Fleet（舰队） | **舰队不再只有门铃**：本机 Pulse 周期写 `fleet.d/<host>.json`（≤16 行、标题 ≤160 过 sanitizer、project 只取叶子名永不带路径、30 秒一写、0600），用户自己的同步工具搬运，对端读其余 host（≤16 host、≤256KB/文件、文件名决定 host 正文不符即拒收、未知 agent 跳过不猜）；**远端事实全部是过去时** —— 年龄以本机 mtime 计，新鲜（<10 分钟）才引用实质，过期进失联（行留、实质不引用），一小时后整行消失，发送方时钟超前 5 分钟即 clockSuspect 且活动时间不许指向未来；**Waiting 永不来自快照**（attention 是唯一来源），同一 host+agent+session 的 raise 与快照共用同一个 rowKey —— 等待来自 raise、实质来自快照；**广播默认关、读取常开**，关广播即删本机文件；本机快照只含本机行（转播远端行会在互同步时让 agent 翻倍）；远端行照旧永不报进程、没有 Focus、`workspaceRoot` 恒空（构造上进不了碰撞计数） |
 | AY | Progress（进展） | **从状态到进展：agent 给自己写的计划成为一等事实** —— 会话记录里的待办结构（Claude 家族 `TodoWrite` 的 `todos`、Codex `update_plan` 的 `plan`）不再被当噪音整类过滤，而是读进专门的字段：`progressDone/Total`（喂已有的 `3/7` 事实）、`planStep`（当前项，`activeForm` 优先）、`planSteps`（整份清单，≤8 项 ≤100 字符逐项过 sanitizer，只进 Details）；**计划是状态不是事件** —— 取窗口里最后一份，后写覆盖先写；**计数取全清单、清单展示有界**（截断视图引用自己的长度就是估算冒充精确）；全部完成没有「当前」就不发明一个；`lastWord`（最新 assistant 文本首行）与 `lastErrorText`（最新 `is_error` 结果首行）同规格 —— 有错误计数没有错误原文等于让用户去猜；**这些全是自述**，与 task/tool 同一认识论层级同一规矩：过 sanitizer、行叙事引用与 phase 同门槛（30 分钟静默即撤，陈旧计划不冒充此刻）、**永不由此推断 Waiting**；主行 hero 仍是用户目标（AK 不变，plan 步骤标题依旧永不当 hero）；哪家会话记录没有该结构就如实缺席不猜；Fleet 快照只运当前步骤一句话 + 两个计数（`step`/`step_done`/`step_total`，Optional 可加可减 —— 2.7 文件照常解码、旧读者忽略新键），整份清单是内容留在本机，远端步骤与其余实质同一新鲜门 |
 | AZ | Quality（质量） | **秒级**：hook 终于对干活说话 —— `PreToolUse` / `UserPromptSubmit` 写 `activity.d/<agent>-<session>.json`（每会话一个状态文件、每事件覆写、0600、目录 ≤64 个、>24h 清除、tool/target 走 toolDescriptor + 消毒截断）；**活动事件不是等待** —— 永不写 attention、永不 hold、永不由此推断 Waiting；无会话身份不写文件；文件名决定身份、正文不符拒收；watcher 第三个 source 盯 activity.d，1s 节流，唤醒只做**轻量刷新**（读一个有界目录、原地补行，绝不全量 harvest —— 能耗是硬约束），全量扫描重放同一批事件（builder 与轻路径共用 `applyActivity`，两处实现必然漂移）；**现在时只许对秒级证据说** —— live 窗口 120s，行叙事「当前 · Edit · Main.swift」（行上路径只取叶子，Details 给全路径），窗口一过回落轮询叙事；prompt 事件清空 tool（上一个工具随回合结束了）；时间戳进 `activityChangedMs`（活信号钟）不进 `harvestMs`（会话此刻在动，但事实还是采集时那么旧）；本机时钟写的未来戳按坏钟处理、夹到 now；**事件永不造行**（没有行的事件意味着 harvest 还没认识这个会话，一行只有单条事件当证据的行立不住）。**自证**：每 agent 每拍记「实测事实类」（task/tool/tokens/progress/plan/word/error/model/workspace，只记名不记值、不出机器），Support Health 显示**声明 vs 实测**；声明 structured、本拍有行、核心三类全空 → 点名「厂商格式可能已漂移」（橙色，不许耳语）—— 「agent 没干活」和「Pulse 没看清」从此不穿同一件衣服；无行是 idle 不是漂移、bestEffort 从未承诺核心类不算漂移。**平权**：2.8 的自述倒序扫描摘掉路径白名单 —— 匹配形状不匹配厂商名，谁的记录里有 `todos` 数组 / assistant 文本块 / `is_error` 结果就产出同样的事实，没有就如实缺席；Codex notify 无逐工具事件，其「正在干什么」继续走轮询，如实分级不硬造 |
-| BA | Workbench（指挥台） | **形态的第四层**（§5）：托盘「更多操作」→ 打开指挥台（⌘⇧W）；左侧全量舰队侧栏（`store.allRows`，四组沿托盘，开窗选中最需要你的行），右侧会话检视器（等待卡带完整消息与既有动作 → 此刻 → 计划整份清单 → 原话+错误原文 → 证据 → 盘上改动）；**「只有计数」是托盘与跨机器的规矩不是产品的规矩** —— 指挥台内容本地、只读、自述文本逐处 sanitizer、不出机器，托盘一个像素不变；盘上改动卡 = `diff-index -p` 只读 plumbing（与测量同 runner 同动词集合，2.7 的教训直接继承）、**点击才加载**、96KB 截断且自称截断、干净直说干净、远端行与未确认根不装按钮、失败说不可用不发明内容；检视器一切事实沿用行上同一套新鲜规矩 —— 换窗口不换认识论 |
+| BA | Workbench（指挥台） | **形态的第四层**（§5）：托盘「更多操作」→ 打开指挥台（⌘⇧W）；左侧全量舰队侧栏（`store.allRows`，四组沿托盘，开窗选中最需要你的行），右侧会话检视器（等待卡带完整消息与既有动作 → 此刻 → 计划整份清单 → 原话+错误原文 → 证据 → 盘上改动）；**「只有计数」是托盘与跨机器的规矩不是产品的规矩** —— 指挥台内容本地、只读、自述文本逐处 sanitizer、不出机器，托盘一个像素不变（7.0 再划：「只有计数」收窄为**跨机器**的铁律，托盘密度改由价值层级管理 —— 见 BL/BM）；盘上改动卡 = `diff-index -p` 只读 plumbing（与测量同 runner 同动词集合，2.7 的教训直接继承）、**点击才加载**、96KB 截断且自称截断、干净直说干净、远端行与未确认根不装按钮、失败说不可用不发明内容；检视器一切事实沿用行上同一套新鲜规矩 —— 换窗口不换认识论 |
 | BB | Answer（就地回答） | **第一个动词，两条通道永不混**：等待卡里，有完整请求（digest 复核）→ 嵌入与 Details 同一张 Respond 卡（完整原文、拒绝永远可用、「同意」仅当 `canOfferAllow`、HMAC 单次判决、fail-open —— 全部走已测的同一套 store 方法，指挥台不重新决定任何事）；本机 Claude 提问/续接 → 写回复、点「复制续接命令」：Pulse 构造 `claude --resume <session> '回复'` 放进剪贴板并唤起终端，**永不代跑**（粘贴与回车是不转移的那一寸判断权，也是 `--resume` 的第一次真机验证 —— 保守版先行）；会话 ID 过形状门（ASCII 字母数字与 `-_.`，≤128）才许上命令行，回复走 POSIX 单引号转义，单引号本身变 `'\''` 逃不出去；权限等待无请求文件 → 只给聚焦（厂商提示已在眼前，第二个答题框只会跟真的赛跑）；远端行 → 不给续接（终端在另一台机器）；未验证厂商 → 不给预填命令（错的命令比没有按钮更糟）；每个出口在卡上可见 —— 复制成功、形状门拒绝、判决写不出，都不许静默 |
 | BC | Review（复盘） | **第二个动词：已结束会话按验收序呈现** —— 盘上改动领头（它干成了什么）、计划终态（✓/▸/· 原样，终态是重点所以不再挂 30 分钟新鲜门 —— 横幅已声明这是历史）、最后的话与错误原文、证据；**没有「此刻」卡**（没有此刻，陈旧不冒充此刻）；运行中的行反向收紧 —— 计划卡与原话卡挂上与 Details 同一道 `selfReportFresh` 门（β 的检视器漏了它，正式版补上：换窗口不换认识论）；横幅明说会话已结束且 **Pulse 永不代动仓库** —— 验收在 Pulse，处置在用户自己的工具里 |
 | BD | Transcript（会话全文） | **检视器展示会话本身**：采集端把结构化 JSONL 的来源路径记成行的本地读取句柄（`transcriptPath` —— 不消毒因为永不渲染、只用来开文件；永不进 fleet 快照、永不上托盘、永不出机器；cache/SQLite/仅进程/远端行没有对话可渲染，构造上就没有句柄）；**点击才加载**，尾部 512KB / ≤300 条双界，头被截断或条数被截断都**自称截断**并给出窗口与全文大小；撕裂首行是前半截记录不是记录，跳过不计数；**按形状解析**（Claude `message.content[]`、Codex `event_msg`/`response_item`、通用 `role`+`content`），簿记行（token 计数等）静默略过是正常不是未识别，真解析不出的行计数「N 行未识别」；逐条 `ContentSanitizer` + 每条 2000 字符界；工具行带名与靶（file_path/command/pattern 首个字符串），**失败的工具结果永远保留**（is_error 标橙，厂商没写正文也保留行）而静默成功丢弃；打开即滚到最新一条（用户为此而来）；读不到文件说「不可用」，读到了但窗口内无对话说「没有对话内容」—— 两个不同的答案不穿同一件衣服 |
@@ -655,6 +682,8 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BI | Fleet Engine（舰队引擎） | **受管会话从 ad hoc 变成受监督的持久实体**：`ManagedFleet` 拥有全部 runner —— 并发上限 3 + 真队列（超出成 `queued` 行排队，槽位空出自动开跑，泵有重入护栏且拒绝在打不开的会话上空转）；每会话一个状态文件（0600 经 PrivateFile，含标题/根/claudeSessionID/完整对话/成本/token/待发 prompt），**写盘时机有界**（状态种类或回合数移动才写，绝不逐流事件写）；**重启重挂**：上次退出时在跑的回合如实标 `interrupted`（「没人见证它怎么结束的」—— 不冒充成功也不冒充失败），排队者带着原任务回来继续排；文件名决定身份（改名的状态文件被拒收）；已结束会话可移除 —— 记录删、worktree 留给用户并明说（Pulse 不代删工作产物）；退出先落盘再收割全部子进程 |
 | BJ | Permission（权限通道） | **headless 的致命洞补上**：每个受管回合注入 `--mcp-config` + `--permission-prompt-tool mcp__pulse__approve`，配置指向 **Pulse 自己的二进制**（`--permission-server` 子命令说最小 MCP stdio 方言：initialize / tools/list / tools/call，未知方法回错误、通知不回话）；tools/call 把完整入参写进权限 spool（0600、文件名定身份）并**阻塞等判决文件**；应用侧单 fd DispatchSource 盯 spool，审批卡实时置顶该会话检视器；**Respond 纪律逐条成立**——「同意」只在完整入参旁（超 64KB 截断即收回同意、拒绝仍在）、判决单次使用（读即删）、fleet 层对截断请求的 allow 二次强制为 deny；**超时（2 分钟）与一切失败 = 拒绝** —— headless 没有厂商提示可回落，这里 fail-open 就是 fail-permissive，是本产品唯一不许失败的方向，卡上明说；allow 原样回显原始入参，deny 带用户可读理由 |
 | BK | Complete（完成度收口） | **同题 N 路**（1–4）：每路自己的 worktree 与 `pulse/<slug>-aN` 分支、同组互列（序号/状态/每回合落盘 ±行数）、一键切换对比 diff —— Pulse 摆开选项，**选优是人的动作**；**运行检查**：每会话记忆的检查命令在 worktree 里跑（`/bin/sh -lc`，根经 POSIX 引号、300s 超时、退出码与输出尾原文回显、超时明说）—— 合并前先验证；**逐回合落盘**：回合终了用同一套只读 plumbing 测一次 worktree（`+x −y` 进状态卡与对比列表，未测到不显示不编造）；工具结果行以 `↳` 挂在调用下；观察侧一个字节不动 |
+| BL | Lead（价值主行） | **弹窗的可观测性质变，其一**：活跃会话行的主行按价值取 —— 自述新鲜（30 分钟窗口，与行叙事同门）的最新原话压过静态任务标题；标题降位进展开卡与指挥台，不丢失；等待行（用户必须认出的那件事）与仅进程行（诚实状态短语）**一条规则不变**；选择逻辑是纯函数 `TrayRowLead.source`，优先级表（wait: task→project→needsYou；live: **freshWords**→task→toolTitle→project→session 短语）由测试逐格钉死；hero 只做映射不做决定 |
+| BM | Expand（行内展开） | **弹窗的可观测性质变，其二**：每行 chevron 原位展开迷你检视器 —— 降位标题、完整原话、错误原文、计划（≤4+N）、价值芯片（成本·回合 / 本回合落盘 / ±行 / token，**没测到不渲染**），随后动作就地：受管权限卡 / Respond 卡 / 受管回复框（紧凑面，Respond 纪律与超时即拒逐条不变）/ 忽略·稍后·在指挥台打开；展开态按 rowKey 记在面板、不跨打开持久化，Go-Look reveal 带展开态抵达；**一套卡片两个容器**（`SessionCards.swift`：托盘 compact、指挥台 full，一处写两处到，构造上不漂移）；「只有计数」收窄为跨机器铁律 —— fleet 快照一个字节不变，逐条自述照旧逐处 sanitizer |
 
 ---
 
@@ -671,6 +700,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 扫描引擎 | `StatusStoreEngine.swift`（start / refresh / harvest 应用 / 活动轻路径） |
 | 通知策略 / 等待动作 | `StatusStoreWaiting.swift` |
 | 会话事实簇 | `SessionFacts.swift`（`SessionRemote` / `SessionSelfReport` / `SessionLiveAction` / `SessionDigestFacts` / `SessionEffect`——AgentRow 组合它们并保留转发访问器，读写两侧零改动） |
+| 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
 | 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` · `TranscriptReader.swift` |
 | 引擎边界 / 受管会话 | `SessionSource.swift` · `ManagedSession.swift` · `ManagedSessionRunner.swift` · `ManagedSessionSource.swift` · `ManagedWorktree.swift` · `ManagedSessionViews.swift` |
 | 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |
