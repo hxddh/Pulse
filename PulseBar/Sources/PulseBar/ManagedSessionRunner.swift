@@ -189,7 +189,9 @@ final class ManagedSessionRunner {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 $0.status = .failed(stderrText.isEmpty ? "exit \(exitCode)" : stderrText)
                 if $0.lastErrorText.isEmpty { $0.lastErrorText = "exit \(exitCode)" }
-            case .idle, .failed, .cancelled:
+            case .idle, .failed, .cancelled, .queued, .interrupted:
+                // The last three cannot follow a child exit in practice —
+                // but a no-op is the honest handling if one ever does.
                 break
             }
         }
