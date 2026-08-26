@@ -686,6 +686,16 @@ enum L10n {
         case .managedRunInPulse: return "Run in Pulse (managed)"
         case .managedUseWorktree: return "Isolated worktree"
         case .managedDispatchHint: return "Pulse runs claude itself and owns the stream: the full conversation lives here, replies are real turns, and stopping is one click. Your words start it; every turn after is also yours."
+        case .managedAcceptance: return "Accept & land"
+        case .managedAcceptanceHint:
+            return "These verbs run only inside the worktree Pulse created, only on your click — your own checkout stays untouchable. Review the diff above first; the commit message is your judgment."
+        case .managedCommitPlaceholder: return "Commit message…"
+        case .managedCommit: return "Commit"
+        case .managedCommitted: return "Committed in the worktree"
+        case .managedPush: return "Push branch"
+        case .managedPushed: return "Pushed %@ — open the PR when you're ready"
+        case .managedOpenPR: return "Open PR on GitHub"
+        case .managedOutsideNamespace: return "Refused: not a Pulse worktree"
         }
     }
 
@@ -1293,6 +1303,16 @@ enum L10n {
         case .managedRunInPulse: return "在 Pulse 里运行（受管）"
         case .managedUseWorktree: return "独立 worktree"
         case .managedDispatchHint: return "Pulse 自己运行 claude 并独占输出流：完整对话就在这里，回复是真实回合，终止一键可达。开局的话是你写的，之后每一回合也都是。"
+        case .managedAcceptance: return "验收落地"
+        case .managedAcceptanceHint:
+            return "这些动词只在 Pulse 自建的 worktree 里、只因你的点击而运行 —— 你自己的工作副本碰不到。先看上方 diff；提交信息就是你的判断。"
+        case .managedCommitPlaceholder: return "提交信息…"
+        case .managedCommit: return "提交"
+        case .managedCommitted: return "已在 worktree 中提交"
+        case .managedPush: return "推送分支"
+        case .managedPushed: return "已推送 %@ —— 就绪后去开 PR"
+        case .managedOpenPR: return "在 GitHub 开 PR"
+        case .managedOutsideNamespace: return "已拒绝：不是 Pulse 的 worktree"
         }
     }
 
@@ -1457,6 +1477,9 @@ enum L10n {
         case managedWorktreeNote, managedNoClaude, managedNotARepo
         case managedWorktreeFailed, managedRunInPulse, managedUseWorktree
         case managedDispatchHint
+        case managedAcceptance, managedAcceptanceHint, managedCommitPlaceholder
+        case managedCommit, managedCommitted, managedPush, managedPushed
+        case managedOpenPR, managedOutsideNamespace
         case trayScanIncomplete
     }
 }

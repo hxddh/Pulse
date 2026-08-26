@@ -14,6 +14,11 @@ struct ManagedSessionInspector: View {
     let row: AgentRow
 
     @State private var reply = ""
+    @State private var commitMessage = ""
+    @State private var acceptanceBusy = false
+    @State private var acceptanceNotice = ""
+    @State private var acceptanceNoticeIsError = false
+    @State private var compareURL: URL?
 
     private var runner: ManagedSessionRunner? { store.managedRunner(for: row) }
 
@@ -26,9 +31,102 @@ struct ManagedSessionInspector: View {
                     statusCard(model)
                 }
                 effectCard
+                if runner?.isRunning != true,
+                   ManagedWorktree.isPulseWorktree(row.workspaceRoot) {
+                    acceptanceCard
+                }
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// 5.0-γ (scene BH): acceptance, on the user's click, inside Pulse's own
+    /// namespace only — the diff sits one card above, the message is the
+    /// user's words, and every outcome lands here in a sentence.
+    private var acceptanceCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.tr(.managedAcceptance))
+                .font(.headline)
+            Text(store.tr(.managedAcceptanceHint))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField(store.tr(.managedCommitPlaceholder), text: $commitMessage, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...3)
+            HStack(spacing: 10) {
+                Button(store.tr(.managedCommit)) {
+                    let message = commitMessage
+                    runAcceptance { worktree in
+                        if let error = ManagedAcceptance.commit(worktree: worktree, message: message) {
+                            return .failure(error)
+                        }
+                        return .success(store.tr(.managedCommitted))
+                    }
+                }
+                .disabled(acceptanceBusy
+                          || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(store.tr(.managedPush)) {
+                    runAcceptance { worktree in
+                        guard let branch = ManagedAcceptance.branch(worktree: worktree) else {
+                            return .failure(.gitFailed("no branch"))
+                        }
+                        if let error = ManagedAcceptance.push(worktree: worktree, branch: branch) {
+                            return .failure(error)
+                        }
+                        if let origin = ManagedAcceptance.originURL(worktree: worktree) {
+                            let url = ManagedAcceptance.compareURL(originURL: origin, branch: branch)
+                            DispatchQueue.main.async { compareURL = url }
+                        }
+                        return .success(String(format: store.tr(.managedPushed), branch))
+                    }
+                }
+                .disabled(acceptanceBusy)
+                if let compareURL {
+                    Button(store.tr(.managedOpenPR)) {
+                        NSWorkspace.shared.open(compareURL)
+                    }
+                }
+                if acceptanceBusy { ProgressView().controlSize(.small) }
+            }
+            .buttonStyle(.bordered)
+            if !acceptanceNotice.isEmpty {
+                Text(acceptanceNotice)
+                    .font(.caption)
+                    .foregroundStyle(acceptanceNoticeIsError ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func runAcceptance(
+        _ verb: @escaping (String) -> Result<String, ManagedAcceptance.VerbError>
+    ) {
+        guard !acceptanceBusy else { return }
+        acceptanceBusy = true
+        acceptanceNotice = ""
+        let worktree = row.workspaceRoot
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = verb(worktree)
+            DispatchQueue.main.async {
+                acceptanceBusy = false
+                switch outcome {
+                case .success(let message):
+                    acceptanceNotice = message
+                    acceptanceNoticeIsError = false
+                case .failure(.outsideNamespace):
+                    acceptanceNotice = store.tr(.managedOutsideNamespace)
+                    acceptanceNoticeIsError = true
+                case .failure(.gitFailed(let reason)):
+                    acceptanceNotice = reason
+                    acceptanceNoticeIsError = true
+                }
+            }
         }
     }
 

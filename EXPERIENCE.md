@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（4.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（5.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -418,6 +418,13 @@ sanitizer、一个字节都不出机器。托盘一个像素不变。
   流里认不出的事件计数明说。受管的「等你回复」只在指挥台呈现，**不点亮托盘
   红灯**（Waiting 唯一来源仍是 attention 协议）。真机验证
   `scripts/qa_managed_session.sh`。
+- **验收落地（5.0-γ，场景 BH）**：受管 worktree 上的动词 —— 提交（信息是
+  用户写的：空信息拒绝）、推送 `pulse/<slug>` 分支（用用户自己的 git 凭据，
+  失败原文回显）、origin 是 GitHub 时给 compare 链接开 PR（非 GitHub 不装
+  按钮 —— 猜的 URL 不是诚实）。**原则重划（照 3.0-β 的先例）：「永不代动
+  仓库」是对旁观会话的规矩** —— Pulse 自建命名空间里的 worktree，动词因用户
+  点击而运行，用户是行动者、Pulse 是手；每个动词跑前先过命名空间门，用户
+  自己的工作副本在构造上就碰不到。
 
 ## 6. Preferences（设置窗）
 
@@ -636,6 +643,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BE | Delivery（送达） | **回答的动词从复制变成发送**：等待卡在满足精确门时给回复框 + 「发送到终端」—— Pulse 先经 tty 精确选中该会话的标签页（Terminal/iTerm 既有脚本），**选中失败一个字都不敲**，选中后经 System Events 敲入折叠为单行的回复（每个换行都是终端的提交键，所以折叠不拒收；≤2000 字符逐字键入）并回车；**键入厂商盲**（敲的是活会话，不是某家 CLI 的 resume 旗），Codex/任何家的提问等待一样能答；**权限等待永拒键入**（y/n 面前的 keystroke 是穿马甲的盲目同意，Respond 或聚焦才是那的动词）；App 级聚焦（Warp/IDE/无 tty）不给发送键，保留 3.0 剪贴板回退 —— 键落对处保证不了就不许键落；opt-in 默认关（keystroke 是比选标签页高一档的授权，开关本身即同意书），关掉立即全停；三个失败出口三句话（没找到标签页-什么都没敲 / 敲入失败-查权限 / 没内容），成功也有回执「已送达」；AppleScript 转义与折叠由测试钉死，真机行为由 `qa_workbench_actuation.sh` 十分钟验证 |
 | BF | Dispatch（派活） | **第三个动词：在舰队工作过的地方起新会话** —— 侧栏「派活」开表单：仓库根只从**采集端见过且磁盘确认**的 workspaceRoot 里选（不接受手输任意路径 —— 派活的地基是观测事实）、任务句可空（空=裸起会话）；命令 `cd <根> && claude '<任务>'` 走与 resume/送达同一套 POSIX 单引号纪律（根与任务都不许裸上 shell，相对路径与 `/`、`/tmp` 直接拒绝），在**新** Terminal 窗口执行；新会话**被观测到才出现**为行，Pulse 不假装派出即看见；与送达同一个 opt-in，关掉按钮即刻消失；终端不接受命令时表单原地说失败，不静默关闭 |
 | BG | Managed（受管会话） | **Pulse 拥有它派出的会话**（市场对比后的质变定义，docs/plan-5.0.md）：派活默认走受管 —— `claude -p --output-format stream-json --verbose`（续回合 `--resume <sid>`，sid 过 3.0 的同一道形状门，坏 id 拒绝回合而不是私开新会话）**纯管道**回合制驱动，prompt 作 argv 单参数上车（没有 shell 就没有转义面）；跑在 Pulse 自建 worktree（`git worktree add` + `pulse/<slug>` 分支，Application Support 命名空间，**只有命名空间内的路径承认是 Pulse 的**，用户工作副本一寸不动）；流事件经**与观察侧同一个** TranscriptReader 解析（assistant/user 消息形状复用，一个解析器两处供货，永不漂移）；result 事件收束回合（成本/token 累计、错误 subtype 如实、`idle` 是「下一句是你的」而**不是**托盘 Waiting）；无 result 的退出不冒充成功（静默退出=失败，带 stderr 尾巴）；未知事件与非 JSON 行分开计数明说；取消 SIGTERM→2s→SIGKILL、退出全员收割（无孤儿烧 token）；行进托盘走既有规矩、检视器换成实时对话（回复框=真回合、运行中可终止、对话≤1000 条自称截断）；worktree diff 用同一张只读 plumbing 卡；受管行的 worktree 不进派活仓库列表（不套娃）；claude CLI 不在、不是 git 仓库、worktree 失败各有各的句子，表单原地说，不静默 |
+| BH | Land（验收落地） | **受管 worktree 上的三个动词，全部只因用户点击**：提交（`add -A` + 用户写的信息 —— 空信息在 git 之前拒绝，提交语就是判断）、推送（只推 `pulse/` 前缀分支，用用户自己的 git 凭据，无 remote/无权限的失败原文回显不改写）、开 PR（只在 origin 解析为 GitHub 时给 compare 链接，分支名里的 `/` 编码为 `%2F`；GitLab 等一律不装按钮 —— 猜的 URL 不是诚实）；**每个动词执行前过命名空间门**（`isPulseWorktree`，Application Support 下 Pulse 自己的目录才算），旁观会话的仓库与用户自己的工作副本在构造上就不可触 —— 「永不代动仓库」重划为对旁观会话的规矩，与 3.0-β 重划「只有计数」同一先例；验收卡只在回合不在跑时出现，diff 卡在它上方一格（先看后落）；真链条（改 → 提交 → 推送 → 分支带内容抵达 origin）由本地 bare origin 在 CI 上实证 |
 
 ---
 
