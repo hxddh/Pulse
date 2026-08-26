@@ -35,6 +35,7 @@ final class StatusStore: ObservableObject {
     @Published var hotkeyEnabled = false
     /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
     @Published var allowTerminalAutomation = false
+    @Published var allowWorkbenchActuation = false
     /// Answer this Mac's own agents from Pulse, when the prompt is not in
     /// front of you. **The key file is the source of truth**, not this flag —
     /// a persisted setting could drift from the file the hook actually reads,
@@ -3900,6 +3901,7 @@ final class StatusStore: ObservableObject {
             hotkey: hotkey,
             hotkeyEnabled: hotkeyEnabled,
             allowTerminalAutomation: allowTerminalAutomation,
+            allowWorkbenchActuation: allowWorkbenchActuation,
             measureWorkspaceEffect: measureWorkspaceEffect,
             broadcastFleet: broadcastFleet,
             mutedAgents: mutedAgents,
@@ -3925,6 +3927,7 @@ final class StatusStore: ObservableObject {
         hotkey = s.hotkey
         hotkeyEnabled = s.hotkeyEnabled
         allowTerminalAutomation = s.allowTerminalAutomation
+        allowWorkbenchActuation = s.allowWorkbenchActuation
         measureWorkspaceEffect = s.measureWorkspaceEffect
         broadcastFleet = s.broadcastFleet
         mutedAgents = s.mutedAgents

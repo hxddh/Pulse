@@ -397,6 +397,15 @@ struct SettingsView: View {
             Text(store.tr(.allowTerminalAutomationHint))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            // 4.0-β: one notch above tab-select — the keystroke grant. The
+            // switch existing is the consent; off kills all actuation now.
+            Toggle(store.tr(.allowWorkbenchActuation), isOn: $store.allowWorkbenchActuation)
+                .onChange(of: store.allowWorkbenchActuation) { _, _ in
+                    store.saveSettings()
+                }
+            Text(store.tr(.allowWorkbenchActuationHint))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
             // Off by default, and the switch is a key file: turning it off
             // stops every hold immediately, because the hook's rule is "no
             // key, no hold".

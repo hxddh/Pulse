@@ -14,6 +14,7 @@ import AppKit
 struct WorkbenchView: View {
     @ObservedObject var store: StatusStore
     @State private var selectedKey: String?
+    @State private var showDispatch = false
 
     private var rows: [AgentRow] { store.allRows }
 
@@ -58,6 +59,25 @@ struct WorkbenchView: View {
             }
         }
         .listStyle(.sidebar)
+        // 4.0-β (scene BF): the dispatch verb. Present only when actuation
+        // is granted — a button that would beg for a setting is noise.
+        .safeAreaInset(edge: .bottom) {
+            if store.allowWorkbenchActuation {
+                HStack {
+                    Button {
+                        showDispatch = true
+                    } label: {
+                        Label(store.tr(.workbenchDispatch), systemImage: "plus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    Spacer()
+                }
+                .padding(10)
+            }
+        }
+        .sheet(isPresented: $showDispatch) {
+            DispatchSheet(store: store)
+        }
     }
 
     private var emptyState: some View {
@@ -210,6 +230,8 @@ struct SessionInspectorView: View {
                 if let inbound = store.respondRequest(for: row) {
                     respondSection(inbound)
                 }
+            case .type:
+                typeSection
             case .resume:
                 resumeSection
             case .focusOnly, .none:
@@ -268,6 +290,29 @@ struct SessionInspectorView: View {
                 }
                 .buttonStyle(.bordered)
             }
+        }
+    }
+
+    /// 4.0-β (scene BE): delivery. The reply is the user's words, the click
+    /// is the user's decision, the typing is Pulse's finger work — into the
+    /// exact tab the precision gate verified, never anywhere else.
+    private var typeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.tr(.workbenchAnswerHeading))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            TextField(store.tr(.workbenchAnswerPlaceholder), text: $answerDraft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(2...6)
+            Button(store.tr(.workbenchSend)) {
+                store.sendReply(row, text: answerDraft)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(answerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Text(store.tr(.workbenchSendHint))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -428,6 +473,79 @@ struct SessionInspectorView: View {
                 .font(.callout)
                 .textSelection(.enabled)
         }
+    }
+}
+
+/// 4.0-β (scene BF) — start a session where the fleet already works. The
+/// picker offers only disk-confirmed roots the collector has actually seen;
+/// the command is built with the same POSIX quoting as everything else, run
+/// in a fresh Terminal window, and the new session appears as a row when the
+/// collector sees it — Pulse does not pretend it started observing early.
+@MainActor
+private struct DispatchSheet: View {
+    @ObservedObject var store: StatusStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedRoot: String?
+    @State private var task = ""
+    @State private var failed = false
+
+    private var roots: [String] { store.workbenchDispatchRoots }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(store.tr(.workbenchDispatch))
+                .font(.headline)
+            if roots.isEmpty {
+                Text(store.tr(.workbenchDispatchNoRoots))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker(store.tr(.workbenchDispatchRepo), selection: $selectedRoot) {
+                    ForEach(roots, id: \.self) { root in
+                        Text(URL(fileURLWithPath: root).lastPathComponent)
+                            .tag(String?.some(root))
+                    }
+                }
+                if let selectedRoot {
+                    Text(selectedRoot)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                TextField(store.tr(.workbenchDispatchTask), text: $task, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...5)
+                Text(store.tr(.workbenchDispatchHint))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if failed {
+                    Text(store.tr(.workbenchDispatchFailed))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            HStack {
+                Spacer()
+                Button(store.tr(.cancel)) { dismiss() }
+                if !roots.isEmpty {
+                    Button(store.tr(.workbenchDispatchStart)) {
+                        guard let root = selectedRoot else { return }
+                        if store.dispatchSession(root: root, task: task) {
+                            dismiss()
+                        } else {
+                            failed = true
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedRoot == nil)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onAppear { selectedRoot = roots.first }
     }
 }
 
