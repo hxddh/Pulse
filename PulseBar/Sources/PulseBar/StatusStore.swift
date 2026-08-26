@@ -199,6 +199,12 @@ final class StatusStore: ObservableObject {
     static let maxWaitHistory = 12
 
     var timer: Timer?
+    /// 5.0-α — the engine boundary. Sources produce rows; the coordinator
+    /// merges; `cachedAll` is the merged cache the display layer reads.
+    /// The observed pipeline registers first and stays ground truth for any
+    /// rowKey it also produces; the managed runtime (5.0-β) registers after.
+    let observedSessions = ObservedSessionSource()
+    private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
     var cachedAll: [AgentRow] = []
     var lastGoodHarvest: [ActivityHarvest.Row] = []
     /// Result of the latest attempted adapter scan, including adapters that
