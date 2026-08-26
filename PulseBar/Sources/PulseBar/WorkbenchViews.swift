@@ -114,16 +114,41 @@ struct SessionInspectorView: View {
     @ObservedObject var store: StatusStore
     let row: AgentRow
 
+    /// The user's draft reply for the resume channel. Lives on the inspector,
+    /// which the split view recreates per `.id(rowKey)` — a draft never leaks
+    /// from one session into another's answer box.
+    @State private var answerDraft = ""
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                header
-                if row.waiting { waitCard }
-                nowCard
-                if !row.planSteps.isEmpty || !row.planStep.isEmpty { planCard }
-                if !row.lastWord.isEmpty || !row.lastErrorText.isEmpty { wordsCard }
-                evidenceCard
-                effectCard
+                if row.isRecentOnly {
+                    // 复盘 (scene BC): an ended session is reviewed, not
+                    // watched. The diff — what actually landed — leads; the
+                    // plan's final state and last words follow; there is no
+                    // "right now" card because there is no now (陈旧不冒充
+                    // 此刻). The checklist shows ungated here: its final
+                    // state is the point, and the banner above already says
+                    // this is history.
+                    header
+                    reviewCard
+                    effectCard
+                    if !row.planSteps.isEmpty || !row.planStep.isEmpty { planCard }
+                    if !row.lastWord.isEmpty || !row.lastErrorText.isEmpty { wordsCard }
+                    evidenceCard
+                } else {
+                    header
+                    if row.waiting { waitCard }
+                    nowCard
+                    // Same freshness rule as the tray and Details: a
+                    // 30-minute-silent plan is withdrawn, not re-dressed.
+                    if row.selfReportFresh,
+                       !row.planSteps.isEmpty || !row.planStep.isEmpty { planCard }
+                    if row.selfReportFresh,
+                       !row.lastWord.isEmpty || !row.lastErrorText.isEmpty { wordsCard }
+                    evidenceCard
+                    effectCard
+                }
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -175,6 +200,19 @@ struct SessionInspectorView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // 回答 (scene BB): the two channels, routed by the same pure
+            // function the tests pin. Respond wins when a full request is
+            // attached; resume appears only for a local resumable session.
+            switch store.workbenchAnswerChannel(row) {
+            case .respond:
+                if let inbound = store.respondRequest(for: row) {
+                    respondSection(inbound)
+                }
+            case .resume:
+                resumeSection
+            case .focusOnly, .none:
+                EmptyView()
+            }
             HStack(spacing: 10) {
                 if row.canFocusTerminal {
                     Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
@@ -185,6 +223,88 @@ struct SessionInspectorView: View {
                 }
             }
             .buttonStyle(.bordered)
+            // Every verb's exit is visible where the button was pressed —
+            // a copy, a refusal, a verdict that could not be written.
+            if let notice = store.rowActionNotice(row) {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The Respond card, workbench edition — same rules as Details (scene
+    /// AR): Allow only next to the complete text it would approve, Deny
+    /// always available, the fate note replacing the buttons once a verdict
+    /// is written. The store methods are the tested ones; nothing re-decides
+    /// here.
+    private func respondSection(_ inbound: RespondSpool.InboundRequest) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(store.tr(.respondFullRequest)) · \(inbound.toolName.isEmpty ? row.agent.displayName : inbound.toolName)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                Text(inbound.request.fullRequest)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 200)
+            .padding(8)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            if let fate = store.respondFateNote(row) {
+                Text(fate)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 12) {
+                    Button(store.tr(.respondDeny)) { store.respondDeny(row) }
+                    if inbound.request.canOfferAllow {
+                        Button(store.tr(.respondAllow)) { store.respondAllow(row) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    /// The resume channel: a reply box and one button that copies the exact
+    /// command — Pulse never runs it (scene BB; the hint says so out loud).
+    private var resumeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.tr(.workbenchAnswerHeading))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            TextField(store.tr(.workbenchAnswerPlaceholder), text: $answerDraft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(2...6)
+            Button(store.tr(.workbenchAnswerCopy)) {
+                store.copyResumeCommand(row, answer: answerDraft)
+            }
+            .buttonStyle(.bordered)
+            Text(store.tr(.workbenchAnswerHint))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// 复盘 banner (scene BC): names what this mode is — acceptance of a
+    /// finished session — and repeats the boundary: Pulse never touches the
+    /// repository.
+    private var reviewCard: some View {
+        card(store.tr(.workbenchReview)) {
+            Text(store.tr(.workbenchReviewHint))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            let story = store.rowStoryLine(row)
+            if !story.isEmpty {
+                Text(story)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
