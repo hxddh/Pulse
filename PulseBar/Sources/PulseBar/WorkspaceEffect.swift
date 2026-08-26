@@ -137,6 +137,30 @@ enum WorkspaceEffect {
         return counts.filter { $0.value >= 2 }
     }
 
+    // MARK: - The workbench's read-only patch (3.0-β)
+
+    /// How much diff the workbench will show. Beyond this the view says it
+    /// was cut, with the counts still telling the whole truth.
+    static let maxPatchBytes = 96 * 1024
+
+    /// The full patch against HEAD for the session inspector — the counts'
+    /// own content, shown locally, read-only, never leaving the machine.
+    ///
+    /// Same discipline as the measurement: **plumbing only**. `diff-index -p`
+    /// never refreshes the index (the porcelain `diff` does, and 2.7 caught
+    /// it on a real machine), and the verb stays inside the measurement's
+    /// allowed set. Untracked files do not appear — this answers "what
+    /// changed against HEAD", the same question the counts answer.
+    /// Returns nil for anything but a clean exit: an unreadable repository
+    /// shows nothing rather than something invented.
+    static func patch(root: String) -> (text: String, truncated: Bool)? {
+        guard let result = runner(root, ["diff-index", "-p", "--no-color", "HEAD"]),
+              !result.timedOut, result.status == 0 else { return nil }
+        let truncated = result.stdout.count > maxPatchBytes
+        let bounded = truncated ? result.stdout.prefix(maxPatchBytes) : result.stdout[...]
+        return (String(decoding: bounded, as: UTF8.self), truncated)
+    }
+
     // MARK: - Bounded execution
 
     /// The exact argv for one command, so the read-only guarantee is a

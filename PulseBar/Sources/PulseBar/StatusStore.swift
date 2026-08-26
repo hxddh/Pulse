@@ -3817,6 +3817,16 @@ final class StatusStore: ObservableObject {
         SupportCoverageWindowController.shared.show(store: self)
     }
 
+    /// 3.0-β · the workbench's read surface: every session the store knows,
+    /// not the tray's glance window. Deliberately the window's only special
+    /// access so far — the first real seam, cut where use demanded it
+    /// (plan-3.0's rule: seams follow use).
+    var allRows: [AgentRow] { cachedAll }
+
+    func openWorkbench() {
+        WorkbenchWindowController.shared.show(store: self)
+    }
+
     func openAgentDetail(_ row: AgentRow) {
         AgentDetailWindowController.shared.show(store: self, row: row)
     }
