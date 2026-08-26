@@ -631,6 +631,16 @@ enum L10n {
         case .workbenchDiffClean: return "Working tree clean"
         case .workbenchDiffTruncated: return "Diff cut at 96 KB — the counts above are complete"
         case .workbenchDiffUnavailable: return "Diff unavailable"
+        case .workbenchAnswerHeading: return "Answer & continue"
+        case .workbenchAnswerPlaceholder: return "Write your reply…"
+        case .workbenchAnswerCopy: return "Copy resume command"
+        case .workbenchAnswerHint:
+            return "Copies claude --resume with your reply and brings the terminal forward. Pulse never runs it — pasting and pressing Enter stays in your hands."
+        case .workbenchAnswerCopied: return "Command copied — paste in the terminal and press Enter"
+        case .workbenchAnswerRefused: return "This session id can't safely ride a command line"
+        case .workbenchReview: return "Wrap-up"
+        case .workbenchReviewHint:
+            return "This session has ended — below is what it left behind. Pulse never touches the repository; disposition happens in your own tools."
         }
     }
 
@@ -1183,6 +1193,16 @@ enum L10n {
         case .workbenchDiffClean: return "工作树干净"
         case .workbenchDiffTruncated: return "diff 在 96 KB 处截断 —— 上方计数完整"
         case .workbenchDiffUnavailable: return "diff 不可用"
+        case .workbenchAnswerHeading: return "回答并续接"
+        case .workbenchAnswerPlaceholder: return "写下你的回复…"
+        case .workbenchAnswerCopy: return "复制续接命令"
+        case .workbenchAnswerHint:
+            return "复制带上你回复的 claude --resume 命令并唤起终端。Pulse 永不代跑 —— 粘贴与回车都在你手里。"
+        case .workbenchAnswerCopied: return "命令已复制 —— 在终端粘贴并回车"
+        case .workbenchAnswerRefused: return "会话 ID 无法安全进入命令行"
+        case .workbenchReview: return "复盘"
+        case .workbenchReviewHint:
+            return "会话已结束 —— 下面是它留下的东西。Pulse 永不代动仓库，处置在你自己的工具里。"
         }
     }
 
@@ -1328,6 +1348,9 @@ enum L10n {
         case workbenchTitle, openWorkbench, workbenchSelectHint, workbenchNoSessions
         case workbenchWait, workbenchDiff, workbenchDiffLoad, workbenchDiffClean
         case workbenchDiffTruncated, workbenchDiffUnavailable
+        case workbenchAnswerHeading, workbenchAnswerPlaceholder, workbenchAnswerCopy
+        case workbenchAnswerHint, workbenchAnswerCopied, workbenchAnswerRefused
+        case workbenchReview, workbenchReviewHint
         case trayScanIncomplete
     }
 }
