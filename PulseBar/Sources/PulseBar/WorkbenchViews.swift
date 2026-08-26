@@ -49,6 +49,12 @@ struct WorkbenchView: View {
                 selectedKey = rows.first(where: \.waiting)?.rowKey ?? rows.first?.rowKey
             }
         }
+        // 6.0-γ: attempt-compare jumps land here as one-shot requests.
+        .onChange(of: store.workbenchSelectKey) { _, key in
+            guard let key else { return }
+            selectedKey = key
+            store.workbenchSelectKey = nil
+        }
     }
 
     private var sidebar: some View {
@@ -499,6 +505,7 @@ private struct DispatchSheet: View {
     /// who want the session under their own hands.
     @State private var runManaged = true
     @State private var useWorktree = true
+    @State private var attempts = 1
     @State private var managedError: String?
 
     private var roots: [String] { store.workbenchDispatchRoots }
@@ -536,6 +543,13 @@ private struct DispatchSheet: View {
                 }
                 if runManaged {
                     Toggle(store.tr(.managedUseWorktree), isOn: $useWorktree)
+                    if useWorktree {
+                        // 6.0-γ: same task, several independent tries.
+                        Stepper(
+                            String(format: store.tr(.managedAttemptsCount), attempts),
+                            value: $attempts, in: 1...4
+                        )
+                    }
                     Text(store.tr(.managedDispatchHint))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -566,8 +580,10 @@ private struct DispatchSheet: View {
                         guard let root = selectedRoot else { return }
                         if runManaged {
                             let taskText = task
-                            if let error = store.dispatchManagedSession(
-                                repoRoot: root, task: taskText, useWorktree: useWorktree
+                            if let error = store.dispatchManagedAttempts(
+                                repoRoot: root, task: taskText,
+                                useWorktree: useWorktree,
+                                attempts: useWorktree ? attempts : 1
                             ) {
                                 managedError = error
                             } else {

@@ -15,6 +15,11 @@ struct ManagedSessionInspector: View {
 
     @State private var reply = ""
     @State private var commitMessage = ""
+    @State private var runCheckCommand = ""
+    @State private var runCheckBusy = false
+    @State private var runCheckOutput = ""
+    @State private var runCheckResult = ""
+    @State private var runCheckFailed = false
     @State private var acceptanceBusy = false
     @State private var acceptanceNotice = ""
     @State private var acceptanceNoticeIsError = false
@@ -26,19 +31,212 @@ struct ManagedSessionInspector: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                // 6.0-β: the asks this session is blocked on, first — the
+                // turn is waiting on exactly this.
+                ForEach(store.managedPermissionRequests(for: row), id: \.id) { request in
+                    permissionCard(request)
+                }
                 conversationCard
                 if let model = runner?.model {
                     statusCard(model)
+                    // 6.0-γ: the other tries of the same task, side by side.
+                    if store.managedAttemptSiblings(for: row).count > 1 {
+                        compareCard
+                    }
                 }
                 effectCard
                 if runner?.isRunning != true,
                    ManagedWorktree.isPulseWorktree(row.workspaceRoot) {
+                    runCheckCard
                     acceptanceCard
                 }
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { runCheckCommand = runner?.model.runCommand ?? "" }
+    }
+
+    /// 6.0-γ (scene BK): same task, N independent tries — status and what
+    /// each has landed, one click to switch. Judgment stays a human act:
+    /// Pulse lines them up, the user picks.
+    private var compareCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.tr(.managedAttempts))
+                .font(.headline)
+            ForEach(Array(store.managedAttemptSiblings(for: row).enumerated()), id: \.element.model.id) { index, sibling in
+                HStack(spacing: 10) {
+                    Text(String(format: store.tr(.managedAttemptOrdinal), index + 1))
+                        .font(.callout.weight(sibling.model.id == row.managedID ? .bold : .regular))
+                    Text(statusLabel(sibling.model.status))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let effect = sibling.model.lastTurnEffect {
+                        Text("+\(effect.insertions) −\(effect.deletions)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if sibling.model.id == row.managedID {
+                        Text(store.tr(.managedCurrentAttempt))
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        Button(store.tr(.managedViewAttempt)) {
+                            store.workbenchSelectKey = "managed|" + sibling.model.id
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func statusLabel(_ status: ManagedSession.Status) -> String {
+        switch status {
+        case .idle: return store.tr(.managedIdle)
+        case .running: return store.tr(.managedRunning)
+        case .queued: return store.tr(.managedQueuedNote)
+        case .interrupted: return store.tr(.managedInterrupted)
+        case .cancelled: return store.tr(.managedCancelled)
+        case .failed(let reason): return String(format: store.tr(.managedFailed), reason)
+        }
+    }
+
+    /// 6.0-γ (scene BK): run the repo's own check inside the worktree before
+    /// landing anything. The command is the user's, remembered per session;
+    /// exit code and output tail come back verbatim.
+    private var runCheckCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.tr(.managedRunCheck))
+                .font(.headline)
+            HStack(spacing: 8) {
+                TextField(store.tr(.managedRunCheckPlaceholder), text: $runCheckCommand)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout.monospaced())
+                Button {
+                    runCheck()
+                } label: {
+                    if runCheckBusy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(store.tr(.managedRunCheck))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(runCheckBusy
+                          || runCheckCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if !runCheckResult.isEmpty {
+                Text(runCheckResult)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(runCheckFailed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            }
+            if !runCheckOutput.isEmpty {
+                ScrollView {
+                    Text(runCheckOutput)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                }
+                .frame(maxHeight: 220)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func runCheck() {
+        guard !runCheckBusy, let runner else { return }
+        let command = runCheckCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return }
+        runner.setRunCommand(command)
+        runCheckBusy = true
+        runCheckOutput = ""
+        runCheckResult = ""
+        let root = row.workspaceRoot
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = ProcessIO.run(
+                executable: "/bin/sh",
+                arguments: ["-lc", "cd \(WorkbenchAnswer.shellQuoted(root)) && " + command],
+                timeout: 300
+            )
+            DispatchQueue.main.async {
+                runCheckBusy = false
+                guard let result else {
+                    runCheckResult = store.tr(.managedRunCheckTimeout)
+                    runCheckFailed = true
+                    return
+                }
+                if result.timedOut {
+                    runCheckResult = store.tr(.managedRunCheckTimeout)
+                    runCheckFailed = true
+                } else {
+                    runCheckResult = String(format: store.tr(.managedRunCheckExit), result.status)
+                    runCheckFailed = result.status != 0
+                }
+                var text = String(decoding: result.stdout.suffix(4_000), as: UTF8.self)
+                let stderr = String(decoding: result.stderr.suffix(1_000), as: UTF8.self)
+                if !stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    text += (text.isEmpty ? "" : "\n") + stderr
+                }
+                runCheckOutput = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+    }
+
+    /// 6.0-β (scene BJ): a live permission ask. Every Respond rule holds —
+    /// Allow only beside the complete input (a truncated one loses the
+    /// button, never the Deny), and the hint says out loud that silence
+    /// denies: a headless run has no safe prompt to fall back to.
+    private func permissionCard(_ request: ManagedPermission.Request) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(
+                "\(store.tr(.managedPermissionHeading)) · \(request.toolName)",
+                systemImage: "hand.raised"
+            )
+            .font(.headline)
+            .foregroundStyle(.orange)
+            ScrollView {
+                Text(request.inputJSON)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220)
+            .padding(8)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            if request.truncated {
+                Text(store.tr(.managedPermissionTruncated))
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            HStack(spacing: 12) {
+                Button(store.tr(.respondDeny)) {
+                    store.managedPermissionDecide(id: request.id, allow: false)
+                }
+                if request.canOfferAllow {
+                    Button(store.tr(.respondAllow)) {
+                        store.managedPermissionDecide(id: request.id, allow: true)
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+            Text(store.tr(.managedPermissionHint))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// 5.0-γ (scene BH): acceptance, on the user's click, inside Pulse's own
@@ -211,6 +409,10 @@ struct ManagedSessionInspector: View {
                     Button(store.tr(.managedCancel)) { runner?.cancel() }
                         .buttonStyle(.bordered)
                 }
+            } else if runner?.model.status == .queued {
+                Text(store.tr(.managedQueuedNote))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             } else {
                 TextField(store.tr(.managedReplyPlaceholder), text: $reply, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
@@ -238,6 +440,14 @@ struct ManagedSessionInspector: View {
                     .foregroundStyle(.secondary)
             case .running:
                 EmptyView()
+            case .queued:
+                Text(store.tr(.managedQueuedNote))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            case .interrupted:
+                Text(store.tr(.managedInterrupted))
+                    .font(.callout)
+                    .foregroundStyle(.orange)
             case .cancelled:
                 Text(store.tr(.managedCancelled))
                     .font(.callout)
@@ -266,11 +476,30 @@ struct ManagedSessionInspector: View {
                         .foregroundStyle(.orange)
                 }
             }
+            if let effect = model.lastTurnEffect {
+                Text(String(format: store.tr(.managedTurnEffect), effect.insertions, effect.deletions))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
             if model.isWorktree {
                 Text(store.tr(.managedWorktreeNote))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            // 6.0-α: a finished session can be cleared. The record goes;
+            // the worktree stays for the user — Pulse does not delete work
+            // products on cleanup.
+            if model.status != .running {
+                HStack(spacing: 8) {
+                    Button(store.tr(.managedRemove)) {
+                        store.managedRemove(row)
+                    }
+                    .buttonStyle(.bordered)
+                    Text(store.tr(.managedRemoveNote))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(14)
@@ -322,8 +551,11 @@ struct ManagedEntryRow: View {
         case .user: return store.tr(.workbenchTranscriptUser)
         case .agent: return agentName
         case .tool:
-            if entry.isError { return store.tr(.detailLastError) }
-            return entry.toolName.isEmpty ? store.tr(.workbenchTranscriptResult) : entry.toolName
+            if entry.isError { return "↳ " + store.tr(.detailLastError) }
+            // 6.0-γ: a result visibly hangs off its call.
+            return entry.toolName.isEmpty
+                ? "↳ " + store.tr(.workbenchTranscriptResult)
+                : entry.toolName
         }
     }
 

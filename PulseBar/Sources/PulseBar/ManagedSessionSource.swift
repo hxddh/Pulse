@@ -12,26 +12,26 @@ import Foundation
 @MainActor
 final class ManagedSessionSource: SessionSource {
     let sourceID = "managed"
-    private(set) var runners: [ManagedSessionRunner] = []
+    /// 6.0-α: the fleet supervises the population; the source is the thin
+    /// SessionSource face over it.
+    let fleet = ManagedFleet()
     /// Fired on any session change, wired by the store to re-merge.
-    var onChange: (() -> Void)?
-
-    var sessions: [AgentRow] {
-        runners.map { Self.row(for: $0.model) }
+    var onChange: (() -> Void)? {
+        didSet { fleet.onChange = { [weak self] in self?.onChange?() } }
     }
 
-    func add(_ runner: ManagedSessionRunner) {
-        runners.append(runner)
-        runner.onChange = { [weak self] in self?.onChange?() }
-        onChange?()
+    var runners: [ManagedSessionRunner] { fleet.runners }
+
+    var sessions: [AgentRow] {
+        fleet.runners.map { Self.row(for: $0.model) }
     }
 
     func runner(managedID: String) -> ManagedSessionRunner? {
-        runners.first { $0.model.id == managedID }
+        fleet.runner(managedID: managedID)
     }
 
     func terminateAllForShutdown() {
-        for runner in runners { runner.terminateForShutdown() }
+        fleet.shutdown()
     }
 
     /// Model → row, pure and pinned by tests. First-party facts: the stream
@@ -78,7 +78,32 @@ extension StatusStore {
 
     /// The dispatch verb, managed edition. Returns a user-readable failure
     /// or nil on success — the sheet shows it in place, never silently.
-    func dispatchManagedSession(repoRoot: String, task: String, useWorktree: Bool) -> String? {
+    /// 6.0-γ: same task, several independent tries — each in its own
+    /// worktree and branch, grouped so the inspector can compare them.
+    func dispatchManagedAttempts(
+        repoRoot: String, task: String, useWorktree: Bool, attempts: Int
+    ) -> String? {
+        let count = max(1, min(4, attempts))
+        guard count > 1 else {
+            return dispatchManagedSession(repoRoot: repoRoot, task: task, useWorktree: useWorktree)
+        }
+        guard useWorktree else { return tr(.managedAttemptsNeedWorktree) }
+        let group = UUID().uuidString
+        for index in 1...count {
+            if let error = dispatchManagedSession(
+                repoRoot: repoRoot, task: task, useWorktree: true,
+                attemptGroup: group, attemptIndex: index
+            ) {
+                return error
+            }
+        }
+        return nil
+    }
+
+    func dispatchManagedSession(
+        repoRoot: String, task: String, useWorktree: Bool,
+        attemptGroup: String = "", attemptIndex: Int = 0
+    ) -> String? {
         guard ManagedSession.claudeExecutable() != nil else {
             return tr(.managedNoClaude)
         }
@@ -86,9 +111,11 @@ extension StatusStore {
         var root = repoRoot
         var isWorktree = false
         if useWorktree {
+            var slug = ManagedWorktree.slug(task: task, nowMs: nowMs)
+            if attemptIndex > 0 { slug += "-a\(attemptIndex)" }
             switch ManagedWorktree.create(
                 repoRoot: repoRoot,
-                slug: ManagedWorktree.slug(task: task, nowMs: nowMs)
+                slug: slug
             ) {
             case .success(let path):
                 root = path
@@ -99,28 +126,66 @@ extension StatusStore {
                 return String(format: tr(.managedWorktreeFailed), reason)
             }
         }
-        if managedSessions.runners.isEmpty {
-            // First dispatch registers the source — after observed, so the
-            // coordinator's ground-truth rule holds by construction.
-            sessionSources.register(managedSessions)
-            managedSessions.onChange = { [weak self] in self?.managedSessionsChanged() }
-        }
-        let model = ManagedSession.Model(
+        activateManagedSessions()
+        var model = ManagedSession.Model(
             id: UUID().uuidString,
             task: task,
             root: root,
             isWorktree: isWorktree,
             nowMs: nowMs
         )
-        let runner = ManagedSessionRunner(model: model)
-        managedSessions.add(runner)
-        runner.send(prompt: task)
-        DebugLog.write("managed dispatch worktree=\(isWorktree)")
+        model.pendingPrompt = task
+        model.attemptGroup = attemptGroup
+        managedSessions.fleet.dispatch(model: model)
+        DebugLog.write("managed dispatch worktree=\(isWorktree) group=\(attemptGroup.isEmpty ? "-" : "y")")
         return nil
+    }
+
+    /// Wire the source into the boundary — idempotent, ordered after
+    /// observed by construction. Called on first dispatch and on reattach.
+    func activateManagedSessions() {
+        sessionSources.register(managedSessions)
+        if managedSessions.onChange == nil {
+            managedSessions.onChange = { [weak self] in self?.managedSessionsChanged() }
+        }
+    }
+
+    /// 6.0-α: called once at app start — persisted sessions come back,
+    /// interrupted turns honestly labelled, queued ones re-pumped.
+    func reattachManagedSessions() {
+        managedSessions.fleet.reattachFromDisk()
+        if !managedSessions.fleet.runners.isEmpty {
+            activateManagedSessions()
+            managedSessionsChanged()
+        }
     }
 
     func managedRunner(for row: AgentRow) -> ManagedSessionRunner? {
         guard !row.managedID.isEmpty else { return nil }
         return managedSessions.runner(managedID: row.managedID)
+    }
+
+    /// 6.0-α: clear a finished session's record. The fleet's own change
+    /// notification re-merges the boundary.
+    func managedRemove(_ row: AgentRow) {
+        guard !row.managedID.isEmpty else { return }
+        managedSessions.fleet.remove(managedID: row.managedID)
+    }
+
+    /// 6.0-β: the asks a session is blocked on, live.
+    func managedPermissionRequests(for row: AgentRow) -> [ManagedPermission.Request] {
+        guard !row.managedID.isEmpty else { return [] }
+        return managedSessions.fleet.pendingPermissions.filter { $0.managedID == row.managedID }
+    }
+
+    func managedPermissionDecide(id: String, allow: Bool) {
+        managedSessions.fleet.decidePermission(id: id, allow: allow)
+    }
+
+    /// 6.0-γ: the other tries of the same task, dispatch order.
+    func managedAttemptSiblings(for row: AgentRow) -> [ManagedSessionRunner] {
+        guard let runner = managedRunner(for: row),
+              !runner.model.attemptGroup.isEmpty else { return [] }
+        return managedSessions.fleet.attemptSiblings(group: runner.model.attemptGroup)
     }
 }

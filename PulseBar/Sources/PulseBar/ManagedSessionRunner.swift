@@ -25,6 +25,19 @@ final class ManagedSessionRunner {
 
     var isRunning: Bool { model.status == .running }
 
+    /// 6.0-α: the fleet found a slot for a queued session. Sends the held
+    /// prompt; an empty one falls to failed so the queue cannot spin on it.
+    func beginQueuedTurn() {
+        guard model.status == .queued else { return }
+        let prompt = model.pendingPrompt
+        update { $0.pendingPrompt = "" }
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            update { $0.status = .failed("empty prompt") }
+            return
+        }
+        send(prompt: prompt)
+    }
+
     /// Start the next turn with the user's words. Refuses while a turn is
     /// in flight; every refusal is visible through the model's status.
     func send(prompt: String) {
@@ -34,7 +47,14 @@ final class ManagedSessionRunner {
             return
         }
         let resume = model.claudeSessionID.isEmpty ? nil : model.claudeSessionID
-        guard let arguments = ManagedSession.arguments(prompt: prompt, resumeSessionID: resume) else {
+        guard let arguments = ManagedSession.arguments(
+            prompt: prompt,
+            resumeSessionID: resume,
+            // 6.0-β: nil only if the config could not be written — the turn
+            // still runs, with the 5.0 silent-deny behavior, rather than
+            // refusing to work at all.
+            permissionConfigPath: ManagedPermission.ensureConfig(managedID: model.id)
+        ) else {
             return
         }
         // The user's words are part of the record the moment they are sent.
@@ -103,6 +123,36 @@ final class ManagedSessionRunner {
         DebugLog.write("managed cancel id=\(model.id)")
     }
 
+    /// Test seam: drive queue/persistence semantics without a process.
+    /// Never called from product code.
+    func adoptStatusForTesting(_ status: ManagedSession.Status) {
+        update { $0.status = status }
+    }
+
+    /// 6.0-γ: the per-session run-check command, remembered (persisted with
+    /// the next status move).
+    func setRunCommand(_ command: String) {
+        update { $0.runCommand = command }
+    }
+
+    /// 6.0-γ: what this turn left on disk — measured with the same
+    /// read-only plumbing as everything else, once per turn end, off main.
+    private func measureTurnEffect() {
+        let root = model.root
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let measurement = WorkspaceEffect.measure(root: root, nowMs: nowMs)
+            Task { @MainActor [weak self] in
+                guard let self, measurement.isKnown,
+                      measurement.insertions >= 0, measurement.deletions >= 0
+                else { return }
+                self.update {
+                    $0.lastTurnEffect = (measurement.insertions, measurement.deletions)
+                }
+            }
+        }
+    }
+
     /// Quit-time reaping — no orphaned agents burning tokens after the tray
     /// icon is gone.
     func terminateForShutdown() {
@@ -144,6 +194,11 @@ final class ManagedSessionRunner {
             }
         }
         process = nil
+        if model.status == .idle {
+            measureTurnEffect()
+        } else if case .failed = model.status {
+            measureTurnEffect()
+        }
         DebugLog.write("managed turn end id=\(model.id) exit=\(exitCode) status=\(model.status)")
     }
 
