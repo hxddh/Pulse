@@ -45,6 +45,29 @@ step "5. Honesty exits" \
     a plain directory, if any).
   EXPECT: 不是 git 仓库 message, nothing created."
 
+
+# ---- 6.0 additions ----
+step "6. Permission channel (scene BJ)" \
+"  - Dispatch a task that needs an un-allow-listed tool (e.g. '运行 git push --dry-run').
+  EXPECT: an orange 权限请求 card appears at the top of the inspector with the
+  FULL tool input; the turn is visibly blocked on it. Deny → the agent reports
+  the denial and continues; Allow → the tool runs. Ignore one for 2 minutes →
+  auto-deny with 'timeout'."
+
+step "7. Queue and restart (scenes BI)" \
+"  - Dispatch 5 quick tasks at once. EXPECT: 3 run, 2 show 排队中; finishing
+  one starts the next.
+  - Quit Pulse while one turn runs; relaunch.
+  EXPECT: all sessions return with full conversations; the one that was
+  running says 回合被中断; replying to it resumes the same claude session."
+
+step "8. Compare and check (scene BK)" \
+"  - Dispatch one task with 并行尝试: 3. EXPECT: three rows, three worktrees,
+  the compare card lists all tries with status and ±lines; 查看 switches.
+  - In one try, set 运行检查 to your test command and run it.
+  EXPECT: exit code and output tail appear verbatim; a failing command shows
+  orange, nothing pretends."
+
 echo
-echo "All five held → 5.0-β verified on this machine."
+echo "All eight held → 5.0-β + 6.0 verified on this machine."
 echo "Anything failed → copy the step number and what happened instead."

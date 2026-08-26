@@ -28,8 +28,10 @@ enum TranscriptReader {
     static let maxEntries = 300
     static let maxEntryChars = 2_000
 
-    struct Entry: Equatable {
-        enum Kind: Equatable {
+    /// Codable since 6.0-α: managed sessions persist their conversation
+    /// across app restarts, and these entries are the conversation.
+    struct Entry: Equatable, Codable {
+        enum Kind: String, Equatable, Codable {
             /// The person driving the session.
             case user
             /// The agent's own words.

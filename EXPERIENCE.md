@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（5.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（6.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -425,6 +425,14 @@ sanitizer、一个字节都不出机器。托盘一个像素不变。
   仓库」是对旁观会话的规矩** —— Pulse 自建命名空间里的 worktree，动词因用户
   点击而运行，用户是行动者、Pulse 是手；每个动词跑前先过命名空间门，用户
   自己的工作副本在构造上就碰不到。
+- **舰队引擎（6.0-α，场景 BI）**：受管会话是受监督的持久实体 —— 并发上限 3 +
+  真队列、每会话状态文件（0600、写盘有界）、重启重挂（在跑的回合如实标
+  `interrupted`）、可移除（记录删、worktree 留给用户）。
+- **权限通道（6.0-β，场景 BJ）**：`--permission-prompt-tool` 指向 Pulse 自己
+  （`--permission-server` MCP stdio 子命令），完整入参实时上审批卡，Respond
+  纪律逐条成立；**超时与一切失败 = 拒绝**（headless 无可回落的安全提示）。
+- **完成度（6.0-γ，场景 BK）**：同题 N 路并行 + 互列对比、每会话运行检查
+  （worktree 里跑、退出码原文）、逐回合落盘 `+x −y`、工具结果 `↳` 配对。
 
 ## 6. Preferences（设置窗）
 
@@ -644,6 +652,9 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BF | Dispatch（派活） | **第三个动词：在舰队工作过的地方起新会话** —— 侧栏「派活」开表单：仓库根只从**采集端见过且磁盘确认**的 workspaceRoot 里选（不接受手输任意路径 —— 派活的地基是观测事实）、任务句可空（空=裸起会话）；命令 `cd <根> && claude '<任务>'` 走与 resume/送达同一套 POSIX 单引号纪律（根与任务都不许裸上 shell，相对路径与 `/`、`/tmp` 直接拒绝），在**新** Terminal 窗口执行；新会话**被观测到才出现**为行，Pulse 不假装派出即看见；与送达同一个 opt-in，关掉按钮即刻消失；终端不接受命令时表单原地说失败，不静默关闭 |
 | BG | Managed（受管会话） | **Pulse 拥有它派出的会话**（市场对比后的质变定义，docs/plan-5.0.md）：派活默认走受管 —— `claude -p --output-format stream-json --verbose`（续回合 `--resume <sid>`，sid 过 3.0 的同一道形状门，坏 id 拒绝回合而不是私开新会话）**纯管道**回合制驱动，prompt 作 argv 单参数上车（没有 shell 就没有转义面）；跑在 Pulse 自建 worktree（`git worktree add` + `pulse/<slug>` 分支，Application Support 命名空间，**只有命名空间内的路径承认是 Pulse 的**，用户工作副本一寸不动）；流事件经**与观察侧同一个** TranscriptReader 解析（assistant/user 消息形状复用，一个解析器两处供货，永不漂移）；result 事件收束回合（成本/token 累计、错误 subtype 如实、`idle` 是「下一句是你的」而**不是**托盘 Waiting）；无 result 的退出不冒充成功（静默退出=失败，带 stderr 尾巴）；未知事件与非 JSON 行分开计数明说；取消 SIGTERM→2s→SIGKILL、退出全员收割（无孤儿烧 token）；行进托盘走既有规矩、检视器换成实时对话（回复框=真回合、运行中可终止、对话≤1000 条自称截断）；worktree diff 用同一张只读 plumbing 卡；受管行的 worktree 不进派活仓库列表（不套娃）；claude CLI 不在、不是 git 仓库、worktree 失败各有各的句子，表单原地说，不静默 |
 | BH | Land（验收落地） | **受管 worktree 上的三个动词，全部只因用户点击**：提交（`add -A` + 用户写的信息 —— 空信息在 git 之前拒绝，提交语就是判断）、推送（只推 `pulse/` 前缀分支，用用户自己的 git 凭据，无 remote/无权限的失败原文回显不改写）、开 PR（只在 origin 解析为 GitHub 时给 compare 链接，分支名里的 `/` 编码为 `%2F`；GitLab 等一律不装按钮 —— 猜的 URL 不是诚实）；**每个动词执行前过命名空间门**（`isPulseWorktree`，Application Support 下 Pulse 自己的目录才算），旁观会话的仓库与用户自己的工作副本在构造上就不可触 —— 「永不代动仓库」重划为对旁观会话的规矩，与 3.0-β 重划「只有计数」同一先例；验收卡只在回合不在跑时出现，diff 卡在它上方一格（先看后落）；真链条（改 → 提交 → 推送 → 分支带内容抵达 origin）由本地 bare origin 在 CI 上实证 |
+| BI | Fleet Engine（舰队引擎） | **受管会话从 ad hoc 变成受监督的持久实体**：`ManagedFleet` 拥有全部 runner —— 并发上限 3 + 真队列（超出成 `queued` 行排队，槽位空出自动开跑，泵有重入护栏且拒绝在打不开的会话上空转）；每会话一个状态文件（0600 经 PrivateFile，含标题/根/claudeSessionID/完整对话/成本/token/待发 prompt），**写盘时机有界**（状态种类或回合数移动才写，绝不逐流事件写）；**重启重挂**：上次退出时在跑的回合如实标 `interrupted`（「没人见证它怎么结束的」—— 不冒充成功也不冒充失败），排队者带着原任务回来继续排；文件名决定身份（改名的状态文件被拒收）；已结束会话可移除 —— 记录删、worktree 留给用户并明说（Pulse 不代删工作产物）；退出先落盘再收割全部子进程 |
+| BJ | Permission（权限通道） | **headless 的致命洞补上**：每个受管回合注入 `--mcp-config` + `--permission-prompt-tool mcp__pulse__approve`，配置指向 **Pulse 自己的二进制**（`--permission-server` 子命令说最小 MCP stdio 方言：initialize / tools/list / tools/call，未知方法回错误、通知不回话）；tools/call 把完整入参写进权限 spool（0600、文件名定身份）并**阻塞等判决文件**；应用侧单 fd DispatchSource 盯 spool，审批卡实时置顶该会话检视器；**Respond 纪律逐条成立**——「同意」只在完整入参旁（超 64KB 截断即收回同意、拒绝仍在）、判决单次使用（读即删）、fleet 层对截断请求的 allow 二次强制为 deny；**超时（2 分钟）与一切失败 = 拒绝** —— headless 没有厂商提示可回落，这里 fail-open 就是 fail-permissive，是本产品唯一不许失败的方向，卡上明说；allow 原样回显原始入参，deny 带用户可读理由 |
+| BK | Complete（完成度收口） | **同题 N 路**（1–4）：每路自己的 worktree 与 `pulse/<slug>-aN` 分支、同组互列（序号/状态/每回合落盘 ±行数）、一键切换对比 diff —— Pulse 摆开选项，**选优是人的动作**；**运行检查**：每会话记忆的检查命令在 worktree 里跑（`/bin/sh -lc`，根经 POSIX 引号、300s 超时、退出码与输出尾原文回显、超时明说）—— 合并前先验证；**逐回合落盘**：回合终了用同一套只读 plumbing 测一次 worktree（`+x −y` 进状态卡与对比列表，未测到不显示不编造）；工具结果行以 `↳` 挂在调用下；观察侧一个字节不动 |
 
 ---
 

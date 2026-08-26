@@ -696,6 +696,25 @@ enum L10n {
         case .managedPushed: return "Pushed %@ — open the PR when you're ready"
         case .managedOpenPR: return "Open PR on GitHub"
         case .managedOutsideNamespace: return "Refused: not a Pulse worktree"
+        case .managedQueuedNote: return "Queued — starts when a slot frees (max 3 running at once)"
+        case .managedInterrupted: return "Turn interrupted — Pulse quit while it ran. The conversation survived; reply to resume."
+        case .managedRemove: return "Remove session"
+        case .managedRemoveNote: return "Removes the record; the worktree stays for you"
+        case .managedPermissionHeading: return "Permission ask"
+        case .managedPermissionHint:
+            return "No answer within 2 minutes denies automatically — a headless run has no safe prompt to fall back to."
+        case .managedPermissionTruncated: return "Input over budget — Allow withdrawn, Deny stands"
+        case .managedAttempts: return "Parallel tries"
+        case .managedAttemptsCount: return "Parallel tries: %d"
+        case .managedAttemptsNeedWorktree: return "Parallel tries need isolated worktrees"
+        case .managedAttemptOrdinal: return "Try %d"
+        case .managedViewAttempt: return "View"
+        case .managedCurrentAttempt: return "this one"
+        case .managedRunCheck: return "Run check"
+        case .managedRunCheckPlaceholder: return "e.g. swift test"
+        case .managedRunCheckExit: return "exit %d"
+        case .managedRunCheckTimeout: return "Check timed out"
+        case .managedTurnEffect: return "This turn on disk: +%d −%d"
         }
     }
 
@@ -1313,6 +1332,25 @@ enum L10n {
         case .managedPushed: return "已推送 %@ —— 就绪后去开 PR"
         case .managedOpenPR: return "在 GitHub 开 PR"
         case .managedOutsideNamespace: return "已拒绝：不是 Pulse 的 worktree"
+        case .managedQueuedNote: return "排队中 —— 有空位即开跑（同时最多 3 个）"
+        case .managedInterrupted: return "回合被中断 —— 运行中退出了 Pulse。对话还在，回复即续。"
+        case .managedRemove: return "移除会话"
+        case .managedRemoveNote: return "只移除记录；worktree 留给你"
+        case .managedPermissionHeading: return "权限请求"
+        case .managedPermissionHint:
+            return "两分钟无应答自动拒绝 —— headless 没有可回落的安全提示。"
+        case .managedPermissionTruncated: return "入参超界 —— 收回同意，仅可拒绝"
+        case .managedAttempts: return "并行尝试"
+        case .managedAttemptsCount: return "并行尝试：%d 路"
+        case .managedAttemptsNeedWorktree: return "并行尝试需要独立 worktree"
+        case .managedAttemptOrdinal: return "第 %d 试"
+        case .managedViewAttempt: return "查看"
+        case .managedCurrentAttempt: return "当前"
+        case .managedRunCheck: return "运行检查"
+        case .managedRunCheckPlaceholder: return "如：swift test"
+        case .managedRunCheckExit: return "退出码 %d"
+        case .managedRunCheckTimeout: return "检查超时"
+        case .managedTurnEffect: return "本回合落盘：+%d −%d"
         }
     }
 
@@ -1480,6 +1518,12 @@ enum L10n {
         case managedAcceptance, managedAcceptanceHint, managedCommitPlaceholder
         case managedCommit, managedCommitted, managedPush, managedPushed
         case managedOpenPR, managedOutsideNamespace
+        case managedQueuedNote, managedInterrupted, managedRemove, managedRemoveNote
+        case managedPermissionHeading, managedPermissionHint, managedPermissionTruncated
+        case managedAttempts, managedAttemptsCount, managedAttemptsNeedWorktree
+        case managedAttemptOrdinal, managedViewAttempt, managedCurrentAttempt
+        case managedRunCheck, managedRunCheckPlaceholder, managedRunCheckExit
+        case managedRunCheckTimeout, managedTurnEffect
         case trayScanIncomplete
     }
 }

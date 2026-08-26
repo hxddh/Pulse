@@ -7,6 +7,9 @@ import AppKit
 extension StatusStore {
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
+        // 6.0-α: persisted managed sessions come back before the first scan —
+        // interrupted turns honestly labelled, queued ones re-pumped.
+        reattachManagedSessions()
         let recovery = LaunchRecovery.begin(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
         launchRecovery = recovery.state
         recoveryExitKind = recovery.kind

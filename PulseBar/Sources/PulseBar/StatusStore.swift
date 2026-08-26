@@ -209,6 +209,8 @@ final class StatusStore: ObservableObject {
     let managedSessions = ManagedSessionSource()
     private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
     var cachedAll: [AgentRow] = []
+    /// 6.0-γ: one-shot workbench selection request (attempt compare jumps).
+    @Published var workbenchSelectKey: String? = nil
     var lastGoodHarvest: [ActivityHarvest.Row] = []
     /// Result of the latest attempted adapter scan, including adapters that
     /// ran successfully but had no recent local session. This is deliberately
