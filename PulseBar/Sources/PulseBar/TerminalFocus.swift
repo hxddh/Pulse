@@ -218,7 +218,9 @@ enum TerminalFocus {
     }
 
     /// Terminal / iTerm tab select — only called after Automation opt-in + click.
-    private static func focusTTY(_ raw: String) -> Bool {
+    /// Internal since 4.0-β: `WorkbenchActuation` selects the exact tab with
+    /// this before it is allowed to type a single character.
+    static func focusTTY(_ raw: String) -> Bool {
         let tty = normalizeTTY(raw)
         guard !tty.isEmpty else { return false }
         if focusTerminalAppTTY(tty) { return true }
@@ -282,7 +284,8 @@ enum TerminalFocus {
         return osascriptBool(script)
     }
 
-    private static func osascriptBool(_ source: String) -> Bool {
+    /// Internal since 4.0-β for the same reason as `focusTTY`.
+    static func osascriptBool(_ source: String) -> Bool {
         let t = Process()
         t.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         t.arguments = ["-e", source]

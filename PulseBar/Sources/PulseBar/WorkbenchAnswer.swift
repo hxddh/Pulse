@@ -21,6 +21,9 @@ enum WorkbenchAnswer {
     enum Channel: Equatable {
         /// A digest-verified full request is attached — the Respond card.
         case respond
+        /// 4.0-β: the exact terminal tab is addressable and the actuation
+        /// grant is on — the reply is typed into the session (scene BE).
+        case type
         /// A local resumable session — build the command, hand it over.
         case resume
         /// Waiting, but no channel this version can offer beyond the
@@ -35,13 +38,16 @@ enum WorkbenchAnswer {
     static let resumableAgents: Set<AgentID> = [.claude]
 
     /// Pure so tests can pin the routing without seeding a snapshot.
+    /// `canType` is 4.0-β's precision gate (actuation on + `.tty` focus
+    /// tier), computed by the store, routed here.
     static func channel(
         agent: AgentID,
         isRemote: Bool,
         waiting: Bool,
         waitKind: String,
         sessionID: String,
-        hasRespondRequest: Bool
+        hasRespondRequest: Bool,
+        canType: Bool = false
     ) -> Channel? {
         guard waiting else { return nil }
         // A full request always wins: it is the only channel with a receipt.
@@ -51,8 +57,14 @@ enum WorkbenchAnswer {
         guard !isRemote else { return .focusOnly }
         // A permission wait without an attached request means the vendor's
         // own prompt is already in front of the user — the verb there is
-        // focus, not a second answer box racing the real one.
+        // focus, not a second answer box racing the real one. This outranks
+        // typing too: keystrokes aimed at a y/n prompt would be the blind
+        // approve with extra steps.
         guard waitKind != "Permission" else { return .focusOnly }
+        // Delivery beats a prefilled command whenever the exact tab is
+        // addressable — and it is vendor-blind: typing answers any agent's
+        // interactive prompt, not just one CLI's resume flag.
+        if canType { return .type }
         guard resumableAgents.contains(agent), validSessionID(sessionID) else {
             return .focusOnly
         }
@@ -98,7 +110,8 @@ extension StatusStore {
             waiting: row.waiting,
             waitKind: row.waitKind,
             sessionID: row.sessionID,
-            hasRespondRequest: respondRequest(for: row) != nil
+            hasRespondRequest: respondRequest(for: row) != nil,
+            canType: workbenchCanType(row)
         )
     }
 

@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "3.0.0"
+    static let semver = "4.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -554,15 +554,18 @@ struct AgentRow: Identifiable, Hashable {
     /// ask whether the agent is still alive. Everything a local row gets from
     /// the process table, a remote row simply does not have — so it must never
     /// borrow the local template and imply otherwise.
-    var host: String = ""
+    /// 4.0-γ: the family lives as one value; the forwarders below keep every
+    /// existing reader and writer compiling unchanged.
+    var remote = SessionRemote()
+    var host: String { get { remote.host } set { remote.host = newValue } }
     /// Last time anything arrived from a remote host for this row.
-    var lastHeardMs: Int64 = 0
+    var lastHeardMs: Int64 { get { remote.lastHeardMs } set { remote.lastHeardMs = newValue } }
     /// Nothing has refreshed a remote wait inside the TTL. The lamp comes down;
     /// the row stays. "I stopped hearing from it" is not "it finished".
-    var lostContact: Bool = false
+    var lostContact: Bool { get { remote.lostContact } set { remote.lostContact = newValue } }
     /// The sender's clock disagreed with arrival, so ages are measured from
     /// when the bytes landed here. Shown in Details rather than chosen quietly.
-    var clockSuspect: Bool = false
+    var clockSuspect: Bool { get { remote.clockSuspect } set { remote.clockSuspect = newValue } }
 
     var isRemote: Bool { !host.isEmpty }
     /// How this row can be focused — resolved once per scan, never in a view body.
@@ -589,10 +592,11 @@ struct AgentRow: Identifiable, Hashable {
     /// tier — the same epistemic level as `task` and `tool`, and under the
     /// same rules: sanitized, aged out when stale, and **never** a source of
     /// Waiting.
-    var planStep: String = ""
-    var planSteps: [ActivityHarvest.PlanStep] = []
-    var lastWord: String = ""
-    var lastErrorText: String = ""
+    var selfReport = SessionSelfReport()
+    var planStep: String { get { selfReport.planStep } set { selfReport.planStep = newValue } }
+    var planSteps: [ActivityHarvest.PlanStep] { get { selfReport.planSteps } set { selfReport.planSteps = newValue } }
+    var lastWord: String { get { selfReport.lastWord } set { selfReport.lastWord = newValue } }
+    var lastErrorText: String { get { selfReport.lastErrorText } set { selfReport.lastErrorText = newValue } }
     /// Whether the self-report above may be quoted as *now*. One rule for
     /// every surface: past 30 minutes of transcript silence, a plan labelled
     /// "Current step" — on the story line or in Details — would be stale
@@ -602,9 +606,10 @@ struct AgentRow: Identifiable, Hashable {
     /// 2.9 · push-fresh action from the hook's activity spool. `liveTool` /
     /// `liveTarget` are what a `PreToolUse` event said is running right now;
     /// a prompt event clears them (the previous tool finished with its turn).
-    var liveTool: String = ""
-    var liveTarget: String = ""
-    var liveAtMs: Int64 = 0
+    var liveAction = SessionLiveAction()
+    var liveTool: String { get { liveAction.tool } set { liveAction.tool = newValue } }
+    var liveTarget: String { get { liveAction.target } set { liveAction.target = newValue } }
+    var liveAtMs: Int64 { get { liveAction.atMs } set { liveAction.atMs = newValue } }
     /// Present tense is allowed only for second-grade evidence — past the
     /// window, the polled story takes back over and this says nothing.
     var liveActionFresh: Bool {
@@ -636,12 +641,13 @@ struct AgentRow: Identifiable, Hashable {
     /// An agent calling the same tool back to back is busy without being any
     /// closer to done — a state the lamp cannot express, because it is running
     /// and its clock is moving. Naming it is the whole point.
-    var loopTool: String = ""
-    var loopCount: Int = 0
+    var digest = SessionDigestFacts()
+    var loopTool: String { get { digest.loopTool } set { digest.loopTool = newValue } }
+    var loopCount: Int { get { digest.loopCount } set { digest.loopCount = newValue } }
     /// Errors across the whole session, not just the read window.
-    var sessionErrors: Int = 0
+    var sessionErrors: Int { get { digest.sessionErrors } set { digest.sessionErrors = newValue } }
     /// `Edit 12 · Bash 5` — bounded; Details only, never the tray row.
-    var toolSummary: String = ""
+    var toolSummary: String { get { digest.toolSummary } set { digest.toolSummary = newValue } }
 
     /// 2.1 Evidence · the rest of what the digest already knew.
     ///
@@ -655,21 +661,21 @@ struct AgentRow: Identifiable, Hashable {
     /// true and they are not the same number, so whatever shows them has to
     /// label them apart rather than let a reader watch two token counts
     /// disagree.
-    var sessionTokensIn: Int = 0
-    var sessionTokensOut: Int = 0
+    var sessionTokensIn: Int { get { digest.tokensIn } set { digest.tokensIn = newValue } }
+    var sessionTokensOut: Int { get { digest.tokensOut } set { digest.tokensOut = newValue } }
     /// The last few vendor tool names in order, oldest first (≤12).
     /// "What it has been doing all along" — a fact the tray never had room for.
-    var recentTools: [String] = []
+    var recentTools: [String] { get { digest.recentTools } set { digest.recentTools = newValue } }
     /// 0–100. 100 means the whole transcript has been folded.
-    var digestProgressPercent: Int = 0
+    var digestProgressPercent: Int { get { digest.progressPercent } set { digest.progressPercent = newValue } }
     /// True when nothing in the file is still unread.
     ///
     /// While this is false the counts above are partial, and any surface that
     /// shows them owes the reader that sentence.
-    var digestCaughtUp: Bool = false
+    var digestCaughtUp: Bool { get { digest.caughtUp } set { digest.caughtUp = newValue } }
     /// Transcript growth, in bytes per minute. 0 = unknown, never estimated.
     /// The difference between "moving" and "parked", which no counter states.
-    var bytesPerMinute: Int = 0
+    var bytesPerMinute: Int { get { digest.bytesPerMinute } set { digest.bytesPerMinute = newValue } }
     /// The workspace path was reconstructed from a dash-encoded vendor
     /// directory name and the disk could not confirm it.
     ///
@@ -689,28 +695,29 @@ struct AgentRow: Identifiable, Hashable {
     /// the path is not a working copy, was never confirmed, or the axis is
     /// off. Never displayed — it exists so two agents in the same checkout
     /// can be told apart from two agents in different ones.
-    var workspaceRoot: String = ""
+    var effect = SessionEffect()
+    var workspaceRoot: String { get { effect.root } set { effect.root = newValue } }
     /// What has actually landed on disk. **-1 is not 0**: "measured, and
     /// nothing has changed" is the fact this axis exists to state, and "not
     /// measured" must never wear its clothes.
-    var changedPaths: Int = -1
-    var insertions: Int = -1
-    var deletions: Int = -1
+    var changedPaths: Int { get { effect.changedPaths } set { effect.changedPaths = newValue } }
+    var insertions: Int { get { effect.insertions } set { effect.insertions = newValue } }
+    var deletions: Int { get { effect.deletions } set { effect.deletions = newValue } }
     /// How many other live local rows share this working copy. 0 = nobody.
     /// The one fact no single agent can see: each knows only itself.
-    var workspacePeers: Int = 0
+    var workspacePeers: Int { get { effect.peers } set { effect.peers = newValue } }
 
     /// HEAD moved within the recent-commit window. A clean tree after a
     /// commit is the opposite of "nothing has landed" — the agent landed its
     /// work so thoroughly that the tree is clean.
-    var workspaceHeadMovedRecently: Bool = false
+    var workspaceHeadMovedRecently: Bool { get { effect.headMovedRecently } set { effect.headMovedRecently = newValue } }
 
     var hasWorkspaceEffect: Bool { changedPaths >= 0 }
     /// Measured, and the working copy is exactly as it was.
     var workspaceUntouched: Bool { changedPaths == 0 }
     /// The session's real start, in ms. More reliable than `startedMs`, which
     /// some adapters can only fill from a file stamp. 0 = unknown.
-    var sessionStartedMs: Int64 = 0
+    var sessionStartedMs: Int64 { get { digest.startedMs } set { digest.startedMs = newValue } }
 
     /// Enough repetition to be worth saying out loud.
     var isLooping: Bool { !loopTool.isEmpty && loopCount >= 3 }

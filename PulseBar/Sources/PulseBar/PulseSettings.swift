@@ -53,6 +53,11 @@ struct PulseSettings: Equatable {
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
     var allowTerminalAutomation = false
+    /// 4.0-β · the workbench may type a reply into a session's terminal tab
+    /// and start new sessions in a terminal. Off by default: this is the
+    /// keystroke grant, one notch above tab-select, and the switch existing
+    /// is the consent. Turning it off stops all actuation instantly.
+    var allowWorkbenchActuation = false
     /// Read what has landed in each agent's working copy. On by default: it
     /// runs read-only git plumbing, reads no file contents and writes
     /// nothing, and an evidence axis nobody switches on is worth nothing.
@@ -122,6 +127,7 @@ struct PulseSettings: Equatable {
             case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .commandShiftP
             case "hotkeyEnabled": s.hotkeyEnabled = on
             case "terminalAutomation": s.allowTerminalAutomation = on
+            case "workbenchActuation": s.allowWorkbenchActuation = on
             case "workspaceEffect": s.measureWorkspaceEffect = on
             case "fleetBroadcast": s.broadcastFleet = on
             case "mute":
@@ -171,6 +177,7 @@ struct PulseSettings: Equatable {
             hotkey=\(hotkey.rawValue)
             hotkeyEnabled=\(hotkeyEnabled ? 1 : 0)
             terminalAutomation=\(allowTerminalAutomation ? 1 : 0)
+            workbenchActuation=\(allowWorkbenchActuation ? 1 : 0)
             workspaceEffect=\(measureWorkspaceEffect ? 1 : 0)
             fleetBroadcast=\(broadcastFleet ? 1 : 0)
             grouping=\(trayGrouping.rawValue)
@@ -203,6 +210,7 @@ struct PulseSettings: Equatable {
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
             + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) "
             + "terminalAutomation=\(allowTerminalAutomation) workspaceEffect=\(measureWorkspaceEffect) "
+            + "workbenchActuation=\(allowWorkbenchActuation) "
             + "fleetBroadcast=\(broadcastFleet) "
             + "muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
             + "appData=\(allowAppData) "

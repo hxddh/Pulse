@@ -650,6 +650,24 @@ enum L10n {
         case .workbenchTranscriptUnparsed: return "%d lines unrecognized"
         case .workbenchTranscriptUser: return "You"
         case .workbenchTranscriptResult: return "Result"
+        case .allowWorkbenchActuation: return "Workbench can type into the terminal"
+        case .allowWorkbenchActuationHint:
+            return "Send replies into a session's own tab and start new sessions from the Workbench. Your words, your click — Pulse only does the typing. Off stops everything instantly."
+        case .workbenchSend: return "Send to terminal"
+        case .workbenchSendHint:
+            return "Types your reply into this session's terminal tab and presses Return. Only offered when the exact tab is addressable — never typed anywhere else."
+        case .workbenchSent: return "Delivered — typed into the session and submitted"
+        case .workbenchSendNoTab: return "Couldn't find this session's terminal tab — nothing was typed"
+        case .workbenchSendFailed: return "Tab found, but typing failed — check Automation permission for Pulse"
+        case .workbenchSendRefused: return "Nothing to send"
+        case .workbenchDispatch: return "New session"
+        case .workbenchDispatchRepo: return "Repository"
+        case .workbenchDispatchTask: return "What should it do?"
+        case .workbenchDispatchStart: return "Start"
+        case .workbenchDispatchHint:
+            return "Opens a Terminal window in this repository and starts claude with your task. The new session appears here once Pulse observes it."
+        case .workbenchDispatchFailed: return "Terminal did not accept the command — check Automation permission"
+        case .workbenchDispatchNoRoots: return "No observed repositories yet — dispatch needs a root the fleet has actually worked in"
         }
     }
 
@@ -1221,6 +1239,24 @@ enum L10n {
         case .workbenchTranscriptUnparsed: return "%d 行未识别"
         case .workbenchTranscriptUser: return "你"
         case .workbenchTranscriptResult: return "结果"
+        case .allowWorkbenchActuation: return "允许指挥台敲入终端"
+        case .allowWorkbenchActuationHint:
+            return "在指挥台把回复发进会话自己的标签页、启动新会话。话是你写的、发送是你点的 —— Pulse 只出手指活。关掉立即全部停止。"
+        case .workbenchSend: return "发送到终端"
+        case .workbenchSendHint:
+            return "把你的回复敲进该会话的终端标签页并回车。只在能精确定位那个标签页时提供 —— 绝不敲进别处。"
+        case .workbenchSent: return "已送达 —— 已敲入会话并回车"
+        case .workbenchSendNoTab: return "没找到该会话的终端标签页 —— 什么都没敲"
+        case .workbenchSendFailed: return "找到了标签页但敲入失败 —— 检查 Pulse 的自动化权限"
+        case .workbenchSendRefused: return "没有可发送的内容"
+        case .workbenchDispatch: return "派活"
+        case .workbenchDispatchRepo: return "仓库"
+        case .workbenchDispatchTask: return "要它做什么？"
+        case .workbenchDispatchStart: return "启动"
+        case .workbenchDispatchHint:
+            return "在该仓库打开终端窗口并带任务启动 claude。新会话被 Pulse 观测到后会出现在这里。"
+        case .workbenchDispatchFailed: return "终端没有接受命令 —— 检查自动化权限"
+        case .workbenchDispatchNoRoots: return "还没有观测到的仓库 —— 派活需要舰队实际工作过的根目录"
         }
     }
 
@@ -1373,6 +1409,12 @@ enum L10n {
         case workbenchTranscriptUnavailable, workbenchTranscriptWindow
         case workbenchTranscriptCapped, workbenchTranscriptUnparsed
         case workbenchTranscriptUser, workbenchTranscriptResult
+        case allowWorkbenchActuation, allowWorkbenchActuationHint
+        case workbenchSend, workbenchSendHint, workbenchSent
+        case workbenchSendNoTab, workbenchSendFailed, workbenchSendRefused
+        case workbenchDispatch, workbenchDispatchRepo, workbenchDispatchTask
+        case workbenchDispatchStart, workbenchDispatchHint
+        case workbenchDispatchFailed, workbenchDispatchNoRoots
         case trayScanIncomplete
     }
 }
