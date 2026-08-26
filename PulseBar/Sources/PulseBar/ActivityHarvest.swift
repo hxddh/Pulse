@@ -245,6 +245,14 @@ enum ActivityHarvest {
         /// transcripts, and APFS birth times survive none of that), so this
         /// is the more reliable answer to "how long has this been going".
         var sessionStartedMs: Int64 = 0
+        /// 4.0-α · the transcript file this row's facts were read from —
+        /// the workbench's local read handle for showing the session itself.
+        ///
+        /// Set only for structured JSONL session sources. Deliberately NOT
+        /// sanitized (it is a filesystem path used to open the file, never
+        /// rendered), and it never travels: not into fleet snapshots, not
+        /// onto the tray, not out of the machine in any channel.
+        var transcriptPath: String = ""
 
         /// Whether the vendor said this run reached a terminal state.
         ///

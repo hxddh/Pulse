@@ -641,6 +641,15 @@ enum L10n {
         case .workbenchReview: return "Wrap-up"
         case .workbenchReviewHint:
             return "This session has ended — below is what it left behind. Pulse never touches the repository; disposition happens in your own tools."
+        case .workbenchTranscript: return "Transcript"
+        case .workbenchTranscriptLoad: return "Show transcript"
+        case .workbenchTranscriptEmpty: return "Nothing conversational in the read window"
+        case .workbenchTranscriptUnavailable: return "Transcript unavailable"
+        case .workbenchTranscriptWindow: return "Read the last %@ of %@"
+        case .workbenchTranscriptCapped: return "Showing the last %d entries"
+        case .workbenchTranscriptUnparsed: return "%d lines unrecognized"
+        case .workbenchTranscriptUser: return "You"
+        case .workbenchTranscriptResult: return "Result"
         }
     }
 
@@ -1203,6 +1212,15 @@ enum L10n {
         case .workbenchReview: return "复盘"
         case .workbenchReviewHint:
             return "会话已结束 —— 下面是它留下的东西。Pulse 永不代动仓库，处置在你自己的工具里。"
+        case .workbenchTranscript: return "会话全文"
+        case .workbenchTranscriptLoad: return "查看全文"
+        case .workbenchTranscriptEmpty: return "读取窗口内没有对话内容"
+        case .workbenchTranscriptUnavailable: return "全文不可用"
+        case .workbenchTranscriptWindow: return "已读尾部 %@（全文 %@）"
+        case .workbenchTranscriptCapped: return "仅显示最近 %d 条"
+        case .workbenchTranscriptUnparsed: return "%d 行未识别"
+        case .workbenchTranscriptUser: return "你"
+        case .workbenchTranscriptResult: return "结果"
         }
     }
 
@@ -1351,6 +1369,10 @@ enum L10n {
         case workbenchAnswerHeading, workbenchAnswerPlaceholder, workbenchAnswerCopy
         case workbenchAnswerHint, workbenchAnswerCopied, workbenchAnswerRefused
         case workbenchReview, workbenchReviewHint
+        case workbenchTranscript, workbenchTranscriptLoad, workbenchTranscriptEmpty
+        case workbenchTranscriptUnavailable, workbenchTranscriptWindow
+        case workbenchTranscriptCapped, workbenchTranscriptUnparsed
+        case workbenchTranscriptUser, workbenchTranscriptResult
         case trayScanIncomplete
     }
 }

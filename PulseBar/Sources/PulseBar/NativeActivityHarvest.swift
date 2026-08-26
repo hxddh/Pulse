@@ -3747,6 +3747,14 @@ enum NativeActivityHarvest {
             row.digestCaughtUp = fact.digestCaughtUp
             row.bytesPerMinute = max(0, fact.bytesPerMinute)
             row.sessionStartedMs = max(0, fact.sessionStartedMs)
+            // 4.0-α: only a real structured session transcript earns a read
+            // handle — a cache/SQLite source has no conversation to render,
+            // and offering one would be inventing content.
+            let lowerSource = fact.sourcePath.lowercased()
+            if sessionEvidence,
+               lowerSource.hasSuffix(".jsonl") || lowerSource.hasSuffix(".ndjson") {
+                row.transcriptPath = fact.sourcePath
+            }
             return row
         }
     }

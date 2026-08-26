@@ -135,6 +135,7 @@ struct SessionInspectorView: View {
                     effectCard
                     if !row.planSteps.isEmpty || !row.planStep.isEmpty { planCard }
                     if !row.lastWord.isEmpty || !row.lastErrorText.isEmpty { wordsCard }
+                    if !row.transcriptPath.isEmpty { transcriptCard }
                     evidenceCard
                 } else {
                     header
@@ -146,6 +147,7 @@ struct SessionInspectorView: View {
                        !row.planSteps.isEmpty || !row.planStep.isEmpty { planCard }
                     if row.selfReportFresh,
                        !row.lastWord.isEmpty || !row.lastErrorText.isEmpty { wordsCard }
+                    if !row.transcriptPath.isEmpty { transcriptCard }
                     evidenceCard
                     effectCard
                 }
@@ -394,6 +396,16 @@ struct SessionInspectorView: View {
         }
     }
 
+    /// 4.0-α (scene BD): the session itself, not facts about it. Present
+    /// only when the collector recorded which structured transcript this row
+    /// came from — cache rows, process-only rows and remote rows have no
+    /// file to show and get no button.
+    private var transcriptCard: some View {
+        card(store.tr(.workbenchTranscript)) {
+            TranscriptSection(store: store, row: row)
+        }
+    }
+
     // MARK: - Small pieces
 
     private func card<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -415,6 +427,154 @@ struct SessionInspectorView: View {
             Text(value.isEmpty ? "—" : value)
                 .font(.callout)
                 .textSelection(.enabled)
+        }
+    }
+}
+
+/// The session's own words (4.0-α, scene BD). Click-to-load, tail-bounded,
+/// shape-parsed, sanitized per entry — see `TranscriptReader` for each rule
+/// and its reason. Rendering never quotes the path, only the content.
+@MainActor
+private struct TranscriptSection: View {
+    @ObservedObject var store: StatusStore
+    let row: AgentRow
+
+    @State private var excerpt: TranscriptReader.Excerpt?
+    @State private var failed = false
+    @State private var loading = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let excerpt {
+                honestyLines(excerpt)
+                if excerpt.entries.isEmpty {
+                    Text(store.tr(.workbenchTranscriptEmpty))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 10) {
+                                ForEach(Array(excerpt.entries.enumerated()), id: \.offset) { index, entry in
+                                    entryView(entry).id(index)
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 420)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                        .onAppear {
+                            // The newest turn is why the user opened this.
+                            proxy.scrollTo(excerpt.entries.count - 1, anchor: .bottom)
+                        }
+                    }
+                }
+            } else if failed {
+                Text(store.tr(.workbenchTranscriptUnavailable))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button {
+                    load()
+                } label: {
+                    if loading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(store.tr(.workbenchTranscriptLoad))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(loading)
+            }
+        }
+    }
+
+    /// What was read, said out loud: window size vs file size, caps, and
+    /// unrecognized lines. A truncated view must call itself truncated.
+    private func honestyLines(_ excerpt: TranscriptReader.Excerpt) -> some View {
+        var bits: [String] = []
+        if excerpt.truncatedHead {
+            bits.append(String(
+                format: store.tr(.workbenchTranscriptWindow),
+                sizeLabel(excerpt.windowBytes),
+                sizeLabel(excerpt.fileBytes)
+            ))
+        }
+        if excerpt.entriesCapped {
+            bits.append(String(
+                format: store.tr(.workbenchTranscriptCapped),
+                TranscriptReader.maxEntries
+            ))
+        }
+        if excerpt.unparsedLines > 0 {
+            bits.append(String(
+                format: store.tr(.workbenchTranscriptUnparsed),
+                excerpt.unparsedLines
+            ))
+        }
+        return Group {
+            if !bits.isEmpty {
+                Text(bits.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func entryView(_ entry: TranscriptReader.Entry) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label(entry))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(labelColor(entry))
+                .frame(width: 76, alignment: .trailing)
+            Text(entry.text.isEmpty ? "—" : entry.text)
+                .font(entry.kind == .tool ? .caption.monospaced() : .callout)
+                .foregroundStyle(entry.isError ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func label(_ entry: TranscriptReader.Entry) -> String {
+        switch entry.kind {
+        case .user: return store.tr(.workbenchTranscriptUser)
+        case .agent: return row.agent.displayName
+        case .tool:
+            if entry.isError { return store.tr(.detailLastError) }
+            return entry.toolName.isEmpty ? store.tr(.workbenchTranscriptResult) : entry.toolName
+        }
+    }
+
+    private func labelColor(_ entry: TranscriptReader.Entry) -> Color {
+        switch entry.kind {
+        case .user: return .accentColor
+        case .agent: return .primary
+        case .tool: return entry.isError ? .orange : .secondary
+        }
+    }
+
+    private func sizeLabel(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    private func load() {
+        guard !loading else { return }
+        loading = true
+        let path = row.transcriptPath
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = TranscriptReader.read(path: path)
+            DispatchQueue.main.async {
+                loading = false
+                if let result {
+                    excerpt = result
+                } else {
+                    failed = true
+                }
+            }
         }
     }
 }

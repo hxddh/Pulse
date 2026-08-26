@@ -678,6 +678,13 @@ struct AgentRow: Identifiable, Hashable {
     /// decode from a wrong one that happens to exist, and opening the wrong
     /// workspace under someone's hands is the failure the flag exists for.
     var cwdBestEffort: Bool = false
+    /// 4.0-α · path of the structured transcript this row was read from.
+    ///
+    /// The workbench's local read handle: opened on an explicit click to
+    /// render the session itself. Never rendered as text, never on the tray,
+    /// never in fleet snapshots or any channel that leaves the machine.
+    /// Empty for remote rows, cache-tier rows, and process-only rows.
+    var transcriptPath: String = ""
     /// Canonical repository root for this row's working directory. Empty when
     /// the path is not a working copy, was never confirmed, or the axis is
     /// off. Never displayed — it exists so two agents in the same checkout

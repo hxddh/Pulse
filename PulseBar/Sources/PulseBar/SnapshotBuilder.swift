@@ -354,6 +354,11 @@ enum SnapshotBuilder {
             // Carried, never re-derived: only the collector saw the disk.
             row.cwdBestEffort = act.cwdBestEffort
             if act.sessionStartedMs > 0 { row.sessionStartedMs = act.sessionStartedMs }
+            // 4.0-α: carried, never derived — only the collector knows which
+            // file the facts came from. Local rows only by construction
+            // (remote rows are built from fleet snapshots, which never carry
+            // this field).
+            if !act.transcriptPath.isEmpty { row.transcriptPath = act.transcriptPath }
             row.observationSource = act.evidence
 
             // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.
