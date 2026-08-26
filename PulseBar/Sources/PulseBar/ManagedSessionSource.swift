@@ -37,7 +37,9 @@ final class ManagedSessionSource: SessionSource {
     /// Model → row, pure and pinned by tests. First-party facts: the stream
     /// is Pulse's own, so nothing here carries a "not measured" discount —
     /// but absence still renders as absence, never as zero.
-    static func row(for model: ManagedSession.Model) -> AgentRow {
+    /// `nonisolated`: touches no actor state, and the tests call it from a
+    /// plain XCTestCase.
+    nonisolated static func row(for model: ManagedSession.Model) -> AgentRow {
         var row = AgentRow(rowKey: "managed|\(model.id)", agent: .claude)
         row.managedID = model.id
         row.sessionID = model.claudeSessionID
