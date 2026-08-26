@@ -566,8 +566,8 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 规格 | 文件 |
 | --- | --- |
 | Glance 标题 / 灯 | `StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
-| Tray 结构 | `PulseApp.swift` → `TrayPanel` |
-| Prefs 布局 | `PulseApp.swift` → `SettingsView` |
+| Tray 结构 | `TrayPanelViews.swift` → `TrayPanel` |
+| Prefs 布局 | `SettingsViews.swift` → `SettingsView` |
 | 状态合并 / 编码 | `SnapshotBuilder.swift` |
 | 主行来源 / 采集 explain | `NativeActivityHarvest.swift` |
 | 通知策略 / 定时器 | `StatusStore.swift` |
