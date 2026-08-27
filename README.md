@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`8.1.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v8.1.0) · macOS 14+
+**版本：`8.2.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v8.2.0) · macOS 14+
 
 ---
 
