@@ -751,6 +751,63 @@ extension StatusStore {
         return slot
     }
 
+    /// 10.0 (scene BS) — the collapsed row's ONE meta line.
+    ///
+    /// Seven stacked near-identical grey lines were each individually right
+    /// and jointly unreadable — the eye cannot rank five 10.5pt grey lines.
+    /// Composition replaces accretion: three slots by value — what the
+    /// session is doing NOW, its strongest OUTCOME, its WAY of working —
+    /// with the project as filler when slots stayed empty. The five line
+    /// accessors survive intact and render on the expanded card (the
+    /// understanding surface); collapsed shows only this line. Waiting rows
+    /// return "" — the accent question line is their meta line; process-only
+    /// rows keep their detection sentence.
+    func rowMetaLine(_ row: AgentRow) -> String {
+        guard !row.waiting else { return "" }
+        if row.isProcessOnly { return rowContextLine(row) }
+        var segments: [String] = []
+        if let now = metaNowFact(row) { segments.append(now) }
+        if let outcome = observationTiers(row, workRich: true).outcome.first {
+            segments.append(outcome)
+        }
+        if let way = workSlots(row).first { segments.append(way) }
+        if segments.count < 2 {
+            let short = AgentRow.shortProject(row.project)
+            if !short.isEmpty, row.usefulTask != nil { segments.append(short) }
+        }
+        return segments.prefix(3).joined(separator: " · ")
+    }
+
+    /// The meta line's now-slot — a deliberate mirror of the story line's
+    /// top tier (looping > seconds-fresh action > current plan step > phase).
+    /// The story remains the verbose narrative on the expanded card; this is
+    /// its one-slot summary, under the same honesty gates.
+    private func metaNowFact(_ row: AgentRow) -> String? {
+        if row.isLooping {
+            return String(format: tr(.loopingTool), row.loopTool, row.loopCount)
+        }
+        if row.liveActionFresh, !row.liveTool.isEmpty {
+            var action = row.liveTool
+            let target = row.liveTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !target.isEmpty {
+                let leaf = target.hasPrefix("/")
+                    ? URL(fileURLWithPath: target).lastPathComponent
+                    : target
+                action += " · " + String(leaf.prefix(60))
+            }
+            return String(format: tr(.nowActivity), action)
+        }
+        let planStep = row.planStep.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !planStep.isEmpty, row.selfReportFresh {
+            return String(format: tr(.currentStepFact), planStep)
+        }
+        if let phase = readablePhase(row.phase, waiting: false),
+           !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
+            return phase
+        }
+        return nil
+    }
+
     /// 8.0 — the work-style detail for the expanded card: how this session
     /// works, every collected fact labelled. The raw skill name appears here
     /// (the collapsed line keeps the recognisable-workflow mapping); the tool
@@ -769,15 +826,8 @@ extension StatusStore {
                 ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
                 : String(format: tr(.subagentsObserved), row.subTotal))
         }
-        var line: [String] = []
-        let model = readableModel(row.model)
-        if !model.isEmpty { line.append(String(format: tr(.modelFact), model)) }
-        let tokens = evidenceSessionTokens(row)
-        if !tokens.isEmpty { line.append(tokens) }
-        if row.contextPercent > 0 {
-            line.append(String(format: tr(.contextFact), row.contextPercent))
-        }
-        if !line.isEmpty { facts.append(line.joined(separator: " · ")) }
+        // 10.0: model/tokens/context left this block — the panorama's work
+        // line beside it owns them; one fact, one place, per surface.
         return facts
     }
 

@@ -1155,6 +1155,16 @@ private struct AgentRowButton: View {
                                         .foregroundStyle(.secondary.opacity(0.78))
                                 }
                                 Spacer(minLength: 6)
+                                // 10.0-β (scene BT): the right edge is a
+                                // column — relative time sits tabular and
+                                // muted where every list keeps its metadata,
+                                // instead of buried in a left-stacked line.
+                                if !accessoryTime.isEmpty {
+                                    Text(accessoryTime)
+                                        .font(TrayChrome.detailFont)
+                                        .foregroundStyle(.tertiary)
+                                        .monospacedDigit()
+                                }
                                 statusChip
                             }
 
@@ -1170,72 +1180,33 @@ private struct AgentRowButton: View {
                                 .lineLimit(row.isProcessOnly ? 1 : 2)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            // 0.91/0.92 Row Story — readable even when crowded.
-                            if !storyLine.isEmpty {
-                                Text(storyLine)
-                                    .font(TrayChrome.storyFont)
-                                    .foregroundStyle(.primary.opacity(0.82))
-                                    .lineLimit(2)
-                                    .truncationMode(.tail)
-                            }
-
-                            if !contextLine.isEmpty {
-                                Text(contextLine)
-                                    .font(TrayChrome.contextFont)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(compact ? 1 : 2)
-                                    .truncationMode(.middle)
-                            }
-
-                            // Motion only — Now / Changed / stalled age.
-                            if !signalLine.isEmpty {
-                                Text(signalLine)
-                                    .font(TrayChrome.detailFont)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
-
-                            // EXPERIENCE 观测行: model · tokens · progress — default,
-                            // never Details-only. Disappears when empty (0.80).
-                            if !observationLine.isEmpty {
-                                Text(observationLine)
-                                    .font(TrayChrome.detailFont)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                    .lineLimit(compact ? 1 : 2)
-                                    .truncationMode(.tail)
-                            }
-
-                            // 8.0 工作方式线 (scene BN): the facts the budget
-                            // used to delete — last tool, tokens, skill,
-                            // model, context — rehoused, never invented.
-                            if !workLine.isEmpty {
-                                Text(workLine)
-                                    .font(TrayChrome.detailFont)
-                                    .foregroundStyle(.secondary.opacity(0.85))
-                                    .monospacedDigit()
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
-
-                            // 8.0-γ: the latest error's own words, one line —
-                            // an error count without the error was a guessing
-                            // game the expanded card alone should not solve.
+                            // 10.0-α (scene BS): ONE composed meta line —
+                            // now > outcome > way, three slots by value.
+                            // Seven stacked grey lines were each right and
+                            // jointly unreadable; the full five-line panorama
+                            // moved to the expanded card, where understanding
+                            // lives. A fresh error keeps its own words here —
+                            // a fault changes what you do next.
                             if row.selfReportFresh, !row.lastErrorText.isEmpty, !expanded {
                                 Text(Self.truncate(row.lastErrorText, 78))
                                     .font(.system(size: TrayChrome.captionSize).monospaced())
                                     .foregroundStyle(.orange)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
+                            } else if !metaLine.isEmpty {
+                                Text(metaLine)
+                                    .font(TrayChrome.detailFont)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                             }
 
-                            // Waiting rows get a third line, because the actual
-                            // question is the entire point of the product.
+                            // Waiting rows get the question itself, because
+                            // the question is the entire point of the product.
                             if let detail = store.localizedWaitDetail(row) {
                                 Text(Self.truncate(detail, 78))
-                                    .font(.system(size: 11))
+                                    .font(.system(size: TrayChrome.bodySize))
                                     .foregroundStyle(TrayChrome.waitAccent)
                                     .lineLimit(2)
                             }
@@ -1363,7 +1334,17 @@ private struct AgentRowButton: View {
             if !expanded {
                 let asks = store.managedPermissionRequests(for: row)
                 let inbound = row.waiting ? store.respondRequest(for: row) : nil
-                if !asks.isEmpty || inbound != nil || row.isManaged {
+                // 10.0-γ (scene BU): the in-list card is for "needs you NOW"
+                // only — a blocked ask or a turn that died. An idle managed
+                // row's reply box lives behind expansion; a standing reply
+                // box on every row was a wall, not an inbox.
+                let needsRecovery: Bool = {
+                    switch store.managedRunner(for: row)?.model.status {
+                    case .interrupted, .failed: return true
+                    default: return false
+                    }
+                }()
+                if !asks.isEmpty || inbound != nil || needsRecovery {
                     VStack(alignment: .leading, spacing: TrayChrome.cardSpacing) {
                         ForEach(asks, id: \.id) { request in
                             SessionPermissionCard(store: store, request: request, compact: true)
@@ -1371,7 +1352,7 @@ private struct AgentRowButton: View {
                         if let inbound {
                             SessionRespondCard(store: store, row: row, inbound: inbound, compact: true)
                         }
-                        if row.isManaged {
+                        if needsRecovery {
                             SessionManagedReply(store: store, row: row, compact: true)
                         }
                     }
@@ -1430,10 +1411,9 @@ private struct AgentRowButton: View {
         return row.isUrgentWait ? 6 : 3
     }
 
-    private var observationLine: String { store.rowObservationLine(row) }
-    private var workLine: String { store.rowWorkLine(row) }
-    private var signalLine: String { store.rowSignalLine(row) }
-    private var storyLine: String { store.rowStoryLine(row) }
+    private var metaLine: String { store.rowMetaLine(row) }
+    private var accessoryTime: String { store.lastActivityLabel(row) }
+
     private var sourceLabel: String? { store.rowSourceLabel(row) }
 
     private var showActions: Bool {
@@ -1580,10 +1560,6 @@ private struct AgentRowButton: View {
     /// folder happened to match the agent — printed "Cursor · Cursor". The two
     /// facts a row could never state were *where* and *how long*; both were
     /// collected all along.
-    private var contextLine: String {
-        return store.rowContextLine(row, omitPath: pathInHeading)
-    }
-
     /// Only abnormal states get a badge.
     ///
     /// Running was announced three times over — panel header, section header,
@@ -1638,7 +1614,10 @@ private struct AgentRowButton: View {
             state = store.tr(.running)
         }
         parts.append(state)
-        if !storyLine.isEmpty { parts.append(storyLine) }
+        // 10.0: VoiceOver mirrors the composed anatomy — the meta line plus
+        // the relative time the sighted eye reads off the right column.
+        if !metaLine.isEmpty { parts.append(metaLine) }
+        if !accessoryTime.isEmpty { parts.append(accessoryTime) }
         // The tray line has room for "lost contact"; VoiceOver has room for
         // what it means, and a two-word state that cannot be unpacked is the
         // kind of thing this project keeps having to go back and fix.
@@ -1646,13 +1625,6 @@ private struct AgentRowButton: View {
         // There is no Focus button on a remote row. Silence would read as a
         // missing control rather than an absent capability.
         if row.isRemote { parts.append(store.tr(.remoteNoFocus)) }
-        if !contextLine.isEmpty { parts.append(contextLine) }
-        // Canonical dynamic summary — do not also append activityChange +
-        // metrics; that duplicated Context / Changed facts for VoiceOver.
-        if !signalLine.isEmpty { parts.append(signalLine) }
-        if !observationLine.isEmpty, observationLine != signalLine {
-            parts.append(observationLine)
-        }
         if row.waiting {
             let line = store.localizedWaitLine(row)
             if !line.isEmpty { parts.append(line) }

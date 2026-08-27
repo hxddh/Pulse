@@ -133,8 +133,9 @@ final class RowValueEngineTests: XCTestCase {
         row.sessionTokensOut = 9_000
         let facts = s.workDetailFacts(row)
         XCTAssertTrue(facts.contains { $0.contains("product-design:audit") }, "\(facts)")
-        XCTAssertTrue(facts.contains { $0.contains("30k") }, "\(facts)")
-        XCTAssertTrue(facts.contains { $0.contains("62") }, "\(facts)")
+        // 10.0: tokens/context moved to the panorama's work line beside it.
+        XCTAssertTrue(s.rowWorkLine(row).contains("30k"), s.rowWorkLine(row))
+        XCTAssertTrue(s.rowWorkLine(row).contains("62"), s.rowWorkLine(row))
     }
 
     @MainActor

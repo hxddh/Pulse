@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（9.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（10.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -147,6 +147,29 @@ Prefs 只改开关与连接。
 ### ③ Agent 行
 
 **主语是会话，不是 Agent。**
+
+#### 行解剖学（10.0，场景 BS/BT —— 构图取代堆叠）
+
+七条近同灰线竖排,每条单看都对,叠起来眼睛没有抓手——顶级列表
+(Raycast / Linear / Agent View)的语法是**固定的小解剖学 + 右缘元数据柱**。
+收起行自 10.0 起只渲染:
+
+```
+[灯] 产品名 · 证据标签        相对时间  [芯片]   ← 微身份条 + 右柱(等宽、弱化)
+主行(hero,13 rounded,≤2 行)
+一条合成 meta 线(此刻 > 产出 > 方式,≤3 槽;稀疏时补项目名)
+[等待行:问题本身(accent)] / [新鲜错误原文(orange,替位 meta)]
+```
+
+meta 线由纯函数 `rowMetaLine` 合成,优先级测试逐格钉死:此刻槽
+(循环 > 秒级动作·目标 > 当前计划步 > phase,与叙事行同一诚实门)、
+产出槽(观测行 outcome 层首位:错误 > ±/文件 > 子任务 > 进度)、
+方式槽(工作方式线首位)。**一条事实都不丢——下方五线全景整体撤到
+展开卡**(理解面),收起行只负责扫视。
+
+> 以下「叙事行 / 次行 / 信号行 / 观测行 / 工作方式线」的规则,自 10.0 起
+> 描述**展开卡的全景区**(`SessionPanorama`);它们的选取与去重规则原样
+> 生效,只是渲染面换了——换窗口不换认识论。
 
 - **身份行** = 6px 状态灯（等待红 / 运行绿 / 最近灰 / 异常橙）+ Agent 产品名 + 运行时证据等级（仅缓存 / 仅进程时出现）+ 非常态芯片。
   32 个图标不是识别测试；产品名必须可直接扫读。更多操作只在悬停 / 键盘选中时显形，
@@ -725,6 +748,9 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BP | Live Row（直播行） | **收起行答得了「它干成了什么」**：受管行的成本·回合与本回合落盘 ±行进观测行 advance 层（第一手，未测到缺席）；错误原文一行直进收起行；受管行在列表内即有回合控制（运行中=当前工具+终止，结束=回复框）；展开卡带受管对话尾巴（最近 5 步、`↳` 配对、内存流零磁盘读）——观察行的全文仍在指挥台（每拍磁盘读不是 ambient 成本，边界明说） |
 | BQ | Parity（采集平权） | **展示契约逼出采集缺口**:8.1 的「测到即渲染」成立后,Pi 行还空着 → 病在采集。Pi:>8KB 行有界正则打捞(model/usage/最后 toolCall;JSON 转义保证不匹配进正文)、usage `{input,output}` 键补齐、自述扫描(原话/`isError` 驼峰/独立 toolResult 记录)在专用解析器末尾运行;Codex:model 从 payload 拾取、旧 rollout 的 assistant 消息入 lastWord;Claude 家族:`Skill` 调用的 `input.skill` 成为工作流事实;通用提取器认 `toolCall` 驼峰。未测到照旧缺席——没 usage 的行没有 token,一个字段不发明 |
 | BR | Craft(全员二轮+工艺) | **采集二轮**:8.3 → 栏四缺口守卫式关闭——Cursor bubbles(`cursorDiskKV` 最新 assistant bubble,type 2)、OpenCode 原话(role 经 message 表联查——text part 单独不定作者,采了会把用户话冒充 agent 原话)、Gemini 原话(整文档遍历,最后 `model` 回合;逐行扫描对整文件 JSON 天然失明)、Aider 原话(markdown:最新 `#### ` 用户回合后的散文段);全部表/列/版式不符即空,永不猜;fixture 逐家钉死。**工艺**:TrayChrome 字阶与卡片纪律(§4),视觉从数字巧合变成具名系统 |
+| BS | Anatomy（行解剖学） | **构图取代堆叠**:收起行 = 微身份条(灯·产品名·证据 + 右柱时间/芯片)+ hero(≤2 行)+ **一条合成 meta 线**(`rowMetaLine` 纯合成:此刻>产出>方式,≤3 槽,稀疏补项目;等待行让位问题、新鲜错误原文替位)——七线堆叠终结;五线全景(叙事/信号/观测/工作/次行)整体撤到展开卡 `SessionPanorama`,规则原样、渲染面换了;展开卡内一事实一处(chips 并入全景与工作细节,model/tokens/context 只在全景工作线) |
+| BT | Column(右柱) | 右缘是一根柱子:相对时间等宽、弱化、右对齐在身份条尾,芯片其后——扫视沿两根轴走(左轴读事,右轴读量);VoiceOver 同步读合成解剖学 |
+| BU | Disclosure(披露纪律) | 三层各归其位:收起=扫视(两行),展开=理解与行动(8.x 全部深度原样),**列表内卡只给「此刻需要你」**——权限请求 / Respond / 回合死亡(interrupted/failed)恢复;受管 idle 的回复框撤回展开态(每行常驻回复框是墙不是收件箱);阻塞照旧免点击 |
 
 ---
 
@@ -743,6 +769,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 会话事实簇 | `SessionFacts.swift`（`SessionRemote` / `SessionSelfReport` / `SessionLiveAction` / `SessionDigestFacts` / `SessionEffect`——AgentRow 组合它们并保留转发访问器，读写两侧零改动） |
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
 | 价值引擎 / 工作方式线 | `RowValueEngine.swift` · `StatusStoreNarration.swift` → `rowWorkLine` / `workDetailFacts` |
+| 合成 meta 线 / 全景 | `StatusStoreNarration.swift` → `rowMetaLine` · `SessionCards.swift` → `SessionPanorama` |
 | 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` · `TranscriptReader.swift` |
 | 引擎边界 / 受管会话 | `SessionSource.swift` · `ManagedSession.swift` · `ManagedSessionRunner.swift` · `ManagedSessionSource.swift` · `ManagedWorktree.swift` · `ManagedSessionViews.swift` |
 | 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |
