@@ -200,6 +200,51 @@ struct SessionPlanCompact: View {
     }
 }
 
+/// 11.0-α (scene BV) — the digest tier: information in place, actions
+/// behind the chevron. A live row on an uncrowded panel carries this by
+/// default — its unclipped latest words (only when the hero had to clip
+/// them), its current plan step, and what it has landed. Nothing here is
+/// interactive; the act surfaces stay on the full depth.
+@MainActor
+struct SessionBriefCard: View {
+    @ObservedObject var store: StatusStore
+    let row: AgentRow
+
+    /// Mirrors `AgentRowButton.heroLimit`: below it the hero already shows
+    /// the whole sentence and repeating it would be the same fact twice.
+    static let heroClipThreshold = 96
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if row.selfReportFresh, row.lastWord.count > Self.heroClipThreshold {
+                Text(row.lastWord)
+                    .font(.caption)
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            if row.selfReportFresh, !row.planStep.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("▸")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    Text(row.planStep)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            if row.hasWorkspaceEffect, row.changedPaths > 0,
+               row.insertions >= 0, row.deletions >= 0 {
+                Text("+\(row.insertions) −\(row.deletions)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 /// 10.0 (scene BS) — the collapsed row's former five lines, intact where
 /// understanding lives: narrative, motion, observation, work, where/when.
 /// Nothing was deleted in the recomposition; it moved here.

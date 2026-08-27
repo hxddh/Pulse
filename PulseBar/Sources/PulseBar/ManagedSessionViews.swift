@@ -91,9 +91,9 @@ struct ManagedSessionInspector: View {
                 }
             }
         }
-        .padding(14)
+        .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
     }
 
     private func statusLabel(_ status: ManagedSession.Status) -> String {
@@ -145,12 +145,12 @@ struct ManagedSessionInspector: View {
                         .padding(8)
                 }
                 .frame(maxHeight: 220)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
             }
         }
-        .padding(14)
+        .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
     }
 
     private func runCheck() {
@@ -197,9 +197,9 @@ struct ManagedSessionInspector: View {
     /// compact; only the workbench chrome (padding, tint) lives here.
     private func permissionCard(_ request: ManagedPermission.Request) -> some View {
         SessionPermissionCard(store: store, request: request, compact: false)
-            .padding(14)
+            .padding(PulseTheme.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
     }
 
     /// 5.0-γ (scene BH): acceptance, on the user's click, inside Pulse's own
@@ -260,9 +260,9 @@ struct ManagedSessionInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(14)
+        .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
     }
 
     private func runAcceptance(
@@ -342,7 +342,7 @@ struct ManagedSessionInspector: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(minHeight: 200, maxHeight: 460)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
                     .onChange(of: model.entries.count) { _, count in
                         proxy.scrollTo(count - 1, anchor: .bottom)
                     }
@@ -353,9 +353,9 @@ struct ManagedSessionInspector: View {
             }
             replyRow
         }
-        .padding(14)
+        .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
     }
 
     private var replyRow: some View {
@@ -465,9 +465,9 @@ struct ManagedSessionInspector: View {
                 }
             }
         }
-        .padding(14)
+        .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
     }
 
     private var effectCard: some View {
@@ -479,9 +479,9 @@ struct ManagedSessionInspector: View {
             // construction.
             WorkspaceDiffSection(store: store, row: row)
         }
-        .padding(14)
+        .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
     }
 }
 

@@ -444,9 +444,13 @@ struct SessionInspectorView: View {
                 .font(.headline)
             content()
         }
-        .padding(14)
+        .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+        )
     }
 
     private func labeled(_ label: String, _ value: String) -> some View {
@@ -612,7 +616,7 @@ private struct TranscriptSection: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxHeight: 420)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
                         .onAppear {
                             // The newest turn is why the user opened this.
                             proxy.scrollTo(excerpt.entries.count - 1, anchor: .bottom)
@@ -784,7 +788,7 @@ struct WorkspaceDiffSection: View {
                         .padding(8)
                 }
                 .frame(maxHeight: 360)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
             } else if failed {
                 Text(store.tr(.workbenchDiffUnavailable))
                     .font(.caption)

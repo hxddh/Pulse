@@ -258,7 +258,7 @@ struct TrayPanel: View {
     @FocusState fileprivate var listFocused: Bool
 
     fileprivate func toggleExpanded(_ key: String) {
-        withAnimation(.easeOut(duration: 0.16)) {
+        withAnimation(PulseTheme.motion) {
             if expandedRowKeys.contains(key) {
                 expandedRowKeys.remove(key)
             } else {
@@ -272,7 +272,7 @@ struct TrayPanel: View {
         // hard cuts: a block of rows appearing instantly is indistinguishable
         // from a reorder, and you re-read the whole list to find out which it
         // was. Short and flat — this is a menu-bar panel, not a launch screen.
-        withAnimation(.easeOut(duration: 0.16)) {
+        withAnimation(PulseTheme.motion) {
             if folded.contains(id) { folded.remove(id) } else { folded.insert(id) }
         }
     }
@@ -924,7 +924,7 @@ struct TrayPanel: View {
                 // Rows fade rather than pop. A list that rebuilds itself every
                 // two seconds otherwise makes "a session appeared" and "the
                 // order changed" look identical.
-                .animation(.easeOut(duration: 0.16), value: store.snapshot.rows.map(\.rowKey))
+                .animation(PulseTheme.motion, value: store.snapshot.rows.map(\.rowKey))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     GeometryReader { geo in
@@ -1096,6 +1096,31 @@ private struct AgentRowButton: View {
     var expanded = false
     var onToggleExpand: (() -> Void)?
     @State private var hovering = false
+
+    /// 11.0-α: a dead turn is a needs-you state — the recovery box rides
+    /// the in-list cards like an ask does.
+    private var needsRecovery: Bool {
+        switch store.managedRunner(for: row)?.model.status {
+        case .interrupted, .failed: return true
+        default: return false
+        }
+    }
+
+    private var needsYou: Bool {
+        row.waiting
+            || !store.managedPermissionRequests(for: row).isEmpty
+            || needsRecovery
+    }
+
+    /// The row's default depth before any click (scene BV).
+    private var depthTier: RowDepth.Tier {
+        RowDepth.tier(
+            expanded: expanded,
+            needsYou: needsYou,
+            live: row.liveProcess || row.isExplicitlyRunningPhase,
+            crowded: compact
+        )
+    }
 
     private var highlight: Color {
         if selected { return Color.primary.opacity(0.10) }
@@ -1331,6 +1356,16 @@ private struct AgentRowButton: View {
             // highest-value content and must not cost a click — permission
             // cards, the Respond card and the managed reply live in the list
             // itself. The expanded card renders the same cards, never twice.
+            // 11.0-α (scene BV): the digest tier — a live row's information
+            // arrives without a click; the act surfaces stay behind the
+            // chevron. Never beside an ask: the question owns that space.
+            if depthTier == .digest {
+                SessionBriefCard(store: store, row: row)
+                    .padding(.leading, 48)
+                    .padding(.trailing, TrayChrome.padX)
+                    .padding(.bottom, 8)
+            }
+
             if !expanded {
                 let asks = store.managedPermissionRequests(for: row)
                 let inbound = row.waiting ? store.respondRequest(for: row) : nil
@@ -1338,12 +1373,6 @@ private struct AgentRowButton: View {
                 // only — a blocked ask or a turn that died. An idle managed
                 // row's reply box lives behind expansion; a standing reply
                 // box on every row was a wall, not an inbox.
-                let needsRecovery: Bool = {
-                    switch store.managedRunner(for: row)?.model.status {
-                    case .interrupted, .failed: return true
-                    default: return false
-                    }
-                }()
                 if !asks.isEmpty || inbound != nil || needsRecovery {
                     VStack(alignment: .leading, spacing: TrayChrome.cardSpacing) {
                         ForEach(asks, id: \.id) { request in

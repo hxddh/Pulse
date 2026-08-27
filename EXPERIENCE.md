@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（10.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（11.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -170,6 +170,21 @@ meta 线由纯函数 `rowMetaLine` 合成,优先级测试逐格钉死:此刻槽
 > 以下「叙事行 / 次行 / 信号行 / 观测行 / 工作方式线」的规则,自 10.0 起
 > 描述**展开卡的全景区**(`SessionPanorama`);它们的选取与去重规则原样
 > 生效,只是渲染面换了——换窗口不换认识论。
+
+#### 自适应深度(11.0,场景 BV —— 信息默认在场,动作按需展开)
+
+chevron 曾是「看到信息」的门——一行一次的点击税。11.0 起深度由注意力
+自适应,纯函数 `RowDepth.tier` 钉死:
+
+| 行的状态 | 默认深度 | 内容 |
+| --- | --- | --- |
+| 显式展开(chevron / Go-Look reveal) | **full** | 完整展开卡:全景+工作细节+动作 |
+| 需要你(等待/权限/死亡回合) | minimal + **ask 卡** | 问题即深度,摘要噪音不得稀释它 |
+| 活跃 且 面板不拥挤 | **digest** | 摘要层(`SessionBriefCard`,纯信息):被 hero 截断时的完整原话、当前计划步、± 落盘——**无动作面** |
+| 其余(静默行、拥挤面板) | minimal | 微身份条 + hero + meta |
+
+chevron 语义从此是「进入动作与全量」;拥挤(≥5 行)时活跃行自动降回
+minimal——密度永不失控。
 
 - **身份行** = 6px 状态灯（等待红 / 运行绿 / 最近灰 / 异常橙）+ Agent 产品名 + 运行时证据等级（仅缓存 / 仅进程时出现）+ 非常态芯片。
   32 个图标不是识别测试；产品名必须可直接扫读。更多操作只在悬停 / 键盘选中时显形，
@@ -751,6 +766,9 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BS | Anatomy（行解剖学） | **构图取代堆叠**:收起行 = 微身份条(灯·产品名·证据 + 右柱时间/芯片)+ hero(≤2 行)+ **一条合成 meta 线**(`rowMetaLine` 纯合成:此刻>产出>方式,≤3 槽,稀疏补项目;等待行让位问题、新鲜错误原文替位)——七线堆叠终结;五线全景(叙事/信号/观测/工作/次行)整体撤到展开卡 `SessionPanorama`,规则原样、渲染面换了;展开卡内一事实一处(chips 并入全景与工作细节,model/tokens/context 只在全景工作线) |
 | BT | Column(右柱) | 右缘是一根柱子:相对时间等宽、弱化、右对齐在身份条尾,芯片其后——扫视沿两根轴走(左轴读事,右轴读量);VoiceOver 同步读合成解剖学 |
 | BU | Disclosure(披露纪律) | 三层各归其位:收起=扫视(两行),展开=理解与行动(8.x 全部深度原样),**列表内卡只给「此刻需要你」**——权限请求 / Respond / 回合死亡(interrupted/failed)恢复;受管 idle 的回复框撤回展开态(每行常驻回复框是墙不是收件箱);阻塞照旧免点击 |
+| BV | Depth(自适应深度) | **信息默认在场,动作按需展开**:`RowDepth.tier` 纯表——显式展开→full;需要你→minimal+ask 卡(问题即深度);活跃且不拥挤→digest(`SessionBriefCard` 纯信息:hero 截断时的完整原话/当前计划步/±落盘,无动作面);其余 minimal;拥挤自动降级;chevron 语义收窄为「进入动作与全量」;Go-Look reveal 照旧直达 full |
+| BW | Theme(全产品一体) | `PulseTheme` 统一全产品共享 chrome:窗口卡片半径族(卡 10/内 6)、padding 节奏、发丝描边(指挥台 card() 一处收编全窗)、**唯一动效曲线**(easeOut 0.16)——托盘 `TrayChrome` 保留紧凑网格、同一节奏派生;指挥台/受管检视器全部卡片收编,手写 `padding(14)`/`cornerRadius` 清零 |
+| BX | Grace(收笔) | 折叠/展开/重排共用同一条动效曲线;两条曲线在一个产品里读起来是两个产品 |
 
 ---
 
@@ -770,6 +788,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
 | 价值引擎 / 工作方式线 | `RowValueEngine.swift` · `StatusStoreNarration.swift` → `rowWorkLine` / `workDetailFacts` |
 | 合成 meta 线 / 全景 | `StatusStoreNarration.swift` → `rowMetaLine` · `SessionCards.swift` → `SessionPanorama` |
+| 自适应深度 / 全产品主题 | `RowDepth.swift` · `SessionCards.swift` → `SessionBriefCard` · `PulseTheme.swift` |
 | 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` · `TranscriptReader.swift` |
 | 引擎边界 / 受管会话 | `SessionSource.swift` · `ManagedSession.swift` · `ManagedSessionRunner.swift` · `ManagedSessionSource.swift` · `ManagedWorktree.swift` · `ManagedSessionViews.swift` |
 | 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |

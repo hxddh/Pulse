@@ -125,6 +125,21 @@ step "11. Composition (scenes BS/BT/BU)" \
   its card in the list without any click.
   EXPECT: the popup reads as one calm system."
 
+
+# ---- 11.0 addition ----
+step "12. Coherence (scenes BV/BW/BX)" \
+"  - Open the tray over a few LIVE sessions on a calm panel. Touch nothing.
+  EXPECT: each live row already shows its brief — long last words in
+  full, the current plan step, +x −y — with NO reply box and NO action
+  strip; the chevron now only adds actions and the full panorama.
+  - Add rows until the panel is crowded (>=5).
+  EXPECT: live rows drop back to the two-line anatomy automatically.
+  - A waiting/permission row shows its ask card as before — and no brief
+  beside it.
+  - Open the Workbench and Settings next to the tray.
+  EXPECT: same card radii, same padding rhythm, same hairline strokes,
+  same motion curve — it reads as one product made by one hand."
+
 echo
-echo "All eleven held → 5.0-β + 6.0 + 7.0 + 8.0 + 10.0 verified on this machine."
+echo "All twelve held → 5.0-β through 11.0 verified on this machine."
 echo "Anything failed → copy the step number and what happened instead."
