@@ -1275,10 +1275,35 @@ enum NativeActivityHarvest {
             // 0.95: never infer Waiting from free-text transcript content.
             let lower = content.lowercased()
             if lower.contains("tool") || lower.contains("command") { fact.phase = "running" }
+            // 8.3: the same tagged document `grokTitle` reads carries the
+            // agent's replies under `<assistant` markers — the latest one is
+            // the row's last word. Unknown layouts yield "", never a guess.
+            if fact.lastWord.isEmpty { fact.lastWord = grokLastWord(from: content) }
             if fact.hasUsefulSignal { facts.append(fact) }
             if facts.count >= maxFactsPerAgent { break }
             values.removeAll(keepingCapacity: false)
         }
+    }
+
+    /// The latest assistant paragraph in Grok's tagged session document —
+    /// the first plain line after the last `<assistant` marker. Tag lines
+    /// and code fences reset the marker; a layout this does not recognise
+    /// yields "", never an invented word. Internal for the unit test.
+    static func grokLastWord(from content: String) -> String {
+        var pendingAssistant = false
+        var word = ""
+        for line in content.split(whereSeparator: \.isNewline) {
+            let value = String(line).trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { continue }
+            let lower = value.lowercased()
+            if lower.hasPrefix("<assistant") { pendingAssistant = true; continue }
+            if lower.hasPrefix("<") || lower.hasPrefix("```") { pendingAssistant = false; continue }
+            if pendingAssistant {
+                word = value
+                pendingAssistant = false
+            }
+        }
+        return selfReportLine(word)
     }
 
     private static func grokTitle(from content: String) -> String {
@@ -2504,6 +2529,23 @@ enum NativeActivityHarvest {
                             f.tokensOut = max(f.tokensOut, firstNumber(usage, keys: [
                                 "output_tokens", "outputTokens", "completion_tokens",
                             ]))
+                        }
+                        // 8.3: context % from two measured numbers Codex writes
+                        // side by side — the model's window and the tokens the
+                        // latest turn put in it. A ratio of measurements is a
+                        // fact; a guess at either side would not be.
+                        let window = firstNumber(info, keys: [
+                            "model_context_window", "modelContextWindow", "context_window",
+                        ])
+                        let used = firstNumber(
+                            (info["last_token_usage"] as? [String: Any]) ?? [:],
+                            keys: ["total_tokens", "totalTokens"]
+                        )
+                        if window > 0, used > 0, used <= window {
+                            f.contextPercent = max(
+                                f.contextPercent,
+                                Int((Double(used) / Double(window) * 100).rounded())
+                            )
                         }
                     }
                 default:

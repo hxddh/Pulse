@@ -149,7 +149,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         let lines = [
             #"{"type":"session_meta","payload":{"session_id":"tok-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,
             #"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Count the tokens"}]},"timestamp":1700000001}"#,
-            #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":220,"output_tokens":55}}},"timestamp":1700000002}"#,
+            #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":220,"output_tokens":55,"total_tokens":27500},"model_context_window":110000}},"timestamp":1700000002}"#,
         ].joined(separator: "\n") + "\n"
         try lines.write(to: session, atomically: true, encoding: .utf8)
 
@@ -158,6 +158,38 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.task, "Count the tokens")
         XCTAssertEqual(row.tokensIn, 220)
         XCTAssertEqual(row.tokensOut, 55)
+        // 8.3: window and used are two measured numbers — their ratio is a fact.
+        XCTAssertEqual(row.contextPercent, 25)
+    }
+
+    func testGrokLastWordReadsTheTaggedAssistantParagraph() {
+        let content = """
+        <system prompt>
+        setup text
+        </system>
+        <user_query>
+        Fix the lamp
+        </user_query>
+        <assistant model=grok-4>
+        Working on the lamp now.
+        </assistant>
+        <user_query>
+        And the badge
+        </user_query>
+        <assistant model=grok-4>
+        Badge is green — done.
+        </assistant>
+        """
+        XCTAssertEqual(
+            NativeActivityHarvest.grokLastWord(from: content),
+            "Badge is green — done.",
+            "the latest assistant paragraph wins"
+        )
+        XCTAssertEqual(
+            NativeActivityHarvest.grokLastWord(from: "plain text with no tags"),
+            "",
+            "an unrecognised layout yields nothing, never a guess"
+        )
     }
 
     func testPiWorkFactsAreCollected() throws {
