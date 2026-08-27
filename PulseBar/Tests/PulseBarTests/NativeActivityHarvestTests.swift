@@ -74,6 +74,13 @@ final class NativeActivityHarvestTests: XCTestCase {
         let value = #"{"name":"Refine Cursor adapter","unifiedMode":"agent","contextUsagePercent":42,"filesChangedCount":3,"hasBlockingPendingActions":true}"#
         let insert = "INSERT INTO composerHeaders VALUES ('composer-1', 'ws-1', 1700000000000, '\(value.replacingOccurrences(of: "'", with: "''"))', 0, 0);"
         XCTAssertEqual(sqlite3_exec(database, insert, nil, nil, nil), SQLITE_OK)
+        // 9.0: conversation bubbles live in the same store's KV table.
+        let kv = """
+        CREATE TABLE cursorDiskKV (key TEXT, value TEXT);
+        INSERT INTO cursorDiskKV VALUES ('bubbleId:composer-1:b1', '{"type":1,"text":"please refine it"}');
+        INSERT INTO cursorDiskKV VALUES ('bubbleId:composer-1:b2', '{"type":2,"text":"Adapter refined — headers now verified."}');
+        """
+        XCTAssertEqual(sqlite3_exec(database, kv, nil, nil, nil), SQLITE_OK)
 
         let result = NativeActivityHarvest.scan(
             allowAppData: false,
@@ -92,6 +99,10 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.files, 3)
         XCTAssertEqual(row.skill, "pending")
         XCTAssertEqual(row.mode, "agent", "unifiedMode must reach the tray, not invent local")
+        XCTAssertEqual(
+            row.lastWord, "Adapter refined — headers now verified.",
+            "the latest assistant bubble is the row's last word"
+        )
     }
 
     func testCorruptStoreDoesNotHideOtherAdapterAndFilterIsIsolated() throws {
@@ -275,6 +286,84 @@ final class NativeActivityHarvestTests: XCTestCase {
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
         let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
         XCTAssertEqual(row.skill, "code-review", "the workflow fact lives in the Skill call's input")
+    }
+
+    func testGeminiWholeFileChatYieldsTheModelLastWord() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-gemini-chat-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".gemini/tmp/pulse/chats", isDirectory: true)
+            .appendingPathComponent("session-chat.json")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let document = #"{"sessionId":"gem-chat","title":"Fix the lamp","cwd":"/Users/me/Pulse","history":[{"role":"user","parts":[{"text":"Fix the lamp"}]},{"role":"model","parts":[{"text":"First pass done."}]},{"role":"user","parts":[{"text":"and the badge"}]},{"role":"model","parts":[{"text":"Badge is green now."}]}]}"#
+        try document.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.gemini])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .gemini })
+        XCTAssertEqual(row.lastWord, "Badge is green now.", "the LAST model turn wins")
+    }
+
+    func testOpenCodeLastWordComesFromTheAssistantMessage() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-opencode-\(UUID().uuidString)")
+        let dbURL = home.appendingPathComponent(".local/share/opencode/opencode.db")
+        try fm.createDirectory(at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        var database: OpaquePointer?
+        guard sqlite3_open(dbURL.path, &database) == SQLITE_OK, let database else {
+            XCTFail("could not create OpenCode fixture database")
+            return
+        }
+        defer { sqlite3_close(database) }
+        let schema = """
+        CREATE TABLE session (id TEXT, title TEXT, directory TEXT, agent TEXT, model TEXT,
+            tokens_input INTEGER, tokens_output INTEGER, time_created INTEGER,
+            time_updated INTEGER, summary_files INTEGER, time_archived INTEGER);
+        CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);
+        CREATE TABLE part (session_id TEXT, message_id TEXT, data TEXT, time_updated INTEGER);
+        INSERT INTO session VALUES ('oc-1', 'Tidy the panel', '/Users/me/Pulse', 'build',
+            'anthropic/claude-sonnet-4', 1200, 300, 1700000000000, 1700000005000, 2, 0);
+        INSERT INTO message VALUES ('m1', 'oc-1', '{"role":"user"}');
+        INSERT INTO message VALUES ('m2', 'oc-1', '{"role":"assistant"}');
+        INSERT INTO part VALUES ('oc-1', 'm1', '{"type":"text","text":"tidy it please"}', 1);
+        INSERT INTO part VALUES ('oc-1', 'm2', '{"type":"text","text":"Panel tidied; two rows aligned."}', 2);
+        """
+        XCTAssertEqual(sqlite3_exec(database, schema, nil, nil, nil), SQLITE_OK)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.opencode])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .opencode })
+        XCTAssertEqual(row.task, "Tidy the panel")
+        XCTAssertEqual(row.tokensIn, 1200)
+        XCTAssertEqual(
+            row.lastWord, "Panel tidied; two rows aligned.",
+            "role comes from the message table — a part alone has no author"
+        )
+    }
+
+    func testAiderLastWordFollowsTheNewestUserTurn() {
+        let history = """
+        #### make the tray denser
+
+        Working on density now.
+
+        ```diff
+        - old
+        + new
+        ```
+
+        #### and align the chips
+
+        > some quote
+
+        Chips aligned across both card faces.
+        """
+        XCTAssertEqual(
+            NativeActivityHarvest.aiderLastWord(from: history),
+            "Chips aligned across both card faces."
+        )
+        XCTAssertEqual(NativeActivityHarvest.aiderLastWord(from: "no headers here"), "")
     }
 
     func testClaudeSubagentDirectoryCountsAttachToSessionRow() throws {

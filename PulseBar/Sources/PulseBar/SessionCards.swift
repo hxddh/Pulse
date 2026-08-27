@@ -31,7 +31,7 @@ struct SessionRespondCard: View {
             }
             .frame(maxHeight: compact ? 120 : 200)
             .padding(compact ? 6 : 8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
             if let fate = store.respondFateNote(row) {
                 Text(fate)
                     .font(.caption)
@@ -74,7 +74,7 @@ struct SessionPermissionCard: View {
             }
             .frame(maxHeight: compact ? 120 : 220)
             .padding(compact ? 6 : 8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
             if request.truncated {
                 Text(store.tr(.managedPermissionTruncated))
                     .font(.caption)
@@ -313,9 +313,9 @@ struct TrayExpandedCard: View {
                         ManagedEntryRow(store: store, agentName: row.agent.displayName, entry: entry)
                     }
                 }
-                .padding(6)
+                .padding(TrayChrome.cardSpacing)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
             }
 
             // Act where you read: managed asks first, then Respond, then the
@@ -343,10 +343,14 @@ struct TrayExpandedCard: View {
                 Spacer(minLength: 0)
             }
             .buttonStyle(.borderless)
-            .font(.system(size: 11, weight: .medium))
+            .font(TrayChrome.actionFont)
         }
-        .padding(10)
+        .padding(TrayChrome.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: TrayChrome.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: TrayChrome.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: 1)
+        )
     }
 }

@@ -182,12 +182,12 @@ without exposing namespaces, paths, URLs, or arbitrary implementation text.
 | Codex | 专用解析器 | ✓ function_call | ✓ token_count(latest 优先) | ✓ 8.2(turn_context) | ✓ 8.3(window×used 两实测数之比) | −(rollout 无 skill 概念) | − | ✓/✓(update_plan)/✓ |
 | Pi(JSONL) | 专用解析器 | ✓ 8.2(toolCall;>8KB 行正则打捞) | ✓ 8.2(usage {input,output}) | ✓ | −(JSONL 无上下文字段) | −(无 skill 记录) | − | ✓ 8.2/−(无 todos)/✓ 8.2(isError 方言) |
 | Pi(context-mode DB) | SQLite events | ✓ tool_call 事件 | ✓ agent_usage | ✓ | −(events 无窗口字段) | − | − | −/−/✓(error 事件计数,无原文) |
-| Cursor(composer) | SQLite headers | →(对话 bubbles 在另一张表,未读;headers 无工具) | ✓(header 若带 usage 键) | ✓ | − | − | − | →(同 bubbles;需真机样本定表结构) |
+| Cursor(composer) | SQLite headers + bubbles KV | →(headers 无工具;bubbles 未提取工具) | ✓(header 若带 usage 键) | ✓ | − | − | − | ✓ 9.0(cursorDiskKV 最新 assistant bubble;版式不符则缺席)/−/− |
 | Grok | SQLite session_docs(+ 若有 JSONL 走形状) | −(docs 无结构化工具) | −(docs 无 usage) | −(docs 无模型字段) | − | − | − | ✓ 8.3(`<assistant` 标签后段落)/−/− |
-| OpenCode | SQLite session+parts | ✓ parts | ✓ session 列 | ✓ session 列 | −(无窗口列) | − | − | →(text parts 无 role 归属——采了会把用户话冒充原话,宁缺;需 message 表联查样本)/−/− |
-| Gemini | 通用(chats 整文件 JSON) | ✓ functionCall | ✓ usageMetadata | ✓ | − | − | − | →(整文件 JSON,逐行自述扫描不适用;role 为 `model` 非 `assistant`,需专门通路)/−/− |
+| OpenCode | SQLite session+message+parts | ✓ parts | ✓ session 列 | ✓ session 列 | −(无窗口列) | − | − | ✓ 9.0(role 经 message 表联查;缺表则缺席)/−/− |
+| Gemini | 通用(chats 整文件 JSON) | ✓ functionCall | ✓ usageMetadata | ✓ | − | − | − | ✓ 9.0(整文档遍历,最后一个 `model` 回合)/−/− |
 | Amp | 通用 JSONL 形状 | ✓* | ✓* | ✓* | −* | −* | −* | ✓* |
-| Aider | 文本(markdown 历史) | −(无结构化记录) | −(历史无 usage) | ✓(正则) | − | − | − | −(markdown 无形状可依) |
+| Aider | 文本(markdown 历史) | −(无结构化记录) | −(历史无 usage) | ✓(正则) | − | − | − | ✓ 9.0(最新 `#### ` 用户回合后的散文段)/−/− |
 | Copilot / Goose / OpenHands / Continue / Droid / Kimi | 通用 JSONL/JSON 形状 | ✓* | ✓* | ✓* | −* | −* | −* | ✓* |
 
 \* 形状通路:采到什么取决于该家本机文件实际携带什么——形状匹配则得,
@@ -211,3 +211,7 @@ Cline/Roo 的显式 pending 标志),其余缺席。升格到第一梯队的唯�
 - 8.2:Pi 三缺口(大行打捞/usage 键/自述方言)、Codex model、Claude Skill、
   通用 `toolCall` 驼峰。
 - 8.3:Codex 上下文%(window×used)、Grok 原话(assistant 标签);本节首发。
+- 9.0:→ 栏四缺口全部关闭——Cursor bubbles(KV 表最新 assistant bubble)、
+  OpenCode 原话(role 经 message 表联查,part 单独不定作者)、Gemini 原话
+  (整文档遍历取最后 model 回合)、Aider 原话(markdown 段落规则)。
+  每条守卫式实现:表/列/版式不符 → 空,永不猜。
