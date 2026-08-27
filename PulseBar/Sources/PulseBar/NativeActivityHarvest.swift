@@ -1372,10 +1372,49 @@ enum NativeActivityHarvest {
             fact.startedMs = normalizeTimestamp(created)
             fact.records = openCodePartCount(database, sessionID: sid)
             enrichOpenCodeParts(database, sessionID: sid, fact: &fact)
+            // 9.0: the agent's words, with the role taken from the message
+            // table — a text part alone has no author, and guessing one
+            // would pass the user's words off as the agent's.
+            if fact.lastWord.isEmpty {
+                fact.lastWord = openCodeLastWord(database, sessionID: sid)
+            }
             if fact.hasUsefulSignal { facts.append(fact) }
             if facts.count >= maxFactsPerAgent { break }
             values.removeAll(keepingCapacity: false)
         }
+    }
+
+    /// 9.0 — the latest assistant message's text, via the message table's
+    /// role. Every step is guarded: a schema without these tables or columns
+    /// returns "" (absence, never a guess), and `rowid` ordering needs no
+    /// vendor timestamp column to exist.
+    private static func openCodeLastWord(_ database: OpaquePointer, sessionID: String) -> String {
+        let messageSQL = "SELECT id, data FROM message WHERE session_id = ? ORDER BY rowid DESC LIMIT 40"
+        guard let messages = sqlitePrepare(database, messageSQL),
+              sqliteBind(messages, index: 1, text: sessionID) else { return "" }
+        defer { sqlite3_finalize(messages) }
+        while sqlite3_step(messages) == SQLITE_ROW {
+            let messageID = sqliteString(messages, column: 0)
+            guard !messageID.isEmpty,
+                  let object = jsonObject(sqliteString(messages, column: 1)),
+                  firstString(object, keys: ["role"]).lowercased() == "assistant"
+            else { continue }
+            let partSQL = "SELECT data FROM part WHERE message_id = ? ORDER BY rowid DESC LIMIT 40"
+            guard let parts = sqlitePrepare(database, partSQL),
+                  sqliteBind(parts, index: 1, text: messageID) else { return "" }
+            defer { sqlite3_finalize(parts) }
+            while sqlite3_step(parts) == SQLITE_ROW {
+                guard let part = jsonObject(sqliteString(parts, column: 0)),
+                      firstString(part, keys: ["type"]).lowercased() == "text"
+                else { continue }
+                let line = selfReportLine(firstString(part, keys: ["text"]))
+                if !line.isEmpty { return line }
+            }
+            // The newest assistant message carried no text part — honest empty
+            // beats reaching further back and calling old words current.
+            return ""
+        }
+        return ""
     }
 
     private static func openCodePartCount(_ database: OpaquePointer, sessionID: String) -> Int {
@@ -1915,6 +1954,12 @@ enum NativeActivityHarvest {
                     parsed[index].activityMs = updated > 0 ? updated : fileMTime(url)
                     parsed[index].sourcePath = url.path
                     parsed[index].structured = true
+                    // 9.0: the conversation bubbles live in the same store's
+                    // KV table — the latest assistant bubble is the row's
+                    // last word. Any schema mismatch returns "" (absence).
+                    if parsed[index].lastWord.isEmpty {
+                        parsed[index].lastWord = cursorLastWord(database, composerID: sessionID)
+                    }
                     // Do not invent mode=local — readableMode strips it and the
                     // observation line goes blank (0.81). Prefer vendor keys.
                     if parsed[index].mode.isEmpty, let object = jsonObject(value) {
@@ -1998,6 +2043,27 @@ enum NativeActivityHarvest {
     private static func sqliteString(_ statement: OpaquePointer, column: Int32) -> String {
         guard let pointer = sqlite3_column_text(statement, column) else { return "" }
         return String(cString: pointer)
+    }
+
+    /// 9.0 — the latest assistant bubble's text from Cursor's `cursorDiskKV`
+    /// store (`bubbleId:<composer>:<bubble>` keys; bubble `type` 2 is the
+    /// assistant, 1 the user). `rowid DESC` approximates write order without
+    /// depending on a timestamp column; a store without the table, or bubbles
+    /// without plain text, yield "" — absence, never a guess.
+    private static func cursorLastWord(_ database: OpaquePointer, composerID: String) -> String {
+        guard !composerID.isEmpty else { return "" }
+        let sql = "SELECT value FROM cursorDiskKV WHERE key LIKE 'bubbleId:' || ? || ':%' ORDER BY rowid DESC LIMIT 60"
+        guard let statement = sqlitePrepare(database, sql),
+              sqliteBind(statement, index: 1, text: composerID) else { return "" }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let object = jsonObject(sqliteString(statement, column: 0)),
+                  firstNumber(object, keys: ["type"]) == 2
+            else { continue }
+            let line = selfReportLine(firstString(object, keys: ["text"]))
+            if !line.isEmpty { return line }
+        }
+        return ""
     }
 
     private static func cursorWorkspacePath(databaseURL: URL, workspaceID: String) -> String {
@@ -2132,7 +2198,57 @@ enum NativeActivityHarvest {
         // reach here (their parsers returned above); this is the generic
         // JSONL walker's tail.
         applyTranscriptSelfReport(&merged, text: text)
+        // 9.0: Gemini chats are one whole-file JSON — the line-based scan
+        // above cannot see them, and the reply role is `model`, not
+        // `assistant`. Walk the parsed document for the last model turn.
+        if lowerPath.contains("/.gemini/"), lowerPath.contains("/chats/"),
+           !merged.isEmpty,
+           let root = objects.first?.0,
+           let word = geminiLastWord(in: root) {
+            for index in merged.indices where merged[index].lastWord.isEmpty {
+                merged[index].lastWord = word
+            }
+        }
         return merged
+    }
+
+    /// The last `model`-role turn's text in a Gemini chat document. Arrays
+    /// keep document order (the history array is the structure that matters);
+    /// depth is bounded; an unrecognised layout yields nil.
+    private static func geminiLastWord(in value: Any, depth: Int = 0) -> String? {
+        guard depth < 6 else { return nil }
+        var latest: String?
+        if let dict = value as? [String: Any] {
+            let role = firstString(dict, keys: ["role"]).lowercased()
+            if role == "model" || role == "assistant" {
+                var text = firstString(dict, keys: ["text", "content"])
+                if text.isEmpty, let parts = dict["parts"] as? [Any] {
+                    for part in parts {
+                        if let block = part as? [String: Any] {
+                            let candidate = firstString(block, keys: ["text"])
+                            if !candidate.isEmpty { text = candidate; break }
+                        } else if let plain = part as? String, !plain.isEmpty {
+                            text = plain
+                            break
+                        }
+                    }
+                }
+                let line = selfReportLine(text)
+                if !line.isEmpty { latest = line }
+            }
+            for (_, child) in dict {
+                if let found = geminiLastWord(in: child, depth: depth + 1) {
+                    latest = found
+                }
+            }
+        } else if let array = value as? [Any] {
+            for item in array {
+                if let found = geminiLastWord(in: item, depth: depth + 1) {
+                    latest = found
+                }
+            }
+        }
+        return latest
     }
 
     /// Claude / Command Code / Continue / Droid / Gemini chats keep one goal
@@ -3381,6 +3497,27 @@ enum NativeActivityHarvest {
         return f
     }
 
+    /// 9.0 — Aider's markdown history: the last non-fence, non-header prose
+    /// line after the newest `#### ` user turn. Internal for the unit test.
+    static func aiderLastWord(from text: String) -> String {
+        var inFence = false
+        var afterUser = false
+        var word = ""
+        for line in text.split(whereSeparator: \.isNewline) {
+            let value = String(line).trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("```") { inFence.toggle(); continue }
+            if inFence { continue }
+            if value.hasPrefix("#### ") {
+                afterUser = true
+                word = ""
+                continue
+            }
+            if value.isEmpty || value.hasPrefix("#") || value.hasPrefix(">") { continue }
+            if afterUser { word = value }
+        }
+        return selfReportLine(word)
+    }
+
     private static func textFacts(_ text: String, structured: Bool, path: String) -> Fact? {
         var f = Fact()
         f.structured = structured
@@ -3397,6 +3534,12 @@ enum NativeActivityHarvest {
         ])
         f.model = regexValue(text, patterns: [#"(?i)\"(?:model|modelId)\"\s*:\s*\"([^\"]+)\""#])
         f.tool = regexValue(text, patterns: [#"(?i)\"(?:lastTool|lastAction|toolName)\"\s*:\s*\"([^\"]+)\""#])
+        // 9.0: Aider's chat history is markdown — `#### ` heads each user
+        // turn, the agent's prose follows. The last plain paragraph after
+        // the newest user turn is the agent's latest word.
+        if path.lowercased().contains("aider"), path.lowercased().contains("history") {
+            f.lastWord = aiderLastWord(from: text)
+        }
         f.phase = semanticPhase(regexValue(text, patterns: [#"(?i)\"(?:phase|stage|status|state)\"\s*:\s*\"([^\"]+)\""#]))
         f.outcome = regexValue(text, patterns: [#"(?i)\"(?:outcome|result|finalStatus)\"\s*:\s*\"([^\"]+)\""#])
         // Display fields only. This is the *free-text* fallback: it runs on

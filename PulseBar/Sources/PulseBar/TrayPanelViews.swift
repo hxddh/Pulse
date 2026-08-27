@@ -45,6 +45,38 @@ enum TrayChrome {
     static let waitAccent = GlanceKind.waiting.lampColor
     static let runAccent = GlanceKind.running.lampColor
 
+    // MARK: - 9.0 Craft · one type scale, one card chrome
+
+    /// The row's type scale. Six ad-hoc point sizes had accreted across the
+    /// row's lines; the scale names the role a line plays and every call
+    /// site says which role it is, not which number it happened to like.
+    /// (Fonts carry no appearance-dependent colour, so `static let` is safe
+    /// here — the appearance gate's rule is about colour, not metrics.)
+    static let heroSize: CGFloat = 13
+    static let bodySize: CGFloat = 11
+    static let captionSize: CGFloat = 10.5
+    static let microSize: CGFloat = 9.5
+    static func heroFont(processOnly: Bool) -> Font {
+        .system(size: heroSize, weight: processOnly ? .regular : .semibold, design: .rounded)
+    }
+    /// Narration — the row's human sentence.
+    static let storyFont: Font = .system(size: bodySize, weight: .medium, design: .rounded)
+    /// Dense fact lines: work, observation, signal.
+    static let detailFont: Font = .system(size: captionSize, weight: .medium)
+    /// The secondary where/when line.
+    static let contextFont: Font = .system(size: 10.75)
+    /// Inline row verbs (dismiss / snooze / focus / open …).
+    static let actionFont: Font = .system(size: bodySize, weight: .medium)
+    static let identityNameFont: Font = .system(size: captionSize, weight: .semibold, design: .rounded)
+    static let sourceLabelFont: Font = .system(size: microSize, weight: .medium, design: .rounded)
+
+    /// Card chrome: every in-list and expanded card shares one radius family
+    /// and one padding rhythm, so the popup reads as a single system instead
+    /// of four slightly different boxes.
+    static let cardRadius: CGFloat = 8
+    static let innerRadius: CGFloat = 6
+    static let cardPadding: CGFloat = 10
+    static let cardSpacing: CGFloat = 8
 }
 
 private struct StatusChip: View {
@@ -153,7 +185,7 @@ private struct SectionHeader: View {
             // earns its place when the names do not already give it.
             if showCount {
                 Text("\(count)")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(TrayChrome.storyFont)
                     .monospacedDigit()
                     .opacity(0.7)
                     .foregroundStyle(accent ? TrayChrome.waitAccent : Color.secondary)
@@ -657,7 +689,7 @@ struct TrayPanel: View {
                     Image(systemName: store.waitingNotificationNeedsSetup
                         ? "bell.badge"
                         : "exclamationmark.circle")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(TrayChrome.actionFont)
                     Text(notice)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -665,7 +697,7 @@ struct TrayPanel: View {
                         .font(.system(size: 9, weight: .semibold))
                         .opacity(0.55)
                 }
-                .font(.system(size: 11, weight: .medium))
+                .font(TrayChrome.actionFont)
                 .foregroundStyle(store.waitingNotificationNeedsSetup ? .red : .orange)
                 .padding(.horizontal, TrayChrome.padX)
                 .padding(.bottom, 9)
@@ -697,7 +729,7 @@ struct TrayPanel: View {
                 )
             }
             .buttonStyle(.link)
-            .font(.system(size: 11, weight: .medium))
+            .font(TrayChrome.actionFont)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 26)
@@ -990,7 +1022,7 @@ struct TrayPanel: View {
     private func overflowButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .font(TrayChrome.storyFont)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, TrayChrome.padX)
@@ -1111,11 +1143,11 @@ private struct AgentRowButton: View {
                                     .frame(width: TrayChrome.identityLampSize, height: 18)
                                     .accessibilityHidden(true)
                                 Text(row.agent.displayName)
-                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                    .font(TrayChrome.identityNameFont)
                                     .foregroundStyle(.secondary)
                                 if let sourceLabel {
                                     Text(sourceLabel)
-                                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                                        .font(TrayChrome.sourceLabelFont)
                                         // Evidence labels are important state,
                                         // not decorative metadata. Tertiary
                                         // contrast made Privacy-limited and
@@ -1130,11 +1162,7 @@ private struct AgentRowButton: View {
                             // bare process is not. The title no longer competes
                             // horizontally with age, state and the menu.
                             Text(heroTitle)
-                                .font(.system(
-                                    size: 13,
-                                    weight: row.isProcessOnly ? .regular : .semibold,
-                                    design: .rounded
-                                ))
+                                .font(TrayChrome.heroFont(processOnly: row.isProcessOnly))
                                 .foregroundStyle(.primary)
                                 // Keep two lines for real session titles even when
                                 // the list is crowded — the title tail is the
@@ -1145,7 +1173,7 @@ private struct AgentRowButton: View {
                             // 0.91/0.92 Row Story — readable even when crowded.
                             if !storyLine.isEmpty {
                                 Text(storyLine)
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .font(TrayChrome.storyFont)
                                     .foregroundStyle(.primary.opacity(0.82))
                                     .lineLimit(2)
                                     .truncationMode(.tail)
@@ -1153,7 +1181,7 @@ private struct AgentRowButton: View {
 
                             if !contextLine.isEmpty {
                                 Text(contextLine)
-                                    .font(.system(size: 10.75))
+                                    .font(TrayChrome.contextFont)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(compact ? 1 : 2)
                                     .truncationMode(.middle)
@@ -1162,7 +1190,7 @@ private struct AgentRowButton: View {
                             // Motion only — Now / Changed / stalled age.
                             if !signalLine.isEmpty {
                                 Text(signalLine)
-                                    .font(.system(size: 10.5, weight: .medium))
+                                    .font(TrayChrome.detailFont)
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                     .lineLimit(1)
@@ -1173,7 +1201,7 @@ private struct AgentRowButton: View {
                             // never Details-only. Disappears when empty (0.80).
                             if !observationLine.isEmpty {
                                 Text(observationLine)
-                                    .font(.system(size: 10.5, weight: .medium))
+                                    .font(TrayChrome.detailFont)
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                     .lineLimit(compact ? 1 : 2)
@@ -1185,7 +1213,7 @@ private struct AgentRowButton: View {
                             // model, context — rehoused, never invented.
                             if !workLine.isEmpty {
                                 Text(workLine)
-                                    .font(.system(size: 10.5, weight: .medium))
+                                    .font(TrayChrome.detailFont)
                                     .foregroundStyle(.secondary.opacity(0.85))
                                     .monospacedDigit()
                                     .lineLimit(1)
@@ -1197,7 +1225,7 @@ private struct AgentRowButton: View {
                             // game the expanded card alone should not solve.
                             if row.selfReportFresh, !row.lastErrorText.isEmpty, !expanded {
                                 Text(Self.truncate(row.lastErrorText, 78))
-                                    .font(.system(size: 10.5).monospaced())
+                                    .font(.system(size: TrayChrome.captionSize).monospaced())
                                     .foregroundStyle(.orange)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
@@ -1264,14 +1292,14 @@ private struct AgentRowButton: View {
                     if row.waiting {
                         Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
                             .buttonStyle(.borderless)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(TrayChrome.actionFont)
                         // A countdown you cannot stop is a worse deal than no
                         // countdown, so the same button undoes it.
                         Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
                             if row.isSnoozed { store.unsnooze(row) } else { store.snooze(row) }
                         }
                         .buttonStyle(.borderless)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(TrayChrome.actionFont)
                     }
                     // Respond (scene AR): only on a remote row with a matched
                     // full request. Deny is safe from here; Allow lives only
@@ -1279,10 +1307,10 @@ private struct AgentRowButton: View {
                     if store.respondRequest(for: row) != nil, !store.respondVerdictSent(row) {
                         Button(store.tr(.respondDeny)) { store.respondDeny(row) }
                             .buttonStyle(.borderless)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(TrayChrome.actionFont)
                         Button(store.tr(.respondReview)) { store.openRespond(row) }
                             .buttonStyle(.borderless)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(TrayChrome.actionFont)
                     } else if let fate = store.respondFateNote(row) {
                         // The receipt, on the row that asked. Without it a
                         // decided row simply goes quiet, which is the same
@@ -1294,19 +1322,19 @@ private struct AgentRowButton: View {
                     if row.canFocusTerminal {
                         Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
                             .buttonStyle(.borderless)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(TrayChrome.actionFont)
                     }
                     if row.isProcessOnly {
                         Button(store.tr(.supportHealth)) { store.openSupportHealth() }
                             .buttonStyle(.borderless)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(TrayChrome.actionFont)
                     }
                     if store.isWaitingNoneNeedsReach(row) {
                         Button(store.tr(.setupWaitingSignals)) {
                             store.openWaitingReach(for: row)
                         }
                         .buttonStyle(.borderless)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(TrayChrome.actionFont)
                     }
                     Spacer(minLength: 0)
                 }
@@ -1336,7 +1364,7 @@ private struct AgentRowButton: View {
                 let asks = store.managedPermissionRequests(for: row)
                 let inbound = row.waiting ? store.respondRequest(for: row) : nil
                 if !asks.isEmpty || inbound != nil || row.isManaged {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: TrayChrome.cardSpacing) {
                         ForEach(asks, id: \.id) { request in
                             SessionPermissionCard(store: store, request: request, compact: true)
                         }
@@ -1347,6 +1375,13 @@ private struct AgentRowButton: View {
                             SessionManagedReply(store: store, row: row, compact: true)
                         }
                     }
+                    .padding(TrayChrome.cardPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: TrayChrome.cardRadius))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: TrayChrome.cardRadius)
+                            .strokeBorder(.quaternary, lineWidth: 1)
+                    )
                     .padding(.leading, 48)
                     .padding(.trailing, TrayChrome.padX)
                     .padding(.bottom, 8)

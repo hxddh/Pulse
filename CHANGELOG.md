@@ -2,6 +2,38 @@
 
 All notable changes to Pulse are documented here.
 
+## 9.0.0 — Craft(全员二轮 + 工艺)
+
+「继续检查缺口,对每个 agent。并且打磨产品里每个细节,品质和审美要质变。」
+
+### 采集二轮:→ 栏清零
+
+8.3 矩阵里留给「真机样本」的四个缺口,这轮全部以守卫式实现关闭——
+每条的原则相同:**表、列或版式不符就返回空,绝不猜**:
+
+- **Cursor 原话**:对话 bubbles 就在同一个 store 的 `cursorDiskKV` 表
+  (`bubbleId:<composer>:<bubble>`,type 2 = assistant)——取最新 assistant
+  bubble 的正文。
+- **OpenCode 原话**:text part 单独不定作者——role 经 message 表联查,
+  最新 assistant 消息的 text part 才是 agent 的话;没有就空,
+  绝不把用户的话冒充 agent 原话。
+- **Gemini 原话**:chats 是整文件 JSON,逐行自述扫描天然失明,且回复
+  role 叫 `model` 不叫 `assistant`——整文档有界遍历,取最后一个 model 回合。
+- **Aider 原话**:markdown 历史里 `#### ` 领起用户回合——取最新用户回合后
+  的最后一段散文(围栏与引用跳过)。
+
+矩阵(`docs/observability-matrix.md`)相应四行由 → 转 ✓,fixture 逐家钉死。
+
+### 工艺:从数字巧合到具名系统
+
+- **一套字阶**:行内六种手写字号收敛为 `TrayChrome` 具名字阶
+  (hero 13 / body 11 / caption 10.5 / micro 9.5;叙事与身份 rounded)。
+  每个调用点从此声明「这行是什么角色」,而不是它喜欢哪个数字——
+  一处调整,整面协调。
+- **一套卡片纪律**:列表内收件卡与展开卡共用同一半径族(卡 8 / 内表面 6)、
+  同一 padding 节奏(4pt 栅格)、同一发丝描边;收件卡从裸列表升级为
+  与展开卡同语言的真卡片。弹窗读起来是**一个系统**,不是四个略有出入的盒子。
+
 ## 8.3.0 — 全员对账
 
 「其他 agent 呢。全部检查下。」——32 家逐一过账,产出
