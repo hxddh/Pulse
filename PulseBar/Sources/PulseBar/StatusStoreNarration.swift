@@ -83,17 +83,8 @@ extension StatusStore {
         var bits: [String] = []
         let path = row.displayPath
         if !path.isEmpty, !omitPath { bits.append(path) }
-        // A completed/recent session still benefits from the last meaningful
-        // action — unless the story line already owns that fact (0.92).
-        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        // EXPERIENCE skips last-action when the hero is already that tool —
-        // unless a project heading omitted the path, which would leave an
-        // age-only secondary (0.81 Tray Substance).
-        let heroIsToolOnly = row.usefulTask == nil && row.hasLiveToolFallback
-        let storyOwnsAction = storyOwnsLastAction(row)
-        if !tool.isEmpty, usefulAction(tool), !heroIsToolOnly || omitPath, !storyOwnsAction {
-            bits.append(String(format: tr(.lastAction), readableAction(tool)))
-        }
+        // 8.1: the last-action slot moved to the work line, the tool's one
+        // home outside the story — the secondary line keeps where and when.
         let ago = lastActivityLabel(row)
         if !ago.isEmpty { bits.append(String(format: tr(.lastActive), ago)) }
         let age = row.sessionAgeSeconds(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
@@ -108,10 +99,11 @@ extension StatusStore {
         if row.liveProcess, row.agent.waitingSource == .none {
             bits.append(tr(.supportWaitingNone))
         }
-        // Heading ate the path and there is no tool action → restore path so
-        // the secondary line is not age chrome alone.
-        if omitPath, !path.isEmpty, tool.isEmpty || storyOwnsAction {
-            if !bits.contains(path) { bits.insert(path, at: 0) }
+        // Heading ate the path and nothing else made the line → restore it
+        // rather than render nothing (0.81 Tray Substance). A line that has
+        // real facts keeps honoring the heading's dedup.
+        if omitPath, !path.isEmpty, bits.isEmpty {
+            bits.insert(path, at: 0)
         }
         // Empty secondary is honest. Agent name already sits on the identity
         // line — repeating it here is EXPERIENCE-forbidden empty chrome.
@@ -690,51 +682,73 @@ extension StatusStore {
     /// says.
     func rowObservationLine(_ row: AgentRow) -> String {
         guard !row.waiting, !row.isProcessOnly else { return "" }
-        let tiers = observationTiers(row)
-        return RowValueEngine.split(
-            outcome: tiers.outcome,
-            work: tiers.work,
-            volume: tiers.volume,
-            leadingWork: [],
-            budget: observationFactBudget
-        ).observation.joined(separator: " · ")
+        let tiers = observationTiers(row, workRich: !workSlots(row).isEmpty)
+        return (tiers.outcome + tiers.motion + tiers.volume)
+            .prefix(observationFactBudget)
+            .joined(separator: " · ")
     }
 
-    /// 8.0-α (scene BN): the work line — how the session works, guaranteed.
+    /// 8.1 (scene BN, the verdict's second coming): the work line — how the
+    /// session works, **built directly from the fields, present whenever the
+    /// fields are**.
     ///
-    /// Tools, tokens, skill, model and context were collected for versions
-    /// and rendered almost never: the observation budget ranked them last and
-    /// deleted them. This line is where the displaced work facts live — the
-    /// budget now moves facts here instead of killing them — led by the one
-    /// fact that never competed at all, the last tool. A fact appears on
-    /// exactly one line; nothing here is invented, only rehoused.
+    /// 8.0 routed these facts through the observation budget and showed only
+    /// the overflow; on real rows the budget rarely overflowed and the line
+    /// stayed empty — the conditional maze survived with a new entrance. The
+    /// contract is now unconditional: tool→target, tokens (whole-session
+    /// register first, latest call as fallback), workflow skill, model, mode
+    /// and context render here whenever they were measured. The observation
+    /// line no longer carries any of them — one fact, one line, statically.
+    /// The only yielded slot is the tool, and only to a line that *actually
+    /// says it this beat* (the story's output, not its ownership claim — the
+    /// claim survived the story's own three-fact cut and the tool vanished
+    /// from every line at once).
     func rowWorkLine(_ row: AgentRow) -> String {
         guard !row.waiting, !row.isProcessOnly else { return "" }
-        let tiers = observationTiers(row)
-        let split = RowValueEngine.split(
-            outcome: tiers.outcome,
-            work: tiers.work,
-            volume: tiers.volume,
-            leadingWork: workLead(row),
-            budget: observationFactBudget
-        )
-        return split.work.prefix(4).joined(separator: " · ")
+        return workSlots(row).joined(separator: " · ")
     }
 
-    /// The last tool as the work line's lead — only when no other line
-    /// already says it: the story owns the live (seconds-fresh) action, the
-    /// hero owns the tool-fallback title, the context line owns the last
-    /// action slot. Same fact twice on one row stays forbidden.
-    private func workLead(_ row: AgentRow) -> [String] {
-        guard !row.liveActionFresh else { return [] }
+    /// The value-ordered work slots. Internal so the tests can pin the
+    /// guarantee fact-by-fact.
+    func workSlots(_ row: AgentRow) -> [String] {
+        let session = evidenceSessionTokens(row)
+        let latest = tokenPair(input: row.tokensIn, output: row.tokensOut)
+        let tokens = session.isEmpty ? latest : session
+        let skill = readableSkill(row.skill)
+        let model = readableModel(row.model)
+        let mode = readableMode(row.mode)
+        return RowValueEngine.line([
+            workToolSlot(row),
+            tokens.isEmpty ? nil : tokens,
+            skill.isEmpty ? nil : skill,
+            model.isEmpty ? nil : String(format: tr(.modelFact), model),
+            mode.isEmpty ? nil : mode,
+            row.contextPercent > 0
+                ? String(format: tr(.contextFact), row.contextPercent) : nil
+        ], limit: 6)
+    }
+
+    /// The last tool with its target when the activity spool recorded one —
+    /// suppressed only where another line says it THIS beat: the story's
+    /// seconds-fresh present tense, the hero's tool fallback, or the story's
+    /// actual rendered output (never its static ownership claim).
+    private func workToolSlot(_ row: AgentRow) -> String? {
+        guard !row.liveActionFresh else { return nil }
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tool.isEmpty else { return [] }
+        guard !tool.isEmpty else { return nil }
         let readable = readableAction(tool)
-        guard !readable.isEmpty else { return [] }
-        if row.usefulTask == nil, row.hasLiveToolFallback { return [] }
-        if rowStoryLine(row).contains(readable) { return [] }
-        if rowContextLine(row).contains(readable) { return [] }
-        return [readable]
+        guard !readable.isEmpty else { return nil }
+        if row.usefulTask == nil, row.hasLiveToolFallback { return nil }
+        if rowStoryLine(row).contains(readable) { return nil }
+        var slot = readable
+        let target = row.liveTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        if row.liveTool == tool, !target.isEmpty {
+            let leaf = target.hasPrefix("/")
+                ? URL(fileURLWithPath: target).lastPathComponent
+                : target
+            slot += " · " + String(leaf.prefix(60))
+        }
+        return slot
     }
 
     /// 8.0 — the work-style detail for the expanded card: how this session
@@ -750,6 +764,11 @@ extension StatusStore {
         if !skill.isEmpty, skill.lowercased() != "pending" {
             facts.append(String(format: tr(.skillFact), skill))
         }
+        if row.subTotal > 0 {
+            facts.append(row.subRunning > 0
+                ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
+                : String(format: tr(.subagentsObserved), row.subTotal))
+        }
         var line: [String] = []
         let model = readableModel(row.model)
         if !model.isEmpty { line.append(String(format: tr(.modelFact), model)) }
@@ -764,14 +783,18 @@ extension StatusStore {
 
     private struct ObservationTiers {
         var outcome: [String] = []
-        var work: [String] = []
+        var motion: [String] = []
         var volume: [String] = []
     }
 
-    /// The 2.1 fact tiers, unchanged in content and order — extracted so the
-    /// observation and work lines are two views of one selection instead of
-    /// two selections that drift.
-    private func observationTiers(_ row: AgentRow) -> ObservationTiers {
+    /// The outcome-and-motion tiers of the observation line. 8.1: the work
+    /// facts (tokens, context, model, mode, skill) left this selection for
+    /// the work line, which renders them unconditionally — this line keeps
+    /// what the work line cannot say: faults, what landed, liveness.
+    /// `workRich` says whether the work line has content this beat — record
+    /// counts stay last-resort filler and never crowd a row that already
+    /// carries real facts on either line.
+    private func observationTiers(_ row: AgentRow, workRich: Bool) -> ObservationTiers {
         let change = row.activityChange
 
         // 1 · Faults. This line owns the fault total, and it is the only line
@@ -847,34 +870,20 @@ extension StatusStore {
                 motion.append(String(format: tr(.evidenceRateFact), size))
             }
         }
-        let tokens = tokenPair(input: row.tokensIn, output: row.tokensOut)
-        if !tokens.isEmpty { motion.append(tokens) }
-
-        // 4 · Reach.
-        var reach: [String] = []
+        // 8.1: tokens, context, model, mode and skill left this selection —
+        // the work line renders them unconditionally. Files-touched stays:
+        // it is reach into the working copy, an outcome-class fact.
         if row.files > 0, !isFilesChange(change) {
-            reach.append(String(format: tr(.filesFact), row.files))
-        }
-        if row.contextPercent > 0 {
-            reach.append(String(format: tr(.contextFact), row.contextPercent))
+            motion.append(String(format: tr(.filesFact), row.files))
         }
 
-        // 5 · Standing facts.
-        var standing: [String] = []
-        let model = readableModel(row.model)
-        if !model.isEmpty { standing.append(String(format: tr(.modelFact), model)) }
-        let mode = readableMode(row.mode)
-        if !mode.isEmpty { standing.append(mode) }
-        let skill = readableSkill(row.skill)
-        if !skill.isEmpty { standing.append(skill) }
-
-        // 6 · Volume, then caveats.
+        // Volume, then caveats.
         var volume: [String] = []
         // Records answer "how much has happened", never "is it advancing", so
         // they stay last-resort filler behind anything of the progress class
-        // (0.80 — never crowd the facts that move).
-        let hasProgressClass = !faults.isEmpty || !advance.isEmpty || !reach.isEmpty
-        if !hasProgressClass, row.records > 0 {
+        // (0.80 — never crowd the facts that move), on either line.
+        let hasProgressClass = !faults.isEmpty || !advance.isEmpty
+        if !hasProgressClass, !workRich, row.records > 0 {
             volume.append(String(row.records) + tr(.recordsSuffix))
         }
         // The read-progress caveat is a qualifier, not a fact: it is only
@@ -886,7 +895,7 @@ extension StatusStore {
 
         return ObservationTiers(
             outcome: faults + advance,
-            work: motion + reach + standing,
+            motion: motion,
             volume: volume
         )
     }

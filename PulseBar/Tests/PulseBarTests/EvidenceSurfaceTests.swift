@@ -271,13 +271,17 @@ final class EvidenceSurfaceTests: XCTestCase {
 
         XCTAssertEqual(at("error"), 0, "a fault changes what you do next: \(line)")
         XCTAssertLessThan(at("2/5"), at("KB"), line)
-        XCTAssertLessThan(at("KB"), at("↑"), "growth answers 'moving?' before size does: \(line)")
-        XCTAssertLessThan(at("↑"), at("Context"), line)
-        XCTAssertLessThan(at("Context"), at("Model"), "the model never advances: \(line)")
-        XCTAssertGreaterThan(
-            parts.count, 4,
-            "the count follows the content, it is not rationed to four: \(line)"
-        )
+        // 8.1: the work facts live on their own line, value-ordered, and
+        // never compete with outcome for the budget again.
+        let work = store().rowWorkLine(row)
+        let workParts = work.components(separatedBy: " · ")
+        func wat(_ needle: String) -> Int {
+            workParts.firstIndex { $0.contains(needle) } ?? -1
+        }
+        XCTAssertLessThan(wat("↑"), wat("Model"), work)
+        XCTAssertLessThan(wat("Model"), wat("Context"), work)
+        XCTAssertFalse(line.contains("↑"), "one fact, one line: \(line)")
+        XCTAssertFalse(line.contains("Model"), "one fact, one line: \(line)")
     }
 
     /// `EXPERIENCE.md`: a position that carries no information either gets real
@@ -288,11 +292,12 @@ final class EvidenceSurfaceTests: XCTestCase {
 
         var partial = liveRow()
         partial.tokensIn = 12_000
+        let work = store().rowWorkLine(partial)
+        XCTAssertTrue(work.contains("12k"), work)
+        XCTAssertFalse(work.contains("Model"), "no model was reported: \(work)")
+        XCTAssertFalse(work.contains("Context"), "context was never reported: \(work)")
         let line = store().rowObservationLine(partial)
-        XCTAssertTrue(line.contains("12k"), line)
-        XCTAssertFalse(line.contains("Model"), "no model was reported: \(line)")
         XCTAssertFalse(line.contains("KB"), "no growth rate was measured: \(line)")
-        XCTAssertFalse(line.contains("Context"), "context was never reported: \(line)")
         XCTAssertFalse(line.contains("events"), "zero records is not a record count: \(line)")
         XCTAssertFalse(line.contains("complete"), "zero progress is not progress: \(line)")
     }
@@ -307,9 +312,10 @@ final class EvidenceSurfaceTests: XCTestCase {
         row.tokensOut = 3_000
         row.sessionTokensIn = 412_000
         row.sessionTokensOut = 98_500
-        let line = store().rowObservationLine(row)
-        XCTAssertTrue(line.contains("12k"), line)
-        XCTAssertFalse(line.contains("412k"), "two token numbers on one line is ambiguity: \(line)")
+        let work = store().rowWorkLine(row)
+        XCTAssertTrue(work.contains("412k"), "the whole-session register outranks the latest call: \(work)")
+        XCTAssertFalse(work.contains("↑12k"), "two token scopes on one line is ambiguity: \(work)")
+        XCTAssertFalse(store().rowObservationLine(row).contains("12k"), "tokens left the observation line")
     }
 
     /// A caveat is only information when there is something on the line for it
@@ -333,7 +339,7 @@ final class EvidenceSurfaceTests: XCTestCase {
         uncounted.digestCaughtUp = false
         let quiet = store().rowObservationLine(uncounted)
         XCTAssertFalse(quiet.contains("40"), "nothing here is a partial count: \(quiet)")
-        XCTAssertTrue(quiet.contains("Model gpt 5"), quiet)
+        XCTAssertTrue(store().rowWorkLine(uncounted).contains("Model gpt 5"), store().rowWorkLine(uncounted))
     }
 
     /// A rate on a stalled or finished session is history dressed as motion.

@@ -60,8 +60,8 @@ final class DefectSweepTests: XCTestCase {
         let s = store()
         var row = liveRow()
         row.tokensOut = 4_200
-        XCTAssertFalse(s.rowObservationLine(row).contains("↑0"), s.rowObservationLine(row))
-        XCTAssertTrue(s.rowObservationLine(row).contains("↓4.2k"))
+        XCTAssertFalse(s.rowWorkLine(row).contains("↑0"), s.rowWorkLine(row))
+        XCTAssertTrue(s.rowWorkLine(row).contains("↓4.2k"))
     }
 
     // MARK: D-2 · a fault is not crowded out by motion

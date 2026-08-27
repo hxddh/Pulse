@@ -99,10 +99,12 @@ step "10. Attention cabin (scenes BN/BO/BP)" \
   - Let a managed turn end. EXPECT: the reply box sits in the list (no red
   lamp — your-turn is visible, not alarmed); the last conversation moves
   show in the expanded card.
-  - On a busy observed session, check the collapsed row.
-  EXPECT: a work line appears (last tool / tokens / model / context) with
-  facts the old observation line used to drop; no fact appears twice; a
-  fresh error shows its own words in orange without expanding.
+  - On ANY observed session row (busy or sparse), check the collapsed row.
+  EXPECT: a work line renders every measured work fact — last tool (with
+  target when the hook recorded one), tokens (whole-session register),
+  skill, model, context % — measured means rendered, no budget can drop
+  them; no fact appears twice across lines; a fresh error shows its own
+  words in orange without expanding.
   - Expand any session. EXPECT: 'how it works' block — tool timeline
   (Read → Edit → Bash), workflow skill, model, session tokens, context %."
 

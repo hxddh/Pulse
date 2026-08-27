@@ -9,55 +9,21 @@ import XCTest
 /// itself as the message.
 final class RowValueEngineTests: XCTestCase {
 
-    // MARK: - The pure split
+    // MARK: - The pure line
 
-    func testObservationIsTheHistoricalPrefix() {
-        let split = RowValueEngine.split(
-            outcome: ["e1", "a1"], work: ["m1", "r1", "s1"], volume: ["v1"],
-            leadingWork: [], budget: 4
+    func testOrderIsPreservedAndAbsentFactsAreDropped() {
+        XCTAssertEqual(
+            RowValueEngine.line(["tool", nil, "tokens", nil, "model"], limit: 6),
+            ["tool", "tokens", "model"]
         )
-        XCTAssertEqual(split.observation, ["e1", "a1", "m1", "r1"])
-        XCTAssertEqual(split.work, ["s1"])
     }
 
-    func testTheBudgetMovesFactsInsteadOfDeletingThem() {
-        let work = ["↑12k ↓3k", "context 62%", "Model Claude", "Workflow test"]
-        let split = RowValueEngine.split(
-            outcome: ["2 errors", "3 files", "+10 −2", "2 of 5"],
-            work: work, volume: [], leadingWork: [], budget: 4
+    func testTheLimitCapsWithoutReordering() {
+        XCTAssertEqual(
+            RowValueEngine.line(["a", "b", "c", "d"], limit: 2),
+            ["a", "b"]
         )
-        XCTAssertEqual(split.observation.count, 4)
-        XCTAssertEqual(split.work, work, "every displaced work fact survives")
-    }
-
-    func testEveryWorkFactAppearsOnExactlyOneLine() {
-        let work = ["a", "b", "c"]
-        let split = RowValueEngine.split(
-            outcome: ["o"], work: work, volume: [], leadingWork: [], budget: 2
-        )
-        for fact in work {
-            XCTAssertTrue(
-                split.observation.contains(fact) != split.work.contains(fact),
-                fact
-            )
-        }
-    }
-
-    func testLeadingWorkLeadsAndNeverEntersObservation() {
-        let split = RowValueEngine.split(
-            outcome: [], work: ["tokens"], volume: [],
-            leadingWork: ["Editing"], budget: 6
-        )
-        XCTAssertEqual(split.observation, ["tokens"])
-        XCTAssertEqual(split.work, ["Editing"], "a shown work fact is not repeated")
-    }
-
-    func testZeroBudgetSendsAllWorkFactsToTheWorkLine() {
-        let split = RowValueEngine.split(
-            outcome: ["o"], work: ["w"], volume: [], leadingWork: [], budget: 0
-        )
-        XCTAssertEqual(split.observation, [])
-        XCTAssertEqual(split.work, ["w"])
+        XCTAssertEqual(RowValueEngine.line(["a"], limit: 0), [])
     }
 
     // MARK: - The lines on a real store
@@ -90,16 +56,17 @@ final class RowValueEngineTests: XCTestCase {
     }
 
     @MainActor
-    func testTheWorkLineCarriesWhatTheBudgetDisplaced() {
+    func testTheWorkLineRendersEveryMeasuredWorkFact() {
         let s = store()
         let row = loadedRow()
-        let observation = s.rowObservationLine(row)
         let work = s.rowWorkLine(row)
-        XCTAssertFalse(observation.isEmpty)
-        XCTAssertFalse(
-            work.isEmpty,
-            "a row this loaded overflows the budget — the overflow must not die"
-        )
+        // The 8.1 contract: measured ⇒ rendered, unconditionally.
+        XCTAssertTrue(work.contains("12k"), work)
+        XCTAssertTrue(work.contains("Model"), work)
+        XCTAssertTrue(work.contains("62"), work)
+        // And the outcome line keeps what the work line cannot say.
+        let observation = s.rowObservationLine(row)
+        XCTAssertTrue(observation.contains("error"), observation)
         let shown = Set(observation.components(separatedBy: " · "))
         for segment in work.components(separatedBy: " · ") {
             XCTAssertFalse(shown.contains(segment), "\(segment) said twice")
@@ -107,15 +74,45 @@ final class RowValueEngineTests: XCTestCase {
     }
 
     @MainActor
-    func testASmallRowPutsEverythingOnTheObservationLine() {
+    func testASparseRowStillRendersItsOneWorkFact() {
         let s = store()
         var row = AgentRow(rowKey: "claude|s2", agent: .claude)
         row.task = "T"
         row.liveProcess = true
         row.observationSource = .session
         row.tokensOut = 4_200
-        XCTAssertTrue(s.rowObservationLine(row).contains("4.2k"))
-        XCTAssertEqual(s.rowWorkLine(row), "", "nothing displaced, nothing to say")
+        XCTAssertTrue(
+            s.rowWorkLine(row).contains("4.2k"),
+            "no budget, no maze — measured means rendered: \(s.rowWorkLine(row))"
+        )
+    }
+
+    @MainActor
+    func testTheSessionRegisterOutranksTheLatestCall() {
+        let s = store()
+        var row = loadedRow()
+        row.sessionTokensIn = 412_000
+        row.sessionTokensOut = 98_000
+        let work = s.rowWorkLine(row)
+        XCTAssertTrue(work.contains("412k"), work)
+        XCTAssertFalse(work.contains("↑12k"), "one token scope per line: \(work)")
+    }
+
+    @MainActor
+    func testTheLastToolLeadsTheWorkLineWithItsTarget() {
+        let s = store()
+        var row = loadedRow()
+        row.tool = "Edit"
+        row.liveTool = "Edit"
+        row.liveTarget = "/Users/me/Pulse/Sources/Main.swift"
+        // Stale live window: the story's present tense is over; the work
+        // line pairs the last tool with the target the spool recorded.
+        row.liveAtMs = 0
+        let work = s.rowWorkLine(row)
+        if !s.rowStoryLine(row).localizedCaseInsensitiveContains("edit") {
+            XCTAssertTrue(work.localizedCaseInsensitiveContains("edit"), work)
+            XCTAssertTrue(work.contains("Main.swift"), work)
+        }
     }
 
     @MainActor
