@@ -201,11 +201,11 @@ final class ReturnTruthTests: XCTestCase {
         row.observationSource = .session
         row.refreshObservationQuality()
         let story = store.rowStoryLine(row)
-        let observation = store.rowObservationLine(row)
-        XCTAssertEqual(story, "", "observation owns model/tokens: \(story)")
+        let work = store.rowWorkLine(row)
+        XCTAssertEqual(story, "", "the work line owns model/tokens: \(story)")
         XCTAssertTrue(
-            observation.contains("gpt 5") || observation.contains("Model") || observation.contains("模型"),
-            observation
+            work.contains("gpt 5") || work.contains("Model") || work.contains("模型"),
+            work
         )
     }
 

@@ -664,7 +664,7 @@ final class RowMetricsTests: XCTestCase {
         let observation = store().rowObservationLine(loaded)
         let context = store().rowContextLine(loaded)
         XCTAssertTrue(metrics.contains("2 of 5"), metrics)
-        XCTAssertTrue(observation.contains("12k"), observation)
+        XCTAssertTrue(store().rowWorkLine(loaded).contains("12k"), store().rowWorkLine(loaded))
         XCTAssertTrue(observation.contains("2 of 5") || observation.contains("2"), observation)
         XCTAssertFalse(
             observation.contains("34 events"),
@@ -782,9 +782,9 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(lifecycle.contains("Turn complete"), lifecycle)
         XCTAssertFalse(lifecycle.contains("Now"), lifecycle)
 
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("Build Plan"), observation)
-        XCTAssertTrue(observation.contains("Model grok 4.5"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("Build Plan"), work)
+        XCTAssertTrue(work.contains("Model grok 4.5"), work)
         XCTAssertTrue(store().rowMetrics(r).contains("1 failure"))
 
         r.errors = 0
@@ -809,9 +809,9 @@ final class RowMetricsTests: XCTestCase {
         let signal = store().rowSignalLine(r)
         XCTAssertFalse(signal.contains("Now"), "signal yields Now to story: \(signal)")
         XCTAssertFalse(signal.contains("18/31"), "signal yields Changed to story: \(signal)")
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("Model gpt 5"), observation)
-        XCTAssertTrue(observation.contains("12k") || observation.contains("3.0k") || observation.contains("3k"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("Model gpt 5"), work)
+        XCTAssertTrue(work.contains("12k") || work.contains("3.0k") || work.contains("3k"), work)
     }
 
     @MainActor
@@ -829,11 +829,11 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(story.contains("Model call") || story.contains("模型"), story)
         let signal = store().rowSignalLine(r)
         XCTAssertFalse(signal.contains("Model call"), "story owns Changed: \(signal)")
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("Model gpt 5"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("Model gpt 5"), work)
         XCTAssertTrue(
-            observation.contains("12k") || observation.contains("Context 42%"),
-            observation
+            work.contains("12k") || work.contains("Context 42%"),
+            work
         )
         XCTAssertFalse(signal.contains("Latest model call"), "default signal should stay scan-friendly: \(signal)")
     }
@@ -851,12 +851,13 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
         let signal = store().rowSignalLine(r)
         XCTAssertFalse(signal.contains("Now"), signal)
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("Model claude sonnet 4"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("Model claude sonnet 4"), work)
         XCTAssertTrue(
-            observation.contains("12k") || observation.contains("Context 68%"),
-            observation
+            work.contains("12k") || work.contains("Context 68%"),
+            work
         )
+        let observation = store().rowObservationLine(r)
         XCTAssertFalse(observation.contains("126 events"), "raw record count should yield to model/tokens: \(observation)")
     }
 
@@ -868,9 +869,10 @@ final class RowMetricsTests: XCTestCase {
         r.contextPercent = 31
         r.liveProcess = true
 
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("Model gpt 5"), work)
+        XCTAssertTrue(work.contains("Context 31%"), work)
         let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("Model gpt 5"), observation)
-        XCTAssertTrue(observation.contains("Context 31%"), observation)
         XCTAssertFalse(observation.contains("126 events"), "rich stable facts should hide diagnostic-only records: \(observation)")
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.isEmpty || !signal.contains("126 events"), signal)
@@ -888,9 +890,10 @@ final class RowMetricsTests: XCTestCase {
 
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.isEmpty, "quiet motion line stays empty: \(signal)")
-        let observation = store().rowObservationLine(r)
-        let contextHits = observation.components(separatedBy: "Context 19%").count - 1
-        XCTAssertEqual(contextHits, 1, "observation duplicated Context: \(observation)")
+        let work = store().rowWorkLine(r)
+        let contextHits = work.components(separatedBy: "Context 19%").count - 1
+        XCTAssertEqual(contextHits, 1, "work line duplicated Context: \(work)")
+        XCTAssertFalse(store().rowObservationLine(r).contains("Context"), "one fact, one line")
     }
 
     @MainActor
@@ -917,9 +920,9 @@ final class RowMetricsTests: XCTestCase {
     func testUnknownSkillKeepsASafeWorkflowCapabilityLabel() {
         var r = row()
         r.skill = "openai-developers:agents-sdk"
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("Workflow Agents Sdk"), observation)
-        XCTAssertFalse(observation.contains("openai-developers:"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("Workflow Agents Sdk"), work)
+        XCTAssertFalse(work.contains("openai-developers:"), work)
     }
 
     @MainActor
@@ -971,10 +974,10 @@ final class RowMetricsTests: XCTestCase {
         r.activityChange = nil
         let signal = store().rowSignalLine(r)
         XCTAssertTrue(signal.isEmpty, "quiet motion stays empty: \(signal)")
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("Model claude sonnet 4"), observation)
-        XCTAssertTrue(observation.contains("12k"), observation)
-        XCTAssertTrue(observation.contains("3.0k") || observation.contains("3k"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("Model claude sonnet 4"), work)
+        XCTAssertTrue(work.contains("12k"), work)
+        XCTAssertTrue(work.contains("3.0k") || work.contains("3k"), work)
     }
 
     @MainActor
@@ -998,9 +1001,15 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
         r.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
         XCTAssertTrue(r.hasLiveToolFallback)
+        // 8.1: the tool's home is the hero here (fallback title) — the work
+        // line must not say it twice, and context keeps where/when only.
         let line = store().rowContextLine(r, omitPath: true)
-        XCTAssertTrue(line.contains("Last action:"), "omitPath must not leave age-only context: \(line)")
+        XCTAssertFalse(line.contains("Last action:"), line)
         XCTAssertFalse(line.isEmpty, line)
+        XCTAssertFalse(
+            store().rowWorkLine(r).localizedCaseInsensitiveContains("command"),
+            "hero owns the tool: \(store().rowWorkLine(r))"
+        )
     }
 
     @MainActor
@@ -1011,9 +1020,9 @@ final class RowMetricsTests: XCTestCase {
         r.tool = "Edit"
         r.liveProcess = true
         r.activityChange = nil
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("claude sonnet 4") || observation.contains("Model"), observation)
-        XCTAssertTrue(observation.contains("1.5k") || observation.contains("1500") || observation.contains("1,500") || observation.contains("↑"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("claude sonnet 4") || work.contains("Model"), work)
+        XCTAssertTrue(work.contains("1.5k") || work.contains("1500") || work.contains("1,500") || work.contains("↑"), work)
         let context = store().rowContextLine(r)
         XCTAssertFalse(context.contains("Last action:"), "story owns last-action (0.92): \(context)")
         let story = store().rowStoryLine(r)
@@ -1032,8 +1041,8 @@ final class RowMetricsTests: XCTestCase {
         r.refreshObservationQuality()
         XCTAssertTrue(r.quality.isLimited)
         XCTAssertEqual(r.observationSource, .cache)
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("cascade") || observation.contains("Model"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("cascade") || work.contains("Model"), work)
         let now = store().rowNowLine(r)
         XCTAssertTrue(now.isEmpty, "cache without phase must not invent Now: \(now)")
     }
@@ -1049,9 +1058,9 @@ final class RowMetricsTests: XCTestCase {
         r.activityChange = nil
         let now = store().rowNowLine(r)
         XCTAssertTrue(now.isEmpty, "no phase → empty Now (never last-tool): \(now)")
-        let observation = store().rowObservationLine(r)
-        XCTAssertTrue(observation.contains("gpt 5") || observation.contains("Model"), observation)
-        XCTAssertTrue(observation.contains("900") || observation.contains("40") || observation.contains("↑"), observation)
+        let work = store().rowWorkLine(r)
+        XCTAssertTrue(work.contains("gpt 5") || work.contains("Model"), work)
+        XCTAssertTrue(work.contains("900") || work.contains("40") || work.contains("↑"), work)
     }
 
     @MainActor
