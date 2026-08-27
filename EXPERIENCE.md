@@ -3,7 +3,7 @@
 **这份文档是 UI / UX 改动的验收依据。** 改了行为就同步改这里，否则文档漂移，
 下一个接手的人会照着假规格做事。
 
-描述的是当前实现（7.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
+描述的是当前实现（8.0.0），不是路线图。历史沿革看 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
@@ -176,6 +176,19 @@ Prefs 只改开关与连接。
 - **观测行**（有数据才出现）= `模型调用 · 入 12k · 出 3k · 641 条事件`
   —— **默认显示，不藏在悬停或 Details 里**；事实按信息量取（动态优先、值为 0/未知不出现、
   条数随内容浮动，见下），详情审视器提供完整证据（含同一叙事 + Changed）
+- **工作方式线（8.0，场景 BN，有值必到场）** = 预算从「删事实」改为「分线」：
+  观测行保持 2.1 的构成与预算**逐字节不变**，被预算挤掉的工作类事实
+  （token、上下文、模型、工作流）**搬进本线而不是消失**，由最后工具（人话）领头
+  （story 的秒级现在时、hero 的工具回落、次行的最近动作已说过的不重复）。
+  纯函数 `RowValueEngine.split` 保证：每个工作类事实**恰好出现在一条线上**，
+  出现率不为零。受管行的成本·回合与本回合落盘 ±行进观测行 advance 层
+  （第一手事实，未测到照旧缺席）
+- **错误原文（8.0-γ）**：自述新鲜且有 `lastErrorText` 时，收起行给一行橙色原文
+  （错误计数不带原文等于让用户去猜——展开卡与指挥台仍有完整版）
+- **收件箱（8.0-β，场景 BN）**：需要你的卡**住在列表里，不要 chevron**——
+  受管权限卡、Respond 卡（等待且有完整请求）、受管回复框（回合结束/中断/失败
+  即可回话；运行中显示当前工具与终止键）直接以紧凑面渲染在行下；
+  展开时由展开卡承载同一组卡，**永不双渲染**
 - **等待详情**（仅 Waiting）：`↳ 消息 · 来源`（**消息优先**；种类·时长在芯片）
 - **离开再回**（0.93 Look Closure / **0.96 Return Truth**）：关闭托盘打指纹（含
   `waitSinceMs`）；**重开后的扫描完成再算**具名变化（新等待 → 已结束等待 → 有变化会话，
@@ -460,6 +473,11 @@ sanitizer、一个字节都不出机器。托盘一个像素不变。
   芯片是**同一组视图**（`SessionCards.swift`），指挥台渲染完整面、托盘渲染
   紧凑面 —— 写一次的事实两处都到，两个表面在构造上不再漂移。指挥台仍是读
   整场对话与落地动词的地方。
+- **Attention 舱（8.0，场景 BN/BO/BP）**：受管权限请求是真等待（红灯/分组/
+  计数/通知，消息=被请求的那件事本身，`ManagedPermission.summary`）；ask 卡
+  免点击住进托盘列表；受管行的对话尾巴（最近 5 步，第一手内存流）与
+  「工作方式」全量层进展开卡。指挥台不变——弹窗管「此刻与行动」，指挥台管
+  「整场与落地」。
 
 ## 6. Preferences（设置窗）
 
@@ -577,7 +595,11 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 ### 数据诚实
 
 - 进程在 ≠ 会话在干活。用「运行中 / 检测到」，不用「正在编码」。
-- Waiting 只来自 hooks 或 `skill=pending`。无信号就明说，不假装。
+- Waiting 只来自可证信号：hooks、`skill=pending`，以及 **8.0 起** 受管回合阻塞在
+  权限请求上（场景 BO —— 信号是 Pulse 自己的 spool 请求文件，回合可证地悬停在
+  判决上，比 hooks 更硬；照 3.0-β/5.0-γ 的先例重划，铁律「无信号不亮灯」不破反而
+  更完整）。受管 `idle`（回合结束轮到你）**仍不是 Waiting**——你的回合可见
+  （列表内回复框），不报警；红灯留给「阻塞」。无信号就明说，不假装。
 - **工具名同理。** 只认结构化的 `tool_use` 记录和已知工具名白名单，
   绝不从「任意 `"name": "..."`」里猜——那会把 `workspaceFolder`、`filesystem`、
   模型 id 显示成「它正在跑 X」。宁可空着。
@@ -684,6 +706,9 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BK | Complete（完成度收口） | **同题 N 路**（1–4）：每路自己的 worktree 与 `pulse/<slug>-aN` 分支、同组互列（序号/状态/每回合落盘 ±行数）、一键切换对比 diff —— Pulse 摆开选项，**选优是人的动作**；**运行检查**：每会话记忆的检查命令在 worktree 里跑（`/bin/sh -lc`，根经 POSIX 引号、300s 超时、退出码与输出尾原文回显、超时明说）—— 合并前先验证；**逐回合落盘**：回合终了用同一套只读 plumbing 测一次 worktree（`+x −y` 进状态卡与对比列表，未测到不显示不编造）；工具结果行以 `↳` 挂在调用下；观察侧一个字节不动 |
 | BL | Lead（价值主行） | **弹窗的可观测性质变，其一**：活跃会话行的主行按价值取 —— 自述新鲜（30 分钟窗口，与行叙事同门）的最新原话压过静态任务标题；标题降位进展开卡与指挥台，不丢失；等待行（用户必须认出的那件事）与仅进程行（诚实状态短语）**一条规则不变**；选择逻辑是纯函数 `TrayRowLead.source`，优先级表（wait: task→project→needsYou；live: **freshWords**→task→toolTitle→project→session 短语）由测试逐格钉死；hero 只做映射不做决定 |
 | BM | Expand（行内展开） | **弹窗的可观测性质变，其二**：每行 chevron 原位展开迷你检视器 —— 降位标题、完整原话、错误原文、计划（≤4+N）、价值芯片（成本·回合 / 本回合落盘 / ±行 / token，**没测到不渲染**），随后动作就地：受管权限卡 / Respond 卡 / 受管回复框（紧凑面，Respond 纪律与超时即拒逐条不变）/ 忽略·稍后·在指挥台打开；展开态按 rowKey 记在面板、不跨打开持久化，Go-Look reveal 带展开态抵达；**一套卡片两个容器**（`SessionCards.swift`：托盘 compact、指挥台 full，一处写两处到，构造上不漂移）；「只有计数」收窄为跨机器铁律 —— fleet 快照一个字节不变，逐条自述照旧逐处 sanitizer |
+| BN | Value Engine（价值引擎） | **「tools token skill 完全观测不到」的病根是结构不是采集**：观测行的预算把排最后的工作类事实逐拍删除。`RowValueEngine.split` 改写预算的语义——**预算决定事实住哪条线，永不决定它是否存在**：观测行构成逐字节不变（全量测试为证），被挤掉的工作类事实（token/上下文/模型/工作流）搬进新的工作方式线，最后工具（人话、查重后）领头；每个事实恰好一条线，出现率不为零；收起行加错误原文一行（橙、自述新鲜门）；展开卡加「工作方式」全量层（工具时间线 Read → Edit → Bash、原始 skill 名、模型、整场 token、上下文 %，全部已采字段，零新采集）；ask 卡（权限/Respond/受管回复）免点击住进列表，与展开卡互斥永不双渲染 |
+| BO | True Wait（真等待重划） | **最需要你的事实不再穿「运行中」的衣服**：受管回合阻塞在权限请求上 = 真等待——信号是 Pulse 自己的 spool 请求文件（0600、文件名定身份），回合可证悬停在判决上，比 hooks 更硬；照 3.0-β/5.0-γ 先例重划，「Waiting 只来自可证信号」不破反而完整。等待行走全部既有规矩：进「需要你」分组与计数、红灯、通知（正文=被请求的那件事本身：`Bash: git push --dry-run`，字段序沿厂商权限标题 command→file_path→url，经 sanitizer）、waitSince=请求落盘时刻。受管 `idle` 仍不是 Waiting——你的回合可见（列表内回复框）不报警，红灯留给阻塞；超时两分钟自动拒绝的语义一字不动 |
+| BP | Live Row（直播行） | **收起行答得了「它干成了什么」**：受管行的成本·回合与本回合落盘 ±行进观测行 advance 层（第一手，未测到缺席）；错误原文一行直进收起行；受管行在列表内即有回合控制（运行中=当前工具+终止，结束=回复框）；展开卡带受管对话尾巴（最近 5 步、`↳` 配对、内存流零磁盘读）——观察行的全文仍在指挥台（每拍磁盘读不是 ambient 成本，边界明说） |
 
 ---
 
@@ -701,6 +726,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 通知策略 / 等待动作 | `StatusStoreWaiting.swift` |
 | 会话事实簇 | `SessionFacts.swift`（`SessionRemote` / `SessionSelfReport` / `SessionLiveAction` / `SessionDigestFacts` / `SessionEffect`——AgentRow 组合它们并保留转发访问器，读写两侧零改动） |
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
+| 价值引擎 / 工作方式线 | `RowValueEngine.swift` · `StatusStoreNarration.swift` → `rowWorkLine` / `workDetailFacts` |
 | 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` · `TranscriptReader.swift` |
 | 引擎边界 / 受管会话 | `SessionSource.swift` · `ManagedSession.swift` · `ManagedSessionRunner.swift` · `ManagedSessionSource.swift` · `ManagedWorktree.swift` · `ManagedSessionViews.swift` |
 | 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |

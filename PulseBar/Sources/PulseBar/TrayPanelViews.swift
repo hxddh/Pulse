@@ -1180,6 +1180,29 @@ private struct AgentRowButton: View {
                                     .truncationMode(.tail)
                             }
 
+                            // 8.0 工作方式线 (scene BN): the facts the budget
+                            // used to delete — last tool, tokens, skill,
+                            // model, context — rehoused, never invented.
+                            if !workLine.isEmpty {
+                                Text(workLine)
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(.secondary.opacity(0.85))
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+
+                            // 8.0-γ: the latest error's own words, one line —
+                            // an error count without the error was a guessing
+                            // game the expanded card alone should not solve.
+                            if row.selfReportFresh, !row.lastErrorText.isEmpty, !expanded {
+                                Text(Self.truncate(row.lastErrorText, 78))
+                                    .font(.system(size: 10.5).monospaced())
+                                    .foregroundStyle(.orange)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+
                             // Waiting rows get a third line, because the actual
                             // question is the entire point of the product.
                             if let detail = store.localizedWaitDetail(row) {
@@ -1305,6 +1328,31 @@ private struct AgentRowButton: View {
                     .padding(.bottom, 8)
             }
 
+            // 8.0-β inbox (scene BN): a blocked agent's ask is the popup's
+            // highest-value content and must not cost a click — permission
+            // cards, the Respond card and the managed reply live in the list
+            // itself. The expanded card renders the same cards, never twice.
+            if !expanded {
+                let asks = store.managedPermissionRequests(for: row)
+                let inbound = row.waiting ? store.respondRequest(for: row) : nil
+                if !asks.isEmpty || inbound != nil || row.isManaged {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(asks, id: \.id) { request in
+                            SessionPermissionCard(store: store, request: request, compact: true)
+                        }
+                        if let inbound {
+                            SessionRespondCard(store: store, row: row, inbound: inbound, compact: true)
+                        }
+                        if row.isManaged {
+                            SessionManagedReply(store: store, row: row, compact: true)
+                        }
+                    }
+                    .padding(.leading, 48)
+                    .padding(.trailing, TrayChrome.padX)
+                    .padding(.bottom, 8)
+                }
+            }
+
             // 7.0-β: the in-place mini-inspector (scene BM). Same cards as
             // the workbench, compact face — understanding and acting no
             // longer require leaving the popup.
@@ -1348,6 +1396,7 @@ private struct AgentRowButton: View {
     }
 
     private var observationLine: String { store.rowObservationLine(row) }
+    private var workLine: String { store.rowWorkLine(row) }
     private var signalLine: String { store.rowSignalLine(row) }
     private var storyLine: String { store.rowStoryLine(row) }
     private var sourceLabel: String? { store.rowSourceLabel(row) }

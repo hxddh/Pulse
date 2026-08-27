@@ -690,6 +690,88 @@ extension StatusStore {
     /// says.
     func rowObservationLine(_ row: AgentRow) -> String {
         guard !row.waiting, !row.isProcessOnly else { return "" }
+        let tiers = observationTiers(row)
+        return RowValueEngine.split(
+            outcome: tiers.outcome,
+            work: tiers.work,
+            volume: tiers.volume,
+            leadingWork: [],
+            budget: observationFactBudget
+        ).observation.joined(separator: " · ")
+    }
+
+    /// 8.0-α (scene BN): the work line — how the session works, guaranteed.
+    ///
+    /// Tools, tokens, skill, model and context were collected for versions
+    /// and rendered almost never: the observation budget ranked them last and
+    /// deleted them. This line is where the displaced work facts live — the
+    /// budget now moves facts here instead of killing them — led by the one
+    /// fact that never competed at all, the last tool. A fact appears on
+    /// exactly one line; nothing here is invented, only rehoused.
+    func rowWorkLine(_ row: AgentRow) -> String {
+        guard !row.waiting, !row.isProcessOnly else { return "" }
+        let tiers = observationTiers(row)
+        let split = RowValueEngine.split(
+            outcome: tiers.outcome,
+            work: tiers.work,
+            volume: tiers.volume,
+            leadingWork: workLead(row),
+            budget: observationFactBudget
+        )
+        return split.work.prefix(4).joined(separator: " · ")
+    }
+
+    /// The last tool as the work line's lead — only when no other line
+    /// already says it: the story owns the live (seconds-fresh) action, the
+    /// hero owns the tool-fallback title, the context line owns the last
+    /// action slot. Same fact twice on one row stays forbidden.
+    private func workLead(_ row: AgentRow) -> [String] {
+        guard !row.liveActionFresh else { return [] }
+        let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tool.isEmpty else { return [] }
+        let readable = readableAction(tool)
+        guard !readable.isEmpty else { return [] }
+        if row.usefulTask == nil, row.hasLiveToolFallback { return [] }
+        if rowStoryLine(row).contains(readable) { return [] }
+        if rowContextLine(row).contains(readable) { return [] }
+        return [readable]
+    }
+
+    /// 8.0 — the work-style detail for the expanded card: how this session
+    /// works, every collected fact labelled. The raw skill name appears here
+    /// (the collapsed line keeps the recognisable-workflow mapping); the tool
+    /// timeline and session tokens are the digest's own, recomputing nothing.
+    func workDetailFacts(_ row: AgentRow) -> [String] {
+        guard !row.isProcessOnly else { return [] }
+        var facts: [String] = []
+        let timeline = evidenceTimeline(row)
+        if !timeline.isEmpty { facts.append(timeline) }
+        let skill = row.skill.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !skill.isEmpty, skill.lowercased() != "pending" {
+            facts.append(String(format: tr(.skillFact), skill))
+        }
+        var line: [String] = []
+        let model = readableModel(row.model)
+        if !model.isEmpty { line.append(String(format: tr(.modelFact), model)) }
+        let tokens = evidenceSessionTokens(row)
+        if !tokens.isEmpty { line.append(tokens) }
+        if row.contextPercent > 0 {
+            line.append(String(format: tr(.contextFact), row.contextPercent))
+        }
+        if !line.isEmpty { facts.append(line.joined(separator: " · ")) }
+        return facts
+    }
+
+    private struct ObservationTiers {
+        var outcome: [String] = []
+        var work: [String] = []
+        var volume: [String] = []
+    }
+
+    /// The 2.1 fact tiers, unchanged in content and order — extracted so the
+    /// observation and work lines are two views of one selection instead of
+    /// two selections that drift.
+    private func observationTiers(_ row: AgentRow) -> ObservationTiers {
         let change = row.activityChange
 
         // 1 · Faults. This line owns the fault total, and it is the only line
@@ -733,6 +815,17 @@ extension StatusStore {
             advance.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
         } else if row.progressDone > 0, !isProgressChange(change) {
             advance.append(String(format: tr(.turnsFact), row.progressDone))
+        }
+        // 8.0: a managed session's first-party outcome facts — cost·turns and
+        // what the last turn left on disk. Measured by Pulse's own stream and
+        // plumbing; absent facts stay absent.
+        if let managed = managedRunner(for: row)?.model {
+            if managed.totalCostUSD > 0 {
+                advance.append(String(format: tr(.managedCost), managed.totalCostUSD, managed.turns))
+            }
+            if let effect = managed.lastTurnEffect {
+                advance.append(String(format: tr(.managedTurnEffect), effect.insertions, effect.deletions))
+            }
         }
 
         // 3 · Motion.
@@ -791,8 +884,11 @@ extension StatusStore {
             if !caveat.isEmpty { volume.append(caveat) }
         }
 
-        let facts = faults + advance + motion + reach + standing + volume
-        return facts.prefix(observationFactBudget).joined(separator: " · ")
+        return ObservationTiers(
+            outcome: faults + advance,
+            work: motion + reach + standing,
+            volume: volume
+        )
     }
 
     /// The most recent tool a live row recorded — not necessarily one still
