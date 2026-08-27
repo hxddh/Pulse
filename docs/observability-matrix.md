@@ -158,3 +158,56 @@ role such as Planning, Researching, Testing, Building, Editing, or Publishing
 when it maps cleanly; an otherwise unknown name keeps only its safe leaf as a
 bounded `Workflow <name>` label. This preserves useful capability evidence
 without exposing namespaces, paths, URLs, or arbitrary implementation text.
+
+## 工作事实矩阵（8.3 全员对账）
+
+上表回答「四个基线事实 + 增强事实」;本节按 8.1 弹窗工作方式线的口径,
+逐家逐类对账:**工具/目标、token、模型、上下文 %、skill/工作流、子 agent、
+原话/计划/错误原文**,三种诚实状态:
+
+- **✓** = 采集器有对应提取路径,且被 fixture 或形状测试钉住。
+- **−** = 该厂商的本机记录(我们能读到的那份)不含此事实。缺席是诚实的,
+  不发明;厂商日后开始写,形状匹配的通路自动接住(形状优先于厂商名,2.9)。
+- **→** = 记录里可能有、采集器尚未提取(附原因;需真机样本才能安全落地)。
+
+真机核对仪器:Support Health 每拍显示每家「声明 vs 实测」的事实类;
+`PulseBar --harvest-test` 打印每行实测值。
+
+### 第一梯队:structured session(16 家)
+
+| Agent | 通路 | 工具(→目标) | token | 模型 | 上下文% | skill | 子agent | 原话/计划/错误 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Claude 家族 | 通用 JSONL 形状 | ✓(tool_use;目标走 hooks 活动事件) | ✓ message.usage | ✓ | −(transcript 不写百分比) | ✓ 8.2(`Skill` 调用的 input.skill) | ✓(subagents 目录计数) | ✓/✓/✓ |
+| Command Code | 通用 JSONL(Claude 同形) | ✓ | ✓ | ✓ | − | ✓(同形自动生效) | −(无子 agent 目录约定) | ✓/✓/✓ |
+| Codex | 专用解析器 | ✓ function_call | ✓ token_count(latest 优先) | ✓ 8.2(turn_context) | ✓ 8.3(window×used 两实测数之比) | −(rollout 无 skill 概念) | − | ✓/✓(update_plan)/✓ |
+| Pi(JSONL) | 专用解析器 | ✓ 8.2(toolCall;>8KB 行正则打捞) | ✓ 8.2(usage {input,output}) | ✓ | −(JSONL 无上下文字段) | −(无 skill 记录) | − | ✓ 8.2/−(无 todos)/✓ 8.2(isError 方言) |
+| Pi(context-mode DB) | SQLite events | ✓ tool_call 事件 | ✓ agent_usage | ✓ | −(events 无窗口字段) | − | − | −/−/✓(error 事件计数,无原文) |
+| Cursor(composer) | SQLite headers | →(对话 bubbles 在另一张表,未读;headers 无工具) | ✓(header 若带 usage 键) | ✓ | − | − | − | →(同 bubbles;需真机样本定表结构) |
+| Grok | SQLite session_docs(+ 若有 JSONL 走形状) | −(docs 无结构化工具) | −(docs 无 usage) | −(docs 无模型字段) | − | − | − | ✓ 8.3(`<assistant` 标签后段落)/−/− |
+| OpenCode | SQLite session+parts | ✓ parts | ✓ session 列 | ✓ session 列 | −(无窗口列) | − | − | →(text parts 无 role 归属——采了会把用户话冒充原话,宁缺;需 message 表联查样本)/−/− |
+| Gemini | 通用(chats 整文件 JSON) | ✓ functionCall | ✓ usageMetadata | ✓ | − | − | − | →(整文件 JSON,逐行自述扫描不适用;role 为 `model` 非 `assistant`,需专门通路)/−/− |
+| Amp | 通用 JSONL 形状 | ✓* | ✓* | ✓* | −* | −* | −* | ✓* |
+| Aider | 文本(markdown 历史) | −(无结构化记录) | −(历史无 usage) | ✓(正则) | − | − | − | −(markdown 无形状可依) |
+| Copilot / Goose / OpenHands / Continue / Droid / Kimi | 通用 JSONL/JSON 形状 | ✓* | ✓* | ✓* | −* | −* | −* | ✓* |
+
+\* 形状通路:采到什么取决于该家本机文件实际携带什么——形状匹配则得,
+不匹配则诚实缺席。某家某类长期为空 = 该家记录不写它(−);若你在原始文件里
+亲眼见到该字段,那是 →:带样本提 issue,一条形状规则就能接住。
+
+### 第二梯队:bestEffortCache(17 家)
+
+cursorAgent(Cursor 别名)、Amazon Q、Cline、Roo、Cascade、Windsurf、Augment、
+Zed Agent、Trae、Warp Agent、Kilo、Devin、Kiro、Junie、Replit、Antigravity、
+ZCode——缓存级按设计只展示缓存里真实存在的字段(如 Warp 的 model/上下文%、
+Cline/Roo 的显式 pending 标志),其余缺席。升格到第一梯队的唯一途径是厂商
+开始写结构化会话记录,或用户给出可依据的真机样本。
+
+### 受管会话(Pulse 自己的流)
+
+全字段第一手:工具/原话/错误/成本·回合/±行/token——8.0 起完整入弹窗。
+
+### 变更史
+
+- 8.2:Pi 三缺口(大行打捞/usage 键/自述方言)、Codex model、Claude Skill、
+  通用 `toolCall` 驼峰。
+- 8.3:Codex 上下文%(window×used)、Grok 原话(assistant 标签);本节首发。

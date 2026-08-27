@@ -2,6 +2,30 @@
 
 All notable changes to Pulse are documented here.
 
+## 8.3.0 — 全员对账
+
+「其他 agent 呢。全部检查下。」——32 家逐一过账,产出
+[`docs/observability-matrix.md`](docs/observability-matrix.md):每家 × 每类
+工作事实(工具/token/模型/上下文/skill/子 agent/原话/计划/错误),三种诚实
+状态——**采到(✓,有 fixture 钉住)**、**厂商记录里没有(−,缺席不发明)**、
+**已知缺口(→,标明原因与所需样本)**。
+
+对账中能安全落地的两个缺口当场修掉:
+
+- **Codex 上下文 %**:`token_count.info` 里 `model_context_window` 与
+  `last_token_usage.total_tokens` 并排躺着——两个实测数之比是事实,不是估算。
+- **Grok 原话**:`session_docs` 的标签文档(`grokTitle` 一直在跳过的那些
+  `<assistant` 标记)里就有 agent 的回复段落——取最新一段;不认识的版式
+  返回空,永不猜。
+
+留在 → 栏的缺口(各附原因,需真机样本才能安全落地):Cursor 对话 bubbles
+表、OpenCode text parts 的 role 归属(采了会把用户的话冒充 agent 原话——
+宁缺)、Gemini 整文件 JSON 的自述通路。第二梯队(17 家缓存级)按设计只
+展示缓存里真有的字段,矩阵里逐家列明。
+
+自证不变:Support Health 的「声明 vs 实测」与 `--harvest-test` 是真机上
+逐家核对的仪器——矩阵告诉你该期待什么,仪器告诉你实际拿到了什么。
+
 ## 8.2.0 — 采集平权（Pi 与众家）
 
 8.1 的展示契约成立后,真机指认落到了采集层:Pi 行的工作方式线仍然空着。
