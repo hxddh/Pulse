@@ -236,6 +236,30 @@ struct SessionChips: View {
     }
 }
 
+/// 8.0 — the work-style detail (scene BN): how this session works, every
+/// collected fact labelled — tool timeline, workflow skill, model, session
+/// tokens, context. Absent facts are absent; nothing here is recomputed.
+@MainActor
+struct SessionWorkDetail: View {
+    @ObservedObject var store: StatusStore
+    let row: AgentRow
+
+    var body: some View {
+        let facts = store.workDetailFacts(row)
+        if !facts.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(facts, id: \.self) { fact in
+                    Text(fact)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+}
+
 /// 7.0-β — the expanded row: the popup's in-place mini-inspector (scene BM).
 /// Everything the user needs to UNDERSTAND and ACT lives here; the workbench
 /// remains the place to read whole conversations and land work.
@@ -273,6 +297,26 @@ struct TrayExpandedCard: View {
                 SessionPlanCompact(store: store, row: row)
             }
             SessionChips(store: store, row: row)
+            // 8.0: how it works — the collected-but-rarely-shown layer
+            // (tool timeline, skill, model, tokens, context), in full.
+            SessionWorkDetail(store: store, row: row)
+
+            // 8.0-γ: the managed conversation's last moves, ambient — the
+            // stream is first-hand and already in memory. Observed rows keep
+            // the workbench for their transcript (a disk read per repaint is
+            // not an ambient cost).
+            if row.isManaged,
+               let entries = store.managedRunner(for: row)?.model.entries,
+               !entries.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(entries.suffix(5).enumerated()), id: \.offset) { _, entry in
+                        ManagedEntryRow(store: store, agentName: row.agent.displayName, entry: entry)
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            }
 
             // Act where you read: managed asks first, then Respond, then the
             // managed reply, then the classic wait actions.

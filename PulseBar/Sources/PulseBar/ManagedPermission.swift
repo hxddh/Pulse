@@ -44,6 +44,29 @@ enum ManagedPermission {
         var message: String
     }
 
+    /// 8.0-β: the ask in one honest line — `Bash: npm run build` — for the
+    /// waiting row's message and its notification. "权限" alone never
+    /// satisfies the notification rule (say the requested thing itself), so
+    /// the field order follows the vendor's own permission titles
+    /// (command → file_path → url), the same order the hook path uses.
+    /// Credentials go through the sanitizer like every other surfaced string.
+    static func summary(toolName: String, inputJSON: String) -> String {
+        let name = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = name.isEmpty ? "tool" : name
+        guard let data = inputJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return fallback }
+        for key in ["command", "file_path", "url", "pattern", "path", "prompt"] {
+            guard let value = object[key] as? String else { continue }
+            let flat = value
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !flat.isEmpty else { continue }
+            return ContentSanitizer.redact("\(fallback): \(String(flat.prefix(120)))")
+        }
+        return fallback
+    }
+
     // MARK: - Spool layout
 
     static var spoolDirectoryOverride: URL?

@@ -23,7 +23,13 @@ final class ManagedSessionSource: SessionSource {
     var runners: [ManagedSessionRunner] { fleet.runners }
 
     var sessions: [AgentRow] {
-        fleet.runners.map { Self.row(for: $0.model) }
+        fleet.runners.map { runner in
+            Self.row(
+                for: runner.model,
+                permissionAsk: fleet.pendingPermissions
+                    .first { $0.managedID == runner.model.id }
+            )
+        }
     }
 
     func runner(managedID: String) -> ManagedSessionRunner? {
@@ -39,7 +45,10 @@ final class ManagedSessionSource: SessionSource {
     /// but absence still renders as absence, never as zero.
     /// `nonisolated`: touches no actor state, and the tests call it from a
     /// plain XCTestCase.
-    nonisolated static func row(for model: ManagedSession.Model) -> AgentRow {
+    nonisolated static func row(
+        for model: ManagedSession.Model,
+        permissionAsk: ManagedPermission.Request? = nil
+    ) -> AgentRow {
         var row = AgentRow(rowKey: "managed|\(model.id)", agent: .claude)
         row.managedID = model.id
         row.sessionID = model.claudeSessionID
@@ -64,6 +73,23 @@ final class ManagedSessionSource: SessionSource {
         row.workspaceRoot = model.root
         if case .failed = model.status { row.outcome = "failed" }
         if model.status == .cancelled { row.outcome = "cancelled" }
+        // 8.0-β (scene BO) — the principle redrawn, on the 3.0-β/5.0-γ
+        // precedent: "Waiting only from a provable signal" was never about
+        // *which* signal. A managed turn blocked on a permission ask carries
+        // the hardest signal in the product — Pulse's own spool file, written
+        // by its own MCP server, with the turn provably suspended on the
+        // verdict. Denying that row the waiting state made the fleet's most
+        // urgent fact wear a green "running" lamp. An idle turn stays
+        // NOT-waiting: your-turn is visible (the reply box), never alarmed —
+        // the lamp is for blocked, not for finished.
+        if let ask = permissionAsk {
+            row.waiting = true
+            row.waitKind = "permission"
+            row.waitMessage = ManagedPermission.summary(
+                toolName: ask.toolName, inputJSON: ask.inputJSON
+            )
+            row.waitSinceMs = ask.createdMs
+        }
         return row
     }
 }

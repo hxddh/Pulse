@@ -87,6 +87,25 @@ step "9. Popup rebirth (scenes BL/BM)" \
   - Let a notification arrive for a waiting row and click it.
   EXPECT: the tray opens with that row selected AND already expanded."
 
+
+# ---- 8.0 addition ----
+step "10. Attention cabin (scenes BN/BO/BP)" \
+"  - Dispatch a managed task that needs permission (e.g. 'git push --dry-run').
+  EXPECT: the tray lamp goes RED; the row moves into 需要你 with a waiting
+  chip; its message says the requested thing itself ('Bash: git push
+  --dry-run'); a notification arrives with the same words; the orange
+  permission card is visible IN THE LIST with no chevron click.
+  - Answer it from the list. EXPECT: the row returns to running, lamp clears.
+  - Let a managed turn end. EXPECT: the reply box sits in the list (no red
+  lamp — your-turn is visible, not alarmed); the last conversation moves
+  show in the expanded card.
+  - On a busy observed session, check the collapsed row.
+  EXPECT: a work line appears (last tool / tokens / model / context) with
+  facts the old observation line used to drop; no fact appears twice; a
+  fresh error shows its own words in orange without expanding.
+  - Expand any session. EXPECT: 'how it works' block — tool timeline
+  (Read → Edit → Bash), workflow skill, model, session tokens, context %."
+
 echo
-echo "All nine held → 5.0-β + 6.0 + 7.0 verified on this machine."
+echo "All ten held → 5.0-β + 6.0 + 7.0 + 8.0 verified on this machine."
 echo "Anything failed → copy the step number and what happened instead."
