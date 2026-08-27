@@ -80,7 +80,8 @@ step "9. Popup rebirth (scenes BL/BM)" \
   - Trigger a permission ask (e.g. 'git push --dry-run') and answer it FROM
   THE POPUP's orange card. EXPECT: same Deny/Allow rules as the workbench
   (truncated input withdraws Allow); the turn unblocks on Allow.
-  - Reply to an idle managed session from the popup's reply box.
+  - Expand an idle managed session and reply from its box (10.0: the
+  in-list box appears only for blocked/dead turns).
   EXPECT: a real turn starts; 终止本回合 works from the popup too.
   - Click 「在指挥台打开」. EXPECT: the workbench opens with THIS session
   selected.
@@ -96,18 +97,34 @@ step "10. Attention cabin (scenes BN/BO/BP)" \
   --dry-run'); a notification arrives with the same words; the orange
   permission card is visible IN THE LIST with no chevron click.
   - Answer it from the list. EXPECT: the row returns to running, lamp clears.
-  - Let a managed turn end. EXPECT: the reply box sits in the list (no red
-  lamp — your-turn is visible, not alarmed); the last conversation moves
-  show in the expanded card.
-  - On ANY observed session row (busy or sparse), check the collapsed row.
-  EXPECT: a work line renders every measured work fact — last tool (with
-  target when the hook recorded one), tokens (whole-session register),
-  skill, model, context % — measured means rendered, no budget can drop
-  them; no fact appears twice across lines; a fresh error shows its own
-  words in orange without expanding.
+  - Let a managed turn end. EXPECT: no red lamp (your-turn is not
+  alarmed); expanding the row shows the reply box and the last
+  conversation moves (10.0 moved the idle box behind expansion).
+  - Expand ANY observed session row (busy or sparse).
+  EXPECT: the panorama's work line renders every measured work fact —
+  last tool (with target when the hook recorded one), tokens
+  (whole-session register), skill, model, context % — measured means
+  rendered; no fact appears twice on the card; a fresh error still shows
+  its own words in orange on the COLLAPSED row without expanding.
   - Expand any session. EXPECT: 'how it works' block — tool timeline
   (Read → Edit → Bash), workflow skill, model, session tokens, context %."
 
+
+# ---- 10.0 addition ----
+step "11. Composition (scenes BS/BT/BU)" \
+"  - Open the tray over five mixed sessions and glance for 3 seconds.
+  EXPECT: each collapsed row is exactly: tiny identity strip (name +
+  relative time right-aligned) / hero / ONE grey meta line — no stacked
+  grey walls; you can say who needs you, who is moving, who produced
+  what, without reading.
+  - Expand any row. EXPECT: the full panorama (narrative/motion/
+  observation/work/where·when) plus plan, work detail and actions — no
+  fact lost versus 9.0, each stated once.
+  - An idle managed row shows NO reply box in the list; expanding shows
+  it. A permission ask or a dead turn (interrupted/failed) still shows
+  its card in the list without any click.
+  EXPECT: the popup reads as one calm system."
+
 echo
-echo "All ten held → 5.0-β + 6.0 + 7.0 + 8.0 verified on this machine."
+echo "All eleven held → 5.0-β + 6.0 + 7.0 + 8.0 + 10.0 verified on this machine."
 echo "Anything failed → copy the step number and what happened instead."

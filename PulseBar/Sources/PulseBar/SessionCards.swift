@@ -200,39 +200,33 @@ struct SessionPlanCompact: View {
     }
 }
 
-/// The one-line value chips: cost, tokens, on-disk effect, per-turn effect.
-/// Absent facts are absent — a chip never renders a zero it did not measure.
+/// 10.0 (scene BS) — the collapsed row's former five lines, intact where
+/// understanding lives: narrative, motion, observation, work, where/when.
+/// Nothing was deleted in the recomposition; it moved here.
 @MainActor
-struct SessionChips: View {
+struct SessionPanorama: View {
     @ObservedObject var store: StatusStore
     let row: AgentRow
 
     var body: some View {
-        HStack(spacing: 10) {
-            if let model = store.managedRunner(for: row)?.model {
-                if model.totalCostUSD > 0 {
-                    chip(String(format: store.tr(.managedCost), model.totalCostUSD, model.turns))
+        let lines = [
+            store.rowStoryLine(row),
+            store.rowSignalLine(row),
+            store.rowObservationLine(row),
+            store.rowWorkLine(row),
+            store.rowContextLine(row),
+        ].filter { !$0.isEmpty }
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(lines, id: \.self) { line in
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(2)
                 }
-                if let effect = model.lastTurnEffect {
-                    chip(String(format: store.tr(.managedTurnEffect), effect.insertions, effect.deletions))
-                }
-            }
-            if row.changedPaths > 0, row.insertions >= 0, row.deletions >= 0 {
-                chip("+\(row.insertions) −\(row.deletions)")
-            }
-            if row.sessionTokensIn > 0 || row.sessionTokensOut > 0 {
-                chip("↑\(AgentRow.compactToken(row.sessionTokensIn)) ↓\(AgentRow.compactToken(row.sessionTokensOut))")
             }
         }
-    }
-
-    private func chip(_ text: String) -> some View {
-        Text(text)
-            .font(.caption2.monospaced())
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(.quaternary.opacity(0.5), in: Capsule())
     }
 }
 
@@ -296,10 +290,10 @@ struct TrayExpandedCard: View {
             if row.selfReportFresh, !row.planSteps.isEmpty {
                 SessionPlanCompact(store: store, row: row)
             }
-            SessionChips(store: store, row: row)
-            // 8.0: how it works — the collected-but-rarely-shown layer
-            // (tool timeline, skill, model, tokens, context), in full.
+            // 8.0/10.0: how it works — timeline, skill, sub-agents — then
+            // the five-line panorama the collapsed row no longer stacks.
             SessionWorkDetail(store: store, row: row)
+            SessionPanorama(store: store, row: row)
 
             // 8.0-γ: the managed conversation's last moves, ambient — the
             // stream is first-hand and already in memory. Observed rows keep
