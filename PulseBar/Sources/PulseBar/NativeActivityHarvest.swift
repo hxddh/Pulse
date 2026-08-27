@@ -2174,7 +2174,10 @@ enum NativeActivityHarvest {
             guard raw.hasPrefix("{") else { continue }
             let wantsPlan = plan == nil && raw.contains("\"todos\"")
             let wantsWord = word == nil && raw.contains("\"assistant\"")
-            let wantsError = errorText == nil && raw.contains("\"is_error\"")
+            // Pi spells the flag `isError` on a standalone toolResult record;
+            // the Claude family spells it `is_error` inside a content block.
+            let wantsError = errorText == nil
+                && (raw.contains("\"is_error\"") || raw.contains("\"isError\""))
             guard wantsPlan || wantsWord || wantsError else { continue }
             decoded += 1
             if decoded > 512 { break }
@@ -2217,6 +2220,25 @@ enum NativeActivityHarvest {
                     }
                     let line = selfReportLine(body)
                     if !line.isEmpty { errorText = line; break }
+                }
+                // Pi: a failed result is its own record — role `toolResult`
+                // with `isError` and the output at the record level.
+                if errorText == nil {
+                    let container = message ?? object
+                    let role = firstString(container, keys: ["role", "type"]).lowercased()
+                    if role == "toolresult" || role == "tool_result",
+                       anyTruthy(container, keys: ["is_error", "isError"]) {
+                        let body: String
+                        if let text = container["content"] as? String {
+                            body = text
+                        } else if let text = container["output"] as? String {
+                            body = text
+                        } else {
+                            body = userMessageText(container["content"])
+                        }
+                        let line = selfReportLine(body)
+                        if !line.isEmpty { errorText = line }
+                    }
                 }
             }
         }
@@ -2420,6 +2442,11 @@ enum NativeActivityHarvest {
             }
             let payload = object["payload"] as? [String: Any] ?? [:]
             let payloadType = firstString(payload, keys: ["type"]).lowercased()
+            // 8.2: the model rides the turn context / session meta payloads.
+            // It was the one work fact this parser never picked up.
+            if f.model.isEmpty {
+                f.model = firstString(payload, keys: ["model", "modelId", "model_id", "model_name"])
+            }
             if payloadType == "session_meta" || type == "session_meta" {
                 f.sessionID = firstString(payload, keys: ["session_id", "sessionId"])
                 f.cwd = normalizedPath(firstString(payload, keys: ["cwd", "workdir", "workingDirectory"]))
@@ -2517,6 +2544,10 @@ enum NativeActivityHarvest {
                           firstString(payload, keys: ["role"]).lowercased() == "assistant" {
                     let phase = firstString(payload, keys: ["phase", "status"])
                     if !phase.isEmpty { f.phase = semanticPhase(phase) }
+                    // 8.2: older rollouts carry the agent's words only here,
+                    // never as an event_msg — same fact, same field.
+                    let line = selfReportLine(codexUserText(payload["content"]))
+                    if !line.isEmpty { f.lastWord = line }
                 }
             }
             if f.sessionID.isEmpty, contextLooksSession(path) {
@@ -2544,6 +2575,45 @@ enum NativeActivityHarvest {
         f.tool = clean(f.tool, limit: 64)
         f.phase = clean(f.phase, limit: 64)
         return f.hasUsefulSignal ? [f] : []
+    }
+
+    /// Bounded regex salvage for a Pi assistant record too large to JSON-
+    /// parse under the adapter deadline: model, usage tokens, and the last
+    /// tool call's name. Only assistant/message lines — a tool-result body
+    /// carries none of these at the JSON level, and JSON escaping keeps the
+    /// patterns from matching inside quoted prose.
+    private static func piSalvageLargeLine(_ raw: String, into f: inout Fact) {
+        let prefix = raw.prefix(384)
+        guard prefix.contains("\"assistant\"")
+                || prefix.contains("\"type\":\"message\"")
+                || prefix.contains("\"type\": \"message\"")
+        else { return }
+        if f.model.isEmpty {
+            let model = regexValue(raw, patterns: [#""model"\s*:\s*"([^"]+)""#])
+            if !model.isEmpty { f.model = model }
+        }
+        if let tin = Int(regexValue(raw, patterns: [#""input(?:_tokens|Tokens)?"\s*:\s*(\d+)"#])) {
+            f.tokensIn = max(f.tokensIn, tin)
+        }
+        if let tout = Int(regexValue(raw, patterns: [#""output(?:_tokens|Tokens)?"\s*:\s*(\d+)"#])) {
+            f.tokensOut = max(f.tokensOut, tout)
+        }
+        if let name = regexLastValue(raw, pattern: #""type"\s*:\s*"(?:toolCall|tool_use|tool_call)"[^{}]*?"name"\s*:\s*"([^"]+)""#),
+           !name.isEmpty {
+            f.tool = name
+        }
+    }
+
+    /// Last capture-group match in the text — the newest tool call in an
+    /// append-ordered record.
+    private static func regexLastValue(_ text: String, pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.matches(in: text, range: range).last,
+              match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: text)
+        else { return nil }
+        return String(text[valueRange])
     }
 
     private static func piLineMightCarryTitle(_ raw: String) -> Bool {
@@ -2597,8 +2667,15 @@ enum NativeActivityHarvest {
             let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard raw.hasPrefix("{") else { continue }
             // Tool-result bodies can be megabytes. JSON-parsing them blew the
-            // adapter deadline and left the /resume title unread.
-            if raw.count > 8_192, !piLineMightCarryTitle(raw) { continue }
+            // adapter deadline and left the /resume title unread. 8.2: the
+            // skipped lines are exactly the assistant records that carry
+            // usage, model and tool calls — salvage those three by bounded
+            // regex instead of losing them (JSON string content escapes its
+            // quotes, so `"model":"…"` cannot match inside prose).
+            if raw.count > 8_192, !piLineMightCarryTitle(raw) {
+                piSalvageLargeLine(raw, into: &f)
+                continue
+            }
             guard let data = raw.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { continue }
@@ -2703,7 +2780,14 @@ enum NativeActivityHarvest {
         f.tool = clean(f.tool, limit: 64)
         f.phase = clean(f.phase, limit: 64)
         f.model = clean(f.model, limit: 64)
-        return f.hasUsefulSignal ? [f] : []
+        guard f.hasUsefulSignal else { return [] }
+        // 8.2: Pi returned before the generic walker's tail, so the shape-
+        // strict self-report scan (the agent's words, its failed results)
+        // never ran for it — the one adapter fixed alone again. Run it here
+        // on the same window.
+        var result = [f]
+        applyTranscriptSelfReport(&result, text: text)
+        return result
     }
 
     private static func firstMeaningfulPiTitle(_ titles: [String]) -> String? {
@@ -3106,8 +3190,14 @@ enum NativeActivityHarvest {
         // sibling's name.
         if f.tool.isEmpty {
             let recordType = firstString(dict, keys: ["type"]).lowercased()
-            if ["tool_use", "tool_call", "function_call", "custom_tool_call"].contains(recordType) {
+            if ["tool_use", "tool_call", "function_call", "custom_tool_call", "toolcall"].contains(recordType) {
                 f.tool = firstString(dict, keys: ["name", "toolName", "tool_name"])
+                // 8.2: a Skill/workflow invocation names the workflow in its
+                // input — the one place the fact exists in the transcript.
+                if f.skill.isEmpty, f.tool.lowercased() == "skill",
+                   let input = dict["input"] as? [String: Any] {
+                    f.skill = firstString(input, keys: ["skill", "skillName", "skill_name", "command"])
+                }
             }
         }
         // Gemini / Google-style functionCall objects (0.82).
@@ -3158,9 +3248,16 @@ enum NativeActivityHarvest {
                 for item in content.reversed() {
                     guard let block = item as? [String: Any] else { continue }
                     let blockType = firstString(block, keys: ["type"]).lowercased()
-                    if ["tool_use", "tool_call", "function_call", "custom_tool_call"].contains(blockType) {
+                    if ["tool_use", "tool_call", "function_call", "custom_tool_call", "toolcall"].contains(blockType) {
                         let name = firstString(block, keys: ["name", "toolName", "tool_name"])
-                        if !name.isEmpty { f.tool = name; break }
+                        if !name.isEmpty {
+                            f.tool = name
+                            if f.skill.isEmpty, name.lowercased() == "skill",
+                               let input = block["input"] as? [String: Any] {
+                                f.skill = firstString(input, keys: ["skill", "skillName", "skill_name", "command"])
+                            }
+                            break
+                        }
                     }
                 }
             }
@@ -3179,6 +3276,7 @@ enum NativeActivityHarvest {
         ])
         f.contextPercent = contextPercent(firstValue(dict, keys: [
             "contextWindowUsage", "contextUsagePercent", "contextPercent", "context_percent",
+            "contextUsage",
         ]))
         f.progressDone = firstNumber(dict, keys: ["completedTasks", "completed", "doneCount", "progressDone"])
         f.progressTotal = firstNumber(dict, keys: ["totalTasks", "total", "taskCount", "progressTotal"])
@@ -3763,14 +3861,17 @@ enum NativeActivityHarvest {
 
     private static func applyTokenUsage(_ fact: inout Fact, _ usage: [String: Any]?) {
         guard let usage else { return }
+        // Bare `input`/`output` are Pi's official usage keys. They are safe
+        // here and only here: this function is handed usage-labelled dicts,
+        // never arbitrary records where `input` means a tool's arguments.
         fact.tokensIn = max(fact.tokensIn, firstNumber(usage, keys: [
             "inputTokens", "input_tokens", "promptTokens", "prompt_tokens",
-            "inputTokenCount", "input_token_count", "promptTokenCount",
+            "inputTokenCount", "input_token_count", "promptTokenCount", "input",
         ]))
         fact.tokensOut = max(fact.tokensOut, firstNumber(usage, keys: [
             "outputTokens", "output_tokens", "completionTokens", "completion_tokens",
             "outputTokenCount", "output_token_count", "completionTokenCount",
-            "candidatesTokenCount", "candidates_token_count",
+            "candidatesTokenCount", "candidates_token_count", "output",
         ]))
     }
 

@@ -160,6 +160,91 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.tokensOut, 55)
     }
 
+    func testPiWorkFactsAreCollected() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pi-work-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(
+            ".pi/agent/sessions/--Users-me-Pulse--/2024-12-03T14-00-01-000Z_sess-work.jsonl"
+        )
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        // A large assistant record (>8 KB) — the class of line the title-only
+        // gate used to skip, which is exactly where usage/model/tool live.
+        let prose = String(repeating: "All checks passing so far. ", count: 400)
+        let bigAssistant = "{\"type\":\"message\",\"timestamp\":\"2024-12-03T14:00:04.000Z\","
+            + "\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"\(prose)\"},"
+            + "{\"type\":\"toolCall\",\"id\":\"t2\",\"name\":\"bash\",\"arguments\":{\"command\":\"swift test\"}}],"
+            + "\"model\":\"claude-opus-4\",\"usage\":{\"input\":9000,\"output\":150}}}"
+        XCTAssertGreaterThan(bigAssistant.count, 8_192)
+        let lines = [
+            #"{"type":"session","version":3,"id":"sess-work","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/Users/me/Pulse"}"#,
+            #"{"type":"message","timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"Fix the tray"}}"#,
+            #"{"type":"message","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Reading the panel code"},{"type":"toolCall","id":"t1","name":"read","arguments":{"path":"/a.swift"}}],"model":"claude-sonnet-4-5","usage":{"input":5185,"output":80}}}"#,
+            #"{"type":"message","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"t1","content":"error: no such file /a.swift","isError":true}}"#,
+            bigAssistant,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .pi })
+        XCTAssertEqual(row.task, "Fix the tray")
+        // Small assistant line: parsed whole — model + usage {input, output}.
+        XCTAssertEqual(row.model, "claude-sonnet-4-5")
+        // Large assistant line: salvaged by bounded regex — tokens climb,
+        // the latest tool call wins.
+        XCTAssertEqual(row.tokensIn, 9_000)
+        XCTAssertEqual(row.tokensOut, 150)
+        XCTAssertEqual(row.tool, "bash")
+        // Self-report now runs for Pi: the agent's words and the failed
+        // result's own text.
+        XCTAssertTrue(row.lastWord.hasPrefix("All checks passing"), row.lastWord)
+        XCTAssertTrue(row.lastErrorText.contains("no such file"), row.lastErrorText)
+    }
+
+    func testCodexModelAndAssistantWordAreCollected() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-codex-model-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".codex/sessions/2026/08/03", isDirectory: true)
+            .appendingPathComponent("rollout-model.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        let lines = [
+            #"{"type":"session_meta","payload":{"session_id":"mdl-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,
+            #"{"type":"turn_context","payload":{"model":"gpt-5-codex","cwd":"/Users/me/Pulse"},"timestamp":1700000001}"#,
+            #"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Name the model"}]},"timestamp":1700000002}"#,
+            #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done — the lamp is green."}]},"timestamp":1700000003}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
+        XCTAssertEqual(row.task, "Name the model")
+        XCTAssertEqual(row.model, "gpt-5-codex")
+        XCTAssertTrue(row.lastWord.contains("lamp is green"), row.lastWord)
+    }
+
+    func testClaudeSkillInvocationBecomesTheSkillFact() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-claude-skill-\(UUID().uuidString)")
+        let session = home
+            .appendingPathComponent(".claude/projects/-Users-me-code-Pulse", isDirectory: true)
+            .appendingPathComponent("sess-skill.jsonl")
+        try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        let lines = [
+            #"{"type":"user","message":{"role":"user","content":"Review the diff"},"sessionId":"sess-skill"}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Skill","input":{"skill":"code-review"}}]},"sessionId":"sess-skill"}"#,
+        ].joined(separator: "\n") + "\n"
+        try lines.write(to: session, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.claude])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
+        XCTAssertEqual(row.skill, "code-review", "the workflow fact lives in the Skill call's input")
+    }
+
     func testClaudeSubagentDirectoryCountsAttachToSessionRow() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-claude-sub-\(UUID().uuidString)")

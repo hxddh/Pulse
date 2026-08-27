@@ -2,6 +2,35 @@
 
 All notable changes to Pulse are documented here.
 
+## 8.2.0 — 采集平权（Pi 与众家）
+
+8.1 的展示契约成立后,真机指认落到了采集层:Pi 行的工作方式线仍然空着。
+审计确认这是**采集缺口**,不是展示缺口——三个死因都在 Pi 专用解析器里:
+
+- **大行整条跳过**:>8KB 的行只要不带标题就丢——而带 usage/model/工具调用的
+  assistant 记录恰恰是最大的那些行。8.2 起对这类行做**有界正则打捞**
+  (model / usage token / 最后一个 toolCall 名;JSON 字符串内容的引号是转义的,
+  模式不可能匹配进正文)。
+- **usage 键不认 Pi 的拼法**:Pi 官方 usage 是 `{input, output}`,键表只认
+  `input_tokens` 家族。补上——仅在 usage 标签的字典里,`input` 不会误读成
+  工具入参。
+- **自述扫描从不运行**:Pi 解析器在通用 walker 之前返回,agent 的原话
+  (lastWord → 7.0 价值主行!)与失败结果原文从未提取。8.2 在 Pi 解析器
+  末尾跑同一套形状严格扫描,并教会它 Pi 的方言:`isError`(驼峰)、
+  独立的 `toolResult` 记录(错误正文在记录层不在 content block)。
+
+**众家横扫**(同一次审计的顺手账):
+
+- **Codex**:model 从未提取(turn_context/payload 现在拾取);旧 rollout 只有
+  `response_item` assistant 消息没有 `agent_message` 事件时,原话同样入
+  lastWord。token/工具/计划/错误此前已齐,核对无缺。
+- **Claude 家族**:`Skill` 工具调用的 `input.skill` 现在成为工作流事实——
+  skill 一直显示不出来的另一半原因是它从未被采过。
+- 通用提取器认得 `toolCall`(驼峰)块与记录类型;上下文别名补 `contextUsage`。
+
+未测到的照旧缺席:Pi 没有 todos 就没有计划,没有 usage 的行就没有 token,
+一个字段都不发明。
+
 ## 8.1.0 — 测到即渲染
 
 8.0 发布当天真机复核不通过：当前工具/目标、工具分布、token、skill、模型、
