@@ -797,15 +797,30 @@ extension StatusStore {
             }
             return String(format: tr(.nowActivity), action)
         }
-        let planStep = row.planStep.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !planStep.isEmpty, row.selfReportFresh {
-            return String(format: tr(.currentStepFact), planStep)
+        if rowMetaOwnsPlanStep(row) {
+            return String(
+                format: tr(.currentStepFact),
+                row.planStep.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         }
         if let phase = readablePhase(row.phase, waiting: false),
            !row.isRecentOnly || row.lastActivitySeconds <= 30 * 60 {
             return phase
         }
         return nil
+    }
+
+    /// Whether the collapsed meta line already renders the current plan step.
+    /// The 11.0 digest consults the same ownership decision so the step can
+    /// fill information hidden by a higher-value Now fact without appearing
+    /// twice when it already leads the row.
+    func rowMetaOwnsPlanStep(_ row: AgentRow) -> Bool {
+        guard row.selfReportFresh,
+              !row.planStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        if row.isLooping { return false }
+        if row.liveActionFresh, !row.liveTool.isEmpty { return false }
+        return true
     }
 
     /// 8.0 — the work-style detail for the expanded card: how this session

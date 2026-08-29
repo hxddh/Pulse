@@ -136,7 +136,7 @@ step "12. Coherence (scenes BV/BW/BX)" \
   EXPECT: live rows drop back to the two-line anatomy automatically.
   - A waiting/permission row shows its ask card as before — and no brief
   beside it.
-  - Open the Workbench and Settings next to the tray.
+  - Open the Workbench and a managed-session inspector next to the tray.
   EXPECT: same card radii, same padding rhythm, same hairline strokes,
   same motion curve — it reads as one product made by one hand."
 

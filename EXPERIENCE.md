@@ -767,7 +767,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | BT | Column(右柱) | 右缘是一根柱子:相对时间等宽、弱化、右对齐在身份条尾,芯片其后——扫视沿两根轴走(左轴读事,右轴读量);VoiceOver 同步读合成解剖学 |
 | BU | Disclosure(披露纪律) | 三层各归其位:收起=扫视(两行),展开=理解与行动(8.x 全部深度原样),**列表内卡只给「此刻需要你」**——权限请求 / Respond / 回合死亡(interrupted/failed)恢复;受管 idle 的回复框撤回展开态(每行常驻回复框是墙不是收件箱);阻塞照旧免点击 |
 | BV | Depth(自适应深度) | **信息默认在场,动作按需展开**:`RowDepth.tier` 纯表——显式展开→full;需要你→minimal+ask 卡(问题即深度);活跃且不拥挤→digest(`SessionBriefCard` 纯信息:hero 截断时的完整原话/当前计划步/±落盘,无动作面);其余 minimal;拥挤自动降级;chevron 语义收窄为「进入动作与全量」;Go-Look reveal 照旧直达 full |
-| BW | Theme(全产品一体) | `PulseTheme` 统一全产品共享 chrome:窗口卡片半径族(卡 10/内 6)、padding 节奏、发丝描边(指挥台 card() 一处收编全窗)、**唯一动效曲线**(easeOut 0.16)——托盘 `TrayChrome` 保留紧凑网格、同一节奏派生;指挥台/受管检视器全部卡片收编,手写 `padding(14)`/`cornerRadius` 清零 |
+| BW | Theme(产品一体) | `PulseTheme` 统一产品自有卡片的共享 chrome:窗口卡片半径族(卡 10/内 6)、padding 节奏、发丝描边(指挥台 card() 一处收编全窗)、**唯一动效曲线**(easeOut 0.16)——托盘 `TrayChrome` 保留紧凑网格、同一节奏派生;指挥台/受管检视器全部卡片收编,手写 `padding(14)`/`cornerRadius` 清零;设置保留 macOS 原生 grouped Form chrome,共享同一动效 token |
 | BX | Grace(收笔) | 折叠/展开/重排共用同一条动效曲线;两条曲线在一个产品里读起来是两个产品 |
 
 ---

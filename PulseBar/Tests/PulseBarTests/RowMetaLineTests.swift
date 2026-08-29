@@ -102,4 +102,20 @@ final class RowMetaLineTests: XCTestCase {
         let line = store().rowMetaLine(row)
         XCTAssertEqual(line, store().rowContextLine(row))
     }
+
+    @MainActor
+    func testPlanOwnershipMovesToBriefOnlyWhenANowFactOutranksIt() {
+        var row = liveRow()
+        row.planStep = "Run the focused tests"
+        row.lastWord = "Implementing the fix"
+        let subject = store()
+
+        XCTAssertTrue(subject.rowMetaOwnsPlanStep(row))
+        XCTAssertTrue(subject.rowMetaLine(row).contains("Run the focused tests"))
+
+        row.liveTool = "Edit"
+        row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+        XCTAssertFalse(subject.rowMetaOwnsPlanStep(row))
+        XCTAssertFalse(subject.rowMetaLine(row).contains("Run the focused tests"))
+    }
 }

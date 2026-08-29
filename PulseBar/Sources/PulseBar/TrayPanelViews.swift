@@ -1359,7 +1359,8 @@ private struct AgentRowButton: View {
             // 11.0-α (scene BV): the digest tier — a live row's information
             // arrives without a click; the act surfaces stay behind the
             // chevron. Never beside an ask: the question owns that space.
-            if depthTier == .digest {
+            if depthTier == .digest,
+               SessionBriefCard.hasContent(store: store, row: row) {
                 SessionBriefCard(store: store, row: row)
                     .padding(.leading, 48)
                     .padding(.trailing, TrayChrome.padX)

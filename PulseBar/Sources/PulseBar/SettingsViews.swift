@@ -51,7 +51,7 @@ struct SettingsView: View {
     private func scrollToWaitingIfNeeded(_ proxy: ScrollViewProxy) {
         guard store.settingsFocusWaitingSignals else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            withAnimation(.easeInOut(duration: 0.25)) {
+            withAnimation(PulseTheme.motion) {
                 proxy.scrollTo("settings-waiting-signals", anchor: .top)
             }
         }

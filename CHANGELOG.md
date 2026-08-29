@@ -2,6 +2,14 @@
 
 All notable changes to Pulse are documented here.
 
+## 11.0.1 — Coherence fixes
+
+- 活跃行摘要里的长原话不再二次截成三行;hero 截断后,摘要真正给出完整原话。
+- 当前计划步只由一个表面拥有:meta 已显示时摘要不重复,被更高价值的 Now 事实
+  挤掉时摘要接住;没有任何摘要事实的行不再凭空多出 8pt 留白。
+- 受管检视器所有卡片补齐 `PulseTheme` 发丝描边,设置页滚动共享同一动效 token;
+  规格与真机 QA 明确区分产品自有卡片和 macOS 原生 grouped Form chrome。
+
 ## 11.0.0 — Coherence(一体)
 
 两个输入:「默认展开是否更合理?」与「整体产品仍然不优雅」。
@@ -19,13 +27,13 @@ digest**——`SessionBriefCard` 纯信息摘要层:被 hero 截断时的完整�
 当前计划步、± 落盘,无任何动作面;其余 minimal,拥挤自动降级。
 chevron 语义收窄为「进入动作与全量」;每行一次的点击税终结。
 
-### 全产品一套系统(11.0-β,场景 BW)
+### 产品卡片一套系统(11.0-β,场景 BW)
 
-`PulseTheme` 收拢全产品共享 chrome:窗口卡片半径族(卡 10 / 内 6)、
+`PulseTheme` 收拢产品自有卡片的共享 chrome:窗口卡片半径族(卡 10 / 内 6)、
 padding 节奏、发丝描边、唯一动效曲线。指挥台 `card()` 助手一处收编整个
 窗口;受管检视器全部卡片(对比/运行检查/验收/状态)同步收编——
 `padding(14)` 与手写 `cornerRadius` 在这两个窗口清零。托盘 `TrayChrome`
-保留紧凑网格,同一节奏派生。
+保留紧凑网格,同一节奏派生;设置继续使用原生 grouped Form chrome,只共享动效。
 
 ### 收笔(11.0-γ,场景 BX)
 

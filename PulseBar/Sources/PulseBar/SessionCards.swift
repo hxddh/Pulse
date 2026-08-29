@@ -214,17 +214,31 @@ struct SessionBriefCard: View {
     /// the whole sentence and repeating it would be the same fact twice.
     static let heroClipThreshold = 96
 
+    static func hasContent(store: StatusStore, row: AgentRow) -> Bool {
+        let hasFullWords = row.selfReportFresh
+            && row.lastWord.count > heroClipThreshold
+        let hasUnownedPlan = row.selfReportFresh
+            && !row.planStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !store.rowMetaOwnsPlanStep(row)
+        let hasEffect = row.hasWorkspaceEffect
+            && row.changedPaths > 0
+            && row.insertions >= 0
+            && row.deletions >= 0
+        return hasFullWords || hasUnownedPlan || hasEffect
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if row.selfReportFresh, row.lastWord.count > Self.heroClipThreshold {
                 Text(row.lastWord)
                     .font(.caption)
                     .foregroundStyle(.primary.opacity(0.85))
-                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
-            if row.selfReportFresh, !row.planStep.isEmpty {
+            if row.selfReportFresh,
+               !row.planStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !store.rowMetaOwnsPlanStep(row) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("▸")
                         .font(.caption.monospaced())

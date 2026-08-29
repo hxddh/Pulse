@@ -46,4 +46,33 @@ final class RowDepthTests: XCTestCase {
             .minimal
         )
     }
+
+    @MainActor
+    func testEmptyBriefDoesNotReserveSpace() {
+        let store = StatusStore()
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.liveProcess = true
+        row.observationSource = .session
+
+        XCTAssertFalse(SessionBriefCard.hasContent(store: store, row: row))
+
+        row.lastWord = String(repeating: "x", count: SessionBriefCard.heroClipThreshold + 1)
+        XCTAssertTrue(SessionBriefCard.hasContent(store: store, row: row))
+    }
+
+    @MainActor
+    func testBriefOnlyRepeatsAPlanHiddenByAHigherValueNowFact() {
+        let store = StatusStore()
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.liveProcess = true
+        row.observationSource = .session
+        row.planStep = "Run the focused tests"
+        row.lastWord = "Implementing the fix"
+
+        XCTAssertFalse(SessionBriefCard.hasContent(store: store, row: row))
+
+        row.liveTool = "Edit"
+        row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+        XCTAssertTrue(SessionBriefCard.hasContent(store: store, row: row))
+    }
 }

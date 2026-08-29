@@ -94,6 +94,10 @@ struct ManagedSessionInspector: View {
         .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+        )
     }
 
     private func statusLabel(_ status: ManagedSession.Status) -> String {
@@ -151,6 +155,10 @@ struct ManagedSessionInspector: View {
         .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+        )
     }
 
     private func runCheck() {
@@ -200,6 +208,10 @@ struct ManagedSessionInspector: View {
             .padding(PulseTheme.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                    .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+            )
     }
 
     /// 5.0-γ (scene BH): acceptance, on the user's click, inside Pulse's own
@@ -263,6 +275,10 @@ struct ManagedSessionInspector: View {
         .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+        )
     }
 
     private func runAcceptance(
@@ -356,6 +372,10 @@ struct ManagedSessionInspector: View {
         .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+        )
     }
 
     private var replyRow: some View {
@@ -468,6 +488,10 @@ struct ManagedSessionInspector: View {
         .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+        )
     }
 
     private var effectCard: some View {
@@ -482,6 +506,10 @@ struct ManagedSessionInspector: View {
         .padding(PulseTheme.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+        )
     }
 }
 
@@ -530,4 +558,3 @@ struct ManagedEntryRow: View {
         }
     }
 }
-

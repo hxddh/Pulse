@@ -3,13 +3,14 @@ import SwiftUI
 /// 11.0-β (scene BW) — one visual system for the whole product.
 ///
 /// The tray earned a type scale and a card discipline in 9.0/10.0; every
-/// other window still carried its own hand-written numbers, so the product
-/// read as one ironed shirt-front on an unironed shirt. `PulseTheme` owns
-/// what every window shares — the card chrome, the spacing rhythm, the one
-/// motion curve — and window code names a role here instead of liking a
-/// number. `TrayChrome` keeps the tray's compact layout grid and derives
-/// from the same rhythm. Colours stay out of `static let` everywhere; the
-/// appearance gate's rule is about colour, and these are metrics.
+/// other product-owned card surface still carried its own hand-written
+/// numbers, so the product read as one ironed shirt-front on an unironed
+/// shirt. `PulseTheme` owns what those surfaces share — card chrome, spacing
+/// rhythm and motion. Native system containers such as the grouped Settings
+/// form keep their platform chrome while sharing the motion token.
+/// `TrayChrome` keeps the tray's compact layout grid and derives from the
+/// same rhythm. Colours stay out of `static let` everywhere; the appearance
+/// gate's rule is about colour, and these are metrics.
 enum PulseTheme {
     /// Window-surface card chrome (the tray's compact family lives in
     /// `TrayChrome`: card 8 / inner 6 on the 4-pt grid; windows breathe one
