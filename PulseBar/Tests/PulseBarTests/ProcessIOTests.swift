@@ -45,7 +45,7 @@ final class ProcessIOTests: XCTestCase {
         XCTAssertEqual(
             String(decoding: result?.stdout ?? Data(), as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-            directory.path
+            directory.resolvingSymlinksInPath().path
         )
     }
 }
