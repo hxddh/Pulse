@@ -2,6 +2,18 @@
 
 All notable changes to Pulse are documented here.
 
+## 11.0.3 — Durable evidence
+
+- 受管会话的验收检查不再是瞬时按钮结果：命令、起止时间、耗时、结论、退出码与
+  有界 stdout/stderr 成为持久证据，检视器在重启后仍能展示最近一次运行；每条输出
+  各限 64 KiB，状态最多保留最新 20 条，避免历史无界增长。
+- 每次检查前后都以 SHA-256 绑定代码身份：仓库根、HEAD、已暂存与未暂存 diff、
+  非忽略的未跟踪文件内容都纳入指纹；运行中代码变化会把结果明确标成失效，之后
+  工作区变化则显示证据已过期，而不是继续冒充当前代码的通过证明。
+- 持久状态升级为 schema v3，保留旧 schema 与 `claudeSessionID` 的迁移；指纹读取
+  使用只读 Git 路径、严格的时间/文件/总量预算，并且不跟随未跟踪符号链接。
+  本版是 Outcome 的证据地基，不启用 Codex runtime，也不宣称 12.0 Mission 已完成。
+
 ## 11.0.2 — Runtime boundary
 
 - 受管会话新增厂商无关的 runtime session 边界；Claude 的 executable、argv、
