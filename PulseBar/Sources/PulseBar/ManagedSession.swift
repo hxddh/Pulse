@@ -2,13 +2,9 @@ import Foundation
 
 // 5.0-β — the managed runtime's pure core (docs/plan-5.0.md, scene BG).
 //
-// A managed session is a turn loop over the vendor's own headless interface:
-// `claude -p <prompt> --output-format stream-json --verbose`, continued with
-// `--resume <session-id>`. Pure pipes — no PTY, no AppleScript, no TCC.
-// Everything in this file is deterministic and fixture-testable: the argv a
-// turn runs, the NDJSON line reassembly, and the state machine that turns
-// stream events into session facts. The process handling lives in
-// `ManagedSessionRunner`; nothing here touches a process.
+// A managed session is the vendor-neutral value model above `ManagedRuntime`:
+// runtime events become durable session facts here; process topology and wire
+// decoding live behind the runtime session boundary.
 //
 // Epistemically these facts are FIRST-PARTY: Pulse spawned the process and
 // owns its stream, so there is no "not measured" discount and no sanitizer-
@@ -49,7 +45,8 @@ enum ManagedSession {
         var isWorktree: Bool
         var startedMs: Int64
 
-        var claudeSessionID = ""
+        var runtimeID = "claude"
+        var continuationID = ""
         var modelName = ""
         var status: Status = .idle
         var entries: [TranscriptReader.Entry] = []
@@ -102,58 +99,38 @@ enum ManagedSession {
             self.startedMs = nowMs
         }
 
-        /// One stream line, already split by `LineBuffer`.
-        mutating func apply(line: Data, nowMs: Int64) {
+        mutating func apply(event: ManagedRuntimeEvent, nowMs: Int64) {
             lastEventMs = nowMs
-            guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
-                unparsedLines += 1
-                return
-            }
-            apply(event: object, nowMs: nowMs)
-        }
-
-        mutating func apply(event object: [String: Any], nowMs: Int64) {
-            let type = (object["type"] as? String) ?? ""
-            if let sid = object["session_id"] as? String, !sid.isEmpty,
-               claudeSessionID.isEmpty {
-                claudeSessionID = sid
-            }
-            switch type {
-            case "system":
-                if let model = object["model"] as? String, !model.isEmpty {
-                    modelName = model
-                }
-            case "assistant", "user":
-                // The exact shapes TranscriptReader already parses, sanitizes
-                // and bounds — one parser for observed files and the managed
-                // stream, so the two can never drift apart.
-                let new = TranscriptReader.entries(from: object)
+            switch event {
+            case .continuation(let id):
+                if continuationID.isEmpty { continuationID = id }
+            case .model(let name):
+                if !name.isEmpty { modelName = name }
+            case .entries(let new):
                 appendEntries(new)
                 for entry in new where entry.kind == .tool {
                     if !entry.toolName.isEmpty { currentTool = entry.toolName }
                     if entry.isError, !entry.text.isEmpty { lastErrorText = entry.text }
                 }
-            case "result":
+            case .result(let result):
                 turns += 1
                 currentTool = ""
-                if let cost = object["total_cost_usd"] as? Double { totalCostUSD += cost }
-                if let usage = object["usage"] as? [String: Any] {
-                    if let n = usage["input_tokens"] as? Int { tokensIn += n }
-                    if let n = usage["output_tokens"] as? Int { tokensOut += n }
-                }
-                let text = bound((object["result"] as? String) ?? "", ManagedSession.maxResultLength)
+                if let cost = result.costUSD { totalCostUSD += cost }
+                if let n = result.tokensIn { tokensIn += n }
+                if let n = result.tokensOut { tokensOut += n }
+                let text = bound(result.text, ManagedSession.maxResultLength)
                 if !text.isEmpty { lastResultText = ContentSanitizer.redact(text) }
-                let isError = (object["is_error"] as? Bool) ?? false
-                if isError {
+                if let detail = result.errorDetail {
                     errorResults += 1
-                    let subtype = (object["subtype"] as? String) ?? "error"
-                    lastErrorText = lastResultText.isEmpty ? subtype : lastResultText
-                    status = .failed(subtype)
+                    lastErrorText = lastResultText.isEmpty ? detail : lastResultText
+                    status = .failed(detail)
                 } else {
                     status = .idle
                 }
-            default:
+            case .unknown:
                 unknownEvents += 1
+            case .unparsed:
+                unparsedLines += 1
             }
         }
 
@@ -177,60 +154,22 @@ enum ManagedSession {
         }
     }
 
-    // MARK: - The command a turn runs
-
-    /// Argv, never a shell string: the prompt travels as one argument and no
-    /// quoting layer exists to escape from. A resume id passes the same
-    /// shape gate the 3.0 resume command used; a bad one refuses the turn
-    /// rather than improvising a fresh session under the user's reply.
-    static func arguments(
-        prompt: String,
-        resumeSessionID: String?,
-        permissionConfigPath: String? = nil
-    ) -> [String]? {
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        var args = ["-p", trimmed, "--output-format", "stream-json", "--verbose"]
-        if let sid = resumeSessionID, !sid.isEmpty {
-            guard WorkbenchAnswer.validSessionID(sid) else { return nil }
-            args += ["--resume", sid]
-        }
-        // 6.0-β: the permission channel — the CLI asks Pulse's own MCP
-        // server instead of silently denying un-allow-listed tools.
-        if let configPath = permissionConfigPath {
-            args += ["--mcp-config", configPath,
-                     "--permission-prompt-tool", "mcp__pulse__approve"]
-        }
-        return args
-    }
-
-    /// Where the `claude` CLI lives on this machine, if anywhere. Checked at
-    /// dispatch time so the answer is current, surfaced honestly when absent.
-    static func claudeExecutable(
-        fileExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
-    ) -> String? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude",
-            home + "/.local/bin/claude",
-            home + "/.claude/local/claude",
-        ]
-        return candidates.first(where: fileExists)
-    }
-
     // MARK: - Persistence (6.0-α)
 
     /// The on-disk shape of a session. A DTO rather than making `Model`
     /// itself Codable: the status enum flattens to kind+detail here, and the
     /// file format stays decoupled from in-memory evolution.
     struct State: Codable, Equatable {
+        static let currentSchemaVersion = 2
+
+        var schemaVersion: Int
         var id: String
         var title: String
         var root: String
         var isWorktree: Bool
         var startedMs: Int64
-        var claudeSessionID: String
+        var runtimeID: String
+        var continuationID: String
         var modelName: String
         var statusKind: String
         var statusDetail: String
@@ -251,12 +190,14 @@ enum ManagedSession {
         var attemptGroup: String = ""
 
         init(model: Model) {
+            schemaVersion = Self.currentSchemaVersion
             id = model.id
             title = model.title
             root = model.root
             isWorktree = model.isWorktree
             startedMs = model.startedMs
-            claudeSessionID = model.claudeSessionID
+            runtimeID = model.runtimeID
+            continuationID = model.continuationID
             modelName = model.modelName
             switch model.status {
             case .idle: statusKind = "idle"; statusDetail = ""
@@ -281,6 +222,79 @@ enum ManagedSession {
             attemptGroup = model.attemptGroup
         }
 
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion, id, title, root, isWorktree, startedMs
+            case runtimeID, continuationID, claudeSessionID
+            case modelName, statusKind, statusDetail, entries, entriesCapped
+            case turns, errorResults, totalCostUSD, tokensIn, tokensOut
+            case lastEventMs, lastResultText, lastErrorText, pendingPrompt
+            case runCommand, attemptGroup
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+            guard (1...Self.currentSchemaVersion).contains(schemaVersion) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .schemaVersion, in: values,
+                    debugDescription: "unsupported managed state schema \(schemaVersion)"
+                )
+            }
+            id = try values.decode(String.self, forKey: .id)
+            title = try values.decode(String.self, forKey: .title)
+            root = try values.decode(String.self, forKey: .root)
+            isWorktree = try values.decode(Bool.self, forKey: .isWorktree)
+            startedMs = try values.decode(Int64.self, forKey: .startedMs)
+            runtimeID = try values.decodeIfPresent(String.self, forKey: .runtimeID) ?? "claude"
+            continuationID = try values.decodeIfPresent(String.self, forKey: .continuationID)
+                ?? values.decodeIfPresent(String.self, forKey: .claudeSessionID)
+                ?? ""
+            modelName = try values.decode(String.self, forKey: .modelName)
+            statusKind = try values.decode(String.self, forKey: .statusKind)
+            statusDetail = try values.decode(String.self, forKey: .statusDetail)
+            entries = try values.decode([TranscriptReader.Entry].self, forKey: .entries)
+            entriesCapped = try values.decode(Bool.self, forKey: .entriesCapped)
+            turns = try values.decode(Int.self, forKey: .turns)
+            errorResults = try values.decode(Int.self, forKey: .errorResults)
+            totalCostUSD = try values.decode(Double.self, forKey: .totalCostUSD)
+            tokensIn = try values.decode(Int.self, forKey: .tokensIn)
+            tokensOut = try values.decode(Int.self, forKey: .tokensOut)
+            lastEventMs = try values.decode(Int64.self, forKey: .lastEventMs)
+            lastResultText = try values.decode(String.self, forKey: .lastResultText)
+            lastErrorText = try values.decode(String.self, forKey: .lastErrorText)
+            pendingPrompt = try values.decodeIfPresent(String.self, forKey: .pendingPrompt) ?? ""
+            runCommand = try values.decodeIfPresent(String.self, forKey: .runCommand) ?? ""
+            attemptGroup = try values.decodeIfPresent(String.self, forKey: .attemptGroup) ?? ""
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(schemaVersion, forKey: .schemaVersion)
+            try values.encode(id, forKey: .id)
+            try values.encode(title, forKey: .title)
+            try values.encode(root, forKey: .root)
+            try values.encode(isWorktree, forKey: .isWorktree)
+            try values.encode(startedMs, forKey: .startedMs)
+            try values.encode(runtimeID, forKey: .runtimeID)
+            try values.encode(continuationID, forKey: .continuationID)
+            try values.encode(modelName, forKey: .modelName)
+            try values.encode(statusKind, forKey: .statusKind)
+            try values.encode(statusDetail, forKey: .statusDetail)
+            try values.encode(entries, forKey: .entries)
+            try values.encode(entriesCapped, forKey: .entriesCapped)
+            try values.encode(turns, forKey: .turns)
+            try values.encode(errorResults, forKey: .errorResults)
+            try values.encode(totalCostUSD, forKey: .totalCostUSD)
+            try values.encode(tokensIn, forKey: .tokensIn)
+            try values.encode(tokensOut, forKey: .tokensOut)
+            try values.encode(lastEventMs, forKey: .lastEventMs)
+            try values.encode(lastResultText, forKey: .lastResultText)
+            try values.encode(lastErrorText, forKey: .lastErrorText)
+            try values.encode(pendingPrompt, forKey: .pendingPrompt)
+            try values.encode(runCommand, forKey: .runCommand)
+            try values.encode(attemptGroup, forKey: .attemptGroup)
+        }
+
         /// Reattach. A state persisted mid-turn ("running") comes back as
         /// `interrupted` — we were not there to see how that turn ended, and
         /// saying anything else would be inventing an outcome. A queued
@@ -288,7 +302,8 @@ enum ManagedSession {
         func model() -> Model {
             var m = Model(id: id, task: title, root: root, isWorktree: isWorktree, nowMs: startedMs)
             m.title = title
-            m.claudeSessionID = claudeSessionID
+            m.runtimeID = runtimeID
+            m.continuationID = continuationID
             m.modelName = modelName
             switch statusKind {
             case "running": m.status = .interrupted
@@ -345,11 +360,25 @@ enum ManagedSession {
         ) else { return [] }
         var models: [Model] = []
         for name in names.sorted() where name.hasSuffix(".json") {
-            guard let data = try? Data(contentsOf: stateDirectory().appendingPathComponent(name)),
-                  let state = try? JSONDecoder().decode(State.self, from: data),
-                  // Filename decides identity — the spool rule, here too.
-                  name == state.id + ".json"
-            else { continue }
+            let url = stateDirectory().appendingPathComponent(name)
+            let state: State
+            do {
+                state = try JSONDecoder().decode(State.self, from: Data(contentsOf: url))
+            } catch {
+                DebugLog.write("managed state refused file=\(name) reason=decode")
+                continue
+            }
+            // Filename decides identity — the spool rule, here too.
+            guard name == state.id + ".json" else {
+                DebugLog.write("managed state refused file=\(name) reason=identity")
+                continue
+            }
+            // Alpha ships one implementation. A future state is not a
+            // Claude state merely because this binary cannot name it.
+            guard state.runtimeID == "claude" else {
+                DebugLog.write("managed state refused file=\(name) reason=runtime")
+                continue
+            }
             models.append(state.model())
         }
         return models.sorted { $0.startedMs < $1.startedMs }

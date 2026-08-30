@@ -12,6 +12,7 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
 | [`docs/review-1.2.md`](docs/review-1.2.md) | You want the defect list at the 1.2.0 baseline, or the next-major evaluation |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
+| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The next-major plan (Outcome) — durable result contracts, runtime boundary, comparable evidence, and proof gates |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
 | [`docs/plan-1.2.md`](docs/plan-1.2.md) | Historical plan (Substance) |
 | [`docs/plan-1.1.md`](docs/plan-1.1.md) | Historical plan (Full Transcript) |

@@ -51,7 +51,7 @@ final class ManagedSessionSource: SessionSource {
     ) -> AgentRow {
         var row = AgentRow(rowKey: "managed|\(model.id)", agent: .claude)
         row.managedID = model.id
-        row.sessionID = model.claudeSessionID
+        row.sessionID = model.continuationID
         row.task = model.title
         row.cwd = model.root
         row.project = AgentRow.shortProject(model.root)
@@ -130,7 +130,7 @@ extension StatusStore {
         repoRoot: String, task: String, useWorktree: Bool,
         attemptGroup: String = "", attemptIndex: Int = 0
     ) -> String? {
-        guard ManagedSession.claudeExecutable() != nil else {
+        guard ClaudeManagedRuntime.executable() != nil else {
             return tr(.managedNoClaude)
         }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)

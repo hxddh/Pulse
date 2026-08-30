@@ -8,6 +8,33 @@ import XCTest
 @MainActor
 final class ManagedFleetTests: XCTestCase {
 
+    private final class FakeRuntimeSession: ManagedRuntimeSession {
+        var onEvent: ((ManagedRuntimeEvent) -> Void)?
+        var onFinish: ((Int32, Data) -> Void)?
+
+        func start(prompt: String, continuation: String?, root: String, managedID: String) -> String? {
+            onEvent?(.continuation("fake-thread"))
+            onEvent?(.model("fake-model"))
+            onEvent?(.result(ManagedRuntimeResult(
+                text: "finished", costUSD: nil, tokensIn: 3, tokensOut: 2, errorDetail: nil
+            )))
+            onFinish?(0, Data())
+            return nil
+        }
+
+        func cancel() -> Bool { true }
+        func shutdown() {}
+    }
+
+    private final class FakeRuntime: ManagedRuntime {
+        let id = "fake"
+        let session = FakeRuntimeSession()
+
+        func executable() -> String? { "/usr/bin/true" }
+        func canStart(prompt: String, continuation: String?) -> Bool { !prompt.isEmpty }
+        func makeSession() -> any ManagedRuntimeSession { session }
+    }
+
     private var stateDir: URL!
 
     override func setUpWithError() throws {
@@ -31,7 +58,7 @@ final class ManagedFleetTests: XCTestCase {
 
     func testAStateSurvivesTheRoundTripFieldForField() {
         var m = model("s1")
-        m.claudeSessionID = "abc"
+        m.continuationID = "abc"
         m.modelName = "claude-fable-5"
         m.entries = [.init(kind: .agent, text: "hello", tsMs: 5)]
         m.turns = 3
@@ -78,6 +105,72 @@ final class ManagedFleetTests: XCTestCase {
             to: ManagedSession.stateURL(id: "impostor")
         )
         XCTAssertTrue(ManagedSession.loadAll().isEmpty, "body/filename mismatch is refused")
+    }
+
+    func testLegacyClaudeStateMigratesToTheVersionedRuntimeShape() throws {
+        var original = model("legacy")
+        original.continuationID = "old-session"
+        XCTAssertTrue(ManagedSession.persist(original))
+        let url = ManagedSession.stateURL(id: "legacy")
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        object["schemaVersion"] = nil
+        object["runtimeID"] = nil
+        object["continuationID"] = nil
+        object["claudeSessionID"] = "old-session"
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+
+        let loaded = try XCTUnwrap(ManagedSession.loadAll().first)
+        XCTAssertEqual(loaded.runtimeID, "claude")
+        XCTAssertEqual(loaded.continuationID, "old-session")
+
+        XCTAssertTrue(ManagedSession.persist(loaded))
+        let migrated = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        XCTAssertEqual(migrated["schemaVersion"] as? Int, 2)
+        XCTAssertEqual(migrated["runtimeID"] as? String, "claude")
+        XCTAssertEqual(migrated["continuationID"] as? String, "old-session")
+        XCTAssertNil(migrated["claudeSessionID"])
+    }
+
+    func testInvalidSchemasAndUnsupportedRuntimesAreRefused() throws {
+        XCTAssertTrue(ManagedSession.persist(model("future")))
+        let url = ManagedSession.stateURL(id: "future")
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        object["schemaVersion"] = 999
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        XCTAssertTrue(ManagedSession.loadAll().isEmpty)
+
+        object["schemaVersion"] = 0
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        XCTAssertTrue(ManagedSession.loadAll().isEmpty)
+
+        XCTAssertTrue(ManagedSession.persist(model("future")))
+        object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        object["runtimeID"] = "future-runtime"
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        XCTAssertTrue(ManagedSession.loadAll().isEmpty)
+    }
+
+    func testRunnerSeesOnlyNormalizedRuntimeSessionEvents() {
+        var m = model("runtime")
+        m.runtimeID = "fake"
+        let runner = ManagedSessionRunner(model: m, runtime: FakeRuntime())
+        runner.send(prompt: "do it")
+
+        XCTAssertEqual(runner.model.status, .idle)
+        XCTAssertEqual(runner.model.continuationID, "fake-thread")
+        XCTAssertEqual(runner.model.modelName, "fake-model")
+        XCTAssertEqual(runner.model.lastResultText, "finished")
+        XCTAssertEqual(runner.model.tokensIn, 3)
+        XCTAssertEqual(runner.model.tokensOut, 2)
+        XCTAssertEqual(runner.model.entries.first?.kind, .user)
     }
 
     // MARK: - The queue under its cap

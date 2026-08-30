@@ -14,7 +14,9 @@ final class ManagedSessionTests: XCTestCase {
     }
 
     private func apply(_ m: inout ManagedSession.Model, _ json: String) {
-        m.apply(line: Data(json.utf8), nowMs: now + 1000)
+        for event in ClaudeManagedRuntime.decode(line: Data(json.utf8)) {
+            m.apply(event: event, nowMs: now + 1000)
+        }
     }
 
     // MARK: - The state machine
@@ -22,7 +24,7 @@ final class ManagedSessionTests: XCTestCase {
     func testTheInitEventNamesTheSessionAndModel() {
         var m = model()
         apply(&m, #"{"type":"system","subtype":"init","session_id":"abc-123","model":"claude-fable-5"}"#)
-        XCTAssertEqual(m.claudeSessionID, "abc-123")
+        XCTAssertEqual(m.continuationID, "abc-123")
         XCTAssertEqual(m.modelName, "claude-fable-5")
     }
 
@@ -49,7 +51,7 @@ final class ManagedSessionTests: XCTestCase {
         XCTAssertEqual(m.tokensIn, 100)
         XCTAssertEqual(m.tokensOut, 50)
         XCTAssertEqual(m.lastResultText, "done")
-        XCTAssertEqual(m.claudeSessionID, "abc")
+        XCTAssertEqual(m.continuationID, "abc")
         XCTAssertEqual(m.currentTool, "", "the turn is over; nothing is running now")
     }
 
@@ -81,29 +83,29 @@ final class ManagedSessionTests: XCTestCase {
 
     func testTheFirstTurnArgvCarriesThePromptAsOneArgument() {
         XCTAssertEqual(
-            ManagedSession.arguments(prompt: "fix it; $(echo owned)", resumeSessionID: nil),
+            ClaudeManagedRuntime.arguments(prompt: "fix it; $(echo owned)", continuation: nil),
             ["-p", "fix it; $(echo owned)", "--output-format", "stream-json", "--verbose"],
             "argv, never a shell — metacharacters are just characters"
         )
     }
 
     func testAResumeTurnAppendsTheSessionIdAfterTheShapeGate() {
-        let args = ManagedSession.arguments(prompt: "continue", resumeSessionID: "abc-123")
+        let args = ClaudeManagedRuntime.arguments(prompt: "continue", continuation: "abc-123")
         XCTAssertEqual(args.map { Array($0.suffix(2)) }, ["--resume", "abc-123"])
         XCTAssertNil(
-            ManagedSession.arguments(prompt: "continue", resumeSessionID: "bad id"),
+            ClaudeManagedRuntime.arguments(prompt: "continue", continuation: "bad id"),
             "a malformed id refuses the turn rather than improvising a fresh session"
         )
-        XCTAssertNil(ManagedSession.arguments(prompt: "   ", resumeSessionID: nil))
+        XCTAssertNil(ClaudeManagedRuntime.arguments(prompt: "   ", continuation: nil))
     }
 
     func testExecutableLookupTakesTheFirstCandidateThatExists() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         XCTAssertEqual(
-            ManagedSession.claudeExecutable(fileExists: { $0 == home + "/.local/bin/claude" }),
+            ClaudeManagedRuntime.executable(fileExists: { $0 == home + "/.local/bin/claude" }),
             home + "/.local/bin/claude"
         )
-        XCTAssertNil(ManagedSession.claudeExecutable(fileExists: { _ in false }))
+        XCTAssertNil(ClaudeManagedRuntime.executable(fileExists: { _ in false }))
     }
 
     // MARK: - NDJSON reassembly
@@ -129,7 +131,7 @@ final class ManagedSessionTests: XCTestCase {
     func testTheRowCarriesFirstPartyFactsAndTheManagedIdentity() {
         var m = model()
         m.status = .running
-        m.claudeSessionID = "abc"
+        m.continuationID = "abc"
         m.modelName = "claude-fable-5"
         m.currentTool = "Bash"
         m.tokensIn = 10
