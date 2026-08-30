@@ -10,15 +10,20 @@ import Darwin
 /// when the app died comes back as `interrupted`, never as a success or a
 /// failure nobody witnessed.
 ///
-/// Persistence is bounded: a session is written when its status kind or turn
-/// count moves (turn start, turn end, cancel, failure, queue transitions) —
-/// never per stream line.
+/// Persistence is bounded: a session is written when its status kind, turn,
+/// remembered check command or newest evidence moves — never per stream line.
 @MainActor
 final class ManagedFleet {
     static let maxConcurrent = 3
 
     private(set) var runners: [ManagedSessionRunner] = []
-    private var lastPersisted: [String: (statusKind: String, turns: Int)] = [:]
+    private struct PersistenceMarker: Equatable {
+        var statusKind: String
+        var turns: Int
+        var runCommand: String
+        var lastEvidence: AcceptanceEvidence?
+    }
+    private var lastPersisted: [String: PersistenceMarker] = [:]
     private var pumping = false
     /// Fired after any session change, wired by the source.
     var onChange: (() -> Void)?
@@ -170,18 +175,25 @@ final class ManagedFleet {
 
     private func persistIfMoved(_ runner: ManagedSessionRunner) {
         let state = ManagedSession.State(model: runner.model)
-        let marker = (statusKind: state.statusKind, turns: state.turns)
-        if let last = lastPersisted[state.id],
-           last.statusKind == marker.statusKind, last.turns == marker.turns {
-            return
-        }
+        let marker = PersistenceMarker(
+            statusKind: state.statusKind,
+            turns: state.turns,
+            runCommand: state.runCommand,
+            lastEvidence: state.acceptanceEvidence.last
+        )
+        if lastPersisted[state.id] == marker { return }
         lastPersisted[state.id] = marker
         ManagedSession.persist(runner.model)
     }
 
     private func persist(_ runner: ManagedSessionRunner) {
         let state = ManagedSession.State(model: runner.model)
-        lastPersisted[state.id] = (state.statusKind, state.turns)
+        lastPersisted[state.id] = PersistenceMarker(
+            statusKind: state.statusKind,
+            turns: state.turns,
+            runCommand: state.runCommand,
+            lastEvidence: state.acceptanceEvidence.last
+        )
         ManagedSession.persist(runner.model)
     }
 }

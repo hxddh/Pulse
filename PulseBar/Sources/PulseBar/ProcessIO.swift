@@ -39,6 +39,7 @@ enum ProcessIO {
         executable: String,
         arguments: [String],
         environment: [String: String]? = nil,
+        currentDirectory: String? = nil,
         timeout: TimeInterval = 1.5,
         outputLimit: Int = 4 * 1024 * 1024
     ) -> Result? {
@@ -46,6 +47,9 @@ enum ProcessIO {
         task.executableURL = URL(fileURLWithPath: executable)
         task.arguments = arguments
         if let environment { task.environment = environment }
+        if let currentDirectory {
+            task.currentDirectoryURL = URL(fileURLWithPath: currentDirectory, isDirectory: true)
+        }
 
         let out = Pipe()
         let err = Pipe()

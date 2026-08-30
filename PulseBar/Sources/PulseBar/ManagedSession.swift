@@ -35,6 +35,7 @@ enum ManagedSession {
     static let maxTitleLength = 160
     static let maxResultLength = 500
     static let maxEntries = 1_000
+    static let maxAcceptanceEvidence = 20
 
     /// The whole session as a value: the runner mutates it via `apply`,
     /// views render it, tests drive it line by line.
@@ -71,6 +72,8 @@ enum ManagedSession {
         var pendingPrompt = ""
         /// 6.0-γ · the run-check command this session uses (persisted).
         var runCommand = ""
+        /// 12.0-β · durable facts from user-triggered acceptance checks.
+        var acceptanceEvidence: [AcceptanceEvidence] = []
         /// 6.0-γ · same-task attempt group id (empty = standalone).
         var attemptGroup = ""
         /// 6.0-γ · what the last finished turn left on disk (+insertions,
@@ -160,7 +163,7 @@ enum ManagedSession {
     /// itself Codable: the status enum flattens to kind+detail here, and the
     /// file format stays decoupled from in-memory evolution.
     struct State: Codable, Equatable {
-        static let currentSchemaVersion = 2
+        static let currentSchemaVersion = 3
 
         var schemaVersion: Int
         var id: String
@@ -186,6 +189,7 @@ enum ManagedSession {
         var pendingPrompt: String = ""
         /// 6.0-γ · the per-session run-check command, remembered.
         var runCommand: String = ""
+        var acceptanceEvidence: [AcceptanceEvidence] = []
         /// 6.0-γ · same-task attempt group (empty = standalone).
         var attemptGroup: String = ""
 
@@ -219,6 +223,7 @@ enum ManagedSession {
             lastErrorText = model.lastErrorText
             pendingPrompt = model.pendingPrompt
             runCommand = model.runCommand
+            acceptanceEvidence = Array(model.acceptanceEvidence.suffix(ManagedSession.maxAcceptanceEvidence))
             attemptGroup = model.attemptGroup
         }
 
@@ -228,7 +233,7 @@ enum ManagedSession {
             case modelName, statusKind, statusDetail, entries, entriesCapped
             case turns, errorResults, totalCostUSD, tokensIn, tokensOut
             case lastEventMs, lastResultText, lastErrorText, pendingPrompt
-            case runCommand, attemptGroup
+            case runCommand, acceptanceEvidence, attemptGroup
         }
 
         init(from decoder: Decoder) throws {
@@ -264,6 +269,10 @@ enum ManagedSession {
             lastErrorText = try values.decode(String.self, forKey: .lastErrorText)
             pendingPrompt = try values.decodeIfPresent(String.self, forKey: .pendingPrompt) ?? ""
             runCommand = try values.decodeIfPresent(String.self, forKey: .runCommand) ?? ""
+            let decodedEvidence = try values.decodeIfPresent(
+                [AcceptanceEvidence].self, forKey: .acceptanceEvidence
+            ) ?? []
+            acceptanceEvidence = Array(decodedEvidence.suffix(ManagedSession.maxAcceptanceEvidence))
             attemptGroup = try values.decodeIfPresent(String.self, forKey: .attemptGroup) ?? ""
         }
 
@@ -292,6 +301,7 @@ enum ManagedSession {
             try values.encode(lastErrorText, forKey: .lastErrorText)
             try values.encode(pendingPrompt, forKey: .pendingPrompt)
             try values.encode(runCommand, forKey: .runCommand)
+            try values.encode(acceptanceEvidence, forKey: .acceptanceEvidence)
             try values.encode(attemptGroup, forKey: .attemptGroup)
         }
 
@@ -325,6 +335,7 @@ enum ManagedSession {
             m.lastErrorText = lastErrorText
             m.pendingPrompt = pendingPrompt
             m.runCommand = runCommand
+            m.acceptanceEvidence = acceptanceEvidence
             m.attemptGroup = attemptGroup
             return m
         }

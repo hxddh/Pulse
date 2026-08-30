@@ -29,4 +29,23 @@ final class ProcessIOTests: XCTestCase {
         XCTAssertNotNil(result)
         XCTAssertTrue(result?.timedOut ?? false)
     }
+
+    func testCurrentDirectoryIsSetWithoutAQuotedCdPrefix() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse process cwd \(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = ProcessIO.run(
+            executable: "/bin/pwd",
+            arguments: [],
+            currentDirectory: directory.path,
+            timeout: 1
+        )
+        XCTAssertEqual(
+            String(decoding: result?.stdout ?? Data(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            directory.path
+        )
+    }
 }

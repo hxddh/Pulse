@@ -14,6 +14,7 @@ final class ManagedSessionRunner {
 
     private let runtime: any ManagedRuntime
     private let runtimeSession: any ManagedRuntimeSession
+    private(set) var isChecking = false
 
     init(model: ManagedSession.Model, runtime: (any ManagedRuntime)? = nil) {
         self.model = model
@@ -93,10 +94,57 @@ final class ManagedSessionRunner {
         update { $0.status = status }
     }
 
-    /// 6.0-γ: the per-session run-check command, remembered (persisted with
-    /// the next status move).
+    /// 6.0-γ: the per-session run-check command, remembered.
     func setRunCommand(_ command: String) {
         update { $0.runCommand = command }
+    }
+
+    /// 12.0-β: run the user's check and retain evidence bound to the exact
+    /// code before and after it. Process work stays off the main actor; only
+    /// the finished durable fact crosses back.
+    func runCheck(command rawCommand: String, completion: (() -> Void)? = nil) {
+        let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isRunning, !isChecking, !command.isEmpty else { return }
+        let root = model.root
+        isChecking = true
+        update { $0.runCommand = command }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let startedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let before = CodeFingerprint.measure(cwd: root)
+            let result = ProcessIO.run(
+                executable: "/bin/sh",
+                arguments: ["-lc", command],
+                currentDirectory: root,
+                timeout: 300,
+                outputLimit: AcceptanceEvidence.outputLimitBytes
+            )
+            let after = CodeFingerprint.measure(cwd: root)
+            let evidence = AcceptanceEvidence.make(
+                command: command,
+                cwd: root,
+                startedAtMs: startedAtMs,
+                finishedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
+                stdout: result?.stdout ?? Data(),
+                stderr: result?.stderr ?? Data(),
+                exitCode: result?.status,
+                preFingerprint: before,
+                postFingerprint: after,
+                timedOut: result?.timedOut ?? false
+            )
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isChecking = false
+                self.update {
+                    $0.acceptanceEvidence.append(evidence)
+                    if $0.acceptanceEvidence.count > ManagedSession.maxAcceptanceEvidence {
+                        $0.acceptanceEvidence.removeFirst(
+                            $0.acceptanceEvidence.count - ManagedSession.maxAcceptanceEvidence
+                        )
+                    }
+                }
+                completion?()
+            }
+        }
     }
 
     /// 6.0-γ: what this turn left on disk — measured with the same

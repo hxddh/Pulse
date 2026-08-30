@@ -714,6 +714,11 @@ enum L10n {
         case .managedRunCheckPlaceholder: return "e.g. swift test"
         case .managedRunCheckExit: return "exit %d"
         case .managedRunCheckTimeout: return "Check timed out"
+        case .managedRunCheckMeasuring: return "Verifying current code…"
+        case .managedRunCheckUnverified: return "Current code could not be verified"
+        case .managedRunCheckStale: return "Evidence stale — code changed"
+        case .managedRunCheckChanged: return "Code changed while the check ran"
+        case .managedRunCheckInterrupted: return "Check interrupted"
         case .managedTurnEffect: return "This turn on disk: +%d −%d"
         case .trayOpenInWorkbench: return "Open in Workbench"
         case .trayExpandRow: return "Expand row"
@@ -1353,6 +1358,11 @@ enum L10n {
         case .managedRunCheckPlaceholder: return "如：swift test"
         case .managedRunCheckExit: return "退出码 %d"
         case .managedRunCheckTimeout: return "检查超时"
+        case .managedRunCheckMeasuring: return "正在核对当前代码…"
+        case .managedRunCheckUnverified: return "无法核对当前代码"
+        case .managedRunCheckStale: return "证据已过期 —— 代码已变化"
+        case .managedRunCheckChanged: return "检查运行期间代码发生变化"
+        case .managedRunCheckInterrupted: return "检查被中断"
         case .managedTurnEffect: return "本回合落盘：+%d −%d"
         case .trayOpenInWorkbench: return "在指挥台打开"
         case .trayExpandRow: return "展开此行"
@@ -1529,7 +1539,9 @@ enum L10n {
         case managedAttempts, managedAttemptsCount, managedAttemptsNeedWorktree
         case managedAttemptOrdinal, managedViewAttempt, managedCurrentAttempt
         case managedRunCheck, managedRunCheckPlaceholder, managedRunCheckExit
-        case managedRunCheckTimeout, managedTurnEffect
+        case managedRunCheckTimeout, managedRunCheckMeasuring, managedRunCheckUnverified
+        case managedRunCheckStale, managedRunCheckChanged, managedRunCheckInterrupted
+        case managedTurnEffect
         case trayOpenInWorkbench, trayExpandRow, trayCollapseRow
         case trayScanIncomplete
     }

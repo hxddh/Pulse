@@ -66,6 +66,12 @@ final class ManagedFleetTests: XCTestCase {
         m.tokensIn = 10
         m.tokensOut = 20
         m.runCommand = "swift test"
+        let fingerprint = CodeFingerprint(sha256: "same")
+        m.acceptanceEvidence = [AcceptanceEvidence.make(
+            command: "swift test", cwd: m.root, startedAtMs: 10, finishedAtMs: 20,
+            stdout: Data("ok".utf8), stderr: Data(), exitCode: 0,
+            preFingerprint: fingerprint, postFingerprint: fingerprint
+        )]
         m.attemptGroup = "g1"
         XCTAssertTrue(ManagedSession.persist(m))
         let loaded = ManagedSession.loadAll()
@@ -97,6 +103,24 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(ManagedSession.loadAll().first?.status, .failed("error_max_turns"))
     }
 
+    func testPersistenceKeepsOnlyTheNewestBoundedEvidence() throws {
+        var m = model("evidence")
+        let fingerprint = CodeFingerprint(sha256: "same")
+        let root = m.root
+        m.acceptanceEvidence = (0..<(ManagedSession.maxAcceptanceEvidence + 5)).map { index in
+            AcceptanceEvidence.make(
+                command: "check \(index)", cwd: root,
+                startedAtMs: Int64(index), finishedAtMs: Int64(index + 1),
+                stdout: Data(), stderr: Data(), exitCode: 0,
+                preFingerprint: fingerprint, postFingerprint: fingerprint
+            )
+        }
+        XCTAssertTrue(ManagedSession.persist(m))
+        let loaded = try XCTUnwrap(ManagedSession.loadAll().first)
+        XCTAssertEqual(loaded.acceptanceEvidence.count, ManagedSession.maxAcceptanceEvidence)
+        XCTAssertEqual(loaded.acceptanceEvidence.first?.command, "check 5")
+    }
+
     func testFilenameDecidesIdentityHereToo() throws {
         ManagedSession.persist(model("honest"))
         // A renamed state file claims an identity its body does not carry.
@@ -118,6 +142,7 @@ final class ManagedFleetTests: XCTestCase {
         object["schemaVersion"] = nil
         object["runtimeID"] = nil
         object["continuationID"] = nil
+        object["acceptanceEvidence"] = nil
         object["claudeSessionID"] = "old-session"
         try JSONSerialization.data(withJSONObject: object).write(to: url)
 
@@ -129,7 +154,7 @@ final class ManagedFleetTests: XCTestCase {
         let migrated = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         )
-        XCTAssertEqual(migrated["schemaVersion"] as? Int, 2)
+        XCTAssertEqual(migrated["schemaVersion"] as? Int, 3)
         XCTAssertEqual(migrated["runtimeID"] as? String, "claude")
         XCTAssertEqual(migrated["continuationID"] as? String, "old-session")
         XCTAssertNil(migrated["claudeSessionID"])
@@ -206,7 +231,7 @@ final class ManagedFleetTests: XCTestCase {
 
     // MARK: - Bounded persistence and removal
 
-    func testPersistenceWritesOnStatusMovesNotOnEveryChange() throws {
+    func testPersistenceWritesOnlyOnDurableMoves() throws {
         let fleet = testFleet()
         fleet.dispatch(model: model("s1"))
         let url = ManagedSession.stateURL(id: "s1")
@@ -216,9 +241,14 @@ final class ManagedFleetTests: XCTestCase {
         // A change that moves nothing does not rewrite the file.
         fleet.runners[0].adoptStatusForTesting(.running)
         XCTAssertEqual(try Data(contentsOf: url), afterStart)
+        // The user's acceptance command is durable even without a status move.
+        fleet.runners[0].setRunCommand("swift test")
+        let afterCommand = try Data(contentsOf: url)
+        XCTAssertNotEqual(afterCommand, afterStart)
+        XCTAssertTrue(String(decoding: afterCommand, as: UTF8.self).contains("swift test"))
         // A real move rewrites it.
         fleet.runners[0].adoptStatusForTesting(.idle)
-        XCTAssertNotEqual(try Data(contentsOf: url), afterStart)
+        XCTAssertNotEqual(try Data(contentsOf: url), afterCommand)
     }
 
     func testRemoveDeletesTheRecordButRefusesARunningSession() {

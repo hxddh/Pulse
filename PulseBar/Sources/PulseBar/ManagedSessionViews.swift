@@ -17,9 +17,10 @@ struct ManagedSessionInspector: View {
     @State private var commitMessage = ""
     @State private var runCheckCommand = ""
     @State private var runCheckBusy = false
-    @State private var runCheckOutput = ""
-    @State private var runCheckResult = ""
-    @State private var runCheckFailed = false
+    @State private var currentFingerprint: CodeFingerprint?
+    @State private var fingerprintMeasured = false
+    @State private var fingerprintRefreshInFlight = false
+    @State private var fingerprintRefreshQueued = false
     @State private var acceptanceBusy = false
     @State private var acceptanceNotice = ""
     @State private var acceptanceNoticeIsError = false
@@ -54,7 +55,11 @@ struct ManagedSessionInspector: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear { runCheckCommand = runner?.model.runCommand ?? "" }
+        .onAppear {
+            runCheckCommand = runner?.model.runCommand ?? ""
+            refreshFingerprint()
+        }
+        .onChange(of: row) { _, _ in refreshFingerprint() }
     }
 
     /// 6.0-γ (scene BK): same task, N independent tries — status and what
@@ -125,24 +130,30 @@ struct ManagedSessionInspector: View {
                 Button {
                     runCheck()
                 } label: {
-                    if runCheckBusy {
+                    if runCheckBusy || runner?.isChecking == true {
                         ProgressView().controlSize(.small)
                     } else {
                         Text(store.tr(.managedRunCheck))
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(runCheckBusy
+                .disabled(runCheckBusy || runner?.isChecking == true
                           || runCheckCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            if !runCheckResult.isEmpty {
-                Text(runCheckResult)
+            if let evidence = runner?.model.acceptanceEvidence.last {
+                Text(evidence.command)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                Text(evidenceLabel(evidence))
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(runCheckFailed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(evidenceFailed(evidence)
+                                     ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
-            if !runCheckOutput.isEmpty {
+            if let evidence = runner?.model.acceptanceEvidence.last,
+               !evidenceOutput(evidence).isEmpty {
                 ScrollView {
-                    Text(runCheckOutput)
+                    Text(evidenceOutput(evidence))
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -162,42 +173,72 @@ struct ManagedSessionInspector: View {
     }
 
     private func runCheck() {
-        guard !runCheckBusy, let runner else { return }
+        guard !runCheckBusy, let runner, !runner.isChecking else { return }
         let command = runCheckCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return }
-        runner.setRunCommand(command)
         runCheckBusy = true
-        runCheckOutput = ""
-        runCheckResult = ""
+        runner.runCheck(command: command) {
+            runCheckBusy = false
+            refreshFingerprint()
+        }
+    }
+
+    private func refreshFingerprint() {
         let root = row.workspaceRoot
+        guard !root.isEmpty else { return }
+        if fingerprintRefreshInFlight {
+            fingerprintRefreshQueued = true
+            return
+        }
+        fingerprintRefreshInFlight = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = ProcessIO.run(
-                executable: "/bin/sh",
-                arguments: ["-lc", "cd \(WorkbenchAnswer.shellQuoted(root)) && " + command],
-                timeout: 300
-            )
+            let fingerprint = CodeFingerprint.measure(cwd: root)
             DispatchQueue.main.async {
-                runCheckBusy = false
-                guard let result else {
-                    runCheckResult = store.tr(.managedRunCheckTimeout)
-                    runCheckFailed = true
-                    return
+                currentFingerprint = fingerprint
+                fingerprintMeasured = true
+                fingerprintRefreshInFlight = false
+                if fingerprintRefreshQueued {
+                    fingerprintRefreshQueued = false
+                    refreshFingerprint()
                 }
-                if result.timedOut {
-                    runCheckResult = store.tr(.managedRunCheckTimeout)
-                    runCheckFailed = true
-                } else {
-                    runCheckResult = String(format: store.tr(.managedRunCheckExit), result.status)
-                    runCheckFailed = result.status != 0
-                }
-                var text = String(decoding: result.stdout.suffix(4_000), as: UTF8.self)
-                let stderr = String(decoding: result.stderr.suffix(1_000), as: UTF8.self)
-                if !stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    text += (text.isEmpty ? "" : "\n") + stderr
-                }
-                runCheckOutput = text.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
+    }
+
+    private func evidenceLabel(_ evidence: AcceptanceEvidence) -> String {
+        if evidence.outcome == .passed {
+            guard fingerprintMeasured else { return store.tr(.managedRunCheckMeasuring) }
+            guard let currentFingerprint else { return store.tr(.managedRunCheckUnverified) }
+            guard currentFingerprint == evidence.postFingerprint else {
+                return store.tr(.managedRunCheckStale)
+            }
+        }
+        switch evidence.outcome {
+        case .passed, .failed:
+            return String(format: store.tr(.managedRunCheckExit), evidence.exitCode ?? -1)
+        case .timedOut:
+            return store.tr(.managedRunCheckTimeout)
+        case .couldNotRun:
+            return store.tr(.managedRunCheckUnverified)
+        case .invalidatedDuringRun:
+            return store.tr(.managedRunCheckChanged)
+        case .interrupted:
+            return store.tr(.managedRunCheckInterrupted)
+        }
+    }
+
+    private func evidenceFailed(_ evidence: AcceptanceEvidence) -> Bool {
+        guard evidence.outcome == .passed else { return true }
+        return !fingerprintMeasured || currentFingerprint != evidence.postFingerprint
+    }
+
+    private func evidenceOutput(_ evidence: AcceptanceEvidence) -> String {
+        var text = String(decoding: evidence.stdout, as: UTF8.self)
+        let stderr = String(decoding: evidence.stderr, as: UTF8.self)
+        if !stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            text += (text.isEmpty ? "" : "\n") + stderr
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 6.0-β (scene BJ): a live permission ask. 7.0-α: the card body is the
