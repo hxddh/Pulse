@@ -2,6 +2,17 @@
 
 All notable changes to Pulse are documented here.
 
+## 11.0.2 — Runtime boundary
+
+- 受管会话新增厂商无关的 runtime session 边界；Claude 的 executable、argv、
+  stream decoder、进程与取消生命周期归回同一个 adapter，Fleet、worktree 与落地路径
+  保持共享，为后续第二 runtime 消除复制管线的结构风险。
+- 持久状态升级为 schema v2：旧 `claudeSessionID` 无损迁移为
+  `runtimeID=claude` 与 opaque continuation id；未知 runtime、未来或非法 schema 拒绝
+  解释并留下诊断，不会被误当成 Claude 会话。
+- runtime runner 只接收标准化事件；fixture 钉住 Claude 既有 transcript、usage、result、
+  resume 行为和旧状态迁移。本版不启用 Codex，也不改变用户可见的受管会话语义。
+
 ## 11.0.1 — Coherence fixes
 
 - 活跃行摘要里的长原话不再二次截成三行;hero 截断后,摘要真正给出完整原话。
