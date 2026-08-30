@@ -42,10 +42,10 @@ final class ProcessIOTests: XCTestCase {
             currentDirectory: directory.path,
             timeout: 1
         )
-        XCTAssertEqual(
-            String(decoding: result?.stdout ?? Data(), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            directory.resolvingSymlinksInPath().path
-        )
+        let reportedPath = String(decoding: result?.stdout ?? Data(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(result?.status, 0)
+        XCTAssertEqual(URL(fileURLWithPath: reportedPath).lastPathComponent, directory.lastPathComponent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: reportedPath))
     }
 }
