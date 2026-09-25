@@ -65,7 +65,7 @@ enum PulseNotify {
         guard Bundle.main.bundleURL.pathExtension == "app" else { return nil }
         return UNUserNotificationCenter.current()
     }
-    private static let delegate = PulseNotifyDelegate()
+    nonisolated(unsafe) private static let delegate = PulseNotifyDelegate()
 
     static let focusActionID = "pulse.focus"
     static let snoozeActionID = "pulse.snooze"
@@ -129,7 +129,7 @@ enum PulseNotify {
         refreshAuthorization()
     }
 
-    private static var authorizationHandler: ((Bool?) -> Void)?
+    nonisolated(unsafe) private static var authorizationHandler: ((Bool?) -> Void)?
 
     /// Ask only after an explicit user action. Startup and background scans
     /// must never create a permission interruption on their own.
@@ -170,7 +170,7 @@ enum PulseNotify {
     /// user clears Waiting has already left the store's own queue and would
     /// still land on screen. Bounded — one entry per interrupted session, and
     /// the oldest drop out well before the list could grow into a leak.
-    private static var issuedWaitingIDs: [String] = []
+    nonisolated(unsafe) private static var issuedWaitingIDs: [String] = []
     private static let maxIssuedWaitingIDs = 128
 
     private static func rememberWaitingID(_ id: String) {
@@ -327,14 +327,19 @@ enum PulseNotify {
 
 enum SettingsPresenter {
     /// Prefer staying `.accessory` — flipping activation policy is the slow part.
+    /// Called from UI actions only, i.e. on the main thread.
     static func prepareToOpen() {
-        NSApp.activate(ignoringOtherApps: true)
+        MainActor.assumeIsolated {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     static func ensureKeyableIfNeeded() {
-        if NSApp.activationPolicy() != .regular {
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
+        MainActor.assumeIsolated {
+            if NSApp.activationPolicy() != .regular {
+                NSApp.setActivationPolicy(.regular)
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 

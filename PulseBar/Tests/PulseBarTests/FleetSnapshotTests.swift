@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 2.7 Fleet — the rest of each remote machine, not just its doorbell.
 ///

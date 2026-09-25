@@ -235,7 +235,7 @@ extension StatusStore {
             // instance's results to the wrong store and left its
             // `scanInFlight` stuck forever — which is also why the scan
             // pipeline could never be exercised from a test.
-            DispatchQueue.main.async { [completedHarvestMs, completedCursor] in
+            DispatchQueue.main.async { [weak self, completedHarvestMs, completedCursor] in
                 guard let self else { return }
                 self.isApplyingScan = true
                 defer { self.isApplyingScan = false }
@@ -378,7 +378,7 @@ extension StatusStore {
         scanQueue.async { [weak self] in
             let events = ActivitySpool.readEvents(nowMs: nowMs)
             guard !events.isEmpty else { return }
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 self?.applyActivityEvents(events, nowMs: nowMs)
             }
         }

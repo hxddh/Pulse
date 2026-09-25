@@ -102,7 +102,7 @@ enum FleetSnapshot {
         var rows: [Row]
     }
 
-    static var directoryOverride: URL?
+    nonisolated(unsafe) static var directoryOverride: URL?
 
     static var directory: URL {
         if let directoryOverride { return directoryOverride }

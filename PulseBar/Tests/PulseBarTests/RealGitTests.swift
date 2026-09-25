@@ -2,6 +2,9 @@ import CryptoKit
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 2.6 shipped against git's documented porcelain contract without ever
 /// running git — every WorkspaceEffect test injected a fake runner, so they

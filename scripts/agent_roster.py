@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CATALOG = ROOT / "PulseBar" / "Sources" / "PulseBar" / "AgentCatalog.swift"
+CATALOG = ROOT / "PulseBar" / "Sources" / "PulseCore" / "AgentCatalog.swift"
 
 
 @dataclass

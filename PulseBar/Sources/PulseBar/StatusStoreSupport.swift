@@ -402,50 +402,6 @@ extension StatusStore {
             ?? snapshot.rows.first(where: { $0.rowKey == rowKey })
     }
 
-    /// Localized Limited-data / gap explanation — never a bare "Process only".
-    func observationQualitySummary(_ row: AgentRow) -> String {
-        if !row.quality.isLimited, row.observationSource == .session {
-            return tr(.sessionEvidence)
-        }
-        guard let gap = row.quality.missing.first else {
-            switch row.observationSource {
-            case .session: return tr(.sessionEvidence)
-            case .cache: return tr(.cacheEvidence)
-            case .process:
-                return "\(tr(.limitedData)) · \(tr(.qualityNextOpenAgent))"
-            case .remote:
-                return tr(.remoteEvidence)
-            }
-        }
-        return "\(observationGapReason(gap)) · \(observationGapNextStep(gap))"
-    }
-
-    func observationGapReason(_ gap: ObservationGap) -> String {
-        switch gap.reason {
-        case "privacy_limited": return tr(.supportCollectorPrivacyLimitedDetail)
-        case "process_only": return tr(.qualityReasonProcessOnly)
-        case "cache_conditional": return tr(.qualityReasonCache)
-        case "cache_thin": return tr(.qualityReasonCacheThin)
-        case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
-        case "waiting_unsupported": return tr(.supportWaitingNoneDetail)
-        case "scan_timeout": return tr(.qualityReasonScanTimeout)
-        case "remote_event_only": return tr(.remoteEvidence)
-        default: return tr(.qualityReasonNotEmitted)
-        }
-    }
-
-    func observationGapNextStep(_ gap: ObservationGap) -> String {
-        switch gap.nextStep {
-        case "enable_app_data": return tr(.supportEnableData)
-        case "wait_for_vendor_cache": return tr(.qualityNextWaitCache)
-        case "use_attention_bridge": return tr(.qualityNextAttentionBridge)
-        case "retry_scan": return tr(.qualityNextRetryScan)
-        case "open_agent_for_session": return tr(.qualityNextOpenAgent)
-        case "wait_for_remote_host": return tr(.remoteNoFocus)
-        default: return tr(.qualityNextOpenAgent)
-        }
-    }
-
     /// Details lists actionable gaps first so truncation cannot hide the fix.
     func prioritizedObservationGaps(_ gaps: [ObservationGap]) -> [ObservationGap] {
         let actionable: Set<String> = ["use_attention_bridge", "enable_app_data"]

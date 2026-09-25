@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`12.2.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v12.2.0) · macOS 14+
+**版本：`12.3.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v12.3.0) · macOS 14+
 
 ---
 
@@ -252,27 +252,27 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v1 契约 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
-| [`docs/plan-0.91.md`](docs/plan-0.91.md) | 0.91 计划 —— 行叙事 |
-| [`docs/plan-0.90.md`](docs/plan-0.90.md) | 0.90 计划 —— 等待可达 |
-| [`docs/plan-0.82.md`](docs/plan-0.82.md) | 0.82 计划 —— 舰队托盘实质 |
-| [`docs/plan-0.81.md`](docs/plan-0.81.md) | 0.81 计划 —— 托盘实质 |
-| [`docs/plan-0.80.md`](docs/plan-0.80.md) | 0.80 计划 —— 托盘可读 |
-| [`docs/plan-0.70.md`](docs/plan-0.70.md) | 0.70 计划 —— 契约诚实 |
-| [`docs/plan-0.65.md`](docs/plan-0.65.md) | 0.65 计划 —— 舰队覆盖 / ZCode |
-| [`docs/plan-0.64.md`](docs/plan-0.64.md) | 0.64 计划 —— 打断闭环 |
-| [`docs/plan-0.63.md`](docs/plan-0.63.md) | 0.63 计划 —— 绿灯可信 |
-| [`docs/plan-0.62.md`](docs/plan-0.62.md) | 0.62 计划 —— 开放 Attention 协议 |
-| [`docs/plan-0.61.md`](docs/plan-0.61.md) | 0.61 计划 —— 原生等待通路 |
-| [`docs/plan-0.60.md`](docs/plan-0.60.md) | 0.60 计划 —— 等待连续 |
-| [`docs/plan-0.59.md`](docs/plan-0.59.md) | 0.59 计划 —— 缓存连续 |
-| [`docs/plan-0.58.md`](docs/plan-0.58.md) | 0.58 计划 —— 舰队连续 |
-| [`docs/plan-0.57.md`](docs/plan-0.57.md) | 0.57 计划 —— 事实连续 |
-| [`docs/plan-0.56.md`](docs/plan-0.56.md) | 0.56 计划 —— 精确落地 |
-| [`docs/plan-0.55.md`](docs/plan-0.55.md) | 0.55 计划 —— 回到现场 |
-| [`docs/plan-0.54.md`](docs/plan-0.54.md) | 0.54 计划 —— 通道与契约连续 |
-| [`docs/plan-0.53.md`](docs/plan-0.53.md) | 0.53 计划 —— 交付连续信任 |
-| [`docs/plan-0.23.md`](docs/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
-| [`docs/plan-0.24.md`](docs/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
-| [`docs/plan-0.25.md`](docs/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
-| [`docs/plan-0.27.md`](docs/plan-0.27.md) | 0.27 计划 —— 读完面板之后你能做什么 |
-| [`docs/review-0.21.md`](docs/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |
+| [`docs/archive/plan-0.91.md`](docs/archive/plan-0.91.md) | 0.91 计划 —— 行叙事 |
+| [`docs/archive/plan-0.90.md`](docs/archive/plan-0.90.md) | 0.90 计划 —— 等待可达 |
+| [`docs/archive/plan-0.82.md`](docs/archive/plan-0.82.md) | 0.82 计划 —— 舰队托盘实质 |
+| [`docs/archive/plan-0.81.md`](docs/archive/plan-0.81.md) | 0.81 计划 —— 托盘实质 |
+| [`docs/archive/plan-0.80.md`](docs/archive/plan-0.80.md) | 0.80 计划 —— 托盘可读 |
+| [`docs/archive/plan-0.70.md`](docs/archive/plan-0.70.md) | 0.70 计划 —— 契约诚实 |
+| [`docs/archive/plan-0.65.md`](docs/archive/plan-0.65.md) | 0.65 计划 —— 舰队覆盖 / ZCode |
+| [`docs/archive/plan-0.64.md`](docs/archive/plan-0.64.md) | 0.64 计划 —— 打断闭环 |
+| [`docs/archive/plan-0.63.md`](docs/archive/plan-0.63.md) | 0.63 计划 —— 绿灯可信 |
+| [`docs/archive/plan-0.62.md`](docs/archive/plan-0.62.md) | 0.62 计划 —— 开放 Attention 协议 |
+| [`docs/archive/plan-0.61.md`](docs/archive/plan-0.61.md) | 0.61 计划 —— 原生等待通路 |
+| [`docs/archive/plan-0.60.md`](docs/archive/plan-0.60.md) | 0.60 计划 —— 等待连续 |
+| [`docs/archive/plan-0.59.md`](docs/archive/plan-0.59.md) | 0.59 计划 —— 缓存连续 |
+| [`docs/archive/plan-0.58.md`](docs/archive/plan-0.58.md) | 0.58 计划 —— 舰队连续 |
+| [`docs/archive/plan-0.57.md`](docs/archive/plan-0.57.md) | 0.57 计划 —— 事实连续 |
+| [`docs/archive/plan-0.56.md`](docs/archive/plan-0.56.md) | 0.56 计划 —— 精确落地 |
+| [`docs/archive/plan-0.55.md`](docs/archive/plan-0.55.md) | 0.55 计划 —— 回到现场 |
+| [`docs/archive/plan-0.54.md`](docs/archive/plan-0.54.md) | 0.54 计划 —— 通道与契约连续 |
+| [`docs/archive/plan-0.53.md`](docs/archive/plan-0.53.md) | 0.53 计划 —— 交付连续信任 |
+| [`docs/archive/plan-0.23.md`](docs/archive/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
+| [`docs/archive/plan-0.24.md`](docs/archive/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
+| [`docs/archive/plan-0.25.md`](docs/archive/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
+| [`docs/archive/plan-0.27.md`](docs/archive/plan-0.27.md) | 0.27 计划 —— 读完面板之后你能做什么 |
+| [`docs/archive/review-0.21.md`](docs/archive/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |

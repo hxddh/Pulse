@@ -40,14 +40,21 @@
 - ε：会话形 runtime 协议（`startOrResume` / `send` / `resolveApproval` / `ManagedTurnEnd`），权限经
   runtime 送达；`AcceptanceRunner` + `EvidenceStanding`，过期判定移出视图（有界复测，未用 FSEvents）。
 
-## 留给 12.x（按 review §4.2 的阶段）
+## 12.3 已完成（收齐）
 
-| 阶段 | 未做部分 | 前提 |
-| --- | --- | --- |
-| γ Adapter 协议 | 厂商解析（Codex / Pi / Cursor…）各自成文件并以协议分派；扫描引擎改 actor | fixture 墙逐家对比 hero 值 |
-| δ Store 拆分 | 除设置外的 `WaitingDelivery` / `RowPresenter`；Narration 离开 store | 性能墙扩展到托盘与 Workbench |
-| β 余下模块 | `PulseHarvest` / `PulseRespond` / `PulseManaged` target | γ、δ 先完成 |
-| 严格并发 | 推广到 App target | 先拆出更多 target |
+原「留给 12.x」的四行全部在 12.3.0 一次完成：
+
+| 阶段 | 完成内容 |
+| --- | --- |
+| γ Adapter 协议 | `TranscriptDialect` 协议 + 注册表；Codex / Pi / Claude / Gemini·Aider 各自成文件；跨扫描状态收进 `ScanMemory`，由 `Guarded` 一把锁持有（未改 actor，理由见 CHANGELOG） |
+| δ Store 拆分 | `RowNarrator`（叙述离开 store，时钟注入）；`WaitingDelivery`（通知决定是值） |
+| β 余下模块 | `PulseHarvest` / `PulseRespond` / `PulseManaged` 三个 target；`AgentCatalog`、`DebugLog` 进入 `PulseCore` |
+| 严格并发 | 所有 App 侧 target 开启完整检查；警告数由 CI ratchet 只降不升 |
+
+另：review-11.0 的 F-4（更新签名 / Team ID 校验）关闭；历史计划归档到 `docs/archive/`。
+
+仍然不在 12.x 范围内的：Outcome（[`plan-outcome.md`](plan-outcome.md)），等真机 Codex 证据与
+review-11.0 §4.3 的产品决定。
 
 ## 边界不动
 

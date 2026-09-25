@@ -7,7 +7,7 @@ import Foundation
 /// strip both legacy `pulse_hook.py` and native `pulse-hook` markers.
 enum HooksInstaller {
     /// Tests redirect installs away from the real user home.
-    static var homeOverride: URL?
+    nonisolated(unsafe) static var homeOverride: URL?
 
     static var homeURL: URL {
         homeOverride ?? FileManager.default.homeDirectoryForCurrentUser
@@ -114,7 +114,7 @@ enum HooksInstaller {
                 return exe
             }
             // `swift run` / XCTest: prefer the process executable.
-            let processPath = CommandLine.arguments.first ?? ""
+            let processPath = ProcessInfo.processInfo.arguments.first ?? ""
             if !processPath.isEmpty, fm.isExecutableFile(atPath: processPath) {
                 return processPath
             }
@@ -235,12 +235,12 @@ enum HooksInstaller {
     /// migrates existing entries to the current values (see
     /// `ensureClaudeEvent` — it rewrites Pulse-owned entries, it does not
     /// skip them).
-    static var claudeHookTimeoutSeconds = 5
+    nonisolated(unsafe) static var claudeHookTimeoutSeconds = 5
     /// PermissionRequest is the one event where the hook may deliberately
     /// wait (a remote Respond hold). The vendor default is 600s; 90 caps the
     /// hold well below that while leaving room for a human answer. Every
     /// other event keeps the tight budget — the receiver exits immediately.
-    static var permissionRequestTimeoutSeconds = 90
+    nonisolated(unsafe) static var permissionRequestTimeoutSeconds = 90
 
     private static func ensureClaudeEvent(
         _ hooks: inout [String: Any],

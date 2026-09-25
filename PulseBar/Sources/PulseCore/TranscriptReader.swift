@@ -30,8 +30,8 @@ public enum TranscriptReader {
 
     /// Codable since 6.0-α: managed sessions persist their conversation
     /// across app restarts, and these entries are the conversation.
-    public struct Entry: Equatable, Codable {
-        public enum Kind: String, Equatable, Codable {
+    public struct Entry: Equatable, Codable, Sendable {
+        public enum Kind: String, Equatable, Codable, Sendable {
             /// The person driving the session.
             case user
             /// The agent's own words.
@@ -60,7 +60,7 @@ public enum TranscriptReader {
         }
     }
 
-    public struct Excerpt: Equatable {
+    public struct Excerpt: Equatable, Sendable {
         public var entries: [Entry] = []
         /// The file was larger than the read window — entries are the tail.
         public var truncatedHead = false

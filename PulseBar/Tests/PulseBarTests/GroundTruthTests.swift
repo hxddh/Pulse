@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 0.98 Ground Truth — the collector can be held to account.
 ///

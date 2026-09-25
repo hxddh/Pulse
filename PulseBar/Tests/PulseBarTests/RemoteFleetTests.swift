@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 1.0 Remote Fleet — agents that are not on this Mac.
 ///

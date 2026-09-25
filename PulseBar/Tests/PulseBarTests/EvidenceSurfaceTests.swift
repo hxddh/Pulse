@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 2.1 Evidence — the display layer for facts 1.1 computed and nobody saw.
 ///

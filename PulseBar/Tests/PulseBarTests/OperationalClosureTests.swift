@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 final class OperationalClosureTests: XCTestCase {
     private func waitingRow(_ key: String = "codex|session-1") -> AgentRow {

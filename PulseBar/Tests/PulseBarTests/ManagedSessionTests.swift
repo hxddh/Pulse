@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 5.0-β — the managed runtime's deterministic core: the state machine the
 /// stream drives, the argv a turn runs, the NDJSON reassembly, and the

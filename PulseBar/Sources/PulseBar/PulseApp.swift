@@ -10,18 +10,22 @@ enum AppServices {
 /// `App.main()` connects to the WindowServer, which a CI runner may not have.
 @main
 enum PulseBarMain {
-    private static var instanceGuard: SingleInstanceGuard?
+    nonisolated(unsafe) private static var instanceGuard: SingleInstanceGuard?
 
     static func main() {
-        if let dmg = CommandLine.arguments.first(where: { $0.hasPrefix("--install-update=") }),
-           let target = CommandLine.arguments.first(where: { $0.hasPrefix("--install-target=") }),
-           let parent = CommandLine.arguments.first(where: { $0.hasPrefix("--install-parent-pid=") }),
+        if let dmg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-update=") }),
+           let target = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-target=") }),
+           let parent = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-parent-pid=") }),
            let pid = pid_t(String(parent.dropFirst("--install-parent-pid=".count))) {
             do {
+                let digest = ProcessInfo.processInfo.arguments
+                    .first(where: { $0.hasPrefix("--install-sha256=") })
+                    .map { String($0.dropFirst("--install-sha256=".count)) } ?? ""
                 try UpdateInstaller.runHelper(
                     dmgURL: URL(fileURLWithPath: String(dmg.dropFirst("--install-update=".count))),
                     targetApp: URL(fileURLWithPath: String(target.dropFirst("--install-target=".count))),
-                    parentPID: pid
+                    parentPID: pid,
+                    expectedSHA256: digest
                 )
                 exit(0)
             } catch {
@@ -29,16 +33,16 @@ enum PulseBarMain {
                 exit(1)
             }
         }
-        if CommandLine.arguments.contains("--selftest") {
+        if ProcessInfo.processInfo.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
-        if CommandLine.arguments.contains("--permission-server") {
+        if ProcessInfo.processInfo.arguments.contains("--permission-server") {
             // 6.0-β: the MCP stdio server behind --permission-prompt-tool.
             // Spawned by the managed runner per turn; no AppKit, exits with
             // the pipe.
-            exit(ManagedPermission.runServer())
+            exit(ManagedPermission.runServer(version: PulseVersion.semver))
         }
-        if CommandLine.arguments.contains("--hook") {
+        if ProcessInfo.processInfo.arguments.contains("--hook") {
             // Native Waiting path for Claude/Codex — no Python. Always exit 0
             // so vendor hooks never block the agent process.
             var stdinText = ""
@@ -49,9 +53,9 @@ enum PulseBarMain {
                let text = String(data: data, encoding: .utf8) {
                 stdinText = text
             }
-            exit(Int32(PulseHookReceiver.run(arguments: CommandLine.arguments, stdin: stdinText)))
+            exit(Int32(PulseHookReceiver.run(arguments: ProcessInfo.processInfo.arguments, stdin: stdinText)))
         }
-        if CommandLine.arguments.contains("--harvest-test") {
+        if ProcessInfo.processInfo.arguments.contains("--harvest-test") {
             let started = Date()
             // Match the menu-bar store: App Data grants live in settings.txt.
             // Ignoring that file made A/B harvest dumps always look process-only.
@@ -73,7 +77,7 @@ enum PulseBarMain {
                     + "agents=\(agentsLabel) "
                     + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
             )
-            if CommandLine.arguments.contains("--harvest-dump") {
+            if ProcessInfo.processInfo.arguments.contains("--harvest-dump") {
                 for health in result.health.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
                     print("  health \(health.id.rawValue)=\(health.state.rawValue) rows=\(health.rowCount) source=\(health.sourcePresent) duration_ms=\(health.durationMs) error=\(health.errorKind)")
                     if let row = result.rows.first(where: { $0.id == health.id }) {
@@ -82,7 +86,7 @@ enum PulseBarMain {
                         print("    sample \(title) · \(row.cwd) · action=\(action) · evidence=\(row.evidence.rawValue)")
                     }
                 }
-                if CommandLine.arguments.contains("--harvest-dump-all") {
+                if ProcessInfo.processInfo.arguments.contains("--harvest-dump-all") {
                     for row in result.rows {
                         print("    row \(row.id.rawValue) sid=\(row.sessionID) task=\(row.task) cwd=\(row.cwd) tool=\(row.tool) model=\(row.model) phase=\(row.phase) outcome=\(row.outcome) tokens=\(row.tokensIn)/\(row.tokensOut) files=\(row.files) errors=\(row.errors) context=\(row.contextPercent) progress=\(row.progressDone)/\(row.progressTotal) records=\(row.records) evidence=\(row.evidence.rawValue)")
                     }
@@ -90,7 +94,7 @@ enum PulseBarMain {
             }
             exit(result.unreliable ? 1 : 0)
         }
-        if CommandLine.arguments.contains("--native-fixture-test") {
+        if ProcessInfo.processInfo.arguments.contains("--native-fixture-test") {
             exit(NativeHarvestSelfTest.run() ? 0 : 1)
         }
         // Donate a sample without donating your work. Prints the *shape* of the
@@ -98,7 +102,7 @@ enum PulseBarMain {
         // parsing bug can be fixed against what the vendor actually writes
         // instead of against a format someone inferred. Opt-in, off by
         // default, and short enough to read before sharing.
-        if CommandLine.arguments.contains("--harvest-shape") {
+        if ProcessInfo.processInfo.arguments.contains("--harvest-shape") {
             let settings = PulseSettings.loadFromDisk()
             print(NativeActivityHarvest.shapeReport(
                 allowAppData: settings.allowAppData,
@@ -109,7 +113,7 @@ enum PulseBarMain {
         // Per-adapter account of the last scan: files, bytes, truncation,
         // facts, which record kind produced the hero, and which layer lost it
         // when there is none.
-        if CommandLine.arguments.contains("--harvest-explain") {
+        if ProcessInfo.processInfo.arguments.contains("--harvest-explain") {
             let settings = PulseSettings.loadFromDisk()
             let result = ActivityHarvest.scan(
                 allowAppData: settings.allowAppData,
@@ -147,7 +151,7 @@ enum PulseBarMain {
 
     /// Retained for the process lifetime — NSApplication does not keep a strong
     /// reference to its delegate.
-    private static var retainedAppDelegate: AppDelegate?
+    nonisolated(unsafe) private static var retainedAppDelegate: AppDelegate?
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -181,39 +185,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PulseNotify.refreshAuthorization()
             self?.dismissPhantomSettingsWindows()
         }
-        if CommandLine.arguments.contains("--appearance=dark") {
+        if ProcessInfo.processInfo.arguments.contains("--appearance=dark") {
             NSApp.appearance = NSAppearance(named: .darkAqua)
-        } else if CommandLine.arguments.contains("--appearance=light") {
+        } else if ProcessInfo.processInfo.arguments.contains("--appearance=light") {
             NSApp.appearance = NSAppearance(named: .aqua)
         }
-        if CommandLine.arguments.contains("--language=zh") {
+        if ProcessInfo.processInfo.arguments.contains("--language=zh") {
             AppServices.store.language = .zh
-        } else if CommandLine.arguments.contains("--language=en") {
+        } else if ProcessInfo.processInfo.arguments.contains("--language=en") {
             AppServices.store.language = .en
         }
         let panel = StatusPanelController(store: AppServices.store)
         statusPanel = panel
         StatusPanelController.shared = panel
         panel.install()
-        if let fixture = CommandLine.arguments.first(where: { $0.hasPrefix("--tray-fixture=") }) {
+        if let fixture = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--tray-fixture=") }) {
             AppServices.store.installPreviewFixture(
                 String(fixture.dropFirst("--tray-fixture=".count))
             )
         } else {
             AppServices.store.start()
         }
-        if CommandLine.arguments.contains("--open-settings") {
+        if ProcessInfo.processInfo.arguments.contains("--open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 AppServices.store.openSettings()
             }
         }
-        if let focus = CommandLine.arguments.first(where: { $0.hasPrefix("--open-settings-agent=") }) {
+        if let focus = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--open-settings-agent=") }) {
             let raw = String(focus.dropFirst("--open-settings-agent=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 AppServices.store.openSettings(focusAppDataFor: AgentID(rawValue: raw))
             }
         }
-        if CommandLine.arguments.contains("--open-support-health") {
+        if ProcessInfo.processInfo.arguments.contains("--open-support-health") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 AppServices.store.openSupportHealth()
             }
@@ -221,29 +225,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // This opt-in QA surface hosts the exact TrayPanel view in a normal
         // window so layout and accessibility regressions are testable without
         // Screen Recording or UI automation permissions.
-        if CommandLine.arguments.contains("--open-tray-preview") {
+        if ProcessInfo.processInfo.arguments.contains("--open-tray-preview") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 TrayPreviewWindowController.shared.show(store: AppServices.store)
             }
         }
-        if CommandLine.arguments.contains("--open-tray-panel") {
+        if ProcessInfo.processInfo.arguments.contains("--open-tray-panel") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 StatusPanelController.shared?.show()
             }
         }
-        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-tray-panel=") }) {
+        if let capture = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--capture-tray-panel=") }) {
             let path = String(capture.dropFirst("--capture-tray-panel=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 StatusPanelController.shared?.capture(to: URL(fileURLWithPath: path))
             }
         }
-        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-status-item=") }) {
+        if let capture = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--capture-status-item=") }) {
             let path = String(capture.dropFirst("--capture-status-item=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 StatusPanelController.shared?.captureStatusItem(to: URL(fileURLWithPath: path))
             }
         }
-        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-support-health=") }) {
+        if let capture = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--capture-support-health=") }) {
             let path = String(capture.dropFirst("--capture-support-health=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 SupportCoverageWindowController.shared.capture(
@@ -252,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         }
-        if let capture = CommandLine.arguments.first(where: { $0.hasPrefix("--capture-settings=") }) {
+        if let capture = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--capture-settings=") }) {
             let path = String(capture.dropFirst("--capture-settings=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
                 SettingsWindowController.shared.capture(
@@ -284,15 +288,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Defense-in-depth: close titled windows that are not Pulse-owned.
     /// After removing the SwiftUI Settings scene this should be a no-op.
     private func dismissPhantomSettingsWindows() {
-        for window in NSApp.windows {
-            if let id = window.identifier?.rawValue, Self.ownedWindowIDs.contains(id) {
-                continue
-            }
-            if window.styleMask.contains(.borderless) { continue }
-            if window.level != .normal { continue }
-            guard window.styleMask.contains(.titled) else { continue }
-            if window.identifier == nil {
-                window.close()
+        // AppKit window callbacks run on the main thread.
+        MainActor.assumeIsolated {
+            for window in NSApp.windows {
+                if let id = window.identifier?.rawValue, Self.ownedWindowIDs.contains(id) {
+                    continue
+                }
+                if window.styleMask.contains(.borderless) { continue }
+                if window.level != .normal { continue }
+                guard window.styleMask.contains(.titled) else { continue }
+                if window.identifier == nil {
+                    window.close()
+                }
             }
         }
     }

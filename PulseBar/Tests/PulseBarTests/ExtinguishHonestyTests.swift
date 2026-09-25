@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 0.95 Extinguish Honesty — false Waiting must not light; clear stays clear
 /// until genuine new evidence.

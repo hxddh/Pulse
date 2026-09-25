@@ -1,6 +1,9 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseManaged
+@testable import PulseRespond
 
 /// 11.0-α (scene BV) — the depth a row earns before any click, pinned as a
 /// table. The chevron stops being the door to information; it remains the

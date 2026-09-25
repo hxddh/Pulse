@@ -4,10 +4,10 @@ import Foundation
 /// Durable facts produced by one user-defined acceptance check. This type is
 /// deliberately independent of the runner and UI so persisted evidence can be
 /// decoded and judged again after either changes.
-public struct AcceptanceEvidence: Codable, Equatable {
+public struct AcceptanceEvidence: Codable, Equatable, Sendable {
     public static let outputLimitBytes = 64 * 1024
 
-    public enum Outcome: String, Codable, Equatable {
+    public enum Outcome: String, Codable, Equatable, Sendable {
         case passed, failed, timedOut, couldNotRun
         case invalidatedDuringRun, interrupted
     }
@@ -95,7 +95,7 @@ public struct RunningCheck: Codable, Equatable {
 /// moment it mattered. Measuring stays read-only: blob ids for changed and
 /// untracked files are computed here, nothing is written to the object store
 /// or the index.
-public struct CodeFingerprint: Codable, Equatable {
+public struct CodeFingerprint: Codable, Equatable, Sendable {
     public var sha256: String
 
     public init(sha256: String) {
@@ -114,7 +114,7 @@ public struct CodeFingerprint: Codable, Equatable {
     }
 
     /// One worktree path as Git would record it.
-    public struct Entry: Equatable {
+    public struct Entry: Equatable, Sendable {
         public var mode: String
         public var object: String
 
