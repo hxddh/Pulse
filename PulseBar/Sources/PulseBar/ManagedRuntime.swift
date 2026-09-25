@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-/// 12.0-α — the vendor boundary for a Pulse-owned session.
+/// Outcome-α — the vendor boundary for a Pulse-owned session.
 ///
 /// A runtime session owns its process topology and wire format. Claude uses
 /// one child per turn; Codex can later keep an App Server child alive for the

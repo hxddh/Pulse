@@ -2,6 +2,41 @@
 
 All notable changes to Pulse are documented here.
 
+## 12.0.0 — Kernel（内核）
+
+[`docs/review-11.0.md`](docs/review-11.0.md) 的判词：2.0 → 11.0 九个大版本都在加动词和表面，
+结构只在 4.0 按成员搬过一次文件；缺陷开始长在子系统之间。12.0 不加新动词，把 Pulse 变成
+**一个有类型边界的内核 + 两个表面**。发布定义是三句由测试或编译器证明的话
+（[`docs/plan-12.0.md`](docs/plan-12.0.md)）：
+
+- **加一个 agent 只动一个 Swift 文件。** `AgentCatalog.swift` 收拢过去散在十处的每 agent 事实
+  （显示名、标记、Waiting / 采集等级、App 数据授权、transcript 策略、Respond 可达性、别名、
+  进程规则、采集根目录）。进程探测、采集器、别名映射、图标、Respond 只读它；
+  `agent_catalog_check.py` 让按 agent 分支的表无法在别处重新长出来，其余 gate 从目录推导名单。
+- **一次扫描不重绘设置。** 设置窗口经 `StoreObservation` 观察 store，扫描落地期间的变更最多每
+  30 秒转发一次 —— 常驻菜单栏 App 不再每两秒重建一整张表单。
+- **看到的请求就是签名的请求。** 「同意」必须携带渲染时那条请求的 id 与摘要（11.0.4 修复，
+  12.0 保持为必填参数）。
+
+### 结构
+
+- **`PulseCore` 库 target**：证据与代码身份、0600 写与不跟随链接的有界读、有界子进程与检查进程组、
+  内容消毒、transcript 解析、会话摘要、Attention 协议、探测节奏。只依赖 Foundation，开启严格并发检查；
+  依赖只能向下，由编译器保证。
+- `SnapshotBuilder` 恢复纯函数：停滞时长读扫描时钟，不读墙钟。
+- **一份 gate 清单** `scripts/gates.sh`，CI、Release、`release.sh`、`package.sh` 共用（此前四份
+  清单已分叉）。CI 同分支只保留最新一次运行，并缓存 `.build`。
+
+### 版本与计划
+
+- 原 plan-12.0（Outcome）改名 [`docs/plan-outcome.md`](docs/plan-outcome.md)，不预留版本号：它仍被
+  真机 Codex P0 证据阻塞，且需要先决定 Pulse 是否接受「编排器」身份。
+- AGENTS.md 写下版本策略（major 只给破坏性变更或改变扩展方式的结构变化；schema 迁移不进补丁；
+  落到 main 的版本都发布）与语言约定。
+- Adapter 协议、store 其余拆分、其余模块 target、受管 runtime 地基留给 12.x，见 plan-12.0。
+
+用户可见行为不变。
+
 ## 11.0.4 — Review fixes（review-11.0 缺陷清零）
 
 [`docs/review-11.0.md`](docs/review-11.0.md) 在 11.0.3 上复核出的缺陷，逐条带失败测试修复。
