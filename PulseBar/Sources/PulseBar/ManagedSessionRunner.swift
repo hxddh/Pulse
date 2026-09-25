@@ -15,6 +15,8 @@ final class ManagedSessionRunner {
     private let runtime: any ManagedRuntime
     private let runtimeSession: any ManagedRuntimeSession
     private(set) var isChecking = false
+    /// The running check's handle, so the user (or quitting) can stop it.
+    private var checkControl: ProcessIO.CheckControl?
 
     init(model: ManagedSession.Model, runtime: (any ManagedRuntime)? = nil) {
         self.model = model
@@ -107,6 +109,8 @@ final class ManagedSessionRunner {
         guard !isRunning, !isChecking, !command.isEmpty else { return }
         let root = model.root
         isChecking = true
+        let control = ProcessIO.CheckControl()
+        checkControl = control
         update {
             $0.runCommand = command
             $0.runningCheck = RunningCheck(
@@ -121,7 +125,8 @@ final class ManagedSessionRunner {
                 command: command,
                 currentDirectory: root,
                 timeout: 300,
-                outputLimit: AcceptanceEvidence.outputLimitBytes
+                outputLimit: AcceptanceEvidence.outputLimitBytes,
+                control: control
             )
             let after = CodeFingerprint.measure(cwd: root)
             let evidence = AcceptanceEvidence.make(
@@ -134,11 +139,15 @@ final class ManagedSessionRunner {
                 exitCode: result?.status,
                 preFingerprint: before,
                 postFingerprint: after,
-                timedOut: result?.timedOut ?? false
+                timedOut: result?.timedOut ?? false,
+                // Stopped by the user: the honest name is "interrupted" —
+                // it did not pass and it did not fail.
+                interrupted: result?.cancelled ?? false
             )
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isChecking = false
+                self.checkControl = nil
                 self.update {
                     $0.runningCheck = nil
                     $0.acceptanceEvidence.append(evidence)
@@ -175,6 +184,14 @@ final class ManagedSessionRunner {
     /// icon is gone.
     func terminateForShutdown() {
         runtimeSession.shutdown()
+        // A check must not outlive the app that was going to record it; the
+        // persisted `runningCheck` reloads as interrupted.
+        checkControl?.cancel()
+    }
+
+    /// Stop the running check and its whole process group.
+    func cancelCheck() {
+        checkControl?.cancel()
     }
 
     private func finishedTurn(exitCode: Int32, stderrTail: Data) {

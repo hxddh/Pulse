@@ -150,6 +150,10 @@ struct ManagedSessionInspector: View {
                 .buttonStyle(.bordered)
                 .disabled(runCheckBusy || runner?.isChecking == true
                           || runCheckCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if runCheckBusy || runner?.isChecking == true {
+                    Button(store.tr(.managedRunCheckStop)) { runner?.cancelCheck() }
+                        .buttonStyle(.bordered)
+                }
             }
             if let evidence = runner?.model.acceptanceEvidence.last {
                 Text(evidence.command)

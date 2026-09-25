@@ -10,6 +10,8 @@ public enum ProcessIO {
         public var stderr: Data
         public var status: Int32
         public var timedOut: Bool
+        /// Stopped by the user through a `CheckControl`, not by the deadline.
+        public var cancelled = false
     }
 
     /// Which end of an over-long output survives. Probes parse from the
@@ -137,11 +139,49 @@ public enum ProcessIO {
     /// 11.0.3 ran checks through `run`, whose SIGKILL reached only the shell:
     /// a test runner's children survived the timeout and could keep changing
     /// the worktree the evidence had just been measured against.
+    /// The way to stop a running check from outside: its whole process
+    /// group, the same as the deadline does. Safe from any thread.
+    public final class CheckControl: @unchecked Sendable {
+        private let lock = NSLock()
+        private var group: pid_t = 0
+        private var stopped = false
+
+        public init() {}
+
+        public var isCancelled: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return stopped
+        }
+
+        public func cancel() {
+            lock.lock()
+            stopped = true
+            let target = group
+            lock.unlock()
+            if target > 0 { kill(-target, SIGKILL) }
+        }
+
+        /// A check that was cancelled before it started is killed the moment
+        /// it has a group to kill.
+        fileprivate func attach(_ pid: pid_t) {
+            lock.lock()
+            group = pid
+            let already = stopped
+            lock.unlock()
+            if already { kill(-pid, SIGKILL) }
+        }
+
+        fileprivate func detach() {
+            lock.lock(); group = 0; lock.unlock()
+        }
+    }
+
     public static func runCheck(
         command: String,
         currentDirectory: String,
         timeout: TimeInterval,
-        outputLimit: Int
+        outputLimit: Int,
+        control: CheckControl? = nil
     ) -> Result? {
         var stdoutPipe: [Int32] = [-1, -1]
         var stderrPipe: [Int32] = [-1, -1]
@@ -184,6 +224,8 @@ public enum ProcessIO {
             return nil
         }
         let child = pid
+        control?.attach(child)
+        defer { control?.detach() }
         let stdoutRead = stdoutPipe[0]
         let stderrRead = stderrPipe[0]
 
@@ -228,7 +270,8 @@ public enum ProcessIO {
             stdout: outBuffer.value,
             stderr: errBuffer.value,
             status: timedOut ? -1 : status.value,
-            timedOut: timedOut
+            timedOut: timedOut,
+            cancelled: control?.isCancelled ?? false
         )
     }
 
