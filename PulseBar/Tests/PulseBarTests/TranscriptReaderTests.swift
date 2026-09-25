@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 4.0-α — the transcript the workbench renders is parsed by shape, bounded
 /// at every edge, and sanitized per entry. These tests pin each rule with

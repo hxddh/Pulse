@@ -237,6 +237,8 @@ extension StatusStore {
             // pipeline could never be exercised from a test.
             DispatchQueue.main.async { [completedHarvestMs, completedCursor] in
                 guard let self else { return }
+                self.isApplyingScan = true
+                defer { self.isApplyingScan = false }
                 self.harvestScanCursor = completedCursor
                 self.workspaceEffects = advancedEffectStore
                 if measureEffects {

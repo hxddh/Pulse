@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// Respond (scene AR) — attachment rules for inbound full requests.
 ///

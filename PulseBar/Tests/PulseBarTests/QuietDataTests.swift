@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 0.99 Quiet Data — what Pulse writes down, and whether it says so.
 ///

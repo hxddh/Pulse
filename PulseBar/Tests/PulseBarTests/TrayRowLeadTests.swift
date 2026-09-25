@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 7.0 (scene BL): the collapsed row's lead, pinned as a pure precedence
 /// table. The one behavior this version changes — fresh words outrank the

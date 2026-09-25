@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// The 0.22 release note claims the energy rework cut Python forks from
 /// ~28,800/day to ~2,880/day. That was arithmetic. These counters are what

@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// A user's acceptance check: output kept from the end, and nothing it
 /// started outlives it.

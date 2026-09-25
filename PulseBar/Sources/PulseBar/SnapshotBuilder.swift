@@ -1007,7 +1007,7 @@ enum SnapshotBuilder {
             let stalledRows = all.filter { $0.section == .stalled }
             let busyRows = liveRows + stalledRows
             let liveNames = busyRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            let oldestStall = stalledRows.map(\.lastActivitySeconds).filter { $0 > 0 }.max() ?? 0
+            let oldestStall = stalledRows.map { $0.lastActivitySeconds(at: context.nowMs) }.filter { $0 > 0 }.max() ?? 0
             let stalledDur = oldestStall > 0
                 ? DurationFormat.label(seconds: oldestStall, lang: lang)
                 : ""

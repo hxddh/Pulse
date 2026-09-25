@@ -1,6 +1,7 @@
 import Darwin
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// Files a sync tool may have planted: only regular files are read, and never
 /// past the bound.

@@ -18,52 +18,11 @@ enum AgentIcon {
         return image
     }
 
-    static func assetName(for id: AgentID) -> String {
-        switch id {
-        case .codex: return "codex"
-        case .continue_: return "continue"
-        default: return id.rawValue
-        }
-    }
+    /// `Resources/AgentIcons/<rawValue>.png|svg`.
+    static func assetName(for id: AgentID) -> String { id.rawValue }
 
-    /// Fallback glyph when PNG/SVG missing — keep unique across the roster.
-    static func monogramLetter(for id: AgentID) -> String {
-        switch id {
-        case .claude: return "Cl"
-        case .codex: return "Cx"
-        case .cursor: return "Cu"
-        case .cursorAgent: return "CA"
-        case .grok: return "Gk"
-        case .pi: return "Pi"
-        case .amp: return "Am"
-        case .aider: return "Ai"
-        case .gemini: return "Ge"
-        case .copilot: return "Cp"
-        case .opencode: return "Oc"
-        case .goose: return "Go"
-        case .openhands: return "OH"
-        case .cline: return "Ci"
-        case .roo: return "Ro"
-        case .continue_: return "Cn"
-        case .amazonQ: return "Q"
-        case .cascade: return "Cs"
-        case .windsurf: return "Ws"
-        case .augment: return "Au"
-        case .zedAgent: return "Zd"
-        case .trae: return "Tr"
-        case .warpAgent: return "Wa"
-        case .devin: return "Dv"
-        case .kiro: return "Kr"
-        case .junie: return "Ju"
-        case .kilo: return "Ko"
-        case .replit: return "Rp"
-        case .droid: return "Dr"
-        case .commandCode: return "CC"
-        case .antigravity: return "Ag"
-        case .kimi: return "Km"
-        case .zcode: return "Zc"
-        }
-    }
+    /// Fallback glyph when PNG/SVG missing — unique across the roster.
+    static func monogramLetter(for id: AgentID) -> String { id.spec.monogram }
 
     private static func loadPNG(_ name: String) -> NSImage? {
         if let url = PulseResources.url(forResource: name, withExtension: "png", subdirectory: "AgentIcons"),

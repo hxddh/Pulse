@@ -101,180 +101,10 @@ enum ProcessProbe {
         var args: String = ""
     }
 
-    private struct Rule {
-        var id: AgentID
-        var basenames: [String]
-        var pathNeedles: [String]
-        var denyNeedles: [String]
-        /// Some real CLIs intentionally use a short executable name (`pi`,
-        /// `roo`, `cmd`). Their exact basename is useful evidence after the
-        /// deny list has run; length alone must not make a live agent vanish.
-        var allowBareBasename: Bool = false
-    }
-
-    private static let rules: [Rule] = [
-        .init(id: .claude, basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude"], denyNeedles: ["Claude.app", "chrome-native-host"]),
-        .init(id: .codex, basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
-        .init(id: .cursor, basenames: ["Cursor", "cursor"], pathNeedles: ["Cursor.app/Contents/MacOS/Cursor"], denyNeedles: ["crashpad", "CursorUIViewService"]),
-        .init(
-            id: .cursorAgent,
-            basenames: ["cursor-agent", "cursor_agent"],
-            pathNeedles: ["cursor-agent", "anysphere.cursor-agent", "cursor-agent-worker"],
-            // Cursor's private-worker daemon is persistent infrastructure. It
-            // remains alive with no composer running, so counting it as an
-            // agent made an idle IDE look like "2 processes" forever.
-            denyNeedles: ["crashpad", "worker start", "--worker-dir"]
-        ),
-        .init(id: .grok, basenames: ["grok"], pathNeedles: ["/.grok/bin/grok", "grok-0.", "GROK_AGENT=", "/bin/grok"], denyNeedles: []),
-        .init(id: .pi, basenames: ["pi"], pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"], denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"], allowBareBasename: true),
-        .init(
-            id: .amp,
-            basenames: ["amp"],
-            // Bare argv `amp` is 3 chars; non-empty pathNeedles would skip basename-only matches.
-            pathNeedles: [],
-            denyNeedles: ["AMPDevice", "AMPLibrary", "AMPDevices", "iTunesCloud", "AMPLibraryAgent"]
-        ),
-        .init(id: .aider, basenames: ["aider"], pathNeedles: ["/bin/aider", "-m aider"], denyNeedles: []),
-        .init(id: .gemini, basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: ["Gemini.app"]),
-        .init(
-            id: .copilot,
-            basenames: ["copilot"],
-            pathNeedles: ["/bin/copilot", "github/gh-copilot", "@github/copilot", "copilot-cli"],
-            denyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
-        ),
-        .init(id: .opencode, basenames: ["opencode", "open-code"], pathNeedles: ["/bin/opencode", "/opencode/", "opencode@", "@opencode"], denyNeedles: []),
-        .init(id: .goose, basenames: ["goose"], pathNeedles: ["/bin/goose", "block/goose", "goose-cli"], denyNeedles: []),
-        .init(id: .openhands, basenames: ["openhands", "opendevin"], pathNeedles: ["openhands", "OpenHands", "OpenDevin"], denyNeedles: []),
-        .init(id: .cline, basenames: ["cline"], pathNeedles: ["saoudrizwan.claude-dev", "/cline/", "cline@", "claude-dev"], denyNeedles: ["crashpad", "decline", "incline"]),
-        .init(id: .roo, basenames: ["roo", "roo-code"], pathNeedles: ["roo-cline", "roo-code", "RooCode"], denyNeedles: ["crashpad"], allowBareBasename: true),
-        .init(id: .continue_, basenames: ["continue", "continue-cli"], pathNeedles: ["continue.dev", "Continue.continue", "continue-cli"], denyNeedles: ["crashpad"]),
-        .init(id: .amazonQ, basenames: ["amazon-q", "q-chat", "qchat"], pathNeedles: ["amazon-q", "Amazon Q", "/opt/homebrew/bin/q"], denyNeedles: ["qemu", "QuickTime"]),
-        .init(
-            id: .cascade,
-            basenames: ["cascade", "windsurf-cascade"],
-            pathNeedles: ["cascade-agent", "windsurf-cascade", "codeium.cascade", "Codeium.Cascade"],
-            denyNeedles: ["crashpad", "Windsurf.app/Contents/MacOS/Windsurf", "Windsurf Helper"]
-        ),
-        .init(
-            id: .windsurf,
-            basenames: ["Windsurf", "windsurf"],
-            pathNeedles: ["Windsurf.app/Contents/MacOS/Windsurf", "Exafunction/windsurf", "codeium.windsurf"],
-            denyNeedles: ["crashpad", "Windsurf Helper", "WindsurfUI", "cascade-agent", "windsurf-cascade"]
-        ),
-        .init(
-            id: .augment,
-            basenames: ["augment", "auggie"],
-            pathNeedles: ["augmentcode", "augment-code", "/bin/augment", "Augment"],
-            denyNeedles: ["crashpad"]
-        ),
-        .init(
-            id: .zedAgent,
-            basenames: ["zed-agent", "zed_agent"],
-            pathNeedles: ["zed-agent", "zed_agent", "Zed Agent", "zed-agentic"],
-            denyNeedles: ["crashpad", "Zed.app/Contents/MacOS/Zed", "Zed.app/Contents/MacOS/zed"]
-        ),
-        .init(
-            id: .trae,
-            basenames: ["trae-agent", "TraeAgent"],
-            pathNeedles: ["trae-agent", "bytedance.trae", "Trae Agent", "trae/agent"],
-            denyNeedles: ["crashpad", "Trae Helper", "Trae.app/Contents/MacOS/Trae"]
-        ),
-        .init(
-            id: .warpAgent,
-            basenames: ["warp-agent", "warp_agent", "warp-ai"],
-            pathNeedles: ["warp-agent", "warp_agent", "WarpAgent", "warp ai agent"],
-            denyNeedles: ["crashpad", "Warp.app/Contents/MacOS/stable", "Warp.app/Contents/MacOS/Warp"]
-        ),
-        .init(
-            id: .devin,
-            basenames: ["devin", "devin-cli"],
-            pathNeedles: ["/bin/devin", "cognition.devin", "devin-cli", "@cognition/devin"],
-            denyNeedles: ["crashpad"]
-        ),
-        .init(
-            id: .kiro,
-            basenames: ["kiro", "kiro-cli", "kiro-agent"],
-            pathNeedles: ["/bin/kiro", "kiro-cli", "kiro-agent", "amazon.kiro", "Kiro.app"],
-            denyNeedles: ["crashpad", "Kiro Helper"]
-        ),
-        .init(
-            id: .junie,
-            basenames: ["junie", "junie-cli"],
-            pathNeedles: ["/bin/junie", "junie-cli", "jetbrains.junie", "Junie"],
-            denyNeedles: ["crashpad"]
-        ),
-        .init(
-            id: .kilo,
-            basenames: ["kilo", "kilo-code"],
-            pathNeedles: ["kilocode", "kilo-code", "kilo.code", "Kilo Code"],
-            denyNeedles: ["crashpad", "kilobyte"]
-        ),
-        .init(
-            id: .replit,
-            basenames: ["replit", "replit-agent"],
-            pathNeedles: ["replit-agent", "replit.com/agent", "@replit/agent", "Replit Agent"],
-            denyNeedles: ["crashpad"]
-        ),
-        .init(
-            id: .droid,
-            basenames: ["droid"],
-            pathNeedles: ["/bin/droid", "factory.ai", "/.factory/", "@factory", "Factory-AI", "factory/droid"],
-            denyNeedles: ["crashpad", "android", "droidcam"]
-        ),
-        .init(
-            id: .commandCode,
-            basenames: ["cmd", "command-code"],
-            pathNeedles: [
-                "command-code",
-                "commandcode",
-                "Command Code",
-                "⌘ Command Code",
-                "/.commandcode/",
-                "@command-code",
-                "node_modules/command-code",
-                "/opt/homebrew/bin/cmd",
-                "/usr/local/bin/cmd",
-            ],
-            denyNeedles: ["crashpad", "cmd.exe", "cmdline-tools"],
-            allowBareBasename: true
-        ),
-        .init(
-            id: .antigravity,
-            basenames: ["Antigravity", "antigravity", "Antigravity IDE", "agy"],
-            pathNeedles: [
-                "Antigravity.app/Contents/MacOS/Antigravity",
-                "Antigravity IDE.app",
-                "/bin/antigravity",
-                "/.local/bin/agy",
-                "/bin/agy",
-                "google.antigravity",
-            ],
-            denyNeedles: ["crashpad", "Antigravity Helper", "AntigravityUI"],
-            allowBareBasename: true
-        ),
-        .init(
-            id: .kimi,
-            basenames: ["kimi"],
-            pathNeedles: ["kimi-code", "/.kimi-code/", "@moonshot-ai/kimi-code", "moonshotai/kimi", "/bin/kimi"],
-            denyNeedles: ["crashpad", "Kimis", "kimisc"]
-        ),
-        .init(
-            id: .zcode,
-            basenames: ["ZCode", "zcode"],
-            pathNeedles: [
-                "ZCode.app/Contents/MacOS/ZCode",
-                "ZCode.app/",
-                "/.zcode/",
-                "zcode.cjs",
-                "Resources/glm/zcode",
-            ],
-            denyNeedles: [
-                "crashpad",
-                "ZCode Helper",
-                "ZCode Account Switcher",
-            ]
-        ),
-    ]
+    /// Process rules in roster order — the first matching rule wins, so
+    /// precedence is `AgentCatalog.all` order.
+    private static let rules: [(id: AgentID, rule: AgentProcessRule)] =
+        AgentCatalog.all.map { ($0.id, $0.process) }
 
     static func scan(
         allowAppData: Bool = false,
@@ -815,26 +645,26 @@ enum ProcessProbe {
     static func matchEvidence(args: String) -> Match? {
         let exe = args.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? args
         let base = (exe as NSString).lastPathComponent
-        for rule in rules {
+        for (id, rule) in rules {
             if rule.denyNeedles.contains(where: { args.contains($0) }) { continue }
             let baseHit = rule.basenames.contains { $0.caseInsensitiveCompare(base) == .orderedSame }
             // Prefer path needles; bare basename only when explicitly trusted,
             // pathNeedles are absent, or the name is naturally distinctive.
             let pathHit = rule.pathNeedles.contains { args.contains($0) }
-            if pathHit { return Match(id: rule.id, evidence: .pathSignature) }
+            if pathHit { return Match(id: id, evidence: .pathSignature) }
             // Electron gives many Cursor helper processes the same `Cursor`
             // comm name as the GUI. They do not contain the app's main
             // executable path, so treating the basename as a hit inflated one
             // app into a misleading "15 processes" row.
-            if rule.id == .cursor, baseHit { continue }
+            if id == .cursor, baseHit { continue }
             if baseHit, !rule.pathNeedles.isEmpty {
                 if base.count <= 3 && !rule.allowBareBasename {
                     continue
                 }
-                return Match(id: rule.id, evidence: .executable)
+                return Match(id: id, evidence: .executable)
             }
             if baseHit, rule.pathNeedles.isEmpty {
-                return Match(id: rule.id, evidence: .executable)
+                return Match(id: id, evidence: .executable)
             }
         }
         return nil

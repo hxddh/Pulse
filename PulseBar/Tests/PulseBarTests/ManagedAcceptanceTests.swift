@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 5.0-γ — acceptance verbs, proven against a real repository with a real
 /// (local, bare) origin. The namespace guard and the compare-URL parser are

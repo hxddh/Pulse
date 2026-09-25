@@ -8,8 +8,21 @@ let package = Package(
         .executable(name: "PulseBar", targets: ["PulseBar"]),
     ],
     targets: [
+        // 12.0 · the kernel. Foundation only — no AppKit, no SwiftUI, no
+        // StatusStore — so the compiler, not a review, keeps the facts Pulse
+        // stands behind (evidence, code identity, bounded and link-safe IO,
+        // process supervision, transcript parsing, probe cadence) free of UI
+        // and app state. Checked under complete concurrency checking.
+        .target(
+            name: "PulseCore",
+            path: "Sources/PulseCore",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+            ]
+        ),
         .executableTarget(
             name: "PulseBar",
+            dependencies: ["PulseCore"],
             path: "Sources/PulseBar",
             resources: [
                 .copy("Resources/pulse_hook.py"),
@@ -25,7 +38,7 @@ let package = Package(
         // the product and had no coverage at all before 0.22.
         .testTarget(
             name: "PulseBarTests",
-            dependencies: ["PulseBar"],
+            dependencies: ["PulseBar", "PulseCore"],
             path: "Tests/PulseBarTests",
             linkerSettings: [
                 .linkedLibrary("sqlite3"),

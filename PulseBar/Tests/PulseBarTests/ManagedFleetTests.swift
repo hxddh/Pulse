@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 6.0-α — the supervisor's contracts: the state round-trip (including the
 /// honest interrupted mapping), filename identity, the queue under its cap,

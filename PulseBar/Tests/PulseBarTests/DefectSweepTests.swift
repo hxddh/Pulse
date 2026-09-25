@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
 ///

@@ -91,149 +91,6 @@ enum PulseVersion {
     }
 }
 
-enum AgentID: String, CaseIterable, Identifiable, Hashable {
-    case claude, codex, cursor, cursorAgent = "cursor_agent"
-    case grok, pi, amp, aider, gemini, copilot
-    case opencode, goose, openhands, cline, roo, continue_ = "continue"
-    case amazonQ = "amazon_q"
-    case cascade, windsurf, augment, zedAgent = "zed_agent"
-    case trae, warpAgent = "warp_agent"
-    case devin, kiro, junie, kilo, replit
-    case droid, commandCode = "command_code", antigravity, kimi
-    case zcode
-
-    var id: String { rawValue }
-
-    /// User-facing identity used when several vendor processes share one
-    /// surface. Cursor's `cursor-agent` worker is observed separately by the
-    /// collectors, but it is deliberately one Cursor row in the tray,
-    /// support matrix, and attention ledger.
-    var surfaceID: AgentID {
-        self == .cursorAgent ? .cursor : self
-    }
-
-    var displayName: String {
-        switch self {
-        case .claude: return "Claude"
-        case .codex: return "Codex"
-        case .cursor: return "Cursor"
-        case .cursorAgent: return "Cursor Agent"
-        case .grok: return "Grok"
-        case .pi: return "Pi"
-        case .amp: return "Amp"
-        case .aider: return "Aider"
-        case .gemini: return "Gemini"
-        case .copilot: return "Copilot"
-        case .opencode: return "OpenCode"
-        case .goose: return "Goose"
-        case .openhands: return "OpenHands"
-        case .cline: return "Cline"
-        case .roo: return "Roo"
-        case .continue_: return "Continue"
-        case .amazonQ: return "Amazon Q"
-        case .cascade: return "Cascade"
-        case .windsurf: return "Windsurf"
-        case .augment: return "Augment"
-        case .zedAgent: return "Zed Agent"
-        case .trae: return "Trae"
-        case .warpAgent: return "Warp Agent"
-        case .devin: return "Devin"
-        case .kiro: return "Kiro"
-        case .junie: return "Junie"
-        case .kilo: return "Kilo"
-        case .replit: return "Replit"
-        case .droid: return "Droid"
-        case .commandCode: return "Command Code"
-        case .antigravity: return "Antigravity"
-        case .kimi: return "Kimi"
-        case .zcode: return "ZCode"
-        }
-    }
-
-    // `isSurface` used to gate Glance/Tray, but every case returned true — the
-    // whole AgentID list is the surface list. The vacuous filter is gone; if a
-    // non-surface id ever lands here, reintroduce the predicate deliberately.
-
-    /// Honest Waiting path exists (hooks and/or harvest `skill=pending`).
-    /// Agents with `.none` may still show Running; tray can nudge once.
-    var waitingSource: WaitingSource {
-        switch self {
-        case .claude, .codex:
-            return .hooks
-        case .cursor, .cursorAgent, .gemini, .opencode, .amp, .aider, .goose,
-             .cline, .roo, .continue_, .copilot, .amazonQ, .cascade, .windsurf,
-             .augment, .zedAgent, .openhands, .grok, .pi, .kilo, .kiro,
-             .droid, .commandCode, .kimi:
-            return .harvestPending
-        // Opaque / cloud-first / IDE-shell: probe (+best-effort harvest) only.
-        case .replit, .antigravity, .trae, .warpAgent, .devin, .junie, .zcode:
-            return .none
-        }
-    }
-
-    /// What the local collector is allowed to promise before runtime data is
-    /// considered. Every agent can still degrade to process detection.
-    ///
-    /// `structuredSession` means the adapter reads a session/thread/composer
-    /// identity and its activity facts. `bestEffortCache` means the vendor
-    /// exposes no stable local session contract and Pulse may only recover a
-    /// workspace or title. The README matrix is checked against this switch so
-    /// "a collector function exists" can no longer be advertised as equivalent
-    /// session observability.
-    var harvestSource: HarvestSource {
-        switch self {
-        case .claude, .codex, .cursor, .grok, .pi, .amp, .aider, .gemini,
-             .copilot, .opencode, .goose, .openhands, .continue_, .droid,
-             .commandCode, .kimi:
-            return .structuredSession
-        case .cursorAgent, .amazonQ, .cline, .roo, .cascade, .windsurf,
-             .augment, .zedAgent, .trae, .warpAgent, .kilo, .devin, .kiro,
-             .junie, .replit, .antigravity, .zcode:
-            return .bestEffortCache
-        }
-    }
-
-    /// Some adapters keep their only useful session/cache evidence inside
-    /// macOS-protected Application Support, App Group, or VS Code stores. The
-    /// default scanner deliberately skips those locations; the support window
-    /// uses this bit to explain that an unavailable row may be privacy-limited,
-    /// not unsupported.
-    var requiresAppDataOptIn: Bool {
-        switch self {
-        case .cursor, .cursorAgent, .amazonQ, .cline, .roo, .cascade, .windsurf,
-             .zedAgent, .trae, .warpAgent, .kilo, .kiro, .junie, .replit,
-             .antigravity, .zcode:
-            return true
-        default:
-            return false
-        }
-    }
-
-    static let priority: [AgentID] = [
-        .claude, .cursorAgent, .codex, .droid, .kimi, .commandCode, .devin,
-        .antigravity, .cascade, .windsurf, .kiro, .junie, .kilo, .augment,
-        .grok, .pi, .amp, .aider, .gemini, .copilot, .opencode, .goose,
-        .openhands, .cline, .roo, .continue_, .amazonQ, .zedAgent, .trae,
-        .warpAgent, .replit, .zcode, .cursor,
-    ]
-
-    /// Surface Agents with no native Waiting path — Attention Protocol only.
-    /// Single source for Settings samples, Support repair, and L10n lists.
-    static var waitingNoneAgents: [AgentID] {
-        priority.filter { $0 != .cursorAgent && $0.waitingSource == .none }
-    }
-}
-
-enum WaitingSource {
-    case hooks
-    case harvestPending
-    case none
-}
-
-enum HarvestSource {
-    case structuredSession
-    case bestEffortCache
-}
 
 /// Evidence carried by this specific row, not a blanket promise for an agent.
 ///
@@ -1159,9 +1016,16 @@ struct AgentRow: Identifiable, Hashable {
     /// (`activityChangedMs`) — progress/tokens can advance without a newer
     /// filesystem stamp.
     var lastActivitySeconds: Double {
+        lastActivitySeconds(at: Int64(Date().timeIntervalSince1970 * 1000))
+    }
+
+    /// The same age measured against a caller's clock. `SnapshotBuilder`
+    /// must use this form with `Context.nowMs`: the property above reads the
+    /// wall clock, and a builder that reads the wall clock is not pure.
+    func lastActivitySeconds(at nowMs: Int64) -> Double {
         let lastMs = max(harvestMs, activityChangedMs)
         guard lastMs > 0 else { return 0 }
-        return max(0, Date().timeIntervalSince1970 - Double(lastMs) / 1000.0)
+        return max(0, Double(nowMs - lastMs) / 1000.0)
     }
 
     /// Running with a live session is the ordinary case, and the ordinary case

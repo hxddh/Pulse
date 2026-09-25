@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 0.95 Extinguish Honesty — false Waiting must not light; clear stays clear
 /// until genuine new evidence.

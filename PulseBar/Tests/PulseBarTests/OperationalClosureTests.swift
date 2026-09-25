@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 final class OperationalClosureTests: XCTestCase {
     private func waitingRow(_ key: String = "codex|session-1") -> AgentRow {

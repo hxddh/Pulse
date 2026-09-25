@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 @MainActor
 final class GoLookClosureTests: XCTestCase {

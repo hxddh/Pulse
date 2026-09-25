@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 4.0-β — the pure half of delivery and dispatch. The AppleScript execution
 /// itself only a real machine can verify (scripts/qa_workbench_actuation.sh);

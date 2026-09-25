@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 8.0-α/β (scenes BN/BO) — the value engine and the inbox mapping.
 ///

@@ -23,61 +23,61 @@ import Foundation
 /// and file bookkeeping. No prompts, no tool arguments, no paths from inside
 /// the transcript. The file identity fields are the transcript's own path and
 /// a hash — the same class of thing the tray already shows.
-struct SessionDigest: Codable, Equatable {
+public struct SessionDigest: Codable, Equatable {
     /// Transcript path. Identity is this plus `fileID` plus `headHash`.
-    var path: String
+    public var path: String
     /// Filesystem identity, so a recycled path is not mistaken for the same file.
-    var fileID: String = ""
+    public var fileID: String = ""
     /// Hash of the first bytes — catches a file rewritten in place at the same
     /// size, which no offset or identity check would notice.
-    var headHash: String = ""
+    public var headHash: String = ""
     /// Bytes already folded in.
-    var offset: Int = 0
+    public var offset: Int = 0
     /// File size when it was last looked at.
-    var size: Int = 0
+    public var size: Int = 0
 
     /// Records seen across the whole file, not a window. 0 means nothing has
     /// been folded yet — never an estimate.
-    var records: Int = 0
+    public var records: Int = 0
     /// Vendor tool names only (`Bash`, `Edit`, …), with how often each ran.
-    var toolCounts: [String: Int] = [:]
+    public var toolCounts: [String: Int] = [:]
     /// The last few tool names in order, oldest first.
-    var recentTools: [String] = []
-    var errors: Int = 0
-    var tokensIn: Int = 0
-    var tokensOut: Int = 0
+    public var recentTools: [String] = []
+    public var errors: Int = 0
+    public var tokensIn: Int = 0
+    public var tokensOut: Int = 0
 
-    var firstFoldedMs: Int64 = 0
-    var lastFoldedMs: Int64 = 0
+    public var firstFoldedMs: Int64 = 0
+    public var lastFoldedMs: Int64 = 0
 
     /// `size` as of the previous fold that actually took new bytes in.
     ///
     /// Two points make a rate. Keeping the older one is what lets the digest
     /// say how fast a transcript is growing without storing a history — one
     /// pair of numbers, overwritten every time real bytes arrive.
-    var previousSize: Int = 0
+    public var previousSize: Int = 0
     /// `lastFoldedMs` as of that same previous fold.
-    var previousFoldedMs: Int64 = 0
+    public var previousFoldedMs: Int64 = 0
 
     /// The most tool names kept in order. A window on the recent past, not a
     /// log: enough to notice a loop, far too little to reconstruct a session.
-    static let maxRecentTools = 12
+    public static let maxRecentTools = 12
     /// Distinct tool names kept per session.
-    static let maxToolNames = 32
+    public static let maxToolNames = 32
     /// Below this gap the two fold stamps are too close together for their
     /// ratio to mean anything: 4 KB arriving 40 ms apart is arithmetically
     /// 6 MB/min, which is a number about the scan cadence, not the session.
-    static let minRateWindowMs: Int64 = 5_000
+    public static let minRateWindowMs: Int64 = 5_000
     /// Ceiling on the reported rate. A clock that jumps backwards or a vendor
     /// dumping a compacted context in one write must not produce a headline
     /// figure; past this the honest statement is "fast", not a bigger number.
-    static let maxBytesPerMinute = 50_000_000
+    public static let maxBytesPerMinute = 50_000_000
 
     /// Everything before `size` has been folded.
-    var caughtUp: Bool { offset >= size }
+    public var caughtUp: Bool { offset >= size }
 
     /// How much of the file has been read, for an honest "still catching up".
-    var progressPercent: Int {
+    public var progressPercent: Int {
         guard size > 0 else { return 100 }
         return min(100, Int((Double(min(offset, size)) / Double(size)) * 100))
     }
@@ -92,7 +92,7 @@ struct SessionDigest: Codable, Equatable {
     ///
     /// Deliberately silent rather than wrong: too short a window, no growth,
     /// or a file that shrank (compaction, which is routine) all report 0.
-    var bytesPerMinute: Int {
+    public var bytesPerMinute: Int {
         guard previousFoldedMs > 0, lastFoldedMs > previousFoldedMs else { return 0 }
         let elapsedMs = lastFoldedMs - previousFoldedMs
         guard elapsedMs >= Self.minRateWindowMs else { return 0 }
@@ -113,7 +113,7 @@ struct SessionDigest: Codable, Equatable {
     /// This is the fact a window can never produce and a person always wants:
     /// an agent that has called the same tool six times in a row is not making
     /// progress, however healthy its lamp looks.
-    var repeatedTool: (name: String, count: Int)? {
+    public var repeatedTool: (name: String, count: Int)? {
         guard let last = recentTools.last else { return nil }
         var run = 0
         for name in recentTools.reversed() {
@@ -143,7 +143,7 @@ extension SessionDigest {
     /// discard every digest on disk and re-read every transcript from byte
     /// zero. Written by hand so that growing the digest is a cheap, ordinary
     /// thing to do.
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         let storedPath = try box.decodeIfPresent(String.self, forKey: .path) ?? ""
         self.init(path: storedPath)
@@ -165,7 +165,7 @@ extension SessionDigest {
 }
 
 /// Whether a file can be read from where Pulse left off.
-enum SessionDigestContinuity: Equatable {
+public enum SessionDigestContinuity: Equatable {
     /// Nothing new since last time.
     case unchanged
     /// The file grew; fold from `offset`.
@@ -176,27 +176,27 @@ enum SessionDigestContinuity: Equatable {
     case rewritten
 }
 
-enum SessionDigestFold {
+public enum SessionDigestFold {
     /// Bytes folded per file per scan while catching up.
     ///
     /// A first encounter with a large backlog must not become a stall. Reading
     /// a bounded slice per pass means a big file takes several scans to become
     /// complete — which is why `caughtUp` exists and why the counts are not
     /// presented as totals until it is true.
-    static let maxCatchUpBytes = 2_000_000
+    public static let maxCatchUpBytes = 2_000_000
 
     /// How far past a slice Pulse will look for the end of one record before
     /// deciding it is not a record at all.
-    static let maxOversizedRecordBytes = 64 * 1024 * 1024
+    public static let maxOversizedRecordBytes = 64 * 1024 * 1024
 
-    static func headHash(_ data: Data) -> String {
+    public static func headHash(_ data: Data) -> String {
         SHA256.hash(data: data.prefix(4096))
             .map { String(format: "%02x", $0) }
             .joined()
     }
 
     /// Can the stored digest be continued against what is on disk now?
-    static func continuity(
+    public static func continuity(
         _ digest: SessionDigest,
         size: Int,
         headHash: String,
@@ -222,7 +222,7 @@ enum SessionDigestFold {
     /// A fragment that never claimed to be JSON is taken at face value —
     /// refusing it would leave plain-text transcripts permanently short of
     /// caught up over a distinction nothing on disk can settle.
-    static func isWholeRecord<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
+    public static func isWholeRecord<C: Collection>(_ bytes: C) -> Bool where C.Element == UInt8 {
         let data = Data(bytes)
         let line = String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -234,7 +234,7 @@ enum SessionDigestFold {
 
     /// Fold transcript lines into the digest. Pure, so the counting rules can
     /// be held to fixtures without touching a filesystem.
-    static func fold(_ digest: inout SessionDigest, lines: [Substring], nowMs: Int64) {
+    public static func fold(_ digest: inout SessionDigest, lines: [Substring], nowMs: Int64) {
         for raw in lines {
             let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty else { continue }
@@ -291,7 +291,7 @@ enum SessionDigestFold {
     }
 
     /// Short, identifier-shaped names only. Anything else could be free text.
-    static func sanitizedToolName(_ raw: String) -> String? {
+    public static func sanitizedToolName(_ raw: String) -> String? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, value.count <= 32 else { return nil }
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-."))
@@ -311,14 +311,14 @@ enum SessionDigestFold {
 }
 
 /// Rendering a digest's tool counts as one short, bounded line.
-enum SessionDigestSummary {
+public enum SessionDigestSummary {
     /// Most-used first: `Edit 12 · Bash 5 · Read 3`.
     ///
     /// Bounded because this reaches the Details window, and a session with
     /// thirty distinct tools would otherwise produce a paragraph.
-    static let maxEntries = 4
+    public static let maxEntries = 4
 
-    static func line(_ counts: [String: Int], limit: Int = maxEntries) -> String {
+    public static func line(_ counts: [String: Int], limit: Int = maxEntries) -> String {
         counts
             .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
             .prefix(limit)
@@ -332,16 +332,16 @@ enum SessionDigestSummary {
 /// Scans advance it on one serial queue (`StatusStore.scanQueue`), but the
 /// support report reads `summary` from the main thread — while a scan may be
 /// writing. "Safe by convention" was not safe, so every access holds `lock`.
-enum HarvestDigests {
+public enum HarvestDigests {
     private static var store = SessionDigestStore.load()
     private static var dirty = false
     private static let lock = NSLock()
 
     /// Test seam: the fixture wall and unit tests must not read or write the
     /// real user's digest file.
-    static var isEnabled = true
+    public static var isEnabled = true
 
-    static func advance(url: URL, size: Int, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> SessionDigest? {
+    public static func advance(url: URL, size: Int, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> SessionDigest? {
         guard isEnabled else { return nil }
         lock.lock()
         defer { lock.unlock() }
@@ -360,7 +360,7 @@ enum HarvestDigests {
     /// — the tests need real behaviour — but they must not leave fixture paths
     /// in the user's own digest file, and a unit test must never write to
     /// `~/Library/Application Support` as a side effect.
-    static func flush(persist: Bool, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+    public static func flush(persist: Bool, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
         lock.lock()
         defer { lock.unlock() }
         guard isEnabled, dirty else { return }
@@ -377,7 +377,7 @@ enum HarvestDigests {
     /// Support-report line. Says how many transcripts are fully read and how
     /// many are still being caught up on — the state that used to be invisible
     /// because it did not exist.
-    static var summary: String {
+    public static var summary: String {
         lock.lock()
         let all = Array(store.entries.values)
         lock.unlock()
@@ -388,7 +388,7 @@ enum HarvestDigests {
     }
 
     /// Tests reset between cases.
-    static func resetForTesting() {
+    public static func resetForTesting() {
         lock.lock()
         defer { lock.unlock() }
         store = SessionDigestStore()
@@ -397,12 +397,12 @@ enum HarvestDigests {
 }
 
 /// Reads the part of a transcript Pulse has not read yet.
-enum SessionDigestEngine {
+public enum SessionDigestEngine {
     /// Fold whatever is new in `url` into `digest`.
     ///
     /// Returns `nil` when there is nothing to do, so a caller can tell "no
     /// change" from "changed but still catching up".
-    static func advance(
+    public static func advance(
         _ existing: SessionDigest?,
         url: URL,
         size: Int,
@@ -529,7 +529,7 @@ enum SessionDigestEngine {
     /// The offset just past the newline that ends the record in progress at
     /// `from`, looking no further than `limit` bytes. Nil when the record is
     /// still being written or is longer than any real one.
-    static func endOfRecord(_ handle: FileHandle, from: Int, size: Int, limit: Int) -> Int? {
+    public static func endOfRecord(_ handle: FileHandle, from: Int, size: Int, limit: Int) -> Int? {
         var position = from
         do { try handle.seek(toOffset: UInt64(position)) } catch { return nil }
         while position < size, position - from < limit {
@@ -544,7 +544,7 @@ enum SessionDigestEngine {
     }
 
     /// `<device>.<inode>` — stable across renames, different after a recreate.
-    static func identity(of url: URL) -> String {
+    public static func identity(of url: URL) -> String {
         guard let values = try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]),
               let identifier = values.fileResourceIdentifier
         else { return "" }
@@ -556,17 +556,17 @@ enum SessionDigestEngine {
 ///
 /// Same discipline as 0.99's attention ledger: bounded, pruned, and documented
 /// so the comment and the file agree. Nothing here outlives its usefulness.
-struct SessionDigestStore: Codable, Equatable {
-    static let retentionDays = 14
-    static let maxEntries = 256
+public struct SessionDigestStore: Codable, Equatable {
+    public static let retentionDays = 14
+    public static let maxEntries = 256
 
-    var entries: [String: SessionDigest] = [:]
+    public var entries: [String: SessionDigest] = [:]
 
     /// Fixtures and tests redirect the store so a self-test never folds into
     /// (or prunes) the real user's digests.
-    static var pathOverride: URL?
+    public static var pathOverride: URL?
 
-    static var fileURL: URL {
+    public static var fileURL: URL {
         if let pathOverride { return pathOverride }
         if let home = ProcessInfo.processInfo.environment["PULSE_HOME"]?
             .trimmingCharacters(in: .whitespacesAndNewlines), !home.isEmpty {
@@ -577,7 +577,7 @@ struct SessionDigestStore: Codable, Equatable {
             .appendingPathComponent("Library/Application Support/Pulse/session-digests.json")
     }
 
-    static func load() -> SessionDigestStore {
+    public static func load() -> SessionDigestStore {
         guard let data = try? Data(contentsOf: fileURL),
               let store = try? JSONDecoder().decode(SessionDigestStore.self, from: data)
         else { return SessionDigestStore() }
@@ -587,23 +587,23 @@ struct SessionDigestStore: Codable, Equatable {
     /// Test seam, kept here because the digest's own privacy test names it.
     /// The implementation moved to `PrivateFile`, which every file carrying
     /// the user's words now shares.
-    static var inspectTemporaryFileForTesting: ((String) -> Void)? {
+    public static var inspectTemporaryFileForTesting: ((String) -> Void)? {
         get { PrivateFile.inspectTemporaryFileForTesting }
         set { PrivateFile.inspectTemporaryFileForTesting = newValue }
     }
 
-    func save() {
+    public func save() {
         guard let data = try? JSONEncoder().encode(self) else { return }
         Self.writePrivately(data, to: Self.fileURL)
     }
 
     /// Write `data` so that it is 0600 from the moment it exists.
     @discardableResult
-    static func writePrivately(_ data: Data, to url: URL) -> Bool {
+    public static func writePrivately(_ data: Data, to url: URL) -> Bool {
         PrivateFile.write(data, to: url)
     }
 
-    mutating func prune(nowMs: Int64) {
+    public mutating func prune(nowMs: Int64) {
         let cutoff = nowMs - Int64(Self.retentionDays) * 24 * 60 * 60 * 1000
         entries = entries.filter { $0.value.lastFoldedMs >= cutoff }
         guard entries.count > Self.maxEntries else { return }

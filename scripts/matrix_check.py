@@ -15,75 +15,22 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODELS = ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"
 README = ROOT / "README.md"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agent_roster  # noqa: E402
 
-# Display name (as written in README) -> AgentID case name in Swift.
-DISPLAY_TO_CASE = {
-    "Claude": "claude",
-    "Codex": "codex",
-    "Cursor": "cursor",
-    "Cursor Agent": "cursorAgent",
-    "Grok": "grok",
-    "Pi": "pi",
-    "Amp": "amp",
-    "Aider": "aider",
-    "Gemini": "gemini",
-    "Copilot": "copilot",
-    "OpenCode": "opencode",
-    "Goose": "goose",
-    "OpenHands": "openhands",
-    "Cline": "cline",
-    "Roo": "roo",
-    "Continue": "continue_",
-    "Amazon Q": "amazonQ",
-    "Cascade": "cascade",
-    "Windsurf": "windsurf",
-    "Augment": "augment",
-    "Zed": "zedAgent",
-    "Zed Agent": "zedAgent",
-    "Trae": "trae",
-    "Warp": "warpAgent",
-    "Warp Agent": "warpAgent",
-    "Devin": "devin",
-    "Kiro": "kiro",
-    "Junie": "junie",
-    "Kilo": "kilo",
-    "Replit": "replit",
-    "Droid": "droid",
-    "Command Code": "commandCode",
-    "Antigravity": "antigravity",
-    "Kimi": "kimi",
-    "ZCode": "zcode",
-}
+ROSTER = agent_roster.agents()
+
+# Display name (as written in README) -> AgentID case name in Swift. The
+# catalog's display names, plus the short forms the README table uses.
+DISPLAY_TO_CASE = {agent.display: agent.case for agent in ROSTER}
+DISPLAY_TO_CASE.update({"Zed": "zedAgent", "Warp": "warpAgent"})
 
 
 def case_sources(property_name: str) -> dict[str, str]:
-    """Parse a switch property into {case name: returned enum case}."""
-    text = MODELS.read_text(encoding="utf-8")
-    m = re.search(rf"var {property_name}: \w+ \{{(.*?)\n    \}}", text, re.S)
-    if not m:
-        print(f"FAIL: could not find {property_name} in Models.swift", file=sys.stderr)
-        raise SystemExit(1)
-
-    body = m.group(1)
-    out: dict[str, str] = {}
-    pending_cases: list[str] = []
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("//"):
-            continue
-        if stripped.startswith("case "):
-            pending_cases.extend(re.findall(r"\.(\w+)", stripped))
-        elif stripped.startswith("return ."):
-            source = stripped[len("return ."):].strip()
-            for case in pending_cases:
-                out[case] = source
-            pending_cases = []
-        elif stripped:
-            # continuation of a multi-line `case` list
-            pending_cases.extend(re.findall(r"\.(\w+)", stripped))
-    return out
+    """{case name: value} for a roster field, read from AgentCatalog.swift."""
+    field = {"waitingSource": "waiting", "harvestSource": "harvest"}[property_name]
+    return {agent.case: getattr(agent, field) for agent in ROSTER}
 
 
 def readme_rows() -> list[tuple[str, str, str, int]]:
@@ -156,14 +103,14 @@ def main() -> int:
             covered.add(case)
             actual = sources.get(case)
             if actual is None:
-                failures.append(f"README:{lineno} {name}: no waitingSource in Models.swift")
+                failures.append(f"README:{lineno} {name}: no waitingSource in AgentCatalog.swift")
             elif actual != want:
                 failures.append(
                     f"README:{lineno} {name}: doc says {want}, code says {actual}"
                 )
             actual_harvest = harvest_sources.get(case)
             if actual_harvest is None:
-                failures.append(f"README:{lineno} {name}: no harvestSource in Models.swift")
+                failures.append(f"README:{lineno} {name}: no harvestSource in AgentCatalog.swift")
             elif actual_harvest != want_harvest:
                 failures.append(
                     f"README:{lineno} {name}: harvest doc says {want_harvest}, "
@@ -191,9 +138,8 @@ def main() -> int:
     if "all 32 surfaces" not in obs:
         print("FAIL: observability-matrix.md must say all 32 surfaces", file=sys.stderr)
         return 1
-    models = MODELS.read_text(encoding="utf-8")
-    if "static var waitingNoneAgents" not in models:
-        print("FAIL: Models.swift missing AgentID.waitingNoneAgents truth source", file=sys.stderr)
+    if "static var waitingNoneAgents" not in agent_roster.text():
+        print("FAIL: AgentCatalog.swift missing AgentID.waitingNoneAgents truth source", file=sys.stderr)
         return 1
 
     print(f"support matrix OK — {len(covered)} agents agree with harvestSource + waitingSource")

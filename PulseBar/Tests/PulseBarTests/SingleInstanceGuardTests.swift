@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 final class SingleInstanceGuardTests: XCTestCase {
     func testTwoCopiesShareOneOwnerAcrossBundlePaths() throws {

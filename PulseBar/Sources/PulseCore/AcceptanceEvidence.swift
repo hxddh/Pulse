@@ -4,27 +4,27 @@ import Foundation
 /// Durable facts produced by one user-defined acceptance check. This type is
 /// deliberately independent of the runner and UI so persisted evidence can be
 /// decoded and judged again after either changes.
-struct AcceptanceEvidence: Codable, Equatable {
-    static let outputLimitBytes = 64 * 1024
+public struct AcceptanceEvidence: Codable, Equatable {
+    public static let outputLimitBytes = 64 * 1024
 
-    enum Outcome: String, Codable, Equatable {
+    public enum Outcome: String, Codable, Equatable {
         case passed, failed, timedOut, couldNotRun
         case invalidatedDuringRun, interrupted
     }
 
-    var command: String
-    var cwd: String
-    var startedAtMs: Int64
-    var finishedAtMs: Int64
-    var stdout: Data
-    var stderr: Data
-    var exitCode: Int32?
-    var preFingerprint: CodeFingerprint?
-    var postFingerprint: CodeFingerprint?
-    var outcome: Outcome
+    public var command: String
+    public var cwd: String
+    public var startedAtMs: Int64
+    public var finishedAtMs: Int64
+    public var stdout: Data
+    public var stderr: Data
+    public var exitCode: Int32?
+    public var preFingerprint: CodeFingerprint?
+    public var postFingerprint: CodeFingerprint?
+    public var outcome: Outcome
 
     /// Pure state table. Callers bound output before constructing this value.
-    static func make(
+    public static func make(
         command: String,
         cwd: String,
         startedAtMs: Int64,
@@ -65,12 +65,18 @@ struct AcceptanceEvidence: Codable, Equatable {
 /// A check that has started and not yet produced evidence. Persisted, so a
 /// check the app did not live to finish comes back as `interrupted` rather
 /// than vanishing — and never as a result nobody saw.
-struct RunningCheck: Codable, Equatable {
-    var command: String
-    var cwd: String
-    var startedAtMs: Int64
+public struct RunningCheck: Codable, Equatable {
+    public var command: String
+    public var cwd: String
+    public var startedAtMs: Int64
 
-    func interruptedEvidence() -> AcceptanceEvidence {
+    public init(command: String, cwd: String, startedAtMs: Int64) {
+        self.command = command
+        self.cwd = cwd
+        self.startedAtMs = startedAtMs
+    }
+
+    public func interruptedEvidence() -> AcceptanceEvidence {
         AcceptanceEvidence.make(
             command: command, cwd: cwd, startedAtMs: startedAtMs, finishedAtMs: startedAtMs,
             stdout: Data(), stderr: Data(), exitCode: nil,
@@ -89,27 +95,36 @@ struct RunningCheck: Codable, Equatable {
 /// moment it mattered. Measuring stays read-only: blob ids for changed and
 /// untracked files are computed here, nothing is written to the object store
 /// or the index.
-struct CodeFingerprint: Codable, Equatable {
-    var sha256: String
+public struct CodeFingerprint: Codable, Equatable {
+    public var sha256: String
 
-    struct Limits: Equatable {
-        var gitOutputBytes = 32 * 1024 * 1024
-        var untrackedFileBytes = 16 * 1024 * 1024
-        var totalUntrackedBytes = 64 * 1024 * 1024
-        var untrackedPaths = 10_000
-        var pathBytes = 16 * 1024
-        var gitTimeout: TimeInterval = 15
+    public init(sha256: String) {
+        self.sha256 = sha256
+    }
 
-        static let `default` = Limits()
+    public struct Limits: Equatable {
+        public var gitOutputBytes = 32 * 1024 * 1024
+        public var untrackedFileBytes = 16 * 1024 * 1024
+        public var totalUntrackedBytes = 64 * 1024 * 1024
+        public var untrackedPaths = 10_000
+        public var pathBytes = 16 * 1024
+        public var gitTimeout: TimeInterval = 15
+
+        public static let `default` = Limits()
     }
 
     /// One worktree path as Git would record it.
-    struct Entry: Equatable {
-        var mode: String
-        var object: String
+    public struct Entry: Equatable {
+        public var mode: String
+        public var object: String
+
+        public init(mode: String, object: String) {
+            self.mode = mode
+            self.object = object
+        }
     }
 
-    static func measure(
+    public static func measure(
         cwd: String,
         gitExecutable: String = "/usr/bin/git",
         limits: Limits = .default
@@ -215,7 +230,7 @@ struct CodeFingerprint: Codable, Equatable {
     }
 
     /// Pure: the identity of a set of worktree entries.
-    static func identity(root: String, entries: [String: Entry]) -> CodeFingerprint {
+    public static func identity(root: String, entries: [String: Entry]) -> CodeFingerprint {
         var hasher = SHA256()
         func feed(_ label: String, _ data: Data) {
             hasher.update(data: Data("\(label):\(data.count):".utf8))
@@ -234,7 +249,7 @@ struct CodeFingerprint: Codable, Equatable {
 
     /// Git's own blob id for `content`, so a file hashed here and the same
     /// file recorded in HEAD compare equal.
-    static func blobID(_ content: Data, sha256: Bool = false) -> String {
+    public static func blobID(_ content: Data, sha256: Bool = false) -> String {
         var header = Data("blob \(content.count)".utf8)
         header.append(0)
         if sha256 {
@@ -250,7 +265,7 @@ struct CodeFingerprint: Codable, Equatable {
     }
 
     /// `ls-tree -r -z`: `<mode> SP <type> SP <object> TAB <path> NUL`.
-    static func parseTree(_ data: Data) -> [String: Entry]? {
+    public static func parseTree(_ data: Data) -> [String: Entry]? {
         var entries: [String: Entry] = [:]
         for record in data.split(separator: 0, omittingEmptySubsequences: true) {
             guard let tab = record.firstIndex(of: 9),
@@ -266,7 +281,7 @@ struct CodeFingerprint: Codable, Equatable {
 
     /// `diff-index --raw -z`: `:<modes and ids> <status> NUL <path> NUL`.
     /// Only the paths matter — their content is measured, not trusted.
-    static func parseChangedPaths(_ data: Data) -> [String]? {
+    public static func parseChangedPaths(_ data: Data) -> [String]? {
         let fields = data.split(separator: 0, omittingEmptySubsequences: true)
         var paths: [String] = []
         var index = 0

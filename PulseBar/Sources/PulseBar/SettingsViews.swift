@@ -5,7 +5,20 @@ import AppKit
 
 @MainActor
 struct SettingsView: View {
-    @ObservedObject var store: StatusStore
+    /// Not the store itself: a scan must not redraw this form. See
+    /// `StoreObservation`.
+    @StateObject private var observation: StoreObservation
+    private var store: StatusStore { observation.store }
+
+    init(store: StatusStore) {
+        _observation = StateObject(wrappedValue: StoreObservation(store: store))
+    }
+
+    /// A binding into the store, like `$store.x`, without observing it.
+    private func bind<Value>(_ keyPath: ReferenceWritableKeyPath<StatusStore, Value>) -> Binding<Value> {
+        let store = self.store
+        return Binding(get: { store[keyPath: keyPath] }, set: { store[keyPath: keyPath] = $0 })
+    }
     @State private var confirmDuplicateRemoval = false
 
     var body: some View {
@@ -61,7 +74,7 @@ struct SettingsView: View {
 
     private var generalSection: some View {
         Section(store.tr(.general)) {
-            Toggle(store.tr(.liveUpdates), isOn: $store.autoProbe)
+            Toggle(store.tr(.liveUpdates), isOn: bind(\.autoProbe))
                 .onChange(of: store.autoProbe) { _, _ in store.saveSettings() }
             Toggle(store.tr(.agentDataAccess), isOn: Binding(
                 get: { store.allowAppData },
@@ -108,15 +121,15 @@ struct SettingsView: View {
             },
                 label: { Text(store.tr(.agentDataAccessScopes)) }
             )
-            Toggle(store.tr(.launchAtLogin), isOn: $store.launchAtLogin)
+            Toggle(store.tr(.launchAtLogin), isOn: bind(\.launchAtLogin))
                 .onChange(of: store.launchAtLogin) { _, _ in store.saveSettings() }
-            Picker(store.tr(.language), selection: $store.language) {
+            Picker(store.tr(.language), selection: bind(\.language)) {
                 ForEach(AppLanguage.allCases) { lang in
                     Text(lang.menuLabel).tag(lang)
                 }
             }
             .onChange(of: store.language) { _, _ in store.saveSettings() }
-            Picker(store.tr(.groupingLabel), selection: $store.trayGrouping) {
+            Picker(store.tr(.groupingLabel), selection: bind(\.trayGrouping)) {
                 ForEach(TrayGrouping.allCases) { mode in
                     Text(store.tr(mode.labelKey)).tag(mode)
                 }
@@ -126,14 +139,14 @@ struct SettingsView: View {
             // long build is not stalled at twenty, a short exchange is stuck
             // well before it. "Never" has to be reachable too — on a machine
             // that runs hour-long jobs the badge is pure noise.
-            Picker(store.tr(.stallAfter), selection: $store.stallMinutes) {
+            Picker(store.tr(.stallAfter), selection: bind(\.stallMinutes)) {
                 Text(store.tr(.stallOff)).tag(0)
                 ForEach([5, 10, 20, 30, 60], id: \.self) { m in
                     Text(String(format: store.tr(.minutesShort), m)).tag(m)
                 }
             }
             .onChange(of: store.stallMinutes) { _, _ in store.saveSettings() }
-            Picker(store.tr(.snooze), selection: $store.snoozeMinutes) {
+            Picker(store.tr(.snooze), selection: bind(\.snoozeMinutes)) {
                 ForEach([5, 10, 30, 60], id: \.self) { m in
                     Text(String(format: store.tr(.minutesShort), m)).tag(m)
                 }
@@ -180,7 +193,7 @@ struct SettingsView: View {
                 preference: \StatusStore.playSoundOnWaiting
             )
 
-            Toggle(store.tr(.quietHours), isOn: $store.quietHoursEnabled)
+            Toggle(store.tr(.quietHours), isOn: bind(\.quietHoursEnabled))
                 .onChange(of: store.quietHoursEnabled) { _, _ in store.saveSettings() }
             if store.quietHoursEnabled {
                 Text(store.tr(.quietHoursHint))
@@ -188,11 +201,11 @@ struct SettingsView: View {
                     .foregroundStyle(.tertiary)
                 MinutePicker(
                     label: store.tr(.quietStart),
-                    minutes: $store.quietStartMinute
+                    minutes: bind(\.quietStartMinute)
                 ) { store.saveSettings() }
                 MinutePicker(
                     label: store.tr(.quietEnd),
-                    minutes: $store.quietEndMinute
+                    minutes: bind(\.quietEndMinute)
                 ) { store.saveSettings() }
             }
 
@@ -359,7 +372,7 @@ struct SettingsView: View {
 
     private var shortcutsSection: some View {
         Section(store.tr(.shortcuts)) {
-            Picker(store.tr(.revealShortcut), selection: $store.hotkey) {
+            Picker(store.tr(.revealShortcut), selection: bind(\.hotkey)) {
                 ForEach(HotkeyChoice.allCases) { choice in
                     Text(choice.label).tag(choice)
                 }
@@ -369,7 +382,7 @@ struct SettingsView: View {
                 store.hotkeyEnabled = choice != .off
                 store.saveSettings()
             }
-            Toggle(store.tr(.globalShortcut), isOn: $store.hotkeyEnabled)
+            Toggle(store.tr(.globalShortcut), isOn: bind(\.hotkeyEnabled))
                 .onChange(of: store.hotkeyEnabled) { _, _ in
                     store.saveSettings()
                 }
@@ -389,7 +402,7 @@ struct SettingsView: View {
             Text(store.tr(.a11yHint))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-            Toggle(store.tr(.allowTerminalAutomation), isOn: $store.allowTerminalAutomation)
+            Toggle(store.tr(.allowTerminalAutomation), isOn: bind(\.allowTerminalAutomation))
                 .onChange(of: store.allowTerminalAutomation) { _, _ in
                     store.saveSettings()
                     store.refresh(reason: "terminalAutomation")
@@ -399,7 +412,7 @@ struct SettingsView: View {
                 .foregroundStyle(.tertiary)
             // 4.0-β: one notch above tab-select — the keystroke grant. The
             // switch existing is the consent; off kills all actuation now.
-            Toggle(store.tr(.allowWorkbenchActuation), isOn: $store.allowWorkbenchActuation)
+            Toggle(store.tr(.allowWorkbenchActuation), isOn: bind(\.allowWorkbenchActuation))
                 .onChange(of: store.allowWorkbenchActuation) { _, _ in
                     store.saveSettings()
                 }
@@ -418,7 +431,7 @@ struct SettingsView: View {
                 .foregroundStyle(.tertiary)
             // On by default: an evidence axis nobody switches on is worth
             // nothing. Off means not one git command runs.
-            Toggle(store.tr(.measureWorkspaceEffect), isOn: $store.measureWorkspaceEffect)
+            Toggle(store.tr(.measureWorkspaceEffect), isOn: bind(\.measureWorkspaceEffect))
                 .onChange(of: store.measureWorkspaceEffect) { _, _ in
                     store.saveSettings()
                     store.refresh(reason: "workspaceEffect")
@@ -567,7 +580,7 @@ struct SettingsView: View {
                 }
             }
 
-            Toggle(store.tr(.checkForUpdates), isOn: $store.updateCheckEnabled)
+            Toggle(store.tr(.checkForUpdates), isOn: bind(\.updateCheckEnabled))
                 .onChange(of: store.updateCheckEnabled) { _, _ in store.saveSettings() }
             HStack {
                 Text(store.updateStatusText)

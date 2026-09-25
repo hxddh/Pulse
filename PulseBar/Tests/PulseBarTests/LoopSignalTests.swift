@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 1.2 Substance — the facts 1.1 could compute but nobody could see.
 ///

@@ -4,14 +4,14 @@ import Foundation
 /// surface. Agent transcripts are untrusted input: a prompt, tool result, or
 /// waiting message may contain a secret even when Pulse only intends to show a
 /// short title.
-enum ContentSanitizer {
-    static let replacement = "••••"
+public enum ContentSanitizer {
+    public static let replacement = "••••"
 
     private struct Rule {
-        let expression: NSRegularExpression
-        let replacement: String
+        public let expression: NSRegularExpression
+        public let replacement: String
 
-        init?(_ pattern: String, replacement: String = ContentSanitizer.replacement) {
+        public init?(_ pattern: String, replacement: String = ContentSanitizer.replacement) {
             guard let expression = try? NSRegularExpression(
                 pattern: pattern,
                 options: [.caseInsensitive]
@@ -45,7 +45,7 @@ enum ContentSanitizer {
         ),
     ].compactMap { $0 }
 
-    static func redact(_ raw: String) -> String {
+    public static func redact(_ raw: String) -> String {
         guard !raw.isEmpty else { return raw }
         var value = raw
         for rule in rules {

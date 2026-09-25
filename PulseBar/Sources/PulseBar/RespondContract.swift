@@ -18,17 +18,6 @@ enum RespondReach: String, Equatable {
     case hookSite
 }
 
-extension AgentID {
-    /// Reach is a statement about the installed hook, not about capability.
-    var respondReach: RespondReach {
-        switch self {
-        case .claude:
-            return .hookSite
-        default:
-            return .none
-        }
-    }
-}
 
 /// A permission request Pulse has been told about.
 ///
