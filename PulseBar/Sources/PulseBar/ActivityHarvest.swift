@@ -397,28 +397,7 @@ enum ActivityHarvest {
     }
 
     static func mapAgent(_ raw: String) -> AgentID? {
-        if let id = AgentID(rawValue: raw) { return id }
-        switch raw {
-        case "cursor_agent": return .cursorAgent
-        case "amazon_q", "amazon-q", "q": return .amazonQ
-        case "continue": return .continue_
-        case "zed_agent", "zed-agent": return .zedAgent
-        case "warp_agent", "warp-agent": return .warpAgent
-        case "auggie": return .augment
-        case "windsurf-cascade": return .cascade
-        case "kilo-code", "kilocode": return .kilo
-        case "kiro-cli", "kiro-agent": return .kiro
-        case "junie-cli": return .junie
-        case "devin-cli": return .devin
-        case "replit-agent": return .replit
-        case "command-code", "commandcode", "cmd": return .commandCode
-        case "factory", "factory-droid": return .droid
-        case "kimi-code", "kimi_code": return .kimi
-        case "antigravity-ide", "antigravity_ide": return .antigravity
-        case "agy": return .antigravity
-        case "z-code", "ZCode", "zcode-agent": return .zcode
-        default: return nil
-        }
+        AgentCatalog.agent(named: raw)
     }
 
     static func sessionKey(id: AgentID, sessionID: String, project: String, cwd: String) -> String {

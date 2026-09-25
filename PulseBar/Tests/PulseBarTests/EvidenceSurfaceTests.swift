@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 2.1 Evidence — the display layer for facts 1.1 computed and nobody saw.
 ///

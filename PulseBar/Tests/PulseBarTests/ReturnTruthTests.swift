@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 0.96 Return Truth — Look after the opening scan, wait generation, Glance
 /// width, Attention compact/rekey, and Details honesty.

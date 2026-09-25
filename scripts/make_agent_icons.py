@@ -208,7 +208,7 @@ def render(shape) -> bytes:
 
 def roster(root: Path) -> list[str]:
     """Asset names for every `AgentID`, which is the raw value in every case."""
-    text = (root / "PulseBar/Sources/PulseBar/Models.swift").read_text(encoding="utf-8")
+    text = (root / "PulseBar/Sources/PulseBar/AgentCatalog.swift").read_text(encoding="utf-8")
     block = re.search(r"enum AgentID[^{]*\{(.*?)\n\n", text, re.S)
     names = []
     for line in block.group(1).splitlines() if block else []:

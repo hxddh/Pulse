@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A push to a PR branch starts this workflow twice (push + pull_request) and
+# every later push used to queue behind the previous one on the scarce macOS
+# runners. One run per branch, newest wins.
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   gates:
     name: Gates (version · coverage · python)
@@ -15,50 +22,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Version consistency
-        run: python3 scripts/version_check.py
-      - name: Harvest coverage
-        run: python3 scripts/coverage_check.py
-      - name: Support matrix matches code
-        run: python3 scripts/matrix_check.py
-      - name: Every agent has a mark
-        run: python3 scripts/make_agent_icons.py --check
-      - name: No appearance frozen into a constant
-        run: python3 scripts/appearance_check.py
-      - name: Python compiles
-        run: python3 -m py_compile src/*.py scripts/*.py
-      - name: Respond hook contract (hold, HMAC, exactly-once)
-        run: python3 scripts/respond_hook_check.py
-
-      # The legacy Python collector was deleted in 0.99. Nothing in the product
-      # may fork an interpreter to observe a session again.
-      - name: No Python in the harvest path
-        run: |
-          if grep -rn "activity_scan" --include='*.swift' PulseBar/Sources; then
-            echo "::error::the harvest path must not reference the deleted Python collector"
-            exit 1
-          fi
-          echo "OK — harvest is native only"
-      # SwiftPM's generated Bundle.module accessor for an executable target
-      # checks only the .app root and the baked build path, then calls
-      # fatalError(). Using it turns a packaging mistake into a launch crash —
-      # which is what shipped in 0.21.0, 0.22.0 and 0.23.0. PulseResources
-      # resolves the same bundle and returns nil instead.
-      - name: No Bundle.module in app code
-        run: |
-          # `^[^/]*` keeps the doc comments in PulseResources.swift from
-          # matching the rule they exist to explain.
-          if grep -rnE --include='*.swift' '^[^/]*[^.a-zA-Z]Bundle\.module' PulseBar/Sources; then
-            echo "::error::use PulseResources instead of Bundle.module — it fatalErrors when the bundle moves"
-            exit 1
-          fi
-          echo "OK — no Bundle.module references"
-      - name: Bundled hook assets are in sync with src/
-        run: |
-          for py in pulse_hook.py install_hooks.py; do
-            diff -u "src/$py" "PulseBar/Sources/PulseBar/Resources/$py" \
-              || { echo "::error::PulseBar/Sources/PulseBar/Resources/$py is stale — re-run package.sh"; exit 1; }
-          done
+      # The one gate list. release.yml, scripts/release.sh and package.sh
+      # call the same script, so the lists can no longer drift apart.
+      - name: Source gates
+        run: bash scripts/gates.sh
 
   build:
     name: Build & test (macOS)
@@ -67,6 +34,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Show toolchain
         run: swift --version
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: PulseBar/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('PulseBar/Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ hashFiles('PulseBar/Package.swift') }}-
       - name: Build
         run: swift build -c debug
         working-directory: PulseBar

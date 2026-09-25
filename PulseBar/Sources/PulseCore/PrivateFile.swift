@@ -17,14 +17,14 @@ import Foundation
 /// names, and set no mode at all; `attention.tsv` keeps the command an agent
 /// asked to run and the directory it asked from, and was created 0644. The
 /// respond spool sitting in the same folder was already 0600.
-enum PrivateFile {
-    static let mode: mode_t = 0o600
+public enum PrivateFile {
+    public static let mode: mode_t = 0o600
 
     /// Test seam: handed the temporary file's path after it is created and
     /// filled, before it is renamed into place — so a test can prove the
     /// bytes were never readable by anyone else, rather than only that they
     /// ended up private.
-    static var inspectTemporaryFileForTesting: ((String) -> Void)?
+    public static var inspectTemporaryFileForTesting: ((String) -> Void)?
 
     /// Write `data` privately, then publish it atomically.
     ///
@@ -32,7 +32,7 @@ enum PrivateFile {
     /// there, which is the same shape `RespondSpool.atomicWrite0600` uses for
     /// verdicts, and for the same reason.
     @discardableResult
-    static func write(_ data: Data, to url: URL) -> Bool {
+    public static func write(_ data: Data, to url: URL) -> Bool {
         let fm = FileManager.default
         let directory = url.deletingLastPathComponent()
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -61,7 +61,7 @@ enum PrivateFile {
     /// A file owned by somebody else is left exactly as it is: Pulse has no
     /// business changing another account's modes, and failing quietly here is
     /// better than refusing to record a wait.
-    static func tighten(fileDescriptor fd: Int32) {
+    public static func tighten(fileDescriptor fd: Int32) {
         var info = stat()
         guard fstat(fd, &info) == 0 else { return }
         guard info.st_uid == getuid() else { return }
@@ -79,10 +79,10 @@ enum PrivateFile {
 /// bound, and a FIFO blocked the scan forever. Every read here opens without
 /// following links and without blocking, confirms a regular file on the
 /// descriptor it already holds, and never reads past the limit.
-enum SafeRead {
+public enum SafeRead {
     /// The whole file, or nil when it is not a regular file, is larger than
     /// `limit`, or cannot be read.
-    static func regularFile(atPath path: String, limit: Int) -> Data? {
+    public static func regularFile(atPath path: String, limit: Int) -> Data? {
         guard let opened = open(path) else { return nil }
         let (handle, size) = opened
         defer { try? handle.close() }
@@ -93,7 +93,7 @@ enum SafeRead {
     /// At most the last `limit` bytes of a regular file, and whether anything
     /// before them was skipped. For append-only logs, whose newest lines are
     /// the ones that matter.
-    static func regularFileTail(atPath path: String, limit: Int) -> (data: Data, truncated: Bool)? {
+    public static func regularFileTail(atPath path: String, limit: Int) -> (data: Data, truncated: Bool)? {
         guard let opened = open(path) else { return nil }
         let (handle, size) = opened
         defer { try? handle.close() }

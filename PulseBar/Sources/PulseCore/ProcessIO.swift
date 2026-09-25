@@ -4,18 +4,18 @@ import Foundation
 /// runs outside the harvest child. Reading stdout and stderr one after the
 /// other can block forever when either pipe fills; keep both drains live and
 /// put a deadline around the child itself.
-enum ProcessIO {
-    struct Result {
-        var stdout: Data
-        var stderr: Data
-        var status: Int32
-        var timedOut: Bool
+public enum ProcessIO {
+    public struct Result {
+        public var stdout: Data
+        public var stderr: Data
+        public var status: Int32
+        public var timedOut: Bool
     }
 
     /// Which end of an over-long output survives. Probes parse from the
     /// start; a check's verdict — the failing test, the summary — is at the
     /// end, which is what 11.0.3's head-only buffer threw away.
-    enum Keep { case head, tail }
+    public enum Keep { case head, tail }
 
     private final class Buffer: @unchecked Sendable {
         private let lock = NSLock()
@@ -23,12 +23,12 @@ enum ProcessIO {
         private let limit: Int
         private let keep: Keep
 
-        init(limit: Int, keep: Keep = .head) {
+        public init(limit: Int, keep: Keep = .head) {
             self.limit = limit
             self.keep = keep
         }
 
-        func append(_ chunk: Data) {
+        public func append(_ chunk: Data) {
             guard !chunk.isEmpty else { return }
             lock.lock()
             defer { lock.unlock() }
@@ -43,14 +43,14 @@ enum ProcessIO {
             }
         }
 
-        var value: Data {
+        public var value: Data {
             lock.lock()
             defer { lock.unlock() }
             return data
         }
     }
 
-    static func run(
+    public static func run(
         executable: String,
         arguments: [String],
         environment: [String: String]? = nil,
@@ -137,7 +137,7 @@ enum ProcessIO {
     /// 11.0.3 ran checks through `run`, whose SIGKILL reached only the shell:
     /// a test runner's children survived the timeout and could keep changing
     /// the worktree the evidence had just been measured against.
-    static func runCheck(
+    public static func runCheck(
         command: String,
         currentDirectory: String,
         timeout: TimeInterval,
@@ -235,13 +235,13 @@ enum ProcessIO {
     /// `WIFEXITED` / `WEXITSTATUS` / `WTERMSIG`, which Swift cannot import
     /// as macros. A signal death reads as `128 + signal`, the shell's own
     /// convention, so it is never mistaken for a clean exit.
-    static func decodeWaitStatus(_ raw: Int32) -> Int32 {
+    public static func decodeWaitStatus(_ raw: Int32) -> Int32 {
         let signal = raw & 0x7f
         if signal == 0 { return (raw >> 8) & 0xff }
         return 128 + signal
     }
 
     private final class CheckStatus: @unchecked Sendable {
-        var value: Int32 = -1
+        public var value: Int32 = -1
     }
 }

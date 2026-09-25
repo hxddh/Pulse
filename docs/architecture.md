@@ -16,8 +16,28 @@
       StatusStore          定时器、通知策略、设置、I/O
            │
            ▼
-   StatusItem（StatusPanelController）/ TrayPanel / SettingsView
+   StatusItem（StatusPanelController）/ TrayPanelViews / SettingsViews
 ```
+
+## 模块（12.0 起）
+
+```
+PulseBar/Sources/
+  PulseCore/   库。只 import Foundation（+ CryptoKit / CoreGraphics），严格并发检查。
+               AcceptanceEvidence（证据、代码身份）· PrivateFile / SafeRead（0600 写、
+               不跟随链接的有界读）· ProcessIO（有界子进程、检查进程组）· ContentSanitizer
+               · TranscriptReader · SessionDigest · AttentionProtocol · ProbeSchedule · ProbeStats
+  PulseBar/    可执行。其余一切：采集、builder、StatusStore、视图、受管会话、Respond。
+               PulseCoreExports.swift 以 @_exported 引入 PulseCore。
+```
+
+依赖只能向下：`PulseCore` 引用不到 `StatusStore`、AppKit 或任何视图，这由编译器保证，
+不靠 review。每个 Agent 的全部非解析事实（进程规则、采集根目录、别名、Waiting / 采集等级、
+单字母标记、Respond 可达性）只在 `AgentCatalog.swift` 的一条 `AgentSpec` 里；
+`scripts/agent_catalog_check.py` 防止按 Agent 分支的表在别处重新长出来。
+
+设置窗口经 `StoreObservation` 观察 store：扫描落地期间（`isApplyingScan`）的变更最多每
+30 秒转发一次，扫描不再逐次重绘设置表单。
 
 ## 三个来源
 

@@ -8,9 +8,9 @@ import Foundation
 /// permanently-resident menu bar tool. The cadence therefore follows what is
 /// actually happening: loud when something needs you, near-silent when nothing
 /// is running, and fully parked when the screen is off.
-enum ProbeSchedule {
+public enum ProbeSchedule {
     /// What the last scan found — drives the base interval.
-    enum Activity: Equatable {
+    public enum Activity: Equatable {
         /// At least one agent needs the user.
         case waiting
         /// Something is live, nothing is waiting.
@@ -22,13 +22,19 @@ enum ProbeSchedule {
     }
 
     /// Machine context that can only ever slow us down, never speed us up.
-    struct Power: Equatable {
-        var displayAsleep = false
-        var screenLocked = false
-        var lowPowerMode = false
+    public struct Power: Equatable {
+        public var displayAsleep = false
+        public var screenLocked = false
+        public var lowPowerMode = false
+
+        public init(displayAsleep: Bool = false, screenLocked: Bool = false, lowPowerMode: Bool = false) {
+            self.displayAsleep = displayAsleep
+            self.screenLocked = screenLocked
+            self.lowPowerMode = lowPowerMode
+        }
 
         /// No point probing what nobody can see.
-        var parked: Bool { displayAsleep || screenLocked }
+        public var parked: Bool { displayAsleep || screenLocked }
 
         /// The machine as it actually is right now.
         ///
@@ -44,7 +50,7 @@ enum ProbeSchedule {
         /// Both queries fail closed to the old assumption: a headless runner,
         /// a session dictionary without the key, or an unavailable display all
         /// mean "carry on as before" rather than a park nobody asked for.
-        static var current: Power {
+        public static var current: Power {
             Power(
                 displayAsleep: displaysAreAsleep,
                 screenLocked: screenIsLocked,
@@ -65,7 +71,7 @@ enum ProbeSchedule {
 
     /// Seconds between probes. `nil` means "stop the timer entirely" — the
     /// attention-file watcher still wakes us if an agent starts waiting.
-    static func interval(
+    public static func interval(
         activity: Activity,
         power: Power,
         trayOpen: Bool
@@ -89,7 +95,7 @@ enum ProbeSchedule {
     /// Harvest (a bounded walk of dozens of directories) is far more expensive
     /// than probe (`ps`), so it does not have to run every tick.
     /// Returns how many probe ticks may pass between harvests.
-    static func harvestEveryNTicks(activity: Activity, trayOpen: Bool) -> Int {
+    public static func harvestEveryNTicks(activity: Activity, trayOpen: Bool) -> Int {
         if trayOpen { return 1 }
         switch activity {
         case .waiting: return 1

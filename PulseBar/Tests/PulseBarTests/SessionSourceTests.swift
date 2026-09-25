@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 5.0-α — the merge contract at the engine boundary. The observed pipeline
 /// keeps its behavior by construction (single source = verbatim passthrough,

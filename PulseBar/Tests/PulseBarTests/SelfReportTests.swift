@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 2.8 Progress — the agent's own plan, words, and errors.
 ///

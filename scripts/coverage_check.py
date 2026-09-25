@@ -18,105 +18,30 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NATIVE = ROOT / "PulseBar" / "Sources" / "PulseBar" / "NativeActivityHarvest.swift"
-MODELS = ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agent_roster  # noqa: E402
 
-# AgentID raw values that must have a descriptor in NativeActivityHarvest.
-# cursor_agent is a transport alias of cursor and has no descriptor of its own.
-EXPECTED = {
-    "claude",
-    "codex",
-    "cursor",
-    "grok",
-    "pi",
-    "amp",
-    "aider",
-    "gemini",
-    "copilot",
-    "opencode",
-    "goose",
-    "openhands",
-    "cline",
-    "roo",
-    "continue",
-    "amazon_q",
-    "cascade",
-    "windsurf",  # optional path when no cascade
-    "augment",
-    "zed_agent",
-    "trae",
-    "warp_agent",
-    "kilo",
-    "devin",
-    "kiro",
-    "junie",
-    "replit",
-    "droid",
-    "command_code",
-    "kimi",
-    "antigravity",
-    "zcode",
-}
+ROSTER = agent_roster.agents()
+CATALOG_TEXT = agent_roster.text()
 
-
-def swift_agent_ids() -> set[str]:
-    """Raw values of `AgentID` — the surface list the gate must keep up with."""
-    text = MODELS.read_text(encoding="utf-8")
-    block = re.search(r"enum AgentID[^{]*\{(.*?)\n\n", text, re.S)
-    if not block:
-        return set()
-    ids: set[str] = set()
-    for line in block.group(1).splitlines():
-        line = line.strip()
-        if not line.startswith("case "):
-            continue
-        for part in line[len("case "):].split(","):
-            part = part.strip()
-            if not part:
-                continue
-            m = re.match(r'\w+\s*=\s*"([a-z0-9_]+)"', part)
-            ids.add(m.group(1) if m else part.rstrip("_"))
-    return ids
-
-
-def swift_case_to_raw(name: str) -> str:
-    """`.commandCode` → `command_code`, matching the AgentID raw values."""
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower().rstrip("_")
+# Every AgentID must have native harvest roots. cursor_agent is a transport
+# alias of cursor and deliberately has none of its own. The set is derived
+# from the catalog — a hand-kept copy here was one more place an added agent
+# had to be remembered.
+EXPECTED = {agent.raw for agent in ROSTER} - {"cursor_agent"}
 
 
 def harvest_tiers() -> dict[str, str]:
-    """`AgentID.harvestSource` → {raw id: structuredSession|bestEffortCache}."""
-    text = MODELS.read_text(encoding="utf-8")
-    block = re.search(
-        r"var harvestSource: HarvestSource \{(.*?)\n    \}", text, re.S
-    )
-    if not block:
-        return {}
-    tiers: dict[str, str] = {}
-    pending: list[str] = []
-    for line in block.group(1).splitlines():
-        line = line.strip()
-        if line.startswith("//"):
-            continue
-        if line.startswith("return ."):
-            tier = re.search(r"return \.(\w+)", line).group(1)
-            for case in pending:
-                tiers[swift_case_to_raw(case)] = tier
-            pending = []
-        elif line.startswith("case ") or line.startswith("."):
-            # A case list wraps across lines; continuation lines start with the
-            # next `.member` rather than repeating `case`.
-            pending += re.findall(r"\.(\w+)", line)
-    return tiers
+    """`AgentSpec.harvest` → {raw id: structuredSession|bestEffortCache}."""
+    return {agent.raw: agent.harvest for agent in ROSTER}
 
 
 def main() -> int:
-    native = NATIVE.read_text(encoding="utf-8")
-    block = re.search(r"private static func descriptors\(.*?\n    \}", native, re.S)
-    if not block:
-        print("MISSING NativeActivityHarvest.descriptors()")
+    native = (ROOT / "PulseBar/Sources/PulseBar/NativeActivityHarvest.swift").read_text(encoding="utf-8")
+    if "AgentCatalog.all" not in native or "harvestRoots" not in native:
+        print("NativeActivityHarvest.descriptors() must be built from AgentCatalog")
         return 1
-    wired = {swift_case_to_raw(m) for m in re.findall(r"d\(\s*\.(\w+)\s*,", block.group(0))}
+    wired = {agent.raw for agent in ROSTER if agent.has_collector}
     missing = sorted(EXPECTED - wired)
     print(f"native descriptors: {len(wired & EXPECTED)}/{len(EXPECTED)}")
     if missing:
@@ -139,18 +64,10 @@ def main() -> int:
     cache_count = sum(tiers[name] == "bestEffortCache" for name in EXPECTED)
     print(f"collector evidence: {session_count} session · {cache_count} cache")
 
-    # A new AgentID must be added to EXPECTED too, or the gate silently shrinks.
-    # cursor_agent merges into cursor at scan time, so it never emits its own id.
-    known = swift_agent_ids() - {"cursor_agent"}
-    ungated = sorted(known - EXPECTED)
-    if ungated:
-        print("AgentID missing from this gate's EXPECTED set:", ", ".join(ungated))
-        return 1
-
+    known = {agent.raw for agent in ROSTER} - {"cursor_agent"}
     probe = (ROOT / "PulseBar/Sources/PulseBar/ProcessProbe.swift").read_text(encoding="utf-8")
-    probe_ids = set(re.findall(r"id:\s*\.(\w+)", probe))
-    print(f"probe rules: {len(probe_ids)} · AgentID cases: {len(known) + 1}")
-    if '"worker start"' not in probe or '"--worker-dir"' not in probe:
+    print(f"probe rules: {CATALOG_TEXT.count('process: AgentProcessRule(')} · AgentID cases: {len(known) + 1}")
+    if '"worker start"' not in CATALOG_TEXT or '"--worker-dir"' not in CATALOG_TEXT:
         print(
             "Cursor private-worker daemon must be denied; it is infrastructure, not an active session"
         )
@@ -175,23 +92,9 @@ def main() -> int:
     # having to undo.
     respond = (ROOT / "PulseBar/Sources/PulseBar/RespondContract.swift").read_text(encoding="utf-8")
     installer = (ROOT / "PulseBar/Sources/PulseBar/HooksInstaller.swift").read_text(encoding="utf-8")
-    reach_block = re.search(r"var respondReach: RespondReach \{(.*?)\n    \}", respond, re.S)
-    if not reach_block:
-        print("MISSING AgentID.respondReach")
-        return 1
-    reaching: list[str] = []
-    pending_cases: list[str] = []
-    for line in reach_block.group(1).splitlines():
-        line = line.strip()
-        if line.startswith("case ") or line.startswith("."):
-            pending_cases += re.findall(r"\.(\w+)", line)
-        elif line.startswith("return .hookSite"):
-            reaching += pending_cases
-            pending_cases = []
-        elif line.startswith("return "):
-            pending_cases = []
+    reaching = [agent.raw for agent in ROSTER if agent.respond_reach == "hookSite"]
     for name in reaching:
-        raw = swift_case_to_raw(name)
+        raw = name
         if '"PermissionRequest"' not in installer or f'agent: "{raw}", kind: "permission"' not in installer:
             print(
                 f"{raw} claims respondReach .hookSite but no PermissionRequest hook installs it"

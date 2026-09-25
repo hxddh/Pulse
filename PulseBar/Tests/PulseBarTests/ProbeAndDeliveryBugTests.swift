@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// Regressions for two defects found by reading 0.99.0.
 ///

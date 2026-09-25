@@ -72,7 +72,7 @@ enum ManagedSession {
         var pendingPrompt = ""
         /// 6.0-γ · the run-check command this session uses (persisted).
         var runCommand = ""
-        /// 12.0-β · durable facts from user-triggered acceptance checks.
+        /// Outcome-β · durable facts from user-triggered acceptance checks.
         var acceptanceEvidence: [AcceptanceEvidence] = []
         /// 11.0.4 · a check in flight, persisted so a restart can say it was
         /// interrupted instead of forgetting it ran.

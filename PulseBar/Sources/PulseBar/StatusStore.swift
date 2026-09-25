@@ -236,6 +236,9 @@ final class StatusStore: ObservableObject {
     /// the first adapter it could not reach; the next one begins there.
     // Internal since the 4.0-γ split: the engine extension is the only
     // reader and writer (StatusStoreEngine.swift).
+    /// True while a finished scan is being landed on the main actor. Views
+    /// that should not redraw per scan read it through `StoreObservation`.
+    var isApplyingScan = false
     var harvestScanCursor = 0
     /// Deterministic event ages for visual fixtures only.
     var previewWaitingEventTimes: [AgentID: Int64]?

@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 final class AttentionLedgerTests: XCTestCase {
     private func row(_ key: String, agent: AgentID = .codex) -> AgentRow {

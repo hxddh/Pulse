@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// 0.97 Hero Honesty — tray hero is the user goal; Details/header do not invent.
 @MainActor

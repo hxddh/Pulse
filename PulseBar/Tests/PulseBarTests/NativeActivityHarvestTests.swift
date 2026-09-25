@@ -1,6 +1,7 @@
 import XCTest
 import SQLite3
 @testable import PulseBar
+@testable import PulseCore
 
 final class NativeActivityHarvestTests: XCTestCase {
     func testNativeCollectorProducesUsefulFactsAndCompleteHealthWithoutPython() throws {

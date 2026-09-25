@@ -659,103 +659,11 @@ enum NativeActivityHarvest {
             Descriptor(id: id, roots: paths.map(h), commands: commands)
         }
         // `cursorAgent` is intentionally a transport alias of Cursor and has
-        // no second health row. The remaining descriptors cover every public
-        // AgentID surface, including agents whose only local source is a cache.
-        return [
-            d(.claude, [".claude/projects", ".claude/tasks"], ["claude"]),
-            d(.codex, [".codex/sessions", ".codex/rollouts"], ["codex"]),
-            d(.cursor, [
-                "Library/Application Support/Cursor/User/globalStorage",
-                "Library/Application Support/Cursor/User/workspaceStorage",
-                // A few Cursor builds keep a compact session summary directly
-                // under User rather than in globalStorage. It is still a
-                // protected store, so this root is visited only after the
-                // user's explicit Cursor app-data opt-in.
-                "Library/Application Support/Cursor/User",
-            ], ["Cursor"]),
-            d(.grok, [".grok/sessions"], ["grok"]),
-            // Pi's JSONL transcripts are the richest source; context-mode's
-            // per-session SQLite adds cwd/tool/resource facts when the agent
-            // has no transcript hook installed.
-            // Keep the two session-shaped Pi stores explicit. Walking the
-            // entire ~/.pi tree also traverses its bundled npm/runtime cache
-            // (11k+ files on a typical install), consumes the global budget,
-            // and can hide the actual session DBs behind a native timeout.
-            // JSONL under agent/sessions is the /resume title source. Walking
-            // context-mode SQLite first spent the adapter deadline on empty
-            // session_meta rows and never opened the transcripts.
-            d(.pi, [".pi/agent/sessions", ".pi/context-mode/sessions"], ["pi"]),
-            d(.amp, [".local/share/amp", ".amp"], ["amp"]),
-            d(.aider, [".aider"], ["aider"]),
-            d(.gemini, [".gemini/tmp"], ["gemini"]),
-            d(.copilot, [".copilot", ".config/copilot"], ["copilot"]),
-            d(.opencode, [".local/share/opencode"], ["opencode"]),
-            d(.goose, [".config/goose", ".local/share/goose", "Library/Application Support/Goose"], ["goose"]),
-            d(.openhands, [".openhands", ".openhands-state"], ["openhands"]),
-            d(.cline, [
-                "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev",
-                "Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev",
-                "Library/Application Support/Windsurf/User/globalStorage/saoudrizwan.claude-dev",
-                "Library/Application Support/Trae/User/globalStorage/saoudrizwan.claude-dev",
-            ]),
-            d(.roo, [
-                "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline",
-                "Library/Application Support/Cursor/User/globalStorage/rooveterinaryinc.roo-cline",
-                "Library/Application Support/Windsurf/User/globalStorage/rooveterinaryinc.roo-cline",
-                "Library/Application Support/Trae/User/globalStorage/rooveterinaryinc.roo-cline",
-            ]),
-            d(.continue_, [".continue"]),
-            d(.amazonQ, [
-                ".aws/amazonq", ".aws/amazon-q", ".aws/q",
-                ".local/share/amazon-q",
-                "Library/Application Support/Amazon Q",
-                "Library/Application Support/amazon-q",
-                "Library/Application Support/AmazonQ",
-            ]),
-            d(.cascade, [
-                ".codeium", ".windsurf",
-                "Library/Application Support/Windsurf",
-                "Library/Application Support/Codeium",
-            ]),
-            d(.windsurf, [".windsurf", "Library/Application Support/Windsurf"]),
-            d(.augment, [".augment", ".auggie"]),
-            d(.zedAgent, [
-                ".zed", ".config/zed",
-                "Library/Application Support/Zed",
-            ]),
-            d(.trae, [".trae", "Library/Application Support/Trae"]),
-            d(.warpAgent, [
-                ".warp",
-                "Library/Application Support/dev.warp.Warp-Stable",
-                "Library/Application Support/dev.warp.Warp",
-                "Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp-Stable",
-                "Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp",
-            ]),
-            d(.devin, [".devin", ".cognition"], ["devin"]),
-            d(.kiro, [".kiro", "Library/Application Support/Kiro"], ["kiro"]),
-            d(.junie, [".junie", "Library/Application Support/JetBrains/Junie"], ["junie"]),
-            d(.kilo, [
-                "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code",
-                "Library/Application Support/Cursor/User/globalStorage/kilocode.kilo-code",
-            ]),
-            d(.replit, [".replit", ".config/replit"]),
-            d(.droid, [".factory"], ["droid"]),
-            // `cmd` alone is far too generic a binary name to treat as
-            // evidence that Command Code is installed — especially now that
-            // the search covers ~/.local/bin and the other user bin roots.
-            d(.commandCode, [".commandcode"], ["command-code"]),
-            d(.antigravity, [
-                "Library/Application Support/Antigravity/User/globalStorage",
-                "Library/Application Support/Antigravity/User/workspaceStorage",
-                "Library/Application Support/Antigravity IDE/User/globalStorage",
-                "Library/Application Support/Antigravity IDE/User/workspaceStorage",
-            ], ["agy", "antigravity"]),
-            d(.kimi, [".kimi-code"], ["kimi"]),
-            d(.zcode, [
-                ".zcode",
-                "Library/Application Support/ZCode",
-            ], ["zcode", "ZCode"]),
-        ]
+        // no roots of its own, so no second health row. The roots, commands
+        // and their rationale live in `AgentCatalog`.
+        return AgentCatalog.all
+            .filter { !$0.harvestRoots.isEmpty }
+            .map { d($0.id, $0.harvestRoots, $0.harvestCommands) }
     }
 
     private static func accessAlias(_ selected: AgentID, matches id: AgentID) -> Bool {
@@ -830,29 +738,15 @@ enum NativeActivityHarvest {
 
     private static func shouldSkipStaleTranscript(id: AgentID, mtime: Int64) -> Bool {
         guard mtime > 0 else { return false }
-        switch id {
-        case .pi:
-            // Pi JSONL is the session title source. Idle files older than
-            // 72h are still the live `~/.pi/agent/sessions` tree; skipping
-            // them left SQLite rows with cwd and no task (blank tray hero).
-            return false
-        case .claude, .codex, .gemini, .amp, .aider, .copilot,
-             .goose, .openhands, .continue_, .droid, .commandCode, .kimi:
-            let age = Int64(Date().timeIntervalSince1970 * 1000) - mtime
-            return age > transcriptFreshFileWindowMs
-        default:
-            return false
-        }
+        // Pi's idle JSONL is still the title source (`TranscriptPolicy`):
+        // skipping it left SQLite rows with cwd and no task.
+        guard id.spec.transcripts.skipsStaleFiles else { return false }
+        let age = Int64(Date().timeIntervalSince1970 * 1000) - mtime
+        return age > transcriptFreshFileWindowMs
     }
 
     private static func allowsBoundedLargeTranscript(_ id: AgentID) -> Bool {
-        switch id {
-        case .claude, .codex, .gemini, .pi, .amp, .aider, .copilot,
-             .goose, .openhands, .continue_, .droid, .commandCode, .kimi:
-            return true
-        default:
-            return false
-        }
+        id.spec.transcripts.allowsBoundedLargeFiles
     }
 
     // MARK: - Bounded file walk

@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 final class HarvestParsingTests: XCTestCase {
     /// The collector redacts credential-shaped content before a row exists.

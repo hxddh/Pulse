@@ -13,7 +13,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/review-11.0.md`](docs/review-11.0.md) | **The current review** — defects at the 11.0.3 baseline (fixed in 11.0.4) and the next-version evaluation (Kernel before Outcome) |
 | [`docs/review-1.2.md`](docs/review-1.2.md) | You want the defect list at the 1.2.0 baseline |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
-| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The next-major plan (Outcome) — durable result contracts, runtime boundary, comparable evidence, and proof gates |
+| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The shipped 12.0 plan (Kernel) — PulseCore, AgentCatalog, scan-quiet Settings, and what is left for 12.x |
+| [`docs/plan-outcome.md`](docs/plan-outcome.md) | The unnumbered next plan (Outcome) — result contracts and comparable evidence; blocked on real-machine Codex evidence |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
 | [`docs/plan-1.2.md`](docs/plan-1.2.md) | Historical plan (Substance) |
 | [`docs/plan-1.1.md`](docs/plan-1.1.md) | Historical plan (Full Transcript) |
@@ -53,7 +54,13 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/`; `src/` retains only the optional hook
-scripts. The legacy Python collector was deleted in 0.99 and the Vercel Native
+scripts. Since 12.0 there are two targets: `PulseCore` (a Foundation-only
+library — evidence, code identity, bounded IO, process supervision, transcript
+parsing, probe cadence) and the `PulseBar` app. Nothing in `PulseCore` may
+import AppKit, SwiftUI or reach `StatusStore`. **Adding an agent** means one
+`case` and one `AgentSpec` in `AgentCatalog.swift`, plus its icon and README
+row — `scripts/agent_catalog_check.py` fails if a per-agent table grows back
+anywhere else. The legacy Python collector was deleted in 0.99 and the Vercel Native
 SDK shell in 0.22 — recover either from git history if you ever need it.
 
 ## Invariants
@@ -94,16 +101,13 @@ cd PulseBar && swift build      # macOS 14+, Swift 5.9
 cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
-Gates, from the repo root — `package.sh` and CI both run all seven:
+Gates, from the repo root — CI, `release.yml`, `scripts/release.sh` and
+`package.sh` all run the same list:
 
 ```bash
-python3 scripts/version_check.py    # --fix aligns the followers
-python3 scripts/coverage_check.py
-python3 scripts/matrix_check.py
-python3 scripts/make_agent_icons.py --check   # every AgentID has a mark
-python3 scripts/appearance_check.py          # no appearance frozen into a constant
-python3 scripts/resource_budget_check.py     # native fixture wall + RSS
-python3 scripts/package_check.py    # reads the built .app
+bash scripts/gates.sh                        # every source gate
+python3 scripts/resource_budget_check.py     # native fixture wall + RSS (needs a build)
+python3 scripts/package_check.py             # reads the built .app
 ```
 
 `NativeActivityHarvest.swift` is the collector. There is no second one: 0.99
@@ -168,27 +172,31 @@ version that already has a Release is refused, so re-pushing is harmless.
 The in-app update check reads those Releases; an untagged version is invisible
 to users.
 
+## Versioning and language
+
+- A **major** version is for a breaking change to persisted state, a protocol,
+  or a removed capability — or a structural change that alters how the code is
+  extended (12.0). A UI pass is a minor. A schema migration never ships in a
+  patch. Every version that lands on `main` is released; do not bump without
+  releasing, and do not reserve a number for blocked work.
+- Code comments and agent-facing docs (this file, protocols) are English.
+  User-facing copy, CHANGELOG, plans and reviews are Chinese.
+
 ## Current state
 
-11.0.4 is the current source version. The review and next-version evaluation
-at this baseline is [`docs/review-11.0.md`](docs/review-11.0.md); the notes
-below about 2.0 are historical context.
+12.0.0 is the current source version (Kernel — [`docs/plan-12.0.md`](docs/plan-12.0.md)).
+The review behind it is [`docs/review-11.0.md`](docs/review-11.0.md); its
+defects were fixed in 11.0.4. The next product axis is Outcome
+([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the
+real-machine Codex P0 evidence exists and the product decision in review-11.0
+§4.3 has been made.
 
-**1.0 marks the product, not the signature.** It was previously reserved for
-"notarized", which is externally blocked without an Apple Developer ID — a
-number that could never be reached said nothing about the product. Channel
-honesty lives where it belongs, in `PulseDistributionChannel`: without an Apple
-Developer ID, GitHub **Latest** tracks the current semver while the binary stays
-`preview` / ad-hoc — **never stamp `stable` or claim Gatekeeper-ready.** See
-`CHANGELOG.md`. **2.0 changed the verb**: Respond delivers the user's decision
-to a remote permission request ([`docs/plan-2.0.md`](docs/plan-2.0.md),
-[`docs/respond-protocol.md`](docs/respond-protocol.md)). It ships inert —
-per-host key file is the opt-in — and one item of the P0-0 checklist remains
-open on a real machine: interactive confirmation that the emitted decision
-shape is honoured (wrong shape = verdict silently ignored, fail-open; never a
-wrong approval). A defect list at the 1.2.0 baseline lives in
-[`docs/review-1.2.md`](docs/review-1.2.md) — several mediums there are still
-open (rowKey stability U-6, remote mtime freshness F-2, update signing F-4,
-and the S1/S2 structural splits). Reserving a number for blocked work is what
-forced two renames, so Respond still takes its number at release. A full-source
-review at this baseline is [`docs/review-1.2.md`](docs/review-1.2.md).
+Still open: update signing (F-4, dormant until a Developer ID exists), remote
+mtime freshness (F-2), and the 12.x structural phases listed in plan-12.0.
+Respond's P0-0 real-machine confirmation (decision shape honoured) remains the
+one unverified item of 2.0 — a wrong shape is silently ignored and falls open,
+never a wrong approval.
+
+Without an Apple Developer ID, GitHub **Latest** tracks the current semver
+while the binary stays `preview` / ad-hoc — **never stamp `stable` or claim
+Gatekeeper-ready.** Channel honesty lives in `PulseDistributionChannel`.

@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// Settings are a one-way door: the 0.22 whole-hours → minutes migration runs
 /// once on every existing user's first launch, and a bug there silently costs

@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import PulseBar
+@testable import PulseCore
 
 /// VoiceOver must speak the interface language, not English.
 final class AccessibilityLocalizationTests: XCTestCase {

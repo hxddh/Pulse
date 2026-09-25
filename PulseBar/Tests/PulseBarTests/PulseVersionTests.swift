@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 /// The 0.5.0-vs-0.21.0 drift that shipped for months was invisible because
 /// nothing ever compared the two.

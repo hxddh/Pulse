@@ -86,7 +86,7 @@ what forced two renames」）。
 - **`interrupted` 状态从未产生**：没有调用方会传入它。崩溃中的检查不留任何记录。
 - **陈旧的通过仍显示 exit 0**：「是否过期」只在 view `@State` 里、在 appear 或行变化时算
   （`ManagedSessionViews.swift:20-23,186-233`）。用户在编辑器里改了文件，旧绿灯不会熄灭。
-  这直接违反 plan-12.0 自己的发布阻断项。
+  这直接违反 Outcome 计划 自己的发布阻断项。
 - **cancel 可能杀错进程**：2 秒后按保存的 pid 发 SIGKILL，不校验（`ManagedRuntime.swift:190-192`）。
   pid 被复用时会误杀。
 - **权限请求残留**：被 SIGKILL 的 permission server 留下的请求文件永不清扫，行会一直显示
@@ -143,7 +143,7 @@ what forced two renames」）。
 | 没有 adapter 协议 | `NativeActivityHarvest.swift` 4236 行：描述表 + 一个通用 `collect`，30 处 `id ==` 特判，按路径子串嗅探（`:2138`、`:2143`），122 个带厂商前缀的静态函数 | 加一个 agent 要改 10+ 处（Models 里 4-5 个 switch、ProcessProbe、别名表、图标、TerminalFocus、三个 Python gate…） |
 | Models.swift 是杂物间 | 1578 行、约 24 个类型：版本/发布通道、领域类型、托盘 UI 枚举、支持面板、L10n 键；`AgentRow` 约 123 个属性 | 领域事实与呈现状态、时钟读取混在同一个值里 |
 | 并发靠约定 | GCD、`Task.detached`、`@MainActor`、`@unchecked Sendable` 混用；静态可变缓存靠「只有一个队列碰」保证安全 | M-5 的竞争就是这样来的，编译器一条也拦不住 |
-| 受管 runtime 接缝只做了一半 | `ManagedRuntimeSession` 把 start 与 send 合一、没有 `resolveApproval`、`onFinish(exitCode:)` 假设每回合一个进程；`loadAll` 拒绝非 Claude runtime（`ManagedSession.swift:389`）；行恒为 `.claude`（`ManagedSessionSource.swift:52`） | plan-12.0 要的「长寿双向 Codex App Server」接不上，只能复制管线或堆条件分支 |
+| 受管 runtime 接缝只做了一半 | `ManagedRuntimeSession` 把 start 与 send 合一、没有 `resolveApproval`、`onFinish(exitCode:)` 假设每回合一个进程；`loadAll` 拒绝非 Claude runtime（`ManagedSession.swift:389`）；行恒为 `.claude`（`ManagedSessionSource.swift:52`） | Outcome 计划 要的「长寿双向 Codex App Server」接不上，只能复制管线或堆条件分支 |
 
 上面每一条单独看都可以说是「风格」，合在一起就是 H-1、M-2、M-5 的成因：**状态的所有权
 不唯一，时序没有被类型表达。**
@@ -173,7 +173,7 @@ what forced two renames」）。
 
 ### 4.1 为什么不是 12.0 Outcome
 
-plan-12.0 在产品方向上是认真的：结果契约、持久证据、不排名。但它现在不该是下一版：
+Outcome 计划 在产品方向上是认真的：结果契约、持久证据、不排名。但它现在不该是下一版：
 
 1. **被外部证据阻塞**：它自己的发布定义要求第二 runtime 在真机上过 P0。当前 orb 没有
    Codex binary，`evidence-12.0-codex.md` 只完成了公开协议取证。占住 12.0 等一个外部条件，
@@ -227,10 +227,10 @@ warnings-as-errors；其余 target 随迁移逐个开启。
 | **β Core 抽取** | 建 `PulseCore` target，编译器暴露隐藏依赖；`Models.swift` 按事实 / 呈现 / 版本拆开 | `swift test` + `--native-fixture-test` 逐步全绿；1067 个测试零语义改动 |
 | **γ Adapter 协议** | `HarvestAdapter { descriptor; collect(root:budget:) -> [Fact] }`；从 Codex、Pi 开始逐厂商迁移；扫描引擎改为 actor | fixture 墙作 oracle；每迁一家都做 hero 值断言对比；`resource_budget_check` 不回退 |
 | **δ Store 拆分** | ScanEngine / WaitingDelivery / SettingsModel / RowPresenter；Narration 离开 store | 性能墙：一次扫描对设置页的重算次数为 0（计数器测试） |
-| **ε Managed 地基** | 会话形 runtime 协议（startOrResume / send / resolveApproval / shutdown）；AcceptanceRunner；树内容指纹；陈旧判定从 view 移进 store 并由 FSEvents 驱动 | plan-12.0 证明墙中「Evidence state table」与「Isolation」两组测试提前到此处 |
+| **ε Managed 地基** | 会话形 runtime 协议（startOrResume / send / resolveApproval / shutdown）；AcceptanceRunner；树内容指纹；陈旧判定从 view 移进 store 并由 FSEvents 驱动 | Outcome 计划 证明墙中「Evidence state table」与「Isolation」两组测试提前到此处 |
 | **ζ 流程** | 见 §5 | CI 时长与 gate 数量下降，且 release.yml 与 ci.yml 共用同一个脚本 |
 
-**禁止**：与重构同一个提交里改变任何用户可见语义（沿用 plan-12.0 α 的纪律）；为了拆分
+**禁止**：与重构同一个提交里改变任何用户可见语义（沿用 Outcome 计划 α 的纪律）；为了拆分
 放宽任何 AGENTS.md 不变量。
 
 #### 发布定义

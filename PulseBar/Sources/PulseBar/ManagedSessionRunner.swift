@@ -1,6 +1,6 @@
 import Foundation
 
-/// 5.0-β / 12.0-α — one managed session's vendor-neutral turn life. The
+/// 5.0-β / Outcome-α — one managed session's vendor-neutral turn life. The
 /// runtime session owns child processes and wire decoding; this runner owns
 /// the shared model, turn status and worktree measurement.
 ///
@@ -99,7 +99,7 @@ final class ManagedSessionRunner {
         update { $0.runCommand = command }
     }
 
-    /// 12.0-β: run the user's check and retain evidence bound to the exact
+    /// Outcome-β: run the user's check and retain evidence bound to the exact
     /// code before and after it. Process work stays off the main actor; only
     /// the finished durable fact crosses back.
     func runCheck(command rawCommand: String, completion: (() -> Void)? = nil) {

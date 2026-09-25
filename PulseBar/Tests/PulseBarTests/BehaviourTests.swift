@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 @testable import PulseBar
+@testable import PulseCore
 
 @MainActor
 final class StatusPanelChromeTests: XCTestCase {

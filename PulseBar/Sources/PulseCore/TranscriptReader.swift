@@ -22,16 +22,16 @@ import Foundation
 ///   that will be rendered passes `ContentSanitizer` and a length bound.
 /// - **Local only.** The path never renders, the content never leaves the
 ///   machine, remote rows never had a path to begin with.
-enum TranscriptReader {
+public enum TranscriptReader {
 
-    static let tailWindowBytes = 512 * 1024
-    static let maxEntries = 300
-    static let maxEntryChars = 2_000
+    public static let tailWindowBytes = 512 * 1024
+    public static let maxEntries = 300
+    public static let maxEntryChars = 2_000
 
     /// Codable since 6.0-α: managed sessions persist their conversation
     /// across app restarts, and these entries are the conversation.
-    struct Entry: Equatable, Codable {
-        enum Kind: String, Equatable, Codable {
+    public struct Entry: Equatable, Codable {
+        public enum Kind: String, Equatable, Codable {
             /// The person driving the session.
             case user
             /// The agent's own words.
@@ -40,28 +40,36 @@ enum TranscriptReader {
             case tool
         }
 
-        var kind: Kind
+        public var kind: Kind
         /// Tool name for `.tool` entries; empty otherwise (the view labels
         /// user/agent itself).
-        var toolName: String = ""
+        public var toolName: String = ""
         /// Sanitized, bounded display text.
-        var text: String
+        public var text: String
         /// A failed tool result.
-        var isError: Bool = false
+        public var isError: Bool = false
         /// Record timestamp, 0 when the line carried none (never invented).
-        var tsMs: Int64 = 0
+        public var tsMs: Int64 = 0
+
+        public init(kind: Kind, toolName: String = "", text: String, isError: Bool = false, tsMs: Int64 = 0) {
+            self.kind = kind
+            self.toolName = toolName
+            self.text = text
+            self.isError = isError
+            self.tsMs = tsMs
+        }
     }
 
-    struct Excerpt: Equatable {
-        var entries: [Entry] = []
+    public struct Excerpt: Equatable {
+        public var entries: [Entry] = []
         /// The file was larger than the read window — entries are the tail.
-        var truncatedHead = false
+        public var truncatedHead = false
         /// Entries beyond `maxEntries` were dropped from the front.
-        var entriesCapped = false
+        public var entriesCapped = false
         /// Lines in the window that were not parseable JSON objects.
-        var unparsedLines = 0
-        var fileBytes = 0
-        var windowBytes = 0
+        public var unparsedLines = 0
+        public var fileBytes = 0
+        public var windowBytes = 0
     }
 
     // MARK: - Reading
@@ -69,7 +77,7 @@ enum TranscriptReader {
     /// Nil when the file cannot be read at all. An empty `entries` with a
     /// successful read is a different, honest answer ("nothing conversational
     /// in the window") and the view says so.
-    static func read(path: String) -> Excerpt? {
+    public static func read(path: String) -> Excerpt? {
         guard !path.isEmpty, let handle = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }
@@ -84,7 +92,7 @@ enum TranscriptReader {
     }
 
     /// Pure, so tests can pin every shape without touching a disk.
-    static func parse(data: Data, truncatedHead: Bool) -> Excerpt {
+    public static func parse(data: Data, truncatedHead: Bool) -> Excerpt {
         var excerpt = Excerpt()
         excerpt.truncatedHead = truncatedHead
         excerpt.windowBytes = data.count
@@ -124,7 +132,7 @@ enum TranscriptReader {
     /// One JSONL record → zero or more display entries. A record that is not
     /// conversational (usage events, summaries, plan bookkeeping) yields
     /// nothing, which is normal and not an error.
-    static func entries(from object: [String: Any]) -> [Entry] {
+    public static func entries(from object: [String: Any]) -> [Entry] {
         let tsMs = timestamp(of: object)
 
         // Codex `event_msg` envelope: {"type":"event_msg","payload":{...}}.

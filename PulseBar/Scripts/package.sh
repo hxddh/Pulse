@@ -19,11 +19,7 @@ done
 
 CHECK_PYTHON="$(command -v python3 || true)"
 if [[ -n "$CHECK_PYTHON" ]]; then
-  "$CHECK_PYTHON" "$ROOT/scripts/version_check.py"
-  "$CHECK_PYTHON" "$ROOT/scripts/coverage_check.py"
-  "$CHECK_PYTHON" "$ROOT/scripts/matrix_check.py"
-  "$CHECK_PYTHON" "$ROOT/scripts/make_agent_icons.py" --check
-  "$CHECK_PYTHON" "$ROOT/scripts/appearance_check.py"
+  bash "$ROOT/scripts/gates.sh"
 else
   # Python is an optional legacy/verification tool. The application and the
   # release artifact must still be buildable on a clean Swift-only machine;

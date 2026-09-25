@@ -1,5 +1,6 @@
 import XCTest
 @testable import PulseBar
+@testable import PulseCore
 
 final class ProcessIOTests: XCTestCase {
     func testLargeStdoutAndStderrAreDrainedWithoutDeadlock() {
