@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import Darwin
 
 /// 6.0-α — the supervisor (docs/plan-6.0.md, scene BI).
@@ -13,30 +14,32 @@ import Darwin
 /// Persistence is bounded: a session is written when its status kind, turn,
 /// remembered check command or newest evidence moves — never per stream line.
 @MainActor
-final class ManagedFleet {
-    static let maxConcurrent = 3
+package final class ManagedFleet {
+    package static let maxConcurrent = 3
 
-    private(set) var runners: [ManagedSessionRunner] = []
+    package private(set) var runners: [ManagedSessionRunner] = []
+
+    package init() {}
     private struct PersistenceMarker: Equatable {
-        var statusKind: String
-        var turns: Int
-        var runCommand: String
-        var lastEvidence: AcceptanceEvidence?
+        package var statusKind: String
+        package var turns: Int
+        package var runCommand: String
+        package var lastEvidence: AcceptanceEvidence?
         /// The first turn's continuation arrives mid-turn. Without it here a
         /// crash during that turn reloaded an empty id, and "reply to resume"
         /// silently started a new conversation.
-        var continuationID: String
-        var runningCheck: RunningCheck?
+        package var continuationID: String
+        package var runningCheck: RunningCheck?
     }
     private var lastPersisted: [String: PersistenceMarker] = [:]
     private var pumping = false
     /// Fired after any session change, wired by the source.
-    var onChange: (() -> Void)?
+    package var onChange: (() -> Void)?
     /// What "start" means — the real turn in production; tests inject a
     /// process-free stand-in to pin the queue semantics themselves.
-    var startAction: (ManagedSessionRunner) -> Void = { $0.beginQueuedTurn() }
+    package var startAction: (ManagedSessionRunner) -> Void = { $0.beginQueuedTurn() }
 
-    var runningCount: Int {
+    package var runningCount: Int {
         runners.filter { $0.model.status == .running }.count
     }
 
@@ -44,7 +47,7 @@ final class ManagedFleet {
 
     /// Load every persisted session back. Called once at app start; the
     /// state layer maps a persisted "running" to `interrupted` itself.
-    func reattachFromDisk() {
+    package func reattachFromDisk() {
         guard runners.isEmpty else { return }
         for model in ManagedSession.loadAll() {
             attach(ManagedSessionRunner(model: model))
@@ -54,7 +57,7 @@ final class ManagedFleet {
 
     /// A new session enters queued with its prompt held; the pump decides
     /// when it actually starts.
-    func dispatch(model: ManagedSession.Model) {
+    package func dispatch(model: ManagedSession.Model) {
         var queued = model
         queued.status = .queued
         let runner = ManagedSessionRunner(model: queued)
@@ -64,12 +67,12 @@ final class ManagedFleet {
         onChange?()
     }
 
-    func runner(managedID: String) -> ManagedSessionRunner? {
+    package func runner(managedID: String) -> ManagedSessionRunner? {
         runners.first { $0.model.id == managedID }
     }
 
     /// Sessions in the same same-task attempt group, in dispatch order.
-    func attemptSiblings(group: String) -> [ManagedSessionRunner] {
+    package func attemptSiblings(group: String) -> [ManagedSessionRunner] {
         guard !group.isEmpty else { return [] }
         return runners.filter { $0.model.attemptGroup == group }
     }
@@ -77,7 +80,7 @@ final class ManagedFleet {
     /// Remove a finished session: state file goes, the worktree stays for
     /// the user (Pulse does not delete work products on cleanup — the path
     /// is shown, the choice is theirs).
-    func remove(managedID: String) {
+    package func remove(managedID: String) {
         guard let runner = runner(managedID: managedID),
               runner.model.status != .running else { return }
         runners.removeAll { $0.model.id == managedID }
@@ -90,7 +93,7 @@ final class ManagedFleet {
     /// Quit: write everyone down exactly as they are (a running turn
     /// persists as running and reattaches as interrupted — the truthful
     /// account), then reap every child.
-    func shutdown() {
+    package func shutdown() {
         for runner in runners {
             ManagedSession.persist(runner.model)
             runner.terminateForShutdown()
@@ -111,7 +114,7 @@ final class ManagedFleet {
     // MARK: - Permission asks (6.0-β)
 
     private var permissionSource: DispatchSourceFileSystemObject?
-    private(set) var pendingPermissions: [ManagedPermission.Request] = []
+    package private(set) var pendingPermissions: [ManagedPermission.Request] = []
 
     /// One directory watch for the whole fleet, armed with the first runner
     /// and kept — a single fd, event-driven, no polling.
@@ -131,7 +134,7 @@ final class ManagedFleet {
         refreshPermissions()
     }
 
-    func refreshPermissions() {
+    package func refreshPermissions() {
         let requests = ManagedPermission.readRequests()
         if requests != pendingPermissions {
             pendingPermissions = requests
@@ -142,7 +145,7 @@ final class ManagedFleet {
     /// The verdict, single-use, under the Respond gate: Allow only ever
     /// lands beside the full text — a truncated request's allow is refused
     /// here again even if a caller tried.
-    func decidePermission(id: String, allow: Bool) {
+    package func decidePermission(id: String, allow: Bool) {
         guard let request = pendingPermissions.first(where: { $0.id == id }) else { return }
         let effectiveAllow = allow && request.canOfferAllow
         let decision: ManagedApprovalDecision = effectiveAllow ? .allow : .deny(message: "denied by user")
@@ -169,7 +172,7 @@ final class ManagedFleet {
 
     /// Start queued sessions while slots are free. Reentrancy-guarded: a
     /// started turn's own change notification pumps again and must no-op.
-    func pump() {
+    package func pump() {
         guard !pumping else { return }
         pumping = true
         defer { pumping = false }

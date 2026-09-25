@@ -2,6 +2,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// 7.0 (scene BL): the collapsed row's lead, pinned as a pure precedence

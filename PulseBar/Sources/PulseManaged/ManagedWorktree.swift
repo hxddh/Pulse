@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 /// 5.0-β — the workspace a managed session runs in (scene BG).
 ///
@@ -7,14 +8,14 @@ import Foundation
 /// their hands. Worktrees live in Pulse's Application Support namespace, not
 /// inside the repository, and every destructive verb here refuses paths
 /// outside that namespace — Pulse deletes only what Pulse created.
-enum ManagedWorktree {
+package enum ManagedWorktree {
 
-    static let branchPrefix = "pulse/"
+    package static let branchPrefix = "pulse/"
 
     /// `~/Library/Application Support/Pulse/worktrees` — overridable so
     /// tests never touch the real one.
-    static var baseOverride: URL?
-    static func baseDirectory() -> URL {
+    package static var baseOverride: URL?
+    package static func baseDirectory() -> URL {
         if let baseOverride { return baseOverride }
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
@@ -24,7 +25,7 @@ enum ManagedWorktree {
 
     /// A short, filesystem- and branch-safe name from the task's first
     /// words, made unique by the dispatch time. Pure for tests.
-    static func slug(task: String, nowMs: Int64) -> String {
+    package static func slug(task: String, nowMs: Int64) -> String {
         let words = task.lowercased()
             .map { ch -> Character in
                 (ch.isLetter && ch.isASCII) || ch.isNumber ? ch : " "
@@ -38,13 +39,13 @@ enum ManagedWorktree {
     }
 
     /// Only paths inside the namespace are Pulse's to touch.
-    static func isPulseWorktree(_ path: String) -> Bool {
+    package static func isPulseWorktree(_ path: String) -> Bool {
         let base = baseDirectory().standardizedFileURL.path
         let candidate = URL(fileURLWithPath: path).standardizedFileURL.path
         return candidate.hasPrefix(base + "/") && candidate.count > base.count + 1
     }
 
-    enum CreateError: Error, Equatable {
+    package enum CreateError: Error, Equatable {
         case notARepository
         case gitFailed(String)
     }
@@ -52,7 +53,7 @@ enum ManagedWorktree {
     /// `git -C <repoRoot> worktree add <dir> -b pulse/<slug>` — the one
     /// write verb dispatch needs, run against the repository the user chose,
     /// creating a directory only inside Pulse's namespace.
-    static func create(repoRoot: String, slug: String) -> Result<String, CreateError> {
+    package static func create(repoRoot: String, slug: String) -> Result<String, CreateError> {
         guard WorkspaceEffect.repositoryRoot(of: repoRoot) != nil else {
             return .failure(.notARepository)
         }

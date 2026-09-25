@@ -2,6 +2,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// 12.3 γ — vendor formats are dialects in one table, not branches inside

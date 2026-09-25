@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 // 5.0-β — the managed runtime's pure core (docs/plan-5.0.md, scene BG).
 //
@@ -12,13 +13,13 @@ import Foundation
 // rendered string passes the same `ContentSanitizer` discipline (via
 // `TranscriptReader.entries(from:)`, which already parses these exact
 // message shapes).
-enum ManagedSession {
+package enum ManagedSession {
 
     /// Where a session stands. `idle` means the turn finished and the next
     /// word is the user's — deliberately NOT a tray Waiting (the plan keeps
     /// the attention protocol as Waiting's only source; a managed reply
     /// prompt lives in the workbench).
-    enum Status: Equatable {
+    package enum Status: Equatable {
         case idle
         case running
         case failed(String)
@@ -32,58 +33,58 @@ enum ManagedSession {
         case interrupted
     }
 
-    static let maxTitleLength = 160
-    static let maxResultLength = 500
-    static let maxEntries = 1_000
-    static let maxAcceptanceEvidence = 20
+    package static let maxTitleLength = 160
+    package static let maxResultLength = 500
+    package static let maxEntries = 1_000
+    package static let maxAcceptanceEvidence = 20
 
     /// The whole session as a value: the runner mutates it via `apply`,
     /// views render it, tests drive it line by line.
-    struct Model: Equatable {
-        let id: String
-        var title: String
-        var root: String
-        var isWorktree: Bool
-        var startedMs: Int64
+    package struct Model: Equatable {
+        package let id: String
+        package var title: String
+        package var root: String
+        package var isWorktree: Bool
+        package var startedMs: Int64
 
-        var runtimeID = "claude"
-        var continuationID = ""
-        var modelName = ""
-        var status: Status = .idle
-        var entries: [TranscriptReader.Entry] = []
-        var entriesCapped = false
-        var currentTool = ""
-        var turns = 0
-        var errorResults = 0
-        var totalCostUSD: Double = 0
-        var tokensIn = 0
-        var tokensOut = 0
-        var lastEventMs: Int64 = 0
-        var lastResultText = ""
-        var lastErrorText = ""
+        package var runtimeID = "claude"
+        package var continuationID = ""
+        package var modelName = ""
+        package var status: Status = .idle
+        package var entries: [TranscriptReader.Entry] = []
+        package var entriesCapped = false
+        package var currentTool = ""
+        package var turns = 0
+        package var errorResults = 0
+        package var totalCostUSD: Double = 0
+        package var tokensIn = 0
+        package var tokensOut = 0
+        package var lastEventMs: Int64 = 0
+        package var lastResultText = ""
+        package var lastErrorText = ""
         /// Stream lines that parsed as JSON but matched no known event type.
         /// Counted, never guessed at — the TranscriptReader rule.
-        var unknownEvents = 0
+        package var unknownEvents = 0
         /// Lines that were not JSON objects at all.
-        var unparsedLines = 0
+        package var unparsedLines = 0
         /// 6.0-α · the first prompt, held while the session waits for a
         /// fleet slot. Cleared when the turn actually starts; persisted so a
         /// queued session survives a restart with its task intact.
-        var pendingPrompt = ""
+        package var pendingPrompt = ""
         /// 6.0-γ · the run-check command this session uses (persisted).
-        var runCommand = ""
+        package var runCommand = ""
         /// Outcome-β · durable facts from user-triggered acceptance checks.
-        var acceptanceEvidence: [AcceptanceEvidence] = []
+        package var acceptanceEvidence: [AcceptanceEvidence] = []
         /// 11.0.4 · a check in flight, persisted so a restart can say it was
         /// interrupted instead of forgetting it ran.
-        var runningCheck: RunningCheck?
+        package var runningCheck: RunningCheck?
         /// 6.0-γ · same-task attempt group id (empty = standalone).
-        var attemptGroup = ""
+        package var attemptGroup = ""
         /// 6.0-γ · what the last finished turn left on disk (+insertions,
         /// −deletions); nil until a turn has been measured.
-        var lastTurnEffect: (insertions: Int, deletions: Int)?
+        package var lastTurnEffect: (insertions: Int, deletions: Int)?
 
-        static func == (lhs: Model, rhs: Model) -> Bool {
+        package static func == (lhs: Model, rhs: Model) -> Bool {
             State(model: lhs) == State(model: rhs)
                 && lhs.unknownEvents == rhs.unknownEvents
                 && lhs.unparsedLines == rhs.unparsedLines
@@ -92,7 +93,7 @@ enum ManagedSession {
                 && lhs.lastTurnEffect?.deletions == rhs.lastTurnEffect?.deletions
         }
 
-        init(id: String, task: String, root: String, isWorktree: Bool, nowMs: Int64) {
+        package init(id: String, task: String, root: String, isWorktree: Bool, nowMs: Int64) {
             self.id = id
             let firstLine = task.split(separator: "\n").first.map(String.init) ?? task
             let cleaned = ContentSanitizer.redact(firstLine)
@@ -105,7 +106,7 @@ enum ManagedSession {
             self.startedMs = nowMs
         }
 
-        mutating func apply(event: ManagedRuntimeEvent, nowMs: Int64) {
+        package mutating func apply(event: ManagedRuntimeEvent, nowMs: Int64) {
             lastEventMs = nowMs
             switch event {
             case .continuation(let id):
@@ -150,7 +151,7 @@ enum ManagedSession {
         }
 
         /// The agent's latest words, for the row.
-        var lastAgentText: String {
+        package var lastAgentText: String {
             entries.last(where: { $0.kind == .agent })?.text ?? ""
         }
 
@@ -165,39 +166,39 @@ enum ManagedSession {
     /// The on-disk shape of a session. A DTO rather than making `Model`
     /// itself Codable: the status enum flattens to kind+detail here, and the
     /// file format stays decoupled from in-memory evolution.
-    struct State: Codable, Equatable {
-        static let currentSchemaVersion = 3
+    package struct State: Codable, Equatable {
+        package static let currentSchemaVersion = 3
 
-        var schemaVersion: Int
-        var id: String
-        var title: String
-        var root: String
-        var isWorktree: Bool
-        var startedMs: Int64
-        var runtimeID: String
-        var continuationID: String
-        var modelName: String
-        var statusKind: String
-        var statusDetail: String
-        var entries: [TranscriptReader.Entry]
-        var entriesCapped: Bool
-        var turns: Int
-        var errorResults: Int
-        var totalCostUSD: Double
-        var tokensIn: Int
-        var tokensOut: Int
-        var lastEventMs: Int64
-        var lastResultText: String
-        var lastErrorText: String
-        var pendingPrompt: String = ""
+        package var schemaVersion: Int
+        package var id: String
+        package var title: String
+        package var root: String
+        package var isWorktree: Bool
+        package var startedMs: Int64
+        package var runtimeID: String
+        package var continuationID: String
+        package var modelName: String
+        package var statusKind: String
+        package var statusDetail: String
+        package var entries: [TranscriptReader.Entry]
+        package var entriesCapped: Bool
+        package var turns: Int
+        package var errorResults: Int
+        package var totalCostUSD: Double
+        package var tokensIn: Int
+        package var tokensOut: Int
+        package var lastEventMs: Int64
+        package var lastResultText: String
+        package var lastErrorText: String
+        package var pendingPrompt: String = ""
         /// 6.0-γ · the per-session run-check command, remembered.
-        var runCommand: String = ""
-        var acceptanceEvidence: [AcceptanceEvidence] = []
-        var runningCheck: RunningCheck?
+        package var runCommand: String = ""
+        package var acceptanceEvidence: [AcceptanceEvidence] = []
+        package var runningCheck: RunningCheck?
         /// 6.0-γ · same-task attempt group (empty = standalone).
-        var attemptGroup: String = ""
+        package var attemptGroup: String = ""
 
-        init(model: Model) {
+        package init(model: Model) {
             schemaVersion = Self.currentSchemaVersion
             id = model.id
             title = model.title
@@ -241,7 +242,7 @@ enum ManagedSession {
             case runCommand, acceptanceEvidence, runningCheck, attemptGroup
         }
 
-        init(from decoder: Decoder) throws {
+        package init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
             guard (1...Self.currentSchemaVersion).contains(schemaVersion) else {
@@ -282,7 +283,7 @@ enum ManagedSession {
             attemptGroup = try values.decodeIfPresent(String.self, forKey: .attemptGroup) ?? ""
         }
 
-        func encode(to encoder: Encoder) throws {
+        package func encode(to encoder: Encoder) throws {
             var values = encoder.container(keyedBy: CodingKeys.self)
             try values.encode(schemaVersion, forKey: .schemaVersion)
             try values.encode(id, forKey: .id)
@@ -316,7 +317,7 @@ enum ManagedSession {
         /// `interrupted` — we were not there to see how that turn ended, and
         /// saying anything else would be inventing an outcome. A queued
         /// session comes back queued (the fleet re-pumps it).
-        func model() -> Model {
+        package func model() -> Model {
             var m = Model(id: id, task: title, root: root, isWorktree: isWorktree, nowMs: startedMs)
             m.title = title
             m.runtimeID = runtimeID
@@ -358,8 +359,8 @@ enum ManagedSession {
     }
 
     /// `~/Library/Application Support/Pulse/managed` — overridable for tests.
-    static var stateDirectoryOverride: URL?
-    static func stateDirectory() -> URL {
+    package static var stateDirectoryOverride: URL?
+    package static func stateDirectory() -> URL {
         if let stateDirectoryOverride { return stateDirectoryOverride }
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
@@ -367,13 +368,13 @@ enum ManagedSession {
         return support.appendingPathComponent("Pulse/managed", isDirectory: true)
     }
 
-    static func stateURL(id: String) -> URL {
+    package static func stateURL(id: String) -> URL {
         stateDirectory().appendingPathComponent(id + ".json")
     }
 
     /// 0600 via PrivateFile — the conversation is the user's own words.
     @discardableResult
-    static func persist(_ model: Model) -> Bool {
+    package static func persist(_ model: Model) -> Bool {
         try? FileManager.default.createDirectory(
             at: stateDirectory(), withIntermediateDirectories: true
         )
@@ -381,7 +382,7 @@ enum ManagedSession {
         return PrivateFile.write(data, to: stateURL(id: model.id))
     }
 
-    static func loadAll() -> [Model] {
+    package static func loadAll() -> [Model] {
         guard let names = try? FileManager.default.contentsOfDirectory(
             atPath: stateDirectory().path
         ) else { return [] }
@@ -411,7 +412,7 @@ enum ManagedSession {
         return models.sorted { $0.startedMs < $1.startedMs }
     }
 
-    static func removeState(id: String) {
+    package static func removeState(id: String) {
         try? FileManager.default.removeItem(at: stateURL(id: id))
     }
 
@@ -420,10 +421,10 @@ enum ManagedSession {
     /// A pipe hands over chunks, not lines; a JSON event split across two
     /// chunks must not be counted as two broken ones. Carries the unfinished
     /// tail until its newline arrives.
-    struct LineBuffer {
+    package struct LineBuffer {
         private var carry = Data()
 
-        mutating func lines(from chunk: Data) -> [Data] {
+        package mutating func lines(from chunk: Data) -> [Data] {
             carry.append(chunk)
             var out: [Data] = []
             while let newline = carry.firstIndex(of: 0x0A) {
@@ -435,7 +436,7 @@ enum ManagedSession {
         }
 
         /// End of stream: whatever is left is a whole line if non-empty.
-        mutating func flush() -> Data? {
+        package mutating func flush() -> Data? {
             defer { carry = Data() }
             return carry.isEmpty ? nil : carry
         }

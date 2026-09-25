@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 /// One managed session's acceptance checks and its knowledge of the code
 /// they ran against — outside any view.
@@ -11,34 +12,34 @@ import Foundation
 /// could go stale, re-measures on a slow cadence. Nothing is measured for a
 /// session whose newest evidence is not a pass.
 @MainActor
-final class AcceptanceRunner {
+package final class AcceptanceRunner {
     /// How often a live pass is re-checked against the worktree.
-    static let watchIntervalSeconds: Double = 10
+    package static let watchIntervalSeconds: Double = 10
 
-    let root: String
+    package let root: String
     /// Fired after any change the UI shows.
-    var onChange: (() -> Void)?
+    package var onChange: (() -> Void)?
 
-    private(set) var isChecking = false
-    private(set) var currentFingerprint: CodeFingerprint?
-    private(set) var fingerprintMeasured = false
+    package private(set) var isChecking = false
+    package private(set) var currentFingerprint: CodeFingerprint?
+    package private(set) var fingerprintMeasured = false
 
     private var control: ProcessIO.CheckControl?
     private var measureInFlight = false
     private var measureQueued = false
     private var watchTask: Task<Void, Never>?
 
-    init(root: String) {
+    package init(root: String) {
         self.root = root
     }
 
-    func standing(of evidence: AcceptanceEvidence) -> EvidenceStanding {
+    package func standing(of evidence: AcceptanceEvidence) -> EvidenceStanding {
         EvidenceStanding.of(evidence, current: currentFingerprint, measured: fingerprintMeasured)
     }
 
     /// Run `command` in the worktree, bound to the code before and after it.
     /// Process work stays off the main actor; only the finished fact returns.
-    func run(command: String, completion: @escaping (AcceptanceEvidence) -> Void) {
+    package func run(command: String, completion: @escaping (AcceptanceEvidence) -> Void) {
         guard !isChecking else { return }
         isChecking = true
         let control = ProcessIO.CheckControl()
@@ -85,12 +86,12 @@ final class AcceptanceRunner {
     }
 
     /// Stop the running check and its whole process group.
-    func cancel() {
+    package func cancel() {
         control?.cancel()
     }
 
     /// Measure the worktree now (off main); overlapping requests coalesce.
-    func refresh() {
+    package func refresh() {
         guard !root.isEmpty else { return }
         if measureInFlight {
             measureQueued = true
@@ -118,7 +119,7 @@ final class AcceptanceRunner {
     /// Keep watching only while `latest` is a pass that is still current —
     /// that is the one standing a silent edit can falsify. Anything else
     /// (no evidence, a failure, already stale) needs no clock at all.
-    func watch(latest: AcceptanceEvidence?) {
+    package func watch(latest: AcceptanceEvidence?) {
         let live = latest.map { standing(of: $0) == .passing || standing(of: $0) == .measuring } ?? false
         if live, watchTask == nil {
             let seconds = Self.watchIntervalSeconds
@@ -135,7 +136,7 @@ final class AcceptanceRunner {
         }
     }
 
-    func shutdown() {
+    package func shutdown() {
         watchTask?.cancel()
         watchTask = nil
         control?.cancel()

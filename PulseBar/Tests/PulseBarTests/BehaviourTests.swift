@@ -3,6 +3,7 @@ import AppKit
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 @MainActor

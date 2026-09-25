@@ -2,6 +2,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// The merge core. Until 0.23 this logic lived inside `StatusStore.applyScan`

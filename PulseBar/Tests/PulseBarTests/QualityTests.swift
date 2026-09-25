@@ -2,6 +2,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// 2.9 Quality — second-grade freshness, and the measurement measuring itself.

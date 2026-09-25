@@ -3,6 +3,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// The respond spool is the first file surface whose contents can make an

@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import Darwin
 
 /// Outcome-α — the vendor boundary for a Pulse-owned session.
@@ -7,7 +8,7 @@ import Darwin
 /// one child per turn; Codex can later keep an App Server child alive for the
 /// candidate. The runner above this boundary sees only normalized events and
 /// lifecycle operations, so Fleet, persistence and worktrees stay shared.
-enum ManagedRuntimeEvent {
+package enum ManagedRuntimeEvent {
     case continuation(String)
     case model(String)
     case entries([TranscriptReader.Entry])
@@ -16,25 +17,25 @@ enum ManagedRuntimeEvent {
     case unparsed
 }
 
-struct ManagedRuntimeResult {
-    var text: String
-    var costUSD: Double?
-    var tokensIn: Int?
-    var tokensOut: Int?
-    var errorDetail: String?
+package struct ManagedRuntimeResult {
+    package var text: String
+    package var costUSD: Double?
+    package var tokensIn: Int?
+    package var tokensOut: Int?
+    package var errorDetail: String?
 }
 
 /// How a turn ended, in the runtime's own terms. A per-turn runtime (Claude)
 /// reports its child's exit; a long-lived one reports the turn's completion
 /// without implying any process went away.
-struct ManagedTurnEnd: Equatable {
+package struct ManagedTurnEnd: Equatable {
     /// The child's exit status, when a child per turn is the topology.
-    var exitStatus: Int32?
+    package var exitStatus: Int32?
     /// The runtime's last diagnostic words (stderr tail, protocol error), if any.
-    var diagnostic: String = ""
+    package var diagnostic: String = ""
 
     /// The sentence a turn that ended without a result event gets.
-    var failureText: String {
+    package var failureText: String {
         if !diagnostic.isEmpty { return diagnostic }
         return exitStatus.map { "exit \($0)" } ?? "turn ended without a result"
     }
@@ -43,7 +44,7 @@ struct ManagedTurnEnd: Equatable {
 /// The user's decision on one permission request, as the runtime delivers it.
 /// Single-use by construction: there is no "for the session" variant, and
 /// there must never be one (no always-allow).
-enum ManagedApprovalDecision: Equatable {
+package enum ManagedApprovalDecision: Equatable {
     case allow
     case deny(message: String)
 }
@@ -54,7 +55,7 @@ enum ManagedApprovalDecision: Equatable {
 /// pipes or wire formats. Claude spawns a child per turn behind `send`; an
 /// App-Server runtime would keep one child for the whole session. Both fit.
 @MainActor
-protocol ManagedRuntimeSession: AnyObject {
+package protocol ManagedRuntimeSession: AnyObject {
     var onEvent: ((ManagedRuntimeEvent) -> Void)? { get set }
     var onTurnEnd: ((ManagedTurnEnd) -> Void)? { get set }
 
@@ -70,7 +71,7 @@ protocol ManagedRuntimeSession: AnyObject {
 }
 
 @MainActor
-protocol ManagedRuntime {
+package protocol ManagedRuntime {
     var id: String { get }
     /// The agent this runtime's sessions are rows of.
     var agent: AgentID { get }
@@ -80,32 +81,32 @@ protocol ManagedRuntime {
 }
 
 @MainActor
-enum ManagedRuntimeRegistry {
-    static let claude: any ManagedRuntime = ClaudeManagedRuntime()
-    static let all: [any ManagedRuntime] = [claude]
+package enum ManagedRuntimeRegistry {
+    package static let claude: any ManagedRuntime = ClaudeManagedRuntime()
+    package static let all: [any ManagedRuntime] = [claude]
 
-    static func runtime(id: String) -> (any ManagedRuntime)? {
+    package static func runtime(id: String) -> (any ManagedRuntime)? {
         all.first { $0.id == id }
     }
 
     /// Runtime ids this build can drive. Persisted sessions of any other
     /// runtime are refused, not guessed at.
-    nonisolated static let knownIDs: Set<String> = ["claude"]
+    package nonisolated static let knownIDs: Set<String> = ["claude"]
 }
 
 /// Claude's complete vendor shape: discovery, argv, stream decoder and its
 /// one-child-per-turn process. Nothing outside this type knows Claude's wire.
 @MainActor
-struct ClaudeManagedRuntime: ManagedRuntime {
-    let id = "claude"
-    let agent: AgentID = .claude
+package struct ClaudeManagedRuntime: ManagedRuntime {
+    package let id = "claude"
+    package let agent: AgentID = .claude
 
-    func executable() -> String? { Self.executable() }
-    func canStart(prompt: String, continuation: String?) -> Bool {
+    package func executable() -> String? { Self.executable() }
+    package func canStart(prompt: String, continuation: String?) -> Bool {
         Self.arguments(prompt: prompt, continuation: continuation) != nil
     }
 
-    nonisolated static func executable(
+    package nonisolated static func executable(
         fileExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -118,7 +119,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         return candidates.first(where: fileExists)
     }
 
-    nonisolated static func arguments(
+    package nonisolated static func arguments(
         prompt: String,
         continuation: String?,
         permissionConfigPath: String? = nil
@@ -127,7 +128,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         guard !trimmed.isEmpty else { return nil }
         var args = ["-p", trimmed, "--output-format", "stream-json", "--verbose"]
         if let continuation, !continuation.isEmpty {
-            guard WorkbenchAnswer.validSessionID(continuation) else { return nil }
+            guard ManagedSessionID.isValid(continuation) else { return nil }
             args += ["--resume", continuation]
         }
         if let permissionConfigPath {
@@ -137,7 +138,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         return args
     }
 
-    nonisolated static func decode(line: Data) -> [ManagedRuntimeEvent] {
+    package nonisolated static func decode(line: Data) -> [ManagedRuntimeEvent] {
         guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
             return [.unparsed]
         }
@@ -170,12 +171,12 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         return events
     }
 
-    func makeSession() -> any ManagedRuntimeSession { Session() }
+    package func makeSession() -> any ManagedRuntimeSession { Session() }
 
     @MainActor
     fileprivate final class Session: ManagedRuntimeSession {
-        var onEvent: ((ManagedRuntimeEvent) -> Void)?
-        var onTurnEnd: ((ManagedTurnEnd) -> Void)?
+        package var onEvent: ((ManagedRuntimeEvent) -> Void)?
+        package var onTurnEnd: ((ManagedTurnEnd) -> Void)?
 
         private var root = ""
         private var managedID = ""
@@ -191,7 +192,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         /// earlier child are dropped rather than mixed into this one.
         private var turn = 0
 
-        func startOrResume(continuation: String?, root: String, managedID: String) -> String? {
+        package func startOrResume(continuation: String?, root: String, managedID: String) -> String? {
             guard ClaudeManagedRuntime.executable() != nil else { return "claude-not-found" }
             self.continuation = continuation
             self.root = root
@@ -200,7 +201,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             return nil
         }
 
-        func resolveApproval(id: String, decision: ManagedApprovalDecision) {
+        package func resolveApproval(id: String, decision: ManagedApprovalDecision) {
             // Claude's permission-prompt MCP server polls for this file.
             switch decision {
             case .allow:
@@ -210,7 +211,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             }
         }
 
-        func send(prompt: String) -> String? {
+        package func send(prompt: String) -> String? {
             guard bound else { return "session-not-started" }
             guard let executable = ClaudeManagedRuntime.executable() else {
                 return "claude-not-found"
@@ -283,7 +284,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             return nil
         }
 
-        func cancel() -> Bool {
+        package func cancel() -> Bool {
             guard let child = process, child.isRunning else { return false }
             child.terminate()
             let pid = child.processIdentifier
@@ -295,7 +296,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             return true
         }
 
-        func shutdown() {
+        package func shutdown() {
             guard let child = process, child.isRunning else { return }
             child.terminate()
         }
@@ -338,12 +339,24 @@ struct ClaudeManagedRuntime: ManagedRuntime {
 /// Written once by a termination handler, read once after the `exited`
 /// semaphore — the semaphore is the synchronisation.
 private final class ManagedExitCode: @unchecked Sendable {
-    var value: Int32 = -1
+    package var value: Int32 = -1
 }
 
 /// A weak reference the reader threads can carry: the session is main-actor
 /// state, touched only inside `MainActor.assumeIsolated` on the main queue.
 private final class ManagedSessionRef: @unchecked Sendable {
-    weak var session: ClaudeManagedRuntime.Session?
-    init(_ session: ClaudeManagedRuntime.Session) { self.session = session }
+    package weak var session: ClaudeManagedRuntime.Session?
+    package init(_ session: ClaudeManagedRuntime.Session) { self.session = session }
+}
+
+/// What a vendor session id may look like before Pulse puts it on a command
+/// line (`--resume <id>`). 12.3: the rule lives with the runtime that relies
+/// on it; `WorkbenchAnswer.validSessionID` forwards here.
+package enum ManagedSessionID {
+    package static func isValid(_ raw: String) -> Bool {
+        guard !raw.isEmpty, raw.count <= 128 else { return false }
+        return raw.allSatisfy { ch in
+            ch.isASCII && (ch.isLetter || ch.isNumber || ch == "-" || ch == "_" || ch == ".")
+        }
+    }
 }

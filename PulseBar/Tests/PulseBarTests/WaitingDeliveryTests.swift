@@ -2,6 +2,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// 12.3 δ — the Waiting notification decision is a value. No store, no

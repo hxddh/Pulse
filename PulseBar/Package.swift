@@ -51,9 +51,21 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
             ]
         ),
+        // 12.3 · Managed: sessions Pulse runs itself — the runtime protocol
+        // and the Claude runtime, the fleet, worktrees, the permission MCP
+        // server, acceptance checks and workspace effect. It owns processes
+        // and files, never the store or the UI.
+        .target(
+            name: "PulseManaged",
+            dependencies: ["PulseCore"],
+            path: "Sources/PulseManaged",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+            ]
+        ),
         .executableTarget(
             name: "PulseBar",
-            dependencies: ["PulseCore", "PulseRespond", "PulseHarvest"],
+            dependencies: ["PulseCore", "PulseRespond", "PulseHarvest", "PulseManaged"],
             path: "Sources/PulseBar",
             resources: [
                 .copy("Resources/pulse_hook.py"),
@@ -77,7 +89,7 @@ let package = Package(
         // the product and had no coverage at all before 0.22.
         .testTarget(
             name: "PulseBarTests",
-            dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest"],
+            dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest", "PulseManaged"],
             path: "Tests/PulseBarTests",
             linkerSettings: [
                 .linkedLibrary("sqlite3"),

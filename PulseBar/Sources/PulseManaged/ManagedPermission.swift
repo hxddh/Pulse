@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 // 6.0-β — the permission channel (docs/plan-6.0.md, scene BJ).
 //
@@ -16,32 +17,32 @@ import Foundation
 // run has no vendor prompt to fall back to, **timeout and every failure deny**
 // — here fail-open would mean fail-permissive, which is the one direction
 // this product never fails in.
-enum ManagedPermission {
+package enum ManagedPermission {
 
-    static let timeoutMs: Int64 = 120_000
-    static let maxInputBytes = 64 * 1024
+    package static let timeoutMs: Int64 = 120_000
+    package static let maxInputBytes = 64 * 1024
 
     // MARK: - Spool shapes
 
-    struct Request: Codable, Equatable {
-        var id: String
-        var managedID: String
-        var toolName: String
+    package struct Request: Codable, Equatable {
+        package var id: String
+        package var managedID: String
+        package var toolName: String
         /// The tool input, JSON-encoded, exactly as the CLI sent it — this
         /// is the text Allow is approving.
-        var inputJSON: String
+        package var inputJSON: String
         /// The input exceeded the budget and was cut: Allow is withdrawn
         /// (approving a truncated request is the blind approve).
-        var truncated: Bool
-        var createdMs: Int64
+        package var truncated: Bool
+        package var createdMs: Int64
 
-        var canOfferAllow: Bool { !truncated }
+        package var canOfferAllow: Bool { !truncated }
     }
 
-    struct Verdict: Codable, Equatable {
-        var id: String
-        var allow: Bool
-        var message: String
+    package struct Verdict: Codable, Equatable {
+        package var id: String
+        package var allow: Bool
+        package var message: String
     }
 
     /// 8.0-β: the ask in one honest line — `Bash: npm run build` — for the
@@ -50,7 +51,7 @@ enum ManagedPermission {
     /// the field order follows the vendor's own permission titles
     /// (command → file_path → url), the same order the hook path uses.
     /// Credentials go through the sanitizer like every other surfaced string.
-    static func summary(toolName: String, inputJSON: String) -> String {
+    package static func summary(toolName: String, inputJSON: String) -> String {
         let name = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallback = name.isEmpty ? "tool" : name
         guard let data = inputJSON.data(using: .utf8),
@@ -69,20 +70,20 @@ enum ManagedPermission {
 
     // MARK: - Spool layout
 
-    static var spoolDirectoryOverride: URL?
-    static func spoolDirectory() -> URL {
+    package static var spoolDirectoryOverride: URL?
+    package static func spoolDirectory() -> URL {
         if let spoolDirectoryOverride { return spoolDirectoryOverride }
         return ManagedSession.stateDirectory().appendingPathComponent("permissions", isDirectory: true)
     }
-    static func requestsDirectory() -> URL {
+    package static func requestsDirectory() -> URL {
         spoolDirectory().appendingPathComponent("requests", isDirectory: true)
     }
-    static func verdictsDirectory() -> URL {
+    package static func verdictsDirectory() -> URL {
         spoolDirectory().appendingPathComponent("verdicts", isDirectory: true)
     }
 
     @discardableResult
-    static func writeRequest(_ request: Request) -> Bool {
+    package static func writeRequest(_ request: Request) -> Bool {
         try? FileManager.default.createDirectory(
             at: requestsDirectory(), withIntermediateDirectories: true
         )
@@ -91,7 +92,7 @@ enum ManagedPermission {
     }
 
     /// Filename decides identity (the spool rule); mismatches are refused.
-    static func readRequests() -> [Request] {
+    package static func readRequests() -> [Request] {
         guard let names = try? FileManager.default.contentsOfDirectory(
             atPath: requestsDirectory().path
         ) else { return [] }
@@ -107,13 +108,13 @@ enum ManagedPermission {
         return out
     }
 
-    static func removeRequest(id: String) {
+    package static func removeRequest(id: String) {
         try? FileManager.default.removeItem(
             at: requestsDirectory().appendingPathComponent(id + ".json"))
     }
 
     @discardableResult
-    static func writeVerdict(_ verdict: Verdict) -> Bool {
+    package static func writeVerdict(_ verdict: Verdict) -> Bool {
         try? FileManager.default.createDirectory(
             at: verdictsDirectory(), withIntermediateDirectories: true
         )
@@ -122,7 +123,7 @@ enum ManagedPermission {
     }
 
     /// Single use: reading a verdict consumes its file.
-    static func takeVerdict(id: String) -> Verdict? {
+    package static func takeVerdict(id: String) -> Verdict? {
         let url = verdictsDirectory().appendingPathComponent(id + ".json")
         guard let data = SafeRead.regularFile(atPath: url.path, limit: 64 * 1024),
               let verdict = try? JSONDecoder().decode(Verdict.self, from: data),
@@ -134,7 +135,7 @@ enum ManagedPermission {
 
     /// The per-session MCP config the runner hands the CLI: Pulse's own
     /// binary as the server, the spool and the session identity in env.
-    static func ensureConfig(managedID: String) -> String? {
+    package static func ensureConfig(managedID: String) -> String? {
         guard let executable = Bundle.main.executablePath else { return nil }
         try? FileManager.default.createDirectory(
             at: ManagedSession.stateDirectory(), withIntermediateDirectories: true
@@ -159,10 +160,11 @@ enum ManagedPermission {
     /// Line-delimited JSON-RPC, the three methods the permission flag needs.
     /// `decide` is injected: production blocks on the spool, tests answer
     /// instantly. Returns the response line, or nil for notifications.
-    static func handle(
+    package static func handle(
         line: String,
         managedID: String,
         nowMs: Int64,
+        serverVersion: String = "dev",
         decide: (Request) -> Verdict
     ) -> String? {
         guard let data = line.data(using: .utf8),
@@ -178,7 +180,7 @@ enum ManagedPermission {
             return respond(id: id, result: [
                 "protocolVersion": "2024-11-05",
                 "capabilities": ["tools": [String: String]()],
-                "serverInfo": ["name": "pulse-permission", "version": PulseVersion.semver],
+                "serverInfo": ["name": "pulse-permission", "version": serverVersion],
             ])
         case "tools/list":
             return respond(id: id, result: [
@@ -238,7 +240,7 @@ enum ManagedPermission {
 
     /// Production decision: publish the ask, block on the verdict file,
     /// deny on timeout — and clean the request away whatever happened.
-    static func blockingDecide(
+    package static func blockingDecide(
         _ request: Request,
         pollMs: UInt32 = 200,
         timeoutMs: Int64 = ManagedPermission.timeoutMs
@@ -275,7 +277,7 @@ enum ManagedPermission {
 
     /// `PulseBar --permission-server`: stdin lines in, response lines out.
     /// Runs before any AppKit exists; exits with the pipe.
-    static func runServer() -> Int32 {
+    package static func runServer(version: String) -> Int32 {
         let managedID = ProcessInfo.processInfo.environment["PULSE_MANAGED_ID"] ?? ""
         if let dir = ProcessInfo.processInfo.environment["PULSE_PERMISSION_DIR"] {
             spoolDirectoryOverride = URL(fileURLWithPath: dir, isDirectory: true)
@@ -284,7 +286,7 @@ enum ManagedPermission {
             guard !line.isEmpty else { continue }
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
             if let response = handle(
-                line: line, managedID: managedID, nowMs: nowMs,
+                line: line, managedID: managedID, nowMs: nowMs, serverVersion: version,
                 decide: { blockingDecide($0) }
             ) {
                 print(response)

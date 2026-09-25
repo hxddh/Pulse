@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 /// What actually changed on disk.
 ///
@@ -27,56 +28,56 @@ import Foundation
 /// `index.lock` with the user's own git commands — which is why the
 /// read-only guarantee is asserted against a real repository, byte for byte,
 /// rather than promised in a comment. A fixture could never have seen it.
-enum WorkspaceEffect {
+package enum WorkspaceEffect {
     /// Counts only. No path, no branch, no diff text ever leaves this type —
     /// those are content, and this axis is about magnitude.
-    struct Measurement: Equatable {
+    package struct Measurement: Equatable {
         /// Canonical repository root, used to tell two agents in the same
         /// working copy apart from two agents in different ones. Never shown.
-        var root: String = ""
+        package var root: String = ""
         /// Changed paths including newly created files. -1 = not known.
-        var changedPaths: Int = -1
+        package var changedPaths: Int = -1
         /// Tracked changes against HEAD. -1 = not known.
-        var insertions: Int = -1
-        var deletions: Int = -1
-        var measuredAtMs: Int64 = 0
+        package var insertions: Int = -1
+        package var deletions: Int = -1
+        package var measuredAtMs: Int64 = 0
         /// Commit id at measurement time. Never displayed — it exists so two
         /// consecutive measurements can tell a *committed* change from no
         /// change at all. An agent that commits as it goes leaves a clean
         /// tree, and a clean tree after a commit is the opposite of "nothing
         /// has landed".
-        var head: String = ""
+        package var head: String = ""
         /// HEAD differed between this measurement and an earlier one within
         /// the recent-commit window. Set by the store, which is the only
         /// place two measurements of the same root ever meet.
-        var headMovedRecently: Bool = false
+        package var headMovedRecently: Bool = false
 
         /// **-1 is not 0.** "Measured, and nothing has landed" is the whole
         /// point of this axis; "not measured" must never wear its clothes.
-        var isKnown: Bool { changedPaths >= 0 }
+        package var isKnown: Bool { changedPaths >= 0 }
         /// Measured, and the working copy is exactly as it was.
-        var nothingLanded: Bool { changedPaths == 0 }
-        var hasLineCounts: Bool { insertions >= 0 || deletions >= 0 }
+        package var nothingLanded: Bool { changedPaths == 0 }
+        package var hasLineCounts: Bool { insertions >= 0 || deletions >= 0 }
     }
 
-    static let executable = "/usr/bin/git"
+    package static let executable = "/usr/bin/git"
     /// A working copy that cannot answer in this long is a working copy Pulse
     /// will not wait on. A menu-bar tool blocking on someone's monorepo is
     /// the energy-hog failure the whole cadence design exists to avoid.
-    static let timeout: TimeInterval = 1.5
+    package static let timeout: TimeInterval = 1.5
     /// Past this a root is put in backoff and reported as unknown until the
     /// penalty expires — honest, and self-limiting.
-    static let slowMeasurementMs = 900
-    static let backoffMs: Int64 = 5 * 60 * 1000
+    package static let slowMeasurementMs = 900
+    package static let backoffMs: Int64 = 5 * 60 * 1000
     /// `git status` on a huge tree can print a great deal. Only the line
     /// count is wanted, so the read stays small.
-    static let outputLimit = 512 * 1024
+    package static let outputLimit = 512 * 1024
     /// How long a commit keeps counting as "something landed". The story
     /// line's "moving, but nothing has landed" must stay suppressed for a
     /// while after a commit, not merely for one 10-second measurement cycle —
     /// an agent that commits and keeps working has landed things, and saying
     /// otherwise ten seconds later would be the accusation G-1 removed.
-    static let recentCommitWindowMs: Int64 = 10 * 60 * 1000
+    package static let recentCommitWindowMs: Int64 = 10 * 60 * 1000
 
     // MARK: - Pure parsing
 
@@ -87,7 +88,7 @@ enum WorkspaceEffect {
     /// neither. A clause that is absent is **0 for that clause**, because the
     /// line itself is git's complete statement about the diff — unlike a
     /// failed command, which is not a statement at all.
-    static func parseShortstat(_ raw: String) -> (files: Int, insertions: Int, deletions: Int)? {
+    package static func parseShortstat(_ raw: String) -> (files: Int, insertions: Int, deletions: Int)? {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty else { return nil }
         func number(before keyword: String) -> Int? {
@@ -107,41 +108,24 @@ enum WorkspaceEffect {
 
     /// One changed path per line in `--porcelain=v1`, untracked files included
     /// as `??`. Blank lines are not paths.
-    static func parsePorcelainCount(_ raw: String) -> Int {
+    package static func parsePorcelainCount(_ raw: String) -> Int {
         raw.split(whereSeparator: \.isNewline)
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             .count
     }
 
     /// A root is only usable if git printed an absolute path and nothing else.
-    static func parseToplevel(_ raw: String) -> String? {
+    package static func parseToplevel(_ raw: String) -> String? {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard line.hasPrefix("/"), line.count > 1, !line.contains("\n") else { return nil }
         return line
-    }
-
-    /// Which live rows share a working copy.
-    ///
-    /// The fact no single agent can see: each one knows only itself, so two
-    /// agents editing the same checkout is invisible from inside either. It
-    /// is plainly visible from here, and it is the one thing on this axis
-    /// that no other tool could report.
-    ///
-    /// Remote rows never take part — their path describes another machine's
-    /// disk, and a collision there would be pure invention.
-    static func collisionCounts(_ rows: [AgentRow]) -> [String: Int] {
-        var counts: [String: Int] = [:]
-        for row in rows where !row.isRemote && row.liveProcess && !row.workspaceRoot.isEmpty {
-            counts[row.workspaceRoot, default: 0] += 1
-        }
-        return counts.filter { $0.value >= 2 }
     }
 
     // MARK: - The workbench's read-only patch (3.0-β)
 
     /// How much diff the workbench will show. Beyond this the view says it
     /// was cut, with the counts still telling the whole truth.
-    static let maxPatchBytes = 96 * 1024
+    package static let maxPatchBytes = 96 * 1024
 
     /// The full patch against HEAD for the session inspector — the counts'
     /// own content, shown locally, read-only, never leaving the machine.
@@ -153,7 +137,7 @@ enum WorkspaceEffect {
     /// changed against HEAD", the same question the counts answer.
     /// Returns nil for anything but a clean exit: an unreadable repository
     /// shows nothing rather than something invented.
-    static func patch(root: String) -> (text: String, truncated: Bool)? {
+    package static func patch(root: String) -> (text: String, truncated: Bool)? {
         guard let result = runner(root, ["diff-index", "-p", "--no-color", "HEAD"]),
               !result.timedOut, result.status == 0 else { return nil }
         let truncated = result.stdout.count > maxPatchBytes
@@ -165,7 +149,7 @@ enum WorkspaceEffect {
 
     /// The exact argv for one command, so the read-only guarantee is a
     /// testable property of this type rather than a promise in a comment.
-    static func arguments(for command: [String], in directory: String) -> [String] {
+    package static func arguments(for command: [String], in directory: String) -> [String] {
         ["--no-optional-locks", "-C", directory] + command
     }
 
@@ -173,14 +157,14 @@ enum WorkspaceEffect {
     /// the half that actually covers `git diff` — see the type doc for the
     /// real-machine evidence. The parent environment is inherited so git can
     /// still find HOME and PATH-dependent helpers.
-    static func environment() -> [String: String] {
+    package static func environment() -> [String: String] {
         ProcessInfo.processInfo.environment
             .merging(["GIT_OPTIONAL_LOCKS": "0"]) { _, override in override }
     }
 
     /// Test seam: every command this type runs goes through here, so the
     /// rules above can be held to fixtures without a repository on disk.
-    static var runner: (String, [String]) -> ProcessIO.Result? = { directory, command in
+    package static var runner: (String, [String]) -> ProcessIO.Result? = { directory, command in
         ProcessIO.run(
             executable: executable,
             arguments: arguments(for: command, in: directory),
@@ -198,7 +182,7 @@ enum WorkspaceEffect {
     /// Repository root for a working directory, or nil when it is not one.
     /// Cheap and stable: `rev-parse` touches no index, and a directory's root
     /// does not change, so callers cache this for the life of the row.
-    static func repositoryRoot(of directory: String) -> String? {
+    package static func repositoryRoot(of directory: String) -> String? {
         guard let out = text(runner(directory, ["rev-parse", "--show-toplevel"])) else { return nil }
         return parseToplevel(out)
     }
@@ -207,7 +191,7 @@ enum WorkspaceEffect {
     /// rather than nil when git answered but said nothing usable — the
     /// difference between "no repository here" (nil) and "a repository that
     /// has not moved" (0) is exactly what this axis exists to state.
-    static func measure(root: String, nowMs: Int64) -> Measurement {
+    package static func measure(root: String, nowMs: Int64) -> Measurement {
         var measurement = Measurement(root: root, measuredAtMs: nowMs)
         guard let status = text(runner(root, ["status", "--porcelain=v1"])) else {
             return measurement
@@ -240,26 +224,28 @@ enum WorkspaceEffect {
 ///
 /// Kept apart from the measuring so the policy — how often, how many, when to
 /// give up on a root — can be tested on a fake clock without running git.
-struct WorkspaceEffectStore {
+package struct WorkspaceEffectStore {
+    package init() {}
+
     /// How long a measurement stands before it is worth taking again. Well
     /// above the fastest probe tick: a working copy does not change faster
     /// than a person can read about it, and each measurement is two forks.
-    static let freshnessMs: Int64 = 10_000
+    package static let freshnessMs: Int64 = 10_000
     /// A ceiling on how many distinct working copies are measured per tick,
     /// so a machine with a dozen agents cannot turn one scan into two dozen
     /// subprocesses.
-    static let maxRootsPerTick = 6
+    package static let maxRootsPerTick = 6
     /// Bound on retained roots — the same shape as the CPU sample store.
-    static let maxRoots = 64
+    package static let maxRoots = 64
     /// Bound on the directory→root cache. It only ever grew (G-2): every
     /// distinct working directory Pulse had ever seen stayed remembered for
     /// the life of the app.
-    static let maxDirectories = 256
+    package static let maxDirectories = 256
     /// A stored measurement older than this is served as unknown rather than
     /// quoted. After a long park (screen off, lid closed) the first tick
     /// would otherwise print hours-old counts with nothing marking their age
     /// — stale must not wear fresh clothes (2.4's rule, applied here).
-    static let maxServeAgeMs: Int64 = 120_000
+    package static let maxServeAgeMs: Int64 = 120_000
 
     private var measurements: [String: WorkspaceEffect.Measurement] = [:]
     private var backoffUntilMs: [String: Int64] = [:]
@@ -277,7 +263,7 @@ struct WorkspaceEffectStore {
     /// are due, and hand back a table keyed by directory for the builder.
     ///
     /// Runs on the scan queue: two forks per root, bounded and capped.
-    mutating func refresh(directories: [String], nowMs: Int64) -> [String: WorkspaceEffect.Measurement] {
+    package mutating func refresh(directories: [String], nowMs: Int64) -> [String: WorkspaceEffect.Measurement] {
         let wanted = Array(Set(directories.filter { $0.hasPrefix("/") && $0.count > 1 }))
         // Resolution is a fork too, so it obeys the same per-tick cap as
         // measuring (G-3): a burst of new sessions must not turn one scan
@@ -328,7 +314,7 @@ struct WorkspaceEffectStore {
 
     /// Roots that are stale enough to be worth measuring again, oldest first,
     /// bounded, and skipping anything inside its backoff penalty.
-    func due(roots: [String], nowMs: Int64) -> [String] {
+    package func due(roots: [String], nowMs: Int64) -> [String] {
         roots
             .filter { (backoffUntilMs[$0] ?? 0) <= nowMs }
             .filter { nowMs - (measurements[$0]?.measuredAtMs ?? 0) >= Self.freshnessMs }
@@ -341,7 +327,7 @@ struct WorkspaceEffectStore {
     /// for a while. The measurement is still recorded: a slow answer is a
     /// real answer, and dropping it would report unknown for something that
     /// was in fact measured.
-    mutating func record(_ measurement: WorkspaceEffect.Measurement, tookMs: Int, nowMs: Int64) {
+    package mutating func record(_ measurement: WorkspaceEffect.Measurement, tookMs: Int, nowMs: Int64) {
         guard !measurement.root.isEmpty else { return }
         // The one place two measurements of the same root ever meet, so this
         // is where a moved HEAD is noticed. Both ids must be real: a failed
@@ -360,15 +346,15 @@ struct WorkspaceEffectStore {
         prune()
     }
 
-    func measurement(for root: String) -> WorkspaceEffect.Measurement? {
+    package func measurement(for root: String) -> WorkspaceEffect.Measurement? {
         measurements[root]
     }
 
-    func isInBackoff(_ root: String, nowMs: Int64) -> Bool {
+    package func isInBackoff(_ root: String, nowMs: Int64) -> Bool {
         (backoffUntilMs[root] ?? 0) > nowMs
     }
 
-    func headMovedRecently(root: String, nowMs: Int64) -> Bool {
+    package func headMovedRecently(root: String, nowMs: Int64) -> Bool {
         guard let moved = headMovedAtMs[root] else { return false }
         return nowMs - moved < WorkspaceEffect.recentCommitWindowMs
     }

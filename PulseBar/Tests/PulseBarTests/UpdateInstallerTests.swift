@@ -3,6 +3,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// First coverage for UpdateInstaller. The mount-point parser earned it: the

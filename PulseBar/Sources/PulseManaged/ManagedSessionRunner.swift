@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 /// 5.0-β / Outcome-α — one managed session's vendor-neutral turn life. The
 /// runtime session owns child processes and wire decoding; this runner owns
@@ -7,20 +8,20 @@ import Foundation
 /// Runtime callbacks arrive on the main actor before touching the model — the
 /// same discipline every other collector follows.
 @MainActor
-final class ManagedSessionRunner {
-    private(set) var model: ManagedSession.Model
+package final class ManagedSessionRunner {
+    package private(set) var model: ManagedSession.Model
     /// Fired after every model change, on the main actor.
-    var onChange: (() -> Void)?
+    package var onChange: (() -> Void)?
 
     private let runtime: any ManagedRuntime
     private let runtimeSession: any ManagedRuntimeSession
     /// `startOrResume` has run: the session knows its identity and worktree.
     private var sessionBound = false
     /// Checks and the code they ran against (12.2 · out of the view).
-    let acceptance: AcceptanceRunner
-    var isChecking: Bool { acceptance.isChecking }
+    package let acceptance: AcceptanceRunner
+    package var isChecking: Bool { acceptance.isChecking }
 
-    init(model: ManagedSession.Model, runtime: (any ManagedRuntime)? = nil) {
+    package init(model: ManagedSession.Model, runtime: (any ManagedRuntime)? = nil) {
         self.model = model
         guard let resolved = runtime ?? ManagedRuntimeRegistry.runtime(id: model.runtimeID) else {
             preconditionFailure("unsupported managed runtime: \(model.runtimeID)")
@@ -43,11 +44,11 @@ final class ManagedSessionRunner {
         }
     }
 
-    var isRunning: Bool { model.status == .running }
+    package var isRunning: Bool { model.status == .running }
 
     /// 6.0-α: the fleet found a slot for a queued session. Sends the held
     /// prompt; an empty one falls to failed so the queue cannot spin on it.
-    func beginQueuedTurn() {
+    package func beginQueuedTurn() {
         guard model.status == .queued else { return }
         let prompt = model.pendingPrompt
         update { $0.pendingPrompt = "" }
@@ -60,7 +61,7 @@ final class ManagedSessionRunner {
 
     /// Start the next turn with the user's words. Refuses while a turn is
     /// in flight; every refusal is visible through the model's status.
-    func send(prompt: String) {
+    package func send(prompt: String) {
         guard !isRunning else { return }
         guard runtime.executable() != nil else {
             update { $0.status = .failed("\(runtime.id)-not-found") }
@@ -99,7 +100,7 @@ final class ManagedSessionRunner {
 
     /// SIGTERM now; SIGKILL if it lingers. The status says cancelled from
     /// the click, so the termination handler knows not to call it a failure.
-    func cancel() {
+    package func cancel() {
         guard isRunning, runtimeSession.cancel() else { return }
         update { $0.status = .cancelled }
         DebugLog.write("managed cancel id=\(model.id)")
@@ -107,19 +108,19 @@ final class ManagedSessionRunner {
 
     /// Test seam: drive queue/persistence semantics without a process.
     /// Never called from product code.
-    func adoptStatusForTesting(_ status: ManagedSession.Status) {
+    package func adoptStatusForTesting(_ status: ManagedSession.Status) {
         update { $0.status = status }
     }
 
     /// 6.0-γ: the per-session run-check command, remembered.
-    func setRunCommand(_ command: String) {
+    package func setRunCommand(_ command: String) {
         update { $0.runCommand = command }
     }
 
     /// Outcome-β: run the user's check and retain evidence bound to the exact
     /// code before and after it. Process work stays off the main actor; only
     /// the finished durable fact crosses back.
-    func runCheck(command rawCommand: String, completion: (() -> Void)? = nil) {
+    package func runCheck(command rawCommand: String, completion: (() -> Void)? = nil) {
         let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isRunning, !isChecking, !command.isEmpty else { return }
         update {
@@ -145,7 +146,7 @@ final class ManagedSessionRunner {
     }
 
     /// Where the newest evidence stands against the code as it is now.
-    var latestEvidenceStanding: EvidenceStanding? {
+    package var latestEvidenceStanding: EvidenceStanding? {
         model.acceptanceEvidence.last.map { acceptance.standing(of: $0) }
     }
 
@@ -174,7 +175,7 @@ final class ManagedSessionRunner {
 
     /// Quit-time reaping — no orphaned agents burning tokens after the tray
     /// icon is gone.
-    func terminateForShutdown() {
+    package func terminateForShutdown() {
         runtimeSession.shutdown()
         // A check must not outlive the app that was going to record it; the
         // persisted `runningCheck` reloads as interrupted.
@@ -182,12 +183,12 @@ final class ManagedSessionRunner {
     }
 
     /// Stop the running check and its whole process group.
-    func cancelCheck() {
+    package func cancelCheck() {
         acceptance.cancel()
     }
 
     /// The user's decision on a permission request this session raised.
-    func resolveApproval(id: String, decision: ManagedApprovalDecision) {
+    package func resolveApproval(id: String, decision: ManagedApprovalDecision) {
         runtimeSession.resolveApproval(id: id, decision: decision)
     }
 

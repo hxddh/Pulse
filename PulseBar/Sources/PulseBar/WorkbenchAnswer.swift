@@ -75,10 +75,7 @@ enum WorkbenchAnswer {
     /// are UUIDs; anything outside this alphabet is either corruption or an
     /// attempt to ride the command, and both get the same answer.
     static func validSessionID(_ raw: String) -> Bool {
-        guard !raw.isEmpty, raw.count <= 128 else { return false }
-        return raw.allSatisfy { ch in
-            ch.isASCII && (ch.isLetter || ch.isNumber || ch == "-" || ch == "_" || ch == ".")
-        }
+        ManagedSessionID.isValid(raw)
     }
 
     /// The exact command the user will run — built here, executed nowhere.

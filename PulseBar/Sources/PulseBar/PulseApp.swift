@@ -40,7 +40,7 @@ enum PulseBarMain {
             // 6.0-β: the MCP stdio server behind --permission-prompt-tool.
             // Spawned by the managed runner per turn; no AppKit, exits with
             // the pipe.
-            exit(ManagedPermission.runServer())
+            exit(ManagedPermission.runServer(version: PulseVersion.semver))
         }
         if CommandLine.arguments.contains("--hook") {
             // Native Waiting path for Claude/Codex — no Python. Always exit 0

@@ -2,6 +2,7 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+@testable import PulseManaged
 @testable import PulseRespond
 
 /// 0.94 Waiting Proof — harvest ask → tray Waiting → dismiss → clear → re-raise,
