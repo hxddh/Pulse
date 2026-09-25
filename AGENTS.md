@@ -97,7 +97,7 @@ compiles and ships.
 ## Working on it
 
 ```bash
-cd PulseBar && swift build      # macOS 14+, Swift 5.9
+cd PulseBar && swift build      # macOS 14+, Swift 5.10 compiler
 cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
@@ -184,15 +184,15 @@ to users.
 
 ## Current state
 
-12.0.0 is the current source version (Kernel — [`docs/plan-12.0.md`](docs/plan-12.0.md)).
+12.1.0 is the current source version (Kernel + Seams — [`docs/plan-12.0.md`](docs/plan-12.0.md)).
 The review behind it is [`docs/review-11.0.md`](docs/review-11.0.md); its
 defects were fixed in 11.0.4. The next product axis is Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the
 real-machine Codex P0 evidence exists and the product decision in review-11.0
 §4.3 has been made.
 
-Still open: update signing (F-4, dormant until a Developer ID exists), remote
-mtime freshness (F-2), and the 12.x structural phases listed in plan-12.0.
+Still open: update signing (F-4, dormant until a Developer ID exists) and the
+12.x structural phases listed in plan-12.0.
 Respond's P0-0 real-machine confirmation (decision shape honoured) remains the
 one unverified item of 2.0 — a wrong shape is silently ignored and falls open,
 never a wrong approval.

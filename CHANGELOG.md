@@ -2,6 +2,24 @@
 
 All notable changes to Pulse are documented here.
 
+## 12.1.0 — Seams（接缝）
+
+12.x 的第一轮结构工作（[`docs/plan-12.0.md`](docs/plan-12.0.md) 的余项），外加一个用户能碰到的动词。
+
+- **采集的走法变成数据。** 每个 agent 的 `AgentSpec` 多了 `HarvestWalk`：用哪个 SQLite 读取器、
+  哪些文件算会话记录、读窗口多大、单文件上限、时限、是否丢弃「继续」类提示，以及原生 fixture
+  墙上的位置。采集循环里按 agent 分支的 `id ==` 与一条横跨两行、点名 11 个 agent 的列表不复存在；
+  fixture 墙的通用夹具从目录生成 —— 新 agent 不在墙上就进不了名单。
+  `agent_catalog_check.py` 现在也抓跨行的 agent 列表。
+- **`NativeActivityHarvest.swift` 按职责拆开**：4.2k 行变成扫描与遍历（1.1k）+ `HarvestDatabases`
+  + `HarvestFacts` + `HarvestValues`。行为冻结，由 fixture 墙与全量测试证明。
+- **`PulseCore` 零警告，并开启 warnings-as-errors。** 严格并发检查下的 25 条警告全部消除
+  （锁保护的状态与测试接缝如实标注，`Limits` 为 `Sendable`）。需要 Swift 5.10 编译器。
+- **远端时钟按文件判断（修复 review-1.2 F-2）。** 一个远端文件只有一个到达时间；主机时钟偏差
+  由最新一行测得，所有行按同一偏移校正 —— 新到的一行不再把几小时前的权限请求「刷新」成刚到。
+- **运行中的检查可以停止。** 受管会话检视器在检查运行时给出「停止检查」，整组进程一起收割；
+  退出 Pulse 也会停止检查。被停止的检查记为「中断」—— 既没通过也没失败。
+
 ## 12.0.0 — Kernel（内核）
 
 [`docs/review-11.0.md`](docs/review-11.0.md) 的判词：2.0 → 11.0 九个大版本都在加动词和表面，

@@ -285,35 +285,14 @@ enum NativeHarvestSelfTest {
 
     private static func writeGenericFixtures(home: URL) throws {
         let fm = FileManager.default
-        let fixture: [AgentID: String] = [
-            .claude: ".claude/projects/fixture.jsonl",
-            .codex: ".codex/sessions/fixture/rollout-fixture.jsonl",
-            .amp: ".local/share/amp/history.jsonl",
-            .aider: ".aider/session.json",
-            .gemini: ".gemini/tmp/fixture/chats/session-fixture.jsonl",
-            .copilot: ".copilot/session.json",
-            .goose: ".config/goose/session.json",
-            .openhands: ".openhands/session.json",
-            .continue_: ".continue/session.json",
-            .droid: ".factory/session.jsonl",
-            .commandCode: ".commandcode/session.jsonl",
-            .kimi: ".kimi-code/session.jsonl",
-            .amazonQ: ".aws/amazonq/session.json",
-            .cline: "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/session.json",
-            .roo: "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/session.json",
-            .cascade: ".codeium/session.json",
-            .windsurf: ".windsurf/session.json",
-            .augment: ".augment/session.json",
-            .zedAgent: ".zed/session.json",
-            .trae: "Library/Application Support/Trae/session.json",
-            .devin: ".devin/session.json",
-            .kiro: ".kiro/session.json",
-            .junie: ".junie/session.json",
-            .kilo: "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/session.json",
-            .replit: ".replit/session.json",
-            .antigravity: "Library/Application Support/Antigravity/User/globalStorage/session.json",
-            .zcode: ".zcode/sessions/session.json",
-        ]
+        // Where each agent's vendor-shaped fixture goes is part of its spec
+        // (`HarvestWalk.fixturePath`), so a new agent cannot join the roster
+        // without a place on this wall.
+        let fixture: [AgentID: String] = Dictionary(
+            uniqueKeysWithValues: AgentCatalog.all.compactMap { spec in
+                spec.walk.fixturePath.map { (spec.id, $0) }
+            }
+        )
         let generic = "{\"sessionId\":\"fixture-ID\",\"title\":\"TITLE fixture\",\"cwd\":\"/tmp/pulse-ID\",\"status\":\"running\",\"currentTool\":\"bash\",\"model\":\"fixture-model\",\"inputTokens\":12,\"outputTokens\":3,\"filesChanged\":1,\"contextPercent\":24}"
         for (id, relative) in fixture {
             let url = home.appendingPathComponent(relative)

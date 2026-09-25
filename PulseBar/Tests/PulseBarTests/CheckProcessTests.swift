@@ -70,4 +70,35 @@ final class CheckProcessTests: XCTestCase {
         XCTAssertEqual(ProcessIO.decodeWaitStatus(3 << 8), 3)
         XCTAssertEqual(ProcessIO.decodeWaitStatus(9), 137)
     }
+
+    func testAUserCanStopACheckAndItsChildren() throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-check-stopped-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let control = ProcessIO.CheckControl()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { control.cancel() }
+        let started = Date()
+        let result = try XCTUnwrap(ProcessIO.runCheck(
+            command: "(sleep 3; touch '\(marker.path)') & sleep 30",
+            currentDirectory: NSTemporaryDirectory(),
+            timeout: 60,
+            outputLimit: 1024,
+            control: control
+        ))
+        XCTAssertTrue(result.cancelled)
+        XCTAssertFalse(result.timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "the child went with the shell")
+    }
+
+    func testACheckCancelledBeforeItStartsNeverRuns() throws {
+        let control = ProcessIO.CheckControl()
+        control.cancel()
+        let result = try XCTUnwrap(ProcessIO.runCheck(
+            command: "sleep 30", currentDirectory: NSTemporaryDirectory(),
+            timeout: 60, outputLimit: 1024, control: control
+        ))
+        XCTAssertTrue(result.cancelled)
+    }
 }

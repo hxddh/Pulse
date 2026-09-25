@@ -110,6 +110,73 @@ enum TranscriptPolicy {
     var allowsBoundedLargeFiles: Bool { self != .none }
 }
 
+/// A vendor store read through SQLite rather than as transcript files.
+enum DatabaseAdapter {
+    case cursor, openCode, warp, pi, grok
+
+    /// File extensions the walk hands to this adapter instead of the
+    /// transcript reader.
+    var extensions: Set<String> {
+        self == .cursor ? ["vscdb", "sqlite", "db"] : ["sqlite", "db"]
+    }
+
+    /// Pi's JSONL carries the /resume title; its sibling SQLite must not run
+    /// before those transcripts or the row loses its hero.
+    var runsAfterTranscripts: Bool { self == .pi }
+
+    /// A file that will not open as SQLite fails the adapter — except for Pi,
+    /// whose tree holds incidental non-SQLite `.db` files beside the JSONL
+    /// that is its real source.
+    var failsOnUnreadableFile: Bool { self != .pi }
+}
+
+/// Which transcript files under an agent's roots are session evidence.
+enum TranscriptSelection: Equatable {
+    /// Every transcript-shaped file.
+    case all
+    /// None: the database is authoritative and the rest of the tree is noise
+    /// (Grok's terminal transcripts, locks and system prompts).
+    case none
+    /// Only paths containing this fragment, lowercased (Pi's session tree,
+    /// Gemini's chats — their roots also hold caches and checkouts).
+    case pathContains(String)
+
+    func admits(_ lowercasedPath: String) -> Bool {
+        switch self {
+        case .all: return true
+        case .none: return false
+        case .pathContains(let fragment): return lowercasedPath.contains(fragment)
+        }
+    }
+}
+
+/// How the native collector walks and reads one agent's roots. The defaults
+/// are the generic adapter; an agent states only where it differs.
+struct HarvestWalk {
+    var database: DatabaseAdapter? = nil
+    var transcripts: TranscriptSelection = .all
+    /// Directory names the walk normally skips but this agent keeps.
+    var keptDirectoryNames: Set<String> = []
+    /// A path fragment (lowercased) that marks a file as a structured session
+    /// even where the generic session-path rule would not.
+    var structuredPathFragment: String? = nil
+    /// Largest transcript file read at all; nil means the default for the
+    /// agent's transcript policy.
+    var maxFileBytes: Int? = nil
+    /// Bytes read per transcript window, and how many of them from the head.
+    var windowBytes = 1_000_000
+    var headBytes = 64_000
+    /// The adapter's own time budget; nil means the shared default.
+    var deadlineSeconds: Double? = nil
+    /// "continue" / "go on" prompts are not tasks — for agents whose
+    /// transcripts record them as ordinary user turns.
+    var dropsContinuationPrompts = false
+    /// Home-relative path of the generic vendor-shaped fixture the native
+    /// fixture wall writes for this agent (`--native-fixture-test`). Agents
+    /// with a hand-written fixture of their own leave it nil.
+    var fixturePath: String? = nil
+}
+
 /// Which `ps` argv lines are this agent. See `ProcessProbe.matchEvidence`.
 struct AgentProcessRule {
     var basenames: [String]
@@ -141,6 +208,8 @@ struct AgentSpec {
     let harvestRoots: [String]
     /// Executables whose presence says the agent is installed.
     let harvestCommands: [String]
+    /// How the collector walks and reads those roots.
+    var walk = HarvestWalk()
 }
 
 enum AgentCatalog {
@@ -157,7 +226,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude"], denyNeedles: ["Claude.app", "chrome-native-host"]),
             harvestRoots: [".claude/projects", ".claude/tasks"],
-            harvestCommands: ["claude"]
+            harvestCommands: ["claude"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".claude/projects/fixture.jsonl")
         ),
         AgentSpec(
             id: .codex,
@@ -171,7 +241,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
             harvestRoots: [".codex/sessions", ".codex/rollouts"],
-            harvestCommands: ["codex"]
+            harvestCommands: ["codex"],
+            walk: HarvestWalk(windowBytes: 8_000_000, deadlineSeconds: 1.2, fixturePath: ".codex/sessions/fixture/rollout-fixture.jsonl")
         ),
         AgentSpec(
             id: .cursor,
@@ -193,7 +264,8 @@ enum AgentCatalog {
                 // user's explicit Cursor app-data opt-in.
                 "Library/Application Support/Cursor/User",
             ],
-            harvestCommands: ["Cursor"]
+            harvestCommands: ["Cursor"],
+            walk: HarvestWalk(database: .cursor)
         ),
         AgentSpec(
             id: .cursorAgent,
@@ -228,7 +300,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["grok"], pathNeedles: ["/.grok/bin/grok", "grok-0.", "GROK_AGENT=", "/bin/grok"], denyNeedles: []),
             harvestRoots: [".grok/sessions"],
-            harvestCommands: ["grok"]
+            harvestCommands: ["grok"],
+            walk: HarvestWalk(database: .grok, transcripts: .none, keptDirectoryNames: ["logs"], structuredPathFragment: "/.grok/logs/", maxFileBytes: 16 * 1024 * 1024)
         ),
         AgentSpec(
             id: .pi,
@@ -252,7 +325,8 @@ enum AgentCatalog {
             // context-mode SQLite first spent the adapter deadline on empty
             // session_meta rows and never opened the transcripts.
             harvestRoots: [".pi/agent/sessions", ".pi/context-mode/sessions"],
-            harvestCommands: ["pi"]
+            harvestCommands: ["pi"],
+            walk: HarvestWalk(database: .pi, transcripts: .pathContains("/.pi/agent/sessions/"), windowBytes: 496_000, headBytes: 96_000)
         ),
         AgentSpec(
             id: .amp,
@@ -271,7 +345,8 @@ enum AgentCatalog {
                 denyNeedles: ["AMPDevice", "AMPLibrary", "AMPDevices", "iTunesCloud", "AMPLibraryAgent"]
             ),
             harvestRoots: [".local/share/amp", ".amp"],
-            harvestCommands: ["amp"]
+            harvestCommands: ["amp"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".local/share/amp/history.jsonl")
         ),
         AgentSpec(
             id: .aider,
@@ -285,7 +360,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["aider"], pathNeedles: ["/bin/aider", "-m aider"], denyNeedles: []),
             harvestRoots: [".aider"],
-            harvestCommands: ["aider"]
+            harvestCommands: ["aider"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".aider/session.json")
         ),
         AgentSpec(
             id: .gemini,
@@ -299,7 +375,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: ["Gemini.app"]),
             harvestRoots: [".gemini/tmp"],
-            harvestCommands: ["gemini"]
+            harvestCommands: ["gemini"],
+            walk: HarvestWalk(transcripts: .pathContains("/chats/"), dropsContinuationPrompts: true, fixturePath: ".gemini/tmp/fixture/chats/session-fixture.jsonl")
         ),
         AgentSpec(
             id: .copilot,
@@ -317,7 +394,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
             ),
             harvestRoots: [".copilot", ".config/copilot"],
-            harvestCommands: ["copilot"]
+            harvestCommands: ["copilot"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".copilot/session.json")
         ),
         AgentSpec(
             id: .opencode,
@@ -331,7 +409,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["opencode", "open-code"], pathNeedles: ["/bin/opencode", "/opencode/", "opencode@", "@opencode"], denyNeedles: []),
             harvestRoots: [".local/share/opencode"],
-            harvestCommands: ["opencode"]
+            harvestCommands: ["opencode"],
+            walk: HarvestWalk(database: .openCode)
         ),
         AgentSpec(
             id: .goose,
@@ -345,7 +424,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["goose"], pathNeedles: ["/bin/goose", "block/goose", "goose-cli"], denyNeedles: []),
             harvestRoots: [".config/goose", ".local/share/goose", "Library/Application Support/Goose"],
-            harvestCommands: ["goose"]
+            harvestCommands: ["goose"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".config/goose/session.json")
         ),
         AgentSpec(
             id: .openhands,
@@ -359,7 +439,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["openhands", "opendevin"], pathNeedles: ["openhands", "OpenHands", "OpenDevin"], denyNeedles: []),
             harvestRoots: [".openhands", ".openhands-state"],
-            harvestCommands: ["openhands"]
+            harvestCommands: ["openhands"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".openhands/session.json")
         ),
         AgentSpec(
             id: .cline,
@@ -378,7 +459,8 @@ enum AgentCatalog {
                 "Library/Application Support/Windsurf/User/globalStorage/saoudrizwan.claude-dev",
                 "Library/Application Support/Trae/User/globalStorage/saoudrizwan.claude-dev",
             ],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/session.json")
         ),
         AgentSpec(
             id: .roo,
@@ -397,7 +479,8 @@ enum AgentCatalog {
                 "Library/Application Support/Windsurf/User/globalStorage/rooveterinaryinc.roo-cline",
                 "Library/Application Support/Trae/User/globalStorage/rooveterinaryinc.roo-cline",
             ],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/session.json")
         ),
         AgentSpec(
             id: .continue_,
@@ -411,7 +494,8 @@ enum AgentCatalog {
             aliases: [],
             process: AgentProcessRule(basenames: ["continue", "continue-cli"], pathNeedles: ["continue.dev", "Continue.continue", "continue-cli"], denyNeedles: ["crashpad"]),
             harvestRoots: [".continue"],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".continue/session.json")
         ),
         AgentSpec(
             id: .amazonQ,
@@ -431,7 +515,8 @@ enum AgentCatalog {
                 "Library/Application Support/amazon-q",
                 "Library/Application Support/AmazonQ",
             ],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: ".aws/amazonq/session.json")
         ),
         AgentSpec(
             id: .cascade,
@@ -453,7 +538,8 @@ enum AgentCatalog {
                 "Library/Application Support/Windsurf",
                 "Library/Application Support/Codeium",
             ],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: ".codeium/session.json")
         ),
         AgentSpec(
             id: .windsurf,
@@ -471,7 +557,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad", "Windsurf Helper", "WindsurfUI", "cascade-agent", "windsurf-cascade"]
             ),
             harvestRoots: [".windsurf", "Library/Application Support/Windsurf"],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: ".windsurf/session.json")
         ),
         AgentSpec(
             id: .augment,
@@ -489,7 +576,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad"]
             ),
             harvestRoots: [".augment", ".auggie"],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: ".augment/session.json")
         ),
         AgentSpec(
             id: .zedAgent,
@@ -510,7 +598,8 @@ enum AgentCatalog {
                 ".zed", ".config/zed",
                 "Library/Application Support/Zed",
             ],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: ".zed/session.json")
         ),
         AgentSpec(
             id: .trae,
@@ -528,7 +617,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad", "Trae Helper", "Trae.app/Contents/MacOS/Trae"]
             ),
             harvestRoots: [".trae", "Library/Application Support/Trae"],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: "Library/Application Support/Trae/session.json")
         ),
         AgentSpec(
             id: .warpAgent,
@@ -552,7 +642,8 @@ enum AgentCatalog {
                 "Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp-Stable",
                 "Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp",
             ],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(database: .warp)
         ),
         AgentSpec(
             id: .devin,
@@ -570,7 +661,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad"]
             ),
             harvestRoots: [".devin", ".cognition"],
-            harvestCommands: ["devin"]
+            harvestCommands: ["devin"],
+            walk: HarvestWalk(fixturePath: ".devin/session.json")
         ),
         AgentSpec(
             id: .kiro,
@@ -588,7 +680,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad", "Kiro Helper"]
             ),
             harvestRoots: [".kiro", "Library/Application Support/Kiro"],
-            harvestCommands: ["kiro"]
+            harvestCommands: ["kiro"],
+            walk: HarvestWalk(fixturePath: ".kiro/session.json")
         ),
         AgentSpec(
             id: .junie,
@@ -606,7 +699,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad"]
             ),
             harvestRoots: [".junie", "Library/Application Support/JetBrains/Junie"],
-            harvestCommands: ["junie"]
+            harvestCommands: ["junie"],
+            walk: HarvestWalk(fixturePath: ".junie/session.json")
         ),
         AgentSpec(
             id: .kilo,
@@ -627,7 +721,8 @@ enum AgentCatalog {
                 "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code",
                 "Library/Application Support/Cursor/User/globalStorage/kilocode.kilo-code",
             ],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/session.json")
         ),
         AgentSpec(
             id: .replit,
@@ -645,7 +740,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad"]
             ),
             harvestRoots: [".replit", ".config/replit"],
-            harvestCommands: []
+            harvestCommands: [],
+            walk: HarvestWalk(fixturePath: ".replit/session.json")
         ),
         AgentSpec(
             id: .droid,
@@ -663,7 +759,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad", "android", "droidcam"]
             ),
             harvestRoots: [".factory"],
-            harvestCommands: ["droid"]
+            harvestCommands: ["droid"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".factory/session.jsonl")
         ),
         AgentSpec(
             id: .commandCode,
@@ -695,7 +792,8 @@ enum AgentCatalog {
             // evidence that Command Code is installed — especially now that
             // the search covers ~/.local/bin and the other user bin roots.
             harvestRoots: [".commandcode"],
-            harvestCommands: ["command-code"]
+            harvestCommands: ["command-code"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".commandcode/session.jsonl")
         ),
         AgentSpec(
             id: .antigravity,
@@ -726,7 +824,8 @@ enum AgentCatalog {
                 "Library/Application Support/Antigravity IDE/User/globalStorage",
                 "Library/Application Support/Antigravity IDE/User/workspaceStorage",
             ],
-            harvestCommands: ["agy", "antigravity"]
+            harvestCommands: ["agy", "antigravity"],
+            walk: HarvestWalk(fixturePath: "Library/Application Support/Antigravity/User/globalStorage/session.json")
         ),
         AgentSpec(
             id: .kimi,
@@ -744,7 +843,8 @@ enum AgentCatalog {
                 denyNeedles: ["crashpad", "Kimis", "kimisc"]
             ),
             harvestRoots: [".kimi-code"],
-            harvestCommands: ["kimi"]
+            harvestCommands: ["kimi"],
+            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".kimi-code/session.jsonl")
         ),
         AgentSpec(
             id: .zcode,
@@ -775,7 +875,8 @@ enum AgentCatalog {
                 ".zcode",
                 "Library/Application Support/ZCode",
             ],
-            harvestCommands: ["zcode", "ZCode"]
+            harvestCommands: ["zcode", "ZCode"],
+            walk: HarvestWalk(fixturePath: ".zcode/sessions/session.json")
         ),
     ]
 

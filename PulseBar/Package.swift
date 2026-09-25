@@ -1,4 +1,5 @@
 // swift-tools-version: 5.9
+// Requires a Swift 5.10 compiler: PulseCore uses `nonisolated(unsafe)`.
 import PackageDescription
 
 let package = Package(
@@ -18,6 +19,9 @@ let package = Package(
             path: "Sources/PulseCore",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
+                // 12.1: zero warnings, and it stays that way. A concurrency
+                // warning here is a data race the compiler already found.
+                .unsafeFlags(["-warnings-as-errors"]),
             ]
         ),
         .executableTarget(

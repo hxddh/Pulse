@@ -564,7 +564,39 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entry.kind, "Permission")
         XCTAssertTrue(entry.clockSuspect, "the stamp was refused, arrival carries the event")
-        XCTAssertEqual(entry.effectiveMs, now)
+        // 12.1: the whole file is shifted by the host's skew, so the
+        // permission keeps its 1 ms lead over the Stop that followed it.
+        XCTAssertEqual(entry.effectiveMs, now - 1)
+    }
+
+    /// review-1.2 F-2: a fresh line must not re-date an old one. The file's
+    /// mtime is the arrival of its newest line only.
+    func testAFreshLineDoesNotResurrectAnOldRemoteWait() {
+        let now: Int64 = 1_700_000_000_000
+        let hour: Int64 = 60 * 60 * 1000
+        let text = [
+            "claude\tpermission\t\(now - 3 * hour)\tBash: rm -rf build\tsession-old\t/Users/me/Pulse\tbox",
+            "codex\tpermission\t\(now - 60_000)\tBash: make\tsession-new\t/Users/me/Pulse\tbox",
+        ].joined(separator: "\n") + "\n"
+        let entries = AttentionReader.parse(text, nowMs: now, defaultHost: "box", receivedAtMs: now)
+        XCTAssertEqual(entries.map(\.session), ["session-new"], "three hours old is not 'just arrived'")
+        XCTAssertFalse(entries.first?.clockSuspect ?? true)
+    }
+
+    func testASkewedHostShiftsEveryLineByTheSameOffset() throws {
+        let now: Int64 = 1_700_000_000_000
+        let minute: Int64 = 60_000
+        let skew: Int64 = 50 * minute  // the host runs 50 minutes behind
+        let text = [
+            "claude\tpermission\t\(now - skew - 10 * minute)\tA\ts-a\t/x\tbox",
+            "codex\tpermission\t\(now - skew)\tB\ts-b\t/x\tbox",
+        ].joined(separator: "\n") + "\n"
+        let entries = AttentionReader.parse(text, nowMs: now, defaultHost: "box", receivedAtMs: now)
+        let a = try XCTUnwrap(entries.first { $0.session == "s-a" })
+        let b = try XCTUnwrap(entries.first { $0.session == "s-b" })
+        XCTAssertTrue(a.clockSuspect && b.clockSuspect)
+        XCTAssertEqual(b.effectiveMs, now)
+        XCTAssertEqual(a.effectiveMs, now - 10 * minute, "ten minutes older, still ten minutes older")
     }
 
     /// And the grace still expires on the clock it is measured against: a

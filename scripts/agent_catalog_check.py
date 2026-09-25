@@ -74,6 +74,8 @@ def main() -> int:
         seen: set[str] = set()
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             stripped = line.strip()
+            if stripped.startswith("//"):
+                continue
             if not stripped.startswith("case ."):
                 continue
             hits = set(agent_re.findall(stripped.split(":")[0]))
@@ -83,6 +85,18 @@ def main() -> int:
                     "roster-wide facts belong in AgentCatalog"
                 )
             seen |= hits
+        # A roster list is a roster table too: 12.0 missed an eleven-agent
+        # `[.amp, .claude, …].contains(id)` because it was not a `case` line
+        # and it wrapped across two lines.
+        code = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8"))
+        for match in re.finditer(r"\[([^\[\]]*)\]", code):
+            listed = set(agent_re.findall(match.group(1)))
+            if len(listed) > MAX_PER_CASE:
+                number = code.count("\n", 0, match.start()) + 1
+                problems.append(
+                    f"{path.name}:{number}: a list naming {len(listed)} agents — "
+                    "roster-wide facts belong in AgentCatalog"
+                )
         if len(seen) > MAX_PER_FILE:
             problems.append(
                 f"{path.name}: `case` lines name {len(seen)} agents — "

@@ -27,15 +27,23 @@
 - **一份 gate 清单**：`scripts/gates.sh`，CI、release.yml、`release.sh`、`package.sh` 共用。
 - **CI**：同一分支 push + PR 只保留最新一次（`concurrency`），缓存 `.build`。
 
+## 12.1 已完成
+
+- γ 的数据部分：`HarvestWalk` 把 SQLite 读取器、transcript 选择、读窗口、时限等按 agent 的走法
+  搬进目录；`NativeActivityHarvest` 按职责拆成四个文件。
+- 严格并发：`PulseCore` 零警告并开启 warnings-as-errors。
+- review-1.2 F-2：远端时钟按文件校正。
+- ε 的一部分：检查可取消、退出时收割。
+
 ## 留给 12.x（按 review §4.2 的阶段）
 
 | 阶段 | 未做部分 | 前提 |
 | --- | --- | --- |
-| γ Adapter 协议 | `HarvestAdapter` 协议与每厂商一个文件；扫描引擎改 actor | fixture 墙逐家对比 hero 值 |
+| γ Adapter 协议 | 厂商解析（Codex / Pi / Cursor…）各自成文件并以协议分派；扫描引擎改 actor | fixture 墙逐家对比 hero 值 |
 | δ Store 拆分 | 除设置外的 `WaitingDelivery` / `RowPresenter`；Narration 离开 store | 性能墙扩展到托盘与 Workbench |
 | β 余下模块 | `PulseHarvest` / `PulseRespond` / `PulseManaged` target | γ、δ 先完成 |
-| ε Managed 地基 | 会话形 runtime 协议、独立 AcceptanceRunner、FSEvents 驱动的过期判定 | Outcome 开工之前 |
-| 严格并发 | `PulseCore` 零警告后开 warnings-as-errors，再逐 target 推广 | — |
+| ε Managed 地基 | 会话形 runtime 协议、独立 AcceptanceRunner、过期判定移出视图（FSEvents） | Outcome 开工之前 |
+| 严格并发 | 推广到 App target | 先拆出更多 target |
 
 ## 边界不动
 
