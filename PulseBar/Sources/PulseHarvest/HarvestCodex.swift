@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import SQLite3
 
 // Codex: the rollout JSONL parser.
@@ -8,7 +9,7 @@ import SQLite3
 // TranscriptDialect.swift.
 
 extension NativeActivityHarvest {
-    static func parseCodexFacts(_ text: String, path: String) -> [Fact] {
+    package static func parseCodexFacts(_ text: String, path: String) -> [Fact] {
         var f = Fact()
         f.structured = true
         f.sourcePath = path
@@ -198,7 +199,7 @@ extension NativeActivityHarvest {
         return f.hasUsefulSignal ? [f] : []
     }
 
-    static func codexUserText(_ value: Any?) -> String {
+    package static func codexUserText(_ value: Any?) -> String {
         guard let value else { return "" }
         if let text = value as? String { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
         if let array = value as? [Any] {
@@ -218,7 +219,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func cleanCodexUserRequest(_ value: String) -> String {
+    package static func cleanCodexUserRequest(_ value: String) -> String {
         var text = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return "" }
         if let regex = try? NSRegularExpression(pattern: #"##\s+My request for Codex:\s*"#, options: .caseInsensitive),

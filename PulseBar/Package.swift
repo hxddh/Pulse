@@ -24,9 +24,36 @@ let package = Package(
                 .unsafeFlags(["-warnings-as-errors"]),
             ]
         ),
+        // 12.3 · Respond: the permission contract and the verdict spool.
+        // Foundation (+ CoreGraphics for the presence probe) over PulseCore;
+        // no AppKit, no StatusStore, so the rules that decide whether a
+        // verdict may be written cannot reach UI state.
+        .target(
+            name: "PulseRespond",
+            dependencies: ["PulseCore"],
+            path: "Sources/PulseRespond",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+            ]
+        ),
+        // 12.3 · Harvest: the native collector — the scan, the walk, the
+        // vendor dialects, SQLite adapters, the process probe and the
+        // attention spool. It sees the catalog and the kernel, never the
+        // store or the UI; the app reads what it returns.
+        .target(
+            name: "PulseHarvest",
+            dependencies: ["PulseCore"],
+            path: "Sources/PulseHarvest",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency"),
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+            ]
+        ),
         .executableTarget(
             name: "PulseBar",
-            dependencies: ["PulseCore"],
+            dependencies: ["PulseCore", "PulseRespond", "PulseHarvest"],
             path: "Sources/PulseBar",
             resources: [
                 .copy("Resources/pulse_hook.py"),
@@ -50,7 +77,7 @@ let package = Package(
         // the product and had no coverage at all before 0.22.
         .testTarget(
             name: "PulseBarTests",
-            dependencies: ["PulseBar", "PulseCore"],
+            dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest"],
             path: "Tests/PulseBarTests",
             linkerSettings: [
                 .linkedLibrary("sqlite3"),

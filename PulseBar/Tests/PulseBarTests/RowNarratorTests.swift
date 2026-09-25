@@ -1,6 +1,8 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 12.3 δ — narration is a value. Everything it used to read from the store
 /// implicitly (the clock, tray crowding, the managed fleet) is an input, so

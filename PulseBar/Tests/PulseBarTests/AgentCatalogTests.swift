@@ -1,6 +1,8 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 12.0 · the roster is one table, and the table is whole.
 final class AgentCatalogTests: XCTestCase {

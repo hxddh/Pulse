@@ -2,6 +2,8 @@ import CryptoKit
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 2.4 Answer Here — the one verb change this product has shipped, made
 /// reachable by someone with a single Mac.

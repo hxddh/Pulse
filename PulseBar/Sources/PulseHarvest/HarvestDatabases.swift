@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import SQLite3
 
 // The native collector's SQLite readers — Cursor, OpenCode, Warp, Pi and
@@ -12,7 +13,7 @@ extension NativeActivityHarvest {
     /// in SQLite. Falling back to a generic file walk makes those agents look
     /// absent even while they have many sessions. These readers only prepare
     /// read-only statements, cap rows, and share the same global byte budget.
-    static func collectDatabase(
+    package static func collectDatabase(
         _ url: URL,
         adapter: DatabaseAdapter,
         home: URL,
@@ -69,7 +70,7 @@ extension NativeActivityHarvest {
         if sqliteReadFailed(database) { error = true }
     }
 
-    static func collectGrokDatabase(
+    package static func collectGrokDatabase(
         _ database: OpaquePointer,
         url: URL,
         home: URL,
@@ -124,7 +125,7 @@ extension NativeActivityHarvest {
     /// the first plain line after the last `<assistant` marker. Tag lines
     /// and code fences reset the marker; a layout this does not recognise
     /// yields "", never an invented word. Internal for the unit test.
-    static func grokLastWord(from content: String) -> String {
+    package static func grokLastWord(from content: String) -> String {
         var pendingAssistant = false
         var word = ""
         for line in content.split(whereSeparator: \.isNewline) {
@@ -141,7 +142,7 @@ extension NativeActivityHarvest {
         return selfReportLine(word)
     }
 
-    static func grokTitle(from content: String) -> String {
+    package static func grokTitle(from content: String) -> String {
         for line in content.split(whereSeparator: \.isNewline) {
             let value = clean(String(line), limit: 160)
             guard !value.isEmpty else { continue }
@@ -153,7 +154,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func collectOpenCodeDatabase(
+    package static func collectOpenCodeDatabase(
         _ database: OpaquePointer,
         url: URL,
         into facts: inout [Fact],
@@ -223,7 +224,7 @@ extension NativeActivityHarvest {
     /// role. Every step is guarded: a schema without these tables or columns
     /// returns "" (absence, never a guess), and `rowid` ordering needs no
     /// vendor timestamp column to exist.
-    static func openCodeLastWord(_ database: OpaquePointer, sessionID: String) -> String {
+    package static func openCodeLastWord(_ database: OpaquePointer, sessionID: String) -> String {
         let messageSQL = "SELECT id, data FROM message WHERE session_id = ? ORDER BY rowid DESC LIMIT 40"
         guard let messages = sqlitePrepare(database, messageSQL),
               sqliteBind(messages, index: 1, text: sessionID) else { return "" }
@@ -252,7 +253,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func openCodePartCount(_ database: OpaquePointer, sessionID: String) -> Int {
+    package static func openCodePartCount(_ database: OpaquePointer, sessionID: String) -> Int {
         let sql = "SELECT COUNT(*) FROM part WHERE session_id = ?"
         guard let statement = sqlitePrepare(database, sql) else { return 0 }
         defer { sqlite3_finalize(statement) }
@@ -260,7 +261,7 @@ extension NativeActivityHarvest {
         return max(0, Int(sqlite3_column_int64(statement, 0)))
     }
 
-    static func enrichOpenCodeParts(_ database: OpaquePointer, sessionID: String, fact: inout Fact) {
+    package static func enrichOpenCodeParts(_ database: OpaquePointer, sessionID: String, fact: inout Fact) {
         let sql = "SELECT data FROM part WHERE session_id = ? ORDER BY time_updated DESC LIMIT 80"
         guard let statement = sqlitePrepare(database, sql), sqliteBind(statement, index: 1, text: sessionID) else { return }
         defer { sqlite3_finalize(statement) }
@@ -307,15 +308,15 @@ extension NativeActivityHarvest {
         }
     }
 
-    struct WarpQuery {
-        var timestamp: Int64 = 0
-        var cwd = ""
-        var status = ""
-        var model = ""
-        var input = ""
+    package struct WarpQuery {
+        package var timestamp: Int64 = 0
+        package var cwd = ""
+        package var status = ""
+        package var model = ""
+        package var input = ""
     }
 
-    static func collectWarpDatabase(
+    package static func collectWarpDatabase(
         _ database: OpaquePointer,
         url: URL,
         into facts: inout [Fact],
@@ -396,7 +397,7 @@ extension NativeActivityHarvest {
         }
     }
 
-    static func collectPiDatabase(
+    package static func collectPiDatabase(
         _ database: OpaquePointer,
         url: URL,
         home: URL,
@@ -437,7 +438,7 @@ extension NativeActivityHarvest {
         }
     }
 
-    static func enrichPiEvents(_ database: OpaquePointer, sessionID: String, fact: inout Fact) {
+    package static func enrichPiEvents(_ database: OpaquePointer, sessionID: String, fact: inout Fact) {
         let sql = "SELECT type, category, data, project_dir, created_at, bytes_returned FROM session_events WHERE session_id = ? ORDER BY id DESC LIMIT 128"
         guard let statement = sqlitePrepare(database, sql), sqliteBind(statement, index: 1, text: sessionID) else { return }
         defer { sqlite3_finalize(statement) }
@@ -525,15 +526,15 @@ extension NativeActivityHarvest {
         }
     }
 
-    static func recordsFromBytes(_ bytes: Int64) -> Int { bytes > 0 ? 1 : 0 }
+    package static func recordsFromBytes(_ bytes: Int64) -> Int { bytes > 0 ? 1 : 0 }
 
-    static func tokenPair(_ text: String) -> (Int, Int) {
+    package static func tokenPair(_ text: String) -> (Int, Int) {
         let input = regexInt(text, pattern: #"tokens_in\s*:\s*(\d+)"#)
         let output = regexInt(text, pattern: #"tokens_out\s*:\s*(\d+)"#)
         return (input, output)
     }
 
-    static func regexInt(_ text: String, pattern: String) -> Int {
+    package static func regexInt(_ text: String, pattern: String) -> Int {
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
               let range = Range(match.range(at: 1), in: text)
@@ -541,13 +542,13 @@ extension NativeActivityHarvest {
         return Int(text[range]) ?? 0
     }
 
-    static func sqlitePrepare(_ database: OpaquePointer, _ sql: String) -> OpaquePointer? {
+    package static func sqlitePrepare(_ database: OpaquePointer, _ sql: String) -> OpaquePointer? {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
         return statement
     }
 
-    static func sqliteBind(_ statement: OpaquePointer, index: Int32, text: String) -> Bool {
+    package static func sqliteBind(_ statement: OpaquePointer, index: Int32, text: String) -> Bool {
         sqlite3_bind_text(
             statement,
             index,
@@ -557,7 +558,7 @@ extension NativeActivityHarvest {
         ) == SQLITE_OK
     }
 
-    static func modelIdentifier(_ raw: String) -> String {
+    package static func modelIdentifier(_ raw: String) -> String {
         guard !raw.isEmpty else { return "" }
         if let object = jsonObject(raw) {
             return firstString(object, keys: ["id", "model", "modelID", "model_id"])
@@ -565,28 +566,28 @@ extension NativeActivityHarvest {
         return raw
     }
 
-    static func jsonObject(_ raw: String) -> [String: Any]? {
+    package static func jsonObject(_ raw: String) -> [String: Any]? {
         guard let data = raw.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data)
         else { return nil }
         return value as? [String: Any]
     }
 
-    static func jsonFirstText(_ raw: String) -> String {
+    package static func jsonFirstText(_ raw: String) -> String {
         guard let data = raw.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data)
         else { return "" }
         return jsonFirstString(value, keys: ["text", "query", "prompt", "initial_query"])
     }
 
-    static func jsonFirstTool(_ raw: String) -> String {
+    package static func jsonFirstTool(_ raw: String) -> String {
         guard let data = raw.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data)
         else { return "" }
         return jsonFirstString(value, keys: ["tool", "tool_name", "name"])
     }
 
-    static func jsonFirstString(_ value: Any, keys: [String]) -> String {
+    package static func jsonFirstString(_ value: Any, keys: [String]) -> String {
         if let dict = value as? [String: Any] {
             let text = firstString(dict, keys: keys)
             if !text.isEmpty { return text }
@@ -601,12 +602,12 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func jsonFirstStringOptional(_ value: Any, keys: [String]) -> String? {
+    package static func jsonFirstStringOptional(_ value: Any, keys: [String]) -> String? {
         let found = jsonFirstString(value, keys: keys)
         return found.isEmpty ? nil : found
     }
 
-    static func isSessionPath(_ url: URL) -> Bool {
+    package static func isSessionPath(_ url: URL) -> Bool {
         let parts = url.pathComponents.map { $0.lowercased() }
         let ext = url.pathExtension.lowercased()
         let stem = url.deletingPathExtension().lastPathComponent.lowercased()
@@ -624,7 +625,7 @@ extension NativeActivityHarvest {
             || (["jsonl", "ndjson", "json"].contains(ext) && namedTranscript)
     }
 
-    static func sessionIDFromPath(_ url: URL) -> String {
+    package static func sessionIDFromPath(_ url: URL) -> String {
         let stem = url.deletingPathExtension().lastPathComponent
         let cleaned = stem.replacingOccurrences(of: "rollout-", with: "")
         guard cleaned.count >= 6,
@@ -633,7 +634,7 @@ extension NativeActivityHarvest {
         return String(cleaned.prefix(80))
     }
 
-    static func readWindow(
+    package static func readWindow(
         _ url: URL,
         size: Int,
         budget: ScanBudget,
@@ -710,7 +711,7 @@ extension NativeActivityHarvest {
     /// Foundation has no high-level SQLite API, but macOS ships the SQLite3
     /// C module; using its read-only interface keeps this adapter native and
     /// avoids reviving the Python dependency just for Cursor.
-    static func collectCursorDatabase(
+    package static func collectCursorDatabase(
         _ url: URL,
         into facts: inout [Fact],
         budget: ScanBudget,
@@ -866,7 +867,7 @@ extension NativeActivityHarvest {
         if sqliteReadFailed(database) { error = true }
     }
 
-    static func sqliteReadFailed(_ database: OpaquePointer) -> Bool {
+    package static func sqliteReadFailed(_ database: OpaquePointer) -> Bool {
         switch sqlite3_errcode(database) {
         case SQLITE_BUSY, SQLITE_LOCKED, SQLITE_CORRUPT, SQLITE_NOTADB:
             return true
@@ -875,7 +876,7 @@ extension NativeActivityHarvest {
         }
     }
 
-    static func sqliteString(_ statement: OpaquePointer, column: Int32) -> String {
+    package static func sqliteString(_ statement: OpaquePointer, column: Int32) -> String {
         guard let pointer = sqlite3_column_text(statement, column) else { return "" }
         return String(cString: pointer)
     }
@@ -885,7 +886,7 @@ extension NativeActivityHarvest {
     /// assistant, 1 the user). `rowid DESC` approximates write order without
     /// depending on a timestamp column; a store without the table, or bubbles
     /// without plain text, yield "" — absence, never a guess.
-    static func cursorLastWord(_ database: OpaquePointer, composerID: String) -> String {
+    package static func cursorLastWord(_ database: OpaquePointer, composerID: String) -> String {
         guard !composerID.isEmpty else { return "" }
         let sql = "SELECT value FROM cursorDiskKV WHERE key LIKE 'bubbleId:' || ? || ':%' ORDER BY rowid DESC LIMIT 60"
         guard let statement = sqlitePrepare(database, sql),
@@ -901,7 +902,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func cursorWorkspacePath(databaseURL: URL, workspaceID: String) -> String {
+    package static func cursorWorkspacePath(databaseURL: URL, workspaceID: String) -> String {
         guard !workspaceID.isEmpty else { return "" }
         let user = databaseURL
             .deletingLastPathComponent()
@@ -917,7 +918,7 @@ extension NativeActivityHarvest {
         return normalizedPath(folder)
     }
 
-    static func normalizeTimestamp(_ value: Any?) -> Int64 {
+    package static func normalizeTimestamp(_ value: Any?) -> Int64 {
         if let number = value as? NSNumber {
             let raw = number.doubleValue
             if raw > 10_000_000_000 { return Int64(raw) }
@@ -942,14 +943,14 @@ extension NativeActivityHarvest {
     /// per-record ordering (the 0.95 pending-follows-newest rule degraded to
     /// OR). Cached because this runs on the per-line hot path; both formatter
     /// types are immutable after creation and safe to share.
-    static let isoParsers: [ISO8601DateFormatter] = {
+    package static let isoParsers: [ISO8601DateFormatter] = {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let plain = ISO8601DateFormatter()
         return [fractional, plain]
     }()
 
-    static let fallbackParsers: [DateFormatter] = [
+    package static let fallbackParsers: [DateFormatter] = [
         "yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss",
         "yyyy-MM-dd HH:mm:ss.SSSSSS", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss",
     ].map { format in
@@ -960,7 +961,7 @@ extension NativeActivityHarvest {
         return parser
     }
 
-    static func fileMTime(_ url: URL) -> Int64 {
+    package static func fileMTime(_ url: URL) -> Int64 {
         guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
               let date = values.contentModificationDate
         else { return 0 }

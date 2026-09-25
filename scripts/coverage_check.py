@@ -18,6 +18,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def swift_file(name: str) -> Path:
+    """A Swift file by name, in whichever target holds it (12.3 split them)."""
+    hits = sorted((ROOT / "PulseBar" / "Sources").glob(f"*/{name}"))
+    if len(hits) != 1:
+        raise SystemExit(f"coverage_check: expected one {name}, found {len(hits)}")
+    return hits[0]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent_roster  # noqa: E402
 
@@ -37,7 +45,7 @@ def harvest_tiers() -> dict[str, str]:
 
 
 def main() -> int:
-    native = (ROOT / "PulseBar/Sources/PulseBar/NativeActivityHarvest.swift").read_text(encoding="utf-8")
+    native = swift_file("NativeActivityHarvest.swift").read_text(encoding="utf-8")
     if "AgentCatalog.all" not in native or "harvestRoots" not in native:
         print("NativeActivityHarvest.descriptors() must be built from AgentCatalog")
         return 1
@@ -65,7 +73,7 @@ def main() -> int:
     print(f"collector evidence: {session_count} session · {cache_count} cache")
 
     known = {agent.raw for agent in ROSTER} - {"cursor_agent"}
-    probe = (ROOT / "PulseBar/Sources/PulseBar/ProcessProbe.swift").read_text(encoding="utf-8")
+    probe = swift_file("ProcessProbe.swift").read_text(encoding="utf-8")
     print(f"probe rules: {CATALOG_TEXT.count('process: AgentProcessRule(')} · AgentID cases: {len(known) + 1}")
     if '"worker start"' not in CATALOG_TEXT or '"--worker-dir"' not in CATALOG_TEXT:
         print(
@@ -90,8 +98,8 @@ def main() -> int:
     # statement about an installed hook, not a capability — and a capability
     # claim nobody installed is exactly the shape of bug this project keeps
     # having to undo.
-    respond = (ROOT / "PulseBar/Sources/PulseBar/RespondContract.swift").read_text(encoding="utf-8")
-    installer = (ROOT / "PulseBar/Sources/PulseBar/HooksInstaller.swift").read_text(encoding="utf-8")
+    respond = swift_file("RespondContract.swift").read_text(encoding="utf-8")
+    installer = swift_file("HooksInstaller.swift").read_text(encoding="utf-8")
     reaching = [agent.raw for agent in ROSTER if agent.respond_reach == "hookSite"]
     for name in reaching:
         raw = name

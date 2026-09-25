@@ -1,7 +1,8 @@
 import Foundation
+import PulseCore
 
 /// Port of Zig probe rules for surface coding agents (+ Warp parent + TTY).
-enum ProcessProbe {
+package enum ProcessProbe {
     /// `lsof` is only needed when a new agent process appears. Re-running it at
     /// the 2 s Waiting cadence would turn one useful fallback fact into a
     /// permanent energy cost.
@@ -36,15 +37,15 @@ enum ProcessProbe {
     /// Hard ceiling on that store. Only agent processes are sampled, so this is
     /// never reached in practice; it exists so that a pathological machine
     /// cannot turn a cache into a leak.
-    static let maxCPUSamples = 512
+    package static let maxCPUSamples = 512
     /// Below this the two readings are too close together for their ratio to
     /// mean anything: `ps cputime` is reported to 1/100 s, so a 200 ms window
     /// quantises into steps of 5 % — a number about the sampler, not the agent.
-    static let minCPUWindowMs: Int64 = 1_000
+    package static let minCPUWindowMs: Int64 = 1_000
     /// Reported percentage ceiling. Percentages are per core, so a parallel
     /// build legitimately exceeds 100; past this the honest statement is "flat
     /// out", not a bigger number, and a clock jump cannot print an absurdity.
-    static let maxCPUPercent: Double = 1_600
+    package static let maxCPUPercent: Double = 1_600
     /// Latched once if this `ps` will not accept `cputime`/`rss`, so the
     /// degraded field list is asked for directly from then on. A probe that
     /// cannot list processes shows nothing at all, and no new column is worth
@@ -57,23 +58,23 @@ enum ProcessProbe {
     private static let psFieldsWithCPU = "pid=,ppid=,tty=,etime=,cputime=,rss=,args="
     private static let psFieldsBase = "pid=,ppid=,tty=,etime=,args="
 
-    struct Hit: Hashable {
-        var id: AgentID
-        var count: Int
-        var viaWarp: Bool
-        var pid: Int = 0
+    package struct Hit: Hashable {
+        package var id: AgentID
+        package var count: Int
+        package var viaWarp: Bool
+        package var pid: Int = 0
         /// Kernel tty name without `/dev/`, e.g. `ttys003`.
-        var tty: String = ""
+        package var tty: String = ""
         /// Age of the matched process, not the agent session.
-        var elapsedSeconds: Double = 0
+        package var elapsedSeconds: Double = 0
         /// Current working directory observed from the process. This is useful
         /// context for CLI agents even when they expose no readable session
         /// store; it is not a focus handle and never creates an action.
-        var cwd: String = ""
+        package var cwd: String = ""
         /// Rule class only; never retain or show the matched argv.
-        var evidence: ProcessEvidence = .executable
+        package var evidence: ProcessEvidence = .executable
         /// Parent IDE / editor from `ps` argv walk — Focus host without TCC.
-        var hostApp: HostAppKind? = nil
+        package var hostApp: HostAppKind? = nil
         /// Share of one core, in percent, burned between the previous scan and
         /// this one. **-1 means not known** — a process seen for the first time
         /// has no earlier reading to subtract from. 0 is a different and
@@ -82,10 +83,10 @@ enum ProcessProbe {
         /// Highest value among this agent's matched processes. A row that said
         /// "0 %" while one of its three processes was pegged would be stating
         /// the one thing that is false.
-        var cpuPercent: Double = -1
+        package var cpuPercent: Double = -1
         /// Resident memory in bytes, summed over this agent's matched
         /// processes. 0 means not observed.
-        var rssBytes: Int = 0
+        package var rssBytes: Int = 0
     }
 
     /// One parsed row of the process table.
@@ -94,23 +95,23 @@ enum ProcessProbe {
     /// that is compiling, installing dependencies or waiting on a long tool
     /// call writes nothing at all, and on file evidence alone it looks exactly
     /// like a run that has stopped.
-    struct Proc: Equatable {
-        var pid: Int
-        var ppid: Int
-        var tty: String = ""
+    package struct Proc: Equatable {
+        package var pid: Int
+        package var ppid: Int
+        package var tty: String = ""
         /// Age of this process, not of the agent session.
-        var elapsedSeconds: Double = 0
+        package var elapsedSeconds: Double = 0
         /// Accumulated CPU seconds since launch (`ps cputime`). -1 when `ps`
         /// gave nothing parseable — never 0, which is a real answer meaning
         /// "this process has used no CPU".
-        var cpuSeconds: Double = -1
+        package var cpuSeconds: Double = -1
         /// Share of one core over the interval since the previous scan, in
         /// percent; -1 for not known. Only matched agent processes are sampled
         /// (see `scan`), so an unmatched row keeps -1 by design.
-        var cpuPercent: Double = -1
+        package var cpuPercent: Double = -1
         /// Resident set size in bytes. `ps` reports KB.
-        var rssBytes: Int = 0
-        var args: String = ""
+        package var rssBytes: Int = 0
+        package var args: String = ""
     }
 
     /// Process rules in roster order — the first matching rule wins, so
@@ -118,7 +119,7 @@ enum ProcessProbe {
     private static let rules: [(id: AgentID, rule: AgentProcessRule)] =
         AgentCatalog.all.map { ($0.id, $0.process) }
 
-    static func scan(
+    package static func scan(
         allowAppData: Bool = false,
         appDataAgents: Set<AgentID> = []
     ) -> [Hit] {
@@ -344,7 +345,7 @@ enum ProcessProbe {
     /// the exact energy failure the cadence invariant exists to prevent. The
     /// fingerprint answers "did the process set change", not "what are those
     /// processes doing".
-    static func signature(_ hits: [Hit]) -> String {
+    package static func signature(_ hits: [Hit]) -> String {
         hits
             .map { "\($0.id.rawValue):\($0.count):\($0.pid)" }
             .sorted()
@@ -363,7 +364,7 @@ enum ProcessProbe {
     }
 
     /// `ps etime`: `mm:ss`, `hh:mm:ss`, or `dd-hh:mm:ss`.
-    static func parseElapsed(_ raw: String) -> Double {
+    package static func parseElapsed(_ raw: String) -> Double {
         let split = raw.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "-", maxSplits: 1)
         let days = split.count == 2 ? Double(split[0]) ?? 0 : 0
         let clock = (split.last ?? "").split(separator: ":").compactMap { Double($0) }
@@ -382,7 +383,7 @@ enum ProcessProbe {
     ///
     /// `includesCPU: false` is the degraded field list, without `cputime` and
     /// `rss`. Those rows report CPU as -1 (not known) rather than 0.
-    static func parseProcessLines(_ output: String, includesCPU: Bool = true) -> [Proc] {
+    package static func parseProcessLines(_ output: String, includesCPU: Bool = true) -> [Proc] {
         let columns = includesCPU ? 7 : 5
         var procs: [Proc] = []
         for line in output.split(whereSeparator: \.isNewline) {
@@ -416,7 +417,7 @@ enum ProcessProbe {
     /// Returns accumulated CPU seconds, or **-1 when the field said nothing
     /// parseable** — distinct from 0, which means the process has burned no
     /// CPU at all.
-    static func parseCPUTime(_ raw: String) -> Double {
+    package static func parseCPUTime(_ raw: String) -> Double {
         func number(_ field: Substring) -> Double? {
             guard !field.isEmpty else { return nil }
             // `Double` would happily take "inf", "nan" or "1e9"; none of those
@@ -462,7 +463,7 @@ enum ProcessProbe {
     /// second of the window length still slips through, which is a far smaller
     /// hole than the one it closes and cannot be shrunk further with a field
     /// this coarse.
-    static func isSameProcess(elapsedSeconds: Double, windowMs: Int64) -> Bool {
+    package static func isSameProcess(elapsedSeconds: Double, windowMs: Int64) -> Bool {
         guard windowMs > 0 else { return true }
         return (elapsedSeconds + 1) * 1_000 >= Double(windowMs)
     }
@@ -481,7 +482,7 @@ enum ProcessProbe {
     /// Returns -1 for "not known": no previous reading, a window too short to
     /// divide by, or a counter that went backwards (pid reuse — a new process
     /// wearing a dead one's number, whose history means nothing).
-    static func cpuPercent(
+    package static func cpuPercent(
         previousCPUSeconds: Double,
         previousAtMs: Int64,
         currentCPUSeconds: Double,
@@ -505,7 +506,7 @@ enum ProcessProbe {
     /// processes seen in this scan, so the usual eviction is simply that a pid
     /// stopped appearing; this is the floor under a machine with an
     /// implausible number of live agents.
-    static func boundedCPUSamples(
+    package static func boundedCPUSamples(
         _ samples: [Int: (cpuSeconds: Double, atMs: Int64)]
     ) -> [Int: (cpuSeconds: Double, atMs: Int64)] {
         guard samples.count > maxCPUSamples else { return samples }
@@ -534,7 +535,7 @@ enum ProcessProbe {
     /// The parser stays tolerant of both shapes: `-d cwd` restricts the result
     /// to one descriptor per process, so an `n` line following a `p` line is
     /// unambiguous even when the `f` field is absent.
-    static func parseWorkingDirectories(_ output: String) -> [Int: String] {
+    package static func parseWorkingDirectories(_ output: String) -> [Int: String] {
         var result: [Int: String] = [:]
         var pid: Int?
         var expectingPath = false
@@ -556,7 +557,7 @@ enum ProcessProbe {
 
     /// Keep only paths that can identify user work. `/`, app bundles and
     /// support folders are implementation context, not a project.
-    static func usefulWorkingDirectory(_ raw: String) -> String {
+    package static func usefulWorkingDirectory(_ raw: String) -> String {
         let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard path.hasPrefix("/"), path != "/" else { return "" }
         // lsof annotates a directory it could not resolve in place, e.g.
@@ -578,7 +579,7 @@ enum ProcessProbe {
     /// `… (readlink: Permission denied)` / `… (stat: No such file or directory)`.
     /// Anchored to a trailing parenthetical that names an lsof syscall, so a
     /// directory literally called `Work (old)` still counts as a workspace.
-    static func isLsofErrorAnnotated(_ path: String) -> Bool {
+    package static func isLsofErrorAnnotated(_ path: String) -> Bool {
         guard path.hasSuffix(")"), let open = path.range(of: " (", options: .backwards) else {
             return false
         }
@@ -644,17 +645,17 @@ enum ProcessProbe {
 
     /// Match one `ps` argv. Internal so the complete supported-agent roster
     /// can be held to a detection contract in tests.
-    static func match(args: String) -> AgentID? {
+    package static func match(args: String) -> AgentID? {
         matchEvidence(args: args)?.id
     }
 
-    struct Match: Equatable {
-        var id: AgentID
-        var evidence: ProcessEvidence
+    package struct Match: Equatable {
+        package var id: AgentID
+        package var evidence: ProcessEvidence
     }
 
     /// Match plus a privacy-safe explanation for support diagnostics.
-    static func matchEvidence(args: String) -> Match? {
+    package static func matchEvidence(args: String) -> Match? {
         let exe = args.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? args
         let base = (exe as NSString).lastPathComponent
         for (id, rule) in rules {
@@ -685,9 +686,9 @@ enum ProcessProbe {
     /// One probe subprocess, exit status included. `nil` means the tool could
     /// not be launched or had to be killed — the only states in which its
     /// output says nothing at all.
-    struct Invocation: Equatable {
-        var stdout: String
-        var status: Int32
+    package struct Invocation: Equatable {
+        package var stdout: String
+        package var status: Int32
     }
 
     private static func run(_ launchPath: String, _ arguments: [String]) -> Invocation? {
@@ -723,7 +724,7 @@ enum ProcessProbe {
     /// The exit status answers "did you find everything I named", not "did you
     /// work". Those are different questions, and reading the first as the
     /// second is what kept the answer from ever being used.
-    static func workingDirectories(from invocation: Invocation?) -> [Int: String] {
+    package static func workingDirectories(from invocation: Invocation?) -> [Int: String] {
         guard let invocation else { return [:] }
         return parseWorkingDirectories(invocation.stdout)
     }
@@ -735,7 +736,7 @@ enum ProcessProbe {
     /// cross-app privacy prompt. A PID that simply exited explains the silence
     /// by itself, and punishing every future lookup for five minutes because
     /// one agent finished is how a working feature stays invisible.
-    static func shouldBackOff(_ invocation: Invocation?, pids: [Int]) -> Bool {
+    package static func shouldBackOff(_ invocation: Invocation?, pids: [Int]) -> Bool {
         guard let invocation else { return true }
         if invocation.status == 0 { return true }
         // Non-zero: `lsof` reported it could not resolve something. If nothing
@@ -744,7 +745,7 @@ enum ProcessProbe {
     }
 
     /// Liveness only — no signal is sent.
-    static func processExists(_ pid: Int) -> Bool {
+    package static func processExists(_ pid: Int) -> Bool {
         guard pid > 0 else { return false }
         if kill(pid_t(pid), 0) == 0 { return true }
         return errno == EPERM

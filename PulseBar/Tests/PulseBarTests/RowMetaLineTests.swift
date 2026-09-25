@@ -1,6 +1,8 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 10.0 (scene BS) — the collapsed row's ONE composed meta line: three
 /// slots by value (now > outcome > way), project as filler, waiting rows

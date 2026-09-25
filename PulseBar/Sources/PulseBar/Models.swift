@@ -92,24 +92,6 @@ enum PulseVersion {
 }
 
 
-/// Evidence carried by this specific row, not a blanket promise for an agent.
-///
-/// An agent may have a structured collector and still degrade to a process
-/// row when its local session store is unavailable. The view uses this value
-/// to choose an information architecture instead of making every row look
-/// equally certain.
-enum ObservationSource: String, Equatable, Hashable {
-    case session
-    case cache
-    case process
-    /// 1.0: raised by another machine through the Attention inbox.
-    ///
-    /// Deliberately its own tier rather than a thin `process` row. A remote row
-    /// has no process table, no session file and no activity clock behind it —
-    /// only the event that arrived. Calling it `process` would claim evidence
-    /// this Mac does not have.
-    case remote
-}
 
 /// Named fact keys for the 0.50 Signal Quality envelope.
 ///
@@ -308,15 +290,6 @@ struct ObservationQuality: Equatable, Hashable {
     }
 }
 
-/// Privacy-safe reason a process rule matched.
-///
-/// The support window needs to explain why Pulse believes an Agent is live,
-/// but the full command line can contain paths, prompts, tokens, and secrets.
-/// Keep only the rule class.
-enum ProcessEvidence: String, Equatable, Hashable {
-    case executable
-    case pathSignature = "path_signature"
-}
 
 /// How this row's Waiting was raised (shown as a short credibility tag).
 enum WaitSignalKind: String, Equatable {
@@ -734,21 +707,9 @@ struct AgentRow: Identifiable, Hashable {
     /// Entries are lowercase; callers compare case-insensitively. Exact
     /// matches only — `hasSuffix(" session")` would drop real Pi `/name`
     /// titles like "Auth session".
-    static let chromeTitles: Set<String> = [
-        "-", "—", "none", "running", "active",
-        "new session", "new chat", "untitled", "agent session", "chat",
-        "amp session", "amp thread", "pi session", "grok session",
-        "cursor session", "opencode session", "gemini session", "goose session",
-        "copilot session", "continue session", "warp session",
-        "windsurf session", "cline session", "roo session",
-        "cascade session", "aider session", "droid session", "kimi session",
-    ]
+    static var chromeTitles: Set<String> { TitleHeuristics.chromeTitles }
 
-    static func isChromeTitle(_ value: String) -> Bool {
-        chromeTitles.contains(
-            value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-    }
+    static func isChromeTitle(_ value: String) -> Bool { TitleHeuristics.isChromeTitle(value) }
 
     var usefulTask: String? {
         guard let raw = taskLine else { return nil }
@@ -822,22 +783,7 @@ struct AgentRow: Identifiable, Hashable {
     }
 
     /// Pi (and others) sometimes stamp `Read Foo.swift` or bare `Foo.swift`.
-    static func looksLikeFilenameOnlyTitle(_ raw: String) -> Bool {
-        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.range(
-            of: #"^(Read|Reading)\s+\S+\.\w{1,12}$"#,
-            options: [.regularExpression, .caseInsensitive]
-        ) != nil {
-            return true
-        }
-        guard !t.contains(" "), t.contains(".") else { return false }
-        let ext = (t as NSString).pathExtension.lowercased()
-        let code = [
-            "swift", "ts", "tsx", "js", "jsx", "py", "md", "json", "go", "rs",
-            "rb", "java", "kt", "c", "h", "cpp", "hpp", "m", "mm", "cs", "sh",
-        ]
-        return code.contains(ext)
-    }
+    static func looksLikeFilenameOnlyTitle(_ raw: String) -> Bool { TitleHeuristics.looksLikeFilenameOnlyTitle(raw) }
 
     /// First-class session detail for tray (real task title only).
     ///
@@ -931,16 +877,7 @@ struct AgentRow: Identifiable, Hashable {
 
     var canFocusTerminal: Bool { focusTier != nil }
 
-    static func shortProject(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.isEmpty { return "" }
-        if s.contains("/") {
-            s = (s as NSString).lastPathComponent
-        }
-        if s.range(of: #"^[0-9a-fA-F-]{16,}$"#, options: .regularExpression) != nil { return "" }
-        if s.count > 24 { return String(s.prefix(23)) + "…" }
-        return s
-    }
+    static func shortProject(_ raw: String) -> String { TitleHeuristics.shortProject(raw) }
 
     static func compactToken(_ n: Int) -> String {
         guard n > 0 else { return "" }

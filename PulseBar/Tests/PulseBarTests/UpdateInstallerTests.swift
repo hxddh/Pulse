@@ -2,6 +2,8 @@ import CryptoKit
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// First coverage for UpdateInstaller. The mount-point parser earned it: the
 /// old implementation matched a whole-line `/Volumes/` prefix against output

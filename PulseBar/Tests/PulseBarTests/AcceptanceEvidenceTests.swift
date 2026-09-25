@@ -1,6 +1,8 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 final class AcceptanceEvidenceTests: XCTestCase {
     private var repo: URL!

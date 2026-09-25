@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 /// Per-Agent retry and circuit policy for the bounded native harvest.
 ///
@@ -6,38 +7,40 @@ import Foundation
 /// missing operational layer around it: a broken adapter is retried on its own
 /// schedule, repeated failures open a short circuit, and a half-open probe
 /// eventually gives recovery a chance without holding the other 30 adapters.
-struct HarvestSupervisor: Equatable {
-    struct AgentState: Equatable {
-        var consecutiveFailures = 0
-        var nextRetryAtMs: Int64 = 0
-        var circuitOpenUntilMs: Int64 = 0
-        var lastFailureAtMs: Int64 = 0
-        var lastSuccessAtMs: Int64 = 0
+package struct HarvestSupervisor: Equatable {
+    package struct AgentState: Equatable {
+        package var consecutiveFailures = 0
+        package var nextRetryAtMs: Int64 = 0
+        package var circuitOpenUntilMs: Int64 = 0
+        package var lastFailureAtMs: Int64 = 0
+        package var lastSuccessAtMs: Int64 = 0
         /// Last time the global budget ended the scan before this adapter ran.
         /// Not a failure — but invisible before 0.99, so budget starvation left
         /// no trace at all in diagnostics.
-        var lastUnscannedAtMs: Int64 = 0
-        var lastError = ""
+        package var lastUnscannedAtMs: Int64 = 0
+        package var lastError = ""
 
-        var isCircuitOpen: Bool { circuitOpenUntilMs > 0 }
+        package var isCircuitOpen: Bool { circuitOpenUntilMs > 0 }
     }
 
     /// A scan plan is intentionally just a set. The native reader remains the
     /// source of truth for adapter ordering and emits health for every adapter
     /// it actually attempted.
-    struct Plan: Equatable {
-        var attempted: Set<AgentID>
-        var deferred: Set<AgentID>
+    package struct Plan: Equatable {
+        package var attempted: Set<AgentID>
+        package var deferred: Set<AgentID>
     }
 
-    static let maxFailuresBeforeCircuit = 3
-    static let retryDelaysMs: [Int64] = [1_000, 5_000, 20_000]
-    static let circuitDurationMs: Int64 = 60_000
-    static let permissionRetryMs: Int64 = 5 * 60_000
+    package static let maxFailuresBeforeCircuit = 3
+    package static let retryDelaysMs: [Int64] = [1_000, 5_000, 20_000]
+    package static let circuitDurationMs: Int64 = 60_000
+    package static let permissionRetryMs: Int64 = 5 * 60_000
 
-    private(set) var states: [AgentID: AgentState] = [:]
+    package private(set) var states: [AgentID: AgentState] = [:]
 
-    mutating func plan(
+    package init() {}
+
+    package mutating func plan(
         nowMs: Int64,
         agents: Set<AgentID> = ActivityHarvest.expectedCollectorIDs
     ) -> Plan {
@@ -62,7 +65,7 @@ struct HarvestSupervisor: Equatable {
         return Plan(attempted: attempted, deferred: deferred)
     }
 
-    mutating func record(
+    package mutating func record(
         _ health: [ActivityHarvest.CollectorHealth],
         nowMs: Int64
     ) {
@@ -106,11 +109,11 @@ struct HarvestSupervisor: Equatable {
         }
     }
 
-    func state(for agent: AgentID) -> AgentState {
+    package func state(for agent: AgentID) -> AgentState {
         states[agent.surfaceID] ?? AgentState()
     }
 
-    func summary(nowMs: Int64) -> String {
+    package func summary(nowMs: Int64) -> String {
         let open = states.values.filter { $0.circuitOpenUntilMs > nowMs }.count
         let retrying = states.values.filter {
             $0.nextRetryAtMs > nowMs && $0.circuitOpenUntilMs <= nowMs
@@ -138,7 +141,7 @@ struct HarvestSupervisor: Equatable {
 
     /// Recent adapter failures for the safe support report — agent, error, age.
     /// Newest first; empty errors are omitted.
-    func failureTimeline(nowMs: Int64, limit: Int = 8) -> [(agent: AgentID, error: String, atMs: Int64)] {
+    package func failureTimeline(nowMs: Int64, limit: Int = 8) -> [(agent: AgentID, error: String, atMs: Int64)] {
         AgentID.allCases
             .compactMap { agent -> (AgentID, String, Int64)? in
                 let state = states[agent.surfaceID] ?? AgentState()

@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import PulseCore
 
 /// File protocol (v1) for carrying permission requests off a remote machine
 /// and verdicts back. Pulse writes no network code and runs no server:
@@ -49,12 +50,12 @@ import Foundation
 /// - **`request_id` and `host` are untrusted text that becomes a file name.**
 ///   They are sanitized to `[A-Za-z0-9._-]`, capped, and never allowed to be
 ///   a pure-dot component, so a hostile id cannot climb out of the spool.
-enum RespondSpool {
+package enum RespondSpool {
     /// Tests redirect the spool without touching the user's real
     /// Application Support tree — same seam as `AttentionIO.pathOverride`.
-    static var rootOverride: URL?
+    package static var rootOverride: URL?
 
-    static var root: URL {
+    package static var root: URL {
         if let rootOverride { return rootOverride }
         if let home = ProcessInfo.processInfo.environment["PULSE_HOME"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -68,39 +69,39 @@ enum RespondSpool {
             )
     }
 
-    static var requestsDirectory: URL {
+    package static var requestsDirectory: URL {
         root.appendingPathComponent("requests.d", isDirectory: true)
     }
-    static var verdictsDirectory: URL {
+    package static var verdictsDirectory: URL {
         root.appendingPathComponent("verdicts.d", isDirectory: true)
     }
-    static var secretsDirectory: URL {
+    package static var secretsDirectory: URL {
         root.appendingPathComponent("secrets", isDirectory: true)
     }
 
     /// Same bounds philosophy as `AttentionIO`: a misbehaving or hostile
     /// remote writer must not be able to make this Mac read without limit.
-    static let maxHosts = 16
-    static let maxFilesPerHost = 32
-    static let maxBytesPerFile = 256 * 1024
+    package static let maxHosts = 16
+    package static let maxFilesPerHost = 32
+    package static let maxBytesPerFile = 256 * 1024
     /// A shared key is dozens of bytes. A "key" the size of a document is a
     /// mistake (wrong file dropped in `secrets/`), and signing with a mistake
     /// is worse than refusing — fail closed.
-    static let maxSecretBytes = 4 * 1024
+    package static let maxSecretBytes = 4 * 1024
     /// How long an expired file may linger before `cleanup` removes it. The
     /// grace exists so the user's sync tool has time to carry the file's fate
     /// back before the evidence disappears.
-    static let cleanupGraceMs: Int64 = 60 * 60 * 1000
+    package static let cleanupGraceMs: Int64 = 60 * 60 * 1000
 
     /// One permission request, ready for the decision store.
-    struct InboundRequest: Equatable {
-        var request: PermissionRequest
-        var toolName: String
-        var expiresAtMs: Int64
+    package struct InboundRequest: Equatable {
+        package var request: PermissionRequest
+        package var toolName: String
+        package var expiresAtMs: Int64
         /// Raised by an agent on **this** Mac, and read back out of the flat
         /// outbound tree rather than arriving through a sync tool. It attaches
         /// to a local row, and its verdict is signed with the local key.
-        var isLocal: Bool = false
+        package var isLocal: Bool = false
     }
 
     // MARK: - Reading requests
@@ -115,7 +116,7 @@ enum RespondSpool {
     /// (`PermissionRequest.canOfferAllow`). An agent string that matches no
     /// `AgentID` skips the file entirely: guessing who is asking is exactly
     /// how a verdict ends up answering the wrong thing.
-    static func readInboundRequests(nowMs: Int64) -> [InboundRequest] {
+    package static func readInboundRequests(nowMs: Int64) -> [InboundRequest] {
         let fm = FileManager.default
         guard let hostNames = try? fm.contentsOfDirectory(atPath: requestsDirectory.path)
         else { return [] }
@@ -149,7 +150,7 @@ enum RespondSpool {
     ///
     /// Same bounds as the inbound tree, and the same refusal to guess: a file
     /// claiming a host that is not this one is skipped rather than adopted.
-    static func readLocalRequests(nowMs: Int64, host: String) -> [InboundRequest] {
+    package static func readLocalRequests(nowMs: Int64, host: String) -> [InboundRequest] {
         guard !host.isEmpty else { return [] }
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: outboundRequestsDirectory.path)
@@ -211,7 +212,7 @@ enum RespondSpool {
 
     /// 该 host 的密钥文件存在且非空。This is the per-host opt-in: no key file,
     /// no Respond for that machine.
-    static func hostHasSecret(_ host: String) -> Bool {
+    package static func hostHasSecret(_ host: String) -> Bool {
         secret(for: host) != nil
     }
 
@@ -258,7 +259,7 @@ enum RespondSpool {
     ///   its signature. An attacker who can read it already runs as this user
     ///   and could simply start the agent.
     @discardableResult
-    static func writeVerdict(_ verdict: RespondVerdict, local: Bool = false) -> Bool {
+    package static func writeVerdict(_ verdict: RespondVerdict, local: Bool = false) -> Bool {
         guard !verdict.host.isEmpty else { return false }
         if local { return writeLocalVerdict(verdict) }
         // No key, no verdict on disk — fail closed (see the type doc).
@@ -322,7 +323,7 @@ enum RespondSpool {
     /// Deliberately *not* bounded like the read path: deleting is how the
     /// read bounds recover, so cleanup must be able to reach files the reader
     /// will never touch.
-    static func cleanup(nowMs: Int64) {
+    package static func cleanup(nowMs: Int64) {
         cleanupTree(requestsDirectory, nowMs: nowMs)
         cleanupTree(verdictsDirectory, nowMs: nowMs)
     }
@@ -367,15 +368,15 @@ enum RespondSpool {
     // should need it least. Every constant and semantic below is frozen with
     // the Python side — change both or neither.
 
-    static var outboundRequestsDirectory: URL {
+    package static var outboundRequestsDirectory: URL {
         root.appendingPathComponent("requests", isDirectory: true)
     }
-    static var outboundVerdictsDirectory: URL {
+    package static var outboundVerdictsDirectory: URL {
         root.appendingPathComponent("verdicts", isDirectory: true)
     }
     /// `<pulse_dir>/respond-secret.key` — see the type doc for why it lives
     /// beside `respond.d`, not inside it.
-    static var outboundSecretURL: URL {
+    package static var outboundSecretURL: URL {
         root.deletingLastPathComponent().appendingPathComponent("respond-secret.key")
     }
 
@@ -389,14 +390,14 @@ enum RespondSpool {
     /// reject every verdict from a Mac whose clock runs a few minutes behind,
     /// failing the user constantly to defend against a replay the single-use
     /// rename already prevents. (= RESPOND_CLOCK_SKEW_MS)
-    static let respondClockSkewMs: Int64 = 300_000
+    package static let respondClockSkewMs: Int64 = 300_000
     /// `.used` remnants older than an hour are removed. (= RESPOND_USED_TTL_MS)
-    static let usedVerdictTtlMs: Int64 = 3_600_000
+    package static let usedVerdictTtlMs: Int64 = 3_600_000
     /// Cap per spool directory, oldest deleted first. (= RESPOND_DIR_MAX_FILES)
-    static let outboundMaxFilesPerDirectory = 64
+    package static let outboundMaxFilesPerDirectory = 64
 
     /// This machine's Respond opt-in: the shared key exists and is non-empty.
-    static func outboundHasSecret() -> Bool {
+    package static func outboundHasSecret() -> Bool {
         outboundKey() != nil
     }
 
@@ -408,7 +409,7 @@ enum RespondSpool {
     /// carried anywhere**. Where `respond-secret.key` is provisioned by the
     /// user and copied to a partner Mac, this one is generated here and stays
     /// here.
-    static var localSecretURL: URL {
+    package static var localSecretURL: URL {
         root.deletingLastPathComponent().appendingPathComponent("respond-local.key")
     }
 
@@ -416,7 +417,7 @@ enum RespondSpool {
     /// *is* the switch — the same shape as the per-host opt-in, and the same
     /// kill switch: no key, no hold, so an install that never turns this on
     /// sees no change in agent behaviour at all.
-    static func localHasSecret() -> Bool {
+    package static func localHasSecret() -> Bool {
         localKey() != nil
     }
 
@@ -425,7 +426,7 @@ enum RespondSpool {
     }
 
     /// The hook holds only if it can verify *some* verdict.
-    static func hasAnyKey() -> Bool {
+    package static func hasAnyKey() -> Bool {
         outboundHasSecret() || localHasSecret()
     }
 
@@ -436,7 +437,7 @@ enum RespondSpool {
     /// and raw random bytes ending in 0x0A would be silently trimmed into a
     /// different key than the one written.
     @discardableResult
-    static func setLocalAnsweringEnabled(_ enabled: Bool) -> Bool {
+    package static func setLocalAnsweringEnabled(_ enabled: Bool) -> Bool {
         guard enabled else {
             try? FileManager.default.removeItem(at: localSecretURL)
             return !localHasSecret()
@@ -455,7 +456,7 @@ enum RespondSpool {
     /// Housekeeping (`cleanupOutbound`) runs alongside every write, exactly
     /// like the Python side.
     @discardableResult
-    static func writeOutboundRequest(
+    package static func writeOutboundRequest(
         requestID: String,
         agent: String,
         host: String,
@@ -513,7 +514,7 @@ enum RespondSpool {
     /// Returns the verdict's `allow`, or nil for "keep waiting". An allow for
     /// a truncated request is refused here as well: deny stays available, but
     /// approving something not fully captured must be impossible end to end.
-    static func claimVerdict(
+    package static func claimVerdict(
         requestID: String,
         digest: String,
         agent: String,
@@ -578,7 +579,7 @@ enum RespondSpool {
     /// renamed on the *other* machine — whether that rename ever comes back
     /// depends on a tool Pulse does not control, so there is nothing here to
     /// read and nothing honest to say beyond "written".
-    enum VerdictFate: Equatable {
+    package enum VerdictFate: Equatable {
         /// Written, still sitting there, still in time.
         case waiting
         /// The hook took it. This is the receipt.
@@ -590,7 +591,7 @@ enum RespondSpool {
         case unknown
     }
 
-    static func localVerdictFate(requestID: String, nowMs: Int64) -> VerdictFate {
+    package static func localVerdictFate(requestID: String, nowMs: Int64) -> VerdictFate {
         let fm = FileManager.default
         let name = sanitizeComponent(requestID) + ".json"
         let pending = outboundVerdictsDirectory.appendingPathComponent(name)
@@ -609,7 +610,7 @@ enum RespondSpool {
     /// `pulse_hook.py cleanup_respond_dirs`: requests go one hour past their
     /// own expiry (mtime fallback for the unreadable), `.used` remnants go
     /// after an hour, and each directory is capped at 64 files oldest-first.
-    static func cleanupOutbound(nowMs: Int64) {
+    package static func cleanupOutbound(nowMs: Int64) {
         let fm = FileManager.default
         if let names = try? fm.contentsOfDirectory(atPath: outboundRequestsDirectory.path) {
             for name in names where name.hasSuffix(".json") {
@@ -721,7 +722,7 @@ enum RespondSpool {
     /// everything else becomes `_`, length is capped, and a component that is
     /// nothing but dots (`.`, `..`) is replaced outright — those are the two
     /// spellings that would climb out of the spool.
-    static func sanitizeComponent(_ raw: String) -> String {
+    package static func sanitizeComponent(_ raw: String) -> String {
         let sanitized = String(raw.prefix(120).map { ch -> Character in
             let ok = ch.isASCII
                 && (ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-")
@@ -749,20 +750,20 @@ enum RespondSpool {
     /// Written by the remote hook; read here. Extra JSON keys are ignored,
     /// missing required keys fail the decode and the file is skipped.
     private struct RequestFile: Codable {
-        var v: Int
-        var requestID: String
-        var agent: String
-        var host: String
-        var session: String
-        var cwd: String
-        var toolName: String
-        var raisedAtMs: Int64
-        var expiresAtMs: Int64
-        var payloadB64: String
-        var digest: String
-        var truncated: Bool
+        package var v: Int
+        package var requestID: String
+        package var agent: String
+        package var host: String
+        package var session: String
+        package var cwd: String
+        package var toolName: String
+        package var raisedAtMs: Int64
+        package var expiresAtMs: Int64
+        package var payloadB64: String
+        package var digest: String
+        package var truncated: Bool
 
-        enum CodingKeys: String, CodingKey {
+        package enum CodingKeys: String, CodingKey {
             case v
             case requestID = "request_id"
             case agent
@@ -780,17 +781,17 @@ enum RespondSpool {
 
     /// Written here; consumed on the remote machine.
     private struct VerdictFile: Codable {
-        var v: Int
-        var requestID: String
-        var digest: String
-        var agent: String
-        var host: String
-        var allow: Bool
-        var decidedAtMs: Int64
-        var expiresAtMs: Int64
-        var hmac: String
+        package var v: Int
+        package var requestID: String
+        package var digest: String
+        package var agent: String
+        package var host: String
+        package var allow: Bool
+        package var decidedAtMs: Int64
+        package var expiresAtMs: Int64
+        package var hmac: String
 
-        enum CodingKeys: String, CodingKey {
+        package enum CodingKeys: String, CodingKey {
             case v
             case requestID = "request_id"
             case digest

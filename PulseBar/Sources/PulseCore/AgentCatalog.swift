@@ -18,7 +18,7 @@ import Foundation
 // is also process-rule precedence (the first matching rule wins) and harvest
 // descriptor order (the starting point of the rotation under budget).
 
-enum AgentID: String, CaseIterable, Identifiable, Hashable {
+public enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
     case claude, codex, cursor, cursorAgent = "cursor_agent"
     case grok, pi, amp, aider, gemini, copilot
     case opencode, goose, openhands, cline, roo, continue_ = "continue"
@@ -29,24 +29,24 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
     case droid, commandCode = "command_code", antigravity, kimi
     case zcode
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
     /// Everything the roster says about this agent.
-    var spec: AgentSpec { AgentCatalog.spec(self) }
+    public var spec: AgentSpec { AgentCatalog.spec(self) }
 
     /// User-facing identity used when several vendor processes share one
     /// surface. Cursor's `cursor-agent` worker is observed separately by the
     /// collectors, but it is deliberately one Cursor row in the tray,
     /// support matrix, and attention ledger.
-    var surfaceID: AgentID {
+    public var surfaceID: AgentID {
         self == .cursorAgent ? .cursor : self
     }
 
-    var displayName: String { spec.displayName }
+    public var displayName: String { spec.displayName }
 
     /// Honest Waiting path exists (hooks and/or harvest `skill=pending`).
     /// Agents with `.none` may still show Running; tray can nudge once.
-    var waitingSource: WaitingSource { spec.waiting }
+    public var waitingSource: WaitingSource { spec.waiting }
 
     /// What the local collector is allowed to promise before runtime data is
     /// considered. Every agent can still degrade to process detection.
@@ -57,19 +57,19 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
     /// workspace or title. The README matrix is checked against this value so
     /// "a collector function exists" can no longer be advertised as equivalent
     /// session observability.
-    var harvestSource: HarvestSource { spec.harvest }
+    public var harvestSource: HarvestSource { spec.harvest }
 
     /// Some adapters keep their only useful session/cache evidence inside
     /// macOS-protected Application Support, App Group, or VS Code stores. The
     /// default scanner deliberately skips those locations; the support window
     /// uses this bit to explain that an unavailable row may be privacy-limited,
     /// not unsupported.
-    var requiresAppDataOptIn: Bool { spec.requiresAppDataOptIn }
+    public var requiresAppDataOptIn: Bool { spec.requiresAppDataOptIn }
 
     /// Reach is a statement about the installed hook, not about capability.
-    var respondReach: RespondReach { spec.respondReach }
+    public var respondReach: RespondReach { spec.respondReach }
 
-    static let priority: [AgentID] = [
+    public static let priority: [AgentID] = [
         .claude, .cursorAgent, .codex, .droid, .kimi, .commandCode, .devin,
         .antigravity, .cascade, .windsurf, .kiro, .junie, .kilo, .augment,
         .grok, .pi, .amp, .aider, .gemini, .copilot, .opencode, .goose,
@@ -79,24 +79,24 @@ enum AgentID: String, CaseIterable, Identifiable, Hashable {
 
     /// Surface Agents with no native Waiting path — Attention Protocol only.
     /// Single source for Settings samples, Support repair, and L10n lists.
-    static var waitingNoneAgents: [AgentID] {
+    public static var waitingNoneAgents: [AgentID] {
         priority.filter { $0 != .cursorAgent && $0.waitingSource == .none }
     }
 }
 
-enum WaitingSource {
+public enum WaitingSource: Sendable {
     case hooks
     case harvestPending
     case none
 }
 
-enum HarvestSource {
+public enum HarvestSource: Sendable {
     case structuredSession
     case bestEffortCache
 }
 
 /// How the collector treats an agent's JSONL transcripts.
-enum TranscriptPolicy {
+public enum TranscriptPolicy: Sendable {
     /// No transcript files, or none read as transcripts.
     case none
     /// Read transcripts; skip idle files outside the fresh window, and allow
@@ -106,32 +106,32 @@ enum TranscriptPolicy {
     /// source), with the same bounded large read.
     case alwaysRead
 
-    var skipsStaleFiles: Bool { self == .freshWindow }
-    var allowsBoundedLargeFiles: Bool { self != .none }
+    public var skipsStaleFiles: Bool { self == .freshWindow }
+    public var allowsBoundedLargeFiles: Bool { self != .none }
 }
 
 /// A vendor store read through SQLite rather than as transcript files.
-enum DatabaseAdapter {
+public enum DatabaseAdapter: Sendable {
     case cursor, openCode, warp, pi, grok
 
     /// File extensions the walk hands to this adapter instead of the
     /// transcript reader.
-    var extensions: Set<String> {
+    public var extensions: Set<String> {
         self == .cursor ? ["vscdb", "sqlite", "db"] : ["sqlite", "db"]
     }
 
     /// Pi's JSONL carries the /resume title; its sibling SQLite must not run
     /// before those transcripts or the row loses its hero.
-    var runsAfterTranscripts: Bool { self == .pi }
+    public var runsAfterTranscripts: Bool { self == .pi }
 
     /// A file that will not open as SQLite fails the adapter — except for Pi,
     /// whose tree holds incidental non-SQLite `.db` files beside the JSONL
     /// that is its real source.
-    var failsOnUnreadableFile: Bool { self != .pi }
+    public var failsOnUnreadableFile: Bool { self != .pi }
 }
 
 /// Which transcript files under an agent's roots are session evidence.
-enum TranscriptSelection: Equatable {
+public enum TranscriptSelection: Equatable, Sendable {
     /// Every transcript-shaped file.
     case all
     /// None: the database is authoritative and the rest of the tree is noise
@@ -141,7 +141,7 @@ enum TranscriptSelection: Equatable {
     /// Gemini's chats — their roots also hold caches and checkouts).
     case pathContains(String)
 
-    func admits(_ lowercasedPath: String) -> Bool {
+    public func admits(_ lowercasedPath: String) -> Bool {
         switch self {
         case .all: return true
         case .none: return false
@@ -152,68 +152,68 @@ enum TranscriptSelection: Equatable {
 
 /// How the native collector walks and reads one agent's roots. The defaults
 /// are the generic adapter; an agent states only where it differs.
-struct HarvestWalk {
-    var database: DatabaseAdapter? = nil
-    var transcripts: TranscriptSelection = .all
+public struct HarvestWalk: Sendable {
+    public var database: DatabaseAdapter? = nil
+    public var transcripts: TranscriptSelection = .all
     /// Directory names the walk normally skips but this agent keeps.
-    var keptDirectoryNames: Set<String> = []
+    public var keptDirectoryNames: Set<String> = []
     /// A path fragment (lowercased) that marks a file as a structured session
     /// even where the generic session-path rule would not.
-    var structuredPathFragment: String? = nil
+    public var structuredPathFragment: String? = nil
     /// Largest transcript file read at all; nil means the default for the
     /// agent's transcript policy.
-    var maxFileBytes: Int? = nil
+    public var maxFileBytes: Int? = nil
     /// Bytes read per transcript window, and how many of them from the head.
-    var windowBytes = 1_000_000
-    var headBytes = 64_000
+    public var windowBytes = 1_000_000
+    public var headBytes = 64_000
     /// The adapter's own time budget; nil means the shared default.
-    var deadlineSeconds: Double? = nil
+    public var deadlineSeconds: Double? = nil
     /// "continue" / "go on" prompts are not tasks — for agents whose
     /// transcripts record them as ordinary user turns.
-    var dropsContinuationPrompts = false
+    public var dropsContinuationPrompts = false
     /// Home-relative path of the generic vendor-shaped fixture the native
     /// fixture wall writes for this agent (`--native-fixture-test`). Agents
     /// with a hand-written fixture of their own leave it nil.
-    var fixturePath: String? = nil
+    public var fixturePath: String? = nil
 }
 
 /// Which `ps` argv lines are this agent. See `ProcessProbe.matchEvidence`.
-struct AgentProcessRule {
-    var basenames: [String]
-    var pathNeedles: [String]
-    var denyNeedles: [String]
+public struct AgentProcessRule: Sendable {
+    public var basenames: [String]
+    public var pathNeedles: [String]
+    public var denyNeedles: [String]
     /// Some real CLIs intentionally use a short executable name (`pi`,
     /// `roo`, `cmd`). Their exact basename is useful evidence after the
     /// deny list has run; length alone must not make a live agent vanish.
-    var allowBareBasename: Bool = false
+    public var allowBareBasename: Bool = false
 }
 
-struct AgentSpec {
-    let id: AgentID
-    let displayName: String
+public struct AgentSpec: Sendable {
+    public let id: AgentID
+    public let displayName: String
     /// Fallback glyph when the PNG/SVG mark is missing — unique across the
     /// roster. The mark itself is `Resources/AgentIcons/<rawValue>.png|svg`.
-    let monogram: String
-    let waiting: WaitingSource
-    let harvest: HarvestSource
-    let requiresAppDataOptIn: Bool
-    let transcripts: TranscriptPolicy
-    let respondReach: RespondReach
+    public let monogram: String
+    public let waiting: WaitingSource
+    public let harvest: HarvestSource
+    public let requiresAppDataOptIn: Bool
+    public let transcripts: TranscriptPolicy
+    public let respondReach: RespondReach
     /// Other spellings a hook or remote host may use for this agent, beyond
     /// its raw value.
-    let aliases: [String]
-    let process: AgentProcessRule
+    public let aliases: [String]
+    public let process: AgentProcessRule
     /// Home-relative roots the native collector walks. Empty means the agent
     /// has no collector of its own (Cursor Agent is folded into Cursor).
-    let harvestRoots: [String]
+    public let harvestRoots: [String]
     /// Executables whose presence says the agent is installed.
-    let harvestCommands: [String]
+    public let harvestCommands: [String]
     /// How the collector walks and reads those roots.
-    var walk = HarvestWalk()
+    public var walk = HarvestWalk()
 }
 
-enum AgentCatalog {
-    static let all: [AgentSpec] = [
+public enum AgentCatalog {
+    public static let all: [AgentSpec] = [
         AgentSpec(
             id: .claude,
             displayName: "Claude",
@@ -886,7 +886,7 @@ enum AgentCatalog {
 
     /// Every `AgentID` has exactly one spec — `AgentCatalogTests` holds the
     /// roster to that, so this lookup cannot miss in a shipped build.
-    static func spec(_ id: AgentID) -> AgentSpec {
+    public static func spec(_ id: AgentID) -> AgentSpec {
         guard let spec = byID[id] else {
             preconditionFailure("AgentCatalog has no spec for \(id.rawValue)")
         }
@@ -894,8 +894,24 @@ enum AgentCatalog {
     }
 
     /// Raw value or any alias, as a hook or a remote host may spell it.
-    static func agent(named raw: String) -> AgentID? {
+    public static func agent(named raw: String) -> AgentID? {
         if let id = AgentID(rawValue: raw) { return id }
         return all.first { $0.aliases.contains(raw) }?.id
     }
+}
+
+/// Where Pulse stands in an agent's permission decision.
+///
+/// `hookSite` means Pulse's code is executed at the moment the decision is
+/// made — which `HooksInstaller` already arranges for Claude via the
+/// `PermissionRequest` event. **Being executed there is not the same as being
+/// able to answer.** Whether a reply can carry a verdict is a vendor contract
+/// question, and it is deliberately unanswered until `qa_respond_contract.sh`
+/// has been run on a real machine (plan-1.1 P0-0).
+public enum RespondReach: String, Equatable, Sendable {
+    /// Pulse never runs at this agent's decision point. Observation only.
+    case none
+    /// Pulse runs at the decision point. Whether its reply is honoured is
+    /// unverified, so nothing may advertise responding for this agent yet.
+    case hookSite
 }

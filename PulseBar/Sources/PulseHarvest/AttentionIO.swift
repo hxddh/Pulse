@@ -1,19 +1,20 @@
 import Darwin
 import Foundation
+import PulseCore
 
 /// Locked read/write for attention.tsv — same exclusive flock as pulse_hook.py /
 /// `PulseBar --hook`. Columns: agent \\t kind \\t ms \\t message \\t session \\t cwd
-enum AttentionIO {
+package enum AttentionIO {
     /// Tests and `PULSE_HOME` hook self-tests redirect the ledger without
     /// touching the user's real Application Support file.
-    static var pathOverride: URL?
+    package static var pathOverride: URL?
 
-    static var defaultPath: URL {
+    package static var defaultPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Pulse/attention.tsv")
     }
 
-    static var path: URL {
+    package static var path: URL {
         if let pathOverride { return pathOverride }
         if let home = ProcessInfo.processInfo.environment["PULSE_HOME"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -27,9 +28,9 @@ enum AttentionIO {
     /// Must match `AttentionProtocol.header`, `PulseHookReceiver`, and the
     /// optional legacy `pulse_hook.py` — divergent headers used to coexist in
     /// the same file and confuse readers.
-    static var header: String { AttentionProtocol.header }
+    package static var header: String { AttentionProtocol.header }
 
-    static let maxRetainedLines = 80
+    package static let maxRetainedLines = 80
 
     /// Inbox for machines that are not this one.
     ///
@@ -37,14 +38,14 @@ enum AttentionIO {
     /// already uses to move files — rsync, syncthing, a mounted volume, a
     /// `scp` in their own script — drops one TSV per host in here. One file
     /// per host means remote writers never contend for the local flock.
-    static var inboxDirectory: URL {
+    package static var inboxDirectory: URL {
         path.deletingLastPathComponent().appendingPathComponent("attention.d", isDirectory: true)
     }
 
     /// A remote file is someone else's disk quota, not ours. Bound both the
     /// number of hosts and the bytes read from each.
-    static let maxInboxFiles = 16
-    static let maxInboxBytesPerFile = 256 * 1024
+    package static let maxInboxFiles = 16
+    package static let maxInboxBytesPerFile = 256 * 1024
 
     /// One place events came from, with the local time they arrived.
     ///
@@ -53,15 +54,15 @@ enum AttentionIO {
     /// each line showed up — but the moment the bytes landed on *this* disk is
     /// both local and durable, which is exactly what a skewed event stamp
     /// needs to be checked against.
-    struct Source {
-        var host: String
-        var text: String
-        var receivedAtMs: Int64
-        var isLocal: Bool
+    package struct Source {
+        package var host: String
+        package var text: String
+        package var receivedAtMs: Int64
+        package var isLocal: Bool
     }
 
     /// The local file plus every inbox file, newest host first.
-    static func readSources() -> [Source] {
+    package static func readSources() -> [Source] {
         var sources = [
             Source(host: "", text: readText(), receivedAtMs: 0, isLocal: true)
         ]
@@ -69,7 +70,7 @@ enum AttentionIO {
         return sources
     }
 
-    static func readInbox() -> [Source] {
+    package static func readInbox() -> [Source] {
         let fm = FileManager.default
         let directory = inboxDirectory
         guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
@@ -110,7 +111,7 @@ enum AttentionIO {
 
     /// Keep unresolved raises when compacting the TSV. A suffix-only cap can
     /// drop a still-open permission/waiting line with no `done`.
-    static func compactLines(_ lines: [String], cap: Int = maxRetainedLines) -> [String] {
+    package static func compactLines(_ lines: [String], cap: Int = maxRetainedLines) -> [String] {
         guard lines.count > cap else { return lines }
         var lastKind: [String: String] = [:]
         var lastIndex: [String: Int] = [:]
@@ -141,7 +142,7 @@ enum AttentionIO {
         return mustKeep.sorted().map { lines[$0] }
     }
 
-    static func readText() -> String {
+    package static func readText() -> String {
         var result = ""
         withExclusiveLock { fd in
             let size = lseek(fd, 0, SEEK_END)
@@ -155,7 +156,7 @@ enum AttentionIO {
     /// Last raw hook/bridge event per Agent, including done/stop. Runtime
     /// support needs to answer "has this connection ever fired recently?"
     /// without turning a completed event back into Waiting.
-    static func latestEventTimes() -> [AgentID: Int64] {
+    package static func latestEventTimes() -> [AgentID: Int64] {
         var latest: [AgentID: Int64] = [:]
         for line in readText().split(whereSeparator: \.isNewline) {
             if line.hasPrefix("#") { continue }
@@ -188,7 +189,7 @@ enum AttentionIO {
         return data
     }
 
-    static func clearAll() {
+    package static func clearAll() {
         withExclusiveLock { fd in
             ftruncate(fd, 0)
             _ = header.withCString { ptr in write(fd, ptr, strlen(ptr)) }
@@ -196,7 +197,7 @@ enum AttentionIO {
     }
 
     /// Append a done event (optional session scopes the clear).
-    static func appendDone(agent: AgentID, session: String = "") {
+    package static func appendDone(agent: AgentID, session: String = "") {
         let ts = Int64(Date().timeIntervalSince1970 * 1000)
         let line = "\(agent.rawValue)\tdone\t\(ts)\t\t\(session)\t"
         appendRawLine(line)
@@ -204,7 +205,7 @@ enum AttentionIO {
 
     /// Append a permission Waiting line — used by Settings sample and tests.
     /// Never invents Waiting for adapters; the caller must be an explicit user action.
-    static func appendPermission(
+    package static func appendPermission(
         agent: AgentID,
         message: String,
         session: String = "",
@@ -226,7 +227,7 @@ enum AttentionIO {
     }
 
     /// Shared by Settings samples and the native hook receiver.
-    static func appendRawLine(_ line: String) {
+    package static func appendRawLine(_ line: String) {
         withExclusiveLock { fd in
             let size = lseek(fd, 0, SEEK_END)
             lseek(fd, 0, SEEK_SET)

@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import SQLite3
 
 // Pi: session JSONL / SQLite titles, prompts and cwd.
@@ -13,7 +14,7 @@ extension NativeActivityHarvest {
     /// tool call's name. Only assistant/message lines — a tool-result body
     /// carries none of these at the JSON level, and JSON escaping keeps the
     /// patterns from matching inside quoted prose.
-    static func piSalvageLargeLine(_ raw: String, into f: inout Fact) {
+    package static func piSalvageLargeLine(_ raw: String, into f: inout Fact) {
         let prefix = raw.prefix(384)
         guard prefix.contains("\"assistant\"")
                 || prefix.contains("\"type\":\"message\"")
@@ -37,7 +38,7 @@ extension NativeActivityHarvest {
 
     /// Last capture-group match in the text — the newest tool call in an
     /// append-ordered record.
-    static func regexLastValue(_ text: String, pattern: String) -> String? {
+    package static func regexLastValue(_ text: String, pattern: String) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         guard let match = regex.matches(in: text, range: range).last,
@@ -47,7 +48,7 @@ extension NativeActivityHarvest {
         return String(text[valueRange])
     }
 
-    static func piLineMightCarryTitle(_ raw: String) -> Bool {
+    package static func piLineMightCarryTitle(_ raw: String) -> Bool {
         // Only the line prefix — megabyte tool records must stay O(1).
         let prefix = raw.prefix(384)
         return prefix.contains("session_info")
@@ -60,7 +61,7 @@ extension NativeActivityHarvest {
             || prefix.contains("\"type\": \"compaction\"")
     }
 
-    static func piLooksOfficial(_ text: String) -> Bool {
+    package static func piLooksOfficial(_ text: String) -> Bool {
         for line in text.split(whereSeparator: \.isNewline).prefix(8) {
             let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard raw.hasPrefix("{") else { continue }
@@ -82,7 +83,7 @@ extension NativeActivityHarvest {
     /// with a `type:session` header, `message.content` as string *or* text
     /// blocks, optional `session_info.name`, and compaction `retainedTail`.
     /// Compatibility fixtures with a top-level `title` still fall through.
-    static func parsePiFacts(_ text: String, path: String) -> [Fact] {
+    package static func parsePiFacts(_ text: String, path: String) -> [Fact] {
         var headerID = ""
         var headerCwd = ""
         var sessionNames: [String] = []
@@ -221,7 +222,7 @@ extension NativeActivityHarvest {
         return result
     }
 
-    static func firstMeaningfulPiTitle(_ titles: [String]) -> String? {
+    package static func firstMeaningfulPiTitle(_ titles: [String]) -> String? {
         for title in titles {
             let cleaned = cleanPiSessionTitle(title)
             if cleaned.isEmpty || isChromeTask(cleaned) { continue }
@@ -234,7 +235,7 @@ extension NativeActivityHarvest {
         return nil
     }
 
-    static func latestMeaningfulPiTitle(_ titles: [String]) -> String? {
+    package static func latestMeaningfulPiTitle(_ titles: [String]) -> String? {
         guard !titles.isEmpty else { return nil }
         for title in titles.reversed() {
             let cleaned = cleanPiSessionTitle(title)
@@ -248,7 +249,7 @@ extension NativeActivityHarvest {
         return nil
     }
 
-    static func piUserText(from dict: [String: Any]) -> String {
+    package static func piUserText(from dict: [String: Any]) -> String {
         let envelope = dict["message"] as? [String: Any]
         let role = firstString(envelope ?? dict, keys: ["role", "type", "kind"]).lowercased()
         if role == "user" || role == "human"
@@ -264,7 +265,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func piContentText(_ value: Any?) -> String {
+    package static func piContentText(_ value: Any?) -> String {
         guard let value else { return "" }
         if let text = value as? String {
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -287,7 +288,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func piEventPrompt(type: String, data: String) -> String? {
+    package static func piEventPrompt(type: String, data: String) -> String? {
         if type == "file_read" { return nil }
         if let object = jsonObject(data) {
             let fromEnvelope = cleanPiSessionTitle(piUserText(from: object))
@@ -305,7 +306,7 @@ extension NativeActivityHarvest {
         return title.isEmpty ? nil : title
     }
 
-    static func cleanPiSessionTitle(_ value: String) -> String {
+    package static func cleanPiSessionTitle(_ value: String) -> String {
         let stripped = stripPiContextWrappers(value)
         let title = clean(stripped, limit: 160)
         if title.count < 3 { return "" }
@@ -322,7 +323,7 @@ extension NativeActivityHarvest {
     /// Keep the real prompt when Pi (or a wrapper) prepends env/plugin XML.
     /// Rejecting the whole string because it *starts* with those tags blanked
     /// every official user turn that carries context + goal in one `content`.
-    static func stripPiContextWrappers(_ raw: String) -> String {
+    package static func stripPiContextWrappers(_ raw: String) -> String {
         if let query = piTaggedInner(raw, name: "user_query"), query.count >= 3 {
             return query
         }
@@ -336,7 +337,7 @@ extension NativeActivityHarvest {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func piTaggedInner(_ text: String, name: String) -> String? {
+    package static func piTaggedInner(_ text: String, name: String) -> String? {
         let open = "<\(name)"
         let close = "</\(name)>"
         guard let start = text.range(of: open, options: .caseInsensitive),
@@ -348,7 +349,7 @@ extension NativeActivityHarvest {
         return inner.isEmpty ? nil : String(inner)
     }
 
-    static func piRemoveTaggedBlocks(_ text: String, name: String) -> String {
+    package static func piRemoveTaggedBlocks(_ text: String, name: String) -> String {
         var s = text
         let open = "<\(name)"
         let close = "</\(name)>"
@@ -366,7 +367,7 @@ extension NativeActivityHarvest {
         return s
     }
 
-    static func meaningfulPiPrompt(_ value: String) -> Bool {
+    package static func meaningfulPiPrompt(_ value: String) -> Bool {
         let title = cleanPiSessionTitle(value)
         if title.isEmpty { return false }
         let compact = title
@@ -388,7 +389,7 @@ extension NativeActivityHarvest {
         return !continuations.contains(compact)
     }
 
-    static func piSessionID(from url: URL) -> String {
+    package static func piSessionID(from url: URL) -> String {
         let stem = url.deletingPathExtension().lastPathComponent
         // Official files are `<ISO-timestamp>_<uuid>.jsonl`. The header `id`
         // is the UUID; using the whole stem blocked SQLite merge.
@@ -414,7 +415,7 @@ extension NativeActivityHarvest {
     /// `--Users-me-Pulse--` → `/Users/me/Pulse` (Pi encodes `/` as `-`).
     ///
     /// Same ambiguity, same resolution, as `decodeClaudeProjectDir`.
-    static func piCwdFromPath(_ path: String) -> (path: String, verified: Bool) {
+    package static func piCwdFromPath(_ path: String) -> (path: String, verified: Bool) {
         let parent = URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent
         guard parent.hasPrefix("--"), parent.hasSuffix("--"), parent.count > 4 else { return ("", false) }
         var encoded = parent
@@ -429,13 +430,13 @@ extension NativeActivityHarvest {
     /// Empty SQLite Pi rows (cwd + file_read, no prompt) must not occupy the
     /// tray when JSONL already has the session title — often under a different
     /// identity (`timestamp_uuid` vs header UUID) before 0.97.
-    static func dropEmptyPiSqliteDuplicates(_ facts: inout [Fact]) {
+    package static func dropEmptyPiSqliteDuplicates(_ facts: inout [Fact]) {
         let titledJSONL = facts.filter { fact in
             let path = fact.sourcePath.lowercased()
             guard path.hasSuffix(".jsonl") || path.hasSuffix(".ndjson") else { return false }
             let task = cleanPiSessionTitle(fact.task)
             return !task.isEmpty && !isChromeTask(task)
-                && !AgentRow.looksLikeFilenameOnlyTitle(task)
+                && !TitleHeuristics.looksLikeFilenameOnlyTitle(task)
         }
         guard !titledJSONL.isEmpty else { return }
         let ids = Set(titledJSONL.map(\.sessionID).filter { !$0.isEmpty })
@@ -444,7 +445,7 @@ extension NativeActivityHarvest {
             let path = fact.sourcePath.lowercased()
             guard path.hasSuffix(".sqlite") || path.hasSuffix(".db") else { return false }
             let empty = fact.task.isEmpty || isChromeTask(fact.task)
-                || AgentRow.looksLikeFilenameOnlyTitle(fact.task)
+                || TitleHeuristics.looksLikeFilenameOnlyTitle(fact.task)
             guard empty else { return false }
             if !fact.sessionID.isEmpty, ids.contains(fact.sessionID) { return true }
             if !fact.cwd.isEmpty, cwds.contains(fact.cwd) { return true }
@@ -452,19 +453,19 @@ extension NativeActivityHarvest {
         }
     }
 
-    static func isPiSqlitePath(_ path: String) -> Bool {
+    package static func isPiSqlitePath(_ path: String) -> Bool {
         let lower = path.lowercased()
         guard lower.contains("/.pi/") else { return false }
         return lower.hasSuffix(".sqlite") || lower.hasSuffix(".db")
     }
 
-    static func piJSONLResumeTitle(_ path: String, _ task: String) -> Bool {
+    package static func piJSONLResumeTitle(_ path: String, _ task: String) -> Bool {
         let lower = path.lowercased()
         guard lower.contains("/.pi/"),
               lower.hasSuffix(".jsonl") || lower.hasSuffix(".ndjson")
         else { return false }
         let cleaned = cleanPiSessionTitle(task)
         return !cleaned.isEmpty && !isChromeTask(cleaned)
-            && !AgentRow.looksLikeFilenameOnlyTitle(cleaned)
+            && !TitleHeuristics.looksLikeFilenameOnlyTitle(cleaned)
     }
 }

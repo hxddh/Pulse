@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 /// A vendor transcript format that needs more than the generic record walk.
 ///
@@ -12,7 +13,7 @@ import Foundation
 /// Dispatch is by path, as before, and in registration order; the first
 /// dialect that claims a transcript owns it. The parsers themselves live one
 /// vendor per file (`HarvestCodex.swift`, `HarvestPi.swift`, …).
-protocol TranscriptDialect {
+package protocol TranscriptDialect {
     /// Whether this dialect owns the transcript at `lowerPath` (lowercased).
     func claims(lowerPath: String) -> Bool
     /// Parse the whole transcript, or return `nil` to hand it to the generic
@@ -24,27 +25,27 @@ protocol TranscriptDialect {
 }
 
 extension TranscriptDialect {
-    func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? { nil }
-    func finish(_ facts: inout [NativeActivityHarvest.Fact], root: Any?) {}
+    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? { nil }
+    package func finish(_ facts: inout [NativeActivityHarvest.Fact], root: Any?) {}
 }
 
-enum TranscriptDialects {
+package enum TranscriptDialects {
     /// Registration order is precedence.
-    static let all: [any TranscriptDialect] = [CodexDialect(), PiDialect(), GeminiDialect()]
+    package static let all: [any TranscriptDialect] = [CodexDialect(), PiDialect(), GeminiDialect()]
 
-    static func dialect(for path: String) -> (any TranscriptDialect)? {
+    package static func dialect(for path: String) -> (any TranscriptDialect)? {
         let lower = path.lowercased()
         return all.first { $0.claims(lowerPath: lower) }
     }
 }
 
 /// Codex rollouts: its own parser; an empty result falls back to the walker.
-struct CodexDialect: TranscriptDialect {
-    func claims(lowerPath: String) -> Bool {
+package struct CodexDialect: TranscriptDialect {
+    package func claims(lowerPath: String) -> Bool {
         lowerPath.contains("/.codex/") && lowerPath.hasSuffix(".jsonl")
     }
 
-    func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
+    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
         let facts = NativeActivityHarvest.parseCodexFacts(text, path: path)
         return facts.isEmpty ? nil : facts
     }
@@ -53,13 +54,13 @@ struct CodexDialect: TranscriptDialect {
 /// Pi sessions. Official envelopes without a parseable user prompt must not
 /// fall through to the generic walker — that produced cwd-only rows whose tray
 /// hero was the project folder name.
-struct PiDialect: TranscriptDialect {
-    func claims(lowerPath: String) -> Bool {
+package struct PiDialect: TranscriptDialect {
+    package func claims(lowerPath: String) -> Bool {
         lowerPath.contains("/.pi/")
             && (lowerPath.hasSuffix(".jsonl") || lowerPath.hasSuffix(".ndjson"))
     }
 
-    func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
+    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
         let facts = NativeActivityHarvest.parsePiFacts(text, path: path)
         if !facts.isEmpty { return facts }
         return NativeActivityHarvest.piLooksOfficial(text) ? [] : nil
@@ -69,12 +70,12 @@ struct PiDialect: TranscriptDialect {
 /// Gemini chats are one whole-file JSON whose reply role is `model`, not
 /// `assistant`; the generic walk parses them, then this reads the last model
 /// turn for the facts that have no last word yet.
-struct GeminiDialect: TranscriptDialect {
-    func claims(lowerPath: String) -> Bool {
+package struct GeminiDialect: TranscriptDialect {
+    package func claims(lowerPath: String) -> Bool {
         lowerPath.contains("/.gemini/") && lowerPath.contains("/chats/")
     }
 
-    func finish(_ facts: inout [NativeActivityHarvest.Fact], root: Any?) {
+    package func finish(_ facts: inout [NativeActivityHarvest.Fact], root: Any?) {
         guard !facts.isEmpty, let root,
               let word = NativeActivityHarvest.geminiLastWord(in: root)
         else { return }

@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 
 /// 2.9 Quality — the push half of "what is it doing right now".
 ///
@@ -21,48 +22,68 @@ import Foundation
 ///   that disagrees is refused — the respond spool's rule.
 /// - Bounded everything: file count, bytes per file, age; unknown agents are
 ///   skipped, never guessed.
-enum ActivitySpool {
-    static let version = 1
-    static let maxFiles = 64
-    static let maxBytesPerFile = 4 * 1024
-    static let maxAgeMs: Int64 = 24 * 60 * 60 * 1000
+package enum ActivitySpool {
+    package static let version = 1
+    package static let maxFiles = 64
+    package static let maxBytesPerFile = 4 * 1024
+    package static let maxAgeMs: Int64 = 24 * 60 * 60 * 1000
     /// How long an event may be spoken about in the present tense.
-    static let liveWindowMs: Int64 = 120_000
+    package static let liveWindowMs: Int64 = 120_000
 
-    struct Event: Equatable {
-        var agent: String
-        var session: String
+    package struct Event: Equatable {
+        package var agent: String
+        package var session: String
         /// "tool" (PreToolUse) or "prompt" (UserPromptSubmit).
-        var event: String
-        var tool: String
-        var target: String
-        var prompt: String
-        var cwd: String
-        var tsMs: Int64
+        package var event: String
+        package var tool: String
+        package var target: String
+        package var prompt: String
+        package var cwd: String
+        package var tsMs: Int64
+
+        package init(
+            agent: String,
+            session: String,
+            event: String,
+            tool: String,
+            target: String,
+            prompt: String,
+            cwd: String,
+            tsMs: Int64
+        ) {
+            self.agent = agent
+            self.session = session
+            self.event = event
+            self.tool = tool
+            self.target = target
+            self.prompt = prompt
+            self.cwd = cwd
+            self.tsMs = tsMs
+        }
     }
 
-    static var directoryOverride: URL?
+    package static var directoryOverride: URL?
 
-    static var directory: URL {
+    package static var directory: URL {
         if let directoryOverride { return directoryOverride }
         return AttentionIO.path.deletingLastPathComponent()
             .appendingPathComponent("activity.d", isDirectory: true)
     }
 
     /// Filename-safe identity token — mirrors `pulse_hook.sanitize_session_token`.
-    static func sanitizeToken(_ value: String) -> String {
+    package static func sanitizeToken(_ value: String) -> String {
         String(value.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" }
             .prefix(80))
     }
 
-    static func fileName(agent: String, session: String) -> String {
+    package static func fileName(agent: String, session: String) -> String {
         agent + "-" + sanitizeToken(session) + ".json"
     }
 
     /// Receiver-side write, key-for-key with the Python hook's record so the
     /// two ends of the contract stay interchangeable.
     @discardableResult
-    static func write(_ event: Event) -> Bool {
+    package static func write(_ event: Event) -> Bool {
         guard !event.agent.isEmpty, !event.session.isEmpty else { return false }
         let record: [String: Any] = [
             "v": version,
@@ -88,7 +109,7 @@ enum ActivitySpool {
     }
 
     /// Age out and cap, cheapest-first — parity with the Python hook.
-    static func housekeep(nowMs: Int64) {
+    package static func housekeep(nowMs: Int64) {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
         var dated: [(String, Int64)] = []
@@ -110,7 +131,7 @@ enum ActivitySpool {
 
     /// Bounded read of every live-enough state file. The filename decides
     /// which agent+session this is; a body that disagrees is skipped.
-    static func readEvents(nowMs: Int64) -> [Event] {
+    package static func readEvents(nowMs: Int64) -> [Event] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
         var events: [Event] = []

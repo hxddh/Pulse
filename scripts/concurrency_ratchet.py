@@ -5,7 +5,8 @@
 PulseCore already builds with -warnings-as-errors; the app does not yet, so
 this is the ratchet in between: CI builds the app target from scratch, pipes
 the compiler output here, and this fails if the number of distinct warnings
-under Sources/PulseBar/ grew. When it shrinks, lower the baseline in the same
+in the app-side targets (everything but PulseCore, which is already
+warning-free and builds with -warnings-as-errors) grew. When it shrinks, lower the baseline in the same
 change so it cannot grow back.
 
     swift build --target PulseBar 2>&1 | python3 scripts/concurrency_ratchet.py
@@ -16,7 +17,7 @@ import re
 import sys
 
 BASELINE = pathlib.Path(__file__).with_name("concurrency_baseline.json")
-WARNING = re.compile(r"^(?P<file>/\S*/Sources/PulseBar/[^:]+\.swift):(?P<line>\d+):(?P<col>\d+): warning: (?P<msg>.*)$")
+WARNING = re.compile(r"^(?P<file>/\S*/Sources/(?!PulseCore/)[^:]+\.swift):(?P<line>\d+):(?P<col>\d+): warning: (?P<msg>.*)$")
 
 
 def main() -> int:
@@ -40,10 +41,10 @@ def main() -> int:
         by_file[name] = by_file.get(name, 0) + 1
     for name, n in sorted(by_file.items(), key=lambda kv: -kv[1])[:15]:
         print(f"  {n:4d}  {name}")
-    print(f"PulseBar concurrency warnings: {count} (baseline {baseline})")
+    print(f"App-side concurrency warnings: {count} (baseline {baseline})")
+    for item in sorted(seen)[:400]:
+        print("  " + ":".join(item))
     if count > baseline:
-        for item in sorted(seen)[:40]:
-            print("  " + ":".join(item))
         print(f"::error::app-target concurrency warnings grew from {baseline} to {count}")
         return 1
     if count < baseline:

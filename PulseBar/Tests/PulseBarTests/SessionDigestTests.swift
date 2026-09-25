@@ -2,6 +2,8 @@ import Darwin
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 1.1 Full Transcript — reading the part of a session Pulse never saw.
 ///

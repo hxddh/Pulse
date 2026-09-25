@@ -27,8 +27,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ROOT / "PulseBar" / "Sources" / "PulseBar"
-CATALOG = SOURCES / "AgentCatalog.swift"
+SOURCES = ROOT / "PulseBar" / "Sources"
+# 12.3: the catalog is part of PulseCore; every target is scanned.
+CATALOG = SOURCES / "PulseCore" / "AgentCatalog.swift"
 MAX_PER_CASE = 6
 MAX_PER_FILE = 8
 
@@ -68,7 +69,7 @@ def main() -> int:
         problems.append("monograms must be unique across the roster")
 
     agent_re = re.compile(r"\.(" + "|".join(re.escape(n) for n in names) + r")\b")
-    for path in sorted(SOURCES.glob("*.swift")):
+    for path in sorted(SOURCES.glob("*/*.swift")):
         if path == CATALOG:
             continue
         seen: set[str] = set()

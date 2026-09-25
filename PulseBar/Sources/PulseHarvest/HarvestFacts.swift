@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import SQLite3
 
 // Turning transcript text into facts: the generic record walk, the agent's
@@ -8,7 +9,7 @@ import SQLite3
 extension NativeActivityHarvest {
     // MARK: - Conservative metadata extraction
 
-    static func parseFacts(_ text: String, structured: Bool, path: String) -> [Fact] {
+    package static func parseFacts(_ text: String, structured: Bool, path: String) -> [Fact] {
         // 12.3 γ: vendor formats with their own reading are dialects.
         let dialect = TranscriptDialects.dialect(for: path)
         if let facts = dialect?.parse(text, path: path) { return facts }
@@ -70,7 +71,7 @@ extension NativeActivityHarvest {
     /// Claude / Command Code / Continue / Droid / Gemini chats keep one goal
     /// per file. Generic JSONL only walks the last 256 lines, so a long
     /// tool-result tail blanks the hero — same class as the Pi 0.96.1 bug.
-    static func usesTranscriptUserPrompt(_ path: String) -> Bool {
+    package static func usesTranscriptUserPrompt(_ path: String) -> Bool {
         let lower = path.lowercased()
         if lower.contains("/amp/") { return false }
         if lower.contains("/.claude/") { return true }
@@ -81,7 +82,7 @@ extension NativeActivityHarvest {
         return false
     }
 
-    static func latestTranscriptUserPrompt(_ text: String) -> String? {
+    package static func latestTranscriptUserPrompt(_ text: String) -> String? {
         var candidates: [String] = []
         var attempts = 0
         for line in text.split(whereSeparator: \.isNewline).reversed() {
@@ -104,9 +105,9 @@ extension NativeActivityHarvest {
     /// The plan checklist is bounded for display, but the counts must come
     /// from the whole list — a capped list quoting its own length would be an
     /// estimate wearing an exact number's clothes.
-    static let maxPlanSteps = 8
-    static let maxPlanStepLength = 100
-    static let maxSelfReportLength = 160
+    package static let maxPlanSteps = 8
+    package static let maxPlanStepLength = 100
+    package static let maxSelfReportLength = 160
 
     /// The most valuable structure in a transcript is the one the agent
     /// writes for itself: its todo list. It used to be filtered out wholesale
@@ -119,7 +120,7 @@ extension NativeActivityHarvest {
     /// event), the last assistant text line, the last failed tool result.
     /// Substring prefilters keep megabyte tool-result lines O(1) until one
     /// actually needs decoding.
-    static func applyTranscriptSelfReport(_ facts: inout [Fact], text: String) {
+    package static func applyTranscriptSelfReport(_ facts: inout [Fact], text: String) {
         guard !facts.isEmpty else { return }
         var plan: (steps: [ActivityHarvest.PlanStep], current: String, done: Int, total: Int)?
         var word: String?
@@ -217,7 +218,7 @@ extension NativeActivityHarvest {
     /// `{step, status}`. The current step's display text prefers
     /// `activeForm` ("Running tests") over the imperative `content`
     /// ("Run tests") because it is the one written to describe *now*.
-    static func planFacts(
+    package static func planFacts(
         from items: [Any]
     ) -> (steps: [ActivityHarvest.PlanStep], current: String, done: Int, total: Int)? {
         var steps: [ActivityHarvest.PlanStep] = []
@@ -273,7 +274,7 @@ extension NativeActivityHarvest {
 
     /// One sanitized line of the agent's own text — first non-empty line,
     /// bounded. Used for both "what it just said" and "what just failed".
-    static func selfReportLine(_ raw: String) -> String {
+    package static func selfReportLine(_ raw: String) -> String {
         for line in ContentSanitizer.redact(raw).split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
@@ -282,7 +283,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func transcriptUserPrompt(from dict: [String: Any]) -> String {
+    package static func transcriptUserPrompt(from dict: [String: Any]) -> String {
         if let nested = dict["message"] as? [String: Any],
            firstString(nested, keys: ["role", "type", "kind"]).lowercased() == "user" {
             let text = userMessageText(nested["content"] ?? nested["text"])
@@ -296,7 +297,7 @@ extension NativeActivityHarvest {
 
     /// Visible user text only — skip tool_result / tool_call envelopes.
     /// Command Code (and Claude) store tool results as role=user records.
-    static func userMessageText(_ value: Any?) -> String {
+    package static func userMessageText(_ value: Any?) -> String {
         guard let value else { return "" }
         if let text = value as? String {
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -330,7 +331,7 @@ extension NativeActivityHarvest {
         return ""
     }
 
-    static func isToolEnvelope(_ dict: [String: Any]) -> Bool {
+    package static func isToolEnvelope(_ dict: [String: Any]) -> Bool {
         let kind = firstString(dict, keys: ["type"]).lowercased().replacingOccurrences(of: "-", with: "_")
         let tools: Set<String> = [
             "tool_result", "tool_call_output", "custom_tool_call_output",
@@ -341,13 +342,13 @@ extension NativeActivityHarvest {
         return tools.contains(kind)
     }
 
-    static func isToolShapedRecord(_ dict: [String: Any]) -> Bool {
+    package static func isToolShapedRecord(_ dict: [String: Any]) -> Bool {
         if isToolEnvelope(dict) { return true }
         let kind = firstString(dict, keys: ["type"]).lowercased().replacingOccurrences(of: "-", with: "_")
         return kind == "file_read" || kind == "tool_use" || kind == "tool_call"
     }
 
-    static func cwdKeys(for dict: [String: Any]) -> [String] {
+    package static func cwdKeys(for dict: [String: Any]) -> [String] {
         var keys = [
             "cwd", "workingDirectory", "workdir", "workDir", "workspacePath", "workspace_path",
             "projectPath", "project_path", "directory", "worktree", "repoPath",
@@ -361,7 +362,7 @@ extension NativeActivityHarvest {
         return keys
     }
 
-    static func walk(
+    package static func walk(
         _ object: Any,
         context: String,
         structured: Bool,
@@ -390,7 +391,7 @@ extension NativeActivityHarvest {
         }
     }
 
-    static func fact(
+    package static func fact(
         from dict: [String: Any],
         context: String,
         structured: Bool,
@@ -639,7 +640,7 @@ extension NativeActivityHarvest {
         return f
     }
 
-    static func textFacts(_ text: String, structured: Bool, path: String) -> Fact? {
+    package static func textFacts(_ text: String, structured: Bool, path: String) -> Fact? {
         var f = Fact()
         f.structured = structured
         f.sourcePath = path
@@ -683,7 +684,7 @@ extension NativeActivityHarvest {
         return f.hasUsefulSignal ? f : nil
     }
 
-    static func merge(_ input: [Fact]) -> [Fact] {
+    package static func merge(_ input: [Fact]) -> [Fact] {
         var byID: [String: Fact] = [:]
         for item in input {
             guard item.hasUsefulSignal else { continue }
@@ -701,7 +702,7 @@ extension NativeActivityHarvest {
         }
     }
 
-    static func merge(_ target: inout Fact, _ source: Fact) {
+    package static func merge(_ target: inout Fact, _ source: Fact) {
         if piJSONLResumeTitle(target.sourcePath, target.task), isPiSqlitePath(source.sourcePath) {
             // JSONL is the /resume title. A SQLite fragment for the same
             // session never displaces it.
@@ -780,7 +781,7 @@ extension NativeActivityHarvest {
     /// and two files that legitimately share one session id. Taking the
     /// stronger side follows the tokens/progress rule already above — the
     /// weaker side is always an emptier read of the same thing.
-    static func mergeDigestFacts(_ target: inout Fact, _ source: Fact) {
+    package static func mergeDigestFacts(_ target: inout Fact, _ source: Fact) {
         // A longer run of the same tool is the more complete observation of
         // the same tail; an empty target has loopCount 0 and always loses.
         if source.loopCount > target.loopCount, !source.loopTool.isEmpty {
@@ -822,7 +823,7 @@ extension NativeActivityHarvest {
     /// fragments of the same kind keep the first one seen — which is what "the
     /// /resume title is the *first* user message" means — unless the later
     /// fragment is demonstrably newer.
-    static func preferTask(_ target: inout Fact, _ source: Fact) {
+    package static func preferTask(_ target: inout Fact, _ source: Fact) {
         guard !source.task.isEmpty else { return }
         let incoming = effectiveOrigin(source.task, source.taskOrigin)
         guard incoming > .chrome || target.task.isEmpty else { return }
@@ -842,9 +843,9 @@ extension NativeActivityHarvest {
     /// A vendor placeholder or a bare filename can never win a merge, whatever
     /// record produced it. A title recorded without an origin is treated as a
     /// cache headline — the weakest claim that is still a real title.
-    static func effectiveOrigin(_ task: String, _ origin: TaskOrigin) -> TaskOrigin {
+    package static func effectiveOrigin(_ task: String, _ origin: TaskOrigin) -> TaskOrigin {
         if task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .none }
-        if isChromeTask(task) || AgentRow.looksLikeFilenameOnlyTitle(task) { return .chrome }
+        if isChromeTask(task) || TitleHeuristics.looksLikeFilenameOnlyTitle(task) { return .chrome }
         return origin == .none ? .cacheTitle : origin
     }
 
@@ -852,12 +853,12 @@ extension NativeActivityHarvest {
     /// two copies that lived in this file; 0.99 folded in the third, which was
     /// inside `AgentRow.usefulTask`, so the definition now lives beside the row
     /// that renders it.
-    static func isChromeTask(_ value: String) -> Bool {
-        AgentRow.isChromeTitle(value)
+    package static func isChromeTask(_ value: String) -> Bool {
+        TitleHeuristics.isChromeTitle(value)
     }
 
     /// Cline/Roo/Cascade (+ kin) ask tool ids — exact tokens only, never free-text inference.
-    static func isVendorAskTool(_ tool: String) -> Bool {
+    package static func isVendorAskTool(_ tool: String) -> Bool {
         let normalized = tool.lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -879,14 +880,14 @@ extension NativeActivityHarvest {
 
     /// Cline (and kin) stamp an `ask` field while blocked on the user.
     /// When `askResponse` is already present, the user answered — not pending.
-    static func vendorAskAlreadyAnswered(_ dict: [String: Any]) -> Bool {
+    package static func vendorAskAlreadyAnswered(_ dict: [String: Any]) -> Bool {
         guard let raw = firstValue(dict, keys: ["askResponse", "ask_response"]) else { return false }
         if let flag = raw as? Bool { return flag }
         let text = stringValue(raw).trimmingCharacters(in: .whitespacesAndNewlines)
         return !text.isEmpty
     }
 
-    static func isTerminalSessionState(_ value: String) -> Bool {
+    package static func isTerminalSessionState(_ value: String) -> Bool {
         let normalized = value.lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -905,7 +906,7 @@ extension NativeActivityHarvest {
             })
     }
 
-    static func vendorAskFieldPending(_ dict: [String: Any]) -> Bool {
+    package static func vendorAskFieldPending(_ dict: [String: Any]) -> Bool {
         let ask = firstString(dict, keys: ["ask", "askType", "ask_type"])
         guard !ask.isEmpty else { return false }
         if vendorAskAlreadyAnswered(dict) { return false }
@@ -927,12 +928,12 @@ extension NativeActivityHarvest {
 
     /// Tool `input.path` is a file, not a workspace. Adopting it as cwd made
     /// Claude (and kin) rows look like they lived in `/tmp/file-0.swift`.
-    static func looksLikeFilePathCwd(_ path: String) -> Bool {
+    package static func looksLikeFilePathCwd(_ path: String) -> Bool {
         guard !path.isEmpty else { return false }
-        return AgentRow.looksLikeFilenameOnlyTitle(lastPathComponent(path))
+        return TitleHeuristics.looksLikeFilenameOnlyTitle(lastPathComponent(path))
     }
 
-    static func makeRows(from facts: [Fact], id: AgentID, home: URL) -> [ActivityHarvest.Row] {
+    package static func makeRows(from facts: [Fact], id: AgentID, home: URL) -> [ActivityHarvest.Row] {
         var seen = Set<String>()
         return facts.prefix(maxRowsPerAgent).compactMap { fact in
             guard fact.activityMs > 0 else { return nil }

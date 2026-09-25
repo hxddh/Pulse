@@ -2,6 +2,8 @@ import CryptoKit
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 final class PulseHookReceiverTests: XCTestCase {
     private var tempHome: URL!

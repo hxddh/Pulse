@@ -1,23 +1,7 @@
 import CoreGraphics
 import CryptoKit
 import Foundation
-
-/// Where Pulse stands in an agent's permission decision.
-///
-/// `hookSite` means Pulse's code is executed at the moment the decision is
-/// made — which `HooksInstaller` already arranges for Claude via the
-/// `PermissionRequest` event. **Being executed there is not the same as being
-/// able to answer.** Whether a reply can carry a verdict is a vendor contract
-/// question, and it is deliberately unanswered until `qa_respond_contract.sh`
-/// has been run on a real machine (plan-1.1 P0-0).
-enum RespondReach: String, Equatable {
-    /// Pulse never runs at this agent's decision point. Observation only.
-    case none
-    /// Pulse runs at the decision point. Whether its reply is honoured is
-    /// unverified, so nothing may advertise responding for this agent yet.
-    case hookSite
-}
-
+import PulseCore
 
 /// A permission request Pulse has been told about.
 ///
@@ -26,21 +10,21 @@ enum RespondReach: String, Equatable {
 /// could be replayed onto a later request that reused it, and a decision that
 /// only carried a digest could be replayed onto an identical request tomorrow.
 /// Both bindings are required.
-struct PermissionRequest: Equatable {
-    var id: String
-    var agent: AgentID
+package struct PermissionRequest: Equatable {
+    package var id: String
+    package var agent: AgentID
     /// Empty means this Mac.
-    var host: String = ""
-    var session: String = ""
+    package var host: String = ""
+    package var session: String = ""
     /// The complete request as the vendor stated it, or empty if it never
     /// arrived. Never abbreviated for storage — the point of holding it is
     /// that an abbreviation must not be approved.
-    var fullRequest: String = ""
+    package var fullRequest: String = ""
     /// The vendor (or the transport) gave us less than the whole thing.
-    var truncated: Bool = false
-    var receivedAtMs: Int64 = 0
+    package var truncated: Bool = false
+    package var receivedAtMs: Int64 = 0
 
-    var digest: String { RespondDigest.of(fullRequest) }
+    package var digest: String { RespondDigest.of(fullRequest) }
 
     /// Whether an **Allow** control may be offered for this request.
     ///
@@ -48,20 +32,20 @@ struct PermissionRequest: Equatable {
     /// not fully read is safe, and looking is what Pulse has always done.
     /// Approving something you have not fully read is the one action that
     /// cannot be taken back, so it requires the whole request to be present.
-    var canOfferAllow: Bool {
+    package var canOfferAllow: Bool {
         !truncated && !fullRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
-enum RespondDigest {
+package enum RespondDigest {
     /// Hex SHA-256 of the exact request text.
-    static func of(_ text: String) -> String {
+    package static func of(_ text: String) -> String {
         of(Data(text.utf8))
     }
 
     /// Hex SHA-256 of exact bytes — the outbound spool digests the verbatim
     /// hook stdin before anything ever decodes it.
-    static func of(_ data: Data) -> String {
+    package static func of(_ data: Data) -> String {
         SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }
             .joined()
@@ -69,25 +53,25 @@ enum RespondDigest {
 }
 
 /// A decision the user made, bound to the request it answered.
-struct RespondVerdict: Equatable {
-    var requestID: String
-    var digest: String
+package struct RespondVerdict: Equatable {
+    package var requestID: String
+    package var digest: String
     /// Which agent and which machine this verdict is for. Vendor request ids
     /// look globally unique, but nothing *guarantees* they are — and a
     /// security property must never rest on a vendor's id scheme. Without
     /// these bindings, a verdict synced back to the wrong host (or picked up
     /// by a different agent that happened to reuse the id) would answer a
     /// request the user never saw.
-    var agent: String
-    var host: String
-    var allow: Bool
-    var decidedAtMs: Int64
-    var expiresAtMs: Int64
+    package var agent: String
+    package var host: String
+    package var allow: Bool
+    package var decidedAtMs: Int64
+    package var expiresAtMs: Int64
 
-    func isUsable(nowMs: Int64) -> Bool { nowMs < expiresAtMs }
+    package func isUsable(nowMs: Int64) -> Bool { nowMs < expiresAtMs }
 
     /// All four bindings must hold. Any one alone is replayable.
-    func answers(_ request: PermissionRequest) -> Bool {
+    package func answers(_ request: PermissionRequest) -> Bool {
         requestID == request.id && digest == request.digest
             && agent == request.agent.rawValue && host == request.host
     }
@@ -99,18 +83,20 @@ struct RespondVerdict: Equatable {
 /// A verdict is a different class of thing: it can cause an agent to act. So
 /// this store is deliberately mean — every verdict is single-use, short-lived,
 /// and bound to both the request id and the request's content.
-struct RespondDecisionStore: Equatable {
+package struct RespondDecisionStore: Equatable {
     /// A verdict nobody collected is stale within a minute or two; a user who
     /// walked away should not find their approval still armed later.
-    static let defaultTtlMs: Int64 = 90 * 1000
+    package static let defaultTtlMs: Int64 = 90 * 1000
     /// A hard ceiling so a misbehaving writer cannot grow this without bound.
-    static let maxPending = 64
+    package static let maxPending = 64
 
-    private(set) var pending: [RespondVerdict] = []
+    package private(set) var pending: [RespondVerdict] = []
+
+    package init() {}
 
     /// Record a decision. Replaces any earlier verdict for the same request —
     /// the newest answer is the user's actual intent.
-    mutating func decide(
+    package mutating func decide(
         _ request: PermissionRequest,
         allow: Bool,
         nowMs: Int64,
@@ -144,7 +130,7 @@ struct RespondDecisionStore: Equatable {
 
     /// Collect the verdict for a request, if there is a live one that actually
     /// answers it. The verdict is consumed whether or not it is used again.
-    mutating func take(for request: PermissionRequest, nowMs: Int64) -> RespondVerdict? {
+    package mutating func take(for request: PermissionRequest, nowMs: Int64) -> RespondVerdict? {
         prune(nowMs: nowMs)
         guard let index = pending.firstIndex(where: {
             $0.answers(request) && $0.isUsable(nowMs: nowMs)
@@ -152,7 +138,7 @@ struct RespondDecisionStore: Equatable {
         return pending.remove(at: index)
     }
 
-    mutating func prune(nowMs: Int64) {
+    package mutating func prune(nowMs: Int64) {
         pending.removeAll { !$0.isUsable(nowMs: nowMs) }
     }
 }
@@ -176,9 +162,9 @@ struct RespondDecisionStore: Equatable {
 ///
 /// The question is now asked directly. Holding pays exactly when the user
 /// **cannot already see** the prompt.
-enum RespondHold {
+package enum RespondHold {
     /// How long without input before Pulse stops assuming you are here.
-    static let defaultAwayAfterSeconds: Double = 120
+    package static let defaultAwayAfterSeconds: Double = 120
 
     /// - Parameter promptIsFrontmost: `nil` for "could not be established".
     ///   Not knowing is not proof, and the cost of a wrong hold is a frozen
@@ -188,7 +174,7 @@ enum RespondHold {
     /// without ever asking the window server, so the common case costs
     /// nothing. Forwarding another autoclosure into it stays lazy, because
     /// `@autoclosure` captures the expression rather than its value.
-    static func shouldHold(
+    package static func shouldHold(
         idleSeconds: Double,
         promptIsFrontmost: @autoclosure () -> Bool?,
         awayAfterSeconds: Double = defaultAwayAfterSeconds
@@ -209,19 +195,19 @@ enum RespondHold {
 /// Ambient input age only — how long since *any* input, never what the input
 /// was. No Accessibility or Input Monitoring permission is involved, and no
 /// keystroke ever reaches Pulse.
-enum UserPresence {
+package enum UserPresence {
     /// Event kinds worth treating as "someone is here". The shortest age wins.
     private static let watched: [CGEventType] = [
         .keyDown, .mouseMoved, .leftMouseDown, .rightMouseDown, .scrollWheel,
     ]
 
-    static var idleSeconds: Double {
+    package static var idleSeconds: Double {
         watched
             .map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }
             .min() ?? 0
     }
 
-    static func isPresent(awayAfterSeconds: Double = RespondHold.defaultAwayAfterSeconds) -> Bool {
+    package static func isPresent(awayAfterSeconds: Double = RespondHold.defaultAwayAfterSeconds) -> Bool {
         idleSeconds < awayAfterSeconds
     }
 }

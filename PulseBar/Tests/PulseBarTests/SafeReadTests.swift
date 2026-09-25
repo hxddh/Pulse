@@ -2,6 +2,8 @@ import Darwin
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// Files a sync tool may have planted: only regular files are read, and never
 /// past the bound.

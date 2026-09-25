@@ -1,6 +1,8 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 0.94 Waiting Proof — harvest ask → tray Waiting → dismiss → clear → re-raise,
 /// Attention raise→clear for Waiting-none, and honesty guards (no fake Waiting).

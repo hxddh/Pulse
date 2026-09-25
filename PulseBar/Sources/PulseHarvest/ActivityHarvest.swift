@@ -1,7 +1,8 @@
 import Foundation
+import PulseCore
 
-enum ActivityHarvest {
-    enum CollectorState: String, Equatable {
+package enum ActivityHarvest {
+    package enum CollectorState: String, Equatable {
         case observed
         /// Fixture-only state kept so an isolated fixture can still be
         /// diagnosed instead of discarded.
@@ -14,7 +15,7 @@ enum ActivityHarvest {
         /// The process ended before this adapter reported a result.
         case unscanned
 
-        var isIssue: Bool {
+        package var isIssue: Bool {
             switch self {
             case .permissionDenied, .schemaMismatch, .failed:
                 return true
@@ -32,25 +33,41 @@ enum ActivityHarvest {
     /// the parsers produced, what kind of record the hero came from, and — when
     /// there is no hero — which layer lost it. It is diagnostic output, never
     /// a tray fact, and it carries no titles, prompts or vendor paths.
-    struct CollectorExplain: Equatable {
+    package struct CollectorExplain: Equatable {
         /// Files the bounded walk actually opened.
-        var filesRead = 0
+        package var filesRead = 0
         /// Bytes reserved from the scan budget for this adapter.
-        var bytesRead = 0
+        package var bytesRead = 0
         /// At least one file was larger than its window and was read head+tail,
         /// so counts derived from the text are floors, not totals.
-        var truncated = false
+        package var truncated = false
         /// Facts the parsers produced before merge.
-        var factsParsed = 0
+        package var factsParsed = 0
         /// What kind of record produced the best row's hero title.
-        var heroOrigin = ""
+        package var heroOrigin = ""
         /// Which layer lost the hero, when there is none.
-        var emptyReason = ""
+        package var emptyReason = ""
 
-        var isEmpty: Bool { self == CollectorExplain() }
+        package init(
+            filesRead: Int = 0,
+            bytesRead: Int = 0,
+            truncated: Bool = false,
+            factsParsed: Int = 0,
+            heroOrigin: String = "",
+            emptyReason: String = ""
+        ) {
+            self.filesRead = filesRead
+            self.bytesRead = bytesRead
+            self.truncated = truncated
+            self.factsParsed = factsParsed
+            self.heroOrigin = heroOrigin
+            self.emptyReason = emptyReason
+        }
+
+        package var isEmpty: Bool { self == CollectorExplain() }
 
         /// `files=3 bytes=41k facts=7 hero=user_prompt` — support-report line.
-        var summary: String {
+        package var summary: String {
             var bits: [String] = []
             if filesRead > 0 { bits.append("files=\(filesRead)") }
             if bytesRead > 0 { bits.append("bytes=\(bytesRead / 1024)k") }
@@ -62,33 +79,53 @@ enum ActivityHarvest {
         }
     }
 
-    struct CollectorHealth: Equatable {
-        var id: AgentID
-        var state: CollectorState
-        var durationMs: Int
-        var rowCount: Int
-        var sourcePresent: Bool
+    package struct CollectorHealth: Equatable {
+        package var id: AgentID
+        package var state: CollectorState
+        package var durationMs: Int
+        package var rowCount: Int
+        package var sourcePresent: Bool
         /// Exception type only; vendor paths and exception messages never
         /// leave the diagnostic log.
-        var errorKind: String
+        package var errorKind: String
         /// How this adapter reached the result above. Diagnostic only.
-        var explain: CollectorExplain = CollectorExplain()
+        package var explain: CollectorExplain = CollectorExplain()
         /// 2.9 · which fact classes this adapter actually produced this
         /// scan. The declared tier (`harvestSource`) is a promise; this is
         /// the measurement, and Support Health shows both so "the agent is
         /// idle" and "Pulse stopped seeing" stop wearing the same clothes.
-        var factClasses: Set<String> = []
+        package var factClasses: Set<String> = []
+
+        package init(
+            id: AgentID,
+            state: CollectorState,
+            durationMs: Int,
+            rowCount: Int,
+            sourcePresent: Bool,
+            errorKind: String,
+            explain: CollectorExplain = CollectorExplain(),
+            factClasses: Set<String> = []
+        ) {
+            self.id = id
+            self.state = state
+            self.durationMs = durationMs
+            self.rowCount = rowCount
+            self.sourcePresent = sourcePresent
+            self.errorKind = errorKind
+            self.explain = explain
+            self.factClasses = factClasses
+        }
 
         /// Declared structured, produced rows — and none of the core classes
         /// came out. The honest reading is drift (a vendor format change),
         /// not idleness: an idle structured session still yields its task.
-        var looksDrifted: Bool {
+        package var looksDrifted: Bool {
             state == .observed
                 && id.harvestSource == .structuredSession
                 && factClasses.intersection(["task", "tool", "tokens"]).isEmpty
         }
 
-        static func unscanned(_ id: AgentID) -> CollectorHealth {
+        package static func unscanned(_ id: AgentID) -> CollectorHealth {
             CollectorHealth(
                 id: id,
                 state: .unscanned,
@@ -103,7 +140,7 @@ enum ActivityHarvest {
     /// 2.9 · the measurement measuring itself: which classes of fact a set
     /// of rows actually carries. Names only, never values — this feeds the
     /// support surface, not telemetry.
-    static func factClasses(of rows: [Row]) -> Set<String> {
+    package static func factClasses(of rows: [Row]) -> Set<String> {
         var classes: Set<String> = []
         for row in rows {
             if !row.task.isEmpty { classes.insert("task") }
@@ -127,51 +164,51 @@ enum ActivityHarvest {
     /// One item of the agent's own plan (2.8). `text` is sanitized and
     /// bounded at parse time; `state` is the vendor's word, mapped — never
     /// inferred from position or from anything else on the row.
-    struct PlanStep: Equatable, Hashable {
-        enum State: Int, Equatable, Hashable {
+    package struct PlanStep: Equatable, Hashable {
+        package enum State: Int, Equatable, Hashable {
             case pending
             case current
             case done
         }
 
-        var text: String
-        var state: State
+        package var text: String
+        package var state: State
     }
 
-    struct Row {
-        var id: AgentID
-        var task: String
-        var project: String
-        var cwd: String
-        var skill: String
-        var tokensIn: Int = 0
-        var tokensOut: Int = 0
-        var tool: String = ""
-        var harvestMs: Int64 = 0
-        var subRunning: Int = 0
-        var subTotal: Int = 0
-        var sessionID: String = ""
+    package struct Row {
+        package var id: AgentID
+        package var task: String
+        package var project: String
+        package var cwd: String
+        package var skill: String
+        package var tokensIn: Int = 0
+        package var tokensOut: Int = 0
+        package var tool: String = ""
+        package var harvestMs: Int64 = 0
+        package var subRunning: Int = 0
+        package var subTotal: Int = 0
+        package var sessionID: String = ""
         /// Records in the session file — how much has actually happened.
         ///
         /// Records, not conversational turns: a transcript interleaves user
         /// messages, assistant messages, tool calls, tool results and token
         /// events. 0.28.0 labelled this "turns", which overclaimed.
-        var records: Int = 0
+        package var records: Int = 0
         /// When the session started, so a row can say how long it has been going.
-        var startedMs: Int64 = 0
+        package var startedMs: Int64 = 0
         /// Runtime evidence tier emitted by the collector.
-        var evidence: ObservationSource = .cache
+        package var evidence: ObservationSource = .cache
         /// Structured workflow and capability facts. Empty/0 always means
         /// unknown; the UI never invents them for process-only detection.
-        var phase: String = ""
-        var outcome: String = ""
-        var model: String = ""
-        var mode: String = ""
-        var errors: Int = 0
-        var files: Int = 0
-        var contextPercent: Int = 0
-        var progressDone: Int = 0
-        var progressTotal: Int = 0
+        package var phase: String = ""
+        package var outcome: String = ""
+        package var model: String = ""
+        package var mode: String = ""
+        package var errors: Int = 0
+        package var files: Int = 0
+        package var contextPercent: Int = 0
+        package var progressDone: Int = 0
+        package var progressTotal: Int = 0
         /// 2.8 · the agent's own plan, read from the structure it writes for
         /// itself (Claude's TodoWrite, Codex's update_plan) — the latest one
         /// in the window, because a plan is a state, not an event. All of it
@@ -182,25 +219,25 @@ enum ActivityHarvest {
         /// one, else the in-progress item's content). Empty when every item
         /// is done — a finished list has no "current" and we do not invent
         /// one.
-        var planStep: String = ""
+        package var planStep: String = ""
         /// The whole checklist, bounded — Details only, never the tray line.
-        var planSteps: [PlanStep] = []
+        package var planSteps: [PlanStep] = []
         /// The first line of the latest assistant message: what the agent
         /// just said, which is the cheapest honest answer to "is it going
         /// well". Empty when the window holds no assistant text.
-        var lastWord: String = ""
+        package var lastWord: String = ""
         /// The first line of the latest failed tool result. An error count
         /// without the error's text tells the user "something broke, go
         /// guess".
-        var lastErrorText: String = ""
+        package var lastErrorText: String = ""
         /// 1.2 · from the session digest, which read the whole transcript.
         /// The same tool run back to back at the tail of the session.
-        var loopTool: String = ""
-        var loopCount: Int = 0
+        package var loopTool: String = ""
+        package var loopCount: Int = 0
         /// Errors across the whole session, not just the read window.
-        var sessionErrors: Int = 0
+        package var sessionErrors: Int = 0
         /// `Edit 12 · Bash 5` — bounded, Details only.
-        var toolSummary: String = ""
+        package var toolSummary: String = ""
         /// 2.1 · the rest of what the digest already knew.
         ///
         /// 1.2 computed all of this and published three of them. The others
@@ -214,18 +251,18 @@ enum ActivityHarvest {
         /// above, which are the latest message's usage, and both are kept:
         /// "this turn cost 8k" and "this session has spent 900k" are two
         /// different questions.
-        var sessionTokensIn: Int = 0
-        var sessionTokensOut: Int = 0
+        package var sessionTokensIn: Int = 0
+        package var sessionTokensOut: Int = 0
         /// The last few vendor tool names in order, oldest first, ≤ 12.
         /// Names only — never an argument, a path, or a command.
-        var recentTools: [String] = []
+        package var recentTools: [String] = []
         /// How much of the transcript the digest has read, 0–100. 100 means
         /// the facts above cover the whole file.
-        var digestProgressPercent: Int = 0
+        package var digestProgressPercent: Int = 0
         /// Whether the digest has reached the end of the file.
-        var digestCaughtUp: Bool = false
+        package var digestCaughtUp: Bool = false
         /// Recent growth of the transcript in bytes per minute; 0 = unknown.
-        var bytesPerMinute: Int = 0
+        package var bytesPerMinute: Int = 0
         /// The `cwd` above was reconstructed from a vendor directory name
         /// that encodes `/` as `-`, and the filesystem could not confirm it.
         ///
@@ -237,14 +274,14 @@ enum ActivityHarvest {
         /// this flag says so. **Never land Focus on a best-effort cwd**: the
         /// wrong workspace opening under someone's hands is the failure this
         /// exists to prevent.
-        var cwdBestEffort: Bool = false
+        package var cwdBestEffort: Bool = false
         /// When Pulse first folded this transcript (`digest.firstFoldedMs`).
         ///
         /// Separate from `startedMs`, which is the file's birth date: most
         /// adapters cannot get one (vendors rewrite, copy or compact their
         /// transcripts, and APFS birth times survive none of that), so this
         /// is the more reliable answer to "how long has this been going".
-        var sessionStartedMs: Int64 = 0
+        package var sessionStartedMs: Int64 = 0
         /// 4.0-α · the transcript file this row's facts were read from —
         /// the workbench's local read handle for showing the session itself.
         ///
@@ -252,7 +289,7 @@ enum ActivityHarvest {
         /// sanitized (it is a filesystem path used to open the file, never
         /// rendered), and it never travels: not into fleet snapshots, not
         /// onto the tray, not out of the machine in any channel.
-        var transcriptPath: String = ""
+        package var transcriptPath: String = ""
 
         /// Whether the vendor said this run reached a terminal state.
         ///
@@ -266,7 +303,7 @@ enum ActivityHarvest {
         /// matches none of them. An explicit negation anywhere in the pair
         /// vetoes the whole thing, so `not_completed` cannot slip through the
         /// same door from the other side.
-        var isCompleted: Bool {
+        package var isCompleted: Bool {
             let tokens = "\(phase) \(outcome)"
                 .lowercased()
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
@@ -281,22 +318,22 @@ enum ActivityHarvest {
     }
 
     /// Harvest-only rows older than this are dropped unless a live process exists.
-    static let freshWindowMs: Int64 = 45 * 60 * 1000
+    package static let freshWindowMs: Int64 = 45 * 60 * 1000
     /// Cursor's local composer store is authoritative session history, but it
     /// is not updated continuously while the persistent GUI process is alive.
     /// Keep named, non-draft local sessions visible for a bounded work window
     /// without treating the Cursor application itself as running evidence.
-    static let cursorLocalWindowMs: Int64 = 6 * 60 * 60 * 1000
+    package static let cursorLocalWindowMs: Int64 = 6 * 60 * 60 * 1000
     /// The native scan reports one health result for every user-facing
     /// adapter. Cursor Agent is intentionally merged into Cursor, so it has no
     /// separate collector line. This set lets the app distinguish a complete
     /// scan from a partial result without relying on row count (which may
     /// legitimately be zero for an installed but idle Agent).
-    static let expectedCollectorIDs: Set<AgentID> = Set(
+    package static let expectedCollectorIDs: Set<AgentID> = Set(
         AgentID.allCases.filter { $0 != .cursorAgent }
     )
 
-    static func isCompleteHealth(_ health: [CollectorHealth]) -> Bool {
+    package static func isCompleteHealth(_ health: [CollectorHealth]) -> Bool {
         let reported = Set(health.map { $0.id.surfaceID })
         // A full list of IDs is not enough: the native scanner intentionally
         // emits an explicit `.unscanned` line when its global budget/deadline
@@ -325,7 +362,7 @@ enum ActivityHarvest {
     /// lines are the adapter boundary: a reported `no_sessions` result clears
     /// that adapter's old rows, while an unreported adapter retains them until
     /// the next complete scan.
-    static func mergePartialRows(
+    package static func mergePartialRows(
         current: [Row],
         health: [CollectorHealth],
         previous: [Row]
@@ -391,22 +428,22 @@ enum ActivityHarvest {
     /// pending session lights twice. The check therefore belongs here, on the
     /// union the tray actually receives, and the collector keeps its own copy
     /// only so its health lines stay consistent with the rows it reports.
-    static func dedupeSharedRoots(_ rows: [Row]) -> [Row] {
+    package static func dedupeSharedRoots(_ rows: [Row]) -> [Row] {
         guard rows.contains(where: { $0.id.surfaceID == .cascade }) else { return rows }
         return rows.filter { $0.id.surfaceID != .windsurf }
     }
 
-    static func mapAgent(_ raw: String) -> AgentID? {
+    package static func mapAgent(_ raw: String) -> AgentID? {
         AgentCatalog.agent(named: raw)
     }
 
-    static func sessionKey(id: AgentID, sessionID: String, project: String, cwd: String) -> String {
+    package static func sessionKey(id: AgentID, sessionID: String, project: String, cwd: String) -> String {
         let sid = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         if !sid.isEmpty {
             let short = sid.count > 24 ? String(sid.prefix(12)) + "…" + String(sid.suffix(6)) : sid
             return "\(id.rawValue)|\(short)"
         }
-        let short = AgentRow.shortProject(project)
+        let short = TitleHeuristics.shortProject(project)
         if !short.isEmpty { return "\(id.rawValue)|\(short)" }
         let leaf = (cwd as NSString).lastPathComponent
         if !leaf.isEmpty, leaf != "/" { return "\(id.rawValue)|\(leaf)" }
@@ -414,7 +451,7 @@ enum ActivityHarvest {
     }
 
     /// Whether a harvest row may appear without a matching live process.
-    static func isFresh(_ row: Row, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> Bool {
+    package static func isFresh(_ row: Row, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> Bool {
         if row.subRunning > 0 { return true }
         // Missing mtime is not trustworthy as a standalone running signal.
         guard row.harvestMs > 0 else { return false }
@@ -433,7 +470,7 @@ enum ActivityHarvest {
     /// Kept in the signature because a future adapter may need it; the native
     /// collector reports partial results through `complete`/`CollectorHealth`
     /// rather than by failing the whole scan.
-    static func scan(
+    package static func scan(
         allowAppData: Bool = false,
         appDataAgents: Set<AgentID> = [],
         agentFilter: Set<AgentID>? = nil,
@@ -472,41 +509,41 @@ enum ActivityHarvest {
 }
 
 /// Attention TSV reader — last event wins per (agent, session); done clears; stop has short grace.
-enum AttentionReader {
-    static let ttlMs: Int64 = 30 * 60 * 1000
+package enum AttentionReader {
+    package static let ttlMs: Int64 = 30 * 60 * 1000
     /// How long a remote row stays visible after it went quiet.
-    static let lostContactRetentionMs: Int64 = 2 * 30 * 60 * 1000
+    package static let lostContactRetentionMs: Int64 = 2 * 30 * 60 * 1000
     /// Claude often emits idle_prompt then Stop; don't wipe Input/Permission for this long.
-    static let stopGraceMs: Int64 = 20_000
+    package static let stopGraceMs: Int64 = 20_000
 
-    struct Entry {
-        var id: AgentID
-        var kind: String
-        var message: String
-        var tsMs: Int64
-        var session: String = ""
-        var cwd: String = ""
+    package struct Entry {
+        package var id: AgentID
+        package var kind: String
+        package var message: String
+        package var tsMs: Int64
+        package var session: String = ""
+        package var cwd: String = ""
         /// Empty means this Mac. A named host is a machine Pulse cannot probe,
         /// cannot focus, and cannot ask whether the agent is still alive.
-        var host: String = ""
+        package var host: String = ""
         /// When the bytes reached this disk. Equal to `tsMs` for local events.
-        var receivedAtMs: Int64 = 0
+        package var receivedAtMs: Int64 = 0
         /// The event's own clock disagreed with arrival badly enough that
         /// `tsMs` is not being used for age or ordering.
-        var clockSuspect: Bool = false
+        package var clockSuspect: Bool = false
         /// A remote wait nothing has refreshed inside the TTL. The lamp comes
         /// down — Pulse has no evidence it is still open — but the row stays,
         /// because "I stopped hearing from it" is not "it finished".
-        var lostContact: Bool = false
+        package var lostContact: Bool = false
 
-        var isRemote: Bool { !host.isEmpty }
+        package var isRemote: Bool { !host.isEmpty }
 
         /// A suspect stamp corrected by the host's file-level skew (12.1);
         /// 0 when the stamp was usable or there was nothing to correct by.
-        var correctedMs: Int64 = 0
+        package var correctedMs: Int64 = 0
 
         /// The clock Pulse is willing to stand behind.
-        var effectiveMs: Int64 {
+        package var effectiveMs: Int64 {
             guard clockSuspect else { return tsMs }
             return correctedMs > 0 ? correctedMs : receivedAtMs
         }
@@ -514,7 +551,7 @@ enum AttentionReader {
         /// Stable key for last-event-wins map. Two machines running the same
         /// agent are two different waits; merging them would let one host's
         /// `done` clear the other host's open permission.
-        var mapKey: String {
+        package var mapKey: String {
             let surfaceID = id.surfaceID
             let base = session.isEmpty ? surfaceID.rawValue : "\(surfaceID.rawValue)|\(session)"
             return host.isEmpty ? base : "\(base)@\(host)"
@@ -524,7 +561,7 @@ enum AttentionReader {
     private enum Kind {
         case permission, idlePrompt, waiting, stop, done, ignore
 
-        static func parse(_ raw: String) -> Kind {
+        package static func parse(_ raw: String) -> Kind {
             // Protocol v1: only canonical / aliased waiting+clear kinds light
             // or clear Waiting. Unknown free-text never becomes a red lamp.
             let normalized = AttentionProtocol.normalizeKind(raw)
@@ -546,7 +583,7 @@ enum AttentionReader {
             }
         }
 
-        var label: String {
+        package var label: String {
             switch self {
             case .permission: return "Permission"
             case .idlePrompt: return "Input"
@@ -557,7 +594,7 @@ enum AttentionReader {
     }
 
     /// Which clock an event's age may be measured against.
-    enum ClockVerdict: Equatable {
+    package enum ClockVerdict: Equatable {
         /// The event stamp is usable.
         case trustEvent
         /// The event stamp disagrees with arrival past the point of belief;
@@ -569,7 +606,7 @@ enum AttentionReader {
 
     /// How far a remote stamp may run ahead of its own arrival before the
     /// machine's clock, rather than the event, is the thing in question.
-    static let clockFutureToleranceMs: Int64 = 5 * 60 * 1000
+    package static let clockFutureToleranceMs: Int64 = 5 * 60 * 1000
 
     /// A remote machine's clock is not ours.
     ///
@@ -578,7 +615,7 @@ enum AttentionReader {
     /// off had *every* wait silently disappear, with nothing anywhere saying
     /// why. Arrival time is local and durable, so it can carry the event that
     /// the sender's clock cannot.
-    static func clockVerdict(eventMs: Int64, arrivalMs: Int64, isRemote: Bool) -> ClockVerdict {
+    package static func clockVerdict(eventMs: Int64, arrivalMs: Int64, isRemote: Bool) -> ClockVerdict {
         if eventMs > 0, !isRemote {
             // Local: the old rule, unchanged. The caller still applies the
             // future tolerance and TTL.
@@ -599,7 +636,7 @@ enum AttentionReader {
     /// its arrival time: 0 when the stamps are believable as they are, the
     /// correction to add to every stamp when they are not, nil when there is
     /// nothing to judge (a local file, or no stamped line).
-    static func fileSkewMs(_ text: String, receivedAtMs: Int64) -> Int64? {
+    package static func fileSkewMs(_ text: String, receivedAtMs: Int64) -> Int64? {
         guard receivedAtMs > 0 else { return nil }
         var newest: Int64 = 0
         for line in text.split(whereSeparator: \.isNewline) {
@@ -617,7 +654,7 @@ enum AttentionReader {
         }
     }
 
-    static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
+    package static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
         // Each source is parsed on its own: one host's `done` must never clear
         // another host's open permission, and per-file parsing is what keeps
         // that true without a single rule anywhere saying so.
@@ -637,7 +674,7 @@ enum AttentionReader {
     /// `defaultHost` names the machine when a line does not (a remote box still
     /// running a v1 hook); `receivedAtMs` is when the bytes reached this disk,
     /// and is zero for events raised here.
-    static func parse(
+    package static func parse(
         _ text: String,
         nowMs: Int64,
         defaultHost: String = "",

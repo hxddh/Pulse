@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import SQLite3
 
 // Gemini and Aider: the last-word readers their formats need.
@@ -11,7 +12,7 @@ extension NativeActivityHarvest {
     /// The last `model`-role turn's text in a Gemini chat document. Arrays
     /// keep document order (the history array is the structure that matters);
     /// depth is bounded; an unrecognised layout yields nil.
-    static func geminiLastWord(in value: Any, depth: Int = 0) -> String? {
+    package static func geminiLastWord(in value: Any, depth: Int = 0) -> String? {
         guard depth < 6 else { return nil }
         var latest: String?
         if let dict = value as? [String: Any] {
@@ -49,7 +50,7 @@ extension NativeActivityHarvest {
 
     /// 9.0 — Aider's markdown history: the last non-fence, non-header prose
     /// line after the newest `#### ` user turn. Internal for the unit test.
-    static func aiderLastWord(from text: String) -> String {
+    package static func aiderLastWord(from text: String) -> String {
         var inFence = false
         var afterUser = false
         var word = ""

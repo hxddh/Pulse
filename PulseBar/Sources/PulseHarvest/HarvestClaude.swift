@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import SQLite3
 
 // Claude: project-directory decoding and subagent counts.
@@ -10,7 +11,7 @@ import SQLite3
 extension NativeActivityHarvest {
     /// `-Users-me-code-Pulse` → the workspace it was made from (Claude's
     /// projects directory). Empty `path` means the name is not one.
-    static func decodeClaudeProjectDir(_ name: String) -> (path: String, verified: Bool) {
+    package static func decodeClaudeProjectDir(_ name: String) -> (path: String, verified: Bool) {
         let s = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard s.hasPrefix("-"), !s.contains("/") else { return ("", false) }
         let parts = s.split(separator: "-", omittingEmptySubsequences: true).map(String.init)
@@ -27,13 +28,13 @@ extension NativeActivityHarvest {
 
     /// How many `-` separated pieces a project directory name may have before
     /// resolving it stops being worth the stat calls.
-    static let maxDashPathSegments = 32
+    package static let maxDashPathSegments = 32
 
     /// Hard ceiling on directory probes for one name. The search backtracks,
     /// so a pathological name (`-a-a-a-a-…`) could otherwise walk a large
     /// tree; past this the answer is "could not confirm", which is a fine
     /// answer.
-    static let maxDashPathProbes = 256
+    package static let maxDashPathProbes = 256
 
     /// Resolved project directories, for the duration of one scan.
     ///
@@ -42,7 +43,7 @@ extension NativeActivityHarvest {
     /// re-probed once per transcript. `scan()` clears it, so a resolution
     /// never outlives the pass that made it.
     /// Lives in `ScanEngine.memory` since 12.3.
-    static var dashPathCache: [String: (path: String, verified: Bool)] {
+    package static var dashPathCache: [String: (path: String, verified: Bool)] {
         get { ScanEngine.memory.withValue { $0.dashPaths } }
         set { ScanEngine.memory.withValue { $0.dashPaths = newValue } }
     }
@@ -66,7 +67,7 @@ extension NativeActivityHarvest {
     /// Backtrack when a prefix leads nowhere. When nothing matches — the
     /// workspace was deleted, the volume is not mounted — hand back the naive
     /// decode marked unverified: worth showing, never worth landing on.
-    static func resolveDashEncodedPath(_ segments: [String]) -> (path: String, verified: Bool) {
+    package static func resolveDashEncodedPath(_ segments: [String]) -> (path: String, verified: Bool) {
         let naive = "/" + segments.joined(separator: "/")
         guard !segments.isEmpty, segments.count <= maxDashPathSegments else {
             return (naive, false)
@@ -106,7 +107,7 @@ extension NativeActivityHarvest {
 
     /// Layout: `~/.claude/projects/<proj>/<sessionId>/subagents/agent-*.jsonl`
     /// Running ≈ mtime within 2 minutes.
-    static func claudeSubagentCounts(for sessionFile: URL) -> (running: Int, total: Int) {
+    package static func claudeSubagentCounts(for sessionFile: URL) -> (running: Int, total: Int) {
         let subDir = sessionFile
             .deletingLastPathComponent()
             .appendingPathComponent(sessionFile.deletingPathExtension().lastPathComponent, isDirectory: true)

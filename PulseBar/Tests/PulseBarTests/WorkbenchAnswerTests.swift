@@ -1,6 +1,8 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 3.0 — the answer verb's routing and the command it builds. Everything here
 /// is pure: the store method that copies to the clipboard is a thin shell

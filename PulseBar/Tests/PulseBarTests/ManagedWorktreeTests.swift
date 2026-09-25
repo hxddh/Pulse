@@ -1,6 +1,8 @@
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// 5.0-β — the workspace verbs, against a real repository (the RealGitTests
 /// pattern: the CI runner is a real machine). Plus the pure guards that must

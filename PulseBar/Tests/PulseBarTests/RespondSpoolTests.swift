@@ -2,6 +2,8 @@ import CryptoKit
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
+@testable import PulseHarvest
+@testable import PulseRespond
 
 /// The respond spool is the first file surface whose contents can make an
 /// agent *act*, so these tests are less about parsing and more about the

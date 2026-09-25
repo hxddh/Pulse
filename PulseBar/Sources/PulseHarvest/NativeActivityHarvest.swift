@@ -1,4 +1,5 @@
 import Foundation
+import PulseCore
 import SQLite3
 
 /// Swift-native local activity collector.
@@ -17,20 +18,20 @@ import SQLite3
 /// from a transcript/session-shaped file; otherwise it is honestly `.cache`.
 /// The opt-in legacy Python collector remains available for a user who needs a
 /// vendor-specific parser, but it is never required for detection or launch.
-enum NativeActivityHarvest {
-    struct Result {
-        var rows: [ActivityHarvest.Row]
-        var health: [ActivityHarvest.CollectorHealth]
-        var complete: Bool
+package enum NativeActivityHarvest {
+    package struct Result {
+        package var rows: [ActivityHarvest.Row]
+        package var health: [ActivityHarvest.CollectorHealth]
+        package var complete: Bool
         /// Where the next scan should start so a budget cutoff rotates through
         /// the fleet instead of starving the same tail adapters forever.
-        var nextCursor: Int = 0
+        package var nextCursor: Int = 0
     }
 
-    struct Descriptor {
-        var id: AgentID
-        var roots: [URL]
-        var commands: [String]
+    package struct Descriptor {
+        package var id: AgentID
+        package var roots: [URL]
+        package var commands: [String]
     }
 
     /// What kind of record a hero title came from.
@@ -42,7 +43,7 @@ enum NativeActivityHarvest {
     /// each shipped with the tray hero still wrong. Length is not evidence.
     /// A merge now compares *what kind of record* produced the title, and only
     /// falls back to first-seen when two fragments are the same kind.
-    enum TaskOrigin: Int, Comparable {
+    package enum TaskOrigin: Int, Comparable {
         /// No title.
         case none = 0
         /// Vendor placeholder ("New chat") or a bare filename — never a goal.
@@ -59,73 +60,73 @@ enum NativeActivityHarvest {
         /// A name the user gave this session (Pi `/name`, Cursor composer).
         case sessionName = 6
 
-        static func < (lhs: TaskOrigin, rhs: TaskOrigin) -> Bool {
+        package static func < (lhs: TaskOrigin, rhs: TaskOrigin) -> Bool {
             lhs.rawValue < rhs.rawValue
         }
     }
 
-    struct Fact {
+    package struct Fact {
         /// 1.2: facts the session digest produced by reading the whole file.
         /// A window can never see them, so they arrive here already computed
         /// and are only ever copied — never re-derived from the window text.
-        var loopTool = ""
-        var loopCount = 0
-        var sessionErrors = 0
-        var toolSummary = ""
+        package var loopTool = ""
+        package var loopCount = 0
+        package var sessionErrors = 0
+        package var toolSummary = ""
         /// 2.1: the rest of the digest's facts, carried under the same rule.
         /// None of these is ever recomputed from the window text — the window
         /// is the two ends of the file and could only contradict them.
-        var sessionTokensIn = 0
-        var sessionTokensOut = 0
-        var recentTools: [String] = []
-        var digestProgressPercent = 0
-        var digestCaughtUp = false
-        var bytesPerMinute = 0
-        var sessionStartedMs: Int64 = 0
+        package var sessionTokensIn = 0
+        package var sessionTokensOut = 0
+        package var recentTools: [String] = []
+        package var digestProgressPercent = 0
+        package var digestCaughtUp = false
+        package var bytesPerMinute = 0
+        package var sessionStartedMs: Int64 = 0
 
-        var task = ""
+        package var task = ""
         /// Where `task` came from. Drives merge; never rendered.
-        var taskOrigin = TaskOrigin.none
+        package var taskOrigin = TaskOrigin.none
         /// True when the source file was larger than its read window, so any
         /// count derived from the text is a floor rather than a total.
-        var windowTruncated = false
-        var project = ""
-        var cwd = ""
-        var sessionID = ""
-        var tool = ""
-        var skill = ""
-        var phase = ""
-        var outcome = ""
-        var model = ""
-        var mode = ""
-        var tokensIn = 0
-        var tokensOut = 0
-        var errors = 0
-        var files = 0
-        var contextPercent = 0
-        var progressDone = 0
-        var progressTotal = 0
+        package var windowTruncated = false
+        package var project = ""
+        package var cwd = ""
+        package var sessionID = ""
+        package var tool = ""
+        package var skill = ""
+        package var phase = ""
+        package var outcome = ""
+        package var model = ""
+        package var mode = ""
+        package var tokensIn = 0
+        package var tokensOut = 0
+        package var errors = 0
+        package var files = 0
+        package var contextPercent = 0
+        package var progressDone = 0
+        package var progressTotal = 0
         /// 2.8 · the agent's own plan and words, self-report tier. See
         /// `ActivityHarvest.Row` for what each means and why they exist.
-        var planStep = ""
-        var planSteps: [ActivityHarvest.PlanStep] = []
-        var lastWord = ""
-        var lastErrorText = ""
-        var subRunning = 0
-        var subTotal = 0
-        var explicitPending = false
+        package var planStep = ""
+        package var planSteps: [ActivityHarvest.PlanStep] = []
+        package var lastWord = ""
+        package var lastErrorText = ""
+        package var subRunning = 0
+        package var subTotal = 0
+        package var explicitPending = false
         /// `cwd` was decoded from a `-`-encoded directory name that the
         /// filesystem could not confirm. See `resolveDashEncodedPath`.
-        var cwdBestEffort = false
-        var score = 0
-        var context = ""
-        var sourcePath = ""
-        var structured = false
-        var activityMs: Int64 = 0
-        var startedMs: Int64 = 0
-        var records = 0
+        package var cwdBestEffort = false
+        package var score = 0
+        package var context = ""
+        package var sourcePath = ""
+        package var structured = false
+        package var activityMs: Int64 = 0
+        package var startedMs: Int64 = 0
+        package var records = 0
 
-        var identity: String {
+        package var identity: String {
             if !sessionID.isEmpty { return "session:\(sessionID)" }
             if sourcePath.lowercased().contains("/.gemini/tmp/")
                 && sourcePath.lowercased().contains("/chats/") {
@@ -138,7 +139,7 @@ enum NativeActivityHarvest {
             return "file:\(sourcePath)"
         }
 
-        var hasUsefulSignal: Bool {
+        package var hasUsefulSignal: Bool {
             // A title by itself is frequently a plugin name, a template, or a
             // cached document headline. Require an identity/workspace/session
             // context before it crosses into the tray. This is the native
@@ -158,7 +159,7 @@ enum NativeActivityHarvest {
         /// person can act on (for example an empty Composer draft). Keep that
         /// identity for merge diagnostics, but do not let it consume the
         /// per-Agent session budget or displace a later task with real facts.
-        var hasDisplaySignal: Bool {
+        package var hasDisplaySignal: Bool {
             !task.isEmpty || !cwd.isEmpty || !skill.isEmpty || !tool.isEmpty
                 || !phase.isEmpty || !outcome.isEmpty || !model.isEmpty
                 || tokensIn > 0 || tokensOut > 0 || errors > 0 || files > 0
@@ -166,47 +167,47 @@ enum NativeActivityHarvest {
         }
     }
 
-    final class ErrorBox {
-        var value = false
+    package final class ErrorBox {
+        package var value = false
     }
 
-    final class ScanBudget {
-        private(set) var bytesRemaining: Int
-        let deadline: Date
+    package final class ScanBudget {
+        package private(set) var bytesRemaining: Int
+        package let deadline: Date
 
-        init(deadline: Date, bytes: Int = 48_000_000) {
+        package init(deadline: Date, bytes: Int = 48_000_000) {
             self.deadline = deadline
             bytesRemaining = bytes
         }
 
-        var exhausted: Bool { Date() >= deadline || bytesRemaining <= 0 }
+        package var exhausted: Bool { Date() >= deadline || bytesRemaining <= 0 }
 
         // Explain counters for the adapter currently running. Every byte a
         // collector reads already passes through `reserve`, so the budget is
         // the one place that can count the pass honestly without threading a
         // box through every adapter. `scan()` resets them per descriptor.
-        private(set) var agentFilesRead = 0
-        private(set) var agentBytesRead = 0
-        private(set) var agentTruncated = false
+        package private(set) var agentFilesRead = 0
+        package private(set) var agentBytesRead = 0
+        package private(set) var agentTruncated = false
         /// The budget refused a whole-file read for this adapter. "Low but
         /// not empty" is the dangerous state: `exhausted` stays false, so
         /// without this flag the adapter would classify as `no_sessions` —
         /// and mergePartialRows treats that as a trusted empty and clears the
         /// previous good rows.
-        private(set) var agentBudgetDenied = false
+        package private(set) var agentBudgetDenied = false
 
-        func reserve(_ bytes: Int) -> Bool {
+        package func reserve(_ bytes: Int) -> Bool {
             guard bytes > 0, !exhausted, bytes <= bytesRemaining else { return false }
             bytesRemaining -= bytes
             agentBytesRead += bytes
             return true
         }
 
-        func noteFileRead() { agentFilesRead += 1 }
-        func noteTruncated() { agentTruncated = true }
-        func noteBudgetDenied() { agentBudgetDenied = true }
+        package func noteFileRead() { agentFilesRead += 1 }
+        package func noteTruncated() { agentTruncated = true }
+        package func noteBudgetDenied() { agentBudgetDenied = true }
 
-        func resetAgentCounters() {
+        package func resetAgentCounters() {
             agentFilesRead = 0
             agentBytesRead = 0
             agentTruncated = false
@@ -214,16 +215,16 @@ enum NativeActivityHarvest {
         }
     }
 
-    static let maxFilesPerAgent = 384
+    package static let maxFilesPerAgent = 384
     /// Parse up to the product-wide session budget, then keep typed facts for
     /// the searchable index. The two limits are intentionally distinct:
     /// truncating before normalization can hide the newest usable row.
     /// 0.50 raises retain to 500 so search/pagination can cover large histories
     /// while the tray glance stays at SnapshotBuilder.maxVisibleRows.
-    static let maxFactsPerAgent = 512
-    static let maxRowsPerAgent = 500
-    static let maxDepth = 8
-    static let maxFileBytes = 4 * 1024 * 1024
+    package static let maxFactsPerAgent = 512
+    package static let maxRowsPerAgent = 500
+    package static let maxDepth = 8
+    package static let maxFileBytes = 4 * 1024 * 1024
     /// A menu-bar refresh must not spend its whole cadence on one vendor's
     /// ever-growing cache. The deadline is intentionally per adapter; every
     /// Agent still receives a health line even when one root is pathological.
@@ -231,26 +232,26 @@ enum NativeActivityHarvest {
     // report `failed` on every refresh before their first useful record was
     // reached. Keep the adapter isolated, but give one bounded SQLite/text
     // pass enough time to return its authoritative newest session.
-    static let maxAgentSeconds = 0.75
+    package static let maxAgentSeconds = 0.75
     // Codex's longer adapter deadline and wider window (one compacted JSONL
     // record) are its `HarvestWalk` in AgentCatalog.
-    static let maxObjectNodes = 2_000
+    package static let maxObjectNodes = 2_000
     /// Transcript-backed stores can contain months of append-only history. The
     /// row freshness policy already hides these records from the tray; avoid
     /// spending the bounded adapter slice parsing them when a newer file is
     /// available. SQLite adapters are intentionally excluded because their
     /// internal `updated_at` columns are more authoritative than file mtime.
-    static let transcriptFreshFileWindowMs: Int64 = 72 * 60 * 60 * 1000
-    static let sessionNeedles = [
+    package static let transcriptFreshFileWindowMs: Int64 = 72 * 60 * 60 * 1000
+    package static let sessionNeedles = [
         "session", "thread", "conversation", "chat", "history", "rollout",
         "transcript", "composer", "task", "projects",
     ]
-    static let ignoredDirectoryNames: Set<String> = [
+    package static let ignoredDirectoryNames: Set<String> = [
         "node_modules", "crashpad", "gpuCache", "cachedData", "cache",
         "caches", "logs", "thumbnails",
     ]
 
-    static func scan(
+    package static func scan(
         allowAppData: Bool = false,
         appDataAgents: Set<AgentID> = [],
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -471,7 +472,7 @@ enum NativeActivityHarvest {
 
     /// Where in `filtered` a pass starts: the first adapter at or after the
     /// cursor's position in the stable list, wrapping to the head.
-    static func rotationOffset(filteredStableIndices: [Int], cursor: Int) -> Int {
+    package static func rotationOffset(filteredStableIndices: [Int], cursor: Int) -> Int {
         filteredStableIndices.firstIndex { $0 >= cursor } ?? 0
     }
 
@@ -482,7 +483,7 @@ enum NativeActivityHarvest {
     /// bug report said which layer lost the title. Four consecutive releases
     /// each guessed at a vendor format, shipped, and found the tray still
     /// blank. Counts and tags only — no titles, no prompt text, no paths.
-    static func explainResult(
+    package static func explainResult(
         filesRead: Int,
         bytesRead: Int,
         truncated: Bool,
@@ -519,7 +520,7 @@ enum NativeActivityHarvest {
         )
     }
 
-    static func originLabel(_ origin: TaskOrigin) -> String {
+    package static func originLabel(_ origin: TaskOrigin) -> String {
         switch origin {
         case .none: return ""
         case .chrome: return "chrome"
@@ -543,7 +544,7 @@ enum NativeActivityHarvest {
     /// decide to paste it into an issue; it emits no titles, no prompts, no
     /// paths and no values, so what they are sharing is legible before they
     /// share it.
-    static func shapeReport(
+    package static func shapeReport(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         agents: [AgentID] = AgentID.allCases,
         allowAppData: Bool = false,
@@ -604,7 +605,7 @@ enum NativeActivityHarvest {
     /// Last 256 KB of a file. The shape report is a user-triggered diagnostic,
     /// not a scan, but it must still not pull a multi-gigabyte transcript into
     /// memory to describe its keys.
-    static func boundedTail(of url: URL, limit: Int = 256_000) -> String? {
+    package static func boundedTail(of url: URL, limit: Int = 256_000) -> String? {
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         guard size > 0 else { return nil }
         if size <= limit {
@@ -618,7 +619,7 @@ enum NativeActivityHarvest {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func shapeLine(_ object: [String: Any], depth: Int = 0) -> String {
+    package static func shapeLine(_ object: [String: Any], depth: Int = 0) -> String {
         // Key names are vendor schema, not user content, but bound them anyway
         // — a vendor is free to key an object by something the user typed.
         let parts = object
@@ -633,7 +634,7 @@ enum NativeActivityHarvest {
         return "{" + parts.joined(separator: " ") + "}"
     }
 
-    static func shapeKind(_ value: Any, depth: Int) -> String {
+    package static func shapeKind(_ value: Any, depth: Int) -> String {
         if value is NSNull { return "null" }
         if let nested = value as? [String: Any] {
             return depth >= 2 ? "object" : shapeLine(nested, depth: depth + 1)
@@ -651,7 +652,7 @@ enum NativeActivityHarvest {
 
     // MARK: - Agent roots
 
-    static func descriptors(home: URL) -> [Descriptor] {
+    package static func descriptors(home: URL) -> [Descriptor] {
         func h(_ path: String) -> URL { home.appendingPathComponent(path) }
         func d(_ id: AgentID, _ paths: [String], _ commands: [String] = []) -> Descriptor {
             Descriptor(id: id, roots: paths.map(h), commands: commands)
@@ -664,7 +665,7 @@ enum NativeActivityHarvest {
             .map { d($0.id, $0.harvestRoots, $0.harvestCommands) }
     }
 
-    static func accessAlias(_ selected: AgentID, matches id: AgentID) -> Bool {
+    package static func accessAlias(_ selected: AgentID, matches id: AgentID) -> Bool {
         if selected.surfaceID == id.surfaceID { return true }
         if (selected == .cascade || selected == .windsurf)
             && (id == .cascade || id == .windsurf) { return true }
@@ -672,7 +673,7 @@ enum NativeActivityHarvest {
         return false
     }
 
-    static func isProtected(_ url: URL, home: URL) -> Bool {
+    package static func isProtected(_ url: URL, home: URL) -> Bool {
         let root = home.standardizedFileURL.path.hasSuffix("/")
             ? home.standardizedFileURL.path
             : home.standardizedFileURL.path + "/"
@@ -682,7 +683,7 @@ enum NativeActivityHarvest {
             .contains(where: { relative.hasPrefix($0) })
     }
 
-    static func executableExists(
+    package static func executableExists(
         _ name: String,
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -706,7 +707,7 @@ enum NativeActivityHarvest {
     /// confusion the support window exists to prevent.
     ///
     /// Existence checks only; Pulse never executes anything it finds here.
-    static func commandSearchPaths(
+    package static func commandSearchPaths(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String] {
@@ -734,7 +735,7 @@ enum NativeActivityHarvest {
         return result
     }
 
-    static func shouldSkipStaleTranscript(id: AgentID, mtime: Int64) -> Bool {
+    package static func shouldSkipStaleTranscript(id: AgentID, mtime: Int64) -> Bool {
         guard mtime > 0 else { return false }
         // Pi's idle JSONL is still the title source (`TranscriptPolicy`):
         // skipping it left SQLite rows with cwd and no task.
@@ -743,13 +744,13 @@ enum NativeActivityHarvest {
         return age > transcriptFreshFileWindowMs
     }
 
-    static func allowsBoundedLargeTranscript(_ id: AgentID) -> Bool {
+    package static func allowsBoundedLargeTranscript(_ id: AgentID) -> Bool {
         id.spec.transcripts.allowsBoundedLargeFiles
     }
 
     // MARK: - Bounded file walk
 
-    static func collect(
+    package static func collect(
         root: URL,
         id: AgentID,
         home: URL,
@@ -885,7 +886,7 @@ enum NativeActivityHarvest {
         return Date() >= deadline || budget.exhausted
     }
 
-    static func ingestTranscriptFile(
+    package static func ingestTranscriptFile(
         _ item: URL,
         values: URLResourceValues,
         ext: String,
@@ -1040,7 +1041,7 @@ enum NativeActivityHarvest {
         }
     }
 
-    static func geminiProjectRoot(for url: URL) -> String? {
+    package static func geminiProjectRoot(for url: URL) -> String? {
         // ~/.gemini/tmp/<project>/chats/<session>.jsonl → <project>/.project_root
         let marker = url
             .deletingLastPathComponent()
@@ -1051,7 +1052,7 @@ enum NativeActivityHarvest {
         return path.isEmpty ? nil : path
     }
 
-    static func isContinuationPrompt(_ value: String) -> Bool {
+    package static func isContinuationPrompt(_ value: String) -> Bool {
         let normalized = value
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
