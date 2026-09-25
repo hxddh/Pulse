@@ -70,7 +70,7 @@ package enum ManagedPermission {
 
     // MARK: - Spool layout
 
-    package static var spoolDirectoryOverride: URL?
+    nonisolated(unsafe) package static var spoolDirectoryOverride: URL?
     package static func spoolDirectory() -> URL {
         if let spoolDirectoryOverride { return spoolDirectoryOverride }
         return ManagedSession.stateDirectory().appendingPathComponent("permissions", isDirectory: true)

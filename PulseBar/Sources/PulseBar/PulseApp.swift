@@ -10,7 +10,7 @@ enum AppServices {
 /// `App.main()` connects to the WindowServer, which a CI runner may not have.
 @main
 enum PulseBarMain {
-    private static var instanceGuard: SingleInstanceGuard?
+    nonisolated(unsafe) private static var instanceGuard: SingleInstanceGuard?
 
     static func main() {
         if let dmg = CommandLine.arguments.first(where: { $0.hasPrefix("--install-update=") }),
@@ -151,7 +151,7 @@ enum PulseBarMain {
 
     /// Retained for the process lifetime — NSApplication does not keep a strong
     /// reference to its delegate.
-    private static var retainedAppDelegate: AppDelegate?
+    nonisolated(unsafe) private static var retainedAppDelegate: AppDelegate?
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -288,15 +288,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Defense-in-depth: close titled windows that are not Pulse-owned.
     /// After removing the SwiftUI Settings scene this should be a no-op.
     private func dismissPhantomSettingsWindows() {
-        for window in NSApp.windows {
-            if let id = window.identifier?.rawValue, Self.ownedWindowIDs.contains(id) {
-                continue
-            }
-            if window.styleMask.contains(.borderless) { continue }
-            if window.level != .normal { continue }
-            guard window.styleMask.contains(.titled) else { continue }
-            if window.identifier == nil {
-                window.close()
+        // AppKit window callbacks run on the main thread.
+        MainActor.assumeIsolated {
+            for window in NSApp.windows {
+                if let id = window.identifier?.rawValue, Self.ownedWindowIDs.contains(id) {
+                    continue
+                }
+                if window.styleMask.contains(.borderless) { continue }
+                if window.level != .normal { continue }
+                guard window.styleMask.contains(.titled) else { continue }
+                if window.identifier == nil {
+                    window.close()
+                }
             }
         }
     }

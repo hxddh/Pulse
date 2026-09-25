@@ -13,7 +13,7 @@ import PulseCore
 /// Dispatch is by path, as before, and in registration order; the first
 /// dialect that claims a transcript owns it. The parsers themselves live one
 /// vendor per file (`HarvestCodex.swift`, `HarvestPi.swift`, …).
-package protocol TranscriptDialect {
+package protocol TranscriptDialect: Sendable {
     /// Whether this dialect owns the transcript at `lowerPath` (lowercased).
     func claims(lowerPath: String) -> Bool
     /// Parse the whole transcript, or return `nil` to hand it to the generic

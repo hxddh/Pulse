@@ -7,7 +7,7 @@ import PulseCore
 package enum AttentionIO {
     /// Tests and `PULSE_HOME` hook self-tests redirect the ledger without
     /// touching the user's real Application Support file.
-    package static var pathOverride: URL?
+    nonisolated(unsafe) package static var pathOverride: URL?
 
     package static var defaultPath: URL {
         FileManager.default.homeDirectoryForCurrentUser

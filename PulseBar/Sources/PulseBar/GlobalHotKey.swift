@@ -39,8 +39,8 @@ enum HotkeyChoice: String, CaseIterable, Identifiable {
 
 /// Global shortcut that reveals the Pulse tray panel.
 enum GlobalHotKey {
-    private static var hotKeyRef: EventHotKeyRef?
-    private static var handlerRef: EventHandlerRef?
+    nonisolated(unsafe) private static var hotKeyRef: EventHotKeyRef?
+    nonisolated(unsafe) private static var handlerRef: EventHandlerRef?
     private static let signature: OSType = 0x50554C53 // 'PULS'
 
     private static let callback: EventHandlerUPP = { _, event, _ in

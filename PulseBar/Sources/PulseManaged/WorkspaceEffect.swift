@@ -164,7 +164,7 @@ package enum WorkspaceEffect {
 
     /// Test seam: every command this type runs goes through here, so the
     /// rules above can be held to fixtures without a repository on disk.
-    package static var runner: (String, [String]) -> ProcessIO.Result? = { directory, command in
+    nonisolated(unsafe) package static var runner: (String, [String]) -> ProcessIO.Result? = { directory, command in
         ProcessIO.run(
             executable: executable,
             arguments: arguments(for: command, in: directory),

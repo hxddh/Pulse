@@ -359,7 +359,7 @@ package enum ManagedSession {
     }
 
     /// `~/Library/Application Support/Pulse/managed` — overridable for tests.
-    package static var stateDirectoryOverride: URL?
+    nonisolated(unsafe) package static var stateDirectoryOverride: URL?
     package static func stateDirectory() -> URL {
         if let stateDirectoryOverride { return stateDirectoryOverride }
         let support = FileManager.default.urls(

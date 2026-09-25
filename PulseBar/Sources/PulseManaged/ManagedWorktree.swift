@@ -14,7 +14,7 @@ package enum ManagedWorktree {
 
     /// `~/Library/Application Support/Pulse/worktrees` — overridable so
     /// tests never touch the real one.
-    package static var baseOverride: URL?
+    nonisolated(unsafe) package static var baseOverride: URL?
     package static func baseDirectory() -> URL {
         if let baseOverride { return baseOverride }
         let support = FileManager.default.urls(

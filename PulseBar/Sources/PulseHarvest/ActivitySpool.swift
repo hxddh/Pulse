@@ -62,7 +62,7 @@ package enum ActivitySpool {
         }
     }
 
-    package static var directoryOverride: URL?
+    nonisolated(unsafe) package static var directoryOverride: URL?
 
     package static var directory: URL {
         if let directoryOverride { return directoryOverride }

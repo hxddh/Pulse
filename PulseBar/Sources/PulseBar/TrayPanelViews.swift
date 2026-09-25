@@ -122,7 +122,7 @@ private struct StatusChip: View {
 /// Measured height of the row list, so the panel is sized by its content
 /// instead of by arithmetic.
 private struct ContentHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
     }

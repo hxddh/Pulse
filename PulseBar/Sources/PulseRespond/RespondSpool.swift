@@ -53,7 +53,7 @@ import PulseCore
 package enum RespondSpool {
     /// Tests redirect the spool without touching the user's real
     /// Application Support tree — same seam as `AttentionIO.pathOverride`.
-    package static var rootOverride: URL?
+    nonisolated(unsafe) package static var rootOverride: URL?
 
     package static var root: URL {
         if let rootOverride { return rootOverride }
