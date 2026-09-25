@@ -114,7 +114,7 @@ enum HooksInstaller {
                 return exe
             }
             // `swift run` / XCTest: prefer the process executable.
-            let processPath = CommandLine.arguments.first ?? ""
+            let processPath = ProcessInfo.processInfo.arguments.first ?? ""
             if !processPath.isEmpty, fm.isExecutableFile(atPath: processPath) {
                 return processPath
             }
