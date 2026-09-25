@@ -39,9 +39,9 @@ All notable changes to Pulse are documented here.
 
 - **App 侧 target 全部开启完整并发检查。** PulseCore 保持零警告 + warnings-as-errors；其余 target
   的警告由 CI 的「Concurrency ratchet」作业从头构建计数，只许降不许升（`scripts/concurrency_baseline.json`）。
-  开启时 129 条，本版降到 8 条：测试接缝与只在主线程触碰的静态量如实标注 `nonisolated(unsafe)`，
-  主线程 AppKit 调用走 `MainActor.assumeIsolated`，命令行参数改读 `ProcessInfo`，方言协议为 `Sendable`。
-  余下 8 条都是 `@Sendable` 闭包捕获非 Sendable 值，留给下一次降 baseline。
+  开启时 129 条，本版降到 5 条：测试接缝与只在主线程触碰的静态量如实标注 `nonisolated(unsafe)`，
+  主线程 AppKit 调用走 `MainActor.assumeIsolated`，命令行参数改读 `ProcessInfo`，方言协议与验收证据、代码指纹、transcript 摘录为 `Sendable`。
+  余下 5 条都是 `@Sendable` 闭包捕获非 Sendable 值，留给下一次降 baseline。
 
 ### 更新（F-4）
 
