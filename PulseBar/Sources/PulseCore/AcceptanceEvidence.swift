@@ -295,3 +295,28 @@ public struct CodeFingerprint: Codable, Equatable {
         return paths
     }
 }
+
+/// What a piece of evidence may be said to prove *now*.
+///
+/// Pure, so the rule every surface uses is the same rule and can be pinned by
+/// a table: only a pass whose code is still exactly the code it ran against
+/// reads as passing. A pass on code that has since changed is stale; one
+/// whose current code has not been (or cannot be) measured is not a pass yet.
+public enum EvidenceStanding: Equatable, Sendable {
+    case passing
+    case stale
+    case measuring
+    case unverified
+    case notPassing
+
+    public static func of(
+        _ evidence: AcceptanceEvidence,
+        current: CodeFingerprint?,
+        measured: Bool
+    ) -> EvidenceStanding {
+        guard evidence.outcome == .passed else { return .notPassing }
+        guard measured else { return .measuring }
+        guard let current else { return .unverified }
+        return current == evidence.postFingerprint ? .passing : .stale
+    }
+}

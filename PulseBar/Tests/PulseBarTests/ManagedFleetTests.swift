@@ -11,16 +11,29 @@ final class ManagedFleetTests: XCTestCase {
 
     private final class FakeRuntimeSession: ManagedRuntimeSession {
         var onEvent: ((ManagedRuntimeEvent) -> Void)?
-        var onFinish: ((Int32, Data) -> Void)?
+        var onTurnEnd: ((ManagedTurnEnd) -> Void)?
+        private(set) var binds: [(continuation: String?, managedID: String)] = []
+        private(set) var prompts: [String] = []
+        private(set) var approvals: [(id: String, decision: ManagedApprovalDecision)] = []
 
-        func start(prompt: String, continuation: String?, root: String, managedID: String) -> String? {
+        func startOrResume(continuation: String?, root: String, managedID: String) -> String? {
+            binds.append((continuation, managedID))
+            return nil
+        }
+
+        func send(prompt: String) -> String? {
+            prompts.append(prompt)
             onEvent?(.continuation("fake-thread"))
             onEvent?(.model("fake-model"))
             onEvent?(.result(ManagedRuntimeResult(
                 text: "finished", costUSD: nil, tokensIn: 3, tokensOut: 2, errorDetail: nil
             )))
-            onFinish?(0, Data())
+            onTurnEnd?(ManagedTurnEnd(exitStatus: 0))
             return nil
+        }
+
+        func resolveApproval(id: String, decision: ManagedApprovalDecision) {
+            approvals.append((id, decision))
         }
 
         func cancel() -> Bool { true }
@@ -29,6 +42,7 @@ final class ManagedFleetTests: XCTestCase {
 
     private final class FakeRuntime: ManagedRuntime {
         let id = "fake"
+        let agent: AgentID = .claude
         let session = FakeRuntimeSession()
 
         func executable() -> String? { "/usr/bin/true" }
@@ -207,6 +221,44 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(runner.model.tokensIn, 3)
         XCTAssertEqual(runner.model.tokensOut, 2)
         XCTAssertEqual(runner.model.entries.first?.kind, .user)
+    }
+
+    // MARK: - The session-shaped boundary (12.2)
+
+    func testASessionIsBoundOnceAndEachTurnIsASend() {
+        var m = model("bound")
+        m.runtimeID = "fake"
+        m.continuationID = "resume-me"
+        let runtime = FakeRuntime()
+        let runner = ManagedSessionRunner(model: m, runtime: runtime)
+        runner.send(prompt: "first")
+        runner.send(prompt: "second")
+        XCTAssertEqual(runtime.session.binds.count, 1, "bound once, not per turn")
+        XCTAssertEqual(runtime.session.binds.first?.continuation, "resume-me")
+        XCTAssertEqual(runtime.session.binds.first?.managedID, "bound")
+        XCTAssertEqual(runtime.session.prompts, ["first", "second"])
+    }
+
+    func testAnApprovalReachesTheRuntimeThatAskedForIt() {
+        var m = model("asker")
+        m.runtimeID = "fake"
+        let runtime = FakeRuntime()
+        let runner = ManagedSessionRunner(model: m, runtime: runtime)
+        runner.resolveApproval(id: "req-1", decision: .deny(message: "no"))
+        XCTAssertEqual(runtime.session.approvals.map(\.id), ["req-1"])
+        XCTAssertEqual(runtime.session.approvals.first?.decision, .deny(message: "no"))
+    }
+
+    func testATurnEndWithoutAResultSaysHowItEnded() {
+        XCTAssertEqual(ManagedTurnEnd(exitStatus: 0).failureText, "exit 0")
+        XCTAssertEqual(ManagedTurnEnd(exitStatus: 1, diagnostic: "auth expired").failureText, "auth expired")
+        XCTAssertEqual(ManagedTurnEnd(exitStatus: nil).failureText, "turn ended without a result")
+    }
+
+    func testAManagedRowIsTheRuntimesAgent() {
+        var m = model("row")
+        m.runtimeID = "claude"
+        XCTAssertEqual(ManagedSessionSource.row(for: m).agent, .claude)
     }
 
     // MARK: - The queue under its cap

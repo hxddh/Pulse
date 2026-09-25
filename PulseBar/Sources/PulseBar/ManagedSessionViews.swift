@@ -17,10 +17,6 @@ struct ManagedSessionInspector: View {
     @State private var commitMessage = ""
     @State private var runCheckCommand = ""
     @State private var runCheckBusy = false
-    @State private var currentFingerprint: CodeFingerprint?
-    @State private var fingerprintMeasured = false
-    @State private var fingerprintRefreshInFlight = false
-    @State private var fingerprintRefreshQueued = false
     @State private var acceptanceBusy = false
     @State private var acceptanceNotice = ""
     @State private var acceptanceNoticeIsError = false
@@ -55,17 +51,6 @@ struct ManagedSessionInspector: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // A passing check must stop reading as current the moment the
-        // worktree changes — including edits made in another app, which
-        // never touch this row. While the inspector is on screen, re-measure
-        // on a slow cadence; nothing runs once it is closed.
-        .task(id: row.workspaceRoot) {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                if Task.isCancelled { break }
-                refreshFingerprint()
-            }
-        }
         .onAppear {
             runCheckCommand = runner?.model.runCommand ?? ""
             refreshFingerprint()
@@ -92,6 +77,13 @@ struct ManagedSessionInspector: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                     }
+                    // The same rule the run-check card uses, so a stale pass
+                    // never reads as a pass here either. A fact, not a rank.
+                    if let standing = sibling.latestEvidenceStanding {
+                        Text(standingLabel(standing))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     if sibling.model.id == row.managedID {
                         Text(store.tr(.managedCurrentAttempt))
@@ -114,6 +106,16 @@ struct ManagedSessionInspector: View {
             RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
                 .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
         )
+    }
+
+    private func standingLabel(_ standing: EvidenceStanding) -> String {
+        switch standing {
+        case .passing: return store.tr(.managedEvidencePassing)
+        case .stale: return store.tr(.managedRunCheckStale)
+        case .measuring: return store.tr(.managedRunCheckMeasuring)
+        case .unverified: return store.tr(.managedRunCheckUnverified)
+        case .notPassing: return store.tr(.managedEvidenceNotPassing)
+        }
     }
 
     private func statusLabel(_ status: ManagedSession.Status) -> String {
@@ -198,35 +200,19 @@ struct ManagedSessionInspector: View {
         }
     }
 
+    /// Whether a pass is still current is the runner's knowledge
+    /// (`AcceptanceRunner`), not this view's; opening the inspector only asks
+    /// for a fresh measurement.
     private func refreshFingerprint() {
-        let root = row.workspaceRoot
-        guard !root.isEmpty else { return }
-        if fingerprintRefreshInFlight {
-            fingerprintRefreshQueued = true
-            return
-        }
-        fingerprintRefreshInFlight = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            let fingerprint = CodeFingerprint.measure(cwd: root)
-            DispatchQueue.main.async {
-                currentFingerprint = fingerprint
-                fingerprintMeasured = true
-                fingerprintRefreshInFlight = false
-                if fingerprintRefreshQueued {
-                    fingerprintRefreshQueued = false
-                    refreshFingerprint()
-                }
-            }
-        }
+        runner?.acceptance.refresh()
     }
 
     private func evidenceLabel(_ evidence: AcceptanceEvidence) -> String {
-        if evidence.outcome == .passed {
-            guard fingerprintMeasured else { return store.tr(.managedRunCheckMeasuring) }
-            guard let currentFingerprint else { return store.tr(.managedRunCheckUnverified) }
-            guard currentFingerprint == evidence.postFingerprint else {
-                return store.tr(.managedRunCheckStale)
-            }
+        switch runner?.acceptance.standing(of: evidence) ?? .unverified {
+        case .measuring: return store.tr(.managedRunCheckMeasuring)
+        case .unverified: return store.tr(.managedRunCheckUnverified)
+        case .stale: return store.tr(.managedRunCheckStale)
+        case .passing, .notPassing: break
         }
         switch evidence.outcome {
         case .passed, .failed:
@@ -243,8 +229,7 @@ struct ManagedSessionInspector: View {
     }
 
     private func evidenceFailed(_ evidence: AcceptanceEvidence) -> Bool {
-        guard evidence.outcome == .passed else { return true }
-        return !fingerprintMeasured || currentFingerprint != evidence.postFingerprint
+        runner?.acceptance.standing(of: evidence) != .passing
     }
 
     private func evidenceOutput(_ evidence: AcceptanceEvidence) -> String {

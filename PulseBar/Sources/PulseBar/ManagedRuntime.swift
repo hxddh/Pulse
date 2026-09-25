@@ -24,19 +24,56 @@ struct ManagedRuntimeResult {
     var errorDetail: String?
 }
 
+/// How a turn ended, in the runtime's own terms. A per-turn runtime (Claude)
+/// reports its child's exit; a long-lived one reports the turn's completion
+/// without implying any process went away.
+struct ManagedTurnEnd: Equatable {
+    /// The child's exit status, when a child per turn is the topology.
+    var exitStatus: Int32?
+    /// The runtime's last diagnostic words (stderr tail, protocol error), if any.
+    var diagnostic: String = ""
+
+    /// The sentence a turn that ended without a result event gets.
+    var failureText: String {
+        if !diagnostic.isEmpty { return diagnostic }
+        return exitStatus.map { "exit \($0)" } ?? "turn ended without a result"
+    }
+}
+
+/// The user's decision on one permission request, as the runtime delivers it.
+/// Single-use by construction: there is no "for the session" variant, and
+/// there must never be one (no always-allow).
+enum ManagedApprovalDecision: Equatable {
+    case allow
+    case deny(message: String)
+}
+
+/// The session-shaped vendor boundary (plan-outcome, Outcome-α). The runner
+/// above it knows a session's user semantics — bind it, send it a turn,
+/// cancel it, answer its asks, shut it down — and nothing about processes,
+/// pipes or wire formats. Claude spawns a child per turn behind `send`; an
+/// App-Server runtime would keep one child for the whole session. Both fit.
 @MainActor
 protocol ManagedRuntimeSession: AnyObject {
     var onEvent: ((ManagedRuntimeEvent) -> Void)? { get set }
-    var onFinish: ((_ exitCode: Int32, _ stderrTail: Data) -> Void)? { get set }
+    var onTurnEnd: ((ManagedTurnEnd) -> Void)? { get set }
 
-    func start(prompt: String, continuation: String?, root: String, managedID: String) -> String?
+    /// Bind the session to its identity, worktree and (for a resumed
+    /// session) its continuation. Returns an error sentence, nil on success.
+    func startOrResume(continuation: String?, root: String, managedID: String) -> String?
+    /// Start one turn with the user's words. Returns an error sentence.
+    func send(prompt: String) -> String?
     func cancel() -> Bool
+    /// Deliver the user's decision on a request this session raised.
+    func resolveApproval(id: String, decision: ManagedApprovalDecision)
     func shutdown()
 }
 
 @MainActor
 protocol ManagedRuntime {
     var id: String { get }
+    /// The agent this runtime's sessions are rows of.
+    var agent: AgentID { get }
     func executable() -> String?
     func canStart(prompt: String, continuation: String?) -> Bool
     func makeSession() -> any ManagedRuntimeSession
@@ -45,10 +82,15 @@ protocol ManagedRuntime {
 @MainActor
 enum ManagedRuntimeRegistry {
     static let claude: any ManagedRuntime = ClaudeManagedRuntime()
+    static let all: [any ManagedRuntime] = [claude]
 
     static func runtime(id: String) -> (any ManagedRuntime)? {
-        id == claude.id ? claude : nil
+        all.first { $0.id == id }
     }
+
+    /// Runtime ids this build can drive. Persisted sessions of any other
+    /// runtime are refused, not guessed at.
+    nonisolated static let knownIDs: Set<String> = ["claude"]
 }
 
 /// Claude's complete vendor shape: discovery, argv, stream decoder and its
@@ -56,6 +98,7 @@ enum ManagedRuntimeRegistry {
 @MainActor
 struct ClaudeManagedRuntime: ManagedRuntime {
     let id = "claude"
+    let agent: AgentID = .claude
 
     func executable() -> String? { Self.executable() }
     func canStart(prompt: String, continuation: String?) -> Bool {
@@ -132,7 +175,14 @@ struct ClaudeManagedRuntime: ManagedRuntime {
     @MainActor
     fileprivate final class Session: ManagedRuntimeSession {
         var onEvent: ((ManagedRuntimeEvent) -> Void)?
-        var onFinish: ((Int32, Data) -> Void)?
+        var onTurnEnd: ((ManagedTurnEnd) -> Void)?
+
+        private var root = ""
+        private var managedID = ""
+        /// The Claude session id to `--resume`; taken from the stream as soon
+        /// as the first turn names it.
+        private var continuation: String?
+        private var bound = false
 
         private var process: Process?
         private var lineBuffer = ManagedSession.LineBuffer()
@@ -141,7 +191,27 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         /// earlier child are dropped rather than mixed into this one.
         private var turn = 0
 
-        func start(prompt: String, continuation: String?, root: String, managedID: String) -> String? {
+        func startOrResume(continuation: String?, root: String, managedID: String) -> String? {
+            guard ClaudeManagedRuntime.executable() != nil else { return "claude-not-found" }
+            self.continuation = continuation
+            self.root = root
+            self.managedID = managedID
+            bound = true
+            return nil
+        }
+
+        func resolveApproval(id: String, decision: ManagedApprovalDecision) {
+            // Claude's permission-prompt MCP server polls for this file.
+            switch decision {
+            case .allow:
+                ManagedPermission.writeVerdict(ManagedPermission.Verdict(id: id, allow: true, message: ""))
+            case .deny(let message):
+                ManagedPermission.writeVerdict(ManagedPermission.Verdict(id: id, allow: false, message: message))
+            }
+        }
+
+        func send(prompt: String) -> String? {
+            guard bound else { return "session-not-started" }
             guard let executable = ClaudeManagedRuntime.executable() else {
                 return "claude-not-found"
             }
@@ -233,8 +303,17 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         fileprivate func consume(_ chunk: Data, turn chunkTurn: Int) {
             guard chunkTurn == turn else { return }
             for line in lineBuffer.lines(from: chunk) {
-                for event in ClaudeManagedRuntime.decode(line: line) { onEvent?(event) }
+                for event in ClaudeManagedRuntime.decode(line: line) { deliver(event) }
             }
+        }
+
+        /// The session learns its own continuation from the stream, so the
+        /// next `send` resumes without the runner handing it back.
+        private func deliver(_ event: ManagedRuntimeEvent) {
+            if case .continuation(let id) = event, continuation == nil, !id.isEmpty {
+                continuation = id
+            }
+            onEvent?(event)
         }
 
         fileprivate func consumeStderr(_ chunk: Data, turn chunkTurn: Int) {
@@ -246,10 +325,12 @@ struct ClaudeManagedRuntime: ManagedRuntime {
         fileprivate func finished(exitCode: Int32, turn finishedTurn: Int) {
             guard finishedTurn == turn else { return }
             if let tail = lineBuffer.flush() {
-                for event in ClaudeManagedRuntime.decode(line: tail) { onEvent?(event) }
+                for event in ClaudeManagedRuntime.decode(line: tail) { deliver(event) }
             }
             process = nil
-            onFinish?(exitCode, stderrTail)
+            let words = String(decoding: stderrTail.suffix(300), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            onTurnEnd?(ManagedTurnEnd(exitStatus: exitCode, diagnostic: words))
         }
     }
 }

@@ -134,4 +134,44 @@ final class AcceptanceEvidenceTests: XCTestCase {
         XCTAssertEqual(evidence.stdout.count, AcceptanceEvidence.outputLimitBytes)
         XCTAssertEqual(evidence.stderr.count, AcceptanceEvidence.outputLimitBytes)
     }
+
+    // MARK: - 12.2 · what evidence proves now
+
+    func testEvidenceStandingTable() {
+        let a = CodeFingerprint(sha256: "a"), b = CodeFingerprint(sha256: "b")
+        func evidence(_ exit: Int32) -> AcceptanceEvidence {
+            AcceptanceEvidence.make(
+                command: "t", cwd: repo.path, startedAtMs: 1, finishedAtMs: 2,
+                stdout: Data(), stderr: Data(), exitCode: exit,
+                preFingerprint: a, postFingerprint: a
+            )
+        }
+        XCTAssertEqual(EvidenceStanding.of(evidence(0), current: a, measured: true), .passing)
+        XCTAssertEqual(EvidenceStanding.of(evidence(0), current: b, measured: true), .stale)
+        XCTAssertEqual(EvidenceStanding.of(evidence(0), current: nil, measured: true), .unverified)
+        XCTAssertEqual(EvidenceStanding.of(evidence(0), current: a, measured: false), .measuring)
+        XCTAssertEqual(EvidenceStanding.of(evidence(1), current: a, measured: true), .notPassing)
+    }
+
+    @MainActor
+    func testTheRunnerKnowsWhenAPassGoesStale() async throws {
+        let runner = AcceptanceRunner(root: repo.path)
+        let ran = expectation(description: "check finished")
+        var result: AcceptanceEvidence?
+        runner.run(command: "true") { evidence in
+            result = evidence
+            ran.fulfill()
+        }
+        await fulfillment(of: [ran], timeout: 30)
+        let evidence = try XCTUnwrap(result)
+        XCTAssertEqual(runner.standing(of: evidence), .passing, "measured by the check itself")
+
+        try Data("edited elsewhere\n".utf8).write(to: repo.appendingPathComponent("tracked"))
+        let measured = expectation(description: "re-measured")
+        measured.assertForOverFulfill = false
+        runner.onChange = { measured.fulfill() }
+        runner.refresh()
+        await fulfillment(of: [measured], timeout: 30)
+        XCTAssertEqual(runner.standing(of: evidence), .stale)
+    }
 }

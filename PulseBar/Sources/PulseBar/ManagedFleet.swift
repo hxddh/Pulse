@@ -145,11 +145,17 @@ final class ManagedFleet {
     func decidePermission(id: String, allow: Bool) {
         guard let request = pendingPermissions.first(where: { $0.id == id }) else { return }
         let effectiveAllow = allow && request.canOfferAllow
-        ManagedPermission.writeVerdict(ManagedPermission.Verdict(
-            id: id,
-            allow: effectiveAllow,
-            message: effectiveAllow ? "" : "denied by user"
-        ))
+        let decision: ManagedApprovalDecision = effectiveAllow ? .allow : .deny(message: "denied by user")
+        // The runtime that raised it answers it — the wire is its business.
+        // A request whose session is gone still gets a deny, so the asking
+        // process is not left waiting on a verdict nobody will write.
+        if let runner = runner(managedID: request.managedID) {
+            runner.resolveApproval(id: id, decision: decision)
+        } else {
+            ManagedPermission.writeVerdict(ManagedPermission.Verdict(
+                id: id, allow: false, message: "denied: session gone"
+            ))
+        }
         pendingPermissions.removeAll { $0.id == id }
         DebugLog.write("managed permission decide allow=\(effectiveAllow)")
         onChange?()

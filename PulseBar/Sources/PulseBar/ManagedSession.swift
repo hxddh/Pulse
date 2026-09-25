@@ -400,9 +400,9 @@ enum ManagedSession {
                 DebugLog.write("managed state refused file=\(name) reason=identity")
                 continue
             }
-            // Alpha ships one implementation. A future state is not a
+            // A state from a runtime this build cannot drive is not a
             // Claude state merely because this binary cannot name it.
-            guard state.runtimeID == "claude" else {
+            guard ManagedRuntimeRegistry.knownIDs.contains(state.runtimeID) else {
                 DebugLog.write("managed state refused file=\(name) reason=runtime")
                 continue
             }
