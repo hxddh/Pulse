@@ -39,6 +39,7 @@ final class RowNarratorTests: XCTestCase {
     func testManagedOutcomeFactsComeFromTheInjectedFleetOnly() {
         var row = AgentRow(rowKey: "claude|m1", agent: .claude)
         row.managedID = "m1"
+        row.task = "Fix the auth module"
         row.liveProcess = true
         row.observationSource = .session
         row.harvestMs = now
