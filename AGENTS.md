@@ -10,7 +10,8 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/review-1.2.md`](docs/review-1.2.md) | You want the defect list at the 1.2.0 baseline, or the next-major evaluation |
+| [`docs/review-11.0.md`](docs/review-11.0.md) | **The current review** — defects at the 11.0.3 baseline and the next-version evaluation (Kernel before Outcome) |
+| [`docs/review-1.2.md`](docs/review-1.2.md) | You want the defect list at the 1.2.0 baseline |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
 | [`docs/plan-12.0.md`](docs/plan-12.0.md) | The next-major plan (Outcome) — durable result contracts, runtime boundary, comparable evidence, and proof gates |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
@@ -169,7 +170,9 @@ to users.
 
 ## Current state
 
-2.0.0 is the current source version.
+11.0.3 is the current source version. The review and next-version evaluation
+at this baseline is [`docs/review-11.0.md`](docs/review-11.0.md); the notes
+below about 2.0 are historical context.
 
 **1.0 marks the product, not the signature.** It was previously reserved for
 "notarized", which is externally blocked without an Apple Developer ID — a
