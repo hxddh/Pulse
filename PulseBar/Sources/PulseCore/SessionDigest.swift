@@ -333,13 +333,14 @@ public enum SessionDigestSummary {
 /// support report reads `summary` from the main thread — while a scan may be
 /// writing. "Safe by convention" was not safe, so every access holds `lock`.
 public enum HarvestDigests {
-    private static var store = SessionDigestStore.load()
-    private static var dirty = false
+    // Guarded by `lock` — every access below takes it.
+    nonisolated(unsafe) private static var store = SessionDigestStore.load()
+    nonisolated(unsafe) private static var dirty = false
     private static let lock = NSLock()
 
     /// Test seam: the fixture wall and unit tests must not read or write the
     /// real user's digest file.
-    public static var isEnabled = true
+    nonisolated(unsafe) public static var isEnabled = true
 
     public static func advance(url: URL, size: Int, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> SessionDigest? {
         guard isEnabled else { return nil }
@@ -564,7 +565,7 @@ public struct SessionDigestStore: Codable, Equatable {
 
     /// Fixtures and tests redirect the store so a self-test never folds into
     /// (or prunes) the real user's digests.
-    public static var pathOverride: URL?
+    nonisolated(unsafe) public static var pathOverride: URL?
 
     public static var fileURL: URL {
         if let pathOverride { return pathOverride }

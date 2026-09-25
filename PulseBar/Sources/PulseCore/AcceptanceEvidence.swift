@@ -102,7 +102,7 @@ public struct CodeFingerprint: Codable, Equatable {
         self.sha256 = sha256
     }
 
-    public struct Limits: Equatable {
+    public struct Limits: Equatable, Sendable {
         public var gitOutputBytes = 32 * 1024 * 1024
         public var untrackedFileBytes = 16 * 1024 * 1024
         public var totalUntrackedBytes = 64 * 1024 * 1024

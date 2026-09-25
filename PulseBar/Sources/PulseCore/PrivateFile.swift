@@ -24,7 +24,9 @@ public enum PrivateFile {
     /// filled, before it is renamed into place — so a test can prove the
     /// bytes were never readable by anyone else, rather than only that they
     /// ended up private.
-    public static var inspectTemporaryFileForTesting: ((String) -> Void)?
+    /// Tests set it before exercising a write and clear it after; nothing
+    /// else touches it, so it is exempt from isolation checking by contract.
+    nonisolated(unsafe) public static var inspectTemporaryFileForTesting: ((String) -> Void)?
 
     /// Write `data` privately, then publish it atomically.
     ///

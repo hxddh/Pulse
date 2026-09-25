@@ -501,8 +501,15 @@ enum AttentionReader {
 
         var isRemote: Bool { !host.isEmpty }
 
+        /// A suspect stamp corrected by the host's file-level skew (12.1);
+        /// 0 when the stamp was usable or there was nothing to correct by.
+        var correctedMs: Int64 = 0
+
         /// The clock Pulse is willing to stand behind.
-        var effectiveMs: Int64 { clockSuspect ? receivedAtMs : tsMs }
+        var effectiveMs: Int64 {
+            guard clockSuspect else { return tsMs }
+            return correctedMs > 0 ? correctedMs : receivedAtMs
+        }
 
         /// Stable key for last-event-wins map. Two machines running the same
         /// agent are two different waits; merging them would let one host's
@@ -588,6 +595,28 @@ enum AttentionReader {
         return .trustEvent
     }
 
+    /// How far a remote file's clock is off, from its newest stamped line and
+    /// its arrival time: 0 when the stamps are believable as they are, the
+    /// correction to add to every stamp when they are not, nil when there is
+    /// nothing to judge (a local file, or no stamped line).
+    static func fileSkewMs(_ text: String, receivedAtMs: Int64) -> Int64? {
+        guard receivedAtMs > 0 else { return nil }
+        var newest: Int64 = 0
+        for line in text.split(whereSeparator: \.isNewline) {
+            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if raw.isEmpty || raw.hasPrefix("#") { continue }
+            let cols = raw.split(separator: "\t", omittingEmptySubsequences: false)
+            guard cols.count >= 3, let ts = Int64(cols[2]), ts > 0 else { continue }
+            newest = max(newest, ts)
+        }
+        guard newest > 0 else { return nil }
+        switch clockVerdict(eventMs: newest, arrivalMs: receivedAtMs, isRemote: true) {
+        case .trustEvent: return 0
+        case .trustArrival: return receivedAtMs - newest
+        case .unusable: return nil
+        }
+    }
+
     static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
         // Each source is parsed on its own: one host's `done` must never clear
         // another host's open permission, and per-file parsing is what keeps
@@ -615,6 +644,16 @@ enum AttentionReader {
         receivedAtMs: Int64 = 0
     ) -> [Entry] {
         guard !text.isEmpty else { return [] }
+
+        // A remote file carries one arrival time — its mtime — for every line
+        // in it. 11.0 judged each line's stamp against that one time, so an
+        // hours-old Permission sitting above a fresh line looked like clock
+        // skew and was re-dated to "just arrived" (review-1.2 F-2). The
+        // question "is this host's clock wrong" belongs to the file: the
+        // newest line is the one that arrived at the mtime, so the offset
+        // between them is the host's skew, and every line is shifted by that
+        // same offset — an old event stays exactly as old as it was.
+        let fileSkewMs = Self.fileSkewMs(text, receivedAtMs: receivedAtMs)
 
         var byKey: [String: Entry] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
@@ -694,8 +733,16 @@ enum AttentionReader {
             case .trustEvent, .trustArrival:
                 break
             }
-            let suspect = clock == .trustArrival
-            let effective = suspect ? arrival : tsMs
+            let effective: Int64
+            let suspect: Bool
+            if !host.isEmpty, tsMs > 0, receivedAtMs > 0, let fileSkewMs {
+                // Remote with a stamp: the file's verdict, not this line's.
+                suspect = fileSkewMs != 0
+                effective = min(receivedAtMs, tsMs + fileSkewMs)
+            } else {
+                suspect = clock == .trustArrival
+                effective = suspect ? arrival : tsMs
+            }
             if effective > nowMs + 5 * 60 * 1000 { continue }
             let expired = nowMs - effective > ttlMs
             // A local wait that expires is covered by the process probe, so it
@@ -718,6 +765,7 @@ enum AttentionReader {
             entry.host = host
             entry.receivedAtMs = arrival
             entry.clockSuspect = suspect
+            if suspect { entry.correctedMs = effective }
             entry.lostContact = expired
             // A later event with nothing to say must not erase what an earlier
             // one said. One approval makes Claude raise both `Notification`

@@ -97,7 +97,7 @@ compiles and ships.
 ## Working on it
 
 ```bash
-cd PulseBar && swift build      # macOS 14+, Swift 5.9
+cd PulseBar && swift build      # macOS 14+, Swift 5.10 compiler
 cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
