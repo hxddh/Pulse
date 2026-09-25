@@ -55,6 +55,17 @@ struct ManagedSessionInspector: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // A passing check must stop reading as current the moment the
+        // worktree changes — including edits made in another app, which
+        // never touch this row. While the inspector is on screen, re-measure
+        // on a slow cadence; nothing runs once it is closed.
+        .task(id: row.workspaceRoot) {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                if Task.isCancelled { break }
+                refreshFingerprint()
+            }
+        }
         .onAppear {
             runCheckCommand = runner?.model.runCommand ?? ""
             refreshFingerprint()
@@ -272,16 +283,19 @@ struct ManagedSessionInspector: View {
             HStack(spacing: 10) {
                 Button(store.tr(.managedCommit)) {
                     let message = commitMessage
+                    // Resolved here, on the main actor: the closure runs off it.
+                    let committed = store.tr(.managedCommitted)
                     runAcceptance { worktree in
                         if let error = ManagedAcceptance.commit(worktree: worktree, message: message) {
                             return .failure(error)
                         }
-                        return .success(store.tr(.managedCommitted))
+                        return .success(committed)
                     }
                 }
                 .disabled(acceptanceBusy
                           || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(store.tr(.managedPush)) {
+                    let pushedFormat = store.tr(.managedPushed)
                     runAcceptance { worktree in
                         guard let branch = ManagedAcceptance.branch(worktree: worktree) else {
                             return .failure(.gitFailed("no branch"))
@@ -293,7 +307,7 @@ struct ManagedSessionInspector: View {
                             let url = ManagedAcceptance.compareURL(originURL: origin, branch: branch)
                             DispatchQueue.main.async { compareURL = url }
                         }
-                        return .success(String(format: store.tr(.managedPushed), branch))
+                        return .success(String(format: pushedFormat, branch))
                     }
                 }
                 .disabled(acceptanceBusy)

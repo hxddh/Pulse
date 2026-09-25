@@ -199,6 +199,8 @@ enum L10n {
             return "Not enough of this request is here to approve it"
         case .respondRequestGone:
             return "That request is no longer here — it expired or was already answered"
+        case .respondRequestChanged:
+            return "A newer request replaced the one shown — nothing was sent. Read it again."
         case .focusFailed: return "Could not open it — that window may be gone. Rescanning."
         case .respondExpired: return "Request expired — the agent fell back to its own prompt"
         case .hooksNudge: return "Install hooks so Claude/Codex can signal Waiting"
@@ -853,6 +855,7 @@ enum L10n {
         case .respondWriteFailed: return "判决没能写出 —— 远端会回到它自己的提示"
         case .respondRefused: return "请求没到齐，不能在这里同意"
         case .respondRequestGone: return "这个请求已经不在了 —— 过期，或者已经答过"
+        case .respondRequestChanged: return "显示的请求已被更新的请求替换 —— 什么都没发送，请重看"
         case .focusFailed: return "没能打开 —— 那个窗口可能已经不在了，正在重扫"
         case .respondExpired: return "请求已过期 —— Agent 已回落到它自己的提示"
         case .hooksNudge: return "安装 hooks 后，Claude/Codex 才能点亮「需要你」"
@@ -1379,7 +1382,7 @@ enum L10n {
         case refresh, refreshing, clearWaiting, settings, quit
         case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait, details
         case respondDeny, respondReview, respondAllow, respondFullRequest, respondSentNote, respondHeading, respondExpired
-        case respondWriteFailed, respondRefused, respondRequestGone, focusFailed
+        case respondWriteFailed, respondRefused, respondRequestGone, respondRequestChanged, focusFailed
         case respondLocal, respondLocalHint
         case respondWaitingNote, respondTakenNote, respondExpiredUnclaimedNote
         case effectFiles, effectLines, movingNothingLanded, workspaceShared

@@ -107,13 +107,18 @@ final class ManagedSessionRunner {
         guard !isRunning, !isChecking, !command.isEmpty else { return }
         let root = model.root
         isChecking = true
-        update { $0.runCommand = command }
+        update {
+            $0.runCommand = command
+            $0.runningCheck = RunningCheck(
+                command: command, cwd: root,
+                startedAtMs: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let startedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
             let before = CodeFingerprint.measure(cwd: root)
-            let result = ProcessIO.run(
-                executable: "/bin/sh",
-                arguments: ["-lc", command],
+            let result = ProcessIO.runCheck(
+                command: command,
                 currentDirectory: root,
                 timeout: 300,
                 outputLimit: AcceptanceEvidence.outputLimitBytes
@@ -135,6 +140,7 @@ final class ManagedSessionRunner {
                 guard let self else { return }
                 self.isChecking = false
                 self.update {
+                    $0.runningCheck = nil
                     $0.acceptanceEvidence.append(evidence)
                     if $0.acceptanceEvidence.count > ManagedSession.maxAcceptanceEvidence {
                         $0.acceptanceEvidence.removeFirst(

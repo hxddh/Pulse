@@ -74,6 +74,9 @@ enum ManagedSession {
         var runCommand = ""
         /// 12.0-β · durable facts from user-triggered acceptance checks.
         var acceptanceEvidence: [AcceptanceEvidence] = []
+        /// 11.0.4 · a check in flight, persisted so a restart can say it was
+        /// interrupted instead of forgetting it ran.
+        var runningCheck: RunningCheck?
         /// 6.0-γ · same-task attempt group id (empty = standalone).
         var attemptGroup = ""
         /// 6.0-γ · what the last finished turn left on disk (+insertions,
@@ -190,6 +193,7 @@ enum ManagedSession {
         /// 6.0-γ · the per-session run-check command, remembered.
         var runCommand: String = ""
         var acceptanceEvidence: [AcceptanceEvidence] = []
+        var runningCheck: RunningCheck?
         /// 6.0-γ · same-task attempt group (empty = standalone).
         var attemptGroup: String = ""
 
@@ -224,6 +228,7 @@ enum ManagedSession {
             pendingPrompt = model.pendingPrompt
             runCommand = model.runCommand
             acceptanceEvidence = Array(model.acceptanceEvidence.suffix(ManagedSession.maxAcceptanceEvidence))
+            runningCheck = model.runningCheck
             attemptGroup = model.attemptGroup
         }
 
@@ -233,7 +238,7 @@ enum ManagedSession {
             case modelName, statusKind, statusDetail, entries, entriesCapped
             case turns, errorResults, totalCostUSD, tokensIn, tokensOut
             case lastEventMs, lastResultText, lastErrorText, pendingPrompt
-            case runCommand, acceptanceEvidence, attemptGroup
+            case runCommand, acceptanceEvidence, runningCheck, attemptGroup
         }
 
         init(from decoder: Decoder) throws {
@@ -273,6 +278,7 @@ enum ManagedSession {
                 [AcceptanceEvidence].self, forKey: .acceptanceEvidence
             ) ?? []
             acceptanceEvidence = Array(decodedEvidence.suffix(ManagedSession.maxAcceptanceEvidence))
+            runningCheck = try values.decodeIfPresent(RunningCheck.self, forKey: .runningCheck)
             attemptGroup = try values.decodeIfPresent(String.self, forKey: .attemptGroup) ?? ""
         }
 
@@ -302,6 +308,7 @@ enum ManagedSession {
             try values.encode(pendingPrompt, forKey: .pendingPrompt)
             try values.encode(runCommand, forKey: .runCommand)
             try values.encode(acceptanceEvidence, forKey: .acceptanceEvidence)
+            try values.encodeIfPresent(runningCheck, forKey: .runningCheck)
             try values.encode(attemptGroup, forKey: .attemptGroup)
         }
 
@@ -336,6 +343,15 @@ enum ManagedSession {
             m.pendingPrompt = pendingPrompt
             m.runCommand = runCommand
             m.acceptanceEvidence = acceptanceEvidence
+            // We were not there to see how it ended; say exactly that.
+            if let runningCheck {
+                m.acceptanceEvidence.append(runningCheck.interruptedEvidence())
+                if m.acceptanceEvidence.count > ManagedSession.maxAcceptanceEvidence {
+                    m.acceptanceEvidence.removeFirst(
+                        m.acceptanceEvidence.count - ManagedSession.maxAcceptanceEvidence
+                    )
+                }
+            }
             m.attemptGroup = attemptGroup
             return m
         }

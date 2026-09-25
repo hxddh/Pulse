@@ -735,13 +735,7 @@ enum RespondSpool {
     /// JSON document never parses, so a prefix read would only spend the
     /// bytes to learn nothing.
     private static func boundedRead(_ url: URL, limit: Int) -> Data? {
-        let fm = FileManager.default
-        guard let attributes = try? fm.attributesOfItem(atPath: url.path),
-              let size = attributes[.size] as? NSNumber,
-              size.intValue <= limit,
-              let data = try? Data(contentsOf: url)
-        else { return nil }
-        return data
+        SafeRead.regularFile(atPath: url.path, limit: limit)
     }
 
     private static func modificationMs(of url: URL) -> Int64 {

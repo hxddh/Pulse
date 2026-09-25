@@ -169,6 +169,28 @@ final class HarvestParsingTests: XCTestCase {
         XCTAssertFalse(merged.contains { $0.sessionID == "codex-old" })
     }
 
+    func testAnAdapterThatTimedOutMidwayKeepsItsUnreachedSessions() {
+        func codex(_ session: String, _ task: String) -> ActivityHarvest.Row {
+            ActivityHarvest.Row(
+                id: .codex, task: task, project: "Pulse", cwd: "/Users/me/Pulse",
+                skill: "", harvestMs: 1_700_000_000_000, sessionID: session
+            )
+        }
+        let previous = [codex("a", "old a"), codex("b", "old b"), codex("c", "old c")]
+        let health = [
+            ActivityHarvest.CollectorHealth(
+                id: .codex, state: .failed, durationMs: 750, rowCount: 1,
+                sourcePresent: true, errorKind: "native_timeout"
+            )
+        ]
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [codex("a", "fresh a")], health: health, previous: previous
+        )
+        XCTAssertEqual(Set(merged.map(\.sessionID)), ["a", "b", "c"])
+        XCTAssertEqual(merged.first { $0.sessionID == "a" }?.task, "fresh a", "fresh evidence wins")
+        XCTAssertEqual(merged.filter { $0.sessionID == "a" }.count, 1, "no stale duplicate")
+    }
+
     func testPartialHarvestWithNoAdapterBoundaryDoesNotEraseSnapshot() {
         var previous = ActivityHarvest.Row(
             id: .cursor,

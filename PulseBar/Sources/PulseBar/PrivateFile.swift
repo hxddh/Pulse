@@ -69,3 +69,61 @@ enum PrivateFile {
         _ = fchmod(fd, mode)
     }
 }
+
+/// Reading files that someone else's sync tool may have put there.
+///
+/// The spool directories are fed by rsync / Syncthing / a shared folder, and
+/// those copy symlinks and (with `rsync -D`) FIFOs as faithfully as regular
+/// files. A size check through `attributesOfItem` describes the *link*, and
+/// `Data(contentsOf:)` then follows it — so a link to `/dev/zero` passed the
+/// bound, and a FIFO blocked the scan forever. Every read here opens without
+/// following links and without blocking, confirms a regular file on the
+/// descriptor it already holds, and never reads past the limit.
+enum SafeRead {
+    /// The whole file, or nil when it is not a regular file, is larger than
+    /// `limit`, or cannot be read.
+    static func regularFile(atPath path: String, limit: Int) -> Data? {
+        guard let opened = open(path) else { return nil }
+        let (handle, size) = opened
+        defer { try? handle.close() }
+        guard size <= limit else { return nil }
+        return read(handle, upTo: limit)
+    }
+
+    /// At most the last `limit` bytes of a regular file, and whether anything
+    /// before them was skipped. For append-only logs, whose newest lines are
+    /// the ones that matter.
+    static func regularFileTail(atPath path: String, limit: Int) -> (data: Data, truncated: Bool)? {
+        guard let opened = open(path) else { return nil }
+        let (handle, size) = opened
+        defer { try? handle.close() }
+        let truncated = size > limit
+        do { try handle.seek(toOffset: UInt64(truncated ? size - limit : 0)) } catch { return nil }
+        guard let data = read(handle, upTo: limit) else { return nil }
+        return (data, truncated)
+    }
+
+    private static func open(_ path: String) -> (FileHandle, Int)? {
+        let fd = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size >= 0 else {
+            try? handle.close()
+            return nil
+        }
+        return (handle, Int(info.st_size))
+    }
+
+    private static func read(_ handle: FileHandle, upTo limit: Int) -> Data? {
+        var data = Data()
+        while data.count < limit {
+            let chunk: Data?
+            do { chunk = try handle.read(upToCount: min(64 * 1024, limit - data.count)) }
+            catch { return nil }
+            guard let chunk, !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        return data
+    }
+}

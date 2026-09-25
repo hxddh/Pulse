@@ -355,7 +355,27 @@ enum ActivityHarvest {
         reported.formUnion(current.map { normalize($0.id) })
         guard !reported.isEmpty else { return previous }
 
-        let retained = previous.filter { !reported.contains(normalize($0.id)) }
+        // An adapter that failed *after* yielding some rows — Codex timing
+        // out after 3 of 10 sessions — reached only part of its sessions.
+        // Replacing its whole set with that part made the other 7 vanish for
+        // a tick. Its fresh rows win; its unreached sessions keep their last
+        // good row. Only a session id can say "the same session", so rows
+        // without one are not carried.
+        let partial = Set(health.compactMap { item -> AgentID? in
+            switch item.state {
+            case .failed, .permissionDenied, .schemaMismatch, .unscanned:
+                return item.rowCount > 0 ? normalize(item.id) : nil
+            case .observed, .noRecentData, .sourceAbsent, .noSessions:
+                return nil
+            }
+        })
+        let fresh = Set(current.map { "\(normalize($0.id).rawValue)|\($0.sessionID)" })
+        let retained = previous.filter { row in
+            let agent = normalize(row.id)
+            if !reported.contains(agent) { return true }
+            guard partial.contains(agent), !row.sessionID.isEmpty else { return false }
+            return !fresh.contains("\(agent.rawValue)|\(row.sessionID)")
+        }
         return dedupeSharedRoots(current + retained)
     }
 

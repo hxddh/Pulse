@@ -281,7 +281,19 @@ enum NativeActivityHarvest {
         // treats `unscanned` as "not this adapter's fault" and therefore never
         // compensated. Starting each scan where the previous one gave up makes
         // the starvation rotate instead of being permanent.
-        let offset = filtered.isEmpty ? 0 : ((startCursor % filtered.count) + filtered.count) % filtered.count
+        //
+        // The cursor is a position in the full, stable descriptor list — not
+        // in `filtered`. 11.0.3 kept an index into the supervisor-filtered
+        // list, so whenever the deferred set changed between scans the saved
+        // index named a different adapter and the rotation skipped one.
+        let stableIndex: [String: Int] = Dictionary(
+            allDescriptors.enumerated().map { ($0.element.id.rawValue, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let offset = Self.rotationOffset(
+            filteredStableIndices: filtered.map { stableIndex[$0.id.rawValue] ?? 0 },
+            cursor: allDescriptors.isEmpty ? 0 : ((startCursor % allDescriptors.count) + allDescriptors.count) % allDescriptors.count
+        )
         let descriptors = Array(filtered[offset...] + filtered[..<offset])
         let budget = ScanBudget(
             deadline: Date().addingTimeInterval(totalDeadlineSeconds ?? 5.8),
@@ -440,7 +452,9 @@ enum NativeActivityHarvest {
         // Resume at the first adapter this pass could not reach, so the next
         // scan spends its budget on them first. A complete pass rewinds to the
         // start, keeping the flagship agents at the head in the common case.
-        let nextCursor = firstUnreachedIndex.map { (offset + $0) % max(1, filtered.count) } ?? 0
+        let nextCursor = firstUnreachedIndex.map {
+            stableIndex[descriptors[$0].id.rawValue] ?? 0
+        } ?? 0
         // One write per scan, after every adapter has folded what it read. A
         // fixture home folds but does not persist: a test must not leave its
         // temporary paths in the user's digest file.
@@ -455,6 +469,12 @@ enum NativeActivityHarvest {
             complete: ActivityHarvest.isCompleteHealth(health),
             nextCursor: nextCursor
         )
+    }
+
+    /// Where in `filtered` a pass starts: the first adapter at or after the
+    /// cursor's position in the stable list, wrapping to the head.
+    static func rotationOffset(filteredStableIndices: [Int], cursor: Int) -> Int {
+        filteredStableIndices.firstIndex { $0 >= cursor } ?? 0
     }
 
     /// The collector's account of one bounded pass.
