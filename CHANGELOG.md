@@ -2,6 +2,21 @@
 
 All notable changes to Pulse are documented here.
 
+## 12.2.0 — Groundwork（地基）
+
+Outcome 开工前受管会话必须先有的两块地基（[`docs/plan-12.0.md`](docs/plan-12.0.md) 的 ε）。
+
+- **会话形的 runtime 边界。** `ManagedRuntimeSession` 变成 `startOrResume` / `send` / `cancel` /
+  `resolveApproval` / `shutdown`，回合结束以 `ManagedTurnEnd` 报告 —— 不再假设「一个回合一个进程」。
+  Claude 仍是每回合一个子进程，但会话只绑定一次、自己从流里记住续接 id；长寿的 App Server
+  runtime 也能装进同一个形状。权限判决经提出请求的 runtime 送达，Fleet 只守「同意」的闸门；
+  会话已不在的请求一律拒绝，不让提问的进程干等。持久状态按 runtime 注册表加载，受管行显示其
+  runtime 对应的 agent。
+- **验收知识离开视图。** `AcceptanceRunner` 持有检查、当前代码指纹和一个只在「最新证据是仍然
+  有效的通过」时才运行的复测；`EvidenceStanding`（PulseCore）是「在当前代码上通过」的唯一规则。
+  检视器和同题对比卡都读它 —— 对比卡现在逐个尝试写出检查状态（事实，不排名）；回合结束会立即
+  重判此前的通过，而不是等有人打开检视器。
+
 ## 12.1.0 — Seams（接缝）
 
 12.x 的第一轮结构工作（[`docs/plan-12.0.md`](docs/plan-12.0.md) 的余项），外加一个用户能碰到的动词。

@@ -14,9 +14,11 @@ final class ManagedSessionRunner {
 
     private let runtime: any ManagedRuntime
     private let runtimeSession: any ManagedRuntimeSession
-    private(set) var isChecking = false
-    /// The running check's handle, so the user (or quitting) can stop it.
-    private var checkControl: ProcessIO.CheckControl?
+    /// `startOrResume` has run: the session knows its identity and worktree.
+    private var sessionBound = false
+    /// Checks and the code they ran against (12.2 · out of the view).
+    let acceptance: AcceptanceRunner
+    var isChecking: Bool { acceptance.isChecking }
 
     init(model: ManagedSession.Model, runtime: (any ManagedRuntime)? = nil) {
         self.model = model
@@ -25,13 +27,19 @@ final class ManagedSessionRunner {
         }
         self.runtime = resolved
         self.runtimeSession = resolved.makeSession()
+        self.acceptance = AcceptanceRunner(root: model.root)
+        acceptance.onChange = { [weak self] in self?.acceptanceChanged() }
+        // A persisted pass is only worth knowing about if it is still true.
+        if model.acceptanceEvidence.last?.outcome == .passed {
+            acceptance.refresh()
+        }
         runtimeSession.onEvent = { [weak self] event in
             guard let self else { return }
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
             self.update { $0.apply(event: event, nowMs: nowMs) }
         }
-        runtimeSession.onFinish = { [weak self] exitCode, stderrTail in
-            self?.finishedTurn(exitCode: exitCode, stderrTail: stderrTail)
+        runtimeSession.onTurnEnd = { [weak self] end in
+            self?.finishedTurn(end)
         }
     }
 
@@ -71,9 +79,16 @@ final class ManagedSessionRunner {
             $0.status = .running
             $0.lastErrorText = ""
         }
-        if let error = runtimeSession.start(
-            prompt: prompt, continuation: continuation, root: model.root, managedID: model.id
-        ) {
+        if !sessionBound {
+            if let error = runtimeSession.startOrResume(
+                continuation: continuation, root: model.root, managedID: model.id
+            ) {
+                update { $0.status = .failed(error) }
+                return
+            }
+            sessionBound = true
+        }
+        if let error = runtimeSession.send(prompt: prompt) {
             update { $0.status = .failed(error) }
         } else {
             DebugLog.write(
@@ -107,59 +122,36 @@ final class ManagedSessionRunner {
     func runCheck(command rawCommand: String, completion: (() -> Void)? = nil) {
         let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isRunning, !isChecking, !command.isEmpty else { return }
-        let root = model.root
-        isChecking = true
-        let control = ProcessIO.CheckControl()
-        checkControl = control
         update {
             $0.runCommand = command
             $0.runningCheck = RunningCheck(
-                command: command, cwd: root,
+                command: command, cwd: $0.root,
                 startedAtMs: Int64(Date().timeIntervalSince1970 * 1000)
             )
         }
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let startedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
-            let before = CodeFingerprint.measure(cwd: root)
-            let result = ProcessIO.runCheck(
-                command: command,
-                currentDirectory: root,
-                timeout: 300,
-                outputLimit: AcceptanceEvidence.outputLimitBytes,
-                control: control
-            )
-            let after = CodeFingerprint.measure(cwd: root)
-            let evidence = AcceptanceEvidence.make(
-                command: command,
-                cwd: root,
-                startedAtMs: startedAtMs,
-                finishedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
-                stdout: result?.stdout ?? Data(),
-                stderr: result?.stderr ?? Data(),
-                exitCode: result?.status,
-                preFingerprint: before,
-                postFingerprint: after,
-                timedOut: result?.timedOut ?? false,
-                // Stopped by the user: the honest name is "interrupted" —
-                // it did not pass and it did not fail.
-                interrupted: result?.cancelled ?? false
-            )
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.isChecking = false
-                self.checkControl = nil
-                self.update {
-                    $0.runningCheck = nil
-                    $0.acceptanceEvidence.append(evidence)
-                    if $0.acceptanceEvidence.count > ManagedSession.maxAcceptanceEvidence {
-                        $0.acceptanceEvidence.removeFirst(
-                            $0.acceptanceEvidence.count - ManagedSession.maxAcceptanceEvidence
-                        )
-                    }
+        acceptance.run(command: command) { [weak self] evidence in
+            guard let self else { return }
+            self.update {
+                $0.runningCheck = nil
+                $0.acceptanceEvidence.append(evidence)
+                if $0.acceptanceEvidence.count > ManagedSession.maxAcceptanceEvidence {
+                    $0.acceptanceEvidence.removeFirst(
+                        $0.acceptanceEvidence.count - ManagedSession.maxAcceptanceEvidence
+                    )
                 }
-                completion?()
             }
+            completion?()
         }
+    }
+
+    /// Where the newest evidence stands against the code as it is now.
+    var latestEvidenceStanding: EvidenceStanding? {
+        model.acceptanceEvidence.last.map { acceptance.standing(of: $0) }
+    }
+
+    private func acceptanceChanged() {
+        acceptance.watch(latest: model.acceptanceEvidence.last)
+        onChange?()
     }
 
     /// 6.0-γ: what this turn left on disk — measured with the same
@@ -186,25 +178,30 @@ final class ManagedSessionRunner {
         runtimeSession.shutdown()
         // A check must not outlive the app that was going to record it; the
         // persisted `runningCheck` reloads as interrupted.
-        checkControl?.cancel()
+        acceptance.shutdown()
     }
 
     /// Stop the running check and its whole process group.
     func cancelCheck() {
-        checkControl?.cancel()
+        acceptance.cancel()
     }
 
-    private func finishedTurn(exitCode: Int32, stderrTail: Data) {
+    /// The user's decision on a permission request this session raised.
+    func resolveApproval(id: String, decision: ManagedApprovalDecision) {
+        runtimeSession.resolveApproval(id: id, decision: decision)
+    }
+
+    private func finishedTurn(_ end: ManagedTurnEnd) {
         update {
             switch $0.status {
             case .running:
-                // No result event claimed this exit. Zero is not success
-                // here — success speaks through the stream; a silent clean
-                // exit is still an answer that never arrived.
-                let stderrText = String(decoding: stderrTail.suffix(300), as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                $0.status = .failed(stderrText.isEmpty ? "exit \(exitCode)" : stderrText)
-                if $0.lastErrorText.isEmpty { $0.lastErrorText = "exit \(exitCode)" }
+                // No result event claimed this end. A clean exit is not
+                // success here — success speaks through the stream; a silent
+                // end is still an answer that never arrived.
+                $0.status = .failed(end.failureText)
+                if $0.lastErrorText.isEmpty {
+                    $0.lastErrorText = end.exitStatus.map { "exit \($0)" } ?? end.failureText
+                }
             case .idle, .failed, .cancelled, .queued, .interrupted:
                 // The last three cannot follow a child exit in practice —
                 // but a no-op is the honest handling if one ever does.
@@ -216,7 +213,12 @@ final class ManagedSessionRunner {
         } else if case .failed = model.status {
             measureTurnEffect()
         }
-        DebugLog.write("managed turn end id=\(model.id) exit=\(exitCode) status=\(model.status)")
+        // A turn is the agent editing the worktree: a pass from before it is
+        // re-judged now, not whenever someone next opens the inspector.
+        if model.acceptanceEvidence.last != nil { acceptance.refresh() }
+        DebugLog.write(
+            "managed turn end id=\(model.id) exit=\(end.exitStatus.map(String.init) ?? "-") status=\(model.status)"
+        )
     }
 
     private func update(_ mutate: (inout ManagedSession.Model) -> Void) {

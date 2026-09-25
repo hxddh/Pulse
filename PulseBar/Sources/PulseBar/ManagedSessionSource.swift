@@ -49,7 +49,9 @@ final class ManagedSessionSource: SessionSource {
         for model: ManagedSession.Model,
         permissionAsk: ManagedPermission.Request? = nil
     ) -> AgentRow {
-        var row = AgentRow(rowKey: "managed|\(model.id)", agent: .claude)
+        // The runtime id names the agent (AgentCatalog raw value or alias).
+        let agent = AgentCatalog.agent(named: model.runtimeID) ?? .claude
+        var row = AgentRow(rowKey: "managed|\(model.id)", agent: agent)
         row.managedID = model.id
         row.sessionID = model.continuationID
         row.task = model.title

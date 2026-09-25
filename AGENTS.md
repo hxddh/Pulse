@@ -184,7 +184,7 @@ to users.
 
 ## Current state
 
-12.1.0 is the current source version (Kernel + Seams — [`docs/plan-12.0.md`](docs/plan-12.0.md)).
+12.2.0 is the current source version (Kernel + Seams + Groundwork — [`docs/plan-12.0.md`](docs/plan-12.0.md)).
 The review behind it is [`docs/review-11.0.md`](docs/review-11.0.md); its
 defects were fixed in 11.0.4. The next product axis is Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the

@@ -722,6 +722,8 @@ enum L10n {
         case .managedRunCheckChanged: return "Code changed while the check ran"
         case .managedRunCheckInterrupted: return "Check interrupted"
         case .managedRunCheckStop: return "Stop check"
+        case .managedEvidencePassing: return "Check passes on current code"
+        case .managedEvidenceNotPassing: return "Last check did not pass"
         case .managedTurnEffect: return "This turn on disk: +%d −%d"
         case .trayOpenInWorkbench: return "Open in Workbench"
         case .trayExpandRow: return "Expand row"
@@ -1368,6 +1370,8 @@ enum L10n {
         case .managedRunCheckChanged: return "检查运行期间代码发生变化"
         case .managedRunCheckInterrupted: return "检查被中断"
         case .managedRunCheckStop: return "停止检查"
+        case .managedEvidencePassing: return "检查在当前代码上通过"
+        case .managedEvidenceNotPassing: return "上次检查未通过"
         case .managedTurnEffect: return "本回合落盘：+%d −%d"
         case .trayOpenInWorkbench: return "在指挥台打开"
         case .trayExpandRow: return "展开此行"
@@ -1545,7 +1549,7 @@ enum L10n {
         case managedAttemptOrdinal, managedViewAttempt, managedCurrentAttempt
         case managedRunCheck, managedRunCheckPlaceholder, managedRunCheckExit
         case managedRunCheckTimeout, managedRunCheckMeasuring, managedRunCheckUnverified
-        case managedRunCheckStale, managedRunCheckChanged, managedRunCheckInterrupted, managedRunCheckStop
+        case managedRunCheckStale, managedRunCheckChanged, managedRunCheckInterrupted, managedRunCheckStop, managedEvidencePassing, managedEvidenceNotPassing
         case managedTurnEffect
         case trayOpenInWorkbench, trayExpandRow, trayCollapseRow
         case trayScanIncomplete
