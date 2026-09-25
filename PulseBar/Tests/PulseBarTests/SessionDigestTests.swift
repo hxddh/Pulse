@@ -227,6 +227,29 @@ final class SessionDigestTests: XCTestCase {
         XCTAssertEqual(partial.offset, whole.offset)
     }
 
+    /// One record longer than a whole slice must not stop the digest for good.
+    func testARecordLongerThanTheSliceIsSteppedOverNotStalledOn() throws {
+        let url = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let huge = #"{"type":"user","blob":""# + String(repeating: "x", count: 5_000) + #""}"#
+        let lines = [#"{"type":"tool_use","name":"Bash"}"#, huge, #"{"type":"tool_use","name":"Edit"}"#]
+        try write(lines, to: url)
+        let size = try fileSize(url)
+
+        var digest: SessionDigest?
+        for _ in 0..<20 {
+            guard let next = SessionDigestEngine.advance(digest, url: url, size: size, nowMs: now, maxBytes: 700)
+            else { break }
+            digest = next
+            if next.caughtUp { break }
+        }
+        let result = try XCTUnwrap(digest)
+        XCTAssertTrue(result.caughtUp, "the oversized record must not freeze the offset")
+        XCTAssertEqual(result.records, 3)
+        XCTAssertEqual(result.offset, size)
+        XCTAssertEqual(result.toolCounts["Edit"], 1, "records after the long one are still read")
+    }
+
     /// A transcript is appended to while Pulse reads it. Counting a half
     /// written record would put a wrong number on a row that never corrects.
     func testAPartialTrailingRecordIsNotCounted() throws {

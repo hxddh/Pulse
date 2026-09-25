@@ -192,9 +192,9 @@ private struct AgentDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 12) {
-                    Button(store.tr(.respondDeny)) { store.respondDeny(row) }
+                    Button(store.tr(.respondDeny)) { store.respondDeny(row, shown: .init(inbound)) }
                     if inbound.request.canOfferAllow {
-                        Button(store.tr(.respondAllow)) { store.respondAllow(row) }
+                        Button(store.tr(.respondAllow)) { store.respondAllow(row, shown: .init(inbound)) }
                     }
                 }
                 .buttonStyle(.bordered)

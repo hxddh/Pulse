@@ -185,6 +185,10 @@ enum SessionDigestFold {
     /// presented as totals until it is true.
     static let maxCatchUpBytes = 2_000_000
 
+    /// How far past a slice Pulse will look for the end of one record before
+    /// deciding it is not a record at all.
+    static let maxOversizedRecordBytes = 64 * 1024 * 1024
+
     static func headHash(_ data: Data) -> String {
         SHA256.hash(data: data.prefix(4096))
             .map { String(format: "%02x", $0) }
@@ -325,12 +329,13 @@ enum SessionDigestSummary {
 
 /// The collector's digests, held between scans.
 ///
-/// Scans run on one serial queue (`StatusStore.scanQueue`) and the CLI paths
-/// are single-threaded, so this needs no lock of its own — stated here because
-/// static mutable state that is safe only by convention should say so.
+/// Scans advance it on one serial queue (`StatusStore.scanQueue`), but the
+/// support report reads `summary` from the main thread — while a scan may be
+/// writing. "Safe by convention" was not safe, so every access holds `lock`.
 enum HarvestDigests {
     private static var store = SessionDigestStore.load()
     private static var dirty = false
+    private static let lock = NSLock()
 
     /// Test seam: the fixture wall and unit tests must not read or write the
     /// real user's digest file.
@@ -338,6 +343,8 @@ enum HarvestDigests {
 
     static func advance(url: URL, size: Int, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> SessionDigest? {
         guard isEnabled else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
         let key = url.path
         guard let updated = SessionDigestEngine.advance(
             store.entries[key], url: url, size: size, nowMs: nowMs
@@ -354,6 +361,8 @@ enum HarvestDigests {
     /// in the user's own digest file, and a unit test must never write to
     /// `~/Library/Application Support` as a side effect.
     static func flush(persist: Bool, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+        lock.lock()
+        defer { lock.unlock() }
         guard isEnabled, dirty else { return }
         guard persist else {
             store.prune(nowMs: nowMs)
@@ -369,7 +378,9 @@ enum HarvestDigests {
     /// many are still being caught up on — the state that used to be invisible
     /// because it did not exist.
     static var summary: String {
-        let all = store.entries.values
+        lock.lock()
+        let all = Array(store.entries.values)
+        lock.unlock()
         guard !all.isEmpty else { return "none" }
         let caught = all.filter(\.caughtUp).count
         let records = all.reduce(0) { $0 + $1.records }
@@ -378,6 +389,8 @@ enum HarvestDigests {
 
     /// Tests reset between cases.
     static func resetForTesting() {
+        lock.lock()
+        defer { lock.unlock() }
         store = SessionDigestStore()
         dirty = false
     }
@@ -479,9 +492,26 @@ enum SessionDigestEngine {
             complete = chunk
         } else if let afterLastNewline, afterLastNewline > chunk.startIndex {
             complete = chunk[..<afterLastNewline]
+        } else if chunk.count == want, digest.offset + chunk.count < size {
+            // One record longer than the whole slice — a pasted image, a huge
+            // tool result — with more of the file behind it. Waiting here
+            // used to be forever: the offset never moved, every scan re-read
+            // the same 2 MB, and the digest never caught up. Find where the
+            // record ends and count it as the one record it is.
+            guard let end = endOfRecord(
+                handle, from: digest.offset + chunk.count, size: size,
+                limit: SessionDigestFold.maxOversizedRecordBytes
+            ) else { return nil }
+            digest.records += 1
+            digest.offset = end
+            digest.lastFoldedMs = nowMs
+            if digest.firstFoldedMs == 0 { digest.firstFoldedMs = nowMs }
+            digest.previousSize = priorSize
+            digest.previousFoldedMs = priorFoldedMs
+            return digest
         } else {
-            // One record longer than the whole slice. Wait for more rather
-            // than guess where it ends.
+            // A lone unterminated tail still being written. Wait for more
+            // rather than guess where it ends.
             return nil
         }
         guard !complete.isEmpty else { return nil }
@@ -494,6 +524,23 @@ enum SessionDigestEngine {
         digest.previousSize = priorSize
         digest.previousFoldedMs = priorFoldedMs
         return digest
+    }
+
+    /// The offset just past the newline that ends the record in progress at
+    /// `from`, looking no further than `limit` bytes. Nil when the record is
+    /// still being written or is longer than any real one.
+    static func endOfRecord(_ handle: FileHandle, from: Int, size: Int, limit: Int) -> Int? {
+        var position = from
+        do { try handle.seek(toOffset: UInt64(position)) } catch { return nil }
+        while position < size, position - from < limit {
+            guard let block = try? handle.read(upToCount: min(1 << 20, size - position)),
+                  !block.isEmpty else { return nil }
+            if let newline = block.firstIndex(of: UInt8(ascii: "\n")) {
+                return position + block.distance(from: block.startIndex, to: newline) + 1
+            }
+            position += block.count
+        }
+        return nil
     }
 
     /// `<device>.<inode>` — stable across renames, different after a recreate.

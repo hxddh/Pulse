@@ -98,7 +98,7 @@ enum ManagedPermission {
         var out: [Request] = []
         for name in names.sorted() where name.hasSuffix(".json") {
             let url = requestsDirectory().appendingPathComponent(name)
-            guard let data = try? Data(contentsOf: url),
+            guard let data = SafeRead.regularFile(atPath: url.path, limit: 1024 * 1024),
                   let request = try? JSONDecoder().decode(Request.self, from: data),
                   name == request.id + ".json"
             else { continue }
@@ -124,7 +124,7 @@ enum ManagedPermission {
     /// Single use: reading a verdict consumes its file.
     static func takeVerdict(id: String) -> Verdict? {
         let url = verdictsDirectory().appendingPathComponent(id + ".json")
-        guard let data = try? Data(contentsOf: url),
+        guard let data = SafeRead.regularFile(atPath: url.path, limit: 64 * 1024),
               let verdict = try? JSONDecoder().decode(Verdict.self, from: data),
               verdict.id == id
         else { return nil }

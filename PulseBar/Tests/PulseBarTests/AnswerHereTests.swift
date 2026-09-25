@@ -51,6 +51,32 @@ final class AnswerHereTests: XCTestCase {
         )
     }
 
+    func testADetachedChainReachingLaunchdIsUnknownNotFalse() {
+        // hook 100 → agent 500 → shell 900 → tmux server 950 → launchd.
+        // The terminal the user reads it in is not on this chain at all, so
+        // reaching launchd proves nothing about whether they are looking.
+        let tmux: [Int32: Int32] = [100: 500, 500: 900, 900: 950, 950: 1]
+        XCTAssertNil(
+            PromptVisibility.isAncestor(4321, of: 100, parentOf: { tmux[$0] }, isApp: { _ in false })
+        )
+        XCTAssertFalse(
+            RespondHold.shouldHold(
+                idleSeconds: 0,
+                promptIsFrontmost: PromptVisibility.isAncestor(
+                    4321, of: 100, parentOf: { tmux[$0] }, isApp: { _ in false }
+                )
+            ),
+            "a present user in tmux must not have their agent frozen"
+        )
+    }
+
+    func testAChainThroughAnAppReachingLaunchdIsFalse() {
+        XCTAssertEqual(
+            PromptVisibility.isAncestor(7777, of: 100, parentOf: { self.chain[$0] }, isApp: { $0 == 4321 }),
+            false
+        )
+    }
+
     func testAProcessIsItsOwnAncestor() {
         XCTAssertEqual(
             PromptVisibility.isAncestor(100, of: 100, parentOf: { self.chain[$0] }),
@@ -93,13 +119,13 @@ final class AnswerHereTests: XCTestCase {
     func testPromptVisibilityUsesTheChain() {
         XCTAssertEqual(
             PromptVisibility.promptIsFrontmost(
-                selfPID: 100, frontmost: 4321, parentOf: { self.chain[$0] }
+                selfPID: 100, frontmost: 4321, parentOf: { self.chain[$0] }, isApp: { $0 == 4321 }
             ),
             true
         )
         XCTAssertEqual(
             PromptVisibility.promptIsFrontmost(
-                selfPID: 100, frontmost: 7777, parentOf: { self.chain[$0] }
+                selfPID: 100, frontmost: 7777, parentOf: { self.chain[$0] }, isApp: { $0 == 4321 }
             ),
             false
         )

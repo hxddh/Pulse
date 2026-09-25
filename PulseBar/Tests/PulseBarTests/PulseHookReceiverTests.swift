@@ -446,6 +446,42 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertLessThan(notifyIdx.lowerBound, sectionIdx.lowerBound)
     }
 
+    func testInstallNeverOverwritesTheUsersOwnCodexNotify() throws {
+        let cfg = tempHome.appendingPathComponent(".codex/config.toml")
+        try FileManager.default.createDirectory(at: cfg.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original = """
+        model = "gpt"
+        notify = [
+          "terminal-notifier",
+          "-title", "Codex",
+        ]
+
+        [mcp]
+        enabled = true
+
+        """
+        try original.write(to: cfg, atomically: true, encoding: .utf8)
+
+        try HooksInstaller.ensureLauncher()
+        _ = try HooksInstaller.install()
+        XCTAssertEqual(try String(contentsOf: cfg, encoding: .utf8), original, "their notify is theirs")
+    }
+
+    func testInstallWritesThroughASymlinkedSettingsFile() throws {
+        let real = tempHome.appendingPathComponent("dotfiles/settings.json")
+        try FileManager.default.createDirectory(at: real.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "{}\n".write(to: real, atomically: true, encoding: .utf8)
+        let settings = tempHome.appendingPathComponent(".claude/settings.json")
+        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: settings, withDestinationURL: real)
+
+        try HooksInstaller.ensureLauncher()
+        _ = try HooksInstaller.install()
+        let attributes = try FileManager.default.attributesOfItem(atPath: settings.path)
+        XCTAssertEqual(attributes[.type] as? FileAttributeType, .typeSymbolicLink, "the link survives")
+        XCTAssertTrue(try String(contentsOf: real, encoding: .utf8).contains("pulse-hook"))
+    }
+
     func testRootTableEndFindsFirstSection() {
         let text = "a = 1\n\n[profile]\nx = 1\n"
         let end = HooksInstaller.rootTableEnd(text)

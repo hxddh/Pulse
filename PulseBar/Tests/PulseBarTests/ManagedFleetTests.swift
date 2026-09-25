@@ -121,6 +121,16 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(loaded.acceptanceEvidence.first?.command, "check 5")
     }
 
+    func testACheckInFlightAtQuitReloadsAsInterrupted() throws {
+        var original = model("checking")
+        original.runningCheck = RunningCheck(command: "swift test", cwd: "/tmp/w", startedAtMs: 42)
+        XCTAssertTrue(ManagedSession.persist(original))
+        let loaded = try XCTUnwrap(ManagedSession.loadAll().first)
+        XCTAssertNil(loaded.runningCheck)
+        XCTAssertEqual(loaded.acceptanceEvidence.last?.outcome, .interrupted)
+        XCTAssertEqual(loaded.acceptanceEvidence.last?.command, "swift test")
+    }
+
     func testFilenameDecidesIdentityHereToo() throws {
         ManagedSession.persist(model("honest"))
         // A renamed state file claims an identity its body does not carry.

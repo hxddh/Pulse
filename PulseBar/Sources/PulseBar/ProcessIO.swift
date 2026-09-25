@@ -12,20 +12,35 @@ enum ProcessIO {
         var timedOut: Bool
     }
 
-    private final class Buffer {
+    /// Which end of an over-long output survives. Probes parse from the
+    /// start; a check's verdict — the failing test, the summary — is at the
+    /// end, which is what 11.0.3's head-only buffer threw away.
+    enum Keep { case head, tail }
+
+    private final class Buffer: @unchecked Sendable {
         private let lock = NSLock()
         private var data = Data()
         private let limit: Int
+        private let keep: Keep
 
-        init(limit: Int) { self.limit = limit }
+        init(limit: Int, keep: Keep = .head) {
+            self.limit = limit
+            self.keep = keep
+        }
 
         func append(_ chunk: Data) {
             guard !chunk.isEmpty else { return }
             lock.lock()
             defer { lock.unlock() }
-            let remaining = max(0, limit - data.count)
-            guard remaining > 0 else { return }
-            data.append(chunk.prefix(remaining))
+            switch keep {
+            case .head:
+                let remaining = max(0, limit - data.count)
+                guard remaining > 0 else { return }
+                data.append(chunk.prefix(remaining))
+            case .tail:
+                data.append(chunk)
+                if data.count > limit { data = Data(data.suffix(limit)) }
+            }
         }
 
         var value: Data {
@@ -113,5 +128,120 @@ enum ProcessIO {
             status: task.isRunning ? -1 : task.terminationStatus,
             timedOut: timedOut
         )
+    }
+
+    /// A user's check: `/bin/sh -lc <command>` in its **own process group**,
+    /// output kept from the tail, and the whole group killed when the shell
+    /// ends or the deadline passes.
+    ///
+    /// 11.0.3 ran checks through `run`, whose SIGKILL reached only the shell:
+    /// a test runner's children survived the timeout and could keep changing
+    /// the worktree the evidence had just been measured against.
+    static func runCheck(
+        command: String,
+        currentDirectory: String,
+        timeout: TimeInterval,
+        outputLimit: Int
+    ) -> Result? {
+        var stdoutPipe: [Int32] = [-1, -1]
+        var stderrPipe: [Int32] = [-1, -1]
+        guard pipe(&stdoutPipe) == 0 else { return nil }
+        guard pipe(&stderrPipe) == 0 else {
+            close(stdoutPipe[0]); close(stdoutPipe[1])
+            return nil
+        }
+
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, stdoutPipe[1], 1)
+        posix_spawn_file_actions_adddup2(&actions, stderrPipe[1], 2)
+        for fd in [stdoutPipe[0], stdoutPipe[1], stderrPipe[0], stderrPipe[1]] {
+            posix_spawn_file_actions_addclose(&actions, fd)
+        }
+        posix_spawn_file_actions_addchdir_np(&actions, currentDirectory)
+
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setpgroup(&attributes, 0)
+
+        let arguments = ["/bin/sh", "-lc", command]
+        let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
+        defer { for pointer in argv { free(pointer) } }
+        let environment = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        let envp: [UnsafeMutablePointer<CChar>?] = environment.map { strdup($0) } + [nil]
+        defer { for pointer in envp { free(pointer) } }
+
+        var pid: pid_t = 0
+        let spawned = posix_spawn(&pid, "/bin/sh", &actions, &attributes, argv, envp)
+        close(stdoutPipe[1])
+        close(stderrPipe[1])
+        guard spawned == 0 else {
+            close(stdoutPipe[0]); close(stderrPipe[0])
+            return nil
+        }
+        let child = pid
+        let stdoutRead = stdoutPipe[0]
+        let stderrRead = stderrPipe[0]
+
+        let outBuffer = Buffer(limit: outputLimit, keep: .tail)
+        let errBuffer = Buffer(limit: outputLimit, keep: .tail)
+        let outDone = DispatchSemaphore(value: 0)
+        let errDone = DispatchSemaphore(value: 0)
+        let exitDone = DispatchSemaphore(value: 0)
+        let status = CheckStatus()
+        func drain(_ fd: Int32, into buffer: Buffer, done: DispatchSemaphore) {
+            Thread.detachNewThread {
+                let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+                while let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                    buffer.append(chunk)
+                }
+                done.signal()
+            }
+        }
+        drain(stdoutRead, into: outBuffer, done: outDone)
+        drain(stderrRead, into: errBuffer, done: errDone)
+        Thread.detachNewThread {
+            var raw: Int32 = 0
+            while waitpid(child, &raw, 0) == -1, errno == EINTR {}
+            status.value = decodeWaitStatus(raw)
+            exitDone.signal()
+        }
+
+        let timedOut = exitDone.wait(timeout: .now() + timeout) == .timedOut
+        if timedOut {
+            kill(-child, SIGTERM)
+            if exitDone.wait(timeout: .now() + 2) == .timedOut {
+                kill(-child, SIGKILL)
+                _ = exitDone.wait(timeout: .now() + 2)
+            }
+        }
+        // The check is over when its shell is. Anything it left running in
+        // its group is not part of the evidence and must not outlive it.
+        kill(-child, SIGKILL)
+        _ = outDone.wait(timeout: .now() + 2)
+        _ = errDone.wait(timeout: .now() + 2)
+        return Result(
+            stdout: outBuffer.value,
+            stderr: errBuffer.value,
+            status: timedOut ? -1 : status.value,
+            timedOut: timedOut
+        )
+    }
+
+    /// `WIFEXITED` / `WEXITSTATUS` / `WTERMSIG`, which Swift cannot import
+    /// as macros. A signal death reads as `128 + signal`, the shell's own
+    /// convention, so it is never mistaken for a clean exit.
+    static func decodeWaitStatus(_ raw: Int32) -> Int32 {
+        let signal = raw & 0x7f
+        if signal == 0 { return (raw >> 8) & 0xff }
+        return 128 + signal
+    }
+
+    private final class CheckStatus: @unchecked Sendable {
+        var value: Int32 = -1
     }
 }

@@ -130,13 +130,16 @@ struct ClaudeManagedRuntime: ManagedRuntime {
     func makeSession() -> any ManagedRuntimeSession { Session() }
 
     @MainActor
-    private final class Session: ManagedRuntimeSession {
+    fileprivate final class Session: ManagedRuntimeSession {
         var onEvent: ((ManagedRuntimeEvent) -> Void)?
         var onFinish: ((Int32, Data) -> Void)?
 
         private var process: Process?
         private var lineBuffer = ManagedSession.LineBuffer()
         private var stderrTail = Data()
+        /// Which turn the reader threads belong to; late deliveries from an
+        /// earlier child are dropped rather than mixed into this one.
+        private var turn = 0
 
         func start(prompt: String, continuation: String?, root: String, managedID: String) -> String? {
             guard let executable = ClaudeManagedRuntime.executable() else {
@@ -159,28 +162,55 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             child.standardInput = FileHandle.nullDevice
             lineBuffer = ManagedSession.LineBuffer()
             stderrTail = Data()
+            turn += 1
+            let turnID = turn
 
-            out.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let chunk = handle.availableData
-                guard !chunk.isEmpty else { return }
-                Task { @MainActor [weak self] in self?.consume(chunk) }
-            }
-            err.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let chunk = handle.availableData
-                guard !chunk.isEmpty else { return }
-                Task { @MainActor [weak self] in self?.consumeStderr(chunk) }
-            }
-            child.terminationHandler = { [weak self] finished in
-                let code = finished.terminationStatus
-                Task { @MainActor [weak self] in self?.finished(exitCode: code, pipes: (out, err)) }
+            // One reader thread per pipe, and the exit is only reported once
+            // both pipes have reached EOF *and* the child has exited. Every
+            // hop to the main queue comes from the same thread in the order
+            // the bytes arrived, so the last stdout chunk — usually the
+            // `result` event — is always consumed before the turn ends.
+            // 11.0.3 raced a `Task` per chunk against a `Task` for the exit,
+            // and a successful turn could end as `failed("exit 0")`.
+            let exited = DispatchSemaphore(value: 0)
+            let stderrDone = DispatchSemaphore(value: 0)
+            let exitCode = ManagedExitCode()
+            child.terminationHandler = { finished in
+                exitCode.value = finished.terminationStatus
+                exited.signal()
             }
             do {
                 try child.run()
                 process = child
-                return nil
             } catch {
+                turn += 1
                 return "spawn: \(error.localizedDescription)"
             }
+            let target = ManagedSessionRef(self)
+            let errHandle = err.fileHandleForReading
+            Thread.detachNewThread {
+                while let chunk = try? errHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { target.session?.consumeStderr(chunk, turn: turnID) }
+                    }
+                }
+                stderrDone.signal()
+            }
+            let outHandle = out.fileHandleForReading
+            Thread.detachNewThread {
+                while let chunk = try? outHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { target.session?.consume(chunk, turn: turnID) }
+                    }
+                }
+                stderrDone.wait()
+                exited.wait()
+                let code = exitCode.value
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { target.session?.finished(exitCode: code, turn: turnID) }
+                }
+            }
+            return nil
         }
 
         func cancel() -> Bool {
@@ -188,7 +218,9 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             child.terminate()
             let pid = child.processIdentifier
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                kill(pid, SIGKILL)
+                // Only the child we started: once it has exited and been
+                // reaped its pid may already belong to something else.
+                if child.isRunning { kill(pid, SIGKILL) }
             }
             return true
         }
@@ -198,22 +230,21 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             child.terminate()
         }
 
-        private func consume(_ chunk: Data) {
+        fileprivate func consume(_ chunk: Data, turn chunkTurn: Int) {
+            guard chunkTurn == turn else { return }
             for line in lineBuffer.lines(from: chunk) {
                 for event in ClaudeManagedRuntime.decode(line: line) { onEvent?(event) }
             }
         }
 
-        private func consumeStderr(_ chunk: Data) {
+        fileprivate func consumeStderr(_ chunk: Data, turn chunkTurn: Int) {
+            guard chunkTurn == turn else { return }
             stderrTail.append(chunk)
             if stderrTail.count > 4_096 { stderrTail = stderrTail.suffix(4_096) }
         }
 
-        private func finished(exitCode: Int32, pipes: (Pipe, Pipe)) {
-            pipes.0.fileHandleForReading.readabilityHandler = nil
-            pipes.1.fileHandleForReading.readabilityHandler = nil
-            let rest = pipes.0.fileHandleForReading.readDataToEndOfFile()
-            consume(rest)
+        fileprivate func finished(exitCode: Int32, turn finishedTurn: Int) {
+            guard finishedTurn == turn else { return }
             if let tail = lineBuffer.flush() {
                 for event in ClaudeManagedRuntime.decode(line: tail) { onEvent?(event) }
             }
@@ -221,4 +252,17 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             onFinish?(exitCode, stderrTail)
         }
     }
+}
+
+/// Written once by a termination handler, read once after the `exited`
+/// semaphore — the semaphore is the synchronisation.
+private final class ManagedExitCode: @unchecked Sendable {
+    var value: Int32 = -1
+}
+
+/// A weak reference the reader threads can carry: the session is main-actor
+/// state, touched only inside `MainActor.assumeIsolated` on the main queue.
+private final class ManagedSessionRef: @unchecked Sendable {
+    weak var session: ClaudeManagedRuntime.Session?
+    init(_ session: ClaudeManagedRuntime.Session) { self.session = session }
 }

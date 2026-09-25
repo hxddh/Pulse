@@ -37,6 +37,31 @@ final class AcceptanceEvidenceTests: XCTestCase {
         XCTAssertNotEqual(untracked, CodeFingerprint.measure(cwd: repo.path))
     }
 
+    func testCommittingTheCheckedContentKeepsItsIdentity() throws {
+        try Data("checked\n".utf8).write(to: repo.appendingPathComponent("tracked"))
+        try Data("new file\n".utf8).write(to: repo.appendingPathComponent("added"))
+        let checked = try XCTUnwrap(CodeFingerprint.measure(cwd: repo.path))
+        git(["add", "-A"])
+        XCTAssertEqual(checked, CodeFingerprint.measure(cwd: repo.path), "staging is not a content change")
+        git(["-c", "user.name=Pulse", "-c", "user.email=pulse@example.invalid", "commit", "-qm", "land"])
+        XCTAssertEqual(
+            checked, CodeFingerprint.measure(cwd: repo.path),
+            "committing exactly what a check passed must not make its evidence stale"
+        )
+    }
+
+    func testDeletingATrackedFileChangesTheIdentity() throws {
+        let before = try XCTUnwrap(CodeFingerprint.measure(cwd: repo.path))
+        try FileManager.default.removeItem(at: repo.appendingPathComponent("tracked"))
+        let after = try XCTUnwrap(CodeFingerprint.measure(cwd: repo.path))
+        XCTAssertNotEqual(before, after)
+    }
+
+    func testBlobIDMatchesGit() {
+        // `printf 'one\n' | git hash-object --stdin`
+        XCTAssertEqual(CodeFingerprint.blobID(Data("one\n".utf8)), "5626abf0f72e58d7a153368ba57db4c673c0e171")
+    }
+
     func testStagedChangesAreIncluded() throws {
         let before = try XCTUnwrap(CodeFingerprint.measure(cwd: repo.path))
         try Data("staged\n".utf8).write(to: repo.appendingPathComponent("tracked"))

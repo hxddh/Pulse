@@ -212,7 +212,7 @@ enum HooksInstaller {
         let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
         var text = String(data: out, encoding: .utf8) ?? "{}"
         if !text.hasSuffix("\n") { text += "\n" }
-        try text.write(to: settings, atomically: true, encoding: .utf8)
+        try writeConfig(text, to: settings)
         return settings.path
     }
 
@@ -308,7 +308,7 @@ enum HooksInstaller {
             let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
             var text = String(data: out, encoding: .utf8) ?? "{}"
             if !text.hasSuffix("\n") { text += "\n" }
-            try text.write(to: target, atomically: true, encoding: .utf8)
+            try writeConfig(text, to: target)
         }
         return "\(home.path)/.claude/settings.json (\(removed) hook entries removed)"
     }
@@ -331,6 +331,12 @@ enum HooksInstaller {
         }.joined(separator: ", ")
         let line = "notify = [\(quoted)]\n"
 
+        if !text.isEmpty {
+            let backup = cfg.appendingPathExtension("pulse-backup")
+            if !FileManager.default.fileExists(atPath: backup.path) {
+                try? text.write(to: backup, atomically: true, encoding: .utf8)
+            }
+        }
         let end = rootTableEnd(text)
         var root = String(text.prefix(end))
         let rest = String(text.dropFirst(end))
@@ -349,19 +355,17 @@ enum HooksInstaller {
                     if !root.hasSuffix("\n") { root += "\n" }
                     if !root.hasSuffix("\n\n") { root += "\n" }
                 }
-                try (root + rest).write(to: cfg, atomically: true, encoding: .utf8)
+                try writeConfig(root + rest, to: cfg)
                 return cfg.path + " (migrated)"
             }
             return cfg.path + " (already present)"
         }
         if root.range(of: #"(?m)^\s*notify\s*="#, options: .regularExpression) != nil {
-            root = root.replacingOccurrences(
-                of: #"(?m)^\s*notify\s*=.*$"#,
-                with: line.trimmingCharacters(in: .newlines),
-                options: .regularExpression,
-                range: nil
-            )
-            if !root.hasSuffix("\n") { root += "\n" }
+            // The user's own notify. Codex runs exactly one, so adding Pulse
+            // means removing theirs — 11.0.3 did that silently, and a
+            // multi-line `notify = [` array was left as broken TOML. Their
+            // command is theirs; say so and change nothing.
+            return cfg.path + " (kept your own notify — Codex allows one; Pulse was not added)"
         } else {
             if !root.isEmpty, !root.hasSuffix("\n") { root += "\n" }
             root += "\n# Pulse attention hooks\n" + line
@@ -370,7 +374,7 @@ enum HooksInstaller {
             if !root.hasSuffix("\n") { root += "\n" }
             if !root.hasSuffix("\n\n") { root += "\n" }
         }
-        try (root + rest).write(to: cfg, atomically: true, encoding: .utf8)
+        try writeConfig(root + rest, to: cfg)
         return cfg.path
     }
 
@@ -399,8 +403,23 @@ enum HooksInstaller {
         var body = kept.joined(separator: "\n")
         while body.hasSuffix("\n\n") { body = String(body.dropLast()) }
         if !body.hasSuffix("\n") { body += "\n" }
-        try body.write(to: cfg, atomically: true, encoding: .utf8)
+        try writeConfig(body, to: cfg)
         return cfg.path
+    }
+
+    /// Write a vendor config in place of the file the user actually has.
+    ///
+    /// `String.write(atomically:)` replaces the path it is given: a
+    /// settings.json symlinked from a dotfiles repo became a plain file, and
+    /// its mode reset to the umask. Resolve the link first and carry the
+    /// existing mode across.
+    static func writeConfig(_ text: String, to url: URL) throws {
+        let target = url.resolvingSymlinksInPath()
+        let mode = (try? FileManager.default.attributesOfItem(atPath: target.path))?[.posixPermissions]
+        try text.write(to: target, atomically: true, encoding: .utf8)
+        if let mode {
+            try? FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: target.path)
+        }
     }
 
     /// Offset where Codex's root table ends (start of the first `[section]`).

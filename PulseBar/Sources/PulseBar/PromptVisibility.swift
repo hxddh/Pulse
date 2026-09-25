@@ -31,25 +31,34 @@ enum PromptVisibility {
     ///
     /// Pure: the parent lookup is injected, so the walk can be pinned to
     /// fixtures without a process table.
+    ///
+    /// A walk that reaches launchd is only a real "no" when it passed through
+    /// an application on the way (`isApp`). A detached chain — the agent runs
+    /// under a tmux or screen server, which is re-parented to launchd — never
+    /// meets the terminal the user is actually reading it in, so reaching
+    /// launchd there proves nothing and the answer is unknown.
     static func isAncestor(
         _ candidate: Int32,
         of pid: Int32,
-        parentOf: (Int32) -> Int32?
+        parentOf: (Int32) -> Int32?,
+        isApp: (Int32) -> Bool = { _ in true }
     ) -> Bool? {
         guard candidate > 0, pid > 0 else { return nil }
         if candidate == pid { return true }
         var seen: Set<Int32> = [pid]
         var current = pid
+        var passedAnApp = false
         for _ in 0..<maxDepth {
             guard let parent = parentOf(current) else { return nil }
             // launchd is pid 1 and its own parent is 0 or 1; either way the
             // walk is over and the candidate was not on it.
-            if parent <= 1 { return false }
+            if parent <= 1 { return passedAnApp ? false : nil }
             if parent == candidate { return true }
             // A pid that is its own ancestor cannot be walked. Say so rather
             // than spin or invent an answer.
             if seen.contains(parent) { return nil }
             seen.insert(parent)
+            if isApp(parent) { passedAnApp = true }
             current = parent
         }
         return nil
@@ -85,9 +94,16 @@ enum PromptVisibility {
     static func promptIsFrontmost(
         selfPID: Int32 = getpid(),
         frontmost: Int32? = frontmostPID,
-        parentOf: (Int32) -> Int32? = parentPID(of:)
+        parentOf: (Int32) -> Int32? = parentPID(of:),
+        isApp: (Int32) -> Bool = isApplication(pid:)
     ) -> Bool? {
         guard let frontmost, frontmost > 0 else { return nil }
-        return isAncestor(frontmost, of: selfPID, parentOf: parentOf)
+        return isAncestor(frontmost, of: selfPID, parentOf: parentOf, isApp: isApp)
+    }
+
+    /// Is `pid` a registered application (a terminal, an IDE) rather than a
+    /// shell, an agent or a multiplexer server?
+    static func isApplication(pid: Int32) -> Bool {
+        NSRunningApplication(processIdentifier: pid) != nil
     }
 }

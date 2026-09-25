@@ -123,8 +123,8 @@ extension StatusStore {
 
     /// Deny is always safe: refusing something you have not fully read cannot
     /// be regretted the way approving it can.
-    func respondDeny(_ row: AgentRow) {
-        writeRespondVerdict(row, allow: false)
+    func respondDeny(_ row: AgentRow, shown: RespondShown? = nil) {
+        writeRespondVerdict(row, allow: false, shown: shown)
     }
 
     /// Deny straight off the banner, where the interruption actually arrived.
@@ -147,8 +147,43 @@ extension StatusStore {
     /// Allow goes through the model's own gate: `decide(allow: true)` returns
     /// nil for a truncated or empty request, and this method reports failure
     /// rather than pretending.
-    func respondAllow(_ row: AgentRow) {
-        writeRespondVerdict(row, allow: true)
+    ///
+    /// `shown` is not optional: an approval is only ever for the request the
+    /// user was looking at. See `RespondShown`.
+    func respondAllow(_ row: AgentRow, shown: RespondShown) {
+        writeRespondVerdict(row, allow: true, shown: shown)
+    }
+
+    /// The request a verdict is about, as the button that sends it rendered it.
+    ///
+    /// Requests are re-matched to rows on every scan and a newer one replaces
+    /// the old on the same row. Resolving the request again at click time
+    /// therefore could sign one that arrived between drawing and clicking —
+    /// the user read A and approved B. A verdict carries what was on screen,
+    /// and one that no longer matches what is attached is refused.
+    struct RespondShown: Equatable {
+        var requestID: String
+        var digest: String
+
+        init(_ inbound: RespondSpool.InboundRequest) {
+            requestID = inbound.request.id
+            digest = inbound.request.digest
+        }
+    }
+
+    /// Pure resolution of which request a click may answer. Nil means refuse.
+    ///
+    /// Allow without `shown` never resolves. Deny without `shown` (tray row,
+    /// banner) may answer whatever is attached: refusing something unread is
+    /// the safe move the product promises is always available.
+    static func respondTarget(
+        attached: RespondSpool.InboundRequest?,
+        shown: RespondShown?,
+        allow: Bool
+    ) -> RespondSpool.InboundRequest? {
+        guard let attached else { return nil }
+        guard let shown else { return allow ? nil : attached }
+        return RespondShown(attached) == shown ? attached : nil
     }
 
     func openRespond(_ row: AgentRow) {
@@ -163,9 +198,14 @@ extension StatusStore {
     /// looked exactly like pressing a button that does nothing. Failure is
     /// still fail-open: the remote agent falls back to its own prompt, which
     /// is what the sentence says.
-    private func writeRespondVerdict(_ row: AgentRow, allow: Bool) {
-        guard let inbound = respondInboundByRowKey[row.rowKey] else {
+    private func writeRespondVerdict(_ row: AgentRow, allow: Bool, shown: RespondShown?) {
+        guard let attached = respondInboundByRowKey[row.rowKey] else {
             noteRowAction(row.rowKey, tr(.respondRequestGone))
+            return
+        }
+        guard let inbound = Self.respondTarget(attached: attached, shown: shown, allow: allow) else {
+            DebugLog.write("respond refuse allow=\(allow) key=\(row.rowKey) reason=request-changed")
+            noteRowAction(row.rowKey, tr(.respondRequestChanged))
             return
         }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)

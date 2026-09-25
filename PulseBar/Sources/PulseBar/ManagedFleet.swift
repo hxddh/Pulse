@@ -22,6 +22,11 @@ final class ManagedFleet {
         var turns: Int
         var runCommand: String
         var lastEvidence: AcceptanceEvidence?
+        /// The first turn's continuation arrives mid-turn. Without it here a
+        /// crash during that turn reloaded an empty id, and "reply to resume"
+        /// silently started a new conversation.
+        var continuationID: String
+        var runningCheck: RunningCheck?
     }
     private var lastPersisted: [String: PersistenceMarker] = [:]
     private var pumping = false
@@ -179,7 +184,9 @@ final class ManagedFleet {
             statusKind: state.statusKind,
             turns: state.turns,
             runCommand: state.runCommand,
-            lastEvidence: state.acceptanceEvidence.last
+            lastEvidence: state.acceptanceEvidence.last,
+            continuationID: state.continuationID,
+            runningCheck: state.runningCheck
         )
         if lastPersisted[state.id] == marker { return }
         lastPersisted[state.id] = marker
@@ -192,7 +199,9 @@ final class ManagedFleet {
             statusKind: state.statusKind,
             turns: state.turns,
             runCommand: state.runCommand,
-            lastEvidence: state.acceptanceEvidence.last
+            lastEvidence: state.acceptanceEvidence.last,
+            continuationID: state.continuationID,
+            runningCheck: state.runningCheck
         )
         ManagedSession.persist(runner.model)
     }

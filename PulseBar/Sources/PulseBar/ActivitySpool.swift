@@ -149,9 +149,7 @@ enum ActivitySpool {
     }
 
     private static func boundedRead(_ url: URL) -> Data? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        return try? handle.read(upToCount: maxBytesPerFile)
+        SafeRead.regularFile(atPath: url.path, limit: maxBytesPerFile)
     }
 
     private static func modificationMs(of url: URL) -> Int64 {

@@ -348,6 +348,26 @@ final class GroundTruthTests: XCTestCase {
         )
     }
 
+    /// The cursor names a place in the stable adapter list. When the
+    /// supervisor defers a different set next scan, it still resumes at the
+    /// adapter that was cut off, not at whatever now sits at the same index.
+    func testRotationResumesAtTheSameAdapterWhenTheFilterChanges() {
+        // Stable indices of the adapters this pass attempts; 4 was cut off
+        // last time. Adapter 2 is now deferred, which shifts every index in
+        // the filtered list — the old code would have started at 5.
+        XCTAssertEqual(
+            NativeActivityHarvest.rotationOffset(filteredStableIndices: [0, 1, 3, 4, 5], cursor: 4), 3
+        )
+        // The cut-off adapter itself is deferred now: start at the next one.
+        XCTAssertEqual(
+            NativeActivityHarvest.rotationOffset(filteredStableIndices: [0, 1, 5], cursor: 4), 2
+        )
+        // Past the end wraps to the head.
+        XCTAssertEqual(
+            NativeActivityHarvest.rotationOffset(filteredStableIndices: [0, 1], cursor: 9), 0
+        )
+    }
+
     func testCompleteScanRewindsTheCursor() throws {
         let home = try makeHome("cursor")
         defer { try? FileManager.default.removeItem(at: home) }

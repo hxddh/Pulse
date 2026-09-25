@@ -162,4 +162,43 @@ final class StatusStoreRespondTests: XCTestCase {
         XCTAssertEqual(matched["claude|s1"]?.request.id, "toolu_local")
         XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_1")
     }
+
+    // MARK: - H-1 · the verdict answers the request that was on screen
+
+    func testAllowRefusesARequestThatReplacedTheShownOne() {
+        let shownA = StatusStore.RespondShown(inbound(id: "toolu_A", receivedAtMs: 1))
+        // A newer request B arrived on the same row between draw and click.
+        let matched = StatusStore.matchRespondInbound(
+            [inbound(id: "toolu_A", receivedAtMs: 1), inbound(id: "toolu_B", receivedAtMs: 2)],
+            rows: [remoteRow()]
+        )
+        let attached = matched["claude|s1@devbox"]
+        XCTAssertEqual(attached?.request.id, "toolu_B")
+        XCTAssertNil(StatusStore.respondTarget(attached: attached, shown: shownA, allow: true))
+        XCTAssertNil(StatusStore.respondTarget(attached: attached, shown: shownA, allow: false))
+    }
+
+    func testAllowAnswersTheShownRequest() {
+        let a = inbound(id: "toolu_A")
+        let target = StatusStore.respondTarget(attached: a, shown: .init(a), allow: true)
+        XCTAssertEqual(target?.request.id, "toolu_A")
+    }
+
+    func testAllowNeverResolvesWithoutAShownRequest() {
+        XCTAssertNil(StatusStore.respondTarget(attached: inbound(), shown: nil, allow: true))
+    }
+
+    func testDenyWithoutAShownRequestAnswersWhateverIsAttached() {
+        XCTAssertEqual(
+            StatusStore.respondTarget(attached: inbound(), shown: nil, allow: false)?.request.id,
+            "toolu_1"
+        )
+    }
+
+    func testSameIDWithDifferentContentIsNotTheShownRequest() {
+        let a = inbound(id: "toolu_A")
+        var edited = a
+        edited.request.fullRequest = #"{"tool_name":"Bash","tool_input":{"command":"rm -rf ~"}}"#
+        XCTAssertNil(StatusStore.respondTarget(attached: edited, shown: .init(a), allow: true))
+    }
 }
