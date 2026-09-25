@@ -5,12 +5,18 @@ enum ProcessProbe {
     /// `lsof` is only needed when a new agent process appears. Re-running it at
     /// the 2 s Waiting cadence would turn one useful fallback fact into a
     /// permanent energy cost.
-    private static var cwdCache: [Int: (path: String, observedAt: TimeInterval)] = [:]
+    private static var cwdCache: [Int: (path: String, observedAt: TimeInterval)] {
+        get { ScanEngine.memory.withValue { $0.cwd } }
+        set { ScanEngine.memory.withValue { $0.cwd = newValue } }
+    }
     /// A denied/empty `lsof` result must not become a prompt loop. macOS can
     /// surface the cross-app privacy dialog from this lookup, and retrying it
     /// on every probe cadence is both noisy and wasteful. Keep the negative
     /// result for a bounded period; a later explicit refresh can try again.
-    private static var cwdLookupBackoffUntil: TimeInterval = 0
+    private static var cwdLookupBackoffUntil: TimeInterval {
+        get { ScanEngine.memory.withValue { $0.cwdLookupBackoffUntil } }
+        set { ScanEngine.memory.withValue { $0.cwdLookupBackoffUntil = newValue } }
+    }
     private static let cwdLookupBackoffSeconds: TimeInterval = 5 * 60
 
     /// Last accumulated-CPU reading per pid: `(cputime seconds, wall clock ms)`.
@@ -23,7 +29,10 @@ enum ProcessProbe {
     ///
     /// Kept for matched agent processes only and rebuilt from the pids seen in
     /// each scan, so a process that exits takes its entry with it.
-    private static var cpuSamples: [Int: (cpuSeconds: Double, atMs: Int64)] = [:]
+    private static var cpuSamples: [Int: (cpuSeconds: Double, atMs: Int64)] {
+        get { ScanEngine.memory.withValue { $0.cpuSamples } }
+        set { ScanEngine.memory.withValue { $0.cpuSamples = newValue } }
+    }
     /// Hard ceiling on that store. Only agent processes are sampled, so this is
     /// never reached in practice; it exists so that a pathological machine
     /// cannot turn a cache into a leak.
@@ -41,7 +50,10 @@ enum ProcessProbe {
     /// cannot list processes shows nothing at all, and no new column is worth
     /// that; the app drops back to the field set it has always used and simply
     /// reports CPU as unknown.
-    private static var psRejectsCPUFields = false
+    private static var psRejectsCPUFields: Bool {
+        get { ScanEngine.memory.withValue { $0.psRejectsCPUFields } }
+        set { ScanEngine.memory.withValue { $0.psRejectsCPUFields = newValue } }
+    }
     private static let psFieldsWithCPU = "pid=,ppid=,tty=,etime=,cputime=,rss=,args="
     private static let psFieldsBase = "pid=,ppid=,tty=,etime=,args="
 
