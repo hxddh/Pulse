@@ -130,7 +130,7 @@ struct ClaudeManagedRuntime: ManagedRuntime {
     func makeSession() -> any ManagedRuntimeSession { Session() }
 
     @MainActor
-    private final class Session: ManagedRuntimeSession {
+    fileprivate final class Session: ManagedRuntimeSession {
         var onEvent: ((ManagedRuntimeEvent) -> Void)?
         var onFinish: ((Int32, Data) -> Void)?
 
@@ -186,27 +186,28 @@ struct ClaudeManagedRuntime: ManagedRuntime {
                 turn += 1
                 return "spawn: \(error.localizedDescription)"
             }
+            let target = ManagedSessionRef(self)
             let errHandle = err.fileHandleForReading
-            Thread.detachNewThread { [weak self] in
+            Thread.detachNewThread {
                 while let chunk = try? errHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
                     DispatchQueue.main.async {
-                        MainActor.assumeIsolated { self?.consumeStderr(chunk, turn: turnID) }
+                        MainActor.assumeIsolated { target.session?.consumeStderr(chunk, turn: turnID) }
                     }
                 }
                 stderrDone.signal()
             }
             let outHandle = out.fileHandleForReading
-            Thread.detachNewThread { [weak self] in
+            Thread.detachNewThread {
                 while let chunk = try? outHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
                     DispatchQueue.main.async {
-                        MainActor.assumeIsolated { self?.consume(chunk, turn: turnID) }
+                        MainActor.assumeIsolated { target.session?.consume(chunk, turn: turnID) }
                     }
                 }
                 stderrDone.wait()
                 exited.wait()
                 let code = exitCode.value
                 DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.finished(exitCode: code, turn: turnID) }
+                    MainActor.assumeIsolated { target.session?.finished(exitCode: code, turn: turnID) }
                 }
             }
             return nil
@@ -229,20 +230,20 @@ struct ClaudeManagedRuntime: ManagedRuntime {
             child.terminate()
         }
 
-        private func consume(_ chunk: Data, turn chunkTurn: Int) {
+        fileprivate func consume(_ chunk: Data, turn chunkTurn: Int) {
             guard chunkTurn == turn else { return }
             for line in lineBuffer.lines(from: chunk) {
                 for event in ClaudeManagedRuntime.decode(line: line) { onEvent?(event) }
             }
         }
 
-        private func consumeStderr(_ chunk: Data, turn chunkTurn: Int) {
+        fileprivate func consumeStderr(_ chunk: Data, turn chunkTurn: Int) {
             guard chunkTurn == turn else { return }
             stderrTail.append(chunk)
             if stderrTail.count > 4_096 { stderrTail = stderrTail.suffix(4_096) }
         }
 
-        private func finished(exitCode: Int32, turn finishedTurn: Int) {
+        fileprivate func finished(exitCode: Int32, turn finishedTurn: Int) {
             guard finishedTurn == turn else { return }
             if let tail = lineBuffer.flush() {
                 for event in ClaudeManagedRuntime.decode(line: tail) { onEvent?(event) }
@@ -257,4 +258,11 @@ struct ClaudeManagedRuntime: ManagedRuntime {
 /// semaphore — the semaphore is the synchronisation.
 private final class ManagedExitCode: @unchecked Sendable {
     var value: Int32 = -1
+}
+
+/// A weak reference the reader threads can carry: the session is main-actor
+/// state, touched only inside `MainActor.assumeIsolated` on the main queue.
+private final class ManagedSessionRef: @unchecked Sendable {
+    weak var session: ClaudeManagedRuntime.Session?
+    init(_ session: ClaudeManagedRuntime.Session) { self.session = session }
 }
