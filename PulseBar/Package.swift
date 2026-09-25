@@ -28,6 +28,12 @@ let package = Package(
             name: "PulseBar",
             dependencies: ["PulseCore"],
             path: "Sources/PulseBar",
+            resources: [
+                .copy("Resources/pulse_hook.py"),
+                .copy("Resources/install_hooks.py"),
+                .copy("Resources/AgentIcons"),
+                .copy("Resources/Brand"),
+            ],
             // 12.3: the app target is checked under complete concurrency
             // checking too. Unlike PulseCore it is not warning-free yet, so
             // warnings stay warnings here and `scripts/concurrency_ratchet.py`
@@ -35,12 +41,6 @@ let package = Package(
             // that may only go down.
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
-            ],
-            resources: [
-                .copy("Resources/pulse_hook.py"),
-                .copy("Resources/install_hooks.py"),
-                .copy("Resources/AgentIcons"),
-                .copy("Resources/Brand"),
             ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
