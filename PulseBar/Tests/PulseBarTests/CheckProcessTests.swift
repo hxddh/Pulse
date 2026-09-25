@@ -36,8 +36,11 @@ final class CheckProcessTests: XCTestCase {
         let result = try XCTUnwrap(ProcessIO.runCheck(
             command: "pwd -P", currentDirectory: directory.path, timeout: 30, outputLimit: 1024
         ))
+        // `pwd -P` prints /private/var/…; Foundation spells the same place
+        // /var/…. Compare the directories, not the spellings.
+        let reported = String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .newlines)
         XCTAssertEqual(
-            String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .newlines),
+            URL(fileURLWithPath: reported).resolvingSymlinksInPath().path,
             directory.resolvingSymlinksInPath().path
         )
     }
