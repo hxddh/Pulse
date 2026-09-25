@@ -3,7 +3,7 @@
 > **0.50 Signal Quality** — runtime rows carry a named
 > `ObservationQuality` envelope (`facts` / `missing` / `freshness` /
 > `confidence`). A missing field must explain why and what to do next; see
-> [`docs/plan-0.50.md`](plan-0.50.md). Process-only fallbacks are never
+> [`docs/archive/plan-0.50.md`](archive/plan-0.50.md). Process-only fallbacks are never
 > presented as equivalent to session/cache rows.
 
 Pulse does not count a detected process as “Agent support”. A useful row needs

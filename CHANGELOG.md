@@ -742,7 +742,7 @@ EXPERIENCE 加场景 AY。
 一段诚实的插曲：第一版修复以为 `GIT_OPTIONAL_LOCKS=0` 就够，因为容器里试了一遍
 「有效」。那是**测量顺序造成的假象** —— 第一次 diff 把刷新后的 stat 落了盘，之后
 再把 mtime 改回去也不再失配，于是后测的变体全都显得无辜。每个变体一个全新仓库重新
-隔离后，真相才出来。隔离方法和结论都写进了 `docs/plan-2.7.md`，因为这个错误比它的
+隔离后，真相才出来。隔离方法和结论都写进了 `docs/archive/plan-2.7.md`，因为这个错误比它的
 修复更值得记住。
 
 ### 实证从此是一条常设轴
@@ -911,7 +911,7 @@ EXPERIENCE 加场景 AW。
 `decisionReason:{type:"hook",hookName:"PermissionRequest"}` 是**从二进制里读到的厂商
 内部代码路径**，没有任何证据说明它会落进 Pulse 读得到的会话记录 —— 当前采集器一个相关
 字段都没解析。**假设它在，就是在犯本版要修的那个错。** 这一层明确挂在
-`docs/plan-2.5.md` 里，连同关掉它需要什么（一次真机回答，同时把 P0-0 第 2 步还掉）。
+`docs/archive/plan-2.5.md` 里，连同关掉它需要什么（一次真机回答，同时把 P0-0 第 2 步还掉）。
 
 ### 2.4 新面的两个缺陷
 
@@ -1012,7 +1012,7 @@ no-blind-approve 不变量是**收紧**而非放松；`respond_hook_check.py` �
 
 ## 2.3.0 — Sweep / 清扫
 
-在 2.2 的代码上重做了一遍深度 review（`docs/review-2.2.md`，每条带 file:line），
+在 2.2 的代码上重做了一遍深度 review（`docs/archive/review-2.2.md`，每条带 file:line），
 不是拿 1.2 那份旧结论顺延 —— 那 13 项已经在 2.2 全部关闭。挖出八条，全部修掉。
 
 八条有一个共同的形状：**产品在它没测到的地方说了话，或者在该说话的地方沉默。**
@@ -1289,7 +1289,7 @@ Respond（从灯上把你的判断送达）一直阻塞在 P0-0：「真机验�
 
 ### 深度 review 与门槛修复
 
-`docs/review-1.2.md` 是对 1.2.0 基线的全量审计。压在 Respond 运载路径上的
+`docs/archive/review-1.2.md` 是对 1.2.0 基线的全量审计。压在 Respond 运载路径上的
 八处缺陷本版修掉，各带回归测试：
 
 - **采集器（critical）**：全局字节预算「低但未空」时，被拒绝的读取会让 adapter
@@ -1424,7 +1424,7 @@ native fixture 墙上那条同源的断言（1.4 MB Claude 会话记录必须报
 ### 计划编号
 
 原定 1.1 的 Respond（回应）改为 **1.2**：它阻塞于装了 Claude 的真机证据，而本版不阻塞于
-任何人。Respond 的地基已随 1.0.1 落地，见 `docs/plan-1.2.md`。
+任何人。Respond 的地基已随 1.0.1 落地，见 `docs/archive/plan-1.2.md`。
 
 ## 1.0.1 — Respond groundwork / 回应的地基
 
@@ -1451,7 +1451,7 @@ let hookBody = ["type": "command", "command": command, "timeout": 5]
 
 `scripts/qa_respond_contract.sh`：**只读、不批准任何东西、不碰全局 `~/.claude`**，
 在临时项目里布置捕获，报告只输出键名与值的类型（没有正文、路径、代码）。它要回答的
-五个问题、以及每个问题决定哪一处设计，写在 `docs/plan-1.1.md`。其中 **Q2** 决定这一版
+五个问题、以及每个问题决定哪一处设计，写在 `docs/archive/plan-1.1.md`。其中 **Q2** 决定这一版
 最终是完整的「从灯上回答」，还是诚实地缩成「一键拒绝 + 去看看」。
 
 ### 判决的形状（错了会让 Agent 动手，所以先定死）
@@ -1477,7 +1477,7 @@ let hookBody = ["type": "command", "command": command, "timeout": 5]
 
 ### 仍然空着
 
-`docs/plan-1.1.md` 的 **P0-3（送达）与 P0-5（远端应答）** 是空的，阻塞于 P0-0 真机证据。
+`docs/archive/plan-1.1.md` 的 **P0-3（送达）与 P0-5（远端应答）** 是空的，阻塞于 P0-0 真机证据。
 这不是遗漏，是这个仓库从 0.96.1–0.97.2 换来的规矩。
 
 ## 1.0.0 — Remote Fleet / 我的舰队
@@ -1500,7 +1500,7 @@ Gatekeeper-ready。**解绑的是版本号的含义，不是任何一句关于�
 Mac 上」。云端会话、远程开发机、devcontainer、CI 里的 agent 一个都看不见 ——
 **而且看不见的时候灯是绿的，不是灰的。**
 
-`docs/plan-0.23.md` 早就把这条写成「**真正的能力边界**」，并给自己设了前置条件
+`docs/archive/plan-0.23.md` 早就把这条写成「**真正的能力边界**」，并给自己设了前置条件
 「等核心有测试再说」。526+ 测试、七道门禁、逐 Agent fixture 断言之后，条件满足了。
 
 ### 协议 v2：多一列 `host`
@@ -1669,7 +1669,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.90–0.97 让**显示**诚实，0.98 让**采集**诚实。从没人审过 Pulse **写到磁盘上的东西**，
 而 0.98 修好的两条规则在更上一层各还有一份没跟上的副本。
-详见 [`docs/plan-0.99.md`](docs/plan-0.99.md)。
+详见 [`docs/archive/plan-0.99.md`](docs/archive/plan-0.99.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 数据静默
@@ -1709,7 +1709,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
   0.99 多收了一行，也可能是 0.98 漏了一行而 0.99 修对了，两者都没有证据。134 行现在
   逐 Agent 有解释（opencode 100 压力 · cascade 2 共享根 · claude/codex/pi 各 2 = 通用
   + 0.98 厂商 fixture · windsurf 0 按设计压制 · 其余各 1），且墙已钉住这张表，
-  今后任何漂移都会指名道姓。详见 [`docs/plan-0.99.md`](docs/plan-0.99.md)「P0-5 的改判」。
+  今后任何漂移都会指名道姓。详见 [`docs/archive/plan-0.99.md`](docs/archive/plan-0.99.md)「P0-5 的改判」。
 
 ### 未做（等真机证据）
 
@@ -1727,7 +1727,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 0.96.1、0.97.0、0.97.1、0.97.2 四连发修的是同一件事：托盘主行不是用户目标。每一版都加了
 测试、八门禁全绿，然后下一版计划里再写一次「生产仍空」。问题不在下一条解析规则，在
 **采集侧没有真源**：主行靠比字符串长度选，采集器无法自证，端到端墙测的是不跑的那条通路。
-详见 [`docs/plan-0.98.md`](docs/plan-0.98.md)。
+详见 [`docs/archive/plan-0.98.md`](docs/archive/plan-0.98.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 采集可证
@@ -1805,7 +1805,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.96.1 的 Pi 标题修的是假 fixture，生产仍空。本版换章：**主行必须是用户目标**
 —— Pi 按官方 JSONL 取 `/name` 与用户正文；Claude/Codex 不能是工具回包、传输信封
-或窗口计数。详见 [`docs/plan-0.97.md`](docs/plan-0.97.md)。
+或窗口计数。详见 [`docs/archive/plan-0.97.md`](docs/archive/plan-0.97.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 主行诚实
@@ -1854,7 +1854,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.94/0.95 把 Waiting 亮灭做实。本版换章：**离开再回时，灯和 notice 必须说真话**。
 0.93 交了具名 Look Closure，但刷新后再算、等待世代、Glance 宽预算仍假。
-详见 [`docs/plan-0.96.md`](docs/plan-0.96.md)。
+详见 [`docs/archive/plan-0.96.md`](docs/archive/plan-0.96.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 回看诚实
@@ -1885,7 +1885,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 ## 0.95.0 — Extinguish Honesty / 熄灭诚实
 
 0.94 证明真 ask 能亮。本版换章：**假 Waiting 不亮；清了就灭；再亮必须是新证据**。
-详见 [`docs/plan-0.95.md`](docs/plan-0.95.md)。
+详见 [`docs/archive/plan-0.95.md`](docs/archive/plan-0.95.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 熄灭诚实
@@ -1921,7 +1921,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.90 让 Waiting-none「能写样本」；0.93 让离开再回「能点名」。本版换章：**证明**
 声称有 Waiting 的路径，真 ask/block 会亮、清会灭。详见
-[`docs/plan-0.94.md`](docs/plan-0.94.md)。
+[`docs/archive/plan-0.94.md`](docs/archive/plan-0.94.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 等待可证
@@ -1949,7 +1949,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 ## 0.93.0 — Look Closure / 回看闭环
 
 0.92 交了指纹，但离开再回只剩**计数横幅**。本版换章：具名 + 一点落到该行
-（复用 Go-Look）。详见 [`docs/plan-0.93.md`](docs/plan-0.93.md)。
+（复用 Go-Look）。详见 [`docs/archive/plan-0.93.md`](docs/archive/plan-0.93.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 回看闭环
@@ -1978,7 +1978,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.91 给了默认行一句叙事，但 story / 次行 / 信号 / 芯片 / Limited 标签仍互相复述。
 本版换章：**事实所有权** —— 叙事占「在干什么」，其它行让位；Look Continuity 回答
-「离开后什么动了」。详见 [`docs/plan-0.92.md`](docs/plan-0.92.md)。
+「离开后什么动了」。详见 [`docs/archive/plan-0.92.md`](docs/archive/plan-0.92.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 行清晰
@@ -2011,7 +2011,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.80–0.82 让字段可见；0.90 让 Waiting-none 可打断。用户仍缺「有效信息」——
 根因是**行在列遥测，不在讲会话在干什么**。本版换章：默认行一句叙事。详见
-[`docs/plan-0.91.md`](docs/plan-0.91.md)。
+[`docs/archive/plan-0.91.md`](docs/archive/plan-0.91.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 行叙事
@@ -2038,7 +2038,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.80–0.82 把托盘观测做实。本版换章：**Waiting-none 舰队从「只会 Running」变成
 可完成的打断通路** —— Attention 从文档变成产品漏斗。详见
-[`docs/plan-0.90.md`](docs/plan-0.90.md)。
+[`docs/archive/plan-0.90.md`](docs/archive/plan-0.90.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · Waiting Reach 漏斗
@@ -2067,7 +2067,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.81 打通 Claude / Codex / Cursor。本版同章补丁：**非旗舰 session + cache 观测
 + quiet-live phase 诚实**，让默认行在真实有字段时不空。详见
-[`docs/plan-0.82.md`](docs/plan-0.82.md)。
+[`docs/archive/plan-0.82.md`](docs/archive/plan-0.82.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 舰队 harvest → 默认行
@@ -2097,7 +2097,7 @@ pid 写负缓存**。批是一个 Agent 一个 pid，所以一个会话结束就
 
 0.80 画出了观测行，但仍空：**harvest 没把 model/tokens 送进默认行**，次行还会被
 tool-hero + 分组去路径压扁。本版打通 Claude / Codex / Cursor 实质字段。详见
-[`docs/plan-0.81.md`](docs/plan-0.81.md)。
+[`docs/archive/plan-0.81.md`](docs/archive/plan-0.81.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · harvest → 默认行
@@ -2125,7 +2125,7 @@ tool-hero + 分组去路径压扁。本版打通 Claude / Codex / Cursor 实质�
 
 0.70 收了契约漂移；本版换章：**默认托盘行必须扫得到有效信息**。观测行真正渲染，
 信号行只谈运动，次行补回执行命令与开始时间。详见
-[`docs/plan-0.80.md`](docs/plan-0.80.md)。
+[`docs/archive/plan-0.80.md`](docs/archive/plan-0.80.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 默认行合同
@@ -2153,7 +2153,7 @@ tool-hero + 分组去路径压扁。本版打通 Claude / Codex / Cursor 实质�
 
 0.60–0.65 Continuity 弧闭环后，本版换章：**规格 / Support / 样本不得再与代码漂移**。
 Waiting-none 单一真源，深度不遮盖，Attention Reach 点名 Agent。详见
-[`docs/plan-0.70.md`](docs/plan-0.70.md)。
+[`docs/archive/plan-0.70.md`](docs/archive/plan-0.70.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready；不跳 1.0。**
 
 ### P0 · 契约真源
@@ -2181,7 +2181,7 @@ Waiting-none 单一真源，深度不遮盖，Attention Reach 点名 Agent。详
 
 0.60–0.64 闭环灯与打断；本版换轴：**舰队诚实扩员** —— 接入 Z.ai ZCode ADE
 （Probe + best-effort harvest + Waiting-none）。详见
-[`docs/plan-0.65.md`](docs/plan-0.65.md)。
+[`docs/archive/plan-0.65.md`](docs/archive/plan-0.65.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · ZCode 覆盖
@@ -2207,7 +2207,7 @@ Waiting-none 单一真源，深度不遮盖，Attention Reach 点名 Agent。详
 ## 0.64.0 — Go-Look Closure / 打断闭环
 
 0.60–0.63 让灯可信；本版换轴：**点了通知必须落到那一行** —— notify → 最佳
-Focus → 托盘选中/滚到该行。详见 [`docs/plan-0.64.md`](docs/plan-0.64.md)。
+Focus → 托盘选中/滚到该行。详见 [`docs/archive/plan-0.64.md`](docs/archive/plan-0.64.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 打断闭环
@@ -2235,7 +2235,7 @@ Focus → 托盘选中/滚到该行。详见 [`docs/plan-0.64.md`](docs/plan-0.6
 ## 0.63.0 — Live Continuity / 绿灯可信
 
 0.60–0.62 让红灯可达；本版换轴：**绿 / 橙不得说谎** —— 混合舰队、无活动时长、
-仅进程观测，不能在菜单栏装成健康 Running。详见 [`docs/plan-0.63.md`](docs/plan-0.63.md)。
+仅进程观测，不能在菜单栏装成健康 Running。详见 [`docs/archive/plan-0.63.md`](docs/archive/plan-0.63.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · Glance 与停滞钟
@@ -2266,7 +2266,7 @@ Focus → 托盘选中/滚到该行。详见 [`docs/plan-0.64.md`](docs/plan-0.6
 
 0.61 让 Claude/Codex Waiting 脱离 Python；本版换轴：把同一原生 `pulse-hook`
 升成 **对外契约** —— Waiting-none 与名单外工具可按协议亮红灯，**不扩**
-Claude/Codex hook 安装器。详见 [`docs/plan-0.62.md`](docs/plan-0.62.md)。
+Claude/Codex hook 安装器。详见 [`docs/archive/plan-0.62.md`](docs/archive/plan-0.62.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 协议与可交付 raise
@@ -2297,7 +2297,7 @@ Claude/Codex hook 安装器。详见 [`docs/plan-0.62.md`](docs/plan-0.62.md)。
 
 0.60 让红灯在舰队上可达；本版换轴：**Claude/Codex 金标准 Waiting 不再依赖
 optional Python** —— 原生 `pulse-hook` / `PulseBar --hook` 写入 attention.tsv，
-install / self-test 与 native harvest 同级。详见 [`docs/plan-0.61.md`](docs/plan-0.61.md)。
+install / self-test 与 native harvest 同级。详见 [`docs/archive/plan-0.61.md`](docs/archive/plan-0.61.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 原生 Waiting 通路
@@ -2328,7 +2328,7 @@ install / self-test 与 native harvest 同级。详见 [`docs/plan-0.61.md`](doc
 
 0.59 让 Limited 缓存有料；本版回到产品本职：**红灯在舰队上可达且可信** ——
 harvestPending 认显式 ask/block，Attention 不 smear 兄弟行，Waiting-none 只走
-Attention 桥。详见 [`docs/plan-0.60.md`](docs/plan-0.60.md)。
+Attention 桥。详见 [`docs/archive/plan-0.60.md`](docs/archive/plan-0.60.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 等待可达
@@ -2359,7 +2359,7 @@ Attention 桥。详见 [`docs/plan-0.60.md`](docs/plan-0.60.md)。
 
 0.58 止住了假 session；本版让高流量 `bestEffortCache` 在 Limited 下**有料**：
 抽出已有的 goal/cwd/tool/mtime，Support 区分薄索引与富缓存事实。
-详见 [`docs/plan-0.59.md`](docs/plan-0.59.md)。
+详见 [`docs/archive/plan-0.59.md`](docs/archive/plan-0.59.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 富缓存事实
@@ -2389,7 +2389,7 @@ Attention 桥。详见 [`docs/plan-0.60.md`](docs/plan-0.60.md)。
 
 0.57 硬化了旗舰行；本版把同一套事实契约铺到舰队：非旗舰 session 审计、
 `bestEffortCache` 永不假 session、pending 整词匹配、Waiting-none 六 Agent
-Attention 样本可达。详见 [`docs/plan-0.58.md`](docs/plan-0.58.md)。
+Attention 样本可达。详见 [`docs/archive/plan-0.58.md`](docs/archive/plan-0.58.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 舰队事实诚实
@@ -2420,7 +2420,7 @@ Attention 样本可达。详见 [`docs/plan-0.58.md`](docs/plan-0.58.md)。
 ## 0.57.0 — Fact Continuity / 事实连续
 
 0.56 能诚实回去；本版保证托盘行带着**真实事实**，不留空壳 chrome，也不再靠
-SwiftUI Settings 场景当生命周期锚点。详见 [`docs/plan-0.57.md`](docs/plan-0.57.md)。
+SwiftUI Settings 场景当生命周期锚点。详见 [`docs/archive/plan-0.57.md`](docs/archive/plan-0.57.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 事实硬化与 Settings 根治
@@ -2474,7 +2474,7 @@ SwiftUI Settings 场景当生命周期锚点。详见 [`docs/plan-0.57.md`](docs
 ## 0.56.0 — Landing Precision / 精确落地
 
 0.55 能回去；本版把「回到哪一层」说清楚，并在可验证时落到宿主工作区。
-详见 [`docs/plan-0.56.md`](docs/plan-0.56.md)。
+详见 [`docs/archive/plan-0.56.md`](docs/archive/plan-0.56.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready。**
 
 ### P0 · 落地精度
@@ -2500,7 +2500,7 @@ SwiftUI Settings 场景当生命周期锚点。详见 [`docs/plan-0.57.md`](docs
 
 ## 0.55.0 — Return Continuity / 回到现场
 
-红灯已立；本版把「点一下回到正确表面」做完。详见 [`docs/plan-0.55.md`](docs/plan-0.55.md)。
+红灯已立；本版把「点一下回到正确表面」做完。详见 [`docs/archive/plan-0.55.md`](docs/archive/plan-0.55.md)。
 **无 Apple Developer ID 时本版不切 Stable Gate、不标 `stable` / Gatekeeper-ready** ——
 GitHub Latest 仍可跟 semver，Info.plist 保持 preview。
 
@@ -2570,7 +2570,7 @@ GitHub Latest 仍可跟 semver，Info.plist 保持 preview。
 
 ## 0.54.0 — Channel Continuity / 通道与契约连续
 
-0.53.0 把安装与恢复契约做完之后，本版对齐用户触达的下载链接、验收数字与更新文案；无 Apple 公证凭据时仍诚实停留在 prerelease。详见 [`docs/plan-0.54.md`](docs/plan-0.54.md)。
+0.53.0 把安装与恢复契约做完之后，本版对齐用户触达的下载链接、验收数字与更新文案；无 Apple 公证凭据时仍诚实停留在 prerelease。详见 [`docs/archive/plan-0.54.md`](docs/archive/plan-0.54.md)。
 
 ### P0 · 触达契约
 
@@ -2601,7 +2601,7 @@ GitHub Latest 仍可跟 semver，Info.plist 保持 preview。
 
 ## 0.53.0 — Delivery Continuity / 交付连续信任
 
-0.52.0 把发布标签与 Gatekeeper 事实对齐之后，本版把信任推进到安装、更新与恢复连续性；无 Apple 公证凭据时仍诚实停留在 prerelease，不把未公证包装成 Latest。详见 [`docs/plan-0.53.md`](docs/plan-0.53.md)。
+0.52.0 把发布标签与 Gatekeeper 事实对齐之后，本版把信任推进到安装、更新与恢复连续性；无 Apple 公证凭据时仍诚实停留在 prerelease，不把未公证包装成 Latest。详见 [`docs/archive/plan-0.53.md`](docs/archive/plan-0.53.md)。
 
 ### P0 · 通道与更新叙事
 
@@ -2630,7 +2630,7 @@ GitHub Latest 仍可跟 semver，Info.plist 保持 preview。
 
 ## 0.52.0 — Release Trust / 可交付信任
 
-0.51.0 把观测文案做诚实之后，本版对齐发布标签与 Gatekeeper 事实，隔离故意延后的扫描 partial，并把通知拒绝与诊断包写进 Support。详见 [`docs/plan-0.52.md`](docs/plan-0.52.md)。
+0.51.0 把观测文案做诚实之后，本版对齐发布标签与 Gatekeeper 事实，隔离故意延后的扫描 partial，并把通知拒绝与诊断包写进 Support。详见 [`docs/archive/plan-0.52.md`](docs/archive/plan-0.52.md)。
 
 ### P0 · 发布与 Gatekeeper 真相
 
@@ -2664,7 +2664,7 @@ GitHub Latest 仍可跟 semver，Info.plist 保持 preview。
 
 ## 0.51.0 — Observation Truth / 诚实表面
 
-0.50.0 让观测更深之后，本版让权限文案、harvest 诊断、托盘指标与 Support/检查器对齐真实授权与扫描状态。详见 [`docs/plan-0.51.md`](docs/plan-0.51.md)。
+0.50.0 让观测更深之后，本版让权限文案、harvest 诊断、托盘指标与 Support/检查器对齐真实授权与扫描状态。详见 [`docs/archive/plan-0.51.md`](docs/archive/plan-0.51.md)。
 
 ### P0 · 观测真相
 
@@ -2693,7 +2693,7 @@ GitHub Latest 仍可跟 semver，Info.plist 保持 preview。
 
 ## 0.50.0 — Signal Quality / 有效观测
 
-0.49.1 完成可靠性闭环后，本版不再扩 Agent 名单，而是让现有 31 个 Agent 的信息更深、更可信、更可操作。详见 [`docs/plan-0.50.md`](docs/plan-0.50.md)。
+0.49.1 完成可靠性闭环后，本版不再扩 Agent 名单，而是让现有 31 个 Agent 的信息更深、更可信、更可操作。详见 [`docs/archive/plan-0.50.md`](docs/archive/plan-0.50.md)。
 
 ### P0 · 观测质量信封
 
@@ -4077,7 +4077,7 @@ committed 的图不可能和描述它的代码分家。
 真机截图显示问题正好翻了个面：少数几个事实被重复说了三四遍，
 而真正有用的信息一个都没有。
 
-计划与验收见 [`docs/plan-0.25.md`](docs/plan-0.25.md)。
+计划与验收见 [`docs/archive/plan-0.25.md`](docs/archive/plan-0.25.md)。
 
 ### 修复：切换语言后行内文字不跟随
 
@@ -4146,7 +4146,7 @@ committed 的图不可能和描述它的代码分家。
 Pulse 之前能告诉你「有东西在等你」，但说不出**等的是哪个、等了多久、该先管谁**——
 三个 agent 同时红灯时，托盘那三行长得一模一样。
 
-计划与验收见 [`docs/plan-0.24.md`](docs/plan-0.24.md)。
+计划与验收见 [`docs/archive/plan-0.24.md`](docs/archive/plan-0.24.md)。
 
 ### 托盘默认能看到更多 agent
 
@@ -4319,7 +4319,7 @@ Pulse.app/Contents/Resources/
 设置读写没有测试，公开的能耗数字是算出来的，「检查更新」对所有人永久报错。
 这个版本不加功能，只把上一版的承诺变成可以核对的事实。
 
-计划与验收见 [`docs/plan-0.23.md`](docs/plan-0.23.md)。
+计划与验收见 [`docs/archive/plan-0.23.md`](docs/archive/plan-0.23.md)。
 
 ### 可测
 
@@ -4383,7 +4383,7 @@ Pulse.app/Contents/Resources/
 
 ## 0.22.0 — Energy, honesty, and everything the audit found
 
-Closes every open finding in [`docs/review-0.21.md`](docs/review-0.21.md).
+Closes every open finding in [`docs/archive/review-0.21.md`](docs/archive/review-0.21.md).
 
 ### Energy (P0-A)
 - **自适应探测节奏**：不再固定 1.5–3s。等待中 2s / 运行中 5s / 最近 15s / 空 30s；

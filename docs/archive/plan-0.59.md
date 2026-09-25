@@ -6,7 +6,7 @@
 本版缺口是 **Limited 诚实但仍常空** —— 高流量 cache 里已有 goal/cwd/tool/mtime
 却未抽出，或 Support 把富索引与薄索引说成同一种「Limited」。
 
-composer 深链仍见 [`docs/landing-hosts.md`](landing-hosts.md) Blocked。
+composer 深链仍见 [`docs/landing-hosts.md`](../landing-hosts.md) Blocked。
 无 Apple Developer ID → Stable Gate 仍外部 blocked；**不跳 1.0**。
 
 **诚实前提：**

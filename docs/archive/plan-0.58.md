@@ -5,7 +5,7 @@
 0.55–0.57 完成了「回去 → 诚实落地 → 旗舰行有真事实」。0.57 的 Fact Continuity
 主要硬化了 Claude / Codex / Cursor；**其余 Agent 仍可能薄 cache、假 session 证据、
 子串假 Waiting、或 Waiting-none 不可达**。composer 深链仍见
-[`docs/landing-hosts.md`](landing-hosts.md) Blocked。
+[`docs/landing-hosts.md`](../landing-hosts.md) Blocked。
 
 无 Apple Developer ID → Stable Gate 仍外部 blocked；**不跳 1.0**。
 

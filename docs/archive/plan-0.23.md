@@ -30,7 +30,7 @@
 
 **为什么是它。** 它是整个产品的逻辑所在：多会话去重、每 Agent 上限与 `hiddenSessions`
 记账、live 进程只挂一行、cursor/cursorAgent 合并、attention 匹配、Waiting 边沿、
-通知边沿、等待历史、排序、glance 编码。`docs/review-0.21.md` 把它列为最高回归风险，
+通知边沿、等待历史、排序、glance 编码。`docs/archive/review-0.21.md` 把它列为最高回归风险，
 0.22.0 没有动它。
 
 **为什么现在测不了。** 它只改 5 个状态（`cachedAll` / `snapshot` / `knownWaitingKeys` /
@@ -58,7 +58,7 @@
 
 **已交付：** `SnapshotBuilder.swift`（纯函数，`Context` 注入外部世界，
 返回边沿意图而非直接执行）+ 34 个测试。`applyScan` 381 → 115 行。
-数据流见 [`architecture.md`](architecture.md)。
+数据流见 [`architecture.md`](../architecture.md)。
 
 **覆盖：** 多会话去重与 key 唯一化 · 每 Agent 上限与 `hiddenSessions`
 只记在首行 · live 进程只挂一行不涂抹 · cursor/cursorAgent 合并 · attention 按

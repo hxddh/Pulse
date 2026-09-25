@@ -7,7 +7,7 @@
 产品漏斗。
 
 无 Apple Developer ID → Stable Gate 仍外部 blocked；**不跳 1.0**。
-Composer / 会话深链仍见 [`landing-hosts.md`](landing-hosts.md) Blocked —— 本版不挖。
+Composer / 会话深链仍见 [`landing-hosts.md`](../landing-hosts.md) Blocked —— 本版不挖。
 
 **诚实前提：**
 

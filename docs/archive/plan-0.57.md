@@ -4,7 +4,7 @@
 
 0.55–0.56 把「点一下能回去、且不吹牛精度」做完了。0.56.1 暴露的真缺口是：
 **回去之后托盘行仍可能是空壳**（Claude 有行无事实、幽灵 Settings、假次行）。
-composer / 会话深链已在 [`docs/landing-hosts.md`](landing-hosts.md) 标 Blocked——本版不挖。
+composer / 会话深链已在 [`docs/landing-hosts.md`](../landing-hosts.md) 标 Blocked——本版不挖。
 
 无 Apple Developer ID → Stable Gate 仍外部 blocked；**不跳 1.0**。
 

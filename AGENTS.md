@@ -11,46 +11,11 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
 | [`docs/review-11.0.md`](docs/review-11.0.md) | **The current review** — defects at the 11.0.3 baseline (fixed in 11.0.4) and the next-version evaluation (Kernel before Outcome) |
-| [`docs/review-1.2.md`](docs/review-1.2.md) | You want the defect list at the 1.2.0 baseline |
+| [`docs/archive/`](docs/archive/README.md) | Historical plans (0.23 – 6.0) and superseded reviews (0.21, 1.2, 2.2) |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
 | [`docs/plan-12.0.md`](docs/plan-12.0.md) | The shipped 12.0 plan (Kernel) — PulseCore, AgentCatalog, scan-quiet Settings, and what is left for 12.x |
 | [`docs/plan-outcome.md`](docs/plan-outcome.md) | The unnumbered next plan (Outcome) — result contracts and comparable evidence; blocked on real-machine Codex evidence |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
-| [`docs/plan-1.2.md`](docs/plan-1.2.md) | Historical plan (Substance) |
-| [`docs/plan-1.1.md`](docs/plan-1.1.md) | Historical plan (Full Transcript) |
-| [`docs/plan-1.0.md`](docs/plan-1.0.md) | Historical plan (Remote Fleet) |
-| [`docs/plan-0.99.2.md`](docs/plan-0.99.2.md) | Historical plan (Live Wire) |
-| [`docs/plan-0.99.md`](docs/plan-0.99.md) | Historical plan (Quiet Data) |
-| [`docs/plan-0.98.md`](docs/plan-0.98.md) | Historical plan (Ground Truth) |
-| [`docs/plan-0.97.md`](docs/plan-0.97.md) | Historical plan (Hero Honesty) |
-| [`docs/plan-0.96.md`](docs/plan-0.96.md) | Historical plan (Return Truth) |
-| [`docs/plan-0.95.md`](docs/plan-0.95.md) | Historical plan (Extinguish Honesty) |
-| [`docs/plan-0.94.md`](docs/plan-0.94.md) | Historical plan (Waiting Proof) |
-| [`docs/plan-0.93.md`](docs/plan-0.93.md) | Historical plan (Look Closure) |
-| [`docs/plan-0.92.md`](docs/plan-0.92.md) | Historical plan (Row Clarity) |
-| [`docs/plan-0.91.md`](docs/plan-0.91.md) | Historical plan (Row Story) |
-| [`docs/plan-0.90.md`](docs/plan-0.90.md) | Historical plan (Waiting Reach) |
-| [`docs/plan-0.82.md`](docs/plan-0.82.md) | Historical plan (Tray Fleet Substance) |
-| [`docs/plan-0.81.md`](docs/plan-0.81.md) | Historical plan (Tray Substance) |
-| [`docs/plan-0.80.md`](docs/plan-0.80.md) | Historical plan (Tray Legibility) |
-| [`docs/plan-0.70.md`](docs/plan-0.70.md) | Historical plan (Contract Honesty) |
-| [`docs/plan-0.65.md`](docs/plan-0.65.md) | Historical plan (Fleet Coverage / ZCode) |
-| [`docs/plan-0.64.md`](docs/plan-0.64.md) | Historical plan (Go-Look Closure) |
-| [`docs/plan-0.63.md`](docs/plan-0.63.md) | Historical plan (Live Continuity) |
-| [`docs/plan-0.62.md`](docs/plan-0.62.md) | Historical plan (Attention Autonomy) |
-| [`docs/plan-0.61.md`](docs/plan-0.61.md) | Historical plan (Hook Autonomy) |
-| [`docs/plan-0.60.md`](docs/plan-0.60.md) | Historical plan (Waiting Continuity) |
-| [`docs/plan-0.59.md`](docs/plan-0.59.md) | Historical plan (Cache Continuity) |
-| [`docs/plan-0.58.md`](docs/plan-0.58.md) | Historical plan (Fleet Continuity) |
-| [`docs/plan-0.57.md`](docs/plan-0.57.md) | Historical plan (Fact Continuity) |
-| [`docs/plan-0.56.md`](docs/plan-0.56.md) | Historical plan (Landing Precision) |
-| [`docs/plan-0.55.md`](docs/plan-0.55.md) | Historical plan (Return Continuity) |
-| [`docs/plan-0.54.md`](docs/plan-0.54.md) | Historical plan (Channel Continuity) |
-| [`docs/plan-0.53.md`](docs/plan-0.53.md) | Historical plan (Delivery Continuity) |
-| [`docs/plan-0.52.md`](docs/plan-0.52.md) | Historical plan (Release Trust) |
-| [`docs/plan-0.51.md`](docs/plan-0.51.md) | Historical plan (Observation Truth) |
-| [`docs/plan-0.50.md`](docs/plan-0.50.md) | Historical plan (Signal Quality) |
-| [`docs/plan-0.27.md`](docs/plan-0.27.md) | Historical plan (0.27) |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/`; `src/` retains only the optional hook
