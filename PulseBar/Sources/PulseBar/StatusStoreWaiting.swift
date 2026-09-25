@@ -7,30 +7,37 @@ import AppKit
 extension StatusStore {
     func postWaitingNotifications(_ rows: [AgentRow]) {
         guard notifyAuthorized == true, notifyOnWaiting else { return }
-        let candidates = Array(
-            Self.byRowKey(rows.filter { row in
-                row.waiting
-                    && !mutedAgents.contains(row.agent)
-                    && !attentionLedger.isAcknowledged(rowKey: row.rowKey)
-                    && !waitingDeliveryInFlight.contains(row.rowKey)
-            }).values
-        )
-        guard !candidates.isEmpty else { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        guard attentionLedger.canDeliver(
-            nowMs: nowMs,
+        // 12.3 δ: the decision is `WaitingDelivery`; this method carries it out.
+        let delivery = WaitingDelivery(
+            muted: mutedAgents,
+            acknowledged: Set(
+                rows.filter(\.waiting).map(\.rowKey).filter { attentionLedger.isAcknowledged(rowKey: $0) }
+            ),
+            inFlight: waitingDeliveryInFlight,
+            canDeliverNow: attentionLedger.canDeliver(
+                nowMs: nowMs,
+                minimumIntervalMs: Self.waitingNotificationMinimumIntervalMs
+            ),
+            msSinceLastNotification: nowMs - attentionLedger.lastNotificationAtMs,
             minimumIntervalMs: Self.waitingNotificationMinimumIntervalMs
-        ) else {
-            for waiting in candidates {
+        )
+        let candidates: [AgentRow]
+        let asSummary: Bool
+        switch delivery.plan(rows) {
+        case .nothing:
+            return
+        case .hold(let held, let retryAfterMs):
+            for waiting in held {
                 pendingWaitingNotifications[waiting.rowKey] = waiting
                 attentionLedger.markQueued(rowKey: waiting.rowKey, nowMs: nowMs)
             }
             attentionLedger.save()
-            scheduleWaitingDelivery(afterMs: max(
-                Self.waitingNotificationMinimumIntervalMs - (nowMs - attentionLedger.lastNotificationAtMs),
-                250
-            ))
+            scheduleWaitingDelivery(afterMs: retryAfterMs)
             return
+        case .post(let ready, let summary):
+            candidates = ready
+            asSummary = summary
         }
 
         let wasIdleBeforeDelivery = waitingDeliveryInFlight.isEmpty
@@ -55,7 +62,7 @@ extension StatusStore {
             )
         }
 
-        if candidates.count > 3 {
+        if asSummary {
             let eventIDs = candidates.compactMap { attentionLedger.eventID(for: $0.rowKey) }
             let title = String(format: tr(.waitingSummaryTitle), candidates.count)
             let body = candidates.prefix(3).map(notificationBody).joined(separator: " · ")
