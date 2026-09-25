@@ -18,10 +18,14 @@ enum PulseBarMain {
            let parent = CommandLine.arguments.first(where: { $0.hasPrefix("--install-parent-pid=") }),
            let pid = pid_t(String(parent.dropFirst("--install-parent-pid=".count))) {
             do {
+                let digest = CommandLine.arguments
+                    .first(where: { $0.hasPrefix("--install-sha256=") })
+                    .map { String($0.dropFirst("--install-sha256=".count)) } ?? ""
                 try UpdateInstaller.runHelper(
                     dmgURL: URL(fileURLWithPath: String(dmg.dropFirst("--install-update=".count))),
                     targetApp: URL(fileURLWithPath: String(target.dropFirst("--install-target=".count))),
-                    parentPID: pid
+                    parentPID: pid,
+                    expectedSHA256: digest
                 )
                 exit(0)
             } catch {

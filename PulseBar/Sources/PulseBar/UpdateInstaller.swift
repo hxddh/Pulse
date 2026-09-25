@@ -1,5 +1,6 @@
-import Foundation
+import CryptoKit
 import Darwin
+import Foundation
 
 /// Transactional app replacement used only after a DMG has passed HTTP,
 /// content-type, size and SHA-256 checks. The old app is moved to a private
@@ -133,20 +134,99 @@ struct UpdateInstaller {
         }
     }
 
-    static func runHelper(dmgURL: URL, targetApp: URL, parentPID: pid_t) throws {
+    /// The in-place install helper.
+    ///
+    /// F-4 (review-11.0), closed in 12.3. The SHA-256 the download was checked
+    /// against comes from the same release body as the DMG, so on its own it
+    /// only proves the bytes were not damaged in transit. Before anything is
+    /// replaced the helper now also requires:
+    ///
+    /// 1. the DMG on disk still has that digest — it sat in Downloads between
+    ///    the check and the click, and is re-hashed right before mounting;
+    /// 2. the app inside passes `codesign --verify --deep --strict`;
+    /// 3. it is signed by the **same Team ID** as the app being replaced, and
+    ///    that Team ID exists. An ad-hoc build has none, so it can never
+    ///    replace itself in place — which is also why this path stays behind
+    ///    `isGatekeeperReady`;
+    /// 4. the staged copy still verifies after it was copied off the image.
+    ///
+    /// Any failure leaves the installed app untouched; the user still has the
+    /// DMG and the vendor-neutral manual install.
+    static func runHelper(dmgURL: URL, targetApp: URL, parentPID: pid_t, expectedSHA256: String) throws {
         while kill(parentPID, 0) == 0 { usleep(100_000) }
+        try verifyDigest(of: dmgURL, expected: expectedSHA256)
         let mount = try mountDMG(dmgURL)
         defer { _ = run("/usr/bin/hdiutil", ["detach", mount.path, "-quiet"]) }
         let candidates = try fmEnumerateApps(at: mount)
         guard let source = candidates.first(where: { (try? validate(app: $0)) != nil }) else {
             throw InstallError.invalidBundle("Pulse.app not found on disk image")
         }
+        try verifySignature(candidate: source, replacing: targetApp)
         let stagingRoot = rollbackRoot.appendingPathComponent("staging-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
         let staged = stagingRoot.appendingPathComponent("Pulse.app")
         try FileManager.default.copyItem(at: source, to: staged)
+        try verifySignature(candidate: staged, replacing: targetApp)
         try replace(stagedApp: staged, targetApp: targetApp)
         _ = run(targetApp.appendingPathComponent("Contents/MacOS/PulseBar").path, [])
+    }
+
+    /// Re-hash the image right before it is mounted. An empty or malformed
+    /// expectation is a refusal, never a skip.
+    static func verifyDigest(of dmg: URL, expected: String) throws {
+        let want = expected.lowercased()
+        guard want.count == 64, want.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdef").contains($0) }) else {
+            throw InstallError.invalidBundle("missing expected SHA-256")
+        }
+        guard let data = try? Data(contentsOf: dmg, options: .mappedIfSafe) else {
+            throw InstallError.targetUnavailable
+        }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard digest == want else {
+            throw InstallError.invalidBundle("disk image changed since it was verified")
+        }
+    }
+
+    /// Strict signature on the candidate, and the same non-empty Team ID as
+    /// the app it would replace.
+    static func verifySignature(candidate: URL, replacing current: URL) throws {
+        let strict = run("/usr/bin/codesign", ["--verify", "--deep", "--strict", candidate.path])
+        guard strict.status == 0 else {
+            throw InstallError.invalidBundle("code signature does not verify")
+        }
+        let candidateTeam = teamIdentifier(
+            fromCodesignOutput: run("/usr/bin/codesign", ["-dv", "--verbose=2", candidate.path]).output
+        )
+        let currentTeam = teamIdentifier(
+            fromCodesignOutput: run("/usr/bin/codesign", ["-dv", "--verbose=2", current.path]).output
+        )
+        try requireSameTeam(candidate: candidateTeam, current: currentTeam)
+    }
+
+    /// The rule on its own, so it can be held to a test without a signed app.
+    static func requireSameTeam(candidate: String?, current: String?) throws {
+        guard let current, !current.isEmpty else {
+            throw InstallError.invalidBundle("installed app has no Team ID; install the DMG manually")
+        }
+        guard let candidate, candidate == current else {
+            throw InstallError.invalidBundle("update is signed by a different team")
+        }
+    }
+
+    /// `TeamIdentifier=ABCDE12345` from `codesign -dv` output. `not set` (an
+    /// ad-hoc signature) and anything that is not a Team ID shape are nil.
+    static func teamIdentifier(fromCodesignOutput output: String) -> String? {
+        for line in output.split(whereSeparator: \.isNewline) {
+            let text = line.trimmingCharacters(in: .whitespaces)
+            guard text.hasPrefix("TeamIdentifier=") else { continue }
+            let value = String(text.dropFirst("TeamIdentifier=".count))
+                .trimmingCharacters(in: .whitespaces)
+            guard value.count == 10,
+                  value.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) && $0.isASCII })
+            else { return nil }
+            return value
+        }
+        return nil
     }
 
     private static func validate(app: URL) throws -> (version: String, executable: URL) {

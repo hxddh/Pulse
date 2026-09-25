@@ -46,7 +46,9 @@ final class UpdateCheck {
         case idle
         case downloading
         case verifying
-        case ready(URL)
+        /// The verified DMG and the digest it was verified against — the
+        /// install helper re-checks that digest right before it mounts.
+        case ready(URL, sha256: String)
         case installing
         case failed(String)
     }
@@ -257,7 +259,7 @@ final class UpdateCheck {
                 )
                 try FileManager.default.moveItem(at: tempURL, to: destination)
                 Task { @MainActor in
-                    store.updateDownloadStatus = .ready(destination)
+                    store.updateDownloadStatus = .ready(destination, sha256: digest.lowercased())
                     NSWorkspace.shared.open(destination)
                 }
             } catch {
@@ -283,7 +285,7 @@ final class UpdateCheck {
             )
             return
         }
-        guard case .ready(let dmg) = store.updateDownloadStatus,
+        guard case .ready(let dmg, let digest) = store.updateDownloadStatus,
               Bundle.main.bundleURL.pathExtension == "app",
               let executable = Bundle.main.executableURL else {
             store.updateDownloadStatus = .failed("download a verified DMG first")
@@ -296,6 +298,7 @@ final class UpdateCheck {
             "--install-update=\(dmg.path)",
             "--install-target=\(target.path)",
             "--install-parent-pid=\(ProcessInfo.processInfo.processIdentifier)",
+            "--install-sha256=\(digest)",
         ]
         do {
             try helper.run()
