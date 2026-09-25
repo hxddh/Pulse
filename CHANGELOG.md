@@ -2,6 +2,55 @@
 
 All notable changes to Pulse are documented here.
 
+## 12.3.0 — Whole（收齐）
+
+一个版本收齐 [`docs/plan-12.0.md`](docs/plan-12.0.md) 留给 12.x 的全部结构工作，外加 review-11.0
+仍开着的 F-4。用户可见行为不变；fixture 墙、全量测试和资源预算照旧是行为冻结的证明。
+
+### 模块（β）
+
+- **五个 target，依赖只向下。** `PulseCore`（内核，现在也持有 `AgentCatalog` 与 `DebugLog`）←
+  `PulseHarvest`（扫描、遍历、厂商方言、SQLite 读取器、进程探测、Attention IO 与 spool）、
+  `PulseRespond`（权限契约与判决 spool）、`PulseManaged`（受管 runtime、Fleet、worktree、权限
+  MCP 服务、验收检查、工作区影响）← `PulseBar`（store、呈现与视图）。库里没有 AppKit、没有
+  `StatusStore`；哪一层能碰什么由编译器说了算，不再靠 review。
+- 跨模块的接缝：MCP 服务的版本号由 App 传入；会话 id 规则归 runtime（`WorkbenchAnswer` 转发）；
+  读 `AgentRow` 的那一条工作区规则留在 App；标题启发式（`TitleHeuristics`）归采集层，`AgentRow`
+  转发 —— 依旧只有一份词表。
+- gate 按文件名在任意 target 里找源码；`agent_catalog_check` 扫描所有 target。
+
+### 采集（γ）
+
+- **厂商方言各自成文件，以协议分派。** `TranscriptDialect`：一个方言声明它认领哪些 transcript、
+  自己解析或交给通用遍历、再补上通用遍历得不到的事实。Codex、Pi、Gemini 是注册表里的三个值；
+  Codex / Pi / Claude / Gemini·Aider 的解析各在自己的文件里，`HarvestFacts` 只剩通用部分。
+- **扫描记忆只有一个主人。** 跨扫描保存的五份状态（项目目录解析、`lsof` 结果与退避、CPU 采样锚点、
+  `ps` 字段闩）收进 `ScanMemory`，经一把锁（`Guarded`）读写。未改成 Swift actor：整个扫描同步地
+  跑在 `scanQueue` 上，改 async 会让节奏与 CLI 路径全部变成异步，而收益只是这把锁已经给出的保证。
+
+### Store（δ）
+
+- **叙述是值。** `RowNarrator` 接收语言、时刻、托盘是否拥挤和受管会话的结果事实，返回句子；
+  过去它从 store 隐式读墙钟（六处 `Date()`）、`snapshot` 与 Fleet。store 只保留一行转发。
+- **Waiting 通知的决定是值。** `WaitingDelivery` 只吃事实（静音、已确认、在途、限流），返回
+  「无 / 排队并在 N 毫秒后重试 / 立即发送（是否合并成摘要）」；store 执行计划。
+
+### 严格并发
+
+- **App 侧 target 全部开启完整并发检查。** PulseCore 保持零警告 + warnings-as-errors；其余 target
+  的警告由 CI 的「Concurrency ratchet」作业从头构建计数，只许降不许升（`scripts/concurrency_baseline.json`）。
+
+### 更新（F-4）
+
+- **原地安装前必须证明是同一个发布者。** 安装助手在挂载前重新计算 DMG 的 SHA-256（它在「下载」
+  文件夹里放过一阵），要求 `codesign --verify --deep --strict` 通过，且签名的 Team ID 与正在运行的
+  App 一致并且存在；复制到暂存区后再验一次。ad-hoc 构建没有 Team ID，因此永远不会原地替换自己
+  —— 这条路径仍然只对已公证的稳定版开放。
+
+### 文档
+
+- 已发布的计划与被取代的评审移入 [`docs/archive/`](docs/archive/README.md)；`docs/` 只留当前文档。
+
 ## 12.2.0 — Groundwork（地基）
 
 Outcome 开工前受管会话必须先有的两块地基（[`docs/plan-12.0.md`](docs/plan-12.0.md) 的 ε）。

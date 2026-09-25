@@ -13,17 +13,20 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/review-11.0.md`](docs/review-11.0.md) | **The current review** — defects at the 11.0.3 baseline (fixed in 11.0.4) and the next-version evaluation (Kernel before Outcome) |
 | [`docs/archive/`](docs/archive/README.md) | Historical plans (0.23 – 6.0) and superseded reviews (0.21, 1.2, 2.2) |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
-| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The shipped 12.0 plan (Kernel) — PulseCore, AgentCatalog, scan-quiet Settings, and what is left for 12.x |
+| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The 12.x plan (Kernel → Whole) — modules, catalog, dialects, narration, and what each 12.x release completed |
 | [`docs/plan-outcome.md`](docs/plan-outcome.md) | The unnumbered next plan (Outcome) — result contracts and comparable evidence; blocked on real-machine Codex evidence |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/`; `src/` retains only the optional hook
-scripts. Since 12.0 there are two targets: `PulseCore` (a Foundation-only
-library — evidence, code identity, bounded IO, process supervision, transcript
-parsing, probe cadence) and the `PulseBar` app. Nothing in `PulseCore` may
-import AppKit, SwiftUI or reach `StatusStore`. **Adding an agent** means one
-`case` and one `AgentSpec` in `AgentCatalog.swift`, plus its icon and README
+scripts. Since 12.3 there are five targets, dependencies pointing down only:
+`PulseCore` (the kernel — the agent catalog, evidence, code identity, bounded
+IO, process supervision, transcript parsing, probe cadence, the debug log),
+`PulseHarvest` (the collector), `PulseRespond` (the permission contract and
+spool), `PulseManaged` (sessions Pulse runs) and the `PulseBar` app. No
+library may import AppKit, SwiftUI or reach `StatusStore`; library members are
+`package`, Core's are `public`. **Adding an agent** means one
+`case` and one `AgentSpec` in `PulseCore/AgentCatalog.swift`, plus its icon and README
 row — `scripts/agent_catalog_check.py` fails if a per-agent table grows back
 anywhere else. The legacy Python collector was deleted in 0.99 and the Vercel Native
 SDK shell in 0.22 — recover either from git history if you ever need it.
@@ -149,15 +152,17 @@ to users.
 
 ## Current state
 
-12.2.0 is the current source version (Kernel + Seams + Groundwork — [`docs/plan-12.0.md`](docs/plan-12.0.md)).
+12.3.0 is the current source version (Kernel + Seams + Groundwork + Whole —
+[`docs/plan-12.0.md`](docs/plan-12.0.md); every 12.x structural phase is done).
 The review behind it is [`docs/review-11.0.md`](docs/review-11.0.md); its
-defects were fixed in 11.0.4. The next product axis is Outcome
-([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the
+defects were fixed in 11.0.4 and F-4 in 12.3.0. The next product axis is
+Outcome ([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the
 real-machine Codex P0 evidence exists and the product decision in review-11.0
 §4.3 has been made.
 
-Still open: update signing (F-4, dormant until a Developer ID exists) and the
-12.x structural phases listed in plan-12.0.
+App-side concurrency warnings are held by `scripts/concurrency_ratchet.py`
+(CI job "Concurrency ratchet"): the count may only go down — lower
+`scripts/concurrency_baseline.json` in the change that lowers it.
 Respond's P0-0 real-machine confirmation (decision shape honoured) remains the
 one unverified item of 2.0 — a wrong shape is silently ignored and falls open,
 never a wrong approval.
