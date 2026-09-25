@@ -293,7 +293,6 @@ extension StatusStore {
         attentionLedger.save()
     }
 
-
     func clearWaiting() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         // 0.95: extinguish delivery synchronously so a queued banner cannot
@@ -331,12 +330,6 @@ extension StatusStore {
             focusWaitingSignals: true,
             focusWaitingAgent: row.agent.waitingSource == .none ? row.agent : firstLiveWaitingNoneAgent
         )
-    }
-
-    /// One table for the whole app: `SnapshotBuilder` needs the same mapping
-    /// for the glance tooltip and cannot reach a store.
-    func localizedWaitKind(_ kind: String) -> String {
-        L10n.waitKind(kind, lang)
     }
 
     /// The row that has been blocked longest, if any.
