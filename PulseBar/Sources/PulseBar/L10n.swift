@@ -665,6 +665,39 @@ enum L10n {
         case .workbenchDispatch: return "New session"
         case .workbenchDispatchRepo: return "Repository"
         case .workbenchDispatchTask: return "What should it do?"
+        case .missionContractMore: return "Constraints and acceptance checks"
+        case .missionConstraints: return "Constraints (optional)"
+        case .missionChecks: return "Acceptance checks — one command per line (optional)"
+        case .missionChecksHint: return "Checks are your ruler: Pulse runs them in each candidate's worktree, in this order, and never shows them to the agent. No checks means nothing will read as verified."
+        case .missionHeading: return "Mission"
+        case .missionLifecycleDraft: return "draft"
+        case .missionLifecycleRunning: return "running"
+        case .missionLifecycleReady: return "no candidate running"
+        case .missionLifecycleArchived: return "archived"
+        case .missionRevision: return "contract rev %d"
+        case .missionEdit: return "Edit contract"
+        case .missionNoChecks: return "No acceptance checks defined — nothing here reads as verified."
+        case .missionLegacyNote: return "Carried over from an earlier Pulse: the goal is the session title, and an old remembered check has not run against it yet."
+        case .missionCandidate: return "Candidate %d"
+        case .missionChosen: return "your choice"
+        case .missionChoose: return "Choose"
+        case .missionUnchoose: return "Clear choice"
+        case .missionRowSession: return "Session"
+        case .missionRowChanges: return "Changes"
+        case .missionRowAnswer: return "Final answer"
+        case .missionRowProblems: return "Errors · unknown events"
+        case .missionCheckNotRun: return "not run"
+        case .missionCheckRunning: return "running…"
+        case .missionCheckNotInContract: return "not in its contract"
+        case .missionCheckPassed: return "passed"
+        case .missionCheckFailed: return "failed · exit %d"
+        case .missionRunChecks: return "Run checks on every candidate"
+        case .missionStopChecks: return "Stop checks"
+        case .missionOlderRevision: return "ran on rev %d"
+        case .missionNoRanking: return "Pulse lines the candidates up side by side. Which one is right is your call."
+        case .missionGoal: return "Goal"
+        case .missionSave: return "Save"
+        case .missionEditFrozenHint: return "A candidate has already started: saving makes a new contract revision. Earlier candidates keep the one they ran against."
         case .workbenchDispatchStart: return "Start"
         case .workbenchDispatchHint:
             return "Opens a Terminal window in this repository and starts claude with your task. The new session appears here once Pulse observes it."
@@ -1313,6 +1346,39 @@ enum L10n {
         case .workbenchDispatch: return "派活"
         case .workbenchDispatchRepo: return "仓库"
         case .workbenchDispatchTask: return "要它做什么？"
+        case .missionContractMore: return "约束与验收检查"
+        case .missionConstraints: return "约束（可选）"
+        case .missionChecks: return "验收检查 —— 每行一条命令（可选）"
+        case .missionChecksHint: return "检查是你的尺子：Pulse 在每个候选的 worktree 里按此顺序运行它们，不会交给 Agent 看。没有检查，就不会有任何东西显示为已验证。"
+        case .missionHeading: return "任务"
+        case .missionLifecycleDraft: return "草稿"
+        case .missionLifecycleRunning: return "进行中"
+        case .missionLifecycleReady: return "候选都已停下"
+        case .missionLifecycleArchived: return "已归档"
+        case .missionRevision: return "契约第 %d 版"
+        case .missionEdit: return "修改契约"
+        case .missionNoChecks: return "没有定义验收检查 —— 这里不会有任何东西显示为已验证。"
+        case .missionLegacyNote: return "从旧版 Pulse 迁移而来：目标是会话标题；旧的检查命令迁成了一条尚未运行的检查。"
+        case .missionCandidate: return "候选 %d"
+        case .missionChosen: return "你的选择"
+        case .missionChoose: return "选定"
+        case .missionUnchoose: return "取消选定"
+        case .missionRowSession: return "会话"
+        case .missionRowChanges: return "改动"
+        case .missionRowAnswer: return "最终回答"
+        case .missionRowProblems: return "错误 · 未知事件"
+        case .missionCheckNotRun: return "未运行"
+        case .missionCheckRunning: return "运行中…"
+        case .missionCheckNotInContract: return "不在它的契约里"
+        case .missionCheckPassed: return "通过"
+        case .missionCheckFailed: return "失败 · 退出 %d"
+        case .missionRunChecks: return "在所有候选上运行检查"
+        case .missionStopChecks: return "停止检查"
+        case .missionOlderRevision: return "按第 %d 版运行"
+        case .missionNoRanking: return "Pulse 只把候选并排摆好。哪个对，由你判断。"
+        case .missionGoal: return "目标"
+        case .missionSave: return "保存"
+        case .missionEditFrozenHint: return "已有候选开始运行：保存会生成新的契约版本，之前的候选保留它们运行时的那一版。"
         case .workbenchDispatchStart: return "启动"
         case .workbenchDispatchHint:
             return "在该仓库打开终端窗口并带任务启动 claude。新会话被 Pulse 观测到后会出现在这里。"
@@ -1553,6 +1619,16 @@ enum L10n {
         case managedTurnEffect
         case trayOpenInWorkbench, trayExpandRow, trayCollapseRow
         case trayScanIncomplete
+        // 13.0 · Mission
+        case missionContractMore, missionConstraints, missionChecks, missionChecksHint
+        case missionHeading, missionLifecycleDraft, missionLifecycleRunning, missionLifecycleReady
+        case missionLifecycleArchived, missionRevision, missionEdit, missionNoChecks
+        case missionLegacyNote, missionCandidate, missionChosen, missionChoose
+        case missionUnchoose, missionRowSession, missionRowChanges, missionRowAnswer
+        case missionRowProblems, missionCheckNotRun, missionCheckRunning, missionCheckNotInContract
+        case missionCheckPassed, missionCheckFailed, missionRunChecks, missionStopChecks
+        case missionOlderRevision, missionNoRanking, missionGoal, missionSave
+        case missionEditFrozenHint
     }
 }
 

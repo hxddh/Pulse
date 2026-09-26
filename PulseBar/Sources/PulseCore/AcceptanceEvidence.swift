@@ -22,6 +22,10 @@ public struct AcceptanceEvidence: Codable, Equatable, Sendable {
     public var preFingerprint: CodeFingerprint?
     public var postFingerprint: CodeFingerprint?
     public var outcome: Outcome
+    /// 13.0 · the Mission check this evidence answers. `nil` for an ad-hoc
+    /// check and for everything recorded before Missions existed — such
+    /// evidence stays history and is never counted against a Mission check.
+    public var checkID: String? = nil
 
     /// Pure state table. Callers bound output before constructing this value.
     public static func make(
@@ -35,7 +39,8 @@ public struct AcceptanceEvidence: Codable, Equatable, Sendable {
         preFingerprint: CodeFingerprint?,
         postFingerprint: CodeFingerprint?,
         timedOut: Bool = false,
-        interrupted: Bool = false
+        interrupted: Bool = false,
+        checkID: String? = nil
     ) -> AcceptanceEvidence {
         let outcome: Outcome
         if interrupted {
@@ -57,7 +62,8 @@ public struct AcceptanceEvidence: Codable, Equatable, Sendable {
             stdout: Data(stdout.suffix(outputLimitBytes)),
             stderr: Data(stderr.suffix(outputLimitBytes)),
             exitCode: exitCode, preFingerprint: preFingerprint,
-            postFingerprint: postFingerprint, outcome: outcome
+            postFingerprint: postFingerprint, outcome: outcome,
+            checkID: checkID
         )
     }
 }
@@ -65,22 +71,26 @@ public struct AcceptanceEvidence: Codable, Equatable, Sendable {
 /// A check that has started and not yet produced evidence. Persisted, so a
 /// check the app did not live to finish comes back as `interrupted` rather
 /// than vanishing — and never as a result nobody saw.
-public struct RunningCheck: Codable, Equatable {
+public struct RunningCheck: Codable, Equatable, Sendable {
     public var command: String
     public var cwd: String
     public var startedAtMs: Int64
+    /// 13.0 · the Mission check being run, if any.
+    public var checkID: String? = nil
 
-    public init(command: String, cwd: String, startedAtMs: Int64) {
+    public init(command: String, cwd: String, startedAtMs: Int64, checkID: String? = nil) {
         self.command = command
         self.cwd = cwd
         self.startedAtMs = startedAtMs
+        self.checkID = checkID
     }
 
     public func interruptedEvidence() -> AcceptanceEvidence {
         AcceptanceEvidence.make(
             command: command, cwd: cwd, startedAtMs: startedAtMs, finishedAtMs: startedAtMs,
             stdout: Data(), stderr: Data(), exitCode: nil,
-            preFingerprint: nil, postFingerprint: nil, interrupted: true
+            preFingerprint: nil, postFingerprint: nil, interrupted: true,
+            checkID: checkID
         )
     }
 }

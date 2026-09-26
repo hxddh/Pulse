@@ -49,10 +49,116 @@ package final class ManagedFleet {
     /// state layer maps a persisted "running" to `interrupted` itself.
     package func reattachFromDisk() {
         guard runners.isEmpty else { return }
-        for model in ManagedSession.loadAll() {
-            attach(ManagedSessionRunner(model: model))
+        let loaded = ManagedSession.loadAll()
+        let existing = Mission.loadAll()
+        let migrated = Mission.migrate(sessions: loaded, existing: existing)
+        missions = migrated.missions
+        let before = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for mission in missions where before[mission.id] != mission {
+            Mission.persist(mission)
+        }
+        let moved = Dictionary(migrated.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for model in loaded {
+            if let assigned = moved[model.id] {
+                ManagedSession.persist(assigned)
+                attach(ManagedSessionRunner(model: assigned))
+            } else {
+                attach(ManagedSessionRunner(model: model))
+            }
+        }
+        if !migrated.sessions.isEmpty {
+            DebugLog.write("missions migrated sessions=\(migrated.sessions.count) missions=\(missions.count)")
         }
         pump()
+    }
+
+    // MARK: - Missions (13.0)
+
+    package private(set) var missions: [Mission.Model] = []
+
+    package func mission(id: String) -> Mission.Model? {
+        missions.first { $0.id == id }
+    }
+
+    /// A Mission's Candidates in dispatch order.
+    package func candidates(of missionID: String) -> [ManagedSessionRunner] {
+        guard let mission = mission(id: missionID) else { return [] }
+        return mission.candidateIDs.compactMap { runner(managedID: $0) }
+    }
+
+    package func lifecycle(of missionID: String) -> Mission.Lifecycle? {
+        guard let mission = mission(id: missionID) else { return nil }
+        return mission.lifecycle(candidateStatuses: candidates(of: missionID).map(\.model.status))
+    }
+
+    /// Record a new Mission before its Candidates are dispatched.
+    package func create(_ mission: Mission.Model) {
+        guard self.mission(id: mission.id) == nil else { return }
+        missions.append(mission)
+        Mission.persist(mission)
+        onChange?()
+    }
+
+    /// Dispatch a Candidate of `missionID`: it runs the current contract.
+    package func dispatch(candidate model: ManagedSession.Model, missionID: String) {
+        guard let index = missions.firstIndex(where: { $0.id == missionID }) else { return }
+        var candidate = model
+        candidate.missionID = missionID
+        candidate.contractRevision = missions[index].contract.revision
+        candidate.pendingPrompt = missions[index].contract.prompt
+        if !missions[index].candidateIDs.contains(candidate.id) {
+            missions[index].candidateIDs.append(candidate.id)
+            Mission.persist(missions[index])
+        }
+        dispatch(model: candidate)
+    }
+
+    /// The user's edit. Once any Candidate has started, the contract is
+    /// frozen for it and the edit becomes a new revision.
+    package func revise(missionID: String, goal: String, constraints: String, checks: [Mission.Check]) {
+        guard let index = missions.firstIndex(where: { $0.id == missionID }) else { return }
+        let frozen = candidates(of: missionID).contains {
+            $0.model.status != .queued || $0.model.turns > 0
+        }
+        missions[index].revise(goal: goal, constraints: constraints, checks: checks, frozen: frozen)
+        Mission.persist(missions[index])
+        onChange?()
+    }
+
+    /// The user's choice. It marks a Candidate as chosen — nothing else:
+    /// no git write, no ranking. Choosing the chosen one clears it.
+    package func choose(missionID: String, candidateID: String) {
+        guard let index = missions.firstIndex(where: { $0.id == missionID }),
+              missions[index].candidateIDs.contains(candidateID) else { return }
+        missions[index].chosenCandidateID =
+            missions[index].chosenCandidateID == candidateID ? nil : candidateID
+        Mission.persist(missions[index])
+        onChange?()
+    }
+
+    /// Run the Mission's checks — each Candidate against the contract
+    /// revision it was started on — on one Candidate or on all that are
+    /// not busy. Candidates run in parallel; checks within one run in order.
+    package func runChecks(missionID: String, candidateID: String? = nil) {
+        guard let mission = mission(id: missionID) else { return }
+        for runner in candidates(of: missionID) {
+            if let candidateID, runner.model.id != candidateID { continue }
+            let contract = mission.contract(revision: runner.model.contractRevision) ?? mission.contract
+            runner.runChecks(contract.checks)
+        }
+    }
+
+    /// A Mission whose first dispatch failed before any Candidate existed.
+    package func dropIfEmpty(missionID: String) {
+        guard let index = missions.firstIndex(where: { $0.id == missionID }),
+              missions[index].candidateIDs.isEmpty else { return }
+        Mission.remove(id: missionID)
+        missions.remove(at: index)
+        onChange?()
+    }
+
+    package func cancelChecks(missionID: String) {
+        for runner in candidates(of: missionID) { runner.cancelChecks() }
     }
 
     /// A new session enters queued with its prompt held; the pump decides
@@ -83,9 +189,21 @@ package final class ManagedFleet {
     package func remove(managedID: String) {
         guard let runner = runner(managedID: managedID),
               runner.model.status != .running else { return }
+        let missionID = runner.model.missionID
         runners.removeAll { $0.model.id == managedID }
         lastPersisted[managedID] = nil
         ManagedSession.removeState(id: managedID)
+        // The Mission forgets the Candidate; a Mission with none left goes.
+        if let index = missions.firstIndex(where: { $0.id == missionID }) {
+            missions[index].candidateIDs.removeAll { $0 == managedID }
+            if missions[index].chosenCandidateID == managedID { missions[index].chosenCandidateID = nil }
+            if missions[index].candidateIDs.isEmpty {
+                Mission.remove(id: missionID)
+                missions.remove(at: index)
+            } else {
+                Mission.persist(missions[index])
+            }
+        }
         pump()
         onChange?()
     }

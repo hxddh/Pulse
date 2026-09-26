@@ -38,6 +38,28 @@ package enum ManagedSession {
     package static let maxEntries = 1_000
     package static let maxAcceptanceEvidence = 20
 
+    /// Keep at most `maxAcceptanceEvidence`, dropping the oldest first — but
+    /// never the newest evidence for a Mission check (13.0): a rerun plus a
+    /// few ad-hoc checks must not push a check's only answer out.
+    package static func trimEvidence(_ evidence: [AcceptanceEvidence]) -> [AcceptanceEvidence] {
+        guard evidence.count > maxAcceptanceEvidence else { return evidence }
+        var newestForCheck: [String: Int] = [:]
+        for (index, item) in evidence.enumerated() {
+            if let id = item.checkID { newestForCheck[id] = index }
+        }
+        let protected = Set(newestForCheck.values)
+        var excess = evidence.count - maxAcceptanceEvidence
+        var kept: [AcceptanceEvidence] = []
+        for (index, item) in evidence.enumerated() {
+            if excess > 0, !protected.contains(index) {
+                excess -= 1
+                continue
+            }
+            kept.append(item)
+        }
+        return kept
+    }
+
     /// The whole session as a value: the runner mutates it via `apply`,
     /// views render it, tests drive it line by line.
     package struct Model: Equatable {
@@ -80,6 +102,10 @@ package enum ManagedSession {
         package var runningCheck: RunningCheck?
         /// 6.0-γ · same-task attempt group id (empty = standalone).
         package var attemptGroup = ""
+        /// 13.0 · the Mission this session is a Candidate of (empty only
+        /// before migration), and the contract revision it was started on.
+        package var missionID = ""
+        package var contractRevision = 0
         /// 6.0-γ · what the last finished turn left on disk (+insertions,
         /// −deletions); nil until a turn has been measured.
         package var lastTurnEffect: (insertions: Int, deletions: Int)?
@@ -167,7 +193,7 @@ package enum ManagedSession {
     /// itself Codable: the status enum flattens to kind+detail here, and the
     /// file format stays decoupled from in-memory evolution.
     package struct State: Codable, Equatable {
-        package static let currentSchemaVersion = 3
+        package static let currentSchemaVersion = 4
 
         package var schemaVersion: Int
         package var id: String
@@ -197,6 +223,9 @@ package enum ManagedSession {
         package var runningCheck: RunningCheck?
         /// 6.0-γ · same-task attempt group (empty = standalone).
         package var attemptGroup: String = ""
+        /// 13.0 · schema 4.
+        package var missionID: String = ""
+        package var contractRevision: Int = 0
 
         package init(model: Model) {
             schemaVersion = Self.currentSchemaVersion
@@ -228,9 +257,11 @@ package enum ManagedSession {
             lastErrorText = model.lastErrorText
             pendingPrompt = model.pendingPrompt
             runCommand = model.runCommand
-            acceptanceEvidence = Array(model.acceptanceEvidence.suffix(ManagedSession.maxAcceptanceEvidence))
+            acceptanceEvidence = ManagedSession.trimEvidence(model.acceptanceEvidence)
             runningCheck = model.runningCheck
             attemptGroup = model.attemptGroup
+            missionID = model.missionID
+            contractRevision = model.contractRevision
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -240,6 +271,7 @@ package enum ManagedSession {
             case turns, errorResults, totalCostUSD, tokensIn, tokensOut
             case lastEventMs, lastResultText, lastErrorText, pendingPrompt
             case runCommand, acceptanceEvidence, runningCheck, attemptGroup
+            case missionID, contractRevision
         }
 
         package init(from decoder: Decoder) throws {
@@ -278,9 +310,11 @@ package enum ManagedSession {
             let decodedEvidence = try values.decodeIfPresent(
                 [AcceptanceEvidence].self, forKey: .acceptanceEvidence
             ) ?? []
-            acceptanceEvidence = Array(decodedEvidence.suffix(ManagedSession.maxAcceptanceEvidence))
+            acceptanceEvidence = ManagedSession.trimEvidence(decodedEvidence)
             runningCheck = try values.decodeIfPresent(RunningCheck.self, forKey: .runningCheck)
             attemptGroup = try values.decodeIfPresent(String.self, forKey: .attemptGroup) ?? ""
+            missionID = try values.decodeIfPresent(String.self, forKey: .missionID) ?? ""
+            contractRevision = try values.decodeIfPresent(Int.self, forKey: .contractRevision) ?? 0
         }
 
         package func encode(to encoder: Encoder) throws {
@@ -311,6 +345,8 @@ package enum ManagedSession {
             try values.encode(acceptanceEvidence, forKey: .acceptanceEvidence)
             try values.encodeIfPresent(runningCheck, forKey: .runningCheck)
             try values.encode(attemptGroup, forKey: .attemptGroup)
+            try values.encode(missionID, forKey: .missionID)
+            try values.encode(contractRevision, forKey: .contractRevision)
         }
 
         /// Reattach. A state persisted mid-turn ("running") comes back as
@@ -347,13 +383,11 @@ package enum ManagedSession {
             // We were not there to see how it ended; say exactly that.
             if let runningCheck {
                 m.acceptanceEvidence.append(runningCheck.interruptedEvidence())
-                if m.acceptanceEvidence.count > ManagedSession.maxAcceptanceEvidence {
-                    m.acceptanceEvidence.removeFirst(
-                        m.acceptanceEvidence.count - ManagedSession.maxAcceptanceEvidence
-                    )
-                }
+                m.acceptanceEvidence = ManagedSession.trimEvidence(m.acceptanceEvidence)
             }
             m.attemptGroup = attemptGroup
+            m.missionID = missionID
+            m.contractRevision = contractRevision
             return m
         }
     }
