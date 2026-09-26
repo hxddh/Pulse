@@ -121,7 +121,11 @@ package enum Mission {
                 constraints: Mission.bound(constraints, Mission.maxConstraintsLength),
                 checks: Array(checks.prefix(Mission.maxChecks))
             )
-            guard next != contract else { return }
+            // An edit that changes nothing is not a revision.
+            guard next.goal != contract.goal
+                || next.constraints != contract.constraints
+                || next.checks != contract.checks
+            else { return }
             if frozen {
                 contracts.append(next)
                 if contracts.count > Mission.maxContracts {

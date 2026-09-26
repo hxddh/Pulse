@@ -182,7 +182,7 @@ final class ManagedFleetTests: XCTestCase {
         let migrated = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         )
-        XCTAssertEqual(migrated["schemaVersion"] as? Int, 3)
+        XCTAssertEqual(migrated["schemaVersion"] as? Int, ManagedSession.State.currentSchemaVersion)
         XCTAssertEqual(migrated["runtimeID"] as? String, "claude")
         XCTAssertEqual(migrated["continuationID"] as? String, "old-session")
         XCTAssertNil(migrated["claudeSessionID"])
