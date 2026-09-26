@@ -310,6 +310,8 @@ enum PulseNotify {
         if !rowKeys.isEmpty { info["rowKeys"] = rowKeys }
         content.userInfo = info
         let req = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        // Called only after the hop to the main queue below.
+        let deliver = Unchecked(completion)
         center.add(req) { error in
             if let error {
                 // A notification request can still fail after authorization
@@ -319,7 +321,7 @@ enum PulseNotify {
                 DebugLog.write("notification add failed id=\(id) error=\(error.localizedDescription)")
             }
             DispatchQueue.main.async {
-                completion(error == nil)
+                deliver.value(error == nil)
             }
         }
     }

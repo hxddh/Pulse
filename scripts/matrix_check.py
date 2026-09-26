@@ -131,8 +131,9 @@ def main() -> int:
     if "32 个用户可见 Agent" not in experience:
         print("FAIL: EXPERIENCE.md Support Health must say 32 visible Agents", file=sys.stderr)
         return 1
-    if "| Y |" not in experience or "Contract Honesty" not in experience:
-        print("FAIL: EXPERIENCE.md missing scenario Y (Contract Honesty)", file=sys.stderr)
+    scenarios = (ROOT / "docs" / "scenarios.md").read_text(encoding="utf-8")
+    if "| Y |" not in scenarios or "Contract Honesty" not in scenarios:
+        print("FAIL: docs/scenarios.md missing scenario Y (Contract Honesty)", file=sys.stderr)
         return 1
     obs = (ROOT / "docs" / "observability-matrix.md").read_text(encoding="utf-8")
     if "all 32 surfaces" not in obs:

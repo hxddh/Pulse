@@ -27,3 +27,15 @@ public final class Guarded<Value>: @unchecked Sendable {
     /// A copy of the current value.
     public var snapshot: Value { withValue { $0 } }
 }
+
+/// A value carried across a queue boundary whose safety the compiler cannot
+/// see — a completion that is only called after hopping back to the main
+/// thread, or a closure that does pure work. It checks nothing; every use
+/// says in a comment why it holds. Prefer `Sendable` types and `Guarded`.
+public struct Unchecked<Value>: @unchecked Sendable {
+    public let value: Value
+
+    public init(_ value: Value) {
+        self.value = value
+    }
+}

@@ -56,6 +56,26 @@
 仍然不在 12.x 范围内的：Outcome（[`plan-outcome.md`](plan-outcome.md)），等真机 Codex 证据与
 review-11.0 §4.3 的产品决定。
 
+## 12.4 已完成（Surface）
+
+12.0 发布定义的第三句「一次扫描不重绘设置」在 12.0 只对设置窗成立。12.4 让它对所有表面成立：
+
+| 项 | 完成内容 |
+| --- | --- |
+| 扫描静默 | 扫描路径只在值变化时写 `@Published`；`snapshot` 只在内容变化、屏上有秒级时间、或分钟级时间到点时才替换（`PulseSnapshot.needsPublish`）。`ScanQuietTests` 是计数墙：同一世界的第二轮扫描发布数为 0，失败时点名是哪个属性 |
+| 严格并发收尾 | App 侧最后 5 条警告清零；所有 target 开启 warnings-as-errors，ratchet 退役 |
+| 规格拆分 | `EXPERIENCE.md` 94 KB → 约 51 KB，只留行为规格；77 个验收场景移到 `docs/scenarios.md` 并写明钉住它的测试（53 个有具名测试，其余明写「人工 / QA 脚本」）；`scenario_map.py` 进 gate |
+
+评估时列出、本版**没有做**的，以及原因：
+
+- **「退役 227 处文案子串断言」**：逐条核对后这个目标本身是错的。大多数断言的对象是
+  通知正文、支持报告、资源路径、hook 输出 —— 文本就是契约。真正断言行文案的约 35 处
+  （RowValueEngine / RowMetaLine / EvidenceSurface），`RowNarrator` 是纯值之后它们已经是
+  输入 → 输出的确定性断言，不再依赖 store 或墙钟。
+- **视图快照测试**：参考图必须在真 Mac 上生成并由人确认一次，本环境做不到；CI 已把
+  `qa_observation_truth` 的截图作为构件上传，能人工比对，但不是自动断言。
+- **扫描引擎 actor**：12.3 已说明，锁已给出同样的保证，改 async 的代价不值。
+
 ## 边界不动
 
 AGENTS.md 的全部不变量；托盘与 Workbench 的用户可见行为；持久状态 schema。12.0 不改任何文案语义。

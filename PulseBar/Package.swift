@@ -34,6 +34,7 @@ let package = Package(
             path: "Sources/PulseRespond",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
+                .unsafeFlags(["-warnings-as-errors"]),
             ]
         ),
         // 12.3 · Harvest: the native collector — the scan, the walk, the
@@ -46,6 +47,7 @@ let package = Package(
             path: "Sources/PulseHarvest",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
+                .unsafeFlags(["-warnings-as-errors"]),
             ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
@@ -61,6 +63,7 @@ let package = Package(
             path: "Sources/PulseManaged",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
+                .unsafeFlags(["-warnings-as-errors"]),
             ]
         ),
         .executableTarget(
@@ -73,13 +76,11 @@ let package = Package(
                 .copy("Resources/AgentIcons"),
                 .copy("Resources/Brand"),
             ],
-            // 12.3: the app target is checked under complete concurrency
-            // checking too. Unlike PulseCore it is not warning-free yet, so
-            // warnings stay warnings here and `scripts/concurrency_ratchet.py`
-            // (CI job "Concurrency ratchet") holds the count to a baseline
-            // that may only go down.
+            // 12.4: every target is warning-free under complete concurrency
+            // checking, and stays that way — the same rule as PulseCore.
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
+                .unsafeFlags(["-warnings-as-errors"]),
             ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),

@@ -8,12 +8,13 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | --- | --- |
 | [`README.md`](README.md) | You want to know what the product is |
 | [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
-| [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the acceptance basis |
+| [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the behaviour spec |
+| [`docs/scenarios.md`](docs/scenarios.md) | You add or change an acceptance scenario — each row names the tests that pin it |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
 | [`docs/review-11.0.md`](docs/review-11.0.md) | **The current review** — defects at the 11.0.3 baseline (fixed in 11.0.4) and the next-version evaluation (Kernel before Outcome) |
 | [`docs/archive/`](docs/archive/README.md) | Historical plans (0.23 – 6.0) and superseded reviews (0.21, 1.2, 2.2) |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
-| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The 12.x plan (Kernel → Whole) — modules, catalog, dialects, narration, and what each 12.x release completed |
+| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The 12.x plan (Kernel → Surface) — modules, catalog, dialects, narration, scan-quiet surfaces, and what each 12.x release completed |
 | [`docs/plan-outcome.md`](docs/plan-outcome.md) | The unnumbered next plan (Outcome) — result contracts and comparable evidence; blocked on real-machine Codex evidence |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
@@ -152,17 +153,19 @@ to users.
 
 ## Current state
 
-12.3.0 is the current source version (Kernel + Seams + Groundwork + Whole —
-[`docs/plan-12.0.md`](docs/plan-12.0.md); every 12.x structural phase is done).
-The review behind it is [`docs/review-11.0.md`](docs/review-11.0.md); its
-defects were fixed in 11.0.4 and F-4 in 12.3.0. The next product axis is
-Outcome ([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the
+12.4.0 is the current source version (Kernel + Seams + Groundwork + Whole +
+Surface — [`docs/plan-12.0.md`](docs/plan-12.0.md)). The review behind it is
+[`docs/review-11.0.md`](docs/review-11.0.md); its defects were fixed in 11.0.4
+and F-4 in 12.3.0. The next product axis is Outcome
+([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the
 real-machine Codex P0 evidence exists and the product decision in review-11.0
 §4.3 has been made.
 
-App-side concurrency warnings are held by `scripts/concurrency_ratchet.py`
-(CI job "Concurrency ratchet"): the count may only go down — lower
-`scripts/concurrency_baseline.json` in the change that lowers it.
+Every target builds warning-free under complete concurrency checking with
+`-warnings-as-errors` (12.4). A value that crosses a queue by convention goes
+in `Unchecked` with a comment saying why; prefer `Sendable` types and `Guarded`.
+A scan that finds the same world must publish nothing (`ScanQuietTests`): write
+a `@Published` property on the scan path only when its value changed.
 Respond's P0-0 real-machine confirmation (decision shape honoured) remains the
 one unverified item of 2.0 — a wrong shape is silently ignored and falls open,
 never a wrong approval.

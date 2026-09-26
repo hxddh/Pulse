@@ -27,21 +27,6 @@ jobs:
       - name: Source gates
         run: bash scripts/gates.sh
 
-  # 12.3: the app target builds under complete concurrency checking. A clean
-  # build (no cache: an incremental one would only report the files it
-  # recompiled) feeds the warning count to a ratchet that only goes down.
-  concurrency:
-    name: Concurrency ratchet (app target)
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - name: Clean build of the app target, counted
-        run: |
-          set -o pipefail
-          swift build --target PulseBar 2>&1 | tee ../concurrency.log >/dev/null || true
-          python3 ../scripts/concurrency_ratchet.py < ../concurrency.log
-        working-directory: PulseBar
-
   build:
     name: Build & test (macOS)
     runs-on: macos-14

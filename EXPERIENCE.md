@@ -627,6 +627,10 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 昂贵的 native harvest 与便宜的 `ps` probe 解耦，按节奏跳过；legacy Python 只在显式诊断时使用；
 进程指纹变化 / 手动刷新 / attention 变化时强制采集。
 
+**扫描不重绘**（12.4，场景 BY）：一轮扫描发现的世界与上一轮相同时，store 不发布任何变更，
+托盘、指挥台、会话卡与详情窗都不重算；屏上有一分钟以内的秒级时间时照常逐拍刷新，分钟级时间
+每分钟刷新一次。设置窗另有更慢的节奏（扫描来源的变更最多 30 秒转发一次）。
+
 ### 通知
 
 - 触发：全部空闲（边沿）· 新 Waiting（边沿，首扫只播种不发）
@@ -691,116 +695,38 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 
 ## 8. 验收场景
 
-| # | 场景 | 期望 |
-| --- | --- | --- |
-| A | 无 Agent | Glance 安静；Tray 空态带引导和安装按钮 |
-| B | Claude 运行中 | Glance 绿灯 + 名字；Tray 主行是会话标题；无空的 ↳ 行 |
-| C | Claude 等授权 | Glance 红灯 + 短标题（新等待闪一次即止，无常驻呼吸）；Tray 等待置顶 + 原因 + 来源标签；通知带项目与原因，且**原因是被请求的那件事**（`Bash: npm run build`），不是「权限」两个字；后到的哑事件不覆盖它 |
-| D | 2 跑 + 1 等 | Glance 偏等待；Tray 等待行在最上 |
-| E | 同一 Agent 520 个会话 | 采集/模型保留 500 行并报告未显示余量；面板全局 12 行后可展开 |
-| F | 打开再关闭 Prefs | Tray 仍在；无 Dock 常驻感 |
-| G | 切到中文 | Tray / Prefs 中文正确；Agent 名仍英文；时长单位也是中文 |
-| H | 通知权限被拒 | 开关置灰 + 常驻说明 + 「打开系统设置」，不假装会响 |
-| I | 息屏 | 探测停表；唤醒后立即补一次扫描 |
-| J | 旧 app 与新版并存 | 关于区显示 `x.y.z≠bundle` 并提示重新打包 |
-| K | Supervisor 故意延后一 Agent | 不出现 incomplete 横幅；其它 Agent 照常可见 |
-| L | ad-hoc / 未公证包 | About 标 preview 或 signed；不得自称 stable；GitHub 可为 Latest；无就地安装按钮 |
-| M | 多份用户安装副本 | About 最多列 5 条路径，超出显示「另有 N 个」；回收只动用户安装 |
-| N | 无 Waiting 路径的 Agent 在跑 | 托盘 / Support 指向 Waiting signals · Attention 桥；不伪造 Waiting |
-| O | 旗舰事实连续（Claude / Codex / Cursor） | 有会话时主行是真实 goal 或人话工具；cwd / 最新 tool / subagents 可见；无动态事实时次行省略；不发明「进度信号」占位；薄 cache 标 Limited，不升格假 session |
-| P | 更新后用 Finder / Spotlight 打开 | 不弹空白 Settings 窗；真设置只经菜单进入 `SettingsWindowController`；无 SwiftUI `Settings` 场景 |
-| Q | 舰队事实连续（非旗舰 session + 高流量 cache） | Amp/Pi/Grok 等有 goal/cwd/tool 时主行诚实；`bestEffortCache` 证据恒为 cache；薄索引 Limited；`depending` 等不得假 Waiting；Waiting-none 七 Agent（含 ZCode）可从 Settings 写 Attention 样本 |
-| R | 富缓存 Limited（Windsurf / Cline / Roo / Warp…） | 有 goal+cwd/tool 时托盘显示真实事实，Support 标「cache facts (Limited)」；薄索引标「thin cache」；证据仍 `.cache`，不升格假 session |
-| S | Waiting 连续（harvestPending + Waiting-none） | Cline `ask=followup` / Roo ask tool / Cascade waiting 旗 → 红灯；`depending` 仍否；Attention 带未知 session 不点亮已有兄弟会话（空 session 进程行可收养）；Waiting-none 只经 Settings → Waiting signals → Attention 样本，不从 harvest 抬 pending |
-| T | Hook Autonomy（无 Python） | 无 Python 的 Mac：Settings 安装 Claude/Codex hooks 成功；「测试连接」通过；`pulse-hook` / `PulseBar --hook` 写入 attention.tsv；已装 `pulse_hook.py` 可迁移且可卸载 |
-| U | Attention Autonomy（外接 raise） | Waiting-none / 名单外工具按 Attention Protocol v1 经 `pulse-hook` raise → 红灯 + Tray `hooks`；未知 kind 不写不亮；不扩 Claude/Codex 安装器；样本 `raise.sh` 可冒烟 |
-| V | Live Continuity（绿灯可信） | stall-only → 橙；`running + stalled` 混合 → 橙（不装健康绿）；progress/tokens 前进且 harvestMs 未动 → 不假停滞；仅进程 / 无活动时钟 Running → Glance 橙；Waiting 仍优先于 stall |
-| W | Go-Look Closure（打断闭环） | 点 Waiting 通知 /「去看看」→ 托盘打开且**该行**选中并滚入视口；有 Focus 句柄时仍可激活宿主，但不因 Focus 成功丢行身份；多 Waiting 摘要用精确 `rowKey`，不 smear |
-| X | Fleet Coverage（ZCode） | `ZCode.app` / `~/.zcode` 可探测；证据为 best-effort cache；无原生 Waiting；Settings Attention 样本与 `raise-zcode.sh` 可亮红；不扩 Claude/Codex hooks |
-| Y | Contract Honesty（契约诚实） | Support / 样本 / L10n 的 Waiting-none 名单派生自 `AgentID.waitingNoneAgents`；Waiting-none 深度仍露出 cache thin/partial；Support → Waiting signals 点名该 Agent；规格写 32 Agent；未公证不标 Gatekeeper-ready |
-| Z | Tray Legibility（托盘可读） | 默认行同时可见次行（路径·最近动作含执行命令·最近活动·始于）+ 运动信号 + **观测行**（model·tokens·最强进度；**2.1 起条数不再封顶在 4，改为按信息量取**，见 §4 与场景 AS）；无事实整行消失；核心运动事实不藏 Details；不发明进度占位 |
-| AA | Tray Substance（托盘实质） | Claude 会话记录带 `message.model`/`usage` 时观测行有 model+tokens；Codex `last_token_usage` 可见；Cursor `unifiedMode` 可见且非假 local；tool-hero+分组去路径时次行仍有最近动作或路径；LS/Task 等工具可作最近动作 |
-| AB | Tray Fleet Substance（舰队托盘实质） | Gemini `functionCall`+`usageMetadata` / Goose `depending`→Working（非 Waiting）/ Cursor `modelDetails` / Pi `agent_usage` model+tokens 进默认行；有 model 的 cache 行观测非空且仍 Limited；quiet live 无 phase 时 Now 空、观测可有 model/tokens |
-| AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到 Waiting signals；一屏完成「确保 pulse-hook（不装 Claude/Codex）→ 打开文件夹 → 写样本 → 托盘红灯可清除」；可复制 raise 命令；Application Support 有 bridge kit；不伪造原生 Waiting、不扩 hooks 安装器 |
-| AD | Row Story（行叙事） | 默认行在标题下有一句叙事：有 phase 时可读阶段·工具；quiet live 无 Now 仍有最近动作；无动作时观测行有 model/tokens（story 不重复）；tool/phase/task 变化进 Changed；仅进程/薄 cache 显示证据+下一步；不把 last tool 标成 Now、不伪造 Waiting |
-| AE | Row Clarity（行清晰） | Story 拥有 phase/工具/Changed；次行只留路径·年龄；信号在 story 已带 Now/Changed 时让位；Waiting 芯片=种类·时长、详情=消息优先；Limited 质量摘要只出现一次；离开再回可见「什么动了」；Details 同叙事；不伪造 Waiting / 不升格 session |
-| AF | Look Closure（回看闭环） | 离开再回 notice **具名**（最多 3 +「+N」）；优先级新等待→已结束→有变化；一点经 `pendingRevealRowKey` 选中滚到该行；受影响行短暂「离开后有变」；不发明 Waiting、不伪造会话深链 |
-| AG | Waiting Proof（等待可证） | Cline/Roo/Cascade/Cursor 显式 ask/block → 红灯；soft-dismiss 后自然清除可再亮；`depending`/Waiting-none 永不从 harvest 抬；Attention raise 精确点亮并可 clear；Waiting-none 在跑时可直达 Waiting signals；不扩 hooks、不伪造 Waiting |
-| AH | Extinguish Honesty（熄灭诚实） | 已答 ask / 终态不亮；Cascade/Windsurf 共享根不双红；Pi/Grok 正文不抬；soft-dismiss 重启仍压、可靠缺席后可再亮；纯 harvest dismiss 不抹掉同 Agent Attention；歧义 session 前缀不 smear；`Waiting`+Stop 有 grace；Clear waiting 无迟到通知 |
-| AI | Return Truth（回看诚实） | 重开托盘后用新扫描算 Look；同行新 `waitSinceMs` 算新等待且优先于 ended；ended 不进 moved；Glance 超 8 格降为 `1 · 4m` / `1`；样本行出现后再 Go-Look；进程收养重键；Attention 压缩保留未决；Details 可行动缺口优先、quiet/cache 不重复观测/身份 |
-| AJ | Pi 会话标题 | 与 Pi `/resume` 一致：最新 `session_info.name`（空则清除）否则**第一条**用户句；官方 `--<cwd>--/<timestamp>_<uuid>.jsonl`；env 标签不吞后半句，未闭合 env 不当标题；compaction `retainedTail`；sibling `.db` 不挡 JSONL；SQLite 最新句不盖 JSONL；`Auth session` 不是 chrome；官方头-only 不发明项目名主行 |
-| AK | Hero Honesty（主行诚实） | Claude/Command Code `tool_result` 不当标题、长会话记录开场目标仍在；`messages[]` 跳过 tool 信封；Codex `event_msg` 用户正文进主行、Desktop 信封剥掉、`continue` 不覆盖；tool `path` 不是 cwd；Goose `name` / Kimi `lastPrompt` / Cursor `subtitle` 可见；表头计数=舰队；Details 空 phase 不发明「等待权限」；审批 ask → Permission 芯片 |
-| AL | Ground Truth（采集可证） | 主行按记录种类选而非字符串长度（`sessionName` > `userPrompt` > `cacheTitle` > chrome），同种类保留先见到的；每个 adapter 输出 explain（files/bytes/truncated/facts/heroOrigin/emptyReason）进安全支持报告与 debug.log，**并进 Support Health 的「适配器诊断」折叠区**（2.2：「为什么这行是空的」不该要开终端才能问 —— 读了多少 ＋ 结果如何/哪一层丢了它，都用人话；窗口截断时同一行声明计数只是下限；什么都没读就整行消失而不是打一排 0；本版不认识的 tag 原样打出，不静默吞掉）；窗口截断时 records 报未知不报估算值；预算用尽后下次扫描从上次没走到的 adapter 开始，尾部 Agent 不再永久 `unscanned`；launchd 最小 PATH 下 `~/.local/bin` 的 CLI 仍算「已安装」；chrome 词表单源；native 墙用厂商真实布局断言主行**取值**；explain / shape 导出不含标题、正文与路径 |
-| AM | Quiet Data（数据静默） | 账本注释所述 == 实际字段（≤160 字会话标题、14 天 / 256 条、已过 `ContentSanitizer`）；设置里「最近等待」下方写明保留期并可清空；chrome 词表全仓只有一份且大小写不敏感，`Cascade session` 在采集侧与行侧一致被拒；`debug.log` 的 rowKey 不含项目名但仍可跨行关联；预算挤掉的 adapter 进 supervisor 摘要；Details 事实行与 Support 事实徽章 VoiceOver 读得出标签与有无；只有一个采集器，任何路径都不为观测会话 fork 解释器 |
-| AN | Live Wire（通电） | `lsof` 退 1 但已打印的进程照常采用；只有调用失败 / 超时 / 退 0 却无输出 / 退 1 而被问的进程仍活着，才武装 5 分钟 backoff；已退出的 pid 不连坐其它 Agent；子进程超时后不向仍在运行的它索要退出码，SIGTERM 不死则 SIGKILL；仅进程行从探针拿到工作区与项目名，多个陈旧会话按活进程 cwd 消歧（无 cwd 时按新旧）；厂商格式报告可从支持窗口一键复制且不含任何正文；「登录时启动」的终态经 `launchctl list` 复核并进安全支持报告；Focus 打开工作区不在主线程无限等待 |
-| AO | Remote Fleet（我的舰队） | 远端 raise 经 `attention.d/<host>.tsv` 点亮独立行；`host` 空=本机，v1 六列行仍有效；两台机器的同名 Agent 是两行两个 rowKey，一台的 `done` 不清另一台；远端行**永不**报进程、**没有** Focus、叙事行说「最后听到」；TTL 后进**失联**（撤红灯、留行、给原因），一小时后才消失；发送方时钟对不上时按到达时间计龄并在行上说明，不再静默丢弃；远端等待不认领本机会话；安全支持报告有 `remoteFleet:`；Pulse 不联网、不带服务器、不上传任何东西
-| AP | Full Transcript（全见） | 超过窗口的会话记录数不再报未知：摘要读完整份文件后给精确值，没读完则保持原行为；追加中的半行不计数 —— 不只看 stat 说的结尾（那是读之前量的），还问打开着的描述符文件现在到哪儿，**且末尾那截自己得像个记录**（`{` 开头却解析不出来的就是被撕开的前半截；从来不是 JSON 的行没有形状可查，照旧采信）；文件变短 / 标识变 / 头部指纹变（含同长度就地重写）一律从头重来；分片折叠结果 == 一次性折叠结果；摘要只存计数与厂商工具名，不存正文、工具入参或会话记录里的路径，有界并按期清理；安全支持报告有 `sessionDigests:`；窗口读取本版仍在，不得声称已省掉
-| AQ | Substance（行的实质） | 连续调用同一工具 ≥3 次时叙事行说 `Edit · 连续 5 次`，因为「在动但没在推进」是灯表达不了、窗口也看不到的状态；Waiting 与远端行的叙事优先于它；**不改灯色**（状态编码仍是 4 种，打转不是 stalled）；Details 给整场会话证据：用过的工具按次数排序最多 4 项（长尾直接丢弃，不做「其它 N 个」）、错误总量、打转说明；摘要事实只搬运不重算，不得从窗口文本复核
-| AR | Respond（回应） | 远端等待行在存在匹配的完整请求（`respond.d` 请求文件，digest 复核通过）时多出两个动作：**拒绝**（永远可用 —— 拒绝没读全的东西是安全的）与**查看并回应**（打开 Details 的完整请求区，「同意」只出现在那里且仅当 `canOfferAllow` —— 对着 200 字截断摘要没有同意按钮）；判决单次使用、90 秒过期、HMAC 逐 host 密钥签名、绑定 request id + 内容摘要 + agent + host，密钥文件不存在则这一切不出现；**2.4 起本机行也可以有这两个按钮**（见场景 AU）—— 2.0 的「本机永不 hold」是用「有人碰这台 Mac」近似「提示在你眼前」，那个近似在头号场景里是反的；hook 端任何失败静默回落厂商提示；判决送达与否 Pulse 不谎报 —— 界面只说「判决已写出，等你的同步工具送达」
-| AS | Evidence（证据） | 摘要算出的事实不再停在支持报告：Details 有**会话证据**卡 —— 最近动作时间线（`Read → Edit → Bash`）、**整场会话** token（与 facts 里「最近一条消息」的 token 明确区分，不让两个数字打架）、活跃度（会话记录增长速率，未知就说未知）、会话时长、读取完整度；**定性事实在追平前也显示，但必须标注「仍在追平 · 已读 N%」** —— 披露过的部分值不是估算，藏起来才是浪费，而记录数仍然只在读完后才给（数量不估算）；**行的事实按信息量取而不按条数**（本版改写了「最多 4 个」，见 §4 —— 那个数字是从一次事故里反弹出来的，不是推导出来的）：分层排序为 故障 → 推进 → 动静 → 触及 → 常量（model/mode/skill 定位但从不推进，最后竞争）→ 总量；**会话记录增长速率排在 token 前**（它是行上唯一能区分「在干活」与「杵着」的），且仅对 live 且非停滞非 recent 的行发（完成会话上的速率是历史冒充运动）；**整场 token 不上行** —— 同一数量换个跨度平铺是歧义不是信息，它留在 Details 由标签分开说；「已读 N%」只在同一行确实有计数需要被限定时才出现（没有被限定对象的免责声明不算信息）；条数在拥挤（≥5 行）时收敛，这是**行高护栏不是配额** |
-| AT | Momentum（动量） | 进程真实 CPU 占用进入观测行的**动静**层并**排在增长速率之前** —— 会话记录不动时它是唯一还能说话的事实；取值是两拍累计 CPU 时间相减，**不是 `ps %cpu`**（那是生命周期平均值，用它回答「此刻」就是撒谎）；**未知是 -1 不是 0**，界面渲染成「—」并说明还没采到（「测到了它闲着」与「还没采到」是两个答案）；pid 复用两个方向都要挡住 —— 累计值倒退挡一半，**进程比上次采样还年轻**挡另一半（新占用者烧得比前任多时计数器并不倒退）；空闲（<15%）不占位；停滞行在进程确实在跑时改说「会话记录不动，进程在跑 —— 它在算」，**不改灯色**（仍不是健康绿，只是给停滞一个解释）；Details 给计算量与常驻内存；**未经磁盘确认的工作区路径不再提供工作区落地**，降级到仅 App —— 点击时的存在性检查分不出「解对了」和「解错但碰巧存在」 |
-| AU | Answer Here（就地回答） | **判断门问的是「那个提示是不是在你眼前」，不是「有没有人碰这台 Mac」** —— 2.0 用后者近似前者，而产品自己的头号场景（开会 / 写文档）里两者同时为真、只有一个作数；取值是「最前台的 App 是不是本 hook 的祖先进程」（沿 ppid 上溯，不认 App 名单、不碰 TCC、不要新权限）；**判断不出来一律不 hold**（在场时冻住 agent 是净损失，「不知道」不是证据）；前台是终端但请求来自后台标签页时仍算「在你眼前」，宁可保守；**本机 Agent 也能在 Pulse 里回答** —— 本机请求从扁平 `requests/` 读回、只挂本机行、判决写回扁平 `verdicts/`；本机判决**照样签名**（`respond-local.key`，Pulse 自动生成、从不离开这台机器）——`verdicts/` 正是双机场景里被同步进来的目录，接受未签名文件会削弱远端路径；**opt-in，默认关**，开关就是那把钥匙的存在，关掉即刻停止一切 hold；横幅上只给**拒绝**，**「同意」永不上横幅**（横幅装不下完整请求，`canOfferAllow` 的纪律不变）；超时仍然 fail-open，厂商提示照常出现 |
-| AV | Confirmed（兑现） | **判决的下场是观测到的，不是 Pulse 对自己行为的复述** —— `claimVerdict` 的认领方式就是把 `verdicts/<id>.json` 原子改名成 `<id>.json.used`，所以「被取走」是一个文件事实，不需要推断；本机判决三态：已写出 / **已被取走** / 到点没人取（最后一种意味着厂商提示已经自己弹了，这是设计好的失败）；**远端永不报「已被取走」** —— `.used` 发生在另一台机器上，回不回来取决于用户的同步工具，Pulse 无从得知，远端继续说「判决已写出，等你的同步工具送达」；请求文件被清掉后回执仍留一小段时间（否则用户永远看不到那一秒）；**厂商到底认没认（① vs ③）本版不猜** —— 二进制里看到的 `decisionReason` 是内部代码路径，没有证据说明它落进会话记录，假设它在就是在犯本版要修的那个错
-| AW | Effect（成效） | **第三类证据：盘上到底变了什么** —— 前两类（agent 自己写下的东西、进程还活着没有）都在回答「它在干什么」，这一类第一次回答**「它干成了什么」**；取值是三条只读命令（`rev-parse --show-toplevel` / `status --porcelain=v1` / **plumbing 的 `diff-index --shortstat HEAD`**），每条都带 optional-locks 环境与 flag；**行数不用 porcelain 的 `diff`** —— 真机测试第一跑就抓到它在 stat 缓存失配时改写 index，且 flag 与环境变量都拦不住（optional-locks 机制盖住 `status` 的隐式刷新、盖不住 `diff` 的）；`diff-index` 从不刷新、对 stat 脏条目做内容核对、输出同一种 shortstat；index 逐字节不动由测试对真仓库断言（fixture 永远看不见这类缺陷，这正是实证轴存在的理由）；**只取计数，不取内容** —— 不要 diff 正文、不要文件路径、不显示分支名；**未知是 -1 不是 0**（不是仓库 / 超时 / 命令失败 / `cwdBestEffort` 未确认，一律不知道），「测了没动」与「没测」是两个答案；**零 adapter** —— 工作副本不属于任何厂商，一份实现覆盖全部 32 个 agent 及以后新增的；省电按 harvest 节奏跳拍、同一工作副本一拍只测一次、单次太慢即进退避并如实报未知；live 且在动（CPU 忙或会话记录在长）而**测到**盘上没动 → 叙事说「在动，盘上还没有东西落地」，**不改灯色**；同一仓库根上 ≥2 个 live 本机行 → 行上点名（远端行不参与，它的路径属于另一台机器）—— 这是**只有 Pulse 能看见的事实**，每个 agent 只知道自己
-| AX | Fleet（舰队） | **舰队不再只有门铃**：本机 Pulse 周期写 `fleet.d/<host>.json`（≤16 行、标题 ≤160 过 sanitizer、project 只取叶子名永不带路径、30 秒一写、0600），用户自己的同步工具搬运，对端读其余 host（≤16 host、≤256KB/文件、文件名决定 host 正文不符即拒收、未知 agent 跳过不猜）；**远端事实全部是过去时** —— 年龄以本机 mtime 计，新鲜（<10 分钟）才引用实质，过期进失联（行留、实质不引用），一小时后整行消失，发送方时钟超前 5 分钟即 clockSuspect 且活动时间不许指向未来；**Waiting 永不来自快照**（attention 是唯一来源），同一 host+agent+session 的 raise 与快照共用同一个 rowKey —— 等待来自 raise、实质来自快照；**广播默认关、读取常开**，关广播即删本机文件；本机快照只含本机行（转播远端行会在互同步时让 agent 翻倍）；远端行照旧永不报进程、没有 Focus、`workspaceRoot` 恒空（构造上进不了碰撞计数） |
-| AY | Progress（进展） | **从状态到进展：agent 给自己写的计划成为一等事实** —— 会话记录里的待办结构（Claude 家族 `TodoWrite` 的 `todos`、Codex `update_plan` 的 `plan`）不再被当噪音整类过滤，而是读进专门的字段：`progressDone/Total`（喂已有的 `3/7` 事实）、`planStep`（当前项，`activeForm` 优先）、`planSteps`（整份清单，≤8 项 ≤100 字符逐项过 sanitizer，只进 Details）；**计划是状态不是事件** —— 取窗口里最后一份，后写覆盖先写；**计数取全清单、清单展示有界**（截断视图引用自己的长度就是估算冒充精确）；全部完成没有「当前」就不发明一个；`lastWord`（最新 assistant 文本首行）与 `lastErrorText`（最新 `is_error` 结果首行）同规格 —— 有错误计数没有错误原文等于让用户去猜；**这些全是自述**，与 task/tool 同一认识论层级同一规矩：过 sanitizer、行叙事引用与 phase 同门槛（30 分钟静默即撤，陈旧计划不冒充此刻）、**永不由此推断 Waiting**；主行 hero 仍是用户目标（AK 不变，plan 步骤标题依旧永不当 hero）；哪家会话记录没有该结构就如实缺席不猜；Fleet 快照只运当前步骤一句话 + 两个计数（`step`/`step_done`/`step_total`，Optional 可加可减 —— 2.7 文件照常解码、旧读者忽略新键），整份清单是内容留在本机，远端步骤与其余实质同一新鲜门 |
-| AZ | Quality（质量） | **秒级**：hook 终于对干活说话 —— `PreToolUse` / `UserPromptSubmit` 写 `activity.d/<agent>-<session>.json`（每会话一个状态文件、每事件覆写、0600、目录 ≤64 个、>24h 清除、tool/target 走 toolDescriptor + 消毒截断）；**活动事件不是等待** —— 永不写 attention、永不 hold、永不由此推断 Waiting；无会话身份不写文件；文件名决定身份、正文不符拒收；watcher 第三个 source 盯 activity.d，1s 节流，唤醒只做**轻量刷新**（读一个有界目录、原地补行，绝不全量 harvest —— 能耗是硬约束），全量扫描重放同一批事件（builder 与轻路径共用 `applyActivity`，两处实现必然漂移）；**现在时只许对秒级证据说** —— live 窗口 120s，行叙事「当前 · Edit · Main.swift」（行上路径只取叶子，Details 给全路径），窗口一过回落轮询叙事；prompt 事件清空 tool（上一个工具随回合结束了）；时间戳进 `activityChangedMs`（活信号钟）不进 `harvestMs`（会话此刻在动，但事实还是采集时那么旧）；本机时钟写的未来戳按坏钟处理、夹到 now；**事件永不造行**（没有行的事件意味着 harvest 还没认识这个会话，一行只有单条事件当证据的行立不住）。**自证**：每 agent 每拍记「实测事实类」（task/tool/tokens/progress/plan/word/error/model/workspace，只记名不记值、不出机器），Support Health 显示**声明 vs 实测**；声明 structured、本拍有行、核心三类全空 → 点名「厂商格式可能已漂移」（橙色，不许耳语）—— 「agent 没干活」和「Pulse 没看清」从此不穿同一件衣服；无行是 idle 不是漂移、bestEffort 从未承诺核心类不算漂移。**平权**：2.8 的自述倒序扫描摘掉路径白名单 —— 匹配形状不匹配厂商名，谁的记录里有 `todos` 数组 / assistant 文本块 / `is_error` 结果就产出同样的事实，没有就如实缺席；Codex notify 无逐工具事件，其「正在干什么」继续走轮询，如实分级不硬造 |
-| BA | Workbench（指挥台） | **形态的第四层**（§5）：托盘「更多操作」→ 打开指挥台（⌘⇧W）；左侧全量舰队侧栏（`store.allRows`，四组沿托盘，开窗选中最需要你的行），右侧会话检视器（等待卡带完整消息与既有动作 → 此刻 → 计划整份清单 → 原话+错误原文 → 证据 → 盘上改动）；**「只有计数」是托盘与跨机器的规矩不是产品的规矩** —— 指挥台内容本地、只读、自述文本逐处 sanitizer、不出机器，托盘一个像素不变（7.0 再划：「只有计数」收窄为**跨机器**的铁律，托盘密度改由价值层级管理 —— 见 BL/BM）；盘上改动卡 = `diff-index -p` 只读 plumbing（与测量同 runner 同动词集合，2.7 的教训直接继承）、**点击才加载**、96KB 截断且自称截断、干净直说干净、远端行与未确认根不装按钮、失败说不可用不发明内容；检视器一切事实沿用行上同一套新鲜规矩 —— 换窗口不换认识论 |
-| BB | Answer（就地回答） | **第一个动词，两条通道永不混**：等待卡里，有完整请求（digest 复核）→ 嵌入与 Details 同一张 Respond 卡（完整原文、拒绝永远可用、「同意」仅当 `canOfferAllow`、HMAC 单次判决、fail-open —— 全部走已测的同一套 store 方法，指挥台不重新决定任何事）；本机 Claude 提问/续接 → 写回复、点「复制续接命令」：Pulse 构造 `claude --resume <session> '回复'` 放进剪贴板并唤起终端，**永不代跑**（粘贴与回车是不转移的那一寸判断权，也是 `--resume` 的第一次真机验证 —— 保守版先行）；会话 ID 过形状门（ASCII 字母数字与 `-_.`，≤128）才许上命令行，回复走 POSIX 单引号转义，单引号本身变 `'\''` 逃不出去；权限等待无请求文件 → 只给聚焦（厂商提示已在眼前，第二个答题框只会跟真的赛跑）；远端行 → 不给续接（终端在另一台机器）；未验证厂商 → 不给预填命令（错的命令比没有按钮更糟）；每个出口在卡上可见 —— 复制成功、形状门拒绝、判决写不出，都不许静默 |
-| BC | Review（复盘） | **第二个动词：已结束会话按验收序呈现** —— 盘上改动领头（它干成了什么）、计划终态（✓/▸/· 原样，终态是重点所以不再挂 30 分钟新鲜门 —— 横幅已声明这是历史）、最后的话与错误原文、证据；**没有「此刻」卡**（没有此刻，陈旧不冒充此刻）；运行中的行反向收紧 —— 计划卡与原话卡挂上与 Details 同一道 `selfReportFresh` 门（β 的检视器漏了它，正式版补上：换窗口不换认识论）；横幅明说会话已结束且 **Pulse 永不代动仓库** —— 验收在 Pulse，处置在用户自己的工具里 |
-| BD | Transcript（会话全文） | **检视器展示会话本身**：采集端把结构化 JSONL 的来源路径记成行的本地读取句柄（`transcriptPath` —— 不消毒因为永不渲染、只用来开文件；永不进 fleet 快照、永不上托盘、永不出机器；cache/SQLite/仅进程/远端行没有对话可渲染，构造上就没有句柄）；**点击才加载**，尾部 512KB / ≤300 条双界，头被截断或条数被截断都**自称截断**并给出窗口与全文大小；撕裂首行是前半截记录不是记录，跳过不计数；**按形状解析**（Claude `message.content[]`、Codex `event_msg`/`response_item`、通用 `role`+`content`），簿记行（token 计数等）静默略过是正常不是未识别，真解析不出的行计数「N 行未识别」；逐条 `ContentSanitizer` + 每条 2000 字符界；工具行带名与靶（file_path/command/pattern 首个字符串），**失败的工具结果永远保留**（is_error 标橙，厂商没写正文也保留行）而静默成功丢弃；打开即滚到最新一条（用户为此而来）；读不到文件说「不可用」，读到了但窗口内无对话说「没有对话内容」—— 两个不同的答案不穿同一件衣服 |
-| BE | Delivery（送达） | **回答的动词从复制变成发送**：等待卡在满足精确门时给回复框 + 「发送到终端」—— Pulse 先经 tty 精确选中该会话的标签页（Terminal/iTerm 既有脚本），**选中失败一个字都不敲**，选中后经 System Events 敲入折叠为单行的回复（每个换行都是终端的提交键，所以折叠不拒收；≤2000 字符逐字键入）并回车；**键入厂商盲**（敲的是活会话，不是某家 CLI 的 resume 旗），Codex/任何家的提问等待一样能答；**权限等待永拒键入**（y/n 面前的 keystroke 是穿马甲的盲目同意，Respond 或聚焦才是那的动词）；App 级聚焦（Warp/IDE/无 tty）不给发送键，保留 3.0 剪贴板回退 —— 键落对处保证不了就不许键落；opt-in 默认关（keystroke 是比选标签页高一档的授权，开关本身即同意书），关掉立即全停；三个失败出口三句话（没找到标签页-什么都没敲 / 敲入失败-查权限 / 没内容），成功也有回执「已送达」；AppleScript 转义与折叠由测试钉死，真机行为由 `qa_workbench_actuation.sh` 十分钟验证 |
-| BF | Dispatch（派活） | **第三个动词：在舰队工作过的地方起新会话** —— 侧栏「派活」开表单：仓库根只从**采集端见过且磁盘确认**的 workspaceRoot 里选（不接受手输任意路径 —— 派活的地基是观测事实）、任务句可空（空=裸起会话）；命令 `cd <根> && claude '<任务>'` 走与 resume/送达同一套 POSIX 单引号纪律（根与任务都不许裸上 shell，相对路径与 `/`、`/tmp` 直接拒绝），在**新** Terminal 窗口执行；新会话**被观测到才出现**为行，Pulse 不假装派出即看见；与送达同一个 opt-in，关掉按钮即刻消失；终端不接受命令时表单原地说失败，不静默关闭 |
-| BG | Managed（受管会话） | **Pulse 拥有它派出的会话**（市场对比后的质变定义，docs/archive/plan-5.0.md）：派活默认走受管 —— `claude -p --output-format stream-json --verbose`（续回合 `--resume <sid>`，sid 过 3.0 的同一道形状门，坏 id 拒绝回合而不是私开新会话）**纯管道**回合制驱动，prompt 作 argv 单参数上车（没有 shell 就没有转义面）；跑在 Pulse 自建 worktree（`git worktree add` + `pulse/<slug>` 分支，Application Support 命名空间，**只有命名空间内的路径承认是 Pulse 的**，用户工作副本一寸不动）；流事件经**与观察侧同一个** TranscriptReader 解析（assistant/user 消息形状复用，一个解析器两处供货，永不漂移）；result 事件收束回合（成本/token 累计、错误 subtype 如实、`idle` 是「下一句是你的」而**不是**托盘 Waiting）；无 result 的退出不冒充成功（静默退出=失败，带 stderr 尾巴）；未知事件与非 JSON 行分开计数明说；取消 SIGTERM→2s→SIGKILL、退出全员收割（无孤儿烧 token）；行进托盘走既有规矩、检视器换成实时对话（回复框=真回合、运行中可终止、对话≤1000 条自称截断）；worktree diff 用同一张只读 plumbing 卡；受管行的 worktree 不进派活仓库列表（不套娃）；claude CLI 不在、不是 git 仓库、worktree 失败各有各的句子，表单原地说，不静默 |
-| BH | Land（验收落地） | **受管 worktree 上的三个动词，全部只因用户点击**：提交（`add -A` + 用户写的信息 —— 空信息在 git 之前拒绝，提交语就是判断）、推送（只推 `pulse/` 前缀分支，用用户自己的 git 凭据，无 remote/无权限的失败原文回显不改写）、开 PR（只在 origin 解析为 GitHub 时给 compare 链接，分支名里的 `/` 编码为 `%2F`；GitLab 等一律不装按钮 —— 猜的 URL 不是诚实）；**每个动词执行前过命名空间门**（`isPulseWorktree`，Application Support 下 Pulse 自己的目录才算），旁观会话的仓库与用户自己的工作副本在构造上就不可触 —— 「永不代动仓库」重划为对旁观会话的规矩，与 3.0-β 重划「只有计数」同一先例；验收卡只在回合不在跑时出现，diff 卡在它上方一格（先看后落）；真链条（改 → 提交 → 推送 → 分支带内容抵达 origin）由本地 bare origin 在 CI 上实证 |
-| BI | Fleet Engine（舰队引擎） | **受管会话从 ad hoc 变成受监督的持久实体**：`ManagedFleet` 拥有全部 runner —— 并发上限 3 + 真队列（超出成 `queued` 行排队，槽位空出自动开跑，泵有重入护栏且拒绝在打不开的会话上空转）；每会话一个 schema-versioned 状态文件（0600 经 PrivateFile，含标题/根/runtime + opaque continuation/完整对话/成本/token/待发 prompt/Acceptance Evidence；旧 `claudeSessionID` 无损迁移，未知 runtime 与读不懂的 schema 拒绝解释），**写盘时机有界**（状态种类、回合数、检查命令或最新 Evidence 移动才写，绝不逐流事件写）；**重启重挂**：上次退出时在跑的回合如实标 `interrupted`（「没人见证它怎么结束的」—— 不冒充成功也不冒充失败），排队者带着原任务回来继续排；文件名决定身份（改名的状态文件被拒收）；已结束会话可移除 —— 记录删、worktree 留给用户并明说（Pulse 不代删工作产物）；退出先落盘再收割全部子进程 |
-| BJ | Permission（权限通道） | **headless 的致命洞补上**：每个受管回合注入 `--mcp-config` + `--permission-prompt-tool mcp__pulse__approve`，配置指向 **Pulse 自己的二进制**（`--permission-server` 子命令说最小 MCP stdio 方言：initialize / tools/list / tools/call，未知方法回错误、通知不回话）；tools/call 把完整入参写进权限 spool（0600、文件名定身份）并**阻塞等判决文件**；应用侧单 fd DispatchSource 盯 spool，审批卡实时置顶该会话检视器；**Respond 纪律逐条成立**——「同意」只在完整入参旁（超 64KB 截断即收回同意、拒绝仍在）、判决单次使用（读即删）、fleet 层对截断请求的 allow 二次强制为 deny；**超时（2 分钟）与一切失败 = 拒绝** —— headless 没有厂商提示可回落，这里 fail-open 就是 fail-permissive，是本产品唯一不许失败的方向，卡上明说；allow 原样回显原始入参，deny 带用户可读理由 |
-| BK | Complete（完成度收口） | **同题 N 路**（1–4）：每路自己的 worktree 与 `pulse/<slug>-aN` 分支、同组互列（序号/状态/每回合落盘 ±行数）、一键切换对比 diff —— Pulse 摆开选项，**选优是人的动作**；**运行检查**：每会话记忆的检查命令在 worktree 里跑（`/bin/sh -lc`，Process 直接设置 cwd、300s 超时）；退出码与 bounded stdout/stderr 作为持久 Evidence，不再只活在 View；每份 Evidence 绑定检查前后代码指纹（HEAD + tracked patch + 非 ignored untracked 路径/内容），运行中变化不显示通过，之后代码变化显示「证据已过期」，当前代码无法测量也不穿绿灯；最多保留最近 20 份，每份输出每路 64KiB；**逐回合落盘**：回合终了用同一套只读 plumbing 测一次 worktree（`+x −y` 进状态卡与对比列表，未测到不显示不编造）；工具结果行以 `↳` 挂在调用下；观察侧一个字节不动 |
-| BL | Lead（价值主行） | **弹窗的可观测性质变，其一**：活跃会话行的主行按价值取 —— 自述新鲜（30 分钟窗口，与行叙事同门）的最新原话压过静态任务标题；标题降位进展开卡与指挥台，不丢失；等待行（用户必须认出的那件事）与仅进程行（诚实状态短语）**一条规则不变**；选择逻辑是纯函数 `TrayRowLead.source`，优先级表（wait: task→project→needsYou；live: **freshWords**→task→toolTitle→project→session 短语）由测试逐格钉死；hero 只做映射不做决定 |
-| BM | Expand（行内展开） | **弹窗的可观测性质变，其二**：每行 chevron 原位展开迷你检视器 —— 降位标题、完整原话、错误原文、计划（≤4+N）、价值芯片（成本·回合 / 本回合落盘 / ±行 / token，**没测到不渲染**），随后动作就地：受管权限卡 / Respond 卡 / 受管回复框（紧凑面，Respond 纪律与超时即拒逐条不变）/ 忽略·稍后·在指挥台打开；展开态按 rowKey 记在面板、不跨打开持久化，Go-Look reveal 带展开态抵达；**一套卡片两个容器**（`SessionCards.swift`：托盘 compact、指挥台 full，一处写两处到，构造上不漂移）；「只有计数」收窄为跨机器铁律 —— fleet 快照一个字节不变，逐条自述照旧逐处 sanitizer |
-| BN | Value Engine（价值引擎） | **「tools token skill 完全观测不到」的病根是结构不是采集**：观测行的预算把排最后的工作类事实逐拍删除。8.0 的「溢出搬家」在真机上仍旧近零出现率（真实行很少溢出预算），8.1 改为**直构**：工作方式线直接由字段构建（工具→目标 / token 整场优先 / 工作流 / 模型 / 模式 / 上下文 %），测到即渲染，唯一竞争是顺序；观测行彻底迁出这些事实、次行最近动作槽删除——一个事实一条线静态成立；工具槽只对实际渲染了它的输出让位（story 的静态所有权声明曾在其自身裁剪后仍成立，工具因此从每条线同时消失——这个教训写进 `workToolSlot`）；收起行加错误原文一行（橙、自述新鲜门）；展开卡加「工作方式」全量层（工具时间线 Read → Edit → Bash、原始 skill 名、模型、整场 token、上下文 %，全部已采字段，零新采集）；ask 卡（权限/Respond/受管回复）免点击住进列表，与展开卡互斥永不双渲染 |
-| BO | True Wait（真等待重划） | **最需要你的事实不再穿「运行中」的衣服**：受管回合阻塞在权限请求上 = 真等待——信号是 Pulse 自己的 spool 请求文件（0600、文件名定身份），回合可证悬停在判决上，比 hooks 更硬；照 3.0-β/5.0-γ 先例重划，「Waiting 只来自可证信号」不破反而完整。等待行走全部既有规矩：进「需要你」分组与计数、红灯、通知（正文=被请求的那件事本身：`Bash: git push --dry-run`，字段序沿厂商权限标题 command→file_path→url，经 sanitizer）、waitSince=请求落盘时刻。受管 `idle` 仍不是 Waiting——你的回合可见（列表内回复框）不报警，红灯留给阻塞；超时两分钟自动拒绝的语义一字不动 |
-| BP | Live Row（直播行） | **收起行答得了「它干成了什么」**：受管行的成本·回合与本回合落盘 ±行进观测行 advance 层（第一手，未测到缺席）；错误原文一行直进收起行；受管行在列表内即有回合控制（运行中=当前工具+终止，结束=回复框）；展开卡带受管对话尾巴（最近 5 步、`↳` 配对、内存流零磁盘读）——观察行的全文仍在指挥台（每拍磁盘读不是 ambient 成本，边界明说） |
-| BQ | Parity（采集平权） | **展示契约逼出采集缺口**:8.1 的「测到即渲染」成立后,Pi 行还空着 → 病在采集。Pi:>8KB 行有界正则打捞(model/usage/最后 toolCall;JSON 转义保证不匹配进正文)、usage `{input,output}` 键补齐、自述扫描(原话/`isError` 驼峰/独立 toolResult 记录)在专用解析器末尾运行;Codex:model 从 payload 拾取、旧 rollout 的 assistant 消息入 lastWord;Claude 家族:`Skill` 调用的 `input.skill` 成为工作流事实;通用提取器认 `toolCall` 驼峰。未测到照旧缺席——没 usage 的行没有 token,一个字段不发明 |
-| BR | Craft(全员二轮+工艺) | **采集二轮**:8.3 → 栏四缺口守卫式关闭——Cursor bubbles(`cursorDiskKV` 最新 assistant bubble,type 2)、OpenCode 原话(role 经 message 表联查——text part 单独不定作者,采了会把用户话冒充 agent 原话)、Gemini 原话(整文档遍历,最后 `model` 回合;逐行扫描对整文件 JSON 天然失明)、Aider 原话(markdown:最新 `#### ` 用户回合后的散文段);全部表/列/版式不符即空,永不猜;fixture 逐家钉死。**工艺**:TrayChrome 字阶与卡片纪律(§4),视觉从数字巧合变成具名系统 |
-| BS | Anatomy（行解剖学） | **构图取代堆叠**:收起行 = 微身份条(灯·产品名·证据 + 右柱时间/芯片)+ hero(≤2 行)+ **一条合成 meta 线**(`rowMetaLine` 纯合成:此刻>产出>方式,≤3 槽,稀疏补项目;等待行让位问题、新鲜错误原文替位)——七线堆叠终结;五线全景(叙事/信号/观测/工作/次行)整体撤到展开卡 `SessionPanorama`,规则原样、渲染面换了;展开卡内一事实一处(chips 并入全景与工作细节,model/tokens/context 只在全景工作线) |
-| BT | Column(右柱) | 右缘是一根柱子:相对时间等宽、弱化、右对齐在身份条尾,芯片其后——扫视沿两根轴走(左轴读事,右轴读量);VoiceOver 同步读合成解剖学 |
-| BU | Disclosure(披露纪律) | 三层各归其位:收起=扫视(两行),展开=理解与行动(8.x 全部深度原样),**列表内卡只给「此刻需要你」**——权限请求 / Respond / 回合死亡(interrupted/failed)恢复;受管 idle 的回复框撤回展开态(每行常驻回复框是墙不是收件箱);阻塞照旧免点击 |
-| BV | Depth(自适应深度) | **信息默认在场,动作按需展开**:`RowDepth.tier` 纯表——显式展开→full;需要你→minimal+ask 卡(问题即深度);活跃且不拥挤→digest(`SessionBriefCard` 纯信息:hero 截断时的完整原话/当前计划步/±落盘,无动作面);其余 minimal;拥挤自动降级;chevron 语义收窄为「进入动作与全量」;Go-Look reveal 照旧直达 full |
-| BW | Theme(产品一体) | `PulseTheme` 统一产品自有卡片的共享 chrome:窗口卡片半径族(卡 10/内 6)、padding 节奏、发丝描边(指挥台 card() 一处收编全窗)、**唯一动效曲线**(easeOut 0.16)——托盘 `TrayChrome` 保留紧凑网格、同一节奏派生;指挥台/受管检视器全部卡片收编,手写 `padding(14)`/`cornerRadius` 清零;设置保留 macOS 原生 grouped Form chrome,共享同一动效 token |
-| BX | Grace(收笔) | 折叠/展开/重排共用同一条动效曲线;两条曲线在一个产品里读起来是两个产品 |
-
----
+77 个场景（A–BY）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
+新场景写在那里，并在「证明」一栏写明哪个测试让它成立；本文件只保留行为规格。
 
 ## 9. 代码落点
 
+12.3 起代码分五个 target（依赖只向下，见 [`docs/architecture.md`](docs/architecture.md)）：
+`PulseCore` ← `PulseHarvest` / `PulseRespond` / `PulseManaged` ← `PulseBar`（App）。
+
 | 规格 | 文件 |
 | --- | --- |
-| Glance 标题 / 灯 | `StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
-| Tray 结构 | `TrayPanelViews.swift` → `TrayPanel` |
-| Prefs 布局 | `SettingsViews.swift` → `SettingsView` |
-| 状态合并 / 编码 | `SnapshotBuilder.swift` |
-| 主行来源 / 采集 explain | `NativeActivityHarvest.swift` |
-| 状态与设置面 | `StatusStore.swift`（4.0-γ 起只剩状态声明与小胶水；行为按职责住进 `StatusStore{Engine,Waiting,Look,Support,Evidence,Settings,Maintenance,Bridge,Fixture}.swift`，逐成员原样搬运、全量测试为冻结契约） |
-| 扫描引擎 | `StatusStoreEngine.swift`（start / refresh / harvest 应用 / 活动轻路径） |
-| 通知策略 / 等待动作 | `StatusStoreWaiting.swift` |
-| 会话事实簇 | `SessionFacts.swift`（`SessionRemote` / `SessionSelfReport` / `SessionLiveAction` / `SessionDigestFacts` / `SessionEffect`——AgentRow 组合它们并保留转发访问器，读写两侧零改动） |
+| Glance 标题 / 灯 | `PulseBar/StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
+| Tray 结构 | `PulseBar/TrayPanelViews.swift` → `TrayPanel` |
+| Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（经 `StoreObservation`，扫描不重绘） |
+| 状态合并 / 编码 | `PulseBar/SnapshotBuilder.swift` |
+| 行的每一句话 | `PulseBar/RowNarrator.swift`（纯值：语言、时刻、拥挤、受管事实都是输入；store 只转发） |
+| 扫描静默 | `PulseBar/StatusStoreEngine.swift` → `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |
+| 等待通知决定 | `PulseBar/WaitingDelivery.swift`（纯规划）· `StatusStoreWaiting.swift`（执行） |
+| Agent 目录（一处加 agent） | `PulseCore/AgentCatalog.swift` |
+| 采集 / 主行来源 / explain | `PulseHarvest/NativeActivityHarvest.swift` · 厂商方言 `TranscriptDialect.swift` + `HarvestCodex/Pi/Claude/SmallDialects.swift` |
+| 进程探测 | `PulseHarvest/ProcessProbe.swift`（跨扫描状态在 `ScanEngine.swift`） |
+| 状态与设置面 | `PulseBar/StatusStore.swift` + `StatusStore{Engine,Waiting,Look,Support,Settings,Maintenance,Bridge,Fixture,Respond,Narration}.swift` |
+| 会话事实簇 | `PulseBar/SessionFacts.swift` |
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
-| 价值引擎 / 工作方式线 | `RowValueEngine.swift` · `StatusStoreNarration.swift` → `rowWorkLine` / `workDetailFacts` |
-| 合成 meta 线 / 全景 | `StatusStoreNarration.swift` → `rowMetaLine` · `SessionCards.swift` → `SessionPanorama` |
-| 自适应深度 / 全产品主题 | `RowDepth.swift` · `SessionCards.swift` → `SessionBriefCard` · `PulseTheme.swift` |
-| 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` · `TranscriptReader.swift` |
-| 引擎边界 / 受管会话 | `SessionSource.swift` · `ManagedSession.swift` · `ManagedSessionRunner.swift` · `ManagedSessionSource.swift` · `ManagedWorktree.swift` · `ManagedSessionViews.swift` |
-| 探测节奏 | `ProbeSchedule.swift` + `PowerMonitor.swift` |
+| 价值引擎 / 自适应深度 / 主题 | `RowValueEngine.swift` · `RowDepth.swift` · `PulseTheme.swift` |
+| 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` |
+| 受管会话 | `PulseManaged/`（runtime、Fleet、worktree、权限服务、验收）· App 侧 `ManagedSessionSource.swift` / `ManagedSessionViews.swift` / `ManagedAcceptance.swift` |
+| Respond | `PulseRespond/RespondContract.swift` · `RespondSpool.swift` · App 侧 `StatusStoreRespond.swift` |
+| 探测节奏 | `PulseCore/ProbeSchedule.swift` + `PulseBar/PowerMonitor.swift` |
 | 设置与迁移 | `PulseSettings.swift` |
 | 文案 | `L10n.swift` |
 | 版本 / 构建指纹 | `Models.swift` → `PulseVersion` |
-| Harvest / hooks | `NativeActivityHarvest.swift`、`src/pulse_hook.py` |
-| Attention 协议 | `AttentionProtocol.swift`、`AttentionIO.swift`、`PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
-| 绿灯 / 停滞 | `AgentRow.stalled` / `isHealthyRunning` / `isThinRunning`；`SnapshotBuilder` liveFleetGlance |
-| 打断闭环 | `pendingRevealRowKey` · `focusAgent` · `TrayPanel.applyPendingReveal` · `PulseNotify` |
-| 回看闭环 | `lookContinuityItems` · `activateLookContinuity` · `lookMovedRowKeys` · Go-Look reveal |
-| 回看诚实 | `GlanceTitle` · `lookContinuityPendingClosedAt` · 指纹 `waitSinceMs` · `AttentionIO.compactLines` · `prioritizedObservationGaps` |
-| 等待可证 | `skill=pending` → SnapshotBuilder Waiting · soft-dismiss · Attention raise/clear · `openWaitingReach` |
+| Attention 协议 | `PulseCore/AttentionProtocol.swift`、`PulseHarvest/AttentionIO.swift`、`PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
+| 验收场景 → 测试 | [`docs/scenarios.md`](docs/scenarios.md)，`scripts/scenario_map.py` 核对 |
 
 数据流详见 [`docs/architecture.md`](docs/architecture.md)。

@@ -38,6 +38,7 @@ PulseBar/Sources/
                  PulseCoreExports.swift 以 @_exported 引入四个库。
 ```
 
+五个 target 全部在完整并发检查下零警告并开启 warnings-as-errors（12.4）。
 依赖只能向下：没有一个库引用得到 `StatusStore`、AppKit 或任何视图，这由编译器保证，
 不靠 review。库成员是 `package` 可见（Core 是 `public`）。每个 Agent 的全部非解析事实
 （进程规则、采集根目录、别名、Waiting / 采集等级、单字母标记、Respond 可达性）只在
