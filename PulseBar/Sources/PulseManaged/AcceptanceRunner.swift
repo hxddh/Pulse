@@ -40,6 +40,8 @@ package final class AcceptanceRunner {
     /// Run `command` in the worktree, bound to the code before and after it.
     /// Process work stays off the main actor; only the finished fact returns.
     package func run(command: String, completion: @escaping (AcceptanceEvidence) -> Void) {
+        // Called only from the main-actor Task below.
+        let deliver = Unchecked(completion)
         guard !isChecking else { return }
         isChecking = true
         let control = ProcessIO.CheckControl()
@@ -79,7 +81,7 @@ package final class AcceptanceRunner {
                 // The code the check just measured is the current code.
                 self.currentFingerprint = after
                 self.fingerprintMeasured = true
-                completion(evidence)
+                deliver.value(evidence)
                 self.onChange?()
             }
         }

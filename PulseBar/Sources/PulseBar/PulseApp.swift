@@ -177,13 +177,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Activation policy is also set before run(); keep accessory here so
         // CLI/QA relaunch paths stay consistent.
         NSApp.setActivationPolicy(.accessory)
+        // The delegate lives for the whole process (`retainedAppDelegate`),
+        // and the block runs on the main queue.
+        let delegate = Unchecked(self)
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: NSApp,
             queue: .main
-        ) { [weak self] _ in
+        ) { _ in
             PulseNotify.refreshAuthorization()
-            self?.dismissPhantomSettingsWindows()
+            delegate.value.dismissPhantomSettingsWindows()
         }
         if ProcessInfo.processInfo.arguments.contains("--appearance=dark") {
             NSApp.appearance = NSAppearance(named: .darkAqua)

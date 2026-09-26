@@ -332,8 +332,11 @@ struct ManagedSessionInspector: View {
         acceptanceBusy = true
         acceptanceNotice = ""
         let worktree = row.workspaceRoot
+        // The verb runs git off main and only touches view state after its
+        // own hop back to the main queue.
+        let work = Unchecked(verb)
         DispatchQueue.global(qos: .userInitiated).async {
-            let outcome = verb(worktree)
+            let outcome = work.value(worktree)
             DispatchQueue.main.async {
                 acceptanceBusy = false
                 switch outcome {

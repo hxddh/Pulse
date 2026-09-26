@@ -44,9 +44,11 @@ final class PowerMonitor {
         _ name: Notification.Name,
         _ apply: @escaping (inout ProbeSchedule.Power) -> Void
     ) {
+        // A pure edit of a value, applied on the main queue.
+        let change = Unchecked(apply)
         let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.mutate(apply)
+                self?.mutate(change.value)
             }
         }
         observers.append((center, token))
