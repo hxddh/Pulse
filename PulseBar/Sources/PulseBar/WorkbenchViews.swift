@@ -484,6 +484,11 @@ private struct DispatchSheet: View {
     @State private var useWorktree = true
     @State private var attempts = 1
     @State private var managedError: String?
+    /// 13.0 · the Mission's contract beyond its goal — optional, disclosed
+    /// on demand so the default dispatch stays one field.
+    @State private var constraints = ""
+    @State private var checksText = ""
+    @State private var showContract = false
 
     private var roots: [String] { store.workbenchDispatchRoots }
 
@@ -519,6 +524,22 @@ private struct DispatchSheet: View {
                     Toggle(store.tr(.managedRunInPulse), isOn: $runManaged)
                 }
                 if runManaged {
+                    DisclosureGroup(store.tr(.missionContractMore), isExpanded: $showContract) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField(store.tr(.missionConstraints), text: $constraints, axis: .vertical)
+                                .textFieldStyle(.roundedBorder)
+                                .lineLimit(1...4)
+                            TextField(store.tr(.missionChecks), text: $checksText, axis: .vertical)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.callout.monospaced())
+                                .lineLimit(2...6)
+                            Text(store.tr(.missionChecksHint))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 4)
+                    }
                     Toggle(store.tr(.managedUseWorktree), isOn: $useWorktree)
                     if useWorktree {
                         // 6.0-γ: same task, several independent tries.
@@ -556,9 +577,11 @@ private struct DispatchSheet: View {
                     Button(store.tr(.workbenchDispatchStart)) {
                         guard let root = selectedRoot else { return }
                         if runManaged {
-                            let taskText = task
-                            if let error = store.dispatchManagedAttempts(
-                                repoRoot: root, task: taskText,
+                            if let error = store.dispatchMission(
+                                repoRoot: root,
+                                goal: task,
+                                constraints: constraints,
+                                checksText: checksText,
                                 useWorktree: useWorktree,
                                 attempts: useWorktree ? attempts : 1
                             ) {

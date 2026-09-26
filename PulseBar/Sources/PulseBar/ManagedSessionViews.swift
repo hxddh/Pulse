@@ -36,9 +36,9 @@ struct ManagedSessionInspector: View {
                 conversationCard
                 if let model = runner?.model {
                     statusCard(model)
-                    // 6.0-γ: the other tries of the same task, side by side.
-                    if store.managedAttemptSiblings(for: row).count > 1 {
-                        compareCard
+                    // 13.0: the Mission and its Candidates, side by side.
+                    if let mission = store.managedMission(for: row) {
+                        MissionCard(store: store, mission: mission, currentCandidateID: row.managedID)
                     }
                 }
                 effectCard
@@ -56,66 +56,6 @@ struct ManagedSessionInspector: View {
             refreshFingerprint()
         }
         .onChange(of: row) { _, _ in refreshFingerprint() }
-    }
-
-    /// 6.0-γ (scene BK): same task, N independent tries — status and what
-    /// each has landed, one click to switch. Judgment stays a human act:
-    /// Pulse lines them up, the user picks.
-    private var compareCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(store.tr(.managedAttempts))
-                .font(.headline)
-            ForEach(Array(store.managedAttemptSiblings(for: row).enumerated()), id: \.element.model.id) { index, sibling in
-                HStack(spacing: 10) {
-                    Text(String(format: store.tr(.managedAttemptOrdinal), index + 1))
-                        .font(.callout.weight(sibling.model.id == row.managedID ? .bold : .regular))
-                    Text(statusLabel(sibling.model.status))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let effect = sibling.model.lastTurnEffect {
-                        Text("+\(effect.insertions) −\(effect.deletions)")
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                    }
-                    // The same rule the run-check card uses, so a stale pass
-                    // never reads as a pass here either. A fact, not a rank.
-                    if let standing = sibling.latestEvidenceStanding {
-                        Text(standingLabel(standing))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if sibling.model.id == row.managedID {
-                        Text(store.tr(.managedCurrentAttempt))
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        Button(store.tr(.managedViewAttempt)) {
-                            store.workbenchSelectKey = "managed|" + sibling.model.id
-                        }
-                        .buttonStyle(.link)
-                        .font(.caption)
-                    }
-                }
-            }
-        }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
-    }
-
-    private func standingLabel(_ standing: EvidenceStanding) -> String {
-        switch standing {
-        case .passing: return store.tr(.managedEvidencePassing)
-        case .stale: return store.tr(.managedRunCheckStale)
-        case .measuring: return store.tr(.managedRunCheckMeasuring)
-        case .unverified: return store.tr(.managedRunCheckUnverified)
-        case .notPassing: return store.tr(.managedEvidenceNotPassing)
-        }
     }
 
     private func statusLabel(_ status: ManagedSession.Status) -> String {

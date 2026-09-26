@@ -63,6 +63,10 @@ package final class ManagedSessionRunner {
     /// in flight; every refusal is visible through the model's status.
     package func send(prompt: String) {
         guard !isRunning else { return }
+        // A new turn changes the code the queued checks would measure; they
+        // do not start. One already running finishes and is judged by the
+        // fingerprint rule (it will read as changed during the run).
+        queuedChecks.removeAll()
         guard runtime.executable() != nil else {
             update { $0.status = .failed("\(runtime.id)-not-found") }
             return
@@ -120,29 +124,72 @@ package final class ManagedSessionRunner {
     /// Outcome-β: run the user's check and retain evidence bound to the exact
     /// code before and after it. Process work stays off the main actor; only
     /// the finished durable fact crosses back.
-    package func runCheck(command rawCommand: String, completion: (() -> Void)? = nil) {
+    package func runCheck(
+        command rawCommand: String,
+        checkID: String? = nil,
+        completion: (() -> Void)? = nil
+    ) {
         let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isRunning, !isChecking, !command.isEmpty else { return }
         update {
-            $0.runCommand = command
+            // Only an ad-hoc check is remembered as "the" command; Mission
+            // checks live in the Mission's contract.
+            if checkID == nil { $0.runCommand = command }
             $0.runningCheck = RunningCheck(
                 command: command, cwd: $0.root,
-                startedAtMs: Int64(Date().timeIntervalSince1970 * 1000)
+                startedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
+                checkID: checkID
             )
         }
         acceptance.run(command: command) { [weak self] evidence in
             guard let self else { return }
+            var tagged = evidence
+            tagged.checkID = checkID
             self.update {
                 $0.runningCheck = nil
-                $0.acceptanceEvidence.append(evidence)
-                if $0.acceptanceEvidence.count > ManagedSession.maxAcceptanceEvidence {
-                    $0.acceptanceEvidence.removeFirst(
-                        $0.acceptanceEvidence.count - ManagedSession.maxAcceptanceEvidence
-                    )
-                }
+                $0.acceptanceEvidence.append(tagged)
+                $0.acceptanceEvidence = ManagedSession.trimEvidence($0.acceptanceEvidence)
             }
             completion?()
         }
+    }
+
+    // MARK: - Mission checks (13.0)
+
+    /// Checks still waiting their turn in this Candidate's queue.
+    package private(set) var queuedChecks: [Mission.Check] = []
+    package var isRunningChecks: Bool { isChecking || !queuedChecks.isEmpty }
+
+    /// Run a Mission's checks in the user's order, one at a time. A failure
+    /// does **not** stop the rest: the comparison needs the whole ruler
+    /// applied, not the first mark. Refused while a turn or a check runs.
+    package func runChecks(_ checks: [Mission.Check]) {
+        guard !isRunning, !isRunningChecks, !checks.isEmpty else { return }
+        queuedChecks = checks
+        runNextQueuedCheck()
+    }
+
+    /// Drop the checks that have not started and stop the one that has; the
+    /// stopped one is recorded as interrupted, the dropped ones as not run.
+    package func cancelChecks() {
+        guard isRunningChecks else { return }
+        queuedChecks.removeAll()
+        acceptance.cancel()
+        onChange?()
+    }
+
+    private func runNextQueuedCheck() {
+        guard !queuedChecks.isEmpty else {
+            onChange?()
+            return
+        }
+        let next = queuedChecks.removeFirst()
+        runCheck(command: next.command, checkID: next.id) { [weak self] in
+            self?.runNextQueuedCheck()
+        }
+        // A check that could not start (turn began meanwhile) ends the queue
+        // rather than spinning on it.
+        if !isChecking { queuedChecks.removeAll() }
     }
 
     /// Where the newest evidence stands against the code as it is now.

@@ -15,7 +15,7 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/archive/`](docs/archive/README.md) | Historical plans (0.23 – 6.0) and superseded reviews (0.21, 1.2, 2.2) |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
 | [`docs/plan-12.0.md`](docs/plan-12.0.md) | The 12.x plan (Kernel → Surface) — modules, catalog, dialects, narration, scan-quiet surfaces, and what each 12.x release completed |
-| [`docs/plan-outcome.md`](docs/plan-outcome.md) | The unnumbered next plan (Outcome) — result contracts and comparable evidence; blocked on real-machine Codex evidence |
+| [`docs/plan-outcome.md`](docs/plan-outcome.md) | The Outcome plan — β/γ shipped as 13.0 Mission; the second runtime (Codex) is blocked on real-machine P0 evidence |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
@@ -52,6 +52,14 @@ compiles and ships.
   question as "the prompt is in front of them", and where the answer cannot be
   established the request goes straight through. Every failure falls open to
   the vendor's own prompt.
+- **Pulse lays Candidates side by side; it never judges them.** A Mission
+  (13.0) shows facts per Candidate in dispatch order. No score, badge,
+  recommended colour, "best", auto-choose, or ordering by a quality function;
+  "your choice" writes nothing to git; commit / push / PR each need the user's
+  click; no merge. Checks run only on the user's click, are never shown to the
+  agent, and an agent cannot change the contract — only the user's edit makes
+  a new revision, and an old Candidate is never re-judged by a newer one. No
+  checks, stale, running or unreadable evidence never reads as passed.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
   isolation. One broken collector cannot blind the other 32.
@@ -153,13 +161,14 @@ to users.
 
 ## Current state
 
-12.4.0 is the current source version (Kernel + Seams + Groundwork + Whole +
-Surface — [`docs/plan-12.0.md`](docs/plan-12.0.md)). The review behind it is
-[`docs/review-11.0.md`](docs/review-11.0.md); its defects were fixed in 11.0.4
-and F-4 in 12.3.0. The next product axis is Outcome
-([`docs/plan-outcome.md`](docs/plan-outcome.md)), unnumbered until the
-real-machine Codex P0 evidence exists and the product decision in review-11.0
-§4.3 has been made.
+13.0.0 is the current source version (Mission — the result contract over
+Candidates, Outcome β/γ with the Claude runtime only). The product decision in
+review-11.0 §4.3 has been made: Pulse accepts the orchestrator identity, the
+Workbench stays in the tray's process until one of the split triggers listed
+there occurs. What remains of Outcome
+([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
+App Server), blocked on real-machine P0 evidence; it ships as a 13.x.
+The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with
 `-warnings-as-errors` (12.4). A value that crosses a queue by convention goes

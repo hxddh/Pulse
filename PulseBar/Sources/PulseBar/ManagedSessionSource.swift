@@ -104,24 +104,43 @@ extension StatusStore {
         applyRowWindow()
     }
 
-    /// The dispatch verb, managed edition. Returns a user-readable failure
-    /// or nil on success — the sheet shows it in place, never silently.
-    /// 6.0-γ: same task, several independent tries — each in its own
-    /// worktree and branch, grouped so the inspector can compare them.
-    func dispatchManagedAttempts(
-        repoRoot: String, task: String, useWorktree: Bool, attempts: Int
+    /// The dispatch verb, managed edition (13.0: a Mission). Returns a
+    /// user-readable failure or nil on success — the sheet shows it in
+    /// place, never silently. The goal and constraints are the task; the
+    /// checks are the user's ruler and stay out of the prompt. Several
+    /// Candidates each get their own worktree and branch.
+    func dispatchMission(
+        repoRoot: String,
+        goal: String,
+        constraints: String,
+        checksText: String,
+        useWorktree: Bool,
+        attempts: Int
     ) -> String? {
         let count = max(1, min(4, attempts))
-        guard count > 1 else {
-            return dispatchManagedSession(repoRoot: repoRoot, task: task, useWorktree: useWorktree)
+        if count > 1, !useWorktree { return tr(.managedAttemptsNeedWorktree) }
+        guard ClaudeManagedRuntime.executable() != nil else {
+            return tr(.managedNoClaude)
         }
-        guard useWorktree else { return tr(.managedAttemptsNeedWorktree) }
-        let group = UUID().uuidString
+        let missionID = UUID().uuidString
+        let mission = Mission.Model(
+            id: missionID,
+            repoRoot: repoRoot,
+            goal: goal,
+            constraints: constraints,
+            checks: Mission.checks(fromLines: checksText, newID: { UUID().uuidString }),
+            createdMs: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+        activateManagedSessions()
+        managedSessions.fleet.create(mission)
         for index in 1...count {
             if let error = dispatchManagedSession(
-                repoRoot: repoRoot, task: task, useWorktree: true,
-                attemptGroup: group, attemptIndex: index
+                repoRoot: repoRoot, task: mission.contract.goal, useWorktree: useWorktree,
+                attemptGroup: count > 1 ? missionID : "",
+                attemptIndex: count > 1 ? index : 0,
+                missionID: missionID
             ) {
+                managedSessions.fleet.dropIfEmpty(missionID: missionID)
                 return error
             }
         }
@@ -130,7 +149,8 @@ extension StatusStore {
 
     func dispatchManagedSession(
         repoRoot: String, task: String, useWorktree: Bool,
-        attemptGroup: String = "", attemptIndex: Int = 0
+        attemptGroup: String = "", attemptIndex: Int = 0,
+        missionID: String
     ) -> String? {
         guard ClaudeManagedRuntime.executable() != nil else {
             return tr(.managedNoClaude)
@@ -162,9 +182,9 @@ extension StatusStore {
             isWorktree: isWorktree,
             nowMs: nowMs
         )
-        model.pendingPrompt = task
         model.attemptGroup = attemptGroup
-        managedSessions.fleet.dispatch(model: model)
+        // The fleet sets the prompt from the Mission's current contract.
+        managedSessions.fleet.dispatch(candidate: model, missionID: missionID)
         DebugLog.write("managed dispatch worktree=\(isWorktree) group=\(attemptGroup.isEmpty ? "-" : "y")")
         return nil
     }
@@ -210,10 +230,39 @@ extension StatusStore {
         managedSessions.fleet.decidePermission(id: id, allow: allow)
     }
 
-    /// 6.0-γ: the other tries of the same task, dispatch order.
-    func managedAttemptSiblings(for row: AgentRow) -> [ManagedSessionRunner] {
-        guard let runner = managedRunner(for: row),
-              !runner.model.attemptGroup.isEmpty else { return [] }
-        return managedSessions.fleet.attemptSiblings(group: runner.model.attemptGroup)
+    /// 13.0: the Mission a managed row is a Candidate of.
+    func managedMission(for row: AgentRow) -> Mission.Model? {
+        guard let runner = managedRunner(for: row) else { return nil }
+        return managedSessions.fleet.mission(id: runner.model.missionID)
+    }
+
+    /// The Mission's Candidates, dispatch order.
+    func managedCandidates(of mission: Mission.Model) -> [ManagedSessionRunner] {
+        managedSessions.fleet.candidates(of: mission.id)
+    }
+
+    func managedMissionLifecycle(_ mission: Mission.Model) -> Mission.Lifecycle {
+        managedSessions.fleet.lifecycle(of: mission.id) ?? .draft
+    }
+
+    func managedRunMissionChecks(_ mission: Mission.Model, candidateID: String? = nil) {
+        managedSessions.fleet.runChecks(missionID: mission.id, candidateID: candidateID)
+    }
+
+    func managedCancelMissionChecks(_ mission: Mission.Model) {
+        managedSessions.fleet.cancelChecks(missionID: mission.id)
+    }
+
+    func managedChoose(_ mission: Mission.Model, candidateID: String) {
+        managedSessions.fleet.choose(missionID: mission.id, candidateID: candidateID)
+    }
+
+    /// The user's edit of goal / constraints / checks. Unchanged commands
+    /// keep their ids, so their evidence still answers them.
+    func managedReviseMission(_ mission: Mission.Model, goal: String, constraints: String, checksText: String) {
+        let checks = Mission.revisedChecks(
+            fromLines: checksText, previous: mission.contract.checks, newID: { UUID().uuidString }
+        )
+        managedSessions.fleet.revise(missionID: mission.id, goal: goal, constraints: constraints, checks: checks)
     }
 }
