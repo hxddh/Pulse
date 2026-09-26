@@ -27,11 +27,16 @@ extension StatusStore {
         // which is exactly when the receipt becomes worth reading. Keep a
         // decided row for a short while on its own clock instead.
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        respondDecided = respondDecided.filter { nowMs - $0.value.decidedAtMs < Self.decidedNoteLifetimeMs }
-        for key in respondDecided.keys {
-            respondDecided[key]?.fate = fateOf(rowKey: key, nowMs: nowMs)
+        // 12.4: build the next value, publish only a change — every scan
+        // passes through here, and an unchanged write still redraws every
+        // surface observing the store.
+        var decided = respondDecided.filter { nowMs - $0.value.decidedAtMs < Self.decidedNoteLifetimeMs }
+        for key in decided.keys {
+            decided[key]?.fate = fateOf(rowKey: key, nowMs: nowMs)
         }
-        respondVerdictSentRowKeys = Set(respondDecided.keys)
+        if respondDecided != decided { respondDecided = decided }
+        let sent = Set(decided.keys)
+        if respondVerdictSentRowKeys != sent { respondVerdictSentRowKeys = sent }
     }
 
     /// How long a decided row keeps saying what became of its verdict.

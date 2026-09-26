@@ -364,7 +364,8 @@ extension StatusStore {
         // Supervisor-deferred adapters are a policy partial, not a failed scan.
         // Lighting the incomplete banner for intentional deferral made healthy
         // ticks look broken every time one agent was in backoff.
-        collectorScanIncomplete = !complete && !intentionalPartial
+        let incomplete = !complete && !intentionalPartial
+        if collectorScanIncomplete != incomplete { collectorScanIncomplete = incomplete }
     }
 
     // MARK: - 2.9 activity light path
@@ -417,7 +418,7 @@ extension StatusStore {
         }
     }
 
-    fileprivate func applyScan(
+    func applyScan(
         procs: [ProcessProbe.Hit],
         harvest: HarvestOutcome,
         processSignature: String,
@@ -434,7 +435,7 @@ extension StatusStore {
 
         if ticket < lastAppliedTicket {
             DebugLog.write("apply skip stale #\(ticket) lastApplied=\(lastAppliedTicket)")
-            if clearRefreshing { isRefreshing = false }
+            if clearRefreshing, isRefreshing { isRefreshing = false }
             return
         }
         lastAppliedTicket = ticket
@@ -582,7 +583,7 @@ extension StatusStore {
         // window, or a request on a row that scrolled out of the tray would
         // silently lose its controls (E-2).
         refreshRespondInbound(respondInbound, rows: result.rows)
-        showAllAgents = result.showAllAgents
+        if showAllAgents != result.showAllAgents { showAllAgents = result.showAllAgents }
         knownWaitingKeys = result.waitingKeys
         // A wait that resolved on its own takes its snooze with it, or the next
         // wait on the same row would start life already silenced.
@@ -681,8 +682,13 @@ extension StatusStore {
             }
         }
 
-        snapshot = snap
-        if clearRefreshing { isRefreshing = false }
+        // 12.4 Surface: a scan that found the same world leaves `snapshot`
+        // alone, so no surface observing the store is woken for it — except
+        // when a relative-time label on screen is due to move.
+        if PulseSnapshot.needsPublish(next: snap, current: snapshot) {
+            snapshot = snap
+        }
+        if clearRefreshing, isRefreshing { isRefreshing = false }
         if reason == "trayOpen" {
             applyPendingLookContinuity()
         }
@@ -708,4 +714,43 @@ extension StatusStore {
     /// Deliver one actionable notification per Waiting session. A previous
     /// implementation used `first(where:)`, so a scan that found Codex and
     /// Cursor approvals notified only whichever row happened to sort first.
+}
+
+// MARK: - 12.4 Surface: publish only what changed
+//
+// `@Published` announces every assignment, equal or not, and every view
+// observing the store re-evaluates on each announcement. The scan path
+// therefore writes a published property only when the value differs;
+// `ScanQuietTests` holds it to that.
+
+extension PulseSnapshot {
+    /// Equal in everything a surface draws — `updatedAt` aside.
+    func sameContent(as other: PulseSnapshot) -> Bool {
+        var mine = self
+        mine.updatedAt = other.updatedAt
+        return mine == other
+    }
+
+    /// Below a minute, durations are drawn in seconds (`DurationFormat`).
+    static let secondsLabelWindowMs: Int64 = 60_000
+    /// Minute labels need a redraw at most this often when nothing else moved.
+    static let minuteLabelRefresh: TimeInterval = 60
+
+    /// Whether `next` must replace `current` for the surfaces to stay true.
+    ///
+    /// Content changed → yes. Otherwise only the clock can make a drawn fact
+    /// stale: a row whose wait or activity is younger than a minute shows a
+    /// seconds count that moves every scan, and minute labels move once a
+    /// minute. Nothing else about an unchanged world is worth a redraw.
+    static func needsPublish(next: PulseSnapshot, current: PulseSnapshot) -> Bool {
+        if current.updatedAt == .distantPast { return true }
+        if !next.sameContent(as: current) { return true }
+        let nowMs = Int64(next.updatedAt.timeIntervalSince1970 * 1000)
+        let secondsOnScreen = next.rows.contains { row in
+            let newest = max(row.waitSinceMs, row.activityChangedMs, row.harvestMs)
+            return newest > 0 && nowMs - newest < secondsLabelWindowMs
+        }
+        if secondsOnScreen { return true }
+        return next.updatedAt.timeIntervalSince(current.updatedAt) >= minuteLabelRefresh
+    }
 }
