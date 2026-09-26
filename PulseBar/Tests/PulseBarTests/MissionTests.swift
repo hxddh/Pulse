@@ -324,4 +324,14 @@ final class MissionTests: XCTestCase {
         again.reattachFromDisk()
         XCTAssertEqual(again.missions, fleet.missions)
     }
+
+    func testAMissionThatNeverGotACandidateIsDroppedOnReattach() {
+        XCTAssertTrue(Mission.persist(Mission.Model(id: "m-empty", repoRoot: "/r", goal: "A", createdMs: t0)))
+        let fleet = ManagedFleet()
+        fleet.startAction = { _ in }
+        fleet.reattachFromDisk()
+        XCTAssertTrue(fleet.missions.isEmpty)
+        XCTAssertTrue(Mission.loadAll().isEmpty)
+    }
+
 }

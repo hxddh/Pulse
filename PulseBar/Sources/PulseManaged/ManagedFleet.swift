@@ -52,7 +52,12 @@ package final class ManagedFleet {
         let loaded = ManagedSession.loadAll()
         let existing = Mission.loadAll()
         let migrated = Mission.migrate(sessions: loaded, existing: existing)
-        missions = migrated.missions
+        // A Mission is created a moment before its first Candidate; one that
+        // never got a Candidate (the app quit in between) has nothing to show.
+        for empty in migrated.missions where empty.candidateIDs.isEmpty {
+            Mission.remove(id: empty.id)
+        }
+        missions = migrated.missions.filter { !$0.candidateIDs.isEmpty }
         let before = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for mission in missions where before[mission.id] != mission {
             Mission.persist(mission)
