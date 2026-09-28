@@ -23,9 +23,13 @@ package final class ManagedFleet {
     /// Candidate and by the observed sessions the store shows.
     package let evidence: EvidenceBook
 
-    package init(evidence: EvidenceBook = EvidenceBook()) {
-        self.evidence = evidence
-        evidence.onChange = { [weak self] in self?.onChange?() }
+    /// The book is built here rather than as a default argument: a
+    /// main-actor default argument in a stored-property initializer crashes
+    /// the Swift 5.10 compiler in IRGen.
+    package init(evidence: EvidenceBook? = nil) {
+        let book = evidence ?? EvidenceBook()
+        self.evidence = book
+        book.onChange = { [weak self] in self?.onChange?() }
     }
     private struct PersistenceMarker: Equatable {
         package var statusKind: String
