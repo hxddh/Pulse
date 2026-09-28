@@ -224,7 +224,7 @@ final class MissionTests: XCTestCase {
     }
 
     func testMigrationNeverManufacturesEvidence() {
-        var old = session("a1", command: "swift test")
+        let old = session("a1", command: "swift test")
         let history = [evidence(.passed, checkID: nil)]
         let result = Mission.migrate(sessions: [old], existing: [])
         let mission = result.missions[0]

@@ -208,7 +208,7 @@ package final class ManagedFleet {
     /// A Mission whose first dispatch failed before any Candidate existed.
     package func dropIfEmpty(missionID: String) {
         guard let index = missions.firstIndex(where: { $0.id == missionID }),
-              missions[index].candidateIDs.isEmpty else { return }
+              missions[index].candidateIDs.isEmpty, missions[index].externals.isEmpty else { return }
         Mission.remove(id: missionID)
         missions.remove(at: index)
         onChange?()
