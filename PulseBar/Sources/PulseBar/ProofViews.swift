@@ -13,59 +13,62 @@ struct WorkingCopyProofCard: View {
     @ObservedObject var store: StatusStore
     let row: AgentRow
 
+    var body: some View {
+        ProofCardView(model: store.proofCard(row)) { store.handle($0, row: row) }
+            // A different row is a different directory: start its editor over.
+            .id(store.proofRoot(row))
+    }
+}
+
+/// 15.0 · renders a `ProofCardModel` and nothing else (`SurfaceCapture`).
+struct ProofCardView: View {
+    let model: ProofCardModel
+    var send: (ProofIntent) -> Void = { _ in }
+
     @State private var checksText = ""
     @State private var loaded = false
 
-    private var checks: [Mission.Check] { store.workingCopyChecks(row) }
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(store.tr(.proofCard))
+            Text(t(.proofCard))
                 .font(.headline)
-            Text(store.tr(.proofHint))
+            Text(t(.proofHint))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            TextField(store.tr(.missionChecks), text: $checksText, axis: .vertical)
+            TextField(t(.missionChecks), text: $checksText, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .font(.callout.monospaced())
                 .lineLimit(2...6)
             HStack(spacing: 10) {
-                Button(store.tr(.proofSaveChecks)) {
-                    store.setWorkingCopyChecks(row, text: checksText)
-                }
-                .buttonStyle(.bordered)
-                .disabled(checksText == checks.map(\.command).joined(separator: "\n"))
-                Button(store.tr(.proofRunChecks)) {
-                    store.runWorkingCopyChecks(row)
-                }
-                .buttonStyle(.bordered)
-                .disabled(checks.isEmpty || store.workingCopyBusy(row))
-                if store.workingCopyBusy(row) {
-                    ProgressView().controlSize(.small)
-                    Button(store.tr(.missionStopChecks)) {
-                        store.cancelWorkingCopyChecks(row)
-                    }
+                Button(t(.proofSaveChecks)) { send(.save(text: checksText)) }
                     .buttonStyle(.bordered)
+                    .disabled(checksText == model.savedChecksText)
+                Button(t(.proofRunChecks)) { send(.run) }
+                    .buttonStyle(.bordered)
+                    .disabled(!model.canRun)
+                if model.busy {
+                    ProgressView().controlSize(.small)
+                    Button(t(.missionStopChecks)) { send(.stop) }
+                        .buttonStyle(.bordered)
                 }
             }
-            if !checks.isEmpty {
+            if !model.lines.isEmpty {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
-                    ForEach(checks, id: \.id) { check in
+                    ForEach(model.lines) { line in
                         GridRow {
-                            Text(check.command)
+                            Text(line.command)
                                 .font(.caption.monospaced())
                                 .lineLimit(1)
                                 .frame(maxWidth: 280, alignment: .leading)
-                                .help(check.command)
-                            let label = CheckLabels.label(store.workingCopyStanding(check, row), store: store)
-                            Text(label.0)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(label.1 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                                .help(line.command)
+                            CheckCellView(cell: line.cell)
                         }
                     }
                 }
-                Text(store.tr(.proofSideEffects))
+                Text(t(.proofSideEffects))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -82,33 +85,31 @@ struct WorkingCopyProofCard: View {
         .onAppear {
             guard !loaded else { return }
             loaded = true
-            checksText = checks.map(\.command).joined(separator: "\n")
-            store.refreshWorkingCopy(row)
+            checksText = model.savedChecksText
+            send(.refresh)
         }
     }
 
     @ViewBuilder
     private var missionJoin: some View {
-        if let joined = store.joinedMission(row) {
+        if let joined = model.joined {
             HStack(spacing: 8) {
-                Text(String(format: store.tr(.proofJoined), joined.title))
+                Text(String(format: t(.proofJoined), joined.title))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let external = joined.externals.first(where: { $0.root == store.proofRoot(row) }) {
-                    Button(store.tr(.proofLeaveMission)) {
-                        store.leaveMission(joined, externalID: external.id)
+                if let externalID = joined.externalID {
+                    Button(t(.proofLeaveMission)) {
+                        send(.leave(missionID: joined.missionID, externalID: externalID))
                     }
                     .buttonStyle(.link)
                     .font(.caption)
                 }
             }
-        } else if !store.missionsForJoining.isEmpty {
-            Menu(store.tr(.proofJoinMission)) {
-                ForEach(store.missionsForJoining, id: \.id) { mission in
-                    Button(mission.title) {
-                        store.joinMission(mission, row: row)
-                    }
+        } else if !model.joinable.isEmpty {
+            Menu(t(.proofJoinMission)) {
+                ForEach(model.joinable) { choice in
+                    Button(choice.title) { send(.join(missionID: choice.id)) }
                 }
             }
             .menuStyle(.borderlessButton)

@@ -17,57 +17,56 @@ struct MissionCard: View {
 
     @State private var editing = false
 
-    /// One column: a Candidate Pulse launched, or (14.0) a working copy the
-    /// user joined from outside Pulse. Both are judged by the same ruler, in
-    /// their own working copy.
-    private struct Column: Identifiable {
-        let id: String
-        let runner: ManagedSessionRunner?
-        let external: Mission.External?
-        let root: String
-        let revision: Int
-    }
-
-    private var candidates: [ManagedSessionRunner] { store.managedCandidates(of: mission) }
-
-    /// Dispatch order, then join order — the only orders ever shown.
-    private var columns: [Column] {
-        candidates.map {
-            Column(id: $0.model.id, runner: $0, external: nil, root: $0.model.root, revision: $0.model.contractRevision)
-        } + mission.externals.map {
-            Column(id: $0.id, runner: nil, external: $0, root: $0.root, revision: $0.revision)
+    var body: some View {
+        MissionBoardView(
+            board: store.missionBoard(mission, currentCandidateID: currentCandidateID),
+            edit: { editing = true },
+            send: { store.handle($0, mission: mission) }
+        )
+        .sheet(isPresented: $editing) {
+            MissionEditSheet(store: store, mission: mission)
         }
     }
+}
+
+/// 15.0 · renders a `MissionBoard` and nothing else — no store, so a fixture
+/// can render every state of it (`SurfaceCapture`).
+struct MissionBoardView: View {
+    let board: MissionBoard
+    var edit: () -> Void = {}
+    var send: (MissionIntent) -> Void = { _ in }
+
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, board.lang) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
-            Text(mission.contract.goal)
+            Text(board.goal)
                 .font(.callout)
                 .lineLimit(4)
                 .textSelection(.enabled)
-            if !mission.contract.constraints.isEmpty {
-                Text(mission.contract.constraints)
+            if !board.constraints.isEmpty {
+                Text(board.constraints)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(4)
                     .textSelection(.enabled)
             }
-            if mission.legacy {
-                Text(store.tr(.missionLegacyNote))
+            if let note = board.legacyNote {
+                Text(note)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if mission.contract.checks.isEmpty {
-                Text(store.tr(.missionNoChecks))
+            if let warning = board.noChecksWarning {
+                Text(warning)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             comparison
             actions
-            Text(store.tr(.missionNoRanking))
+            Text(t(.missionNoRanking))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -79,66 +78,62 @@ struct MissionCard: View {
             RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
                 .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
         )
-        .sheet(isPresented: $editing) {
-            MissionEditSheet(store: store, mission: mission)
-        }
     }
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text(store.tr(.missionHeading))
+            Text(t(.missionHeading))
                 .font(.headline)
-            Text(lifecycleLabel(store.managedMissionLifecycle(mission)))
+            Text(board.lifecycle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(String(format: store.tr(.missionRevision), mission.contract.revision))
+            Text(board.revision)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             Spacer()
-            Button(store.tr(.missionEdit)) { editing = true }
+            Button(t(.missionEdit), action: edit)
                 .buttonStyle(.link)
                 .font(.caption)
         }
     }
 
     private var comparison: some View {
-        let columns = self.columns
-        return ScrollView(.horizontal, showsIndicators: true) {
+        ScrollView(.horizontal, showsIndicators: true) {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                 GridRow {
                     Color.clear.frame(width: 1, height: 1)
-                    ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
-                        columnHeader(column, ordinal: index + 1)
+                    ForEach(board.columns) { column in
+                        columnHeader(column)
                     }
                 }
                 Divider().gridCellUnsizedAxes(.horizontal)
-                factRow(store.tr(.missionRowSession), columns) { sessionFact($0) }
-                ForEach(mission.contract.checks, id: \.id) { check in
+                factRow(t(.missionRowSession)) { $0.session }
+                ForEach(Array(board.checks.enumerated()), id: \.offset) { index, command in
                     GridRow {
-                        Text(check.command)
+                        Text(command)
                             .font(.caption.monospaced())
                             .lineLimit(1)
                             .frame(maxWidth: 220, alignment: .leading)
-                            .help(check.command)
-                        ForEach(columns) { column in
-                            checkCell(check, column)
+                            .help(command)
+                        ForEach(board.columns) { column in
+                            CheckCellView(cell: column.cells[index])
                         }
                     }
                 }
-                factRow(store.tr(.missionRowChanges), columns) { changesFact($0) }
-                factRow(store.tr(.missionRowAnswer), columns) { answerFact($0) }
-                factRow(store.tr(.missionRowProblems), columns) { problemsFact($0) }
+                factRow(t(.missionRowChanges)) { $0.changes }
+                factRow(t(.missionRowAnswer)) { $0.answer }
+                factRow(t(.missionRowProblems)) { $0.problems }
             }
             .padding(.vertical, 4)
         }
     }
 
-    private func factRow(_ label: String, _ columns: [Column], _ value: @escaping (Column) -> String) -> some View {
+    private func factRow(_ label: String, _ value: @escaping (MissionBoard.Column) -> String) -> some View {
         GridRow {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            ForEach(columns) { column in
+            ForEach(board.columns) { column in
                 Text(value(column))
                     .font(.caption)
                     .lineLimit(2)
@@ -148,187 +143,72 @@ struct MissionCard: View {
         }
     }
 
-    private func columnHeader(_ column: Column, ordinal: Int) -> some View {
+    private func columnHeader(_ column: MissionBoard.Column) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
-                Text(String(format: store.tr(.missionCandidate), ordinal))
-                    .font(.callout.weight(column.id == currentCandidateID ? .bold : .regular))
-                if mission.chosenCandidateID == column.id {
-                    Text(store.tr(.missionChosen))
+                Text(column.title)
+                    .font(.callout.weight(column.isCurrent ? .bold : .regular))
+                if column.chosen {
+                    Text(t(.missionChosen))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
-            if let external = column.external {
-                Text(String(format: store.tr(.missionExternal), external.label))
+            if !column.externalNote.isEmpty {
+                Text(column.externalNote)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            if column.revision != mission.contract.revision, column.revision > 0 {
-                Text(String(format: store.tr(.missionOlderRevision), column.revision))
+            if !column.revisionNote.isEmpty {
+                Text(column.revisionNote)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             HStack(spacing: 8) {
-                if column.id != currentCandidateID, let key = selectionKey(column) {
-                    Button(store.tr(.managedViewAttempt)) {
-                        store.workbenchSelectKey = key
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
+                if let key = column.selectionKey {
+                    Button(t(.managedViewAttempt)) { send(.select(key: key)) }
+                        .buttonStyle(.link)
+                        .font(.caption)
                 }
-                Button(store.tr(mission.chosenCandidateID == column.id ? .missionUnchoose : .missionChoose)) {
-                    store.managedChoose(mission, candidateID: column.id)
+                Button(t(column.chosen ? .missionUnchoose : .missionChoose)) {
+                    send(.choose(candidateID: column.id))
                 }
                 .buttonStyle(.link)
                 .font(.caption)
-                if let external = column.external {
-                    Button(store.tr(.proofLeaveMission)) {
-                        store.leaveMission(mission, externalID: external.id)
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
+                if let externalID = column.externalID {
+                    Button(t(.proofLeaveMission)) { send(.leave(externalID: externalID)) }
+                        .buttonStyle(.link)
+                        .font(.caption)
                 }
             }
         }
-    }
-
-    private func selectionKey(_ column: Column) -> String? {
-        if let runner = column.runner { return "managed|" + runner.model.id }
-        return store.observedRow(forRoot: column.root)?.rowKey
-    }
-
-    private func sessionFact(_ column: Column) -> String {
-        if let model = column.runner?.model {
-            var parts = [model.runtimeID]
-            if !model.modelName.isEmpty { parts.append(model.modelName) }
-            parts.append(statusLabel(model.status))
-            return parts.joined(separator: " · ")
-        }
-        guard let row = store.observedRow(forRoot: column.root) else {
-            return store.tr(.missionExternalGone)
-        }
-        var parts = [row.agent.displayName]
-        if !row.model.isEmpty { parts.append(row.model) }
-        parts.append(row.waiting ? store.tr(.needsYou) : row.liveProcess ? store.tr(.managedRunning) : store.tr(.managedIdle))
-        return parts.joined(separator: " · ")
-    }
-
-    private func changesFact(_ column: Column) -> String {
-        if let runner = column.runner {
-            if let effect = runner.model.lastTurnEffect { return "+\(effect.insertions) −\(effect.deletions)" }
-            return "—"
-        }
-        guard let row = store.observedRow(forRoot: column.root), row.hasWorkspaceEffect,
-              row.insertions >= 0, row.deletions >= 0 else { return "—" }
-        return "+\(row.insertions) −\(row.deletions)"
-    }
-
-    private func answerFact(_ column: Column) -> String {
-        if let runner = column.runner {
-            return runner.model.lastResultText.isEmpty ? "—" : runner.model.lastResultText
-        }
-        let word = store.observedRow(forRoot: column.root)?.lastWord ?? ""
-        return word.isEmpty ? "—" : word
-    }
-
-    private func problemsFact(_ column: Column) -> String {
-        if let runner = column.runner {
-            return "\(runner.model.errorResults) · \(runner.model.unknownEvents)"
-        }
-        guard let row = store.observedRow(forRoot: column.root) else { return "—" }
-        return "\(row.errors) · —"
-    }
-
-    private func checkCell(_ check: Mission.Check, _ column: Column) -> some View {
-        let book = store.evidenceBook
-        let standing = Mission.standing(
-            of: check,
-            revision: column.revision,
-            evidence: book.evidence(for: column.root),
-            running: book.runningCheck(for: column.root),
-            mission: mission
-        ) { book.standing(of: $0, at: column.root) }
-        let (text, warn) = checkLabel(standing)
-        return Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(warn ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-            .frame(maxWidth: 220, alignment: .leading)
-    }
-
-    /// The same honesty rules as the run-check card: only a current pass on
-    /// unchanged code reads as passed.
-    private func checkLabel(_ standing: Mission.CheckStanding) -> (String, Bool) {
-        CheckLabels.label(standing, store: store)
     }
 
     private var actions: some View {
-        let columns = self.columns
-        let busy = columns.contains { store.evidenceBook.isBusy(at: $0.root) }
-        let turnRunning = candidates.contains(where: \.isRunning)
-        return HStack(spacing: 10) {
-            Button(store.tr(.missionRunChecks)) {
-                store.managedRunMissionChecks(mission)
-            }
-            .buttonStyle(.bordered)
-            .disabled(mission.contract.checks.isEmpty || busy || turnRunning || columns.isEmpty)
-            if busy {
-                ProgressView().controlSize(.small)
-                Button(store.tr(.missionStopChecks)) {
-                    store.managedCancelMissionChecks(mission)
-                }
+        HStack(spacing: 10) {
+            Button(t(.missionRunChecks)) { send(.runChecks) }
                 .buttonStyle(.bordered)
+                .disabled(!board.canRunChecks)
+            if board.busy {
+                ProgressView().controlSize(.small)
+                Button(t(.missionStopChecks)) { send(.stopChecks) }
+                    .buttonStyle(.bordered)
             }
-        }
-    }
-
-    private func lifecycleLabel(_ lifecycle: Mission.Lifecycle) -> String {
-        switch lifecycle {
-        case .draft: return store.tr(.missionLifecycleDraft)
-        case .running: return store.tr(.missionLifecycleRunning)
-        case .ready: return store.tr(.missionLifecycleReady)
-        case .archived: return store.tr(.missionLifecycleArchived)
-        }
-    }
-
-    private func statusLabel(_ status: ManagedSession.Status) -> String {
-        switch status {
-        case .idle: return store.tr(.managedIdle)
-        case .running: return store.tr(.managedRunning)
-        case .queued: return store.tr(.managedQueuedNote)
-        case .interrupted: return store.tr(.managedInterrupted)
-        case .cancelled: return store.tr(.managedCancelled)
-        case .failed(let reason): return String(format: store.tr(.managedFailed), reason)
         }
     }
 }
 
-/// One wording for a check cell, shared by the Mission card and the working
-/// copy card. Only a current pass on unchanged code reads as passed.
-@MainActor
-enum CheckLabels {
-    static func label(_ standing: Mission.CheckStanding, store: StatusStore) -> (String, Bool) {
-        switch standing {
-        case .notInContract: return (store.tr(.missionCheckNotInContract), false)
-        case .notRun: return (store.tr(.missionCheckNotRun), false)
-        case .running: return (store.tr(.missionCheckRunning), false)
-        case .evidence(let judged, let evidence):
-            switch judged {
-            case .passing: return (store.tr(.missionCheckPassed), false)
-            case .stale: return (store.tr(.managedRunCheckStale), true)
-            case .measuring: return (store.tr(.managedRunCheckMeasuring), false)
-            case .unverified: return (store.tr(.managedRunCheckUnverified), true)
-            case .notPassing:
-                switch evidence.outcome {
-                case .timedOut: return (store.tr(.managedRunCheckTimeout), true)
-                case .couldNotRun: return (store.tr(.managedRunCheckUnverified), true)
-                case .invalidatedDuringRun: return (store.tr(.managedRunCheckChanged), true)
-                case .interrupted: return (store.tr(.managedRunCheckInterrupted), true)
-                case .passed, .failed:
-                    return (String(format: store.tr(.missionCheckFailed), Int(evidence.exitCode ?? -1)), true)
-                }
-            }
-        }
+/// One check result. A pass is not coloured as a win: only a warning
+/// (failed, stale, unconfirmed) stands out.
+struct CheckCellView: View {
+    let cell: CheckCell
+    var maxWidth: CGFloat = 220
+
+    var body: some View {
+        Text(cell.text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(cell.tone == .warn ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            .frame(maxWidth: maxWidth, alignment: .leading)
     }
 }
 

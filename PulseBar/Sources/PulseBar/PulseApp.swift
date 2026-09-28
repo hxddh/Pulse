@@ -198,6 +198,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if ProcessInfo.processInfo.arguments.contains("--language=en") {
             AppServices.store.language = .en
         }
+        // 15.0 · Witness: render the surface fixtures and quit — no scan,
+        // no tray, nothing read from this Mac.
+        if let directory = SurfaceCapture.requestedDirectory(ProcessInfo.processInfo.arguments) {
+            SurfaceCapture.run(
+                to: directory,
+                lang: AppServices.store.lang,
+                dark: ProcessInfo.processInfo.arguments.contains("--appearance=dark")
+            )
+            NSApp.terminate(nil)
+            return
+        }
         let panel = StatusPanelController(store: AppServices.store)
         statusPanel = panel
         StatusPanelController.shared = panel

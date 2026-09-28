@@ -18,11 +18,6 @@ extension StatusStore {
 
     // MARK: - A working copy's own ruler
 
-    func workingCopyChecks(_ row: AgentRow) -> [Mission.Check] {
-        let root = proofRoot(row)
-        return root.isEmpty ? [] : evidenceBook.checks(for: root)
-    }
-
     /// Writing checks is the opt-in for this directory; clearing them opts out.
     func setWorkingCopyChecks(_ row: AgentRow, text: String) {
         let root = proofRoot(row)
@@ -45,15 +40,6 @@ extension StatusStore {
         evidenceBook.cancel(at: root)
     }
 
-    func workingCopyStanding(_ check: Mission.Check, _ row: AgentRow) -> Mission.CheckStanding {
-        let root = proofRoot(row)
-        return Mission.checkStanding(
-            of: check,
-            evidence: evidenceBook.evidence(for: root),
-            running: evidenceBook.runningCheck(for: root)
-        ) { self.evidenceBook.standing(of: $0, at: root) }
-    }
-
     func workingCopyBusy(_ row: AgentRow) -> Bool {
         let root = proofRoot(row)
         return !root.isEmpty && evidenceBook.isBusy(at: root)
@@ -66,21 +52,6 @@ extension StatusStore {
     }
 
     // MARK: - External Candidates
-
-    /// Missions a row's working copy can join: every Mission, newest first.
-    var missionsForJoining: [Mission.Model] {
-        managedSessions.fleet.missions.filter { !$0.archived }.reversed()
-    }
-
-    /// The Mission this row's working copy is already an external Candidate
-    /// of, if any.
-    func joinedMission(_ row: AgentRow) -> Mission.Model? {
-        let root = proofRoot(row)
-        guard !root.isEmpty else { return nil }
-        return managedSessions.fleet.missions.first { mission in
-            mission.externals.contains { $0.root == root }
-        }
-    }
 
     func joinMission(_ mission: Mission.Model, row: AgentRow) {
         let root = proofRoot(row)
@@ -96,6 +67,66 @@ extension StatusStore {
     func observedRow(forRoot root: String) -> AgentRow? {
         let key = EvidenceBook.key(root)
         return cachedAll.first { !$0.isManaged && !$0.isRemote && EvidenceBook.key($0.workspaceRoot) == key }
+    }
+
+    // MARK: - 15.0 · surfaces as values
+
+    /// The working-copy card for a row, as a value.
+    func proofCard(_ row: AgentRow) -> ProofCardModel {
+        let root = proofRoot(row)
+        let book = evidenceBook
+        return ProofCardModel.make(ProofCardModel.Input(
+            root: root,
+            checks: root.isEmpty ? [] : book.checks(for: root),
+            evidence: root.isEmpty ? [] : book.evidence(for: root),
+            running: root.isEmpty ? nil : book.runningCheck(for: root),
+            busy: workingCopyBusy(row),
+            missions: managedSessions.fleet.missions,
+            lang: lang,
+            judge: { book.standing(of: $0, at: root) }
+        ))
+    }
+
+    func handle(_ intent: ProofIntent, row: AgentRow) {
+        switch intent {
+        case .save(let text): setWorkingCopyChecks(row, text: text)
+        case .run: runWorkingCopyChecks(row)
+        case .stop: cancelWorkingCopyChecks(row)
+        case .refresh: refreshWorkingCopy(row)
+        case .join(let missionID):
+            if let mission = managedSessions.fleet.mission(id: missionID) { joinMission(mission, row: row) }
+        case .leave(let missionID, let externalID):
+            if let mission = managedSessions.fleet.mission(id: missionID) { leaveMission(mission, externalID: externalID) }
+        }
+    }
+
+    /// A Mission's Candidates side by side, as a value.
+    func missionBoard(_ mission: Mission.Model, currentCandidateID: String) -> MissionBoard {
+        let book = evidenceBook
+        let runners = managedCandidates(of: mission)
+        return MissionBoard.make(MissionBoard.Input(
+            mission: mission,
+            candidates: runners.map(\.model),
+            runningCandidateIDs: Set(runners.filter(\.isRunning).map(\.model.id)),
+            currentCandidateID: currentCandidateID,
+            lifecycle: managedMissionLifecycle(mission),
+            lang: lang,
+            observed: { self.observedRow(forRoot: $0) },
+            evidence: { book.evidence(for: $0) },
+            running: { book.runningCheck(for: $0) },
+            busy: { book.isBusy(at: $0) },
+            judge: { book.standing(of: $0, at: $1) }
+        ))
+    }
+
+    func handle(_ intent: MissionIntent, mission: Mission.Model) {
+        switch intent {
+        case .select(let key): workbenchSelectKey = key
+        case .choose(let candidateID): managedChoose(mission, candidateID: candidateID)
+        case .leave(let externalID): leaveMission(mission, externalID: externalID)
+        case .runChecks: managedRunMissionChecks(mission)
+        case .stopChecks: managedCancelMissionChecks(mission)
+        }
     }
 
     // MARK: - The tray's one fact

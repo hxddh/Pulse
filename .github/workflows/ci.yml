@@ -92,3 +92,19 @@ jobs:
           name: qa-observation-truth-en-dark
           path: zig-out/qa-observation-truth-en-dark/
           if-no-files-found: error
+
+      # 15.0 · Witness: every Workbench judgement surface (Mission board,
+      # working-copy card) rendered from fixtures in zh/en × light/dark.
+      # A missing PNG fails the build; the manifests (with each capture's
+      # size) are printed to the log.
+      - name: Surface captures
+        id: surfaces
+        run: ./scripts/qa_surfaces.sh
+
+      - name: Upload surface PNGs
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.surfaces.outcome != 'skipped' }}
+        with:
+          name: qa-surfaces
+          path: zig-out/qa-surfaces/
+          if-no-files-found: error
