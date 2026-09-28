@@ -22,17 +22,37 @@ struct RowNarrator {
     let crowded: Bool
     /// First-party outcome facts of Pulse-managed sessions, by managed id.
     let managedModels: [String: ManagedSession.Model]
+    /// 14.0 · check counts per working copy (`EvidenceBook.key`) that has a
+    /// ruler and at least one result.
+    let proofSummaries: [String: EvidenceBook.Summary]
 
     init(
         lang: ResolvedLanguage,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         crowded: Bool = false,
-        managedModels: [String: ManagedSession.Model] = [:]
+        managedModels: [String: ManagedSession.Model] = [:],
+        proofSummaries: [String: EvidenceBook.Summary] = [:]
     ) {
         self.lang = lang
         self.nowMs = nowMs
         self.crowded = crowded
         self.managedModels = managedModels
+        self.proofSummaries = proofSummaries
+    }
+
+    /// `checks 2/3 passing · 1 failing` — the user's ruler on this row's
+    /// working copy, judged on the code as it is now. Empty when there is no
+    /// ruler or nothing has run: a count of zero passes is not a fact about
+    /// checks nobody ran.
+    func proofFact(_ row: AgentRow) -> String {
+        guard !row.isRemote,
+              let summary = proofSummaries[EvidenceBook.key(row.workspaceRoot)],
+              summary.total > 0
+        else { return "" }
+        var text = String(format: tr(.proofFact), summary.passing, summary.total)
+        if summary.failing > 0 { text += String(format: tr(.proofFailing), summary.failing) }
+        if summary.stale > 0 { text += String(format: tr(.proofStale), summary.stale) }
+        return text
     }
 
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
@@ -926,6 +946,10 @@ struct RowNarrator {
         // 8.0: a managed session's first-party outcome facts — cost·turns and
         // what the last turn left on disk. Measured by Pulse's own stream and
         // plumbing; absent facts stay absent.
+        // 14.0: the user's ruler outranks every self-reported advance — it
+        // is the one fact that says whether the work holds up.
+        let proof = proofFact(row)
+        if !proof.isEmpty { advance.insert(proof, at: 0) }
         if !row.managedID.isEmpty, let managed = managedModels[row.managedID] {
             if managed.totalCostUSD > 0 {
                 advance.append(String(format: tr(.managedCost), managed.totalCostUSD, managed.turns))

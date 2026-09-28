@@ -57,6 +57,26 @@ package enum Mission {
         }
     }
 
+    /// A Candidate produced outside Pulse. Pulse observes it and applies the
+    /// same ruler to its working copy; it never drives it.
+    package struct External: Codable, Equatable, Sendable {
+        package var id: String
+        package var root: String
+        /// Who works there, as the collector named it (e.g. "Codex").
+        package var label: String
+        /// The contract revision current when the user joined it.
+        package var revision: Int
+        package var addedMs: Int64
+
+        package init(id: String, root: String, label: String, revision: Int, addedMs: Int64) {
+            self.id = id
+            self.root = root
+            self.label = label
+            self.revision = revision
+            self.addedMs = addedMs
+        }
+    }
+
     /// Where a Mission stands. Derived from its Candidates — `ready` means
     /// none is still running, **not** that the result is right.
     package enum Lifecycle: String, Equatable, Sendable {
@@ -77,6 +97,10 @@ package enum Mission {
         package var candidateIDs: [String] = []
         package var chosenCandidateID: String? = nil
         package var archived = false
+        /// 14.0 · Candidates Pulse did not launch: a working copy some other
+        /// session works in (the user's own Codex, Claude Code, Cursor…),
+        /// joined to this Mission by the user. Optional so 13.0 files load.
+        package var externalCandidates: [External]? = nil
         /// Migrated from a pre-13.0 attempt group or standalone session:
         /// its goal is the session title, the only part of the task that was
         /// ever persisted.
@@ -105,6 +129,25 @@ package enum Mission {
 
         package var contract: Contract {
             contracts[contracts.count - 1]
+        }
+
+        package var externals: [External] { externalCandidates ?? [] }
+
+        /// Join a working copy as a Candidate. One entry per root; Pulse's own
+        /// worktrees are not external.
+        package mutating func addExternal(root: String, label: String, id: String, nowMs: Int64) {
+            let key = EvidenceBook.key(root)
+            guard !key.isEmpty, !externals.contains(where: { $0.root == key }) else { return }
+            var list = externals
+            list.append(External(id: id, root: key, label: label, revision: contract.revision, addedMs: nowMs))
+            externalCandidates = list
+        }
+
+        package mutating func removeExternal(id: String) {
+            var list = externals
+            list.removeAll { $0.id == id }
+            externalCandidates = list.isEmpty ? nil : list
+            if chosenCandidateID == id { chosenCandidateID = nil }
         }
 
         package func contract(revision: Int) -> Contract? {
@@ -157,18 +200,31 @@ package enum Mission {
         case evidence(EvidenceStanding, AcceptanceEvidence)
     }
 
+    /// One cell for a Candidate that ran against contract `revision`.
     package static func standing(
         of check: Check,
-        candidate: ManagedSession.Model,
+        revision: Int,
+        evidence: [AcceptanceEvidence],
+        running: RunningCheck?,
         mission: Model,
         judge: (AcceptanceEvidence) -> EvidenceStanding
     ) -> CheckStanding {
-        let revision = mission.contract(revision: candidate.contractRevision) ?? mission.contract
-        guard revision.checks.contains(where: { $0.id == check.id }) else { return .notInContract }
-        if candidate.runningCheck?.checkID == check.id { return .running }
-        guard let latest = candidate.acceptanceEvidence.last(where: { $0.checkID == check.id }) else {
-            return .notRun
-        }
+        let contract = mission.contract(revision: revision) ?? mission.contract
+        guard contract.checks.contains(where: { $0.id == check.id }) else { return .notInContract }
+        return checkStanding(of: check, evidence: evidence, running: running, judge: judge)
+    }
+
+    /// One cell with no contract around it — a working copy's own ruler.
+    /// Evidence without this check's id (ad hoc, or recorded before checks
+    /// had ids) never answers it.
+    package static func checkStanding(
+        of check: Check,
+        evidence: [AcceptanceEvidence],
+        running: RunningCheck?,
+        judge: (AcceptanceEvidence) -> EvidenceStanding
+    ) -> CheckStanding {
+        if running?.checkID == check.id { return .running }
+        guard let latest = evidence.last(where: { $0.checkID == check.id }) else { return .notRun }
         return .evidence(judge(latest), latest)
     }
 

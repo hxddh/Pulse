@@ -95,11 +95,11 @@ package enum ManagedSession {
         package var pendingPrompt = ""
         /// 6.0-γ · the run-check command this session uses (persisted).
         package var runCommand = ""
-        /// Outcome-β · durable facts from user-triggered acceptance checks.
-        package var acceptanceEvidence: [AcceptanceEvidence] = []
-        /// 11.0.4 · a check in flight, persisted so a restart can say it was
-        /// interrupted instead of forgetting it ran.
-        package var runningCheck: RunningCheck?
+        /// 14.0 · evidence lives in the `EvidenceBook`, by working copy. A
+        /// state written by 13.0 or earlier still carries its evidence; it is
+        /// held here only until the fleet hands it to the book, and never
+        /// written back.
+        package var carriedEvidence: [AcceptanceEvidence] = []
         /// 6.0-γ · same-task attempt group id (empty = standalone).
         package var attemptGroup = ""
         /// 13.0 · the Mission this session is a Candidate of (empty only
@@ -193,7 +193,7 @@ package enum ManagedSession {
     /// itself Codable: the status enum flattens to kind+detail here, and the
     /// file format stays decoupled from in-memory evolution.
     package struct State: Codable, Equatable {
-        package static let currentSchemaVersion = 4
+        package static let currentSchemaVersion = 5
 
         package var schemaVersion: Int
         package var id: String
@@ -219,8 +219,9 @@ package enum ManagedSession {
         package var pendingPrompt: String = ""
         /// 6.0-γ · the per-session run-check command, remembered.
         package var runCommand: String = ""
-        package var acceptanceEvidence: [AcceptanceEvidence] = []
-        package var runningCheck: RunningCheck?
+        /// Read from schema ≤ 4 only; schema 5 keeps evidence in the book.
+        package var legacyEvidence: [AcceptanceEvidence] = []
+        package var legacyRunningCheck: RunningCheck?
         /// 6.0-γ · same-task attempt group (empty = standalone).
         package var attemptGroup: String = ""
         /// 13.0 · schema 4.
@@ -257,8 +258,6 @@ package enum ManagedSession {
             lastErrorText = model.lastErrorText
             pendingPrompt = model.pendingPrompt
             runCommand = model.runCommand
-            acceptanceEvidence = ManagedSession.trimEvidence(model.acceptanceEvidence)
-            runningCheck = model.runningCheck
             attemptGroup = model.attemptGroup
             missionID = model.missionID
             contractRevision = model.contractRevision
@@ -310,8 +309,8 @@ package enum ManagedSession {
             let decodedEvidence = try values.decodeIfPresent(
                 [AcceptanceEvidence].self, forKey: .acceptanceEvidence
             ) ?? []
-            acceptanceEvidence = ManagedSession.trimEvidence(decodedEvidence)
-            runningCheck = try values.decodeIfPresent(RunningCheck.self, forKey: .runningCheck)
+            legacyEvidence = ManagedSession.trimEvidence(decodedEvidence)
+            legacyRunningCheck = try values.decodeIfPresent(RunningCheck.self, forKey: .runningCheck)
             attemptGroup = try values.decodeIfPresent(String.self, forKey: .attemptGroup) ?? ""
             missionID = try values.decodeIfPresent(String.self, forKey: .missionID) ?? ""
             contractRevision = try values.decodeIfPresent(Int.self, forKey: .contractRevision) ?? 0
@@ -342,8 +341,6 @@ package enum ManagedSession {
             try values.encode(lastErrorText, forKey: .lastErrorText)
             try values.encode(pendingPrompt, forKey: .pendingPrompt)
             try values.encode(runCommand, forKey: .runCommand)
-            try values.encode(acceptanceEvidence, forKey: .acceptanceEvidence)
-            try values.encodeIfPresent(runningCheck, forKey: .runningCheck)
             try values.encode(attemptGroup, forKey: .attemptGroup)
             try values.encode(missionID, forKey: .missionID)
             try values.encode(contractRevision, forKey: .contractRevision)
@@ -379,11 +376,11 @@ package enum ManagedSession {
             m.lastErrorText = lastErrorText
             m.pendingPrompt = pendingPrompt
             m.runCommand = runCommand
-            m.acceptanceEvidence = acceptanceEvidence
+            m.carriedEvidence = legacyEvidence
             // We were not there to see how it ended; say exactly that.
-            if let runningCheck {
-                m.acceptanceEvidence.append(runningCheck.interruptedEvidence())
-                m.acceptanceEvidence = ManagedSession.trimEvidence(m.acceptanceEvidence)
+            if let legacyRunningCheck {
+                m.carriedEvidence.append(legacyRunningCheck.interruptedEvidence())
+                m.carriedEvidence = ManagedSession.trimEvidence(m.carriedEvidence)
             }
             m.attemptGroup = attemptGroup
             m.missionID = missionID

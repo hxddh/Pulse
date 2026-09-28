@@ -16,7 +16,8 @@ extension StatusStore {
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             crowded: snapshot.rows.count >= TrayFold.crowdedFrom,
-            managedModels: managed
+            managedModels: managed,
+            proofSummaries: proofSummaries
         )
     }
 
@@ -70,4 +71,5 @@ extension StatusStore {
     func observationGapReason(_ gap: ObservationGap) -> String { narrator.observationGapReason(gap) }
     func observationGapNextStep(_ gap: ObservationGap) -> String { narrator.observationGapNextStep(gap) }
     func localizedWaitKind(_ kind: String) -> String { narrator.localizedWaitKind(kind) }
+    func proofFact(_ row: AgentRow) -> String { narrator.proofFact(row) }
 }

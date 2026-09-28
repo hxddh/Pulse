@@ -97,7 +97,7 @@ struct ManagedSessionInspector: View {
                         .buttonStyle(.bordered)
                 }
             }
-            if let evidence = runner?.model.acceptanceEvidence.last {
+            if let evidence = runner?.acceptanceEvidence.last {
                 Text(evidence.command)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
@@ -107,7 +107,7 @@ struct ManagedSessionInspector: View {
                     .foregroundStyle(evidenceFailed(evidence)
                                      ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
-            if let evidence = runner?.model.acceptanceEvidence.last,
+            if let evidence = runner?.acceptanceEvidence.last,
                !evidenceOutput(evidence).isEmpty {
                 ScrollView {
                     Text(evidenceOutput(evidence))
