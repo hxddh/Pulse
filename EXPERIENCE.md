@@ -711,7 +711,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 
 ## 8. 验收场景
 
-79 个场景（A–CA）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
+80 个场景（A–CB）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
 新场景写在那里，并在「证明」一栏写明哪个测试让它成立；本文件只保留行为规格。
 
 ## 9. 代码落点
@@ -736,6 +736,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
 | 价值引擎 / 自适应深度 / 主题 | `RowValueEngine.swift` · `RowDepth.swift` · `PulseTheme.swift` |
 | 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` |
+| 判断面（Mission 对比卡、工作副本验收卡） | `SurfaceModels.swift`（纯值：`MissionBoard` / `ProofCardModel`）→ `MissionViews.swift` · `ProofViews.swift` 只渲染值、只发 intent；夹具 `SurfaceFixtures.swift`，CI 截图 `SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
 | 受管会话 | `PulseManaged/`（runtime、Fleet、worktree、权限服务、验收）· App 侧 `ManagedSessionSource.swift` / `ManagedSessionViews.swift` / `ManagedAcceptance.swift` |
 | Respond | `PulseRespond/RespondContract.swift` · `RespondSpool.swift` · App 侧 `StatusStoreRespond.swift` |
 | 探测节奏 | `PulseCore/ProbeSchedule.swift` + `PulseBar/PowerMonitor.swift` |
