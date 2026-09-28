@@ -59,7 +59,12 @@ compiles and ships.
   click; no merge. Checks run only on the user's click, are never shown to the
   agent, and an agent cannot change the contract — only the user's edit makes
   a new revision, and an old Candidate is never re-judged by a newer one. No
-  checks, stale, running or unreadable evidence never reads as passed.
+  checks, stale, running or unreadable evidence never reads as passed. Since
+  14.0 the same holds for any local working copy (`EvidenceBook`, keyed by
+  directory): setting checks for a directory is the opt-in, they run in the
+  user's live copy only on a click, and the tray fact is counts only. An
+  observed working copy may join a Mission as an external Candidate — it is
+  compared, never dispatched, and that is not the Outcome second runtime.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
   isolation. One broken collector cannot blind the other 32.
@@ -161,13 +166,15 @@ to users.
 
 ## Current state
 
-13.0.0 is the current source version (Mission — the result contract over
-Candidates, Outcome β/γ with the Claude runtime only). The product decision in
-review-11.0 §4.3 has been made: Pulse accepts the orchestrator identity, the
-Workbench stays in the tray's process until one of the split triggers listed
-there occurs. What remains of Outcome
+14.0.0 is the current source version (Proof — acceptance evidence belongs to
+the working copy, not the session). `EvidenceBook` (PulseManaged) holds each
+directory's checks, evidence and running check in `Pulse/evidence/<digest>.json`;
+managed session state is schema 5 and no longer carries evidence. 13.0 made
+the product decision in review-11.0 §4.3: Pulse accepts the orchestrator
+identity, and the Workbench stays in the tray's process until one of the split
+triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
-App Server), blocked on real-machine P0 evidence; it ships as a 13.x.
+App Server), blocked on real-machine P0 evidence; it ships as a 14.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with
