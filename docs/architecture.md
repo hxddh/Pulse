@@ -34,6 +34,8 @@ PulseBar/Sources/
   PulseRespond/  Respond 库，依赖 Core。RespondContract · RespondSpool
   PulseManaged/  受管会话库，依赖 Core。ManagedRuntime · ManagedSession / Runner / Fleet
                  · ManagedWorktree · ManagedPermission · AcceptanceRunner · WorkspaceEffect
+                 · EvidenceBook（14.0：检查、证据与运行中检查按工作目录存，受管候选与
+                 观察到的会话读同一页）· Mission
   PulseBar/      可执行。builder、StatusStore、RowNarrator、WaitingDelivery、视图、hook 入口。
                  PulseCoreExports.swift 以 @_exported 引入四个库。
 ```

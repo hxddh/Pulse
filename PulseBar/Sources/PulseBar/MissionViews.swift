@@ -17,7 +17,27 @@ struct MissionCard: View {
 
     @State private var editing = false
 
+    /// One column: a Candidate Pulse launched, or (14.0) a working copy the
+    /// user joined from outside Pulse. Both are judged by the same ruler, in
+    /// their own working copy.
+    private struct Column: Identifiable {
+        let id: String
+        let runner: ManagedSessionRunner?
+        let external: Mission.External?
+        let root: String
+        let revision: Int
+    }
+
     private var candidates: [ManagedSessionRunner] { store.managedCandidates(of: mission) }
+
+    /// Dispatch order, then join order — the only orders ever shown.
+    private var columns: [Column] {
+        candidates.map {
+            Column(id: $0.model.id, runner: $0, external: nil, root: $0.model.root, revision: $0.model.contractRevision)
+        } + mission.externals.map {
+            Column(id: $0.id, runner: nil, external: $0, root: $0.root, revision: $0.revision)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -82,18 +102,17 @@ struct MissionCard: View {
     }
 
     private var comparison: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
+        let columns = self.columns
+        return ScrollView(.horizontal, showsIndicators: true) {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                 GridRow {
                     Color.clear.frame(width: 1, height: 1)
-                    ForEach(Array(candidates.enumerated()), id: \.element.model.id) { index, runner in
-                        candidateHeader(runner, ordinal: index + 1)
+                    ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
+                        columnHeader(column, ordinal: index + 1)
                     }
                 }
                 Divider().gridCellUnsizedAxes(.horizontal)
-                factRow(store.tr(.missionRowSession)) { runner in
-                    sessionFact(runner.model)
-                }
+                factRow(store.tr(.missionRowSession), columns) { sessionFact($0) }
                 ForEach(mission.contract.checks, id: \.id) { check in
                     GridRow {
                         Text(check.command)
@@ -101,35 +120,26 @@ struct MissionCard: View {
                             .lineLimit(1)
                             .frame(maxWidth: 220, alignment: .leading)
                             .help(check.command)
-                        ForEach(candidates, id: \.model.id) { runner in
-                            checkCell(check, runner)
+                        ForEach(columns) { column in
+                            checkCell(check, column)
                         }
                     }
                 }
-                factRow(store.tr(.missionRowChanges)) { runner in
-                    if let effect = runner.model.lastTurnEffect {
-                        return "+\(effect.insertions) −\(effect.deletions)"
-                    }
-                    return "—"
-                }
-                factRow(store.tr(.missionRowAnswer)) { runner in
-                    runner.model.lastResultText.isEmpty ? "—" : runner.model.lastResultText
-                }
-                factRow(store.tr(.missionRowProblems)) { runner in
-                    "\(runner.model.errorResults) · \(runner.model.unknownEvents)"
-                }
+                factRow(store.tr(.missionRowChanges), columns) { changesFact($0) }
+                factRow(store.tr(.missionRowAnswer), columns) { answerFact($0) }
+                factRow(store.tr(.missionRowProblems), columns) { problemsFact($0) }
             }
             .padding(.vertical, 4)
         }
     }
 
-    private func factRow(_ label: String, _ value: @escaping (ManagedSessionRunner) -> String) -> some View {
+    private func factRow(_ label: String, _ columns: [Column], _ value: @escaping (Column) -> String) -> some View {
         GridRow {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            ForEach(candidates, id: \.model.id) { runner in
-                Text(value(runner))
+            ForEach(columns) { column in
+                Text(value(column))
                     .font(.caption)
                     .lineLimit(2)
                     .frame(maxWidth: 220, alignment: .leading)
@@ -138,50 +148,107 @@ struct MissionCard: View {
         }
     }
 
-    private func candidateHeader(_ runner: ManagedSessionRunner, ordinal: Int) -> some View {
+    private func columnHeader(_ column: Column, ordinal: Int) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text(String(format: store.tr(.missionCandidate), ordinal))
-                    .font(.callout.weight(runner.model.id == currentCandidateID ? .bold : .regular))
-                if mission.chosenCandidateID == runner.model.id {
+                    .font(.callout.weight(column.id == currentCandidateID ? .bold : .regular))
+                if mission.chosenCandidateID == column.id {
                     Text(store.tr(.missionChosen))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
-            if runner.model.contractRevision != mission.contract.revision, runner.model.contractRevision > 0 {
-                Text(String(format: store.tr(.missionOlderRevision), runner.model.contractRevision))
+            if let external = column.external {
+                Text(String(format: store.tr(.missionExternal), external.label))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if column.revision != mission.contract.revision, column.revision > 0 {
+                Text(String(format: store.tr(.missionOlderRevision), column.revision))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
             HStack(spacing: 8) {
-                if runner.model.id != currentCandidateID {
+                if column.id != currentCandidateID, let key = selectionKey(column) {
                     Button(store.tr(.managedViewAttempt)) {
-                        store.workbenchSelectKey = "managed|" + runner.model.id
+                        store.workbenchSelectKey = key
                     }
                     .buttonStyle(.link)
                     .font(.caption)
                 }
-                Button(store.tr(mission.chosenCandidateID == runner.model.id ? .missionUnchoose : .missionChoose)) {
-                    store.managedChoose(mission, candidateID: runner.model.id)
+                Button(store.tr(mission.chosenCandidateID == column.id ? .missionUnchoose : .missionChoose)) {
+                    store.managedChoose(mission, candidateID: column.id)
                 }
                 .buttonStyle(.link)
                 .font(.caption)
+                if let external = column.external {
+                    Button(store.tr(.proofLeaveMission)) {
+                        store.leaveMission(mission, externalID: external.id)
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
             }
         }
     }
 
-    private func sessionFact(_ model: ManagedSession.Model) -> String {
-        var parts = [model.runtimeID]
-        if !model.modelName.isEmpty { parts.append(model.modelName) }
-        parts.append(statusLabel(model.status))
+    private func selectionKey(_ column: Column) -> String? {
+        if let runner = column.runner { return "managed|" + runner.model.id }
+        return store.observedRow(forRoot: column.root)?.rowKey
+    }
+
+    private func sessionFact(_ column: Column) -> String {
+        if let model = column.runner?.model {
+            var parts = [model.runtimeID]
+            if !model.modelName.isEmpty { parts.append(model.modelName) }
+            parts.append(statusLabel(model.status))
+            return parts.joined(separator: " · ")
+        }
+        guard let row = store.observedRow(forRoot: column.root) else {
+            return store.tr(.missionExternalGone)
+        }
+        var parts = [row.agent.displayName]
+        if !row.model.isEmpty { parts.append(row.model) }
+        parts.append(row.waiting ? store.tr(.needsYou) : row.liveProcess ? store.tr(.managedRunning) : store.tr(.managedIdle))
         return parts.joined(separator: " · ")
     }
 
-    private func checkCell(_ check: Mission.Check, _ runner: ManagedSessionRunner) -> some View {
-        let standing = Mission.standing(of: check, candidate: runner.model, mission: mission) {
-            runner.acceptance.standing(of: $0)
+    private func changesFact(_ column: Column) -> String {
+        if let runner = column.runner {
+            if let effect = runner.model.lastTurnEffect { return "+\(effect.insertions) −\(effect.deletions)" }
+            return "—"
         }
+        guard let row = store.observedRow(forRoot: column.root), row.hasWorkspaceEffect,
+              row.insertions >= 0, row.deletions >= 0 else { return "—" }
+        return "+\(row.insertions) −\(row.deletions)"
+    }
+
+    private func answerFact(_ column: Column) -> String {
+        if let runner = column.runner {
+            return runner.model.lastResultText.isEmpty ? "—" : runner.model.lastResultText
+        }
+        let word = store.observedRow(forRoot: column.root)?.lastWord ?? ""
+        return word.isEmpty ? "—" : word
+    }
+
+    private func problemsFact(_ column: Column) -> String {
+        if let runner = column.runner {
+            return "\(runner.model.errorResults) · \(runner.model.unknownEvents)"
+        }
+        guard let row = store.observedRow(forRoot: column.root) else { return "—" }
+        return "\(row.errors) · —"
+    }
+
+    private func checkCell(_ check: Mission.Check, _ column: Column) -> some View {
+        let book = store.evidenceBook
+        let standing = Mission.standing(
+            of: check,
+            revision: column.revision,
+            evidence: book.evidence(for: column.root),
+            running: book.runningCheck(for: column.root),
+            mission: mission
+        ) { book.standing(of: $0, at: column.root) }
         let (text, warn) = checkLabel(standing)
         return Text(text)
             .font(.caption.weight(.semibold))
@@ -192,38 +259,19 @@ struct MissionCard: View {
     /// The same honesty rules as the run-check card: only a current pass on
     /// unchanged code reads as passed.
     private func checkLabel(_ standing: Mission.CheckStanding) -> (String, Bool) {
-        switch standing {
-        case .notInContract: return (store.tr(.missionCheckNotInContract), false)
-        case .notRun: return (store.tr(.missionCheckNotRun), false)
-        case .running: return (store.tr(.missionCheckRunning), false)
-        case .evidence(let judged, let evidence):
-            switch judged {
-            case .passing: return (store.tr(.missionCheckPassed), false)
-            case .stale: return (store.tr(.managedRunCheckStale), true)
-            case .measuring: return (store.tr(.managedRunCheckMeasuring), false)
-            case .unverified: return (store.tr(.managedRunCheckUnverified), true)
-            case .notPassing:
-                switch evidence.outcome {
-                case .timedOut: return (store.tr(.managedRunCheckTimeout), true)
-                case .couldNotRun: return (store.tr(.managedRunCheckUnverified), true)
-                case .invalidatedDuringRun: return (store.tr(.managedRunCheckChanged), true)
-                case .interrupted: return (store.tr(.managedRunCheckInterrupted), true)
-                case .passed, .failed:
-                    return (String(format: store.tr(.missionCheckFailed), Int(evidence.exitCode ?? -1)), true)
-                }
-            }
-        }
+        CheckLabels.label(standing, store: store)
     }
 
     private var actions: some View {
-        let busy = candidates.contains(where: \.isRunningChecks)
+        let columns = self.columns
+        let busy = columns.contains { store.evidenceBook.isBusy(at: $0.root) }
         let turnRunning = candidates.contains(where: \.isRunning)
         return HStack(spacing: 10) {
             Button(store.tr(.missionRunChecks)) {
                 store.managedRunMissionChecks(mission)
             }
             .buttonStyle(.bordered)
-            .disabled(mission.contract.checks.isEmpty || busy || turnRunning || candidates.isEmpty)
+            .disabled(mission.contract.checks.isEmpty || busy || turnRunning || columns.isEmpty)
             if busy {
                 ProgressView().controlSize(.small)
                 Button(store.tr(.missionStopChecks)) {
@@ -251,6 +299,35 @@ struct MissionCard: View {
         case .interrupted: return store.tr(.managedInterrupted)
         case .cancelled: return store.tr(.managedCancelled)
         case .failed(let reason): return String(format: store.tr(.managedFailed), reason)
+        }
+    }
+}
+
+/// One wording for a check cell, shared by the Mission card and the working
+/// copy card. Only a current pass on unchanged code reads as passed.
+@MainActor
+enum CheckLabels {
+    static func label(_ standing: Mission.CheckStanding, store: StatusStore) -> (String, Bool) {
+        switch standing {
+        case .notInContract: return (store.tr(.missionCheckNotInContract), false)
+        case .notRun: return (store.tr(.missionCheckNotRun), false)
+        case .running: return (store.tr(.missionCheckRunning), false)
+        case .evidence(let judged, let evidence):
+            switch judged {
+            case .passing: return (store.tr(.missionCheckPassed), false)
+            case .stale: return (store.tr(.managedRunCheckStale), true)
+            case .measuring: return (store.tr(.managedRunCheckMeasuring), false)
+            case .unverified: return (store.tr(.managedRunCheckUnverified), true)
+            case .notPassing:
+                switch evidence.outcome {
+                case .timedOut: return (store.tr(.managedRunCheckTimeout), true)
+                case .couldNotRun: return (store.tr(.managedRunCheckUnverified), true)
+                case .invalidatedDuringRun: return (store.tr(.managedRunCheckChanged), true)
+                case .interrupted: return (store.tr(.managedRunCheckInterrupted), true)
+                case .passed, .failed:
+                    return (String(format: store.tr(.missionCheckFailed), Int(evidence.exitCode ?? -1)), true)
+                }
+            }
         }
     }
 }

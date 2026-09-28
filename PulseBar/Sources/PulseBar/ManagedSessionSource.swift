@@ -201,6 +201,12 @@ extension StatusStore {
     /// 6.0-α: called once at app start — persisted sessions come back,
     /// interrupted turns honestly labelled, queued ones re-pumped.
     func reattachManagedSessions() {
+        // 14.0: evidence for observed working copies lives in the fleet's
+        // book too, so its changes must reach the store even when no managed
+        // session exists.
+        if managedSessions.onChange == nil {
+            managedSessions.onChange = { [weak self] in self?.managedSessionsChanged() }
+        }
         managedSessions.fleet.reattachFromDisk()
         if !managedSessions.fleet.runners.isEmpty {
             activateManagedSessions()

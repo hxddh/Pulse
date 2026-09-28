@@ -17,23 +17,28 @@ package final class ManagedSessionRunner {
     private let runtimeSession: any ManagedRuntimeSession
     /// `startOrResume` has run: the session knows its identity and worktree.
     private var sessionBound = false
-    /// Checks and the code they ran against (12.2 · out of the view).
-    package let acceptance: AcceptanceRunner
-    package var isChecking: Bool { acceptance.isChecking }
+    /// 14.0 · checks, evidence and the code they ran against belong to the
+    /// working copy, not to the session: this Candidate reads its own
+    /// worktree's page in the book it was given.
+    package let evidenceBook: EvidenceBook
+    package var acceptance: AcceptanceRunner { evidenceBook.runner(for: model.root) }
+    package var isChecking: Bool { evidenceBook.isChecking(at: model.root) }
+    /// The evidence recorded for this Candidate's worktree.
+    package var acceptanceEvidence: [AcceptanceEvidence] { evidenceBook.evidence(for: model.root) }
+    package var runningCheck: RunningCheck? { evidenceBook.runningCheck(for: model.root) }
 
-    package init(model: ManagedSession.Model, runtime: (any ManagedRuntime)? = nil) {
+    package init(
+        model: ManagedSession.Model,
+        runtime: (any ManagedRuntime)? = nil,
+        evidence: EvidenceBook? = nil
+    ) {
         self.model = model
         guard let resolved = runtime ?? ManagedRuntimeRegistry.runtime(id: model.runtimeID) else {
             preconditionFailure("unsupported managed runtime: \(model.runtimeID)")
         }
         self.runtime = resolved
         self.runtimeSession = resolved.makeSession()
-        self.acceptance = AcceptanceRunner(root: model.root)
-        acceptance.onChange = { [weak self] in self?.acceptanceChanged() }
-        // A persisted pass is only worth knowing about if it is still true.
-        if model.acceptanceEvidence.last?.outcome == .passed {
-            acceptance.refresh()
-        }
+        self.evidenceBook = evidence ?? EvidenceBook(persists: false)
         runtimeSession.onEvent = { [weak self] event in
             guard let self else { return }
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
@@ -66,7 +71,7 @@ package final class ManagedSessionRunner {
         // A new turn changes the code the queued checks would measure; they
         // do not start. One already running finishes and is judged by the
         // fingerprint rule (it will read as changed during the run).
-        queuedChecks.removeAll()
+        evidenceBook.dropQueue(at: model.root)
         guard runtime.executable() != nil else {
             update { $0.status = .failed("\(runtime.id)-not-found") }
             return
@@ -122,8 +127,7 @@ package final class ManagedSessionRunner {
     }
 
     /// Outcome-β: run the user's check and retain evidence bound to the exact
-    /// code before and after it. Process work stays off the main actor; only
-    /// the finished durable fact crosses back.
+    /// code before and after it — in the worktree's page of the book.
     package func runCheck(
         command rawCommand: String,
         checkID: String? = nil,
@@ -131,75 +135,33 @@ package final class ManagedSessionRunner {
     ) {
         let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isRunning, !isChecking, !command.isEmpty else { return }
-        update {
-            // Only an ad-hoc check is remembered as "the" command; Mission
-            // checks live in the Mission's contract.
-            if checkID == nil { $0.runCommand = command }
-            $0.runningCheck = RunningCheck(
-                command: command, cwd: $0.root,
-                startedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
-                checkID: checkID
-            )
-        }
-        acceptance.run(command: command) { [weak self] evidence in
-            guard let self else { return }
-            var tagged = evidence
-            tagged.checkID = checkID
-            self.update {
-                $0.runningCheck = nil
-                $0.acceptanceEvidence.append(tagged)
-                $0.acceptanceEvidence = ManagedSession.trimEvidence($0.acceptanceEvidence)
-            }
-            completion?()
-        }
+        // Only an ad-hoc check is remembered as "the" command; Mission checks
+        // live in the Mission's contract.
+        if checkID == nil { update { $0.runCommand = command } }
+        evidenceBook.runCheck(command: command, checkID: checkID, at: model.root, completion: completion)
     }
 
     // MARK: - Mission checks (13.0)
 
-    /// Checks still waiting their turn in this Candidate's queue.
-    package private(set) var queuedChecks: [Mission.Check] = []
-    package var isRunningChecks: Bool { isChecking || !queuedChecks.isEmpty }
+    /// Checks still waiting their turn in this Candidate's worktree.
+    package var queuedChecks: [Mission.Check] { evidenceBook.queued(at: model.root) }
+    package var isRunningChecks: Bool { evidenceBook.isBusy(at: model.root) }
 
-    /// Run a Mission's checks in the user's order, one at a time. A failure
-    /// does **not** stop the rest: the comparison needs the whole ruler
-    /// applied, not the first mark. Refused while a turn or a check runs.
+    /// Run a Mission's checks in the user's order, one at a time; a failure
+    /// does not stop the rest. Refused while a turn or a check runs.
     package func runChecks(_ checks: [Mission.Check]) {
-        guard !isRunning, !isRunningChecks, !checks.isEmpty else { return }
-        queuedChecks = checks
-        runNextQueuedCheck()
+        guard !isRunning else { return }
+        evidenceBook.runChecks(checks, at: model.root)
     }
 
-    /// Drop the checks that have not started and stop the one that has; the
-    /// stopped one is recorded as interrupted, the dropped ones as not run.
+    /// Stop the running check (interrupted) and drop the rest (not run).
     package func cancelChecks() {
-        guard isRunningChecks else { return }
-        queuedChecks.removeAll()
-        acceptance.cancel()
-        onChange?()
-    }
-
-    private func runNextQueuedCheck() {
-        guard !queuedChecks.isEmpty else {
-            onChange?()
-            return
-        }
-        let next = queuedChecks.removeFirst()
-        runCheck(command: next.command, checkID: next.id) { [weak self] in
-            self?.runNextQueuedCheck()
-        }
-        // A check that could not start (turn began meanwhile) ends the queue
-        // rather than spinning on it.
-        if !isChecking { queuedChecks.removeAll() }
+        evidenceBook.cancel(at: model.root)
     }
 
     /// Where the newest evidence stands against the code as it is now.
     package var latestEvidenceStanding: EvidenceStanding? {
-        model.acceptanceEvidence.last.map { acceptance.standing(of: $0) }
-    }
-
-    private func acceptanceChanged() {
-        acceptance.watch(latest: model.acceptanceEvidence.last)
-        onChange?()
+        acceptanceEvidence.last.map { evidenceBook.standing(of: $0, at: model.root) }
     }
 
     /// 6.0-γ: what this turn left on disk — measured with the same
@@ -224,14 +186,13 @@ package final class ManagedSessionRunner {
     /// icon is gone.
     package func terminateForShutdown() {
         runtimeSession.shutdown()
-        // A check must not outlive the app that was going to record it; the
-        // persisted `runningCheck` reloads as interrupted.
-        acceptance.shutdown()
+        // Checks are the book's: the fleet shuts it down once, and a persisted
+        // running check reloads as interrupted.
     }
 
     /// Stop the running check and its whole process group.
     package func cancelCheck() {
-        acceptance.cancel()
+        evidenceBook.cancel(at: model.root)
     }
 
     /// The user's decision on a permission request this session raised.
@@ -263,7 +224,7 @@ package final class ManagedSessionRunner {
         }
         // A turn is the agent editing the worktree: a pass from before it is
         // re-judged now, not whenever someone next opens the inspector.
-        if model.acceptanceEvidence.last != nil { acceptance.refresh() }
+        evidenceBook.refresh(at: model.root)
         DebugLog.write(
             "managed turn end id=\(model.id) exit=\(end.exitStatus.map(String.init) ?? "-") status=\(model.status)"
         )

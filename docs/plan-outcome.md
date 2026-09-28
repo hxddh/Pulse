@@ -4,6 +4,9 @@
 > **β（Mission 与持久验收）与 γ（证据对比）已在 13.0.0「Mission」发布**，runtime 只有 Claude。
 > α 的会话形 runtime 接缝在 12.2 已完成；**剩下的只有第二 runtime**（Codex App Server），
 > 仍被下文「第二 runtime 的 P0 证据门」阻塞，到位时以 13.x 发布，本计划的发布定义才成立。
+> **14.0.0「Proof」**把证据从会话挪到工作副本（`EvidenceBook`），任何本机观察到的工作副本都可以
+> 设检查、由用户点击运行，也可以作为**外部候选**加入 Mission 同尺对比。这**不是**第二 runtime：
+> Pulse 不派出、不驱动它，只在用户点击时量它；Outcome 的发布定义仍要等 Codex App Server 过 P0。
 > 文中「12.0-α/β/γ」即 Outcome-α/β/γ，「12.0 这个版本号」应读作「Outcome 所取的版本号」。
 
 ## 判词：11.0 的天花板不在界面

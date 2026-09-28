@@ -59,10 +59,12 @@ final class ManagedFleetTests: XCTestCase {
         stateDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-fleet-\(UUID().uuidString)", isDirectory: true)
         ManagedSession.stateDirectoryOverride = stateDir
+        EvidenceBook.directoryOverride = stateDir.appendingPathComponent("evidence", isDirectory: true)
     }
 
     override func tearDownWithError() throws {
         ManagedSession.stateDirectoryOverride = nil
+        EvidenceBook.directoryOverride = nil
         if let stateDir { try? FileManager.default.removeItem(at: stateDir) }
     }
 
@@ -84,12 +86,6 @@ final class ManagedFleetTests: XCTestCase {
         m.tokensIn = 10
         m.tokensOut = 20
         m.runCommand = "swift test"
-        let fingerprint = CodeFingerprint(sha256: "same")
-        m.acceptanceEvidence = [AcceptanceEvidence.make(
-            command: "swift test", cwd: m.root, startedAtMs: 10, finishedAtMs: 20,
-            stdout: Data("ok".utf8), stderr: Data(), exitCode: 0,
-            preFingerprint: fingerprint, postFingerprint: fingerprint
-        )]
         m.attemptGroup = "g1"
         XCTAssertTrue(ManagedSession.persist(m))
         let loaded = ManagedSession.loadAll()
@@ -121,32 +117,79 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(ManagedSession.loadAll().first?.status, .failed("error_max_turns"))
     }
 
-    func testPersistenceKeepsOnlyTheNewestBoundedEvidence() throws {
-        var m = model("evidence")
+    /// 14.0: evidence is no longer session state. A schema-4 file that
+    /// still carries it hands it over once — bounded, with a check that was
+    /// in flight at quit coming back as interrupted — and the rewritten
+    /// file no longer holds it.
+    func testLegacyEvidenceIsCarriedOutOfTheSessionState() throws {
+        let m = model("carrier")
+        XCTAssertTrue(ManagedSession.persist(m))
+        let url = ManagedSession.stateURL(id: "carrier")
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        XCTAssertNil(object["acceptanceEvidence"], "schema 5 does not write evidence")
+        XCTAssertNil(object["runningCheck"])
         let fingerprint = CodeFingerprint(sha256: "same")
-        let root = m.root
-        m.acceptanceEvidence = (0..<(ManagedSession.maxAcceptanceEvidence + 5)).map { index in
+        let old = (0..<(ManagedSession.maxAcceptanceEvidence + 5)).map { index in
             AcceptanceEvidence.make(
-                command: "check \(index)", cwd: root,
+                command: "check \(index)", cwd: m.root,
                 startedAtMs: Int64(index), finishedAtMs: Int64(index + 1),
                 stdout: Data(), stderr: Data(), exitCode: 0,
                 preFingerprint: fingerprint, postFingerprint: fingerprint
             )
         }
-        XCTAssertTrue(ManagedSession.persist(m))
+        object["schemaVersion"] = 4
+        object["acceptanceEvidence"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(old))
+        object["runningCheck"] = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(RunningCheck(command: "swift test", cwd: m.root, startedAtMs: 42))
+        )
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+
         let loaded = try XCTUnwrap(ManagedSession.loadAll().first)
-        XCTAssertEqual(loaded.acceptanceEvidence.count, ManagedSession.maxAcceptanceEvidence)
-        XCTAssertEqual(loaded.acceptanceEvidence.first?.command, "check 5")
+        XCTAssertEqual(loaded.carriedEvidence.count, ManagedSession.maxAcceptanceEvidence)
+        XCTAssertEqual(loaded.carriedEvidence.last?.outcome, .interrupted)
+        XCTAssertEqual(loaded.carriedEvidence.last?.command, "swift test")
+
+        XCTAssertTrue(ManagedSession.persist(loaded))
+        let rewritten = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        XCTAssertEqual(rewritten["schemaVersion"] as? Int, ManagedSession.State.currentSchemaVersion)
+        XCTAssertNil(rewritten["acceptanceEvidence"])
+        XCTAssertTrue(try XCTUnwrap(ManagedSession.loadAll().first).carriedEvidence.isEmpty)
     }
 
-    func testACheckInFlightAtQuitReloadsAsInterrupted() throws {
-        var original = model("checking")
-        original.runningCheck = RunningCheck(command: "swift test", cwd: "/tmp/w", startedAtMs: 42)
-        XCTAssertTrue(ManagedSession.persist(original))
-        let loaded = try XCTUnwrap(ManagedSession.loadAll().first)
-        XCTAssertNil(loaded.runningCheck)
-        XCTAssertEqual(loaded.acceptanceEvidence.last?.outcome, .interrupted)
-        XCTAssertEqual(loaded.acceptanceEvidence.last?.command, "swift test")
+    func testReattachMovesCarriedEvidenceIntoTheBook() throws {
+        let m = model("carrier")
+        XCTAssertTrue(ManagedSession.persist(m))
+        let url = ManagedSession.stateURL(id: "carrier")
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        object["schemaVersion"] = 4
+        object["runningCheck"] = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(RunningCheck(command: "swift test", cwd: m.root, startedAtMs: 42))
+        )
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+
+        let fleet = testFleet()
+        fleet.startAction = { _ in }
+        fleet.reattachFromDisk()
+        XCTAssertEqual(fleet.evidence.evidence(for: m.root).map(\.outcome), [.interrupted])
+        XCTAssertEqual(fleet.runners.first?.acceptanceEvidence.map(\.outcome), [.interrupted],
+                       "the Candidate reads its worktree's page")
+        let rewritten = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        XCTAssertEqual(rewritten["schemaVersion"] as? Int, ManagedSession.State.currentSchemaVersion)
+        XCTAssertNil(rewritten["runningCheck"])
+
+        // A second launch finds the evidence in the book, not twice.
+        let again = testFleet()
+        again.startAction = { _ in }
+        again.reattachFromDisk()
+        XCTAssertEqual(again.evidence.evidence(for: m.root).count, 1)
     }
 
     func testFilenameDecidesIdentityHereToo() throws {

@@ -167,7 +167,7 @@ final class ManagedPermissionTests: XCTestCase {
             id: "r1", managedID: "m1", toolName: "Write",
             inputJSON: "cut…", truncated: true, createdMs: 1
         ))
-        let fleet = ManagedFleet()
+        let fleet = ManagedFleet(evidence: EvidenceBook(persists: false))
         fleet.refreshPermissions()
         XCTAssertEqual(fleet.pendingPermissions.count, 1)
         fleet.decidePermission(id: "r1", allow: true)

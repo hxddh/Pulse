@@ -169,6 +169,9 @@ struct SessionInspectorView: View {
                     if !row.lastWord.isEmpty || !row.lastErrorText.isEmpty { wordsCard }
                     if !row.transcriptPath.isEmpty { transcriptCard }
                     evidenceCard
+                    if !store.proofRoot(row).isEmpty {
+                        WorkingCopyProofCard(store: store, row: row)
+                    }
                 } else {
                     header
                     if row.waiting { waitCard }
@@ -182,6 +185,9 @@ struct SessionInspectorView: View {
                     if !row.transcriptPath.isEmpty { transcriptCard }
                     evidenceCard
                     effectCard
+                    if !store.proofRoot(row).isEmpty {
+                        WorkingCopyProofCard(store: store, row: row)
+                    }
                 }
             }
             .padding(20)

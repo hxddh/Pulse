@@ -19,17 +19,26 @@ package final class ManagedFleet {
 
     package private(set) var runners: [ManagedSessionRunner] = []
 
-    package init() {}
+    /// 14.0 · the one book of evidence, by working copy — shared by every
+    /// Candidate and by the observed sessions the store shows.
+    package let evidence: EvidenceBook
+
+    /// The book is built here rather than as a default argument: a
+    /// main-actor default argument in a stored-property initializer crashes
+    /// the Swift 5.10 compiler in IRGen.
+    package init(evidence: EvidenceBook? = nil) {
+        let book = evidence ?? EvidenceBook()
+        self.evidence = book
+        book.onChange = { [weak self] in self?.onChange?() }
+    }
     private struct PersistenceMarker: Equatable {
         package var statusKind: String
         package var turns: Int
         package var runCommand: String
-        package var lastEvidence: AcceptanceEvidence?
         /// The first turn's continuation arrives mid-turn. Without it here a
         /// crash during that turn reloaded an empty id, and "reply to resume"
         /// silently started a new conversation.
         package var continuationID: String
-        package var runningCheck: RunningCheck?
     }
     private var lastPersisted: [String: PersistenceMarker] = [:]
     private var pumping = false
@@ -49,27 +58,35 @@ package final class ManagedFleet {
     /// state layer maps a persisted "running" to `interrupted` itself.
     package func reattachFromDisk() {
         guard runners.isEmpty else { return }
+        evidence.loadFromDisk()
         let loaded = ManagedSession.loadAll()
         let existing = Mission.loadAll()
         let migrated = Mission.migrate(sessions: loaded, existing: existing)
         // A Mission is created a moment before its first Candidate; one that
         // never got a Candidate (the app quit in between) has nothing to show.
-        for empty in migrated.missions where empty.candidateIDs.isEmpty {
+        for empty in migrated.missions where empty.candidateIDs.isEmpty && empty.externals.isEmpty {
             Mission.remove(id: empty.id)
         }
-        missions = migrated.missions.filter { !$0.candidateIDs.isEmpty }
+        missions = migrated.missions.filter { !$0.candidateIDs.isEmpty || !$0.externals.isEmpty }
         let before = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for mission in missions where before[mission.id] != mission {
             Mission.persist(mission)
         }
         let moved = Dictionary(migrated.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for model in loaded {
-            if let assigned = moved[model.id] {
-                ManagedSession.persist(assigned)
-                attach(ManagedSessionRunner(model: assigned))
-            } else {
-                attach(ManagedSessionRunner(model: model))
+        for loadedModel in loaded {
+            var model = moved[loadedModel.id] ?? loadedModel
+            // ≤ 13.0 kept evidence in the session: it moves to the book, by
+            // the worktree it was measured in, and the session is rewritten
+            // without it.
+            let carried = !model.carriedEvidence.isEmpty
+            if carried {
+                evidence.adopt(evidence: model.carriedEvidence, at: model.root)
+                model.carriedEvidence = []
             }
+            if carried || moved[loadedModel.id] != nil {
+                ManagedSession.persist(model)
+            }
+            attach(ManagedSessionRunner(model: model, evidence: evidence))
         }
         if !migrated.sessions.isEmpty {
             DebugLog.write("missions migrated sessions=\(migrated.sessions.count) missions=\(missions.count)")
@@ -134,7 +151,9 @@ package final class ManagedFleet {
     /// no git write, no ranking. Choosing the chosen one clears it.
     package func choose(missionID: String, candidateID: String) {
         guard let index = missions.firstIndex(where: { $0.id == missionID }),
-              missions[index].candidateIDs.contains(candidateID) else { return }
+              missions[index].candidateIDs.contains(candidateID)
+                || missions[index].externals.contains(where: { $0.id == candidateID })
+        else { return }
         missions[index].chosenCandidateID =
             missions[index].chosenCandidateID == candidateID ? nil : candidateID
         Mission.persist(missions[index])
@@ -151,12 +170,45 @@ package final class ManagedFleet {
             let contract = mission.contract(revision: runner.model.contractRevision) ?? mission.contract
             runner.runChecks(contract.checks)
         }
+        // External Candidates: the same ruler, in the working copy the user
+        // joined — Pulse runs the checks, never the agent working there.
+        for external in mission.externals {
+            if let candidateID, external.id != candidateID { continue }
+            let contract = mission.contract(revision: external.revision) ?? mission.contract
+            evidence.runChecks(contract.checks, at: external.root)
+        }
+    }
+
+    /// Join a working copy as an external Candidate (14.0).
+    package func addExternal(missionID: String, root: String, label: String) {
+        guard let index = missions.firstIndex(where: { $0.id == missionID }) else { return }
+        // A Candidate Pulse launched is not external.
+        guard !candidates(of: missionID).contains(where: { EvidenceBook.key($0.model.root) == EvidenceBook.key(root) })
+        else { return }
+        missions[index].addExternal(
+            root: root, label: label, id: "x-" + UUID().uuidString,
+            nowMs: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+        Mission.persist(missions[index])
+        onChange?()
+    }
+
+    package func removeExternal(missionID: String, externalID: String) {
+        guard let index = missions.firstIndex(where: { $0.id == missionID }) else { return }
+        missions[index].removeExternal(id: externalID)
+        if missions[index].candidateIDs.isEmpty && missions[index].externals.isEmpty {
+            Mission.remove(id: missionID)
+            missions.remove(at: index)
+        } else {
+            Mission.persist(missions[index])
+        }
+        onChange?()
     }
 
     /// A Mission whose first dispatch failed before any Candidate existed.
     package func dropIfEmpty(missionID: String) {
         guard let index = missions.firstIndex(where: { $0.id == missionID }),
-              missions[index].candidateIDs.isEmpty else { return }
+              missions[index].candidateIDs.isEmpty, missions[index].externals.isEmpty else { return }
         Mission.remove(id: missionID)
         missions.remove(at: index)
         onChange?()
@@ -164,6 +216,9 @@ package final class ManagedFleet {
 
     package func cancelChecks(missionID: String) {
         for runner in candidates(of: missionID) { runner.cancelChecks() }
+        for external in mission(id: missionID)?.externals ?? [] {
+            evidence.cancel(at: external.root)
+        }
     }
 
     /// A new session enters queued with its prompt held; the pump decides
@@ -171,7 +226,7 @@ package final class ManagedFleet {
     package func dispatch(model: ManagedSession.Model) {
         var queued = model
         queued.status = .queued
-        let runner = ManagedSessionRunner(model: queued)
+        let runner = ManagedSessionRunner(model: queued, evidence: evidence)
         attach(runner)
         persist(runner)
         pump()
@@ -202,7 +257,7 @@ package final class ManagedFleet {
         if let index = missions.firstIndex(where: { $0.id == missionID }) {
             missions[index].candidateIDs.removeAll { $0 == managedID }
             if missions[index].chosenCandidateID == managedID { missions[index].chosenCandidateID = nil }
-            if missions[index].candidateIDs.isEmpty {
+            if missions[index].candidateIDs.isEmpty && missions[index].externals.isEmpty {
                 Mission.remove(id: missionID)
                 missions.remove(at: index)
             } else {
@@ -221,6 +276,7 @@ package final class ManagedFleet {
             ManagedSession.persist(runner.model)
             runner.terminateForShutdown()
         }
+        evidence.shutdown()
     }
 
     // MARK: - The pump
@@ -316,9 +372,7 @@ package final class ManagedFleet {
             statusKind: state.statusKind,
             turns: state.turns,
             runCommand: state.runCommand,
-            lastEvidence: state.acceptanceEvidence.last,
-            continuationID: state.continuationID,
-            runningCheck: state.runningCheck
+            continuationID: state.continuationID
         )
         if lastPersisted[state.id] == marker { return }
         lastPersisted[state.id] = marker
@@ -331,9 +385,7 @@ package final class ManagedFleet {
             statusKind: state.statusKind,
             turns: state.turns,
             runCommand: state.runCommand,
-            lastEvidence: state.acceptanceEvidence.last,
-            continuationID: state.continuationID,
-            runningCheck: state.runningCheck
+            continuationID: state.continuationID
         )
         ManagedSession.persist(runner.model)
     }

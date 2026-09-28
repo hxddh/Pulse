@@ -665,6 +665,19 @@ enum L10n {
         case .workbenchDispatch: return "New session"
         case .workbenchDispatchRepo: return "Repository"
         case .workbenchDispatchTask: return "What should it do?"
+        case .proofFact: return "checks %d/%d passing"
+        case .proofFailing: return " · %d failing"
+        case .proofStale: return " · %d stale"
+        case .proofCard: return "Acceptance for this working copy"
+        case .proofHint: return "Your checks for this directory, one command per line. Pulse runs them here on your click — the agent working here never sees them, and a result only counts while the code is unchanged."
+        case .proofSaveChecks: return "Save checks"
+        case .proofRunChecks: return "Run checks"
+        case .proofSideEffects: return "Checks run in this working copy itself, not in an isolated worktree: build output and caches land here."
+        case .proofJoinMission: return "Add to a Mission as a candidate"
+        case .proofJoined: return "Candidate in: %@"
+        case .proofLeaveMission: return "Remove from Mission"
+        case .missionExternal: return "%@ · outside Pulse"
+        case .missionExternalGone: return "not seen now"
         case .missionContractMore: return "Constraints and acceptance checks"
         case .missionConstraints: return "Constraints (optional)"
         case .missionChecks: return "Acceptance checks — one command per line (optional)"
@@ -1346,6 +1359,19 @@ enum L10n {
         case .workbenchDispatch: return "派活"
         case .workbenchDispatchRepo: return "仓库"
         case .workbenchDispatchTask: return "要它做什么？"
+        case .proofFact: return "检查 %d/%d 通过"
+        case .proofFailing: return " · %d 失败"
+        case .proofStale: return " · %d 已过期"
+        case .proofCard: return "这个工作副本的验收"
+        case .proofHint: return "你给这个目录定的检查，每行一条命令。只在你点击时由 Pulse 在这里运行 —— 在这里工作的 Agent 看不到它们；结果只在代码没变时才算数。"
+        case .proofSaveChecks: return "保存检查"
+        case .proofRunChecks: return "运行检查"
+        case .proofSideEffects: return "检查直接在这个工作副本里运行，不是隔离的 worktree：构建产物和缓存会留在这里。"
+        case .proofJoinMission: return "作为候选加入 Mission"
+        case .proofJoined: return "已是候选：%@"
+        case .proofLeaveMission: return "移出 Mission"
+        case .missionExternal: return "%@ · Pulse 之外"
+        case .missionExternalGone: return "当前未观测到"
         case .missionContractMore: return "约束与验收检查"
         case .missionConstraints: return "约束（可选）"
         case .missionChecks: return "验收检查 —— 每行一条命令（可选）"
@@ -1619,6 +1645,11 @@ enum L10n {
         case managedTurnEffect
         case trayOpenInWorkbench, trayExpandRow, trayCollapseRow
         case trayScanIncomplete
+        // 14.0 · Proof
+        case proofFact, proofFailing, proofStale, proofCard
+        case proofHint, proofSaveChecks, proofRunChecks, proofSideEffects
+        case proofJoinMission, proofJoined, proofLeaveMission, missionExternal
+        case missionExternalGone
         // 13.0 · Mission
         case missionContractMore, missionConstraints, missionChecks, missionChecksHint
         case missionHeading, missionLifecycleDraft, missionLifecycleRunning, missionLifecycleReady

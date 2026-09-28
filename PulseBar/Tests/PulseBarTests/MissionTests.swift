@@ -21,11 +21,13 @@ final class MissionTests: XCTestCase {
         stateDir = base.appendingPathComponent("managed", isDirectory: true)
         Mission.directoryOverride = missionDir
         ManagedSession.stateDirectoryOverride = stateDir
+        EvidenceBook.directoryOverride = base.appendingPathComponent("evidence", isDirectory: true)
     }
 
     override func tearDownWithError() throws {
         Mission.directoryOverride = nil
         ManagedSession.stateDirectoryOverride = nil
+        EvidenceBook.directoryOverride = nil
         if let missionDir { try? FileManager.default.removeItem(at: missionDir.deletingLastPathComponent()) }
     }
 
@@ -116,39 +118,35 @@ final class MissionTests: XCTestCase {
             id: "m1", repoRoot: "/r", goal: "A",
             checks: [check("c1", "swift test"), check("c2", "make lint")], createdMs: t0
         )
-        var candidate = session("s1")
-        candidate.missionID = "m1"
-        candidate.contractRevision = 1
         let judge: (AcceptanceEvidence) -> EvidenceStanding = { $0.outcome == .passed ? .passing : .notPassing }
+        var evidenceList: [AcceptanceEvidence] = []
+        var running: RunningCheck?
+        func cell(_ index: Int) -> Mission.CheckStanding {
+            Mission.standing(of: mission.contract.checks[index], revision: 1, evidence: evidenceList, running: running, mission: mission, judge: judge)
+        }
 
-        XCTAssertEqual(Mission.standing(of: mission.contract.checks[0], candidate: candidate, mission: mission, judge: judge), .notRun)
+        XCTAssertEqual(cell(0), .notRun)
 
-        candidate.runningCheck = RunningCheck(command: "swift test", cwd: "/tmp", startedAtMs: t0, checkID: "c1")
-        XCTAssertEqual(Mission.standing(of: mission.contract.checks[0], candidate: candidate, mission: mission, judge: judge), .running)
-        candidate.runningCheck = nil
+        running = RunningCheck(command: "swift test", cwd: "/tmp", startedAtMs: t0, checkID: "c1")
+        XCTAssertEqual(cell(0), .running)
+        running = nil
 
         // Evidence without a check id (ad hoc, or pre-13.0) never answers a check.
-        candidate.acceptanceEvidence = [evidence(.passed, checkID: nil)]
-        XCTAssertEqual(Mission.standing(of: mission.contract.checks[0], candidate: candidate, mission: mission, judge: judge), .notRun)
+        evidenceList = [evidence(.passed, checkID: nil)]
+        XCTAssertEqual(cell(0), .notRun)
 
         let failed = evidence(.failed, checkID: "c1", exit: 2)
-        candidate.acceptanceEvidence.append(failed)
-        XCTAssertEqual(
-            Mission.standing(of: mission.contract.checks[0], candidate: candidate, mission: mission, judge: judge),
-            .evidence(.notPassing, failed)
-        )
-        XCTAssertEqual(Mission.standing(of: mission.contract.checks[1], candidate: candidate, mission: mission, judge: judge), .notRun)
+        evidenceList.append(failed)
+        XCTAssertEqual(cell(0), .evidence(.notPassing, failed))
+        XCTAssertEqual(cell(1), .notRun)
     }
 
     func testANewRulerIsNeverLaidOverAnOldCandidate() {
         var mission = Mission.Model(id: "m1", repoRoot: "/r", goal: "A", checks: [check("c1", "swift test")], createdMs: t0)
         mission.revise(goal: "A", constraints: "", checks: [check("c1", "swift test"), check("c2", "make lint")], frozen: true)
-        var old = session("s1")
-        old.missionID = "m1"
-        old.contractRevision = 1
         let judge: (AcceptanceEvidence) -> EvidenceStanding = { _ in .passing }
-        XCTAssertEqual(Mission.standing(of: check("c2", "make lint"), candidate: old, mission: mission, judge: judge), .notInContract)
-        XCTAssertEqual(Mission.standing(of: check("c1", "swift test"), candidate: old, mission: mission, judge: judge), .notRun)
+        XCTAssertEqual(Mission.standing(of: check("c2", "make lint"), revision: 1, evidence: [], running: nil, mission: mission, judge: judge), .notInContract)
+        XCTAssertEqual(Mission.standing(of: check("c1", "swift test"), revision: 1, evidence: [], running: nil, mission: mission, judge: judge), .notRun)
     }
 
     func testTheNewestEvidenceForEachCheckSurvivesTrimming() {
@@ -226,13 +224,16 @@ final class MissionTests: XCTestCase {
     }
 
     func testMigrationNeverManufacturesEvidence() {
-        var old = session("a1", command: "swift test")
-        old.acceptanceEvidence = [evidence(.passed, checkID: nil)]
+        let old = session("a1", command: "swift test")
+        let history = [evidence(.passed, checkID: nil)]
         let result = Mission.migrate(sessions: [old], existing: [])
         let mission = result.missions[0]
         let judge: (AcceptanceEvidence) -> EvidenceStanding = { _ in .passing }
         XCTAssertEqual(
-            Mission.standing(of: mission.contract.checks[0], candidate: result.sessions[0], mission: mission, judge: judge),
+            Mission.standing(
+                of: mission.contract.checks[0], revision: result.sessions[0].contractRevision,
+                evidence: history, running: nil, mission: mission, judge: judge
+            ),
             .notRun,
             "an old pass of the same command is history, not an answer to the migrated check"
         )
