@@ -569,7 +569,7 @@ enum HooksInstaller {
 
     /// Offset where Codex's root table ends (start of the first `[section]`).
     static func rootTableEnd(_ text: String) -> Int {
-        if let regex = try? NSRegularExpression(pattern: #"(?m)^\s*\["#),
+        if let regex = try? NSRegularExpression(pattern: #"(?m)^[ \t]*\["#),
            let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
            let range = Range(match.range, in: text) {
             return text.distance(from: text.startIndex, to: range.lowerBound)

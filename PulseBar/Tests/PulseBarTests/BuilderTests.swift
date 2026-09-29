@@ -260,12 +260,14 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     func testTenConcurrentWaitingSessionsRemainIndependentAndVisible() {
-        let agents = Array(AgentID.priority.prefix(10))
+        // 24.0: seven agents, five of which can block — two sessions each.
+        let agents = AgentID.priority.filter { $0.waitingSource == .hooks }
+        let sessions = (0..<10).map { index in (agents[index % agents.count], index) }
         let result = build(
             procs: agents.enumerated().map { index, agent in
                 hit(agent, pid: 400 + index)
             },
-            attention: agents.enumerated().map { index, agent in
+            attention: sessions.map { agent, index in
                 attention(
                     agent,
                     kind: index.isMultiple(of: 2) ? "Permission" : "Input",
