@@ -53,9 +53,11 @@ struct LampTests {
     @Test func relaunchingDoesNotDuplicateAnOpenSpan() {
         var book = SessionTimelineBook()
         let r = row("claude|a")
-        #expect(book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now)))
+        let first = book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now))
+        #expect(first)
         // A fresh process has no previous rows and re-sees the same session.
-        #expect(!book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now + minute)))
+        let again = book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now + minute))
+        #expect(!again)
         #expect(book.spans["claude|a"]?.count == 1)
     }
 
@@ -155,9 +157,10 @@ struct LampTests {
         var r = row("claude|a")
         r.waiting = true
         ledger.observe(row: r, nowMs: now)
-        #expect(ledger.markDelivery(rowKey: "claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now))
-        #expect(!ledger.markDelivery(rowKey: "claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now + 1),
-                "the same outcome twice is not a write")
+        let marked = ledger.markDelivery(rowKey: "claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now)
+        #expect(marked)
+        let markedAgain = ledger.markDelivery(rowKey: "claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now + 1)
+        #expect(!markedAgain, "the same outcome twice is not a write")
         let event = ledger.latestEvent(rowKey: "claude|a")
         #expect(event != nil)
         if let event {

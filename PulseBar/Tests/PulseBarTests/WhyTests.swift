@@ -202,7 +202,7 @@ final class WhyTests: XCTestCase {
         // 21.0: at most two visible verbs — answer it, or put it down.
         XCTAssertEqual(model.strip.map(\.action), [.focus, .dismiss])
         XCTAssertTrue(model.stripAlwaysVisible)
-        XCTAssertEqual(model.menu.map(\.action), [.focus, .dismiss, .snooze],
+        XCTAssertEqual(model.menu.map(\.action), [.details, .focus, .dismiss, .snooze, .mute],
                        "every verb is in the menu once")
         XCTAssertNotNil(model.why)
     }

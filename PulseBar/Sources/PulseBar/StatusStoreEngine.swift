@@ -539,8 +539,15 @@ extension StatusStore {
         // 5.0-α: the builder's rows enter through the observed source and
         // the store caches the coordinator's merge — with only the observed
         // source registered this is a verbatim passthrough.
+        let previousRows = cachedAll
         observedSessions.replaceSessions(result.rows)
         setCachedAll(sessionSources.merged())
+        recordTimeline(
+            previous: previousRows,
+            current: result.rows,
+            remapped: result.remappedRowKeys,
+            nowMs: Int64(now.timeIntervalSince1970 * 1000)
+        )
         // Before any notification decision, not after the scan that made it.
         // The banner's Deny is chosen from these matches, and a permission
         // request only ever gets one banner — deciding from the previous

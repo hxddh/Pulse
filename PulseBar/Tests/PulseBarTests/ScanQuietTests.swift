@@ -32,6 +32,7 @@ struct ScanQuietTests {
             ("allowTerminalAutomation", \StatusStore.allowTerminalAutomation),
             ("appDataAgents", \StatusStore.appDataAgents),
             ("autoProbe", \StatusStore.autoProbe),
+            ("timelineRevision", \StatusStore.timelineRevision),
             ("pulseHookLauncherError", \StatusStore.pulseHookLauncherError),
             ("cachedAll", \StatusStore.cachedAll),
             ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),

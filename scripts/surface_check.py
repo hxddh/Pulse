@@ -24,6 +24,9 @@ VIEWS = [
     # 17.0: the tray row's face and the Why card.
     ("TrayPanelViews.swift", "TrayRowFace"),
     ("WhyViews.swift", "WhyCardView"),
+    # 22.0: the session's last hour.
+    ("SessionDetailView.swift", "TimelineStripView"),
+    ("SessionDetailView.swift", "LampShapeView"),
     # 19.0: the cards under a row.
     ("SessionCards.swift", "RespondCardFace"),
     ("SessionCards.swift", "PlanCompactFace"),

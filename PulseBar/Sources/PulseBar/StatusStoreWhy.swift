@@ -25,7 +25,8 @@ extension StatusStore {
             respondOffered: respondRequest(for: row) != nil && !respondVerdictSent(row),
             fateNote: respondFateNote(row),
             notice: rowActionNotice(row),
-            needsReach: isWaitingNoneNeedsReach(row)
+            needsReach: isWaitingNoneNeedsReach(row),
+            muted: mutedAgents.contains(row.agent)
         ))
     }
 

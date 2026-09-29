@@ -293,6 +293,14 @@ final class StatusStore {
     /// the agent-owned attention.tsv bridge so a restart cannot lose the only
     /// human-confirmation edge or emit it twice.
     @ObservationIgnored var attentionLedger = AttentionLedger.load()
+    /// 22.0: every session's state spans. Read by the detail view through
+    /// `timelineRevision`, which moves only when a span did.
+    @ObservationIgnored var timelineBook = SessionTimelineStore.load()
+    var timelineRevision = 0
+    /// 22.0: the tray has an open detail view or a typed filter, so Escape
+    /// belongs to it before it closes the panel. Not observed: only the
+    /// panel's key monitor reads it.
+    @ObservationIgnored var trayEscapeConsumed = false
     /// Soft-dismissed Cursor harvest pending until skill clears.
     @ObservationIgnored var dismissedPendingKeys: Set<String> = []
     /// Row key → when its "remind me later" runs out.

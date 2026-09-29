@@ -694,6 +694,20 @@ enum L10n {
         case .auditSkipNotAuthorized: return "No banner (%@): macOS has not allowed Pulse to notify"
         case .auditSkipAtLaunch: return "No banner (%@): it was already waiting when Pulse started"
         case .auditSkipRejected: return "No banner (%@): macOS refused it — check Notifications and Focus"
+        case .details: return "Details"
+        case .muteAgent: return "Mute %@"
+        case .unmuteAgent: return "Unmute %@"
+        case .detailLastWords: return "Last words"
+        case .detailPlanHeading: return "Plan"
+        case .detailNotificationHeading: return "Notification"
+        case .detailBack: return "Back"
+        case .detailLastHour: return "Last hour:"
+        case .detailMinutesIn: return "%d min %@"
+        case .filterMatches: return "%d matches"
+        case .trayKeyHints: return "↑↓ select · ↩ focus · → details · ⌫ dismiss · type to filter"
+        case .setupTerminalFocus: return "Jump to the exact terminal tab"
+        case .setupTerminalFocusDetail: return "So ↩ lands in the tab that is waiting. macOS asks once for Automation access."
+        case .setupTurnOn: return "Turn on"
         }
     }
 
@@ -1308,6 +1322,20 @@ enum L10n {
         case .auditSkipNotAuthorized: return "没有通知（%@）：macOS 尚未允许 Pulse 发通知"
         case .auditSkipAtLaunch: return "没有通知（%@）：Pulse 启动时它已经在等"
         case .auditSkipRejected: return "没有通知（%@）：macOS 拒绝了 —— 请检查通知与专注模式"
+        case .details: return "详情"
+        case .muteAgent: return "静音 %@"
+        case .unmuteAgent: return "取消静音 %@"
+        case .detailLastWords: return "最后说的话"
+        case .detailPlanHeading: return "计划"
+        case .detailNotificationHeading: return "通知"
+        case .detailBack: return "返回"
+        case .detailLastHour: return "最近一小时："
+        case .detailMinutesIn: return "%d 分钟 %@"
+        case .filterMatches: return "%d 个匹配"
+        case .trayKeyHints: return "↑↓ 选择 · ↩ 聚焦 · → 详情 · ⌫ 忽略 · 直接打字筛选"
+        case .setupTerminalFocus: return "跳到确切的终端标签页"
+        case .setupTerminalFocusDetail: return "这样按 ↩ 就会落到正在等你的那个标签页。macOS 会请求一次「自动化」权限。"
+        case .setupTurnOn: return "开启"
         }
     }
 
@@ -1526,6 +1554,20 @@ enum L10n {
         case auditSkipNotAuthorized
         case auditSkipAtLaunch
         case auditSkipRejected
+        case details
+        case muteAgent
+        case unmuteAgent
+        case detailLastWords
+        case detailPlanHeading
+        case detailNotificationHeading
+        case detailBack
+        case detailLastHour
+        case detailMinutesIn
+        case filterMatches
+        case trayKeyHints
+        case setupTerminalFocus
+        case setupTerminalFocusDetail
+        case setupTurnOn
     }
 }
 

@@ -50,9 +50,11 @@ enum TrayRowLead {
         if isProcessOnly {
             return canFocusTerminal ? .processTerminal : .processApp
         }
-        // 7.0: value first. Fresh words outrank the static title.
-        if freshWords { return .freshWords }
+        // 22.0: the task leads. 7.0 put the agent's latest words first, so the
+        // line a person scans for changed every few seconds and the row they
+        // were looking for kept moving; the words live in the detail view.
         if hasTask { return .task }
+        if freshWords { return .freshWords }
         if hasToolTitle { return .toolTitle }
         if hasProject { return .project }
         return canFocusTerminal ? .terminalSession : .appSession

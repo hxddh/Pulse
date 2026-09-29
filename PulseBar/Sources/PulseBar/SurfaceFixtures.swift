@@ -10,6 +10,8 @@ enum SurfaceFixtures {
     enum Value {
         /// 17.0: the tray row's face; `expanded` shows the why line.
         case row(TrayRowModel, expanded: Bool, hovering: Bool = false)
+        /// 22.0: a session's last hour.
+        case timeline(TimelineStripModel, ResolvedLanguage)
         case why(WhyCardModel)
         /// 19.0: the cards under a row — `asks` is the in-list "needs you
         /// now" card, `expanded` the in-place inspector.
@@ -29,7 +31,7 @@ enum SurfaceFixtures {
     static let names = [
         "row-permission", "row-question-front", "row-turn", "row-pending",
         "row-stalled", "row-snoozed", "row-process-only",
-        "row-running", "row-running-hover",
+        "row-running", "row-running-hover", "timeline-strip",
         "why-permission", "why-turn",
         "card-respond", "card-respond-truncated", "card-respond-decided",
         "card-expanded",
@@ -49,6 +51,7 @@ enum SurfaceFixtures {
             // trailing controls must sit beside the time, never on it.
             Fixture(name: "row-running", width: 420, value: .row(rowModel(rowRunning(), lang: lang), expanded: false)),
             Fixture(name: "row-running-hover", width: 420, value: .row(rowModel(rowRunning(), lang: lang), expanded: false, hovering: true)),
+            Fixture(name: "timeline-strip", width: 400, value: .timeline(timelineStrip(), lang)),
             Fixture(name: "why-permission", width: 520, value: .why(whyPermission(lang: lang))),
             Fixture(name: "why-turn", width: 520, value: .why(whyTurn(lang: lang))),
             Fixture(name: "card-respond", width: 380, value: .asks(cardRespond(lang: lang))),
@@ -145,6 +148,16 @@ enum SurfaceFixtures {
         row.rowKey = "fx-snoozed"
         row.snoozeRemainingSeconds = 12 * 60
         return row
+    }
+
+    /// Forty minutes of work, a four-minute permission wait, then working
+    /// again — the shape a person should read without the numbers.
+    static func timelineStrip() -> TimelineStripModel {
+        TimelineStripModel.make(spans: [
+            TimelineSpan(state: .running, evidence: .harvest, startMs: nowMs - 48 * minute, endMs: nowMs - 12 * minute),
+            TimelineSpan(state: .blocked, evidence: .hook, kind: "Permission", startMs: nowMs - 12 * minute, endMs: nowMs - 8 * minute),
+            TimelineSpan(state: .running, evidence: .harvest, startMs: nowMs - 8 * minute, endMs: nil),
+        ], nowMs: nowMs)
     }
 
     static func rowRunning() -> AgentRow {

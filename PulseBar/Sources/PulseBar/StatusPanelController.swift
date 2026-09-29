@@ -417,6 +417,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
                 // Escape in the search field clears the search first
                 // (`onExitCommand`); only a second Escape closes the panel.
                 if self.panel.firstResponder is NSTextView { return event }
+                // 22.0: the tray has something Escape should undo first — an
+                // open detail view or a typed filter.
+                if self.store.trayEscapeConsumed { return event }
                 self.close()
                 return nil
             }
