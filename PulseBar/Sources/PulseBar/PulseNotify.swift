@@ -21,42 +21,17 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let session = info["session"] as? String ?? ""
         let rowKey = info["rowKey"] as? String ?? ""
         let summaryRowKeys = info["rowKeys"] as? [String] ?? []
-        let action = response.actionIdentifier
+        let waitIDs = PulseNotify.bannerWaitIDs(info["eventIDs"] as? [String] ?? [])
         DispatchQueue.main.async {
-            // 22.0: the click is part of the wait's audit.
-            for key in PulseNotify.snoozeTargets(rowKey: rowKey, rowKeys: summaryRowKeys) {
-                AppServices.store.recordBannerClick(rowKey: key)
-            }
-            // "Later" from the banner is the same snooze as the row's button.
-            // The banner is where you actually are when the interruption lands
-            // — being able to defer without opening anything is the point.
-            if action == PulseNotify.snoozeActionID {
-                // A summary banner stands for every row it counted; "Later"
-                // on it defers all of them, not only the first.
-                AppServices.store.snooze(rowKeys: PulseNotify.snoozeTargets(rowKey: rowKey, rowKeys: summaryRowKeys))
-                return
-            }
-            // Refusing from the banner. This is the whole point of Answer
-            // Here: the interruption arrives where you are, and the safe
-            // answer can be given without going anywhere. **Allow is
-            // deliberately absent** — a banner cannot show the complete
-            // request, and `canOfferAllow` exists so nothing approves what it
-            // could not show.
-            if action == PulseNotify.respondDenyActionID {
-                AppServices.store.respondDeny(rowKey: rowKey)
-                return
-            }
-            // Prefer the concrete rowKey (summary posts it as rowKeys.first too).
-            // Never open the tray without an identity when one was carried.
-            if !rowKey.isEmpty {
-                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
-            } else if !summaryRowKeys.isEmpty {
-                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: summaryRowKeys[0])
-            } else if !agent.isEmpty {
-                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: "")
-            } else {
-                AppServices.store.focusFirstWaiting()
-            }
+            // 22.0: the click is part of the wait's audit — 23.0: of the
+            // waits this banner was posted for, by id.
+            AppServices.store.notifier.handleBannerClick(
+                agent: agent,
+                session: session,
+                rowKey: rowKey,
+                summaryRowKeys: summaryRowKeys,
+                waitIDs: waitIDs
+            )
         }
         completionHandler()
     }
@@ -74,26 +49,18 @@ enum PulseNotify {
     nonisolated(unsafe) private static let delegate = PulseNotifyDelegate()
 
     static let focusActionID = "pulse.focus"
-    static let snoozeActionID = "pulse.snooze"
 
-    /// The rows a banner's "Later" defers: every key a summary carried, else
-    /// the single banner's own key. Order kept, duplicates and blanks dropped.
-    static func snoozeTargets(rowKey: String, rowKeys: [String]) -> [String] {
+    /// The waits a banner stands for (`SessionLog.Wait.id`): one for a
+    /// single banner, every one a summary carried. Order kept, duplicates
+    /// and blanks dropped.
+    static func bannerWaitIDs(_ ids: [String]) -> [String] {
         var seen = Set<String>()
-        return (rowKeys.isEmpty ? [rowKey] : rowKeys).filter { !$0.isEmpty && seen.insert($0).inserted }
+        return ids.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
-    static let respondDenyActionID = "pulse.respond.deny"
     static let waitingCategoryID = "pulse.waiting"
-    /// The same banner plus Deny, used only when a full request really is
-    /// attached to this row. A Deny button on a banner that cannot deliver one
-    /// would be the dead button 2.3 spent a version removing.
-    static let waitingRespondCategoryID = "pulse.waiting.respond"
 
-    /// Buttons on the waiting banner.
-    ///
-    /// Until now a banner could only be clicked as a whole, which meant the
-    /// only thing you could do from it was drop what you were doing. Both real
-    /// answers now live where the interruption actually arrives.
+    /// The button on the waiting banner: go to the session. (23.0 removed
+    /// "Later" with snooze.)
     ///
     /// Registered in the resolved language and re-registered when it changes —
     /// a category is keyed by id, so re-adding replaces the old titles.
@@ -104,29 +71,13 @@ enum PulseNotify {
             title: L10n.t(.notifFocus, lang),
             options: [.foreground]
         )
-        let snooze = UNNotificationAction(
-            identifier: snoozeActionID,
-            title: L10n.t(.snooze, lang),
-            options: []
-        )
-        let deny = UNNotificationAction(
-            identifier: respondDenyActionID,
-            title: L10n.t(.respondDeny, lang),
-            options: [.destructive]
-        )
         let category = UNNotificationCategory(
             identifier: waitingCategoryID,
-            actions: [focus, snooze],
+            actions: [focus],
             intentIdentifiers: [],
             options: []
         )
-        let respondCategory = UNNotificationCategory(
-            identifier: waitingRespondCategoryID,
-            actions: [deny, focus, snooze],
-            intentIdentifiers: [],
-            options: []
-        )
-        center.setNotificationCategories([category, respondCategory])
+        center.setNotificationCategories([category])
     }
 
     /// Reports whether the user actually granted permission. Dropping this
@@ -178,37 +129,6 @@ enum PulseNotify {
         }
     }
 
-    /// Every Waiting banner identifier this process has handed to Notification
-    /// Center, so "Clear waiting" can take them back.
-    ///
-    /// `center.add` is asynchronous: a request accepted a moment before the
-    /// user clears Waiting has already left the store's own queue and would
-    /// still land on screen. Bounded — one entry per interrupted session, and
-    /// the oldest drop out well before the list could grow into a leak.
-    nonisolated(unsafe) private static var issuedWaitingIDs: [String] = []
-    private static let maxIssuedWaitingIDs = 128
-
-    private static func rememberWaitingID(_ id: String) {
-        issuedWaitingIDs.removeAll { $0 == id }
-        issuedWaitingIDs.append(id)
-        if issuedWaitingIDs.count > maxIssuedWaitingIDs {
-            issuedWaitingIDs.removeFirst(issuedWaitingIDs.count - maxIssuedWaitingIDs)
-        }
-    }
-
-    /// Withdraw Waiting banners, submitted or already shown.
-    static func withdrawWaitingNotifications() {
-        let ids = issuedWaitingIDs
-        issuedWaitingIDs.removeAll()
-        guard let center, !ids.isEmpty else { return }
-        center.removePendingNotificationRequests(withIdentifiers: ids)
-        center.removeDeliveredNotifications(withIdentifiers: ids)
-    }
-
-    static func postIdle(title: String, body: String) {
-        post(id: "pulse-idle", title: title, body: body, agent: "", session: "", rowKey: "")
-    }
-
     static func postWaiting(
         title: String,
         body: String,
@@ -216,7 +136,6 @@ enum PulseNotify {
         session: String = "",
         rowKey: String = "",
         eventID: String = "",
-        canRespond: Bool = false,
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
         let id: String = {
@@ -236,7 +155,6 @@ enum PulseNotify {
             if !agent.isEmpty { return "pulse-waiting-\(agent)" }
             return "pulse-waiting"
         }()
-        rememberWaitingID(id)
         post(
             id: id,
             title: title,
@@ -244,14 +162,14 @@ enum PulseNotify {
             agent: agent,
             session: session,
             rowKey: rowKey,
-            eventID: eventID,
-            canRespond: canRespond,
+            eventIDs: eventID.isEmpty ? [] : [eventID],
             completion: completion
         )
     }
 
-    /// A single, actionable summary for a burst of approvals. Each event ID
-    /// remains in the ledger; the summary only reduces interruption count.
+    /// A single, actionable summary for a burst of approvals. Each wait keeps
+    /// its own record in the session log; the summary only reduces
+    /// interruption count.
     static func postWaitingSummary(
         title: String,
         body: String,
@@ -265,7 +183,6 @@ enum PulseNotify {
         let safe = String(seed.unicodeScalars.map { scalar in
             CharacterSet.alphanumerics.contains(scalar) ? String(scalar) : "-"
         }.joined().prefix(96))
-        rememberWaitingID("pulse-waiting-summary-\(safe)")
         post(
             id: "pulse-waiting-summary-\(safe)",
             title: title,
@@ -273,7 +190,7 @@ enum PulseNotify {
             agent: agent,
             session: session,
             rowKey: rowKeys.first ?? "",
-            eventID: eventIDs.joined(separator: ","),
+            eventIDs: eventIDs,
             rowKeys: rowKeys,
             completion: completion
         )
@@ -286,13 +203,12 @@ enum PulseNotify {
         agent: String,
         session: String,
         rowKey: String,
-        eventID: String = "",
+        eventIDs: [String] = [],
         rowKeys: [String] = [],
-        canRespond: Bool = false,
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
-        // Delivery is asynchronous. The caller owns the durable ledger and
-        // must not mark an event as notified until Notification Center accepts
+        // Delivery is asynchronous. The caller owns the durable session log
+        // and must not mark a wait as notified until Notification Center accepts
         // the request; otherwise a transient add failure loses the only
         // interruption until the agent emits a brand-new Waiting edge.
         guard let center else {
@@ -312,16 +228,15 @@ enum PulseNotify {
         if !rowKey.isEmpty || !agent.isEmpty {
             content.threadIdentifier = "pulse.waiting"
         }
-        // Only waiting banners carry actions; "everything went idle" has
-        // nothing to focus and nothing to defer.
+        // A banner that names a session carries the Focus action.
         if !rowKey.isEmpty || !agent.isEmpty {
-            content.categoryIdentifier = canRespond ? waitingRespondCategoryID : waitingCategoryID
+            content.categoryIdentifier = waitingCategoryID
         }
         var info: [String: Any] = [:]
         if !agent.isEmpty { info["agent"] = agent }
         if !session.isEmpty { info["session"] = session }
         if !rowKey.isEmpty { info["rowKey"] = rowKey }
-        if !eventID.isEmpty { info["eventID"] = eventID }
+        if !eventIDs.isEmpty { info["eventIDs"] = eventIDs }
         if !rowKeys.isEmpty { info["rowKeys"] = rowKeys }
         content.userInfo = info
         let req = UNNotificationRequest(identifier: id, content: content, trigger: nil)

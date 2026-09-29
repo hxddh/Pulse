@@ -1,10 +1,9 @@
 import Foundation
 
-/// Native Claude/Codex hook installer — no Python required.
+/// Native Claude/Codex hook installer: installs the `pulse-hook` launcher only.
 ///
-/// Ports the merge rules from `src/install_hooks.py`: refuse to wipe invalid
-/// JSON, keep one `.pulse-backup`, put Codex `notify` in the root table, and
-/// strip both legacy `pulse_hook.py` and native `pulse-hook` markers.
+/// Refuses to wipe invalid JSON, keeps one `.pulse-backup`, puts Codex
+/// `notify` in the root table, and rewrites Pulse-owned entries in place.
 enum HooksInstaller {
     /// Tests redirect installs away from the real user home.
     nonisolated(unsafe) static var homeOverride: URL?
@@ -22,7 +21,6 @@ enum HooksInstaller {
 
     static var launcherName: String { "pulse-hook" }
     static var runnerPathName: String { "hook-runner.path" }
-    static var legacyHookName: String { "pulse_hook.py" }
 
     static var launcherURL: URL {
         supportDir.appendingPathComponent(launcherName)
@@ -39,7 +37,7 @@ enum HooksInstaller {
     /// must never be treated as ours. Legacy installs that pointed straight at
     /// the binary (`…/PulseBar --hook claude`) are still recognized by the
     /// `--hook` + `PulseBar` combination in `containsPulseMarker`.
-    static let pulseMarkers = ["pulse-hook", "pulse_hook.py"]
+    static let pulseMarkers = ["pulse-hook"]
 
     static func hookCommand(agent: String, kind: String = "") -> String {
         let launcher = launcherURL.path
@@ -76,7 +74,7 @@ enum HooksInstaller {
         try fm.createDirectory(at: supportDir, withIntermediateDirectories: true)
         let script = """
         #!/bin/sh
-        # Pulse native attention hook — no Python required.
+        # Pulse native attention hook.
         # Soft-fails (exit 0) when the PulseBar runner is missing so vendor
         # agents are never blocked by a missing Waiting path.
         DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
@@ -161,7 +159,8 @@ enum HooksInstaller {
             }
         }
         var hooks = data["hooks"] as? [String: Any] ?? [:]
-        // Migrate legacy python markers out so install always lands on native.
+        // Drop every Pulse-owned entry first so install always lands on the
+        // current set of events.
         stripPulseHooks(&hooks)
         ensureClaudeEvent(
             &hooks,
@@ -204,7 +203,7 @@ enum HooksInstaller {
         )
         // 2.9 activity events: the hook finally speaks about work, not just
         // waits. Both handlers write a bounded per-session state file and
-        // exit — never attention, never a hold (see ActivitySpool).
+        // exit — never attention (see ActivitySpool).
         ensureClaudeEvent(
             &hooks,
             event: "PreToolUse",
@@ -245,11 +244,6 @@ enum HooksInstaller {
     /// `ensureClaudeEvent` — it rewrites Pulse-owned entries, it does not
     /// skip them).
     nonisolated(unsafe) static var claudeHookTimeoutSeconds = 5
-    /// PermissionRequest is the one event where the hook may deliberately
-    /// wait (a Respond hold). The vendor default is 600s; 90 caps the
-    /// hold well below that while leaving room for a human answer. Every
-    /// other event keeps the tight budget — the receiver exits immediately.
-    nonisolated(unsafe) static var permissionRequestTimeoutSeconds = 90
 
     private static func ensureClaudeEvent(
         _ hooks: inout [String: Any],
@@ -267,13 +261,10 @@ enum HooksInstaller {
             let blob = (try? String(data: JSONSerialization.data(withJSONObject: entry), encoding: .utf8)) ?? ""
             return containsPulseMarker(blob)
         }
-        let timeout = event == "PermissionRequest"
-            ? permissionRequestTimeoutSeconds
-            : claudeHookTimeoutSeconds
         let hookBody: [String: Any] = [
             "type": "command",
             "command": command,
-            "timeout": timeout,
+            "timeout": claudeHookTimeoutSeconds,
         ]
         var entry: [String: Any] = ["hooks": [hookBody]]
         if let matcher { entry["matcher"] = matcher }
@@ -417,23 +408,7 @@ enum HooksInstaller {
         var root = String(text.prefix(end))
         let rest = String(text.dropFirst(end))
 
-        if root.range(of: #"(?m)^\s*notify\s*=.*(pulse-hook|pulse_hook\.py)"#, options: .regularExpression) != nil {
-            // Rewrite legacy python notify onto the native launcher.
-            if root.contains("pulse_hook.py"), !root.contains("pulse-hook") {
-                root = root.replacingOccurrences(
-                    of: #"(?m)^\s*notify\s*=.*$"#,
-                    with: line.trimmingCharacters(in: .newlines),
-                    options: .regularExpression,
-                    range: nil
-                )
-                if !root.hasSuffix("\n") { root += "\n" }
-                if !rest.isEmpty {
-                    if !root.hasSuffix("\n") { root += "\n" }
-                    if !root.hasSuffix("\n\n") { root += "\n" }
-                }
-                try writeConfig(root + rest, to: cfg)
-                return cfg.path + " (migrated)"
-            }
+        if root.range(of: #"(?m)^\s*notify\s*=.*pulse-hook"#, options: .regularExpression) != nil {
             return cfg.path + " (already present)"
         }
         if root.range(of: #"(?m)^\s*notify\s*="#, options: .regularExpression) != nil {

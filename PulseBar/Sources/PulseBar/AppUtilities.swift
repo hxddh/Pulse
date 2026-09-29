@@ -6,34 +6,6 @@ import Foundation
 import AppKit
 import CryptoKit
 
-enum TokenScope {
-    case compact, reported, latestCall
-
-    var both: L10n.Key {
-        switch self {
-        case .compact: return .compactTokens
-        case .reported: return .reportedTokens
-        case .latestCall: return .latestCallTokens
-        }
-    }
-
-    var inputOnly: L10n.Key {
-        switch self {
-        case .compact: return .compactTokensIn
-        case .reported: return .reportedTokensIn
-        case .latestCall: return .latestCallTokensIn
-        }
-    }
-
-    var outputOnly: L10n.Key {
-        switch self {
-        case .compact: return .compactTokensOut
-        case .reported: return .reportedTokensOut
-        case .latestCall: return .latestCallTokensOut
-        }
-    }
-}
-
 enum LoginItem {
     static let label = "com.pulse.app"
 

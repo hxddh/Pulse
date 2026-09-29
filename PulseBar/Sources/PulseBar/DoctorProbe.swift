@@ -13,15 +13,8 @@ enum DoctorProbe {
     /// Only logs this recent say anything about the Codex installed today.
     static let rolloutWindow: TimeInterval = 7 * 24 * 60 * 60
 
-    struct RespondTally: Sendable {
-        var enabled = false
-        var written = 0
-        var taken = 0
-        var expired = 0
-    }
-
     static func gather(
-        home: URL, respond: RespondTally, coverage: [String: DoctorModel.Coverage] = [:], nowMs: Int64
+        home: URL, coverage: [String: DoctorModel.Coverage] = [:], nowMs: Int64
     ) -> DoctorModel.Facts {
         var facts = DoctorModel.Facts()
         facts.readCoverage = coverage
@@ -70,20 +63,10 @@ enum DoctorProbe {
             facts.codexRollout = rolloutShape(head(of: newest, bytes: rolloutHeadBytes))
         }
 
-        // What the hooks said, newest per agent.
-        for events in AttentionHistoryStore.current.events.values {
-            for event in events {
-                let agent = ActivityHarvest.mapAgent(event.agent)?.surfaceID.rawValue ?? event.agent
-                if (facts.lastFire[agent]?.tsMs ?? 0) < event.tsMs {
-                    facts.lastFire[agent] = DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs)
-                }
-            }
+        // What the hooks said, newest per agent, from the attention file.
+        for (agent, event) in AttentionIO.latestEvents() {
+            facts.lastFire[agent.rawValue] = DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs)
         }
-
-        facts.respondEnabled = respond.enabled
-        facts.respondWritten = respond.written
-        facts.respondTaken = respond.taken
-        facts.respondExpired = respond.expired
         return facts
     }
 

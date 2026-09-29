@@ -1,9 +1,8 @@
 import Foundation
 import AppKit
 
-/// 4.0-γ file split — Preview fixtures — CLI-only visual contract, never reachable from UI.
-/// Behavior-frozen: every member moved verbatim from StatusStore.swift;
-/// the full test suite is the contract that nothing changed.
+/// Preview fixtures — the CLI-only visual contract, never reachable from UI.
+@MainActor
 extension StatusStore {
     /// Deterministic visual contract for compact/crowded tray QA.
     ///
@@ -20,7 +19,7 @@ extension StatusStore {
             _ agent: AgentID,
             task: String,
             cwd: String = "/Users/me/code/Pulse",
-            source: ObservationSource = .session,
+            source: RowSource = .session,
             live: Bool = true,
             ageMinutes: Int = 1
         ) -> AgentRow {
@@ -29,12 +28,11 @@ extension StatusStore {
             value.task = task
             value.cwd = cwd
             value.project = AgentRow.shortProject(cwd)
-            value.observationSource = source
+            value.source = source
             value.liveProcess = live
-            value.processCount = live ? 1 : 0
+            value.state = live ? .running : .recent
             value.harvestMs = now - Int64(ageMinutes * 60 * 1000)
             value.startedMs = now - 54 * 60 * 1000
-            value.records = 126
             return value
         }
 
@@ -51,60 +49,54 @@ extension StatusStore {
                     : "Ship Signal Quality",
                 cwd: "/Users/me/code/Pulse"
             )
-            fixtureRow.phase = name == "status-waiting" ? "waiting" : "testing"
             fixtureRow.model = "fixture-model"
-            fixtureRow.tool = name == "status-waiting" ? "" : "swift_test"
             switch name {
             case "status-waiting":
-                fixtureRow.waiting = true
-                fixtureRow.waitKind = "Permission"
-                fixtureRow.waitMessage = "Bash: ./scripts/release.sh 2.0.0 --commit"
-                fixtureRow.waitSignal = .hooks
-                fixtureRow.waitSinceMs = now - 8 * 60 * 1000
+                fixtureRow.state = .blocked(RowWait(
+                    kind: "Permission",
+                    ask: "Bash: ./scripts/release.sh 2.0.0 --commit",
+                    sinceMs: now - 8 * 60 * 1000,
+                    signal: .hooks
+                ))
             case "status-stalled":
                 fixtureRow.isStalled = true
                 fixtureRow.harvestMs = now - 25 * 60 * 1000
             case "status-running":
-                fixtureRow.progressDone = 12
-                fixtureRow.progressTotal = 31
+                fixtureRow.planSteps = [
+                    ActivityHarvest.PlanStep(text: "Read the collector", state: .done),
+                    ActivityHarvest.PlanStep(text: "Run the fixtures", state: .current),
+                ]
             case "status-turn":
                 // 16.0: finished, unseen — a quiet count, not the red lamp.
-                fixtureRow.phase = "completed"
-                fixtureRow.tool = ""
-                fixtureRow.yourTurn = true
-                fixtureRow.turnSinceMs = now - 3 * 60 * 1000
+                fixtureRow.state = .yourTurn(sinceMs: now - 3 * 60 * 1000)
             default:
                 fixtureRow.liveProcess = false
-                fixtureRow.processCount = 0
+                fixtureRow.state = .recent
             }
-            fixtureRow.refreshObservationQuality(privacyLimited: false)
-            observedSessions.replaceSessions([fixtureRow])
-            setCachedAll(sessionSources.merged())
+            setCachedAll([fixtureRow])
 
             var snap = PulseSnapshot()
             switch name {
             case "status-running":
                 snap.glance = .running
-                snap.title = "1"
                 snap.sectionTotals[.running] = 1
             case "status-stalled":
                 snap.glance = .stalled
-                snap.title = "1"
                 snap.sectionTotals[.stalled] = 1
             case "status-waiting":
                 snap.glance = .waiting
-                snap.title = "1"
+                snap.title = "1 · 8m"
                 snap.sectionTotals[.needsYou] = 1
             case "status-turn":
-                snap.glance = .running
+                // A finished turn is grey, even while its process lives.
+                snap.glance = .idle
                 snap.sectionTotals[.running] = 1
-                snap.turnCount = 1
             default:
                 snap.glance = .idle
             }
             snap.headerTitle = name
-            snap.header = name
-            snap.tooltip = name
+            snap.lamp = LampFace.glance(snap.glance)
+            snap.tooltip = LampExplanation.make(rows: [fixtureRow], glance: snap.glance).sentence(lang)
             snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
             snap.rows = [fixtureRow]
             snap.totalCount = 1
@@ -120,10 +112,7 @@ extension StatusStore {
                 task: "Ship runtime observability",
                 cwd: "/Users/me/code/Pulse"
             )
-            codex.phase = "testing"
-            codex.progressDone = 26
-            codex.progressTotal = 31
-            codex.processEvidence = .pathSignature
+            codex.model = "gpt-5"
 
             var amp = row(
                 "coverage-amp",
@@ -133,12 +122,10 @@ extension StatusStore {
                 source: .process
             )
             amp.harvestMs = 0
-            amp.records = 0
-            amp.processStartedMs = now - 60 * 60 * 1000
-            amp.processCount = 2
-            amp.processEvidence = .executable
+            amp.state = .processOnly
+            amp.startedMs = now - 60 * 60 * 1000
 
-            var cursor = row(
+            let cursor = row(
                 "coverage-cursor",
                 .cursor,
                 task: "Refine adapter coverage",
@@ -146,9 +133,11 @@ extension StatusStore {
                 source: .cache,
                 live: false
             )
-            cursor.phase = "completed"
-            observedSessions.replaceSessions([codex, amp, cursor])
-            setCachedAll(sessionSources.merged())
+            setCachedAll([codex, amp, cursor])
+            engine.processesByAgent = [
+                .codex: ProcessFacts(evidence: .pathSignature, startedMs: now - 54 * 60 * 1000, count: 1),
+                .amp: ProcessFacts(evidence: .executable, startedMs: now - 60 * 60 * 1000, count: 2),
+            ]
             hooksStatus = .installedBoth
             previewWaitingEventTimes = [
                 .claude: now - 48_000,
@@ -201,20 +190,18 @@ extension StatusStore {
                     sourcePresent: true,
                     errorKind: "PermissionError"
                 )
-            recordCollectorHealth(Array(health.values))
-            lastSuccessfulReadByAgent[.codex] = codex.harvestMs
-            lastSuccessfulReadByAgent[.cursor] = cursor.harvestMs
+            engine.recordCollectorHealth(Array(health.values))
+            engine.lastSuccessfulReadByAgent[.codex] = codex.harvestMs
+            engine.lastSuccessfulReadByAgent[.cursor] = cursor.harvestMs
             snapshot = PulseSnapshot(
                 glance: .running,
-                title: "2",
-                tooltip: "coverage",
+                title: "",
+                tooltip: LampExplanation.make(rows: cachedAll, glance: .running).sentence(lang),
                 accessibilityLabel: tr(.a11yRunning),
                 headerTitle: "2 running",
-                headerDetail: "",
-                header: "2 running",
                 rows: cachedAll,
                 sectionTotals: [.running: 2, .recent: 1],
-                projectCount: 2,
+                lamp: LampFace.glance(.running),
                 totalCount: cachedAll.count,
                 updatedAt: Date()
             )
@@ -222,27 +209,21 @@ extension StatusStore {
         }
 
         var waiting = row("claude-preview", .claude, task: "Approve the release build")
-        waiting.waiting = true
-        waiting.waitKind = "Permission"
-        waiting.waitMessage = "Bash: ./scripts/release.sh 2.0.0 --commit"
-        waiting.waitSignal = .hooks
-        waiting.waitSinceMs = now - 8 * 60 * 1000
+        waiting.state = .blocked(RowWait(
+            kind: "Permission",
+            ask: "Bash: ./scripts/release.sh 2.0.0 --commit",
+            sinceMs: now - 8 * 60 * 1000,
+            signal: .hooks
+        ))
 
         var active = row(
             "codex-preview",
             .codex,
             task: "[hxddh/Pulse](https://github.com/hxddh/Pulse) Fix panel corners"
         )
-        active.phase = "testing"
-        active.progressDone = 18
-        active.progressTotal = 31
-        active.activityChange = .progress(done: 18, total: 31)
-        active.activityChangedMs = now - 15_000
-        active.tool = "swift_test"
+        active.activityMs = now - 15_000
         active.model = "gpt-5"
-        active.contextPercent = 42
-        active.tokensIn = 12_400
-        active.tokensOut = 860
+        active.lastWord = "Corners now follow the panel radius; running the snapshot tests."
 
         var stalled = row(
             "pi-preview",
@@ -253,7 +234,7 @@ extension StatusStore {
         )
         stalled.isStalled = true
 
-        var recent = row(
+        let recent = row(
             "cursor-preview",
             .cursor,
             task: "Refine crowded tray alignment",
@@ -261,11 +242,10 @@ extension StatusStore {
             live: false,
             ageMinutes: 4
         )
-        recent.phase = "turn_complete"
 
         var rows = [waiting, active, stalled, recent]
         if name != "compact" {
-            var cache = row(
+            let cache = row(
                 "kiro-preview",
                 .kiro,
                 task: "Audit settings copy",
@@ -274,7 +254,6 @@ extension StatusStore {
                 live: false,
                 ageMinutes: 6
             )
-            cache.phase = "completed"
             var process = row(
                 "replit-preview",
                 .replit,
@@ -284,30 +263,26 @@ extension StatusStore {
                 ageMinutes: 0
             )
             process.harvestMs = 0
-            process.records = 0
-            process.processStartedMs = now - 70 * 60 * 1000
-            process.processEvidence = .executable
+            process.state = .processOnly
+            process.startedMs = now - 70 * 60 * 1000
             var sub = row(
                 "claude-sub-preview",
                 .claude,
                 task: "Run collector fixtures",
                 cwd: "/Users/me/code/Pulse"
             )
-            sub.subRunning = 2
-            sub.subTotal = 3
             sub.model = "claude-sonnet-4"
-            sub.contextPercent = 68
             rows += [cache, process, sub]
         }
-        trayGrouping = name == "project" ? .project : .status
         rows.sort { $0.section.rawValue < $1.section.rawValue }
-        observedSessions.replaceSessions(rows)
-        setCachedAll(sessionSources.merged())
+        setCachedAll(rows)
 
         var snap = PulseSnapshot()
         snap.glance = .waiting
-        snap.title = "Claude · 8m"
-        snap.tooltip = "Needs you · Claude"
+        snap.lamp = LampFace.glance(.waiting)
+        let blockedCount = rows.filter { $0.isBlocked }.count
+        snap.title = "\(blockedCount) · 8m"
+        snap.tooltip = LampExplanation.make(rows: rows, glance: .waiting).sentence(lang)
         snap.accessibilityLabel = tr(.a11yWaiting)
         snap.rows = rows
         snap.totalCount = rows.count
@@ -322,11 +297,7 @@ extension StatusStore {
             return "\(count) \(tr(section.titleKey).lowercased())"
         }
         snap.headerTitle = bits.joined(separator: " · ")
-        snap.header = snap.headerTitle
-        snap.projectCount = Set(rows.map(\.displayPath).filter { !$0.isEmpty }).count
         snap.updatedAt = Date()
         snapshot = snap
     }
-
-    /// launchctl unload+load are two blocking subprocesses; never run them on
 }

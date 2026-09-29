@@ -14,11 +14,6 @@ enum NativeHarvestSelfTest {
             isDirectory: true
         )
         defer { try? fm.removeItem(at: home) }
-        // 1.1: the fixture wall exercises the session digest, but must never
-        // fold into — or prune — the real user's store.
-        SessionDigestStore.pathOverride = home.appendingPathComponent("session-digests.json")
-        HarvestDigests.resetForTesting()
-        defer { SessionDigestStore.pathOverride = nil }
 
         do {
             try fm.createDirectory(at: home, withIntermediateDirectories: true)
@@ -149,17 +144,13 @@ enum NativeHarvestSelfTest {
         )
         // The transcript is larger than Claude's read window, so the window
         // alone can only produce a floor — and EXPERIENCE forbids presenting a
-        // floor as a total. Until 1.1 this wall therefore required `0`.
-        //
-        // The session digest reads the middle of the file, so the count is now
-        // the real one. Requiring the *exact* number is a stronger wall than
-        // requiring zero ever was: it fails on an undercount, on a double
-        // count, and on a digest that silently stopped folding.
+        // floor as a total. 23.0 removed the session digest that read the
+        // middle of the file, so a truncated transcript reports unknown (0).
         if let claudeRow = result.rows.first(where: {
             $0.id == .claude && $0.task == "Fix the tray hero for Claude"
-        }), claudeRow.records != claudeTranscriptRecords {
+        }), claudeRow.records != 0 {
             failures.append(
-                "Claude transcript records \(claudeRow.records), expected exactly \(claudeTranscriptRecords)"
+                "Claude transcript records \(claudeRow.records), expected unknown (0) for a truncated read"
             )
         }
         require(
@@ -222,24 +213,23 @@ enum NativeHarvestSelfTest {
             failures.append("per-agent timeout did not produce an isolated partial health result")
         }
 
-        var ledger = AttentionLedger()
+        var log = SessionLog()
         var waitingRows: [AgentRow] = []
         for index in 0..<10 {
             var row = AgentRow(rowKey: "codex|waiting-\(index)", agent: .codex)
             row.sessionID = "waiting-\(index)"
             row.task = "Approve fixture \(index)"
-            row.waiting = true
-            row.waitKind = "Permission"
+            row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
             waitingRows.append(row)
         }
-        ledger.reconcile(activeRows: waitingRows, nowMs: 1_800_000_000_000)
-        ledger.markBaseline()
-        for row in waitingRows { ledger.markNotified(rowKey: row.rowKey, nowMs: 1_800_000_000_001) }
-        let ledgerURL = home.appendingPathComponent("attention-ledger.json")
-        ledger.save(to: ledgerURL)
-        let restartedLedger = AttentionLedger.load(from: ledgerURL)
-        if !restartedLedger.baselineEstablished || restartedLedger.activeKeys.count != 10
-            || restartedLedger.events.contains(where: { $0.notifiedAtMs == 0 }) {
+        log.reconcileWaits(rows: waitingRows, released: [], nowMs: 1_800_000_000_000)
+        log.markBaseline()
+        for row in waitingRows { log.markNotified(row.rowKey, nowMs: 1_800_000_000_001) }
+        let logURL = home.appendingPathComponent("session-log.json")
+        SessionLogFile.save(log, to: logURL, nowMs: 1_800_000_000_002)
+        let restartedLog = SessionLogFile.load(from: logURL, nowMs: 1_800_000_000_003)
+        if !restartedLog.baselineEstablished || restartedLog.waitingKeys.count != 10
+            || waitingRows.contains(where: { restartedLog.openWait($0.rowKey)?.notifiedMs == nil }) {
             failures.append("10 concurrent Waiting events did not survive atomic restart recovery")
         }
 
@@ -402,11 +392,6 @@ enum NativeHarvestSelfTest {
     /// is the production failure — it is what made the tray hero a tool dump,
     /// and it is deliberately larger than the read window so the truncation
     /// path is exercised too.
-    /// Records in the Claude transcript fixture: one user goal, one assistant
-    /// turn, and 800 tool-result envelopes. The fixture wall asserts the digest
-    /// reports exactly this.
-    static let claudeTranscriptRecords = 802
-
     private static func writeClaudeTranscriptFixture(home: URL) throws {
         let fm = FileManager.default
         let url = home.appendingPathComponent(

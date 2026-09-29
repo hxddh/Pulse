@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`22.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v22.0.0) · macOS 14+
+**版本：`23.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v23.0.0) · macOS 14+
 
 ---
 
@@ -23,26 +23,23 @@ Pulse 把这件事变成余光可见：
 红灯只留给阻塞。
 
 点开托盘看到的是**一行一个会话**：灯的形状、Agent、项目、任务、时间。灯不只靠颜色 ——
-实心（在跑、等你）、半实心（停滞、出错）、虚线（只看到进程）、空心（轮到你、最近、空闲），
-色弱和灰度下也分得开。等待行多一行问题本身，停滞 / 失败多一行橙色原因；其余动作在右键菜单里。
+实心（需要你）、环（运行中）、空心（轮到你、最近）、虚线（只看到进程），菜单栏用同一套形状，
+色弱和灰度下也分得开；橙色只给停滞与出错。等待行多一行问题本身，停滞 / 出错多一行橙色原因；
+其余动作在键盘、右键菜单与详情页里。
 有可靠 Focus 句柄时整行可聚焦（TTY 标签 / 宿主工作区 / Warp 或宿主 App），否则点开是详情页，不制造无效动作。
 
-**键盘优先**：打开托盘直接打字就是过滤；↑↓ 选择，↩ 聚焦，→ 详情，⌫ 拒绝或忽略，Esc 先清过滤再关面板。
-头部一行彩色计数，「⋯」里是健康检查、设置、退出；同一时间最多一条提示。
+**键盘优先**：打开托盘直接打字就是过滤（⌫ 只改过滤）；↑↓ 选择，↩ 前往，→ 详情，⌘D 忽略，⌘M 静音，
+Esc 先返回 / 清过滤再关面板。头部一行彩色计数加「多久前更新」（过期时变橙），「⋯」里是诊断、设置、
+退出；同一时间最多一条提示；面板开着时行的顺序不动。
 
-**每个颜色都说得清来历**：鼠标停在菜单栏图标上，提示写出决定颜色的规则和驱动它的会话；
-详情页有这个会话最近一小时的时间条（每种状态各几分钟）、完整的 Respond 请求、Agent 最后说的话、
-计划，以及**这条通知发生了什么**（发了、合并、被拒，或没发以及为什么）；健康检查窗口的「活动」
+**每个颜色都说得清来历**：鼠标停在菜单栏图标上，提示用一句话写出决定颜色的规则；
+详情页有这个会话最近一小时的时间条（每种状态各几分钟）、Agent 最后说的话、
+计划，以及**这条通知发生了什么**（发了、合并、被拒，或没发以及为什么）；诊断窗口的「活动」
 按时间倒序列出所有会话的状态变化和通知去向。
 
 **2.1 起说得更具体**：权限通知直接说出被请求的那件事（`Bash: npm run build`，
 命令里的凭据仍被抹掉）；行上的事实按信息量排序，**会话记录增长速率**排在 token 前 ——
 它是唯一能区分「在干活」与「杵着」的那个；读得不全就明说「仍在追平 · 已读 N%」。
-
-**可以就地回应**（设置里开启，默认关）：这台 Mac 上的 Agent 发来权限请求、而提示不在你眼前时，
-托盘行上可「拒绝」，详情页里完整请求旁可「同意」—— 判决用本机生成、从不离开这台 Mac 的
-密钥做 HMAC 签名、单次使用、绑定请求原文摘要；**没有密钥文件时这一切不存在**。
-详见 [`docs/respond-protocol.md`](docs/respond-protocol.md)。
 
 **22.0 起只做灯**：一个状态灯应该看着编排器，而不是成为编排器。指挥台（Workbench）、
 受管会话、派活、Mission、工作副本检查、盘上成效、终端代打、跨机器回应与舰队广播都已删除；
@@ -79,16 +76,15 @@ always-allow / 自动批准、对着截断摘要的盲批，以及替你派活�
 
 0.49.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
 observed、no_sessions、source_absent、permission_denied、schema_mismatch 或 failed，
-不会再把“没有看到”混成“没有运行”。0.99 起没有第二个采集器：旧版 Python collector 已删除。Waiting 边沿写入 Pulse 自己的原子事件账本，重启后
-仍能去重通知、恢复稍后处理和最近等待历史。首次扫描失败不会播种基线，也不会清空上一
-次有效内容。
+不会再把“没有看到”混成“没有运行”。0.99 起没有第二个采集器：旧版 Python collector 已删除。Waiting 边沿写入 Pulse 自己的会话记录（`session-log.json`），重启后
+仍能去重通知。一次没扫全的采集不会清空上一次有效内容。
 
-需要读取受 macOS 保护的 App Support / App Group 时，设置页可以按 Agent 单独授权；默认不
+需要读取受 macOS 保护的 App Support / App Group 时，在设置页打开「读取应用数据」这一个开关；默认不
 访问这些目录、不制造跨应用权限弹窗。按 → 或行菜单「详情」进入详情页，可查看任务、为什么是这个状态、
-时间条、最后的话、计划、工作事实、通知去向和读取诊断；支持健康度窗口默认展示
+时间条、最后的消息、计划、通知去向和读取诊断；诊断窗口（托盘「⋯」→「诊断…」）默认展示
 全部 32 个用户可见 Agent，逐项给出证据、缺口和下一步动作。
 
-升级到 0.49.0 不会继承旧版的全局 App Data 授权；需要时请在设置中对具体 Agent 重新选择，
+23.0 起设置存为 `settings.json`，不迁移旧的 `settings.txt`（升级后恢复默认值，应用数据读取默认关闭），
 这样不会因 ad-hoc 签名变化在后台反复触发 macOS 权限弹窗。
 
 新的 Waiting 会话会逐一发出系统通知（仅在你明确启用通知后），并让状态栏红灯短促脉冲
@@ -122,9 +118,11 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 | Agent | Probe | Harvest | Waiting |
 | --- | --- | --- | --- |
 | Claude / Codex | A | Structured session | hooks（+ Codex pending） |
-| Cursor / Grok / Pi / Amp / Gemini / Copilot / OpenCode / Goose / OpenHands / Droid / Command Code / Kimi | A* | Structured session | pending |
+| Grok / Pi / Gemini / Copilot / OpenCode / Goose / OpenHands / Kimi | A | Structured session | pending |
+| Cursor / Amp / Droid / Command Code | A* | Structured session | **none**（格式未核实，23.0 起不从 harvest 推断） |
 | Aider / Continue | A | Structured session | **none**（格式里没有等待信号，20.0 核对源码） |
-| Amazon Q / Cline / Roo / Cascade / Windsurf / Augment / Zed / Kilo / Kiro | A | Best effort cache | pending（尽力） |
+| Cline / Roo / Kilo | A | Best effort cache | pending（尽力） |
+| Amazon Q / Cascade / Windsurf / Augment / Zed / Kiro | A | Best effort cache | **none**（格式未核实，23.0 起不从 harvest 推断） |
 | Trae / Warp / Antigravity / Devin / Junie / Replit / ZCode | A | Best effort cache | **none**（本机无可靠信号） |
 
 \* Cursor 进程常跳过外壳，靠 harvest 认；其余 Agent 的 Probe 仍为 A。
@@ -144,12 +142,12 @@ Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、
 未知 skill 不会原样泄露 namespace 或路径；无法映射时只保留安全的叶子名称，以
 `Workflow <name>` 进入默认行，避免丢失有价值的能力信号。
 
-这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.harvestSource` 和
-`AgentID.waitingSource` 校验，
+这张表由 `scripts/catalog_check.py` 对着 `AgentCatalog.swift` 里每个 Agent 的采集等级与
+Waiting 来源校验，
 不一致 CI 就红——它是承诺，不是宣传。
 
-「健康检查」窗口展示的是这台 Mac 的运行事实，而不是重复静态名单：
-可按问题、运行中、已安装、无数据筛选，并区分未发现数据源、数据源存在但没有可用会话、
+「诊断」窗口展示的是这台 Mac 的运行事实，而不是重复静态名单：问题排在最前，
+每个 Agent 一行、点开看细节，并区分未发现数据源、数据源存在但没有可用会话、
 读取权限不足、供应商格式变化、采集失败和超时未完成。进程命中只展示隐私安全的规则类型，
 不会把完整命令行、参数或私有路径带进 UI。
 
@@ -168,16 +166,16 @@ Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、
 
 - **通用** —— 登录时启动、语言（跟随系统 / English / 中文）
 - **快捷键** —— 唤出面板（关闭 / ⌘⇧P / ⌘⇧U / ⌘⌥P / ⌃⌥P）
-- **通知** —— 授权状态、新「需要你」通知、空闲通知；声音与安静时段交给 macOS 的通知设置与专注模式，
-  静音某个 Agent 在行菜单里做
-- **hooks** —— Claude 与 Codex 的 hooks（安装 / 移除 / 测试）
-- **控制** / **数据访问** —— 可以做的事（终端自动化、本机 Respond）与可以读取的内容（受保护的应用数据，
-  全局或按 Agent），每项默认关闭并写明后果
-- **更新** / **关于** —— 可校验更新、版本、「健康检查」入口、构建指纹、运行路径、重复安装、复制诊断信息
-- **高级**（折叠）—— 实时更新，以及其他 Agent 接入 Attention 桥的工具
+- **通知** —— 授权状态、「Agent 需要我时通知」、静音的 Agent（每个带 ✕）；声音与安静时段交给
+  macOS 的通知设置与专注模式，静音某个 Agent 在行菜单里（或按 M）
+- **Hooks** —— Claude 与 Codex 的 hooks（安装 / 移除 / 测试）
+- **终端控制** / **数据访问** —— 可以做的事（终端自动化）与可以读取的内容（受保护的应用数据，
+  一个开关），每项默认关闭并写明后果
+- **更新** —— 检查更新（有新版本时打开发布页，在浏览器里下载）
+- 页脚：版本与构建、「诊断…」入口
 
-「健康检查」窗口把自检、活动记录（所有会话的状态变化与通知去向）、每个 Agent 能读到什么、
-上次读取的时间与耗时、可复制的报告放在一起。
+「诊断」窗口把问题、自检、每个 Agent 能读到什么、活动记录（独立标签）、上次读取的时间与耗时
+和一个「复制报告」放在一起。
 
 省电是硬约束：探测节奏跟着状态走（等待 2s / 运行 5s / 最近 15s / 空 30s），
 托盘打开时提速，低电量模式减半，**息屏或锁屏直接停表**。
@@ -191,19 +189,15 @@ cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
 cd PulseBar && swift test    # 测试数量以 SwiftPM / CI 当次输出为准
 ```
 
-八个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
+源码门禁只有一个入口，从仓库根目录跑（`package.sh`、`release.sh` 和 CI 都调用它）：
 
 ```bash
-python3 scripts/version_check.py            # 版本一致性（--fix 自动对齐）
-python3 scripts/coverage_check.py           # 每个 AgentID 都有 harvest 接线
-python3 scripts/matrix_check.py             # README 支持矩阵 == 代码
-python3 scripts/make_agent_icons.py --check # 每个 AgentID 都有图标，且与生成器一致
-python3 scripts/appearance_check.py         # 没有把外观冻进常量（0.27.1 因此丢了深色模式）
-python3 scripts/resource_budget_check.py    # native fixture 墙钟 + RSS
+bash scripts/gates.sh                       # 版本、Agent 目录、图标、外观、表面、场景
+python3 scripts/resource_budget_check.py    # native fixture 墙钟 + RSS（需先构建）
 python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
 ```
 
-前七个读源码或跑 native fixture，最后一个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
+`gates.sh` 只读源码，`resource_budget_check.py` 跑 native fixture，`package_check.py` 读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
 源码没问题、测试全绿，照样连发三个打不开的 DMG。这类 bug 只有对着 `.app` 才看得见。
 
 但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。
@@ -275,27 +269,3 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v1 契约 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
-| [`docs/archive/plan-0.91.md`](docs/archive/plan-0.91.md) | 0.91 计划 —— 行叙事 |
-| [`docs/archive/plan-0.90.md`](docs/archive/plan-0.90.md) | 0.90 计划 —— 等待可达 |
-| [`docs/archive/plan-0.82.md`](docs/archive/plan-0.82.md) | 0.82 计划 —— 舰队托盘实质 |
-| [`docs/archive/plan-0.81.md`](docs/archive/plan-0.81.md) | 0.81 计划 —— 托盘实质 |
-| [`docs/archive/plan-0.80.md`](docs/archive/plan-0.80.md) | 0.80 计划 —— 托盘可读 |
-| [`docs/archive/plan-0.70.md`](docs/archive/plan-0.70.md) | 0.70 计划 —— 契约诚实 |
-| [`docs/archive/plan-0.65.md`](docs/archive/plan-0.65.md) | 0.65 计划 —— 舰队覆盖 / ZCode |
-| [`docs/archive/plan-0.64.md`](docs/archive/plan-0.64.md) | 0.64 计划 —— 打断闭环 |
-| [`docs/archive/plan-0.63.md`](docs/archive/plan-0.63.md) | 0.63 计划 —— 绿灯可信 |
-| [`docs/archive/plan-0.62.md`](docs/archive/plan-0.62.md) | 0.62 计划 —— 开放 Attention 协议 |
-| [`docs/archive/plan-0.61.md`](docs/archive/plan-0.61.md) | 0.61 计划 —— 原生等待通路 |
-| [`docs/archive/plan-0.60.md`](docs/archive/plan-0.60.md) | 0.60 计划 —— 等待连续 |
-| [`docs/archive/plan-0.59.md`](docs/archive/plan-0.59.md) | 0.59 计划 —— 缓存连续 |
-| [`docs/archive/plan-0.58.md`](docs/archive/plan-0.58.md) | 0.58 计划 —— 舰队连续 |
-| [`docs/archive/plan-0.57.md`](docs/archive/plan-0.57.md) | 0.57 计划 —— 事实连续 |
-| [`docs/archive/plan-0.56.md`](docs/archive/plan-0.56.md) | 0.56 计划 —— 精确落地 |
-| [`docs/archive/plan-0.55.md`](docs/archive/plan-0.55.md) | 0.55 计划 —— 回到现场 |
-| [`docs/archive/plan-0.54.md`](docs/archive/plan-0.54.md) | 0.54 计划 —— 通道与契约连续 |
-| [`docs/archive/plan-0.53.md`](docs/archive/plan-0.53.md) | 0.53 计划 —— 交付连续信任 |
-| [`docs/archive/plan-0.23.md`](docs/archive/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
-| [`docs/archive/plan-0.24.md`](docs/archive/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
-| [`docs/archive/plan-0.25.md`](docs/archive/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
-| [`docs/archive/plan-0.27.md`](docs/archive/plan-0.27.md) | 0.27 计划 —— 读完面板之后你能做什么 |
-| [`docs/archive/review-0.21.md`](docs/archive/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |

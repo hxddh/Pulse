@@ -9,20 +9,23 @@ import Foundation
 /// (the hook's raise time, the turn's time, the transcript's last change),
 /// so an identical scan produces no transition and writes nothing.
 ///
-/// Pure: `transitions` compares two row lists; `SessionTimelineBook`
-/// applies them; `TimelineStripModel` renders a window of them. The store
-/// owns persistence.
+/// Pure: `transitions` compares two row lists; `SessionLog` applies them
+/// (23.0 — the spans live there beside the waits); `TimelineStripModel`
+/// renders a window of them.
 
 /// The state a session is in, as the lamp would colour it.
 enum TimelineState: String, Codable, Equatable, Sendable {
+    /// `thin` is a session seen only as a process (the raw value stays for
+    /// logs written before 23.0).
     case running, thin, stalled, blocked, turn, recent
 
+    /// The row lamp's tone for the state: orange only for a stall.
     var tone: PulseTheme.Tone {
         switch self {
         case .blocked: return .waiting
         case .running: return .running
-        case .thin, .stalled: return .attention
-        case .turn, .recent: return .idle
+        case .stalled: return .attention
+        case .thin, .turn, .recent: return .idle
         }
     }
 }
@@ -58,21 +61,21 @@ enum SessionTimeline {
     /// The row's state and its evidence — the same predicates the lamp uses,
     /// so the strip can never disagree with the colour.
     static func classify(_ row: AgentRow) -> (state: TimelineState, evidence: TimelineEvidence, kind: String) {
-        if row.waiting {
-            let evidence: TimelineEvidence
-            switch row.waitSignal {
-            case .hooks?: evidence = .hook
-            case .vendor?: evidence = .vendor
-            case .pending?, nil: evidence = .pending
-            }
-            return (.blocked, evidence, row.waitKind)
-        }
         let evidence: TimelineEvidence = row.isProcessOnly ? .process : .harvest
-        if row.yourTurn { return (.turn, .hook, "") }
-        if row.isStalled { return (.stalled, evidence, "") }
-        if row.isProcessOnly || row.isThinRunning { return (.thin, evidence, "") }
-        if row.isRecentOnly { return (.recent, evidence, "") }
-        return (.running, evidence, "")
+        switch row.state {
+        case .blocked(let wait):
+            switch wait.signal {
+            case .hooks: return (.blocked, .hook, wait.kind)
+            case .vendor: return (.blocked, .vendor, wait.kind)
+            case .pending: return (.blocked, .pending, wait.kind)
+            }
+        case .yourTurn: return (.turn, .hook, "")
+        case .processOnly: return (.thin, .process, "")
+        case .recent: return (.recent, evidence, "")
+        case .running:
+            if row.isStalled { return (.stalled, evidence, "") }
+            return (.running, evidence, "")
+        }
     }
 
     /// Edges between two scans. A row whose state and evidence did not
@@ -80,11 +83,10 @@ enum SessionTimeline {
     static func transitions(
         previous: [AgentRow],
         current: [AgentRow],
-        remapped: [String: String] = [:],
         nowMs: Int64
     ) -> [TimelineTransition] {
         var before: [String: AgentRow] = [:]
-        for row in previous { before[remapped[row.rowKey] ?? row.rowKey] = row }
+        for row in previous { before[row.rowKey] = row }
         var out: [TimelineTransition] = []
         var seen = Set<String>()
         for row in current {
@@ -113,83 +115,17 @@ enum SessionTimeline {
     static func evidenceStamp(_ row: AgentRow, state: TimelineState, nowMs: Int64) -> (ms: Int64, exact: Bool) {
         let candidate: Int64
         switch state {
-        case .blocked: candidate = row.waitSinceMs
-        case .turn: candidate = row.turnSinceMs
-        case .running, .thin: candidate = row.activityChangedMs
+        case .blocked: candidate = row.wait?.sinceMs ?? 0
+        case .turn: candidate = row.turnSinceMs ?? 0
+        case .running, .thin: candidate = row.activityMs
         case .stalled, .recent: candidate = 0
         }
-        // A clock from the future, or one older than the book keeps, is not
+        // A clock from the future, or one older than the log keeps, is not
         // evidence of when this edge happened.
-        if candidate > 0, candidate <= nowMs, nowMs - candidate < SessionTimelineBook.retentionMs {
+        if candidate > 0, candidate <= nowMs, nowMs - candidate < SessionLog.retentionMs {
             return (candidate, true)
         }
         return (nowMs, false)
-    }
-}
-
-/// Every session's spans, bounded in sessions, spans and age.
-struct SessionTimelineBook: Codable, Equatable, Sendable {
-    static let maxSessions = 128
-    static let maxSpansPerSession = 48
-    static let retentionMs: Int64 = 24 * 60 * 60 * 1000
-
-    var spans: [String: [TimelineSpan]] = [:]
-
-    /// Applies transitions; returns whether anything durable changed.
-    @discardableResult
-    mutating func apply(_ transitions: [TimelineTransition]) -> Bool {
-        var changed = false
-        for t in transitions {
-            var list = spans[t.rowKey] ?? []
-            if let last = list.last, last.endMs == nil {
-                // Restarting Pulse re-sees every row; an open span in the same
-                // state is the same fact, not a new edge.
-                if let state = t.state, last.state == state, last.evidence == t.evidence, last.kind == t.kind {
-                    continue
-                }
-                list[list.count - 1].endMs = max(last.startMs, t.atMs)
-            } else if t.state == nil {
-                continue
-            }
-            if let state = t.state {
-                let start = max(t.atMs, list.last?.endMs ?? t.atMs)
-                list.append(TimelineSpan(
-                    state: state, evidence: t.evidence, kind: t.kind,
-                    startMs: start, endMs: nil, exact: t.exact
-                ))
-            }
-            if list.count > Self.maxSpansPerSession {
-                list.removeFirst(list.count - Self.maxSpansPerSession)
-            }
-            spans[t.rowKey] = list
-            changed = true
-        }
-        return changed
-    }
-
-    /// Drops spans that ended before the retention window and sessions with
-    /// nothing left; keeps at most `maxSessions`, newest first.
-    @discardableResult
-    mutating func prune(nowMs: Int64) -> Bool {
-        let before = self
-        let cutoff = nowMs - Self.retentionMs
-        for (key, list) in spans {
-            let kept = list.filter { ($0.endMs ?? nowMs) >= cutoff }
-            spans[key] = kept.isEmpty ? nil : kept
-        }
-        if spans.count > Self.maxSessions {
-            func lastSeen(_ list: [TimelineSpan]) -> Int64 {
-                guard let last = list.last else { return 0 }
-                return last.endMs ?? nowMs
-            }
-            let newest = spans
-                .sorted { lastSeen($0.value) > lastSeen($1.value) }
-                .prefix(Self.maxSessions)
-                .map { $0.key }
-            let keep = Set(newest)
-            spans = spans.filter { keep.contains($0.key) }
-        }
-        return self != before
     }
 }
 

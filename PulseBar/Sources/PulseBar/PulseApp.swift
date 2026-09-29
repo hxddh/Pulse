@@ -13,62 +13,34 @@ enum PulseBarMain {
     nonisolated(unsafe) private static var instanceGuard: SingleInstanceGuard?
 
     static func main() {
-        if let dmg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-update=") }),
-           let target = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-target=") }),
-           let parent = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-parent-pid=") }),
-           let pid = pid_t(String(parent.dropFirst("--install-parent-pid=".count))) {
-            do {
-                let digest = ProcessInfo.processInfo.arguments
-                    .first(where: { $0.hasPrefix("--install-sha256=") })
-                    .map { String($0.dropFirst("--install-sha256=".count)) } ?? ""
-                try UpdateInstaller.runHelper(
-                    dmgURL: URL(fileURLWithPath: String(dmg.dropFirst("--install-update=".count))),
-                    targetApp: URL(fileURLWithPath: String(target.dropFirst("--install-target=".count))),
-                    parentPID: pid,
-                    expectedSHA256: digest
-                )
-                exit(0)
-            } catch {
-                fputs("Pulse update failed: \(error.localizedDescription)\n", stderr)
-                exit(1)
-            }
-        }
         if ProcessInfo.processInfo.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
         if ProcessInfo.processInfo.arguments.contains("--hook") {
             // Native Waiting path for Claude/Codex — no Python. Always exit 0
             // so vendor hooks never block the agent process.
+            let arguments = ProcessInfo.processInfo.arguments
             var stdinText = ""
-            // Vendors pipe JSON on stdin. Never read when attached to a TTY —
-            // that would block the menu-bar binary until EOF.
-            if isatty(STDIN_FILENO) == 0,
-               let data = try? FileHandle.standardInput.readToEnd(),
-               let text = String(data: data, encoding: .utf8) {
-                stdinText = text
+            // Vendors pipe JSON on stdin. Never read when attached to a TTY,
+            // nor when the payload came in argv (Codex `notify`); otherwise
+            // read for at most a second — a pipe nobody closes must not hold
+            // the agent that is waiting on this hook.
+            if isatty(STDIN_FILENO) == 0, !PulseHookReceiver.payloadInArguments(arguments) {
+                stdinText = PulseHookReceiver.readStdin()
             }
-            exit(Int32(PulseHookReceiver.run(arguments: ProcessInfo.processInfo.arguments, stdin: stdinText)))
+            exit(Int32(PulseHookReceiver.run(arguments: arguments, stdin: stdinText)))
         }
         if ProcessInfo.processInfo.arguments.contains("--harvest-test") {
             let started = Date()
-            // Match the menu-bar store: App Data grants live in settings.txt.
-            // Ignoring that file made A/B harvest dumps always look process-only.
-            let settings = PulseSettings.loadFromDisk()
-            let agentsLabel = settings.allowAppData
-                ? "all"
-                : (settings.appDataAgents.isEmpty
-                    ? "none"
-                    : settings.appDataAgents.map(\.rawValue).sorted().joined(separator: ","))
-            let result = ActivityHarvest.scan(
-                allowAppData: settings.allowAppData,
-                appDataAgents: settings.appDataAgents
-            )
+            // Match the menu-bar store: the app-data switch lives in
+            // settings.json. Ignoring it made A/B harvest dumps always look
+            // process-only.
+            let settings = PulseSettings.load()
+            let result = ActivityHarvest.scan(allowAppData: settings.readProtectedAppData)
             print(
                 "harvest rows=\(result.rows.count) adapters=\(result.health.count) "
-                    + "unreliable=\(result.unreliable) "
                     + "complete=\(result.complete) "
-                    + "appData=\(settings.allowAppData ? 1 : 0) "
-                    + "agents=\(agentsLabel) "
+                    + "appData=\(settings.readProtectedAppData ? 1 : 0) "
                     + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
             )
             if ProcessInfo.processInfo.arguments.contains("--harvest-dump") {
@@ -82,11 +54,11 @@ enum PulseBarMain {
                 }
                 if ProcessInfo.processInfo.arguments.contains("--harvest-dump-all") {
                     for row in result.rows {
-                        print("    row \(row.id.rawValue) sid=\(row.sessionID) task=\(row.task) cwd=\(row.cwd) tool=\(row.tool) model=\(row.model) phase=\(row.phase) outcome=\(row.outcome) tokens=\(row.tokensIn)/\(row.tokensOut) files=\(row.files) errors=\(row.errors) context=\(row.contextPercent) progress=\(row.progressDone)/\(row.progressTotal) records=\(row.records) evidence=\(row.evidence.rawValue)")
+                        print("    row \(row.id.rawValue) sid=\(row.sessionID) task=\(row.task) cwd=\(row.cwd) tool=\(row.tool) model=\(row.model) phase=\(row.phase) outcome=\(row.outcome) tokens=\(row.tokensIn)/\(row.tokensOut) errors=\(row.errors) progress=\(row.progressDone)/\(row.progressTotal) records=\(row.records) evidence=\(row.evidence.rawValue)")
                     }
                 }
             }
-            exit(result.unreliable ? 1 : 0)
+            exit(0)
         }
         if ProcessInfo.processInfo.arguments.contains("--native-fixture-test") {
             exit(NativeHarvestSelfTest.run() ? 0 : 1)
@@ -97,29 +69,20 @@ enum PulseBarMain {
         // instead of against a format someone inferred. Opt-in, off by
         // default, and short enough to read before sharing.
         if ProcessInfo.processInfo.arguments.contains("--harvest-shape") {
-            let settings = PulseSettings.loadFromDisk()
-            print(NativeActivityHarvest.shapeReport(
-                allowAppData: settings.allowAppData,
-                appDataAgents: settings.appDataAgents
-            ))
+            let settings = PulseSettings.load()
+            print(NativeActivityHarvest.shapeReport(allowAppData: settings.readProtectedAppData))
             exit(0)
         }
         // Per-adapter account of the last scan: files, bytes, truncation,
         // facts, which record kind produced the hero, and which layer lost it
         // when there is none.
         if ProcessInfo.processInfo.arguments.contains("--harvest-explain") {
-            let settings = PulseSettings.loadFromDisk()
-            let result = ActivityHarvest.scan(
-                allowAppData: settings.allowAppData,
-                appDataAgents: settings.appDataAgents
-            )
+            let settings = PulseSettings.load()
+            let result = ActivityHarvest.scan(allowAppData: settings.readProtectedAppData)
             for health in result.health.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
                 print("\(health.id.rawValue) \(health.state.rawValue) \(health.explain.summary)")
             }
             exit(0)
-        }
-        if Bundle.main.bundleURL.pathExtension == "app" {
-            _ = UpdateInstaller.recoverIfNeeded(at: Bundle.main.bundleURL)
         }
         let guardLock = SingleInstanceGuard()
         guard guardLock.acquire() else {
@@ -159,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ids are closed as defense-in-depth (should not appear without a Settings scene).
     private static let ownedWindowIDs: Set<String> = [
         "pulse-settings",
-        "pulse-support-coverage",
+        "pulse-diagnostics",
         "pulse-tray-preview",
     ]
 
@@ -186,10 +149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if ProcessInfo.processInfo.arguments.contains("--appearance=light") {
             NSApp.appearance = NSAppearance(named: .aqua)
         }
+        // Wins over settings.json for this run, and is never saved.
         if ProcessInfo.processInfo.arguments.contains("--language=zh") {
-            AppServices.store.language = .zh
+            AppServices.store.languageOverride = .zh
         } else if ProcessInfo.processInfo.arguments.contains("--language=en") {
-            AppServices.store.language = .en
+            AppServices.store.languageOverride = .en
         }
         // 15.0 · Witness: render the surface fixtures and quit — no scan,
         // no tray, nothing read from this Mac.
@@ -218,15 +182,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AppServices.store.openSettings()
             }
         }
-        if let focus = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--open-settings-agent=") }) {
-            let raw = String(focus.dropFirst("--open-settings-agent=".count))
+        if ProcessInfo.processInfo.arguments.contains("--open-settings-data") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                AppServices.store.openSettings(focusAppDataFor: AgentID(rawValue: raw))
+                AppServices.store.openSettings(focus: .appData)
             }
         }
         if ProcessInfo.processInfo.arguments.contains("--open-support-health") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                AppServices.store.openSupportHealth()
+                AppServices.store.openDiagnostics()
             }
         }
         // This opt-in QA surface hosts the exact TrayPanel view in a normal
@@ -257,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let capture = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--capture-support-health=") }) {
             let path = String(capture.dropFirst("--capture-support-health=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
-                SupportCoverageWindowController.shared.capture(
+                DiagnosticsWindowController.shared.capture(
                     store: AppServices.store,
                     to: URL(fileURLWithPath: path)
                 )
@@ -318,7 +281,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         GlobalHotKey.uninstall()
         statusPanel?.uninstall()
-        AppServices.store.markCleanShutdown()
+        // The log goes down now — a debounced change still in memory, and
+        // the quit time the next launch closes open spans at.
+        AppServices.store.sessionLogStore.flushAtQuit(AppServices.store.sessionLog)
     }
 }
 

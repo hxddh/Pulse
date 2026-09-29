@@ -145,14 +145,13 @@ package enum ActivityHarvest {
         for row in rows {
             if !row.task.isEmpty { classes.insert("task") }
             if !row.tool.isEmpty { classes.insert("tool") }
-            if row.tokensIn > 0 || row.tokensOut > 0
-                || row.sessionTokensIn > 0 || row.sessionTokensOut > 0 {
+            if row.tokensIn > 0 || row.tokensOut > 0 {
                 classes.insert("tokens")
             }
             if row.progressTotal > 0 { classes.insert("progress") }
             if !row.planStep.isEmpty || !row.planSteps.isEmpty { classes.insert("plan") }
             if !row.lastWord.isEmpty { classes.insert("word") }
-            if !row.lastErrorText.isEmpty || row.errors > 0 || row.sessionErrors > 0 {
+            if !row.lastErrorText.isEmpty || row.errors > 0 {
                 classes.insert("error")
             }
             if !row.model.isEmpty { classes.insert("model") }
@@ -210,8 +209,6 @@ package enum ActivityHarvest {
         package var model: String = ""
         package var mode: String = ""
         package var errors: Int = 0
-        package var files: Int = 0
-        package var contextPercent: Int = 0
         package var progressDone: Int = 0
         package var progressTotal: Int = 0
         /// 2.8 · the agent's own plan, read from the structure it writes for
@@ -235,39 +232,6 @@ package enum ActivityHarvest {
         /// without the error's text tells the user "something broke, go
         /// guess".
         package var lastErrorText: String = ""
-        /// 1.2 · from the session digest, which read the whole transcript.
-        /// The same tool run back to back at the tail of the session.
-        package var loopTool: String = ""
-        package var loopCount: Int = 0
-        /// Errors across the whole session, not just the read window.
-        package var sessionErrors: Int = 0
-        /// `Edit 12 · Bash 5` — bounded, Details only.
-        package var toolSummary: String = ""
-        /// 2.1 · the rest of what the digest already knew.
-        ///
-        /// 1.2 computed all of this and published three of them. The others
-        /// were held behind the same `caughtUp` gate as `records`, so a long
-        /// session still catching up — the one most worth watching — showed
-        /// nothing at all. They travel now; `digestProgressPercent` and
-        /// `digestCaughtUp` are how a row states its own completeness.
-        ///
-        /// Tokens for the **whole session**, summed as the digest read past
-        /// them. Deliberately not the same thing as `tokensIn`/`tokensOut`
-        /// above, which are the latest message's usage, and both are kept:
-        /// "this turn cost 8k" and "this session has spent 900k" are two
-        /// different questions.
-        package var sessionTokensIn: Int = 0
-        package var sessionTokensOut: Int = 0
-        /// The last few vendor tool names in order, oldest first, ≤ 12.
-        /// Names only — never an argument, a path, or a command.
-        package var recentTools: [String] = []
-        /// How much of the transcript the digest has read, 0–100. 100 means
-        /// the facts above cover the whole file.
-        package var digestProgressPercent: Int = 0
-        /// Whether the digest has reached the end of the file.
-        package var digestCaughtUp: Bool = false
-        /// Recent growth of the transcript in bytes per minute; 0 = unknown.
-        package var bytesPerMinute: Int = 0
         /// The `cwd` above was reconstructed from a vendor directory name
         /// that encodes `/` as `-`, and the filesystem could not confirm it.
         ///
@@ -280,13 +244,6 @@ package enum ActivityHarvest {
         /// wrong workspace opening under someone's hands is the failure this
         /// exists to prevent.
         package var cwdBestEffort: Bool = false
-        /// When Pulse first folded this transcript (`digest.firstFoldedMs`).
-        ///
-        /// Separate from `startedMs`, which is the file's birth date: most
-        /// adapters cannot get one (vendors rewrite, copy or compact their
-        /// transcripts, and APFS birth times survive none of that), so this
-        /// is the more reliable answer to "how long has this been going".
-        package var sessionStartedMs: Int64 = 0
         /// 4.0-α · the transcript file this row's facts were read from —
         /// a local read handle for showing the session itself.
         ///
@@ -442,19 +399,6 @@ package enum ActivityHarvest {
         AgentCatalog.agent(named: raw)
     }
 
-    package static func sessionKey(id: AgentID, sessionID: String, project: String, cwd: String) -> String {
-        let sid = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !sid.isEmpty {
-            let short = sid.count > 24 ? String(sid.prefix(12)) + "…" + String(sid.suffix(6)) : sid
-            return "\(id.rawValue)|\(short)"
-        }
-        let short = TitleHeuristics.shortProject(project)
-        if !short.isEmpty { return "\(id.rawValue)|\(short)" }
-        let leaf = (cwd as NSString).lastPathComponent
-        if !leaf.isEmpty, leaf != "/" { return "\(id.rawValue)|\(leaf)" }
-        return id.rawValue
-    }
-
     /// Whether a harvest row may appear without a matching live process.
     package static func isFresh(_ row: Row, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> Bool {
         if row.subRunning > 0 { return true }
@@ -470,11 +414,8 @@ package enum ActivityHarvest {
         return age >= -5 * 60 * 1000 && age <= window
     }
 
-    /// `unreliable` → caller must keep lastGoodHarvest.
-    ///
-    /// Kept in the signature because a future adapter may need it; the native
-    /// collector reports partial results through `complete`/`CollectorHealth`
-    /// rather than by failing the whole scan.
+    /// The native collector reports partial results through
+    /// `complete`/`CollectorHealth` rather than by failing the whole scan.
     package static func scan(
         allowAppData: Bool = false,
         appDataAgents: Set<AgentID> = [],
@@ -483,7 +424,6 @@ package enum ActivityHarvest {
     ) -> (
         rows: [Row],
         health: [CollectorHealth],
-        unreliable: Bool,
         complete: Bool,
         nextCursor: Int
     ) {
@@ -509,18 +449,19 @@ package enum ActivityHarvest {
         for item in native.health where !item.explain.isEmpty {
             DebugLog.write("harvest explain \(item.id.rawValue) \(item.explain.summary)")
         }
-        return (native.rows, native.health, false, native.complete, native.nextCursor)
+        return (native.rows, native.health, native.complete, native.nextCursor)
     }
 }
 
-/// Attention TSV reader — last event wins per (agent, session); `done` clears;
+/// Attention TSV reader — last event wins per (agent, session); `done` clears
+/// that (agent, session) — an empty session only the session-less entry;
 /// `turn` ends a blocked wait (after a short grace) and leaves "your turn".
 ///
 /// `attention.tsv` is this Mac's own file: every line in it was raised here.
 /// 22.0 removed the remote inbox (`attention.d/<host>.tsv`) and with it the
 /// per-host keys, arrival clocks and "lost contact" rows. The protocol's
-/// `host` column is still accepted and ignored — a hook that sets
-/// `PULSE_HOST` is still a hook on this Mac.
+/// `host` column is ignored. Since 23.0 only complete v3 records (eight
+/// columns) are read.
 package enum AttentionReader {
     package static let ttlMs: Int64 = 30 * 60 * 1000
     /// A turn ending right after a blocked raise must not wipe it: the order
@@ -581,32 +522,22 @@ package enum AttentionReader {
         }
     }
 
-    package static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
-        let sources = AttentionIO.readSources()
-        // 17.0: everything read is also kept, bounded, so a lamp can later
-        // say which event lit it (`AttentionHistory`).
-        AttentionHistoryStore.ingest(sources, nowMs: nowMs)
-        return sources.flatMap { parse($0.text, nowMs: nowMs) }
-    }
-
-    /// Pure TSV → entries. Split out from `load` so the last-event-wins,
-    /// stop-grace and TTL rules are testable without touching the filesystem.
+    /// Pure TSV → entries (the scan reads `attention.tsv` once and hands the
+    /// text here), so the last-event-wins, stop-grace and TTL rules are
+    /// testable without touching the filesystem.
     package static func parse(_ text: String, nowMs: Int64) -> [Entry] {
         guard !text.isEmpty else { return [] }
 
         var byKey: [String: Entry] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
-            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if raw.isEmpty || raw.hasPrefix("#") { continue }
-            let cols = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard cols.count >= 3,
+            guard let cols = AttentionProtocol.columns(of: line),
                   let parsedID = ActivityHarvest.mapAgent(cols[0]) else { continue }
             let id = parsedID.surfaceID
             let kind = Kind.parse(cols[1])
             let tsMs = Int64(cols[2]) ?? 0
-            let message = cols.count > 3 ? ContentSanitizer.redact(cols[3]) : ""
-            let session = cols.count > 4 ? cols[4] : ""
-            let cwd = cols.count > 5 ? ContentSanitizer.redact(cols[5]) : ""
+            let message = ContentSanitizer.redact(cols[3])
+            let session = cols[4]
+            let cwd = ContentSanitizer.redact(cols[5])
             let mapKey = session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
 
             if kind == .ignore { continue }
@@ -615,12 +546,13 @@ package enum AttentionReader {
                 byKey.compactMap { key, entry in entry.id.surfaceID == id ? key : nil }
             }
 
+            // 23.0: a `done` clears exactly the entry it names — a session,
+            // or (session empty) the agent's session-less entry. An empty
+            // session is not "every session of this agent": dismissing a
+            // hook wait that carried no session must not clear the waits of
+            // the agent's other terminals.
             if kind == .done {
-                if session.isEmpty {
-                    for k in siblingKeys() { byKey[k] = nil }
-                } else {
-                    byKey[mapKey] = nil
-                }
+                byKey[mapKey] = nil
                 continue
             }
 
@@ -649,7 +581,7 @@ package enum AttentionReader {
                 if let existing = byKey[mapKey], shouldKeep(existing) { continue }
                 byKey[mapKey] = nil
                 // The user watched it finish: nothing is owed.
-                if AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "") == true { continue }
+                if AttentionProtocol.parseFront(cols[7]) == true { continue }
             }
 
             // No stamp, a stamp from the future, or one past the TTL: a local
@@ -666,7 +598,7 @@ package enum AttentionReader {
                 session: session,
                 cwd: cwd
             )
-            entry.front = AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "")
+            entry.front = AttentionProtocol.parseFront(cols[7])
             // A later event with nothing to say must not erase what an earlier
             // one said. One approval makes Claude raise both `Notification`
             // and `PermissionRequest`, only one of them carries text, and

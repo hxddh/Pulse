@@ -16,10 +16,12 @@ source rather than waiting for a bug report that never comes.
 | `docs` | Closed source; public documentation was read | `urls`, `checked`, `tests` |
 | `unverified` | Nothing public describes the format | `why` |
 
-`scripts/vendor_formats_check.py` (in `gates.sh`) fails when an agent has no
+`scripts/catalog_check.py` (in `gates.sh`) fails when an agent has no
 entry, a repo entry lacks a full commit or watch list, a named test file does
 not exist or never mentions the agent, or the manifest names an agent the
-catalog no longer has. **Adding or changing a dialect means updating its entry
+catalog no longer has, and when an `unverified` format has any Waiting source
+other than `none`. Tests are named by file (`HarvestTests.swift`,
+`VendorFormatTests.swift`, …; 23.0 grouped them by component). **Adding or changing a dialect means updating its entry
 and its vendor-shaped fixture in the same change.**
 
 ## The sentinel

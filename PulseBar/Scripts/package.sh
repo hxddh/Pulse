@@ -12,11 +12,6 @@ if [[ "$(uname -m)" != "arm64" ]]; then
   exit 1
 fi
 
-# Single source of truth: src/*.py → SPM Resources (avoid stale Bundle seed).
-for py in pulse_hook.py install_hooks.py; do
-  cp "$ROOT/src/$py" "$ROOT/PulseBar/Sources/PulseBar/Resources/$py"
-done
-
 CHECK_PYTHON="$(command -v python3 || true)"
 if [[ -n "$CHECK_PYTHON" ]]; then
   bash "$ROOT/scripts/gates.sh"
@@ -60,11 +55,6 @@ echo "running --native-fixture-test..."
 "$BIN" --native-fixture-test
 
 cp "$BIN" "$APP/Contents/MacOS/PulseBar"
-# Bundle hook scripts and the optional legacy harvest adapter. The app's
-# default activity path is Swift-native and does not require any interpreter.
-for py in pulse_hook.py install_hooks.py; do
-  cp "$ROOT/src/$py" "$APP/Contents/Resources/$py"
-done
 # Brand marks (template PNGs + SVG sources)
 if [[ -d "$ROOT/PulseBar/Sources/PulseBar/Resources/AgentIcons" ]]; then
   rm -rf "$APP/Contents/Resources/AgentIcons"
@@ -77,8 +67,8 @@ if [[ -d "$ROOT/PulseBar/Sources/PulseBar/Resources/Brand" ]]; then
     cp "$ROOT/PulseBar/Sources/PulseBar/Resources/Brand/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
   fi
 fi
-# SwiftPM resource bundle. This is not optional: the app resolves icons and the
-# bundled Python through it, so shipping without it ships a broken app.
+# SwiftPM resource bundle. This is not optional: the app resolves its icons
+# through it, so shipping without it ships a broken app.
 #
 # The bundle SwiftPM builds is *flat* — Info.plist and the resource directories
 # sit at its root, with no Contents/. Do not "helpfully" add Contents/Resources

@@ -46,116 +46,16 @@ enum HooksSupport {
             .appendingPathComponent("Library/Application Support/Pulse")
     }
 
-    /// Seed optional legacy Python assets + native launcher.
-    /// Native install/self-test never require Python; the `.py` files remain for
-    /// users who already wired `python3 …/pulse_hook.py` by hand.
+    /// Ensure the native `pulse-hook` launcher exists and points at this app.
     static func seedAssets() {
-        let fm = FileManager.default
-        let dir = supportDir()
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        for name in ["pulse_hook.py", "install_hooks.py"] {
-            guard let src = resourceURL(named: name) else { continue }
-            let dest = dir.appendingPathComponent(name)
-            let srcText = (try? String(contentsOf: src, encoding: .utf8)) ?? ""
-            if fm.fileExists(atPath: dest.path),
-               let destText = try? String(contentsOf: dest, encoding: .utf8) {
-                if destText == srcText { continue }
-                // Never replace a flock-aware hook with a weaker bundled copy.
-                if name == "pulse_hook.py",
-                   destText.contains("fcntl.flock"),
-                   !srcText.contains("fcntl.flock") {
-                    DebugLog.write("seed skip downgrade \(name)")
-                    continue
-                }
-                try? fm.removeItem(at: dest)
-            }
-            try? fm.copyItem(at: src, to: dest)
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
-        }
+        try? FileManager.default.createDirectory(at: supportDir(), withIntermediateDirectories: true)
         try? HooksInstaller.ensureLauncher()
         HooksInstaller.refreshRunnerPath()
-        seedAttentionBridgeKit()
-    }
-
-    static func attentionBridgeKitDir() -> URL {
-        supportDir().appendingPathComponent("attention-bridge", isDirectory: true)
-    }
-
-    /// Seed a minimal Attention bridge kit next to `pulse-hook`.
-    /// Not an installer for other agents — raise/clear samples only (0.90).
-    static func seedAttentionBridgeKit() {
-        let fm = FileManager.default
-        let dir = attentionBridgeKitDir()
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let raise = #"""
-        #!/bin/sh
-        # Pulse Attention bridge sample — prefer native pulse-hook (0.90 kit).
-        # Usage: raise.sh <agent_id> [session] [kind] [message]
-        set -e
-        PULSE="${PULSE_HOME:-$HOME/Library/Application Support/Pulse}"
-        mkdir -p "$PULSE"
-        agent="${1:?usage: raise.sh <agent_id> [session] [kind] [message]}"
-        session="${2:-sample-$agent}"
-        kind="${3:-permission}"
-        message="${4:-Approve tool (sample)}"
-        HOOK="$PULSE/pulse-hook"
-        if [ -x "$HOOK" ]; then
-          printf '%s\n' "{\"notification_type\":\"$kind\",\"message\":\"$message\",\"session_id\":\"$session\",\"cwd\":\"$PWD\"}" \
-            | "$HOOK" "$agent"
-          echo "Wrote $agent Waiting via pulse-hook (session=$session kind=$kind)"
-          exit 0
-        fi
-        ms=$(($(date +%s) * 1000))
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-          "$agent" "$kind" "$ms" "$message" "$session" "$PWD" >> "$PULSE/attention.tsv"
-        echo "Wrote $agent Waiting → $PULSE/attention.tsv"
-        """#
-        let clear = #"""
-        #!/bin/sh
-        # Clear Attention bridge Waiting for one agent id (argv) or all Waiting-none.
-        set -e
-        PULSE="${PULSE_HOME:-$HOME/Library/Application Support/Pulse}"
-        mkdir -p "$PULSE"
-        ms=$(($(date +%s) * 1000))
-        if [ "$#" -eq 0 ]; then
-          set -- replit devin warpAgent trae antigravity junie zcode
-        fi
-        for agent in "$@"; do
-          printf '%s\tdone\t%s\t\t\t\n' "$agent" "$ms" >> "$PULSE/attention.tsv"
-          echo "Cleared $agent"
-        done
-        """#
-        let readme = """
-        Pulse Attention bridge kit (0.90)
-        =================================
-        raise.sh <agent_id>   Prefer pulse-hook; falls back to attention.tsv
-        clear.sh [agent…]     Defaults to all Waiting-none agents (includes zcode)
-        Protocol: docs/attention-protocol.md — not a Claude/Codex hook installer.
-        """
-        writeKitFile(dir.appendingPathComponent("raise.sh"), raise, executable: true)
-        writeKitFile(dir.appendingPathComponent("clear.sh"), clear, executable: true)
-        writeKitFile(dir.appendingPathComponent("README.txt"), readme, executable: false)
-    }
-
-    private static func writeKitFile(_ url: URL, _ text: String, executable: Bool) {
-        let fm = FileManager.default
-        let data = Data(text.utf8)
-        if fm.fileExists(atPath: url.path),
-           let existing = try? Data(contentsOf: url),
-           existing == data {
-            return
-        }
-        try? data.write(to: url, options: .atomic)
-        if executable {
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-        }
     }
 
     static func probeStatus() -> Status {
         let launcher = HooksInstaller.launcherURL
-        let legacy = supportDir().appendingPathComponent(HooksInstaller.legacyHookName)
         let hasAsset = FileManager.default.isExecutableFile(atPath: launcher.path)
-            || FileManager.default.fileExists(atPath: legacy.path)
         guard hasAsset else { return .missing }
 
         let home = HooksInstaller.homeURL
@@ -193,7 +93,7 @@ enum HooksSupport {
         }
     }
 
-    /// Remove Pulse hooks from Claude/Codex configs. Native — no Python.
+    /// Remove Pulse hooks from Claude/Codex configs.
     @discardableResult
     static func uninstall() -> Status {
         seedAssets()
@@ -205,7 +105,7 @@ enum HooksSupport {
         return probeStatus()
     }
 
-    /// Install native `pulse-hook` into Claude/Codex configs. No Python.
+    /// Install native `pulse-hook` into Claude/Codex configs.
     @discardableResult
     static func install() -> Status {
         seedAssets()
@@ -219,9 +119,10 @@ enum HooksSupport {
     }
 
     /// Exercise the native hook receiver end-to-end in an isolated temporary
-    /// Pulse home. Never writes a fake wait into the user's attention log and
-    /// never asks for Automation, Accessibility, or Screen Recording.
-    /// Does **not** require Python.
+    /// file. Never writes a fake wait into the user's attention log and
+    /// never asks for Automation, Accessibility, or Screen Recording. The
+    /// file is passed explicitly: it runs off the main thread, and a global
+    /// override would redirect a scan reading at the same moment.
     static func selfTest() -> SelfTestResult {
         seedAssets()
         let fm = FileManager.default
@@ -229,59 +130,31 @@ enum HooksSupport {
             "pulse-hook-selftest-\(UUID().uuidString)",
             isDirectory: true
         )
-        let previousOverride = AttentionIO.pathOverride
+        defer { try? fm.removeItem(at: temp) }
         do {
             try fm.createDirectory(at: temp, withIntermediateDirectories: true)
-            defer {
-                AttentionIO.pathOverride = previousOverride
-                try? fm.removeItem(at: temp)
-            }
-            AttentionIO.pathOverride = temp.appendingPathComponent("attention.tsv")
+            let file = temp.appendingPathComponent("attention.tsv")
             PulseHookReceiver.appendEvent(
                 agent: "codex",
-                kind: PulseHookReceiver.normalizeKind("request_user_input"),
+                kind: AttentionProtocol.normalizeKind("request_user_input"),
                 message: "Pulse self-test",
                 session: "selftest",
-                cwd: ""
+                cwd: "",
+                attentionURL: file
             )
             // Also exercise argv/stdin parsing the vendor path uses.
             _ = PulseHookReceiver.run(
                 arguments: ["--hook", "codex", "request_user_input"],
-                stdin: #"{"message":"Pulse self-test","session_id":"selftest"}"#
+                stdin: #"{"message":"Pulse self-test","session_id":"selftest"}"#,
+                attentionURL: file
             )
-            let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+            let text = try String(contentsOf: file, encoding: .utf8)
             guard text.contains("codex\tquestion\t"),
                   text.contains("\tPulse self-test\tselftest\t")
             else { return .failed("hook output mismatch") }
             return .passed(Date())
         } catch {
-            AttentionIO.pathOverride = previousOverride
             return .failed(error.localizedDescription)
         }
-    }
-
-    private static func resourceURL(named name: String) -> URL? {
-        let fm = FileManager.default
-        // Prefer repo src/ in dev so seed never ships stale Resources.
-        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let repo = here
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("src/\(name)")
-        if Bundle.main.bundleURL.pathExtension != "app",
-           fm.fileExists(atPath: repo.path) {
-            return repo
-        }
-        if let res = Bundle.main.resourceURL?.appendingPathComponent(name),
-           fm.fileExists(atPath: res.path) {
-            return res
-        }
-        if let url = PulseResources.url(forResource: name.replacingOccurrences(of: ".py", with: ""), withExtension: "py") {
-            return url
-        }
-        let bundled = here.appendingPathComponent("Resources/\(name)")
-        if fm.fileExists(atPath: bundled.path) { return bundled }
-        return nil
     }
 }

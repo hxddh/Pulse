@@ -4,9 +4,9 @@ import Foundation
 ///
 /// 12.3 δ. `postWaitingNotifications` used to decide and act in one method:
 /// which rows qualify, whether the rate limit allows a banner now, whether
-/// several sessions collapse into one summary — interleaved with ledger
+/// several sessions collapse into one summary — interleaved with log
 /// writes, Notification Center calls and a sound. The decision is now this
-/// planner, fed only facts; `StatusStore` carries out the plan it returns.
+/// planner, fed only facts; `WaitNotifier` carries out the plan it returns.
 /// Behaviour is unchanged; the rules are testable without a store.
 struct WaitingDelivery: Equatable {
     enum Plan: Equatable {
@@ -29,13 +29,13 @@ struct WaitingDelivery: Equatable {
     var acknowledged: Set<String>
     /// Row keys Notification Center has not answered for yet.
     var inFlight: Set<String>
-    /// `AttentionLedger.canDeliver` for this instant.
+    /// `SessionLog.canDeliver` for this instant.
     var canDeliverNow: Bool
     var msSinceLastNotification: Int64
     var minimumIntervalMs: Int64
 
     /// 22.0 · why a waiting row got no banner from this plan — the answer
-    /// to "why didn't I get a notification?", recorded on the ledger event
+    /// to "why didn't I get a notification?", recorded on the wait's record
     /// instead of being thrown away with the filter.
     enum SkipReason: String, Codable, Equatable, Sendable {
         /// The prompt was already in front of the person when it was raised.
@@ -59,8 +59,8 @@ struct WaitingDelivery: Equatable {
     /// not "skipped" — their banner is on its way.
     func skipReasons(_ rows: [AgentRow]) -> [String: SkipReason] {
         var out: [String: SkipReason] = [:]
-        for row in rows where row.waiting {
-            if row.waitRaisedInFront {
+        for row in rows where row.isBlocked {
+            if row.wait?.inFront == true {
                 out[row.rowKey] = .inFront
             } else if muted.contains(row.agent) {
                 out[row.rowKey] = .muted
@@ -75,11 +75,11 @@ struct WaitingDelivery: Equatable {
 
     func plan(_ rows: [AgentRow]) -> Plan {
         let eligible = rows.filter { row in
-            row.waiting
+            row.isBlocked
                 // 16.0: the prompt was already in front of the user when it
                 // was raised — the lamp says so; a banner and a sound would
                 // only interrupt someone who is looking at it.
-                && !row.waitRaisedInFront
+                && row.wait?.inFront != true
                 && !muted.contains(row.agent)
                 && !acknowledged.contains(row.rowKey)
                 && !inFlight.contains(row.rowKey)

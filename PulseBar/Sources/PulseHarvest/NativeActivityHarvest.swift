@@ -66,24 +66,6 @@ package enum NativeActivityHarvest {
     }
 
     package struct Fact {
-        /// 1.2: facts the session digest produced by reading the whole file.
-        /// A window can never see them, so they arrive here already computed
-        /// and are only ever copied — never re-derived from the window text.
-        package var loopTool = ""
-        package var loopCount = 0
-        package var sessionErrors = 0
-        package var toolSummary = ""
-        /// 2.1: the rest of the digest's facts, carried under the same rule.
-        /// None of these is ever recomputed from the window text — the window
-        /// is the two ends of the file and could only contradict them.
-        package var sessionTokensIn = 0
-        package var sessionTokensOut = 0
-        package var recentTools: [String] = []
-        package var digestProgressPercent = 0
-        package var digestCaughtUp = false
-        package var bytesPerMinute = 0
-        package var sessionStartedMs: Int64 = 0
-
         package var task = ""
         /// Where `task` came from. Drives merge; never rendered.
         package var taskOrigin = TaskOrigin.none
@@ -102,8 +84,6 @@ package enum NativeActivityHarvest {
         package var tokensIn = 0
         package var tokensOut = 0
         package var errors = 0
-        package var files = 0
-        package var contextPercent = 0
         package var progressDone = 0
         package var progressTotal = 0
         /// 2.8 · the agent's own plan and words, self-report tier. See
@@ -151,7 +131,7 @@ package enum NativeActivityHarvest {
             return !task.isEmpty || !cwd.isEmpty || !sessionID.isEmpty || !tool.isEmpty
                 || !skill.isEmpty || !phase.isEmpty || !outcome.isEmpty
                 || !model.isEmpty || tokensIn > 0 || tokensOut > 0
-                || errors > 0 || files > 0 || contextPercent > 0
+                || errors > 0
                 || progressDone > 0 || progressTotal > 0 || subTotal > 0
         }
 
@@ -162,8 +142,8 @@ package enum NativeActivityHarvest {
         package var hasDisplaySignal: Bool {
             !task.isEmpty || !cwd.isEmpty || !skill.isEmpty || !tool.isEmpty
                 || !phase.isEmpty || !outcome.isEmpty || !model.isEmpty
-                || tokensIn > 0 || tokensOut > 0 || errors > 0 || files > 0
-                || contextPercent > 0 || progressTotal > 0 || subTotal > 0
+                || tokensIn > 0 || tokensOut > 0 || errors > 0
+                || progressTotal > 0 || subTotal > 0
         }
     }
 
@@ -454,14 +434,6 @@ package enum NativeActivityHarvest {
         let nextCursor = firstUnreachedIndex.map {
             stableIndex[descriptors[$0].id.rawValue] ?? 0
         } ?? 0
-        // One write per scan, after every adapter has folded what it read. A
-        // fixture home folds but does not persist: a test must not leave its
-        // temporary paths in the user's digest file.
-        let realHome = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-        HarvestDigests.flush(
-            persist: SessionDigestStore.pathOverride != nil
-                || home.standardizedFileURL == realHome
-        )
         return Result(
             rows: rows,
             health: health,
@@ -947,32 +919,9 @@ package enum NativeActivityHarvest {
         // count, and EXPERIENCE forbids estimating one ("数量不估算"). A
         // truncated read reports unknown rather than a silent undercount that
         // the tray then renders as an exact "N records".
-        var digestFacts: SessionDigest?
-        var records = (ext == "jsonl" || ext == "ndjson") && !window.truncated
+        let records = (ext == "jsonl" || ext == "ndjson") && !window.truncated
             ? text.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
             : 0
-        // 1.1: the window above is the two ends of the file. The digest is the
-        // rest — folded once, as it goes past, and kept between scans. When it
-        // has reached the end of the file its count is the file's count, so a
-        // long transcript stops reporting unknown for the rest of its life.
-        // Until then nothing is claimed: an in-progress catch-up leaves the
-        // window's answer exactly as it was.
-        if ext == "jsonl" || ext == "ndjson" {
-            let digest = HarvestDigests.advance(url: item, size: size)
-            if let digest {
-                // `records` keeps that gate, and 2.1 keeps it for `records`
-                // alone: a partial fold is a floor, never a total.
-                if digest.caughtUp, digest.records > 0 { records = digest.records }
-                // 2.1: everything else is qualitative and was never a total.
-                // "It has called Bash eleven times and hit four errors" does
-                // not become false because there are more records still to
-                // read; it becomes *incomplete*, which the row states outright
-                // through `digestProgressPercent` / `digestCaughtUp`. Holding
-                // these back until catch-up meant a long, busy session — the
-                // one a person most needs to see — showed nothing at all.
-                digestFacts = digest
-            }
-        }
         for index in parsed.indices {
             parsed[index].sourcePath = item.path
             if parsed[index].activityMs <= 0 {
@@ -980,24 +929,6 @@ package enum NativeActivityHarvest {
             }
             parsed[index].startedMs = birth > 0 && birth <= mtime + 1000 ? birth : 0
             parsed[index].records = records
-            if let digestFacts {
-                if let loop = digestFacts.repeatedTool {
-                    parsed[index].loopTool = loop.name
-                    parsed[index].loopCount = loop.count
-                }
-                parsed[index].sessionErrors = digestFacts.errors
-                parsed[index].toolSummary = SessionDigestSummary.line(digestFacts.toolCounts)
-                // Carried, never re-derived. `recentTools` is already bounded
-                // and identifier-shaped by the fold; nothing here is parsed
-                // out of the window a second time.
-                parsed[index].recentTools = digestFacts.recentTools
-                parsed[index].sessionTokensIn = digestFacts.tokensIn
-                parsed[index].sessionTokensOut = digestFacts.tokensOut
-                parsed[index].digestProgressPercent = digestFacts.progressPercent
-                parsed[index].digestCaughtUp = digestFacts.caughtUp
-                parsed[index].bytesPerMinute = digestFacts.bytesPerMinute
-                parsed[index].sessionStartedMs = digestFacts.firstFoldedMs
-            }
             parsed[index].windowTruncated = window.truncated
             parsed[index].structured = structured
             if id.waitingSource == .none, parsed[index].skill == "pending" {

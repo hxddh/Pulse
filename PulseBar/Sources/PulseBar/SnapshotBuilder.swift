@@ -3,27 +3,23 @@ import Foundation
 /// The merge core: probe hits + harvest rows + attention entries → tray rows and
 /// a `PulseSnapshot`.
 ///
-/// This used to live inside `StatusStore.applyScan`, where six kinds of side
-/// effect (`Date()`, running-app enumeration, disk stats, system notifications,
-/// timers, logging) made the most regression-prone logic in the product
-/// impossible to test. Everything the merge needs from the outside world is now
-/// injected through `Context`, and everything it wants the world to *do* comes
-/// back as data — notification edges, cleared keys, log lines. The store stays
-/// in charge of policy and I/O; this stays a function of its inputs.
+/// Everything the merge needs from the outside world is injected through
+/// `Context`, and everything it wants the world to *do* comes back as data —
+/// notification edges, released dismissals, log lines. The store stays in
+/// charge of policy and I/O; this stays a function of its inputs.
+///
+/// 23.0 · **identity is decided once.** Every row is born with the key
+/// `RowIdentity` gives it and keeps it: a session row is keyed by the
+/// vendor's session, a hook wait with no session row by the session it names
+/// (so the transcript turning up later finds the same key), and a process
+/// with no session is its own ephemeral `agent|pid:<pid>` row that is simply
+/// not built once a session row for the agent exists — it never "upgrades".
+/// Nothing downstream has to follow a key from one name to another.
 enum SnapshotBuilder {
 
     /// Safety bound for the searchable session index, not the glance viewport.
-    /// The tray folds globally after `maxVisibleRows`; 0.50 raises retain so
-    /// search can cover up to 500 sessions per agent without dumping them into
-    /// the menu-bar panel.
     static let maxSessionsPerAgent = 500
     /// Rows shown before the "and N more" fold.
-    ///
-    /// Was 5, but every row also carried a permanently visible action strip, so
-    /// the panel's fixed 300pt viewport fit about three — people with four or
-    /// five agents running had to scroll to learn that. Actions moved to hover
-    /// for non-waiting rows and the panel is sized by its content now, so this
-    /// can be what it should always have been.
     static let maxVisibleRows = 12
     /// How long a harvest `pending` (an ask written into a vendor's own
     /// session file) may stay red with no process of that agent alive. The
@@ -41,16 +37,11 @@ enum SnapshotBuilder {
         var lang: ResolvedLanguage
         var maxSessionsPerAgent: Int
         var maxVisibleRows: Int
-        /// Harvest `pending` rows the user soft-dismissed.
+        /// Harvest `pending` / vendor waits the user soft-dismissed.
         var dismissedPendingKeys: Set<String>
         var showAllAgents: Bool
-        /// Silence deadlines by row key — a "remind me later" the user set.
-        var snoozedUntilMs: [String: Int64]
         /// Seconds of silence that make a live row stalled; 0 disables it.
         var stalledSeconds: Double
-        /// Agents whose protected App Data the user has not granted. Used only
-        /// to label ObservationQuality gaps — never to invent facts.
-        var privacyLimitedAgents: Set<AgentID>
 
         init(
             nowMs: Int64,
@@ -60,9 +51,7 @@ enum SnapshotBuilder {
             maxVisibleRows: Int = SnapshotBuilder.maxVisibleRows,
             dismissedPendingKeys: Set<String> = [],
             showAllAgents: Bool = false,
-            snoozedUntilMs: [String: Int64] = [:],
-            stalledSeconds: Double = AgentRow.stalledSeconds,
-            privacyLimitedAgents: Set<AgentID> = []
+            stalledSeconds: Double = AgentRow.stalledSeconds
         ) {
             self.nowMs = nowMs
             self.terminal = terminal
@@ -71,9 +60,7 @@ enum SnapshotBuilder {
             self.maxVisibleRows = maxVisibleRows
             self.dismissedPendingKeys = dismissedPendingKeys
             self.showAllAgents = showAllAgents
-            self.snoozedUntilMs = snoozedUntilMs
             self.stalledSeconds = stalledSeconds
-            self.privacyLimitedAgents = privacyLimitedAgents
         }
     }
 
@@ -81,11 +68,9 @@ enum SnapshotBuilder {
         var procs: [ProcessProbe.Hit] = []
         /// Already resolved to the rows this scan should use (fresh or cached).
         var harvest: [ActivityHarvest.Row] = []
-        /// True when the harvest failed outright — only then can we claim Error.
-        var harvestUnreliable: Bool = false
         var attention: [AttentionReader.Entry] = []
-        /// 2.9: push-fresh activity events from the hook's spool. Local
-        /// sessions only; never a wait, never a new row.
+        /// 2.9: push-fresh activity events from the hook's spool. They move a
+        /// session's live clock; never a wait, never a new row.
         var activity: [ActivitySpool.Event] = []
         /// 18.0: sessions Claude itself reports as waiting (`claude agents`).
         var vendorWaits: [ClaudeAgentsProbe.Wait] = []
@@ -95,6 +80,11 @@ enum SnapshotBuilder {
     struct Previous {
         var rows: [AgentRow] = []
         var waitingKeys: Set<String> = []
+        /// When each open wait was raised, by its evidence's clock
+        /// (`SessionLog.waitingSince`). A key still waiting whose wait now
+        /// carries a later raise is a new wait (`SessionLog.isNewRaise`) —
+        /// the second ask on the same row gets its own edge.
+        var waitingSince: [String: Int64] = [:]
     }
 
     struct Result {
@@ -106,84 +96,48 @@ enum SnapshotBuilder {
         var newlyWaiting: [AgentRow] = []
         /// Rows that were Waiting and no longer are.
         var resolvedWaits: [AgentRow] = []
-        /// The lamp went from busy to fully idle.
-        var wentIdle: Bool = false
-        /// Soft-dismissed keys whose `pending` cleared — the store may forget them.
+        /// Soft-dismissed keys whose source stopped reporting — the store may
+        /// release them.
         var clearedPendingKeys: Set<String> = []
-        /// Process-only / Attention adoption that changed row identity (old → new).
-        var remappedRowKeys: [String: String] = [:]
         /// `showAllAgents` after collapsing it when the list got short again.
         var showAllAgents: Bool = false
         /// Lines the caller should log; keeps `DebugLog` out of the pure path.
         var debugNotes: [String] = []
     }
 
+    /// A row while the merge is still deciding its state.
+    private struct Draft {
+        var row: AgentRow
+        var wait: RowWait?
+        var turnSinceMs: Int64 = 0
+        /// The vendor said this turn is complete.
+        var completed = false
+        /// The vendor's phase says it is running, process or not.
+        var explicitRunning = false
+        var subagentsRunning = false
+        /// The harvest carried something about this session.
+        var hasEvidence = false
+        var processOnly = false
+    }
+
     private static func t(_ key: L10n.Key, _ lang: ResolvedLanguage) -> String {
         L10n.t(key, lang)
     }
 
-    /// Short, process-independent digest of a row's identity.
-    ///
-    /// `Hasher` / `hashValue` are seeded per launch, so they would give the
-    /// same session a different row key after every restart — the exact defect
-    /// this exists to remove. FNV-1a over the UTF-8 bytes is stable across
-    /// launches, machines and Swift versions, and eight hex digits are plenty
-    /// to separate the handful of sessions that ever share one project.
-    static func stableIdentityHash(_ text: String) -> String {
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        for byte in text.utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 0x0000_0100_0000_01b3
-        }
-        return String(format: "%08x", UInt32(truncatingIfNeeded: hash ^ (hash >> 32)))
-    }
-
-    /// The row key for a harvest row whose `sessionKey` cannot stand alone.
-    ///
-    /// Only fields that cannot change while the session is alive take part:
-    /// the working directory it was started in and its start time. `tool`,
-    /// `phase`, `progress` and friends move as the agent works, and a key that
-    /// moves with them would lose a snooze mid-wait. `task` is the last resort
-    /// rather than a first-class part of the seed — a vendor may rename a
-    /// session once, early, which is still far steadier than array order.
-    ///
-    /// When even that is empty the row has no durable identity of its own, so
-    /// the old ordinal remains: two rows that nothing on disk tells apart must
-    /// still become two rows rather than merge into one.
-    static func stableRowKey(
-        base: String,
-        act: ActivityHarvest.Row,
-        ordinal: Int,
-        taken: [String: AgentRow]
-    ) -> String {
-        var seed: [String] = []
-        if !act.cwd.isEmpty { seed.append("c:\(act.cwd)") }
-        if act.startedMs > 0 { seed.append("s:\(act.startedMs)") }
-        if seed.isEmpty, !act.task.isEmpty { seed.append("t:\(act.task)") }
-        guard !seed.isEmpty else {
-            return taken[base] == nil ? base : "\(base)#\(ordinal)"
-        }
-        let stable = "\(base)#\(stableIdentityHash(seed.joined(separator: "\u{1}")))"
-        guard taken[stable] != nil else { return stable }
-        var twin = 2
-        while taken["\(stable)~\(twin)"] != nil { twin += 1 }
-        return "\(stable)~\(twin)"
-    }
-
     static func build(_ input: Input, previous: Previous, context: Context) -> Result {
         var result = Result()
+        let nowMs = context.nowMs
 
-        var rowsByKey: [String: AgentRow] = [:]
+        var drafts: [String: Draft] = [:]
         var liveHits: [AgentID: ProcessProbe.Hit] = [:]
         var perAgentSessionCount: [AgentID: Int] = [:]
         var droppedSessionsByAgent: [AgentID: Int] = [:]
-        /// 21.0: sessions left out for being older than the fresh window,
-        /// by agent — said in the tray instead of only in debug.log.
+        /// 21.0: sessions left out for being older than the fresh window.
         var staleHiddenByAgent: [AgentID: Int] = [:]
         var observedHarvestKeys: Set<String> = []
 
         for hit in input.procs {
-            // Prefer richer hit if duplicate agent ids appear.
+            // Prefer the richer hit if duplicate agent ids appear.
             if let existing = liveHits[hit.id] {
                 if existing.tty.isEmpty, !hit.tty.isEmpty { liveHits[hit.id] = hit }
             } else {
@@ -207,32 +161,26 @@ enum SnapshotBuilder {
             liveHits.removeValue(forKey: .cursorAgent)
         }
 
-        func normalizedAgent(_ id: AgentID) -> AgentID { id.surfaceID }
-
         // A live CLI may preserve one known goal when its session store has
         // stopped updating, but it is not a blanket lease for every unfinished
-        // rollout that Agent ever wrote. Prefer fresh rows. Only when an Agent
-        // has no fresh/subagent row at all may one best stale, unfinished row
-        // inherit the live process.
+        // rollout that Agent ever wrote. Only when an Agent has no fresh row
+        // at all may its best stale, unfinished row inherit the live process.
         var agentsWithFreshRows = Set<AgentID>()
         for act in input.harvest {
-            let agent = normalizedAgent(act.id)
-            if ActivityHarvest.isFresh(act, nowMs: context.nowMs) || act.subRunning > 0 {
-                agentsWithFreshRows.insert(agent)
+            if ActivityHarvest.isFresh(act, nowMs: nowMs) || act.subRunning > 0 {
+                agentsWithFreshRows.insert(act.id.surfaceID)
             }
         }
-
         var staleFallbackByAgent: [AgentID: Int] = [:]
         for (index, act) in input.harvest.enumerated() {
-            let agent = normalizedAgent(act.id)
+            let agent = act.id.surfaceID
             guard liveHits[agent] != nil,
                   !agentsWithFreshRows.contains(agent),
-                  !ActivityHarvest.isFresh(act, nowMs: context.nowMs),
+                  !ActivityHarvest.isFresh(act, nowMs: nowMs),
                   act.subRunning == 0,
                   !act.isCompleted,
                   act.harvestMs > 0
             else { continue }
-
             guard let existingIndex = staleFallbackByAgent[agent] else {
                 staleFallbackByAgent[agent] = index
                 continue
@@ -249,19 +197,18 @@ enum SnapshotBuilder {
         }
         let staleFallbackIndices = Set(staleFallbackByAgent.values)
 
+        // MARK: 1 · Session rows, from the harvest.
+
         for (harvestIndex, act) in input.harvest.enumerated() {
             let agentID = act.id.surfaceID
-
-            let fresh = ActivityHarvest.isFresh(act, nowMs: context.nowMs)
-            let isStaleFallback = staleFallbackIndices.contains(harvestIndex)
-            if !fresh, act.subRunning == 0, !isStaleFallback {
+            let fresh = ActivityHarvest.isFresh(act, nowMs: nowMs)
+            if !fresh, act.subRunning == 0, !staleFallbackIndices.contains(harvestIndex) {
                 result.debugNotes.append("drop stale harvest \(agentID.rawValue) hm=\(act.harvestMs)")
-                if act.harvestMs > 0, context.nowMs - act.harvestMs <= staleHiddenWindowMs {
+                if act.harvestMs > 0, nowMs - act.harvestMs <= staleHiddenWindowMs {
                     staleHiddenByAgent[agentID, default: 0] += 1
                 }
                 continue
             }
-
             let count = perAgentSessionCount[agentID, default: 0]
             if count >= context.maxSessionsPerAgent {
                 // Don't drop it silently — the tray says how many were held back.
@@ -269,487 +216,259 @@ enum SnapshotBuilder {
                 continue
             }
 
-            let key = ActivityHarvest.sessionKey(
-                id: agentID,
-                sessionID: act.sessionID,
-                project: act.project,
-                cwd: act.cwd
-            )
-            // Avoid colliding keys when a second session lacks a session id.
-            //
-            // The suffix used to be `#\(count + 1)` — the number of rows this
-            // agent had already contributed *in this scan* — and it was only
-            // applied to whichever colliding row arrived second. Both halves
-            // depended on harvest order: the same two sessions swapped keys
-            // when the collector enumerated them the other way round, and the
-            // survivor of a pair silently reverted to the bare key when its
-            // sibling went stale. Snooze, soft-dismiss, notification
-            // de-duplication and the Look fingerprint are all stored against
-            // `rowKey`, so every drift dropped a snooze or replayed a Waiting
-            // edge (U-6).
-            //
-            // A session id already makes the key unique and stable; when the
-            // collector has none, the discriminator comes from the row's own
-            // durable identity instead of from its position in the array.
-            var finalKey = key
-            let needsDiscriminator = act.sessionID.isEmpty
-                || (rowsByKey[key] != nil && rowsByKey[key]?.sessionID != act.sessionID)
-            if needsDiscriminator {
-                finalKey = stableRowKey(
-                    base: key,
-                    act: act,
-                    ordinal: count + 1,
-                    taken: rowsByKey
-                )
+            // The same vendor session (or the same file) seen twice is one
+            // row whose facts merge; two sessions nothing on disk tells apart
+            // stay two rows.
+            var key = act.rowKey
+            if drafts[key] != nil, act.sessionID.isEmpty, act.transcriptPath.isEmpty {
+                var twin = 2
+                while drafts["\(key)~\(twin)"] != nil { twin += 1 }
+                key = "\(key)~\(twin)"
             }
-            observedHarvestKeys.insert(finalKey)
+            observedHarvestKeys.insert(key)
 
-            var row = rowsByKey[finalKey] ?? AgentRow(rowKey: finalKey, agent: agentID)
+            var draft = drafts[key] ?? Draft(row: AgentRow(rowKey: key, agent: agentID))
+            var row = draft.row
             if !act.sessionID.isEmpty { row.sessionID = act.sessionID }
-            if !act.task.isEmpty { row.task = act.task }
+            // A live tool id promoted into `task` is an action, not a goal.
+            if !act.task.isEmpty, act.task.caseInsensitiveCompare(act.tool) != .orderedSame {
+                row.task = act.task
+            }
             if !act.project.isEmpty { row.project = act.project }
             if !act.cwd.isEmpty { row.cwd = act.cwd }
-            if !act.tool.isEmpty { row.tool = act.tool }
-            if !act.skill.isEmpty { row.skill = act.skill }
-            if act.tokensIn > 0 { row.tokensIn = act.tokensIn }
-            if act.tokensOut > 0 { row.tokensOut = act.tokensOut }
-            if act.harvestMs > 0 { row.harvestMs = act.harvestMs }
-            if act.subTotal > 0 {
-                row.subRunning = act.subRunning
-                row.subTotal = act.subTotal
-            }
-            if act.records > 0 { row.records = act.records }
-            if act.startedMs > 0 { row.startedMs = act.startedMs }
-            if !act.phase.isEmpty { row.phase = act.phase }
-            if !act.outcome.isEmpty { row.outcome = act.outcome }
             if !act.model.isEmpty { row.model = act.model }
-            if !act.mode.isEmpty { row.mode = act.mode }
             if act.errors > 0 { row.errors = act.errors }
-            if act.files > 0 { row.files = act.files }
-            if act.contextPercent > 0 { row.contextPercent = act.contextPercent }
-            if act.progressDone > 0 { row.progressDone = act.progressDone }
-            if act.progressTotal > 0 { row.progressTotal = act.progressTotal }
-            // 2.8 self-report: the agent's own plan and words. Copied like
-            // task/tool — same epistemic tier, same rules. Display decides
-            // freshness; the builder only carries.
-            if !act.planStep.isEmpty { row.planStep = act.planStep }
-            if !act.planSteps.isEmpty { row.planSteps = act.planSteps }
+            if act.harvestMs > 0 { row.harvestMs = act.harvestMs }
+            if act.startedMs > 0 { row.startedMs = act.startedMs }
+            // 2.8 self-report: carried, never re-derived; display decides
+            // freshness.
+            if !act.planSteps.isEmpty {
+                row.planSteps = act.planSteps
+            } else if !act.planStep.isEmpty, row.planSteps.isEmpty {
+                row.planSteps = [ActivityHarvest.PlanStep(text: act.planStep, state: .current)]
+            }
             if !act.lastWord.isEmpty { row.lastWord = act.lastWord }
             if !act.lastErrorText.isEmpty { row.lastErrorText = act.lastErrorText }
-            // Digest facts: carried straight through. They were produced by
-            // reading the whole transcript, and nothing here can second-guess
-            // them without reading it again.
-            if !act.loopTool.isEmpty {
-                row.loopTool = act.loopTool
-                row.loopCount = act.loopCount
-            }
-            if act.sessionErrors > 0 { row.sessionErrors = act.sessionErrors }
-            if !act.toolSummary.isEmpty { row.toolSummary = act.toolSummary }
-            // 2.1 Evidence: same discipline, more facts. Copied verbatim —
-            // no truncation, no re-ordering, no re-derivation. The digest read
-            // the transcript; the builder did not, so it has nothing to add
-            // and everything to lose by second-guessing.
-            if act.sessionTokensIn > 0 { row.sessionTokensIn = act.sessionTokensIn }
-            if act.sessionTokensOut > 0 { row.sessionTokensOut = act.sessionTokensOut }
-            if !act.recentTools.isEmpty { row.recentTools = act.recentTools }
-            if act.digestProgressPercent > 0 { row.digestProgressPercent = act.digestProgressPercent }
-            // `false` is a real answer here — "still catching up" must be able
-            // to survive a merge, so this one is assigned unconditionally.
-            row.digestCaughtUp = act.digestCaughtUp
-            if act.bytesPerMinute > 0 { row.bytesPerMinute = act.bytesPerMinute }
             // Carried, never re-derived: only the collector saw the disk.
             row.cwdBestEffort = act.cwdBestEffort
-            if act.sessionStartedMs > 0 { row.sessionStartedMs = act.sessionStartedMs }
-            // 4.0-α: carried, never derived — only the collector knows which
-            // file the facts came from.
-            if !act.transcriptPath.isEmpty { row.transcriptPath = act.transcriptPath }
-            row.observationSource = act.evidence
+            row.source = RowSource(act.evidence)
+            draft.row = row
 
-            // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.
-            if act.skill == "pending", ActivityHarvest.isFresh(act, nowMs: context.nowMs) {
-                if !context.dismissedPendingKeys.contains(finalKey) {
-                    row.waiting = true
-                    row.waitKind = harvestWaitKind(tool: act.tool, phase: act.phase)
-                    row.waitSignal = .pending
-                    row.waitSinceMs = act.harvestMs > 0 ? act.harvestMs : context.nowMs
+            let phase = act.phase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            draft.completed = draft.completed
+                || phase == "turn_complete" || phase == "completed" || phase == "complete"
+            draft.explicitRunning = draft.explicitRunning
+                || phase == "running" || phase == "in_progress" || phase == "working" || phase == "executing"
+            draft.subagentsRunning = draft.subagentsRunning || act.subRunning > 0
+            draft.hasEvidence = draft.hasEvidence || hasHarvestEvidence(act)
+
+            // Harvest pending → Waiting, only for an agent whose format has
+            // a stated source (`waiting: .harvestPending`). 23.0: an
+            // unverified reader's `pending` is not evidence of a block.
+            if act.skill == "pending", agentID.waitingSource != .none, fresh {
+                if !context.dismissedPendingKeys.contains(key) {
+                    draft.wait = RowWait(
+                        kind: harvestWaitKind(tool: act.tool, phase: act.phase),
+                        sinceMs: act.harvestMs > 0 ? act.harvestMs : nowMs,
+                        signal: .pending
+                    )
                 }
-            } else if context.dismissedPendingKeys.contains(finalKey) {
+            } else if context.dismissedPendingKeys.contains(key) {
                 // Pending cleared — the soft dismiss has served its purpose.
-                //
-                // Only a key the store is actually holding belongs here. This
-                // used to report every non-pending row on every scan, so the
-                // store received a large non-empty set two to five seconds
-                // apart, subtracted nothing from its tombstones, and rewrote
-                // `dismissed-pending.json` anyway (U-5).
-                result.clearedPendingKeys.insert(finalKey)
+                result.clearedPendingKeys.insert(key)
             }
 
-            rowsByKey[finalKey] = row
+            drafts[key] = draft
             perAgentSessionCount[agentID] = count + 1
         }
 
-        // 0.95: a reliable complete scan that no longer observes a dismissed
-        // key means the session left — forget the tombstone so a genuine new
-        // pending on the same identity can re-raise.
-        if !input.harvestUnreliable {
-            for key in context.dismissedPendingKeys where !observedHarvestKeys.contains(key) {
-                result.clearedPendingKeys.insert(key)
+        // 0.95: a scan that no longer observes a dismissed key means the
+        // session left — forget the tombstone so a genuine new pending on the
+        // same identity can re-raise.
+        for key in context.dismissedPendingKeys where !observedHarvestKeys.contains(key) {
+            result.clearedPendingKeys.insert(key)
+        }
+
+        // MARK: 2 · Hooks — onto a session row, or a hook-only row.
+
+        for att in input.attention {
+            switch matchAttention(att, in: drafts.values.map(\.row)) {
+            case .hit(let key):
+                guard var draft = drafts[key] else { continue }
+                if !att.session.isEmpty, draft.row.sessionID.isEmpty { draft.row.sessionID = att.session }
+                // 23.0: the entry's own session, exactly (possibly empty) —
+                // the `done` that clears it must carry the same spelling.
+                if att.isTurn {
+                    // 16.0: a finished turn marks the row it belongs to and
+                    // nothing else — no wait, no invented row.
+                    if draft.wait == nil {
+                        draft.turnSinceMs = att.tsMs
+                        draft.row.attentionSession = att.session
+                    }
+                } else {
+                    draft.wait = hookWait(att)
+                    draft.row.attentionSession = att.session
+                    if draft.row.cwd.isEmpty, !att.cwd.isEmpty { draft.row.cwd = att.cwd }
+                }
+                drafts[key] = draft
+            case .ambiguous:
+                // A truncated id matched several sessions — never invent Waiting.
+                result.debugNotes.append("attention ambiguous session=\(att.session) agent=\(att.id.rawValue)")
+            case .unmatched:
+                // A turn with no row has nothing to mark: a row invented from
+                // "it finished" would have no other evidence.
+                guard !att.isTurn else { continue }
+                let key = att.hookRowKey
+                var draft = drafts[key] ?? Draft(row: AgentRow(rowKey: key, agent: att.id.surfaceID))
+                draft.row.sessionID = att.session
+                draft.row.attentionSession = att.session
+                if draft.row.cwd.isEmpty { draft.row.cwd = att.cwd }
+                if draft.row.project.isEmpty { draft.row.project = AgentRow.shortProject(att.cwd) }
+                draft.row.source = .hooks
+                draft.wait = hookWait(att)
+                drafts[key] = draft
             }
         }
 
-        // Attach live process to at most one session row per agent (no smear).
+        // MARK: 3 · Processes — onto the agent's best row, or their own row.
+
         for (agentID, hit) in liveHits {
-            let keys = rowsByKey.keys.filter { rowsByKey[$0]?.agent == agentID }
-            if keys.isEmpty {
-                let key = agentID.rawValue
+            let keys = drafts.keys.filter { drafts[$0]?.row.agent == agentID }
+            guard !keys.isEmpty else {
+                let key = RowIdentity.process(agent: agentID, pid: hit.pid)
                 var row = AgentRow(rowKey: key, agent: agentID)
-                row.liveProcess = true
-                row.processCount = hit.count
-                row.viaWarp = hit.viaWarp
-                row.hostApp = hit.hostApp
-                row.pid = hit.pid
-                row.cpuPercent = hit.cpuPercent
-                row.rssBytes = hit.rssBytes
-                row.tty = hit.tty
-                row.processEvidence = hit.evidence
                 row.cwd = hit.cwd
                 row.project = AgentRow.shortProject(hit.cwd)
+                row.source = .process
+                attach(hit, to: &row)
                 if hit.elapsedSeconds > 0 {
-                    row.processStartedMs = context.nowMs - Int64(hit.elapsedSeconds * 1000)
+                    row.startedMs = nowMs - Int64(hit.elapsedSeconds * 1000)
                 }
-                rowsByKey[key] = row
+                var draft = Draft(row: row)
+                draft.processOnly = true
+                drafts[key] = draft
                 continue
             }
+            // One process, one row (no smear): the wait first, then an
+            // unfinished session, then the one in the process's folder, then
+            // the freshest.
             let bestKey = keys.max { a, b in
-                let ra = rowsByKey[a]!, rb = rowsByKey[b]!
-                if ra.waiting != rb.waiting { return !ra.waiting && rb.waiting }
-                if ra.isCompletedPhase != rb.isCompletedPhase {
-                    return ra.isCompletedPhase && !rb.isCompletedPhase
-                }
-                if ra.harvestMs != rb.harvestMs { return ra.harvestMs < rb.harvestMs }
-                return a < b
+                let da = drafts[a]!, db = drafts[b]!
+                if (da.wait != nil) != (db.wait != nil) { return db.wait != nil }
+                if da.completed != db.completed { return da.completed }
+                let ca = !hit.cwd.isEmpty && da.row.cwd == hit.cwd
+                let cb = !hit.cwd.isEmpty && db.row.cwd == hit.cwd
+                if ca != cb { return cb }
+                if da.row.harvestMs != db.row.harvestMs { return da.row.harvestMs < db.row.harvestMs }
+                return a > b
             }!
-            for key in keys {
-                guard var row = rowsByKey[key] else { continue }
-                if key == bestKey {
-                    row.liveProcess = true
-                    row.processCount = max(row.processCount, hit.count)
-                    row.viaWarp = hit.viaWarp || row.viaWarp
-                    if row.hostApp == nil { row.hostApp = hit.hostApp }
-                    if hit.pid != 0 { row.pid = hit.pid }
-                    // A real sample replaces "unknown"; unknown never
-                    // overwrites a real one.
-                    if hit.cpuPercent >= 0 { row.cpuPercent = hit.cpuPercent }
-                    if hit.rssBytes > 0 { row.rssBytes = hit.rssBytes }
-                    if !hit.tty.isEmpty { row.tty = hit.tty }
-                    row.processEvidence = hit.evidence
-                    if row.cwd.isEmpty, !hit.cwd.isEmpty {
-                        row.cwd = hit.cwd
-                        row.project = AgentRow.shortProject(hit.cwd)
-                    }
-                    if hit.elapsedSeconds > 0 {
-                        row.processStartedMs = context.nowMs - Int64(hit.elapsedSeconds * 1000)
-                    }
-                } else {
-                    row.liveProcess = false
-                    // Do not inherit any process count on sibling sessions.
-                    // A single ProcessProbe hit is attached to one best row;
-                    // the other rows remain harvest-only observations.
-                }
-                rowsByKey[key] = row
+            guard var draft = drafts[bestKey] else { continue }
+            attach(hit, to: &draft.row)
+            if draft.row.cwd.isEmpty, !hit.cwd.isEmpty {
+                draft.row.cwd = hit.cwd
+                if draft.row.project.isEmpty { draft.row.project = AgentRow.shortProject(hit.cwd) }
             }
+            drafts[bestKey] = draft
         }
 
         // A vendor-file `pending` with no process of that agent alive and
         // no activity for `pendingWithoutProcessMaxAgeMs` is not red: the
         // ask was written down, but nothing on this Mac is still waiting on
-        // it (Cline's ui_messages ask, Goose's elicitation, Kimi's
-        // interaction.request, OpenHands' waiting_for_confirmation all
-        // survive the app being quit). Hooks, below, may still raise it.
-        for (key, row) in rowsByKey
-        where row.waiting && row.waitSignal == .pending && liveHits[row.agent] == nil
-            && row.waitSinceMs > 0
-            && context.nowMs - row.waitSinceMs > pendingWithoutProcessMaxAgeMs {
-            var updated = row
-            updated.waiting = false
-            updated.waitKind = ""
-            updated.waitSignal = nil
-            updated.waitSinceMs = 0
-            rowsByKey[key] = updated
-            result.debugNotes.append("stale pending without process \(row.agent.rawValue)")
+        // it. A hook raise (signal `.hooks`) is not affected.
+        for (key, draft) in drafts {
+            guard let wait = draft.wait, wait.signal == .pending,
+                  liveHits[draft.row.agent] == nil,
+                  wait.sinceMs > 0, nowMs - wait.sinceMs > pendingWithoutProcessMaxAgeMs
+            else { continue }
+            var updated = draft
+            updated.wait = nil
+            drafts[key] = updated
+            result.debugNotes.append("stale pending without process \(draft.row.agent.rawValue)")
         }
 
-        // Hooks attention — prefer session / cwd match, else best row for agent.
-        for att in input.attention {
-            switch matchAttentionRow(att, in: rowsByKey) {
-            case .hit(let targetKey):
-                guard var best = rowsByKey[targetKey] else { continue }
-                // 16.0: a finished turn marks the row it belongs to and
-                // nothing else — no wait, no invented process, no rekey.
-                if att.isTurn {
-                    if !best.waiting {
-                        best.yourTurn = true
-                        best.turnSinceMs = att.tsMs
-                        // A process-only row that adopts a turn needs the
-                        // session, or "seen" / dismiss have nothing to name.
-                        if best.sessionID.isEmpty, !att.session.isEmpty { best.sessionID = att.session }
-                        if !att.session.isEmpty { best.attentionSession = att.session }
-                    }
-                    rowsByKey[targetKey] = best
-                    continue
-                }
-                if !att.session.isEmpty { best.attentionSession = att.session }
-                best.waitRaisedInFront = att.front == true
-                best.waiting = true
-                best.waitKind = att.kind
-                best.waitSignal = .hooks
-                best.waitMessage = att.message
-                best.waitSinceMs = att.tsMs
-                if best.sessionID.isEmpty, !att.session.isEmpty { best.sessionID = att.session }
-                if best.cwd.isEmpty, !att.cwd.isEmpty { best.cwd = att.cwd }
-                best.processCount = max(best.processCount, 1)
-                // 0.96: rekey process-only adoption so snooze/dismiss follow harvest identity.
-                let newKey = ActivityHarvest.sessionKey(
-                    id: best.agent,
-                    sessionID: best.sessionID,
-                    project: best.project,
-                    cwd: best.cwd
-                )
-                if newKey != targetKey, rowsByKey[newKey] == nil {
-                    rowsByKey.removeValue(forKey: targetKey)
-                    best.rowKey = newKey
-                    rowsByKey[newKey] = best
-                    result.remappedRowKeys[targetKey] = newKey
-                } else {
-                    rowsByKey[targetKey] = best
-                }
-                continue
-            case .ambiguous:
-                // Truncated id matched multiple siblings — never invent Waiting.
-                result.debugNotes.append(
-                    "attention ambiguous session=\(att.session) agent=\(att.id.rawValue)"
-                )
-                continue
-            case .unmatched:
-                // A turn with no row has nothing to mark: a row invented from
-                // "it finished" would have no other evidence.
-                if att.isTurn { continue }
-            }
-            let key: String = {
-                if !att.session.isEmpty {
-                    return ActivityHarvest.sessionKey(id: att.id.surfaceID, sessionID: att.session, project: "", cwd: att.cwd)
-                }
-                return att.id.surfaceID.rawValue
-            }()
-            var row = AgentRow(rowKey: key, agent: att.id.surfaceID)
-            row.sessionID = att.session
-            row.cwd = att.cwd
-            row.project = AgentRow.shortProject(att.cwd)
-            row.waiting = true
-            row.waitKind = att.kind
-            row.waitSignal = .hooks
-            row.waitMessage = att.message
-            row.waitSinceMs = att.tsMs
-            row.waitRaisedInFront = att.front == true
-            row.processCount = max(row.processCount, 1)
-            rowsByKey[key] = row
-        }
+        // MARK: 4 · Claude's own report of a waiting session (18.0).
 
-        // 18.0: Claude's own report of a waiting session. A hook raise for the
-        // same session already said it (and said it first); a report with no
-        // row has no other evidence and makes none. Soft-dismissible like a
-        // harvest pending.
+        // A hook raise for the same session already said it (and said it
+        // first); a report with no row has no other evidence and makes none.
+        // Soft-dismissible like a harvest pending.
         for wait in input.vendorWaits {
-            guard let key = rowsByKey.first(where: { _, row in
-                row.agent == .claude
-                    && ((!wait.sessionID.isEmpty && row.sessionID == wait.sessionID)
-                        || (wait.sessionID.isEmpty && wait.pid > 0 && row.pid == wait.pid))
-            })?.key, var row = rowsByKey[key] else { continue }
+            guard let key = drafts.keys.sorted().first(where: { key in
+                guard let row = drafts[key]?.row, row.agent == .claude else { return false }
+                if !wait.sessionID.isEmpty { return row.sessionID == wait.sessionID }
+                return wait.pid > 0 && row.pid == wait.pid
+            }), var draft = drafts[key] else { continue }
             if context.dismissedPendingKeys.contains(key) {
                 // The user soft-dismissed this wait and Claude still reports
-                // it: the tombstone has not served its purpose yet. The
-                // harvest pass above released it (the harvest row is not
-                // `pending`, or the key is process-only), and releasing it
-                // here would bring the red lamp straight back next scan.
+                // it: the tombstone has not served its purpose yet.
                 result.clearedPendingKeys.remove(key)
                 continue
             }
-            guard !row.waiting else { continue }
-            row.waiting = true
-            // The same protocol tokens a hook raise carries.
+            guard draft.wait == nil else { continue }
+            let kind: String
             switch wait.kind {
-            case .permission: row.waitKind = "Permission"
-            case .question: row.waitKind = "Input"
-            default: row.waitKind = "Waiting"
+            case .permission: kind = "Permission"
+            case .question: kind = "Input"
+            default: kind = "Waiting"
             }
-            row.waitSignal = .vendor
-            row.waitMessage = wait.reason
-            row.waitSinceMs = wait.sinceMs
-            rowsByKey[key] = row
+            draft.wait = RowWait(kind: kind, ask: wait.reason, sinceMs: wait.sinceMs, signal: .vendor)
+            drafts[key] = draft
         }
 
-        // 2.9 activity events: push-fresh "now" from the hook, applied to
-        // the matching local session row. Never a wait, and never a new row —
-        // an event without a row means the harvest has not met this session
-        // yet, and a row invented from one line would have no other evidence.
-        // The stamp feeds `activityChangedMs` (the live-signal clock), not
-        // `harvestMs`: the session moved now, but its facts are still as old
-        // as their harvest.
+        // MARK: 5 · Live clocks.
+
+        // 2.9 activity events: push-fresh "now" from the hook, applied to the
+        // matching session row. Never a wait, and never a new row.
         for event in input.activity {
             guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
-            for (key, row) in rowsByKey
-            where row.agent == agent && row.sessionID == event.session {
-                var updated = row
-                updated.applyActivity(event, nowMs: context.nowMs)
-                rowsByKey[key] = updated
+            for (key, draft) in drafts
+            where draft.row.agent == agent && !event.session.isEmpty && draft.row.sessionID == event.session {
+                var updated = draft
+                updated.row.applyActivity(event, nowMs: nowMs)
+                drafts[key] = updated
             }
         }
 
-        // 16.0: "your turn" ends when the session moves again — a tool call
-        // after the turn ended, or the transcript growing well after it (the
-        // user answered in a way no hook reported). A blocked wait is never
-        // also "your turn".
-        for (key, row) in rowsByKey where row.yourTurn {
-            if !SnapshotBuilder.turnStillOwed(row) {
-                var updated = row
-                updated.yourTurn = false
-                updated.turnSinceMs = 0
-                rowsByKey[key] = updated
-            }
+        // A hook raise is answered in the vendor's own prompt, and nothing
+        // writes `done` when it is: the approved tool simply runs. Its
+        // PreToolUse fired *before* the PermissionRequest, so only activity
+        // stamped after the raise — the next tool, a new prompt — says the
+        // session moved on. Session-scoped: the activity was applied above
+        // only to the row owning that exact session.
+        for (key, draft) in drafts {
+            guard let wait = draft.wait, wait.signal == .hooks,
+                  wait.sinceMs > 0, draft.row.activityMs > wait.sinceMs
+            else { continue }
+            var updated = draft
+            updated.wait = nil
+            drafts[key] = updated
+            result.debugNotes.append("hook wait answered \(draft.row.agent.rawValue) activity after raise")
         }
 
-        // A harvest row is still useful without a matching process: a session
-        // store can outlive its CLI process and should remain observable. Do
-        // not manufacture a process count merely to keep it in the tray; the
-        // count is reserved for ProcessProbe evidence.
-        func hasHarvestEvidence(_ row: AgentRow) -> Bool {
-            guard row.observationSource != .process else { return false }
-            return row.harvestMs > 0
-                || row.startedMs > 0
-                || !row.task.isEmpty
-                || !row.cwd.isEmpty
-                || !row.sessionID.isEmpty
-                || !row.model.isEmpty
-                || !row.phase.isEmpty
-                || !row.outcome.isEmpty
-                || row.tokensIn > 0
-                || row.tokensOut > 0
-                || row.records > 0
-                || row.files > 0
-                || row.errors > 0
-                || row.contextPercent > 0
-                || row.progressDone > 0
-                || row.progressTotal > 0
-        }
-        var all = Array(rowsByKey.values).filter {
-            $0.liveProcess || $0.waiting || $0.subRunning > 0
-                || hasHarvestEvidence($0)
-        }
+        // MARK: 6 · One state per row.
 
-        // Compare the same concrete session with the prior scan. Preserve a
-        // meaningful change briefly so a 5-second polling interval does not
-        // turn it into a one-frame flash.
-        // Not `uniqueKeysWithValues`: that construct traps on a duplicate
-        // key, and a trap here is the menu bar vanishing.
-        let previousByKey = Dictionary(
-            previous.rows.map { ($0.rowKey, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let changeLifetimeMs: Int64 = 3 * 60 * 1000
-        for index in all.indices {
-            guard let old = previousByKey[all[index].rowKey] else { continue }
-            let current = all[index]
-            let changed: AgentActivityChange? = {
-                // Filesystems and vendor stores often expose second-level
-                // mtimes. A session can therefore advance its progress or
-                // token counters without increasing `harvestMs`; requiring a
-                // strictly newer timestamp made the change banner silently
-                // miss exactly the fast updates users look for.
-                let signalMoved = current.outcome != old.outcome
-                    || current.errors != old.errors
-                    || current.progressDone != old.progressDone
-                    || current.progressTotal != old.progressTotal
-                    || current.files != old.files
-                    || current.tokensIn != old.tokensIn
-                    || current.tokensOut != old.tokensOut
-                    || current.model != old.model
-                    || current.mode != old.mode
-                    || current.records != old.records
-                    || current.subRunning != old.subRunning
-                    || current.subTotal != old.subTotal
-                    // 0.91 Row Story — tool/phase/task are what users mean by
-                    // "it moved", even when token counters stay flat.
-                    || current.tool != old.tool
-                    || current.phase != old.phase
-                    || current.task != old.task
-                guard current.harvestMs > 0,
-                      current.harvestMs > old.harvestMs || signalMoved
-                else { return nil }
-                let outcome = current.outcome.lowercased()
-                let oldOutcome = old.outcome.lowercased()
-                if outcome != oldOutcome {
-                    if outcome.contains("fail") || outcome.contains("error") { return .failed }
-                    if outcome.contains("cancel") || outcome.contains("abort") { return .cancelled }
-                    if outcome.contains("complete") { return .completed }
-                }
-                if current.errors > old.errors { return .errors(current.errors - old.errors) }
-                if current.progressTotal > 0,
-                   current.progressDone > old.progressDone {
-                    return .progress(done: current.progressDone, total: current.progressTotal)
-                }
-                if current.files > old.files { return .files(current.files - old.files) }
-                if current.tool != old.tool, !current.tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return .toolChanged
-                }
-                if current.phase != old.phase, !current.phase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return .phaseChanged
-                }
-                if current.task != old.task, !current.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    return .taskChanged
-                }
-                if current.tokensIn != old.tokensIn || current.tokensOut != old.tokensOut
-                    || current.model != old.model || current.mode != old.mode
-                    || current.records != old.records {
-                    return .modelCall
-                }
-                return nil
-            }()
-            if let changed {
-                all[index].activityChange = changed
-                all[index].activityChangedMs = context.nowMs
-            } else if let priorChange = old.activityChange,
-                      old.activityChangedMs > 0,
-                      context.nowMs - old.activityChangedMs <= changeLifetimeMs {
-                all[index].activityChange = priorChange
-                all[index].activityChangedMs = old.activityChangedMs
+        var all: [AgentRow] = []
+        for draft in drafts.values {
+            guard draft.row.liveProcess || draft.wait != nil || draft.subagentsRunning
+                || draft.hasEvidence || draft.processOnly
+            else { continue }
+            var row = draft.row
+            if let wait = draft.wait {
+                row.state = .blocked(wait)
+            } else if draft.processOnly {
+                row.state = .processOnly
+            } else if draft.turnSinceMs > 0,
+                      turnStillOwed(sinceMs: draft.turnSinceMs, harvestMs: row.harvestMs, activityMs: row.activityMs) {
+                row.state = .yourTurn(sinceMs: draft.turnSinceMs)
+            } else if draft.subagentsRunning
+                        || (!draft.completed && (row.liveProcess || draft.explicitRunning)) {
+                row.state = .running
+            } else {
+                row.state = .recent
             }
-        }
-
-        // Resolve focus once per scan. Doing this per row inside the SwiftUI body
-        // meant enumerating running apps and stat-ing the disk on every redraw.
-        var snoozeUntilByKey = context.snoozedUntilMs
-        for (oldKey, newKey) in result.remappedRowKeys {
-            if let until = snoozeUntilByKey[oldKey] {
-                snoozeUntilByKey[newKey] = until
-            }
-        }
-        for i in all.indices {
-            let row = all[i]
-            all[i].isStalled = !row.isCompletedPhase && AgentRow.stalled(
-                harvestMs: row.harvestMs,
-                nowMs: context.nowMs,
-                waiting: row.waiting,
-                live: row.liveProcess || row.isExplicitlyRunningPhase || row.subRunning > 0,
-                threshold: context.stalledSeconds,
-                activityChangedMs: all[i].activityChangedMs
-            )
-            // Resolved here for the same reason as `isStalled`: a countdown
-            // read from `Date()` inside a view body drifts away from the scan
-            // that produced the row it is drawn on.
-            if row.waiting, let until = snoozeUntilByKey[row.rowKey], until > context.nowMs {
-                all[i].snoozeRemainingSeconds = Double(until - context.nowMs) / 1000.0
-            }
-            all[i].focusTier = TerminalFocus.focusTier(
+            // Resolved once per scan against the scan's own clock.
+            row.isStalled = row.state == .running
+                && AgentRow.stalled(lastActivityMs: row.lastActivityMs, nowMs: nowMs, threshold: context.stalledSeconds)
+            row.focusTier = TerminalFocus.focusTier(
                 tty: row.tty,
                 viaWarp: row.viaWarp,
                 hostApp: row.hostApp,
@@ -757,31 +476,29 @@ enum SnapshotBuilder {
                 workspaceVerified: !row.cwdBestEffort,
                 env: context.terminal
             )
-            let privacy = row.agent.requiresAppDataOptIn
-                && context.privacyLimitedAgents.contains(row.agent)
-            all[i].refreshObservationQuality(privacyLimited: privacy)
+            all.append(row)
         }
 
-        // Waiting → active → stalled → recent; evidence quality and agent
-        // priority only break ties inside the same operational state.
-        //
-        // Within Waiting, the oldest goes first: when three agents are blocked,
-        // "who has been stuck longest" is the question the list should answer.
-        // A zero timestamp means unknown, which sorts last rather than first.
+        // Waiting → active → stalled → recent; within Waiting the oldest
+        // first (unknown last); a real title, a live process and agent
+        // priority break ties; the key makes the order total, so the same
+        // world always lists the same way.
         all.sort { a, b in
-            if a.waiting != b.waiting { return a.waiting && !b.waiting }
-            if a.waiting && b.waiting, a.waitSinceMs != b.waitSinceMs {
-                if a.waitSinceMs == 0 { return false }
-                if b.waitSinceMs == 0 { return true }
-                return a.waitSinceMs < b.waitSinceMs
+            if a.isBlocked != b.isBlocked { return a.isBlocked }
+            let wa = a.wait?.sinceMs ?? 0, wb = b.wait?.sinceMs ?? 0
+            if a.isBlocked, wa != wb {
+                if wa == 0 { return false }
+                if wb == 0 { return true }
+                return wa < wb
             }
             if a.section != b.section { return a.section.rawValue < b.section.rawValue }
-            if a.hasSessionTitle != b.hasSessionTitle { return a.hasSessionTitle && !b.hasSessionTitle }
-            if a.liveProcess != b.liveProcess { return a.liveProcess && !b.liveProcess }
-            if (a.subRunning > 0) != (b.subRunning > 0) { return a.subRunning > 0 && b.subRunning == 0 }
+            let ta = a.usefulTask != nil, tb = b.usefulTask != nil
+            if ta != tb { return ta }
+            if a.liveProcess != b.liveProcess { return a.liveProcess }
             let ra = AgentID.priority.firstIndex(of: a.agent) ?? 999
             let rb = AgentID.priority.firstIndex(of: b.agent) ?? 999
-            return ra < rb
+            if ra != rb { return ra < rb }
+            return a.rowKey < b.rowKey
         }
         // Attribute held-back sessions to that agent's top row, so the badge
         // appears once rather than on every sibling session.
@@ -796,279 +513,138 @@ enum SnapshotBuilder {
 
         result.rows = all
         result.showAllAgents = context.showAllAgents && all.count > context.maxVisibleRows
+        result.waitingKeys = Set(all.filter(\.isBlocked).map(\.rowKey))
 
-        let waitingCount = all.filter(\.waiting).count
-        let liveRunning = all.filter { $0.section == .running }.count
-        let healthyRunning = all.filter(\.isHealthyRunning).count
-        let thinRunning = all.filter(\.isThinRunning).count
-        let stalledCount = all.filter { $0.section == .stalled }.count
-        let recentOnly = all.filter { $0.section == .recent }.count
-        result.waitingKeys = Set(all.filter(\.waiting).map(\.rowKey))
+        result.snapshot = snapshot(rows: all, showAll: result.showAllAgents, staleHiddenByAgent: staleHiddenByAgent, context: context)
 
-        /// Menu-bar lamp for non-Waiting fleets.
-        /// Priority: any stalled → orange; else healthy Running → green; else
-        /// thin/process-only Running → orange (not healthy green); else idle.
-        func liveFleetGlance() -> GlanceKind {
-            if stalledCount > 0 { return .stalled }
-            if healthyRunning > 0 { return .running }
-            if thinRunning > 0 || liveRunning > 0 { return .stalled }
-            return .idle
+        // Edges — reported, not acted on. `WaitNotifier` owns notification
+        // policy. Keys are stable: an edge is a key that was not waiting, or
+        // one whose wait is a new raise (a second ask on the same row).
+        result.newlyWaiting = all.filter { row in
+            guard row.isBlocked else { return false }
+            guard previous.waitingKeys.contains(row.rowKey) else { return true }
+            guard let since = previous.waitingSince[row.rowKey] else { return false }
+            return SessionLog.isNewRaise(row, previousSinceMs: since)
         }
+        result.resolvedWaits = previous.rows.filter { $0.isBlocked && !result.waitingKeys.contains($0.rowKey) }
+        result.activity = activity(rows: all)
+        return result
+    }
+
+    /// The cadence tier. 23.0: by row state, like the lamp and the header —
+    /// a process with no session, or a finished turn whose CLI stays open,
+    /// is not work in progress and must not hold the fast cadence.
+    static func activity(rows: [AgentRow]) -> ProbeSchedule.Activity {
+        if rows.contains(where: \.isBlocked) { return .waiting }
+        if rows.contains(where: { $0.state == .running }) { return .running }
+        return rows.isEmpty ? .empty : .recent
+    }
+
+    /// The glance, header, tooltip and lamp for a row list.
+    private static func snapshot(
+        rows all: [AgentRow],
+        showAll: Bool,
+        staleHiddenByAgent: [AgentID: Int],
+        context: Context
+    ) -> PulseSnapshot {
+        let lang = context.lang
+        let nowMs = context.nowMs
+        let waitingRows = all.filter(\.isBlocked)
+        let waitingCount = waitingRows.count
+        let census = Census(rows: all)
 
         var snap = PulseSnapshot()
         snap.totalCount = all.count
-        snap.turnCount = all.filter(\.yourTurn).count
         snap.sectionTotals = [
             .needsYou: waitingCount,
-            .running: liveRunning,
-            .stalled: stalledCount,
-            .recent: recentOnly,
+            .running: all.filter { $0.section == .running }.count,
+            .stalled: all.filter { $0.section == .stalled }.count,
+            .recent: all.filter { $0.section == .recent }.count,
         ]
-        // Oldest wait = smallest non-zero timestamp. Computed here so the view
-        // never has to scan rows to decide what the menu bar should say.
-        let waitStamps = all.filter { $0.waiting && $0.waitSinceMs > 0 }.map(\.waitSinceMs)
-        if let oldest = waitStamps.min() {
-            snap.longestWaitSeconds = max(0, Double(context.nowMs - oldest) / 1000.0)
-        }
-        window(rows: all, showAll: result.showAllAgents, maxVisible: context.maxVisibleRows, into: &snap)
+        // Oldest wait = smallest non-zero timestamp.
+        let waitStamps = waitingRows.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }
+        window(rows: all, showAll: showAll, maxVisible: context.maxVisibleRows, into: &snap)
 
-        let lang = context.lang
-
-        // Distinct projects — the header's one legitimate subject.
-        var projectNames: [String] = []
-        for r in all {
-            let p = r.displayPath
-            guard !p.isEmpty, !projectNames.contains(p) else { continue }
-            projectNames.append(p)
-        }
-        snap.projectCount = projectNames.count
-
-        /// What the header may say.
-        ///
-        /// It read `relative(updatedAt)` — computed microseconds after
-        /// `updatedAt = Date()`, so always "just now". 0.24 replaced that with
-        /// the agent names, which the rows already carry: the panel then said
-        /// "2 running / Cursor · Amp" above two rows that each named their own
-        /// agent. A header earns its line only by stating something no single
-        /// row can — how much is hidden, or how far the work is spread.
-        func aggregate() -> String {
-            if snap.hiddenCount > 0 {
-                return String(format: t(.andMore, lang), snap.hiddenCount)
-            }
-            if projectNames.count > 1 {
-                return String(format: t(.acrossProjects, lang), projectNames.count)
-            }
-            // One project is on every row already. Saying it again here is the
-            // exact duplication this rewrite exists to remove.
-            return ""
-        }
-
-        /// A complete operational census. Unlike agent names or "just now",
-        /// these counts cannot be recovered from a single row and they explain
-        /// every row the header sits above.
-        func stateSummary() -> String {
-            var bits: [String] = []
-            if waitingCount > 0 { bits.append("\(waitingCount) \(t(.waitingN, lang))") }
-            if liveRunning > 0 { bits.append("\(liveRunning) \(t(.runningN, lang))") }
-            if stalledCount > 0 { bits.append("\(stalledCount) \(t(.sectionStalled, lang).lowercased())") }
-            if recentOnly > 0 { bits.append("\(recentOnly) \(t(.recentN, lang))") }
-            return bits.joined(separator: " · ")
-        }
-
-        // Header accounts for all four states; no live-but-stalled row is
-        // allowed to inflate the healthy Running count.
-        if all.isEmpty, input.harvestUnreliable, liveHits.isEmpty {
-            snap.glance = .error
-            snap.title = "!"
-            snap.tooltip = t(.cantRefresh, lang)
-            snap.headerTitle = t(.cantRefresh, lang)
-            snap.headerDetail = ""
-            snap.header = t(.cantRefresh, lang)
-            snap.probeError = "probe+harvest unavailable"
-        } else if waitingCount > 0 {
-            // Snoozed waits keep their row, their section and their place in
-            // the count — the panel tells the truth. What they lose is the
-            // menu bar: no red lamp, no elapsed time, nothing in the corner of
-            // your eye. That suppression *is* the feature; without it "remind
-            // me later" reminds you continuously.
-            let waitingRows = all.filter { $0.waiting && !$0.isSnoozed }
-            snap.glance = waitingRows.isEmpty
-                ? liveFleetGlance()
-                : .waiting
-            let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            // The menu bar carries the two facts that decide whether to look:
-            // how many are blocked, and how long the worst one has waited.
-            //
-            // A wait younger than five seconds formats as "now", which says
-            // nothing the lamp has not already said — so hold the space until
-            // the number is worth it, and let the label escalate on its own
-            // from "Claude…" to a duration that still fits the 8-cell budget
-            // (`1 · 4m` when `Claude · 4m` is too wide).
-            // Elapsed time in the menu bar must come from the waits that are
-            // still shouting, not from a snoozed one that happens to be older.
-            let activeStamps = waitingRows.filter { $0.waitSinceMs > 0 }.map(\.waitSinceMs)
-            let activeOldest = activeStamps.min().map { max(0, Double(context.nowMs - $0) / 1000.0) } ?? 0
-            let rawDuration = activeOldest > 0
-                ? DurationFormat.label(seconds: activeOldest, lang: lang)
-                : ""
-            let dur = rawDuration == t(.durNow, lang) ? "" : rawDuration
-            if waitingRows.isEmpty {
-                // Every wait is snoozed. The lamp already went quiet above; the
-                // menu bar text goes with it, and the panel keeps the count.
-                snap.title = ""
-                snap.tooltip = "\(t(.needsYou, lang)) · \(t(.snoozed, lang))"
-                snap.headerTitle = stateSummary()
-            } else if waitingRows.count == 1, let w = waitingRows.first {
-                let named = dur.isEmpty
-                    ? "\(w.agent.displayName)…"
-                    : "\(w.agent.displayName) · \(dur)"
-                let counted = dur.isEmpty ? "1" : "1 · \(dur)"
-                snap.title = GlanceTitle.fit(named, counted, "1")
-                // `waitKind` is a protocol token (`Permission` / `Input`), not
-                // user copy. Printing it raw put a bare English word in the
-                // Chinese tooltip; the row chip and the banner had already
-                // learned to translate it.
-                let reason = w.waitKind.isEmpty
-                    ? (w.waitMessage.isEmpty ? t(.needsYou, lang) : w.waitMessage)
-                    : L10n.waitKind(w.waitKind, lang)
-                snap.tooltip = dur.isEmpty
-                    ? "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason)"
-                    : "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason) · \(dur)"
-                snap.headerTitle = stateSummary()
-            } else {
-                let counted = dur.isEmpty
-                    ? "\(waitingRows.count)"
-                    : "\(waitingRows.count) · \(dur)"
-                snap.title = GlanceTitle.fit(counted, "\(waitingRows.count)")
-                snap.tooltip = dur.isEmpty
-                    ? "\(t(.needsYou, lang)): \(nameJoin)"
-                    : "\(t(.needsYou, lang)): \(nameJoin) · \(dur)"
-                snap.headerTitle = stateSummary()
-            }
-            snap.headerDetail = aggregate()
-            snap.header = snap.headerDetail.isEmpty
-                ? snap.headerTitle
-                : "\(snap.headerTitle) · \(snap.headerDetail)"
-        } else if liveRunning > 0 || stalledCount > 0 {
-            snap.glance = liveFleetGlance()
-            let liveRows = all.filter { $0.section == .running }
-            let stalledRows = all.filter { $0.section == .stalled }
-            let busyRows = liveRows + stalledRows
-            let liveNames = busyRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            let oldestStall = stalledRows.map { $0.lastActivitySeconds(at: context.nowMs) }.filter { $0 > 0 }.max() ?? 0
-            let stalledDur = oldestStall > 0
-                ? DurationFormat.label(seconds: oldestStall, lang: lang)
-                : ""
-            if healthyRunning == 1, stalledCount == 0, thinRunning == 0 {
-                let name = liveRows.first(where: \.isHealthyRunning)?.agent.displayName
-                    ?? liveRows[0].agent.displayName
-                snap.title = GlanceTitle.fit(name, "1")
-                snap.tooltip = "\(name) \(t(.running, lang))"
-            } else if snap.glance == .stalled, liveRunning == 0 || stalledCount > 0 {
-                // Stall-only, or mixed fleet where stall wins the lamp: surface
-                // count + oldest silence so the corner matches Waiting's "how long".
-                let n = max(stalledCount, liveRunning + stalledCount)
-                snap.title = "\(stalledCount > 0 ? stalledCount : n)"
-                if stalledCount > 0 {
-                    snap.tooltip = stalledDur.isEmpty
-                        ? "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames)"
-                        : "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames) · \(stalledDur)"
-                } else {
-                    snap.tooltip = "\(stateSummary()): \(liveNames)"
-                }
-            } else if snap.glance == .stalled {
-                // Thin / process-only Running — orange lamp, not "healthy".
-                snap.title = "\(liveRunning)"
-                snap.tooltip = "\(stateSummary()): \(liveNames)"
-            } else {
-                snap.title = "\(liveRunning + stalledCount)"
-                snap.tooltip = "\(stateSummary()): \(liveNames)"
-            }
-            snap.headerTitle = stateSummary()
-            snap.headerDetail = aggregate()
-            snap.header = snap.headerDetail.isEmpty
-                ? snap.headerTitle
-                : "\(snap.headerTitle) · \(snap.headerDetail)"
-        } else if recentOnly > 0 {
-            snap.glance = .idle
-            snap.title = ""
-            snap.tooltip = "Pulse · \(recentOnly) \(t(.recentN, lang))"
-            snap.headerTitle = recentOnly == 1
-                ? t(.recent1, lang)
-                : "\(recentOnly) \(t(.recentN, lang))"
-            snap.headerDetail = aggregate()
-            snap.header = snap.headerDetail.isEmpty
-                ? snap.headerTitle
-                : "\(snap.headerTitle) · \(snap.headerDetail)"
+        // 23.0 · the lamp. Red when anything is blocked; orange only for a
+        // stalled session; green for a running session; grey otherwise — a
+        // finished turn is grey even while its process lives, and a process
+        // with no session is grey, never orange and never green.
+        let sessionRunning = census.running > 0
+        if waitingCount > 0 {
+            snap.glance = .waiting
+        } else if census.stalled > 0 {
+            snap.glance = .stalled
+        } else if sessionRunning {
+            snap.glance = .running
         } else {
             snap.glance = .idle
+        }
+
+        // The menu bar carries a title only when something is blocked: how
+        // many, and how long the oldest has waited. A wait younger than five
+        // seconds says nothing the lamp has not.
+        if waitingCount > 0 {
+            let oldest = waitStamps.min().map { max(0, Double(nowMs - $0) / 1000.0) } ?? 0
+            let raw = oldest > 0 ? DurationFormat.label(seconds: oldest, lang: lang) : ""
+            let dur = raw == t(.durNow, lang) ? "" : raw
+            snap.title = dur.isEmpty
+                ? "\(waitingCount)"
+                : GlanceTitle.fit("\(waitingCount) · \(dur)", "\(waitingCount)")
+        } else {
             snap.title = ""
-            snap.tooltip = "Pulse · \(t(.idleWord, lang))"
-            snap.headerTitle = t(.noAgents, lang)
-            snap.headerDetail = ""
-            snap.header = t(.noAgents, lang)
         }
-        snap.accessibilityLabel = t(snap.glance.accessibilityKey, lang)
-        if snap.glance == .waiting || snap.glance == .stalled || snap.glance == .error {
-            // Keep VoiceOver aligned with the explainable menu-bar tooltip.
-            if !snap.tooltip.isEmpty {
-                snap.accessibilityLabel = snap.tooltip
-            }
-        }
+
+        snap.headerTitle = census.summary(lang)
+
+        // One sentence for the tooltip and VoiceOver: the rule that set the
+        // lamp. The tray names the sessions.
+        let explanation = LampExplanation.make(rows: all, glance: snap.glance)
+        snap.tooltip = explanation.sentence(lang)
+        snap.lamp = LampFace.glance(snap.glance, processOnly: explanation.rule == .processOnly)
+        snap.accessibilityLabel = snap.glance == .idle
+            ? t(snap.glance.accessibilityKey, lang)
+            : snap.tooltip
         snap.staleHidden = staleHiddenByAgent.values.reduce(0, +)
         snap.staleHiddenAgents = staleHiddenByAgent.keys.sorted {
             (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
         }
-        // 22.0: why the lamp is this colour — the rule, up to three sessions
-        // that drove it, and what was left out. Shown under the menu-bar
-        // tooltip; the tooltip's own first line is unchanged.
-        snap.lampLines = LampExplanation.make(
-            rows: all,
-            glance: snap.glance,
-            staleHidden: snap.staleHidden,
-            narrator: RowNarrator(
-                lang: lang,
-                nowMs: context.nowMs,
-                stallMinutes: Int(context.stalledSeconds / 60)
-            )
-        ).lines(lang)
-        result.snapshot = snap
+        return snap
+    }
 
-        // Edges — reported, not acted on. The store owns notification policy.
-        let previousLampBusy = previous.rows.contains {
-            $0.waiting || $0.section == .running || $0.section == .stalled
-        }
-        let nowLampBusy = all.contains {
-            $0.waiting || $0.section == .running || $0.section == .stalled
-        }
-        result.wentIdle = previousLampBusy && !nowLampBusy
+    /// Every row counted once, by its state — the census VoiceOver announces.
+    struct Census: Equatable {
+        var blocked = 0
+        var running = 0
+        var stalled = 0
+        var yourTurn = 0
+        var processOnly = 0
+        var recent = 0
 
-        var previousWaiting = previous.waitingKeys
-        for (oldKey, newKey) in result.remappedRowKeys {
-            if previousWaiting.contains(oldKey) {
-                previousWaiting.remove(oldKey)
-                previousWaiting.insert(newKey)
+        init(rows: [AgentRow]) {
+            for row in rows {
+                switch row.state {
+                case .blocked: blocked += 1
+                case .running: if row.isStalled { stalled += 1 } else { running += 1 }
+                case .yourTurn: yourTurn += 1
+                case .processOnly: processOnly += 1
+                case .recent: recent += 1
+                }
             }
         }
-        let newcomers = result.waitingKeys.subtracting(previousWaiting)
-        result.newlyWaiting = all.filter { newcomers.contains($0.rowKey) }
-        result.resolvedWaits = previous.rows.filter { row in
-            guard row.waiting else { return false }
-            let liveKey = result.remappedRowKeys[row.rowKey] ?? row.rowKey
-            return !result.waitingKeys.contains(liveKey)
-        }
 
-        if waitingCount > 0 {
-            result.activity = .waiting
-        } else if liveRunning > 0 || stalledCount > 0 {
-            result.activity = .running
-        } else if recentOnly > 0 {
-            result.activity = .recent
-        } else {
-            result.activity = .empty
+        /// "1 needs you · 2 running · 1 recent", or "No coding agents".
+        func summary(_ lang: ResolvedLanguage) -> String {
+            func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+            var bits: [String] = []
+            // 23.0: "1 needs you", not "1 need you".
+            if blocked > 0 { bits.append("\(blocked) \(t(blocked == 1 ? .waiting1 : .waitingN))") }
+            if running > 0 { bits.append("\(running) \(t(.runningN))") }
+            if stalled > 0 { bits.append("\(stalled) \(t(.stalledN))") }
+            if yourTurn > 0 { bits.append("\(yourTurn) \(t(.yourTurnN))") }
+            if processOnly > 0 { bits.append("\(processOnly) \(t(.processOnlyN))") }
+            if recent > 0 { bits.append(recent == 1 ? t(.recent1) : "\(recent) \(t(.recentN))") }
+            return bits.isEmpty ? t(.noAgents) : bits.joined(separator: " · ")
         }
-
-        return result
     }
 
     /// Fold the row list down to what the tray shows.
@@ -1088,6 +664,39 @@ enum SnapshotBuilder {
         snap.totalCount = rows.count
         // Sessions dropped by the per-agent cap are separate from folded rows.
         snap.cappedSessions = rows.reduce(0) { $0 + $1.hiddenSessions }
+    }
+
+    private static func attach(_ hit: ProcessProbe.Hit, to row: inout AgentRow) {
+        row.liveProcess = true
+        row.viaWarp = row.viaWarp || hit.viaWarp
+        if row.hostApp == nil { row.hostApp = hit.hostApp }
+        if hit.pid != 0 { row.pid = hit.pid }
+        if !hit.tty.isEmpty { row.tty = hit.tty }
+    }
+
+    private static func hookWait(_ att: AttentionReader.Entry) -> RowWait {
+        RowWait(kind: att.kind, ask: att.message, sinceMs: att.tsMs, signal: .hooks, inFront: att.front == true)
+    }
+
+    /// Whether the harvest carried anything about the session at all. A
+    /// session store can outlive its CLI process and stay observable; the
+    /// row needs something besides a live process to exist on its own.
+    private static func hasHarvestEvidence(_ act: ActivityHarvest.Row) -> Bool {
+        guard act.evidence != .process else { return false }
+        return act.harvestMs > 0
+            || act.startedMs > 0
+            || !act.task.isEmpty
+            || !act.cwd.isEmpty
+            || !act.sessionID.isEmpty
+            || !act.model.isEmpty
+            || !act.phase.isEmpty
+            || !act.outcome.isEmpty
+            || act.tokensIn > 0
+            || act.tokensOut > 0
+            || act.records > 0
+            || act.errors > 0
+            || act.progressDone > 0
+            || act.progressTotal > 0
     }
 
     /// Harvest only stamps `skill=pending`. Map approval/permission evidence
@@ -1113,86 +722,70 @@ enum SnapshotBuilder {
     /// (the vendor's own last bookkeeping) before growth means new work.
     static let turnResumeSlackMs: Int64 = 15_000
 
-    /// Is a row's "your turn" still owed? Pure, for the builder and tests.
-    static func turnStillOwed(_ row: AgentRow) -> Bool {
-        guard row.yourTurn, !row.waiting, row.turnSinceMs > 0 else { return false }
-        if row.activityChangedMs > row.turnSinceMs { return false }
-        if row.harvestMs > row.turnSinceMs + turnResumeSlackMs { return false }
+    /// 16.0: "your turn" ends when the session moves again — a tool call
+    /// after the turn ended, or the transcript growing well after it.
+    static func turnStillOwed(sinceMs: Int64, harvestMs: Int64, activityMs: Int64) -> Bool {
+        guard sinceMs > 0 else { return false }
+        if activityMs > sinceMs { return false }
+        if harvestMs > sinceMs + turnResumeSlackMs { return false }
         return true
     }
 
-    /// Match an attention entry to an existing harvest/process row.
-    ///
-    /// Identity order: session id → (empty-session process row) → cwd → best
-    /// live/fresh row for the agent.
-    /// If Attention names a **session** and every candidate already owns a
-    /// *different* session, return `.unmatched` so the caller creates a dedicated
-    /// Waiting row — never smear onto a sibling. A process-only row with an
-    /// empty session id may adopt the named wait.
-    /// Ambiguous truncated prefixes return `.ambiguous` and must not light.
+    /// Where an attention entry lands.
     enum AttentionMatch: Equatable {
         case hit(String)
         case unmatched
         case ambiguous
     }
 
-    static func matchAttentionRow(
-        _ att: AttentionReader.Entry,
-        in rowsByKey: [String: AgentRow]
-    ) -> AttentionMatch {
-        let candidates = rowsByKey.values.filter { $0.agent == att.id.surfaceID }
+    /// Match an attention entry to a session (or hook-only) row. Never a
+    /// process-only row: a process is not a session a hook can speak for.
+    ///
+    /// Identity order: the session id (exact, else a prefix that fits one
+    /// row only; several is `.ambiguous` and must not light) → the working
+    /// directory. A hook that names a session never lands on a row that owns
+    /// a different one, and (23.0) a hook that names none never lands on a
+    /// row that owns one — only a row with no session id of its own can take
+    /// an entry by folder, so the `done` that dismisses it names exactly the
+    /// entry it clears. Unmatched makes a hook-only row (the caller decides).
+    static func matchAttention(_ att: AttentionReader.Entry, in rows: [AgentRow]) -> AttentionMatch {
+        let candidates = rows.filter { $0.agent == att.id.surfaceID && !RowIdentity.isProcessKey($0.rowKey) }
         guard !candidates.isEmpty else { return .unmatched }
-
+        let pool = candidates.filter { $0.sessionID.isEmpty }
         if !att.session.isEmpty {
-            // Exact match first; prefix only when uniquely resolvable so a
-            // truncated Attention id cannot smear onto a sibling (0.95).
             let sessionMatches = candidates.filter {
-                guard !$0.sessionID.isEmpty else { return false }
-                return $0.sessionID == att.session
-                    || att.session.hasPrefix($0.sessionID)
-                    || $0.sessionID.hasPrefix(att.session)
+                !$0.sessionID.isEmpty && (
+                    $0.sessionID == att.session
+                        || att.session.hasPrefix($0.sessionID)
+                        || $0.sessionID.hasPrefix(att.session)
+                )
             }
             if let exact = sessionMatches.first(where: { $0.sessionID == att.session }) {
                 return .hit(exact.rowKey)
             }
-            if sessionMatches.count == 1 {
-                return .hit(sessionMatches[0].rowKey)
-            }
-            if sessionMatches.count > 1 {
-                return .ambiguous
-            }
-            // Process-only / unset-session rows can adopt the named wait.
-            if let unset = candidates.first(where: { $0.sessionID.isEmpty }) {
-                return .hit(unset.rowKey)
-            }
-            // Every candidate already owns a different session — do not smear.
-            return .unmatched
+            if sessionMatches.count == 1 { return .hit(sessionMatches[0].rowKey) }
+            if sessionMatches.count > 1 { return .ambiguous }
         }
-        if !att.cwd.isEmpty {
-            if let hit = candidates.first(where: {
-                !$0.cwd.isEmpty && (
-                    $0.cwd == att.cwd
-                        || $0.cwd.hasPrefix(att.cwd + "/")
-                        || att.cwd.hasPrefix($0.cwd + "/")
-                )
-            }) {
-                return .hit(hit.rowKey)
-            }
-            let want = AgentRow.shortProject(att.cwd)
-            if !want.isEmpty, let hit = candidates.first(where: {
-                AgentRow.shortProject($0.project) == want || AgentRow.shortProject($0.cwd) == want
-            }) {
-                return .hit(hit.rowKey)
+        guard !att.cwd.isEmpty, !pool.isEmpty else { return .unmatched }
+        /// The freshest wins a tie; the key makes it total.
+        func best(_ rows: [AgentRow]) -> AgentRow? {
+            rows.max { a, b in
+                if a.harvestMs != b.harvestMs { return a.harvestMs < b.harvestMs }
+                return a.rowKey > b.rowKey
             }
         }
-        var ranked = candidates
-        ranked.sort { a, b in
-            if a.liveProcess != b.liveProcess { return a.liveProcess && !b.liveProcess }
-            return a.harvestMs > b.harvestMs
+        if let exact = best(pool.filter { $0.cwd == att.cwd }) { return .hit(exact.rowKey) }
+        if let nested = best(pool.filter {
+            !$0.cwd.isEmpty && ($0.cwd.hasPrefix(att.cwd + "/") || att.cwd.hasPrefix($0.cwd + "/"))
+        }) {
+            return .hit(nested.rowKey)
         }
-        if let first = ranked.first {
-            return .hit(first.rowKey)
+        // Rows that know only an encoded project name: one unique match.
+        let want = AgentRow.shortProject(att.cwd)
+        let named = pool.filter {
+            $0.cwd.isEmpty && !want.isEmpty && AgentRow.shortProject($0.project) == want
         }
+        if named.count == 1 { return .hit(named[0].rowKey) }
         return .unmatched
     }
 }

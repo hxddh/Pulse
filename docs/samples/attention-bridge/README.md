@@ -1,7 +1,8 @@
 # Attention bridge samples
 
 Minimal scripts that raise a real Waiting line for Agents whose
-`waitingSource` is `.none`. They write Attention Protocol v1 — see
+`waitingSource` is `.none`. They write Attention Protocol v3 (all eight
+columns) — see
 [`docs/attention-protocol.md`](../../attention-protocol.md) and
 [`docs/attention-bridge.md`](../../attention-bridge.md).
 
@@ -31,12 +32,8 @@ Usage:
 ```
 
 All scripts **prefer** `~/Library/Application Support/Pulse/pulse-hook`
-(native, no Python) and only fall back to a direct TSV append when the launcher
+(native) and only fall back to a direct TSV append when the launcher
 is missing.
 
 These are **samples**, not an installer. Do not expand the Claude/Codex hook
 installer to cover these Agents.
-
-In-app: Settings → Waiting signals → **Write sample Waiting** appends one
-Attention line for **all seven** Waiting-none Agents (`pulse-sample` session);
-**Clear sample Waiting** clears them. Same contract as these scripts.

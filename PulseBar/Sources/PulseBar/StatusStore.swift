@@ -1,547 +1,123 @@
 import Foundation
 import AppKit
-import CryptoKit
 import Observation
 
-/// The app's one source of truth, observed field by field (19.0).
+/// The model every view reads (23.0): UI-facing state and the intents a view
+/// may send. Nothing else.
 ///
-/// Before 19.0 this was an `ObservableObject`: any `@Published` assignment
-/// woke every view that held the store, whether or not it drew that field.
-/// Under Observation a view is invalidated only by the properties its body
-/// actually read. Two rules keep that honest:
+/// Three classes share what used to be one ~100-property store:
 ///
-/// - Engine bookkeeping (timers, tickets, caches no view draws) is
-///   `@ObservationIgnored`, so writing it wakes nothing.
-/// - The scan path still writes a tracked property only when its value
-///   changed — Observation announces every assignment, equal or not.
-///   `ScanQuietTests` tracks every property here and holds it to that.
+/// - `ScanEngine` (not observed) owns the cadence, the background scan and
+///   every piece of bookkeeping a scan keeps between passes. It hands each
+///   finished scan to `land(_:snapshot:nowMs:)`.
+/// - `WaitNotifier` (not observed) owns the "needs you" banner: planning,
+///   posting, rate limiting, outcomes and clicks.
+/// - `StatusStore` (this, `@Observable`) holds the snapshot and rows, the
+///   settings, the session log's revision and a handful of UI flags. A view
+///   is invalidated only by the properties its body read, and Observation
+///   announces every assignment, equal or not — so every write on the scan
+///   path is guarded: a property is assigned only when its value changed.
+///   `ScanQuietTests` tracks every observed property here and holds it to
+///   that.
 @MainActor
 @Observable
 final class StatusStore {
-    var snapshot = PulseSnapshot() {
-        didSet {
-            let agents = Set(snapshot.rows.map(\.agent))
-            if agents != snapshotAgents { snapshotAgents = agents }
-        }
-    }
-    /// The agents in the current snapshot. Settings offers a mute switch per
-    /// agent Pulse has seen; reading this rather than `snapshot` keeps a
-    /// scan that only moved a row's activity from redrawing the form.
-    private(set) var snapshotAgents: Set<AgentID> = []
-    var autoProbe = true
-    var notifyOnIdle = true
-    var notifyOnWaiting = true
-    /// Quiet hours suppress idle notify only; Waiting edges still fire when notifyOnWaiting.
-    var quietHoursEnabled = false
-    /// Minutes since midnight — whole hours were too coarse for a 22:30 bedtime.
-    var quietStartMinute: Int = 22 * 60
-    var quietEndMinute: Int = 8 * 60
-    var launchAtLogin = false
+    // MARK: Observed — what views draw
+
+    var snapshot = PulseSnapshot()
+    /// Every row the last scan produced (the tray's visible window is
+    /// `snapshot.rows`); search, Health and focus read this.
+    var cachedAll: [AgentRow] = []
+    /// The person's settings, persisted as `settings.json`. Change them
+    /// through `set(_:_:)` / `setReadProtectedAppData(_:)` so the change is
+    /// saved and applied.
+    var settings = PulseSettings()
+    /// Moves only when the session log did; views that draw the log read it.
+    var logRevision = 0
+    /// The tray shows every row rather than its visible window.
+    var showAllAgents = false
+    var hooksStatus: HooksSupport.Status = .unknown
+    var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
+    /// False when the system refused the shortcut (another app owns it).
+    var hotkeyRegistered = true
     /// Whether launchd was actually left in the state `launchAtLogin` claims.
     /// `nil` until the toggle has been applied at least once this run.
     var loginItemApplied: Bool?
-    var language: AppLanguage = .auto
-    var hooksStatus: HooksSupport.Status = .unknown
-    /// Native `pulse-hook` launcher present — Attention bridge path, not Claude/Codex install.
-    var pulseHookLauncherReady = false
-    /// 21.0: why the last "ensure pulse-hook" click failed, shown beside it.
-    var pulseHookLauncherError: String?
-    var didCopyAttentionRaise = false
-    var showAllAgents = false
-    var isRefreshing = false
-    /// Transient "Copied" confirmation on the diagnostics button.
-    var didCopyDiagnostics = false
-    /// 19.0: the self-check's last result, and its button states.
-    var doctorReport: DoctorModel.Report?
-    var isRunningDoctor = false
-    var didCopyDoctorReport = false
-    /// The shape report walks the session stores, so the button says so.
-    var isCopyingShapeReport = false
-    var didCopyShapeReport = false
-    /// Agents the user muted — no notifications, still shown in the tray.
-    var mutedAgents: Set<AgentID> = []
-    /// `.off` until the person picks one (see `PulseSettings.hotkey`).
-    var hotkey: HotkeyChoice = .off
-    var hotkeyEnabled: Bool { hotkey != .off }
-    /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
-    var allowTerminalAutomation = false
-    /// Answer this Mac's own agents from Pulse, when the prompt is not in
-    /// front of you. **The key file is the source of truth**, not this flag —
-    /// a persisted setting could drift from the file the hook actually reads,
-    /// and the hook is the half that decides whether an agent waits.
-    var respondLocalEnabled = false
-    var trayGrouping: TrayGrouping = .status
-    var playSoundOnWaiting = false
-    /// Minutes of silence before a live row reads as stalled; 0 turns it off.
-    var stallMinutes = 20
-    /// How long "Later" silences a wait.
-    var snoozeMinutes = 10
-    /// Persisted: the user uninstalled the hooks, so the tray stops offering
-    /// them. Cleared by the next install.
-    var hooksNudgeOff = false
-    /// When the last scan was applied — advances on every scan, published or
-    /// not, unlike `snapshot.updatedAt` which moves only when the snapshot
-    /// changes. Read by the self-check; never drives a view.
-    @ObservationIgnored var lastScanAt: Date?
-    /// False when the system refused the shortcut (another app owns it).
-    var hotkeyRegistered = true
-    var updateCheckEnabled = true
-    /// Opt-in only: reading vendor Application Support/App Group data can
-    /// trigger macOS's cross-app privacy prompt. The default scan remains
-    /// useful through hooks, dot-directory sessions, and process evidence.
-    var allowAppData = false
-    /// Protected app-data access is scoped to the agents the user actually
-    /// wants richer details for. The all-agents switch remains available, but
-    /// a single TCC decision must never silently widen the scan to every app.
-    var appDataAgents: Set<AgentID> = []
-    var updateStatus: UpdateCheck.Status = .idle
-    var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
-    var recoveredAfterCrash = false
-    var recoveryExitKind: LaunchRecovery.ExitKind = .clean
-    /// Keep the unclean-exit banner through the first healthy scan so the user
-    /// can actually see it; clear on the next healthy scan or explicit dismiss.
-    @ObservationIgnored var recoveryNoticeSurvivedFirstHealthyScan = false
-    @ObservationIgnored var launchRecovery: LaunchRecovery?
-    /// SIGTERM → force-quit marker. Force Quit via SIGKILL still looks like a crash.
-    @ObservationIgnored var terminationSignalSource: DispatchSourceSignal?
-    var installReport = InstallTruth.Report.empty
-    var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
     var notifyAuthorized: Bool?
     /// 21.0: Notification Center refused the last "needs you" banner.
     var waitingBannerFailed = false
     /// True when the latest harvest stopped before every adapter reported.
-    /// Existing per-agent health is retained in that case; the banner exposes
-    /// the scan gap without turning every unvisited adapter into an error.
     var collectorScanIncomplete = false
-    /// Waits that have already been resolved, newest first (P1-H).
-    var waitHistory: [ResolvedWait] = []
-    /// Waits that ended while the tray was closed — "what did I miss?".
-    var missedWhileAway = 0
-    /// Sessions that moved / new waits while the tray was closed (Look Continuity).
-    var lookMovedWhileAway = 0
-    var lookNewWaitsWhileAway = 0
-    /// Localized Look Closure notice — named agents/sessions, not only counts (0.93).
-    var lookContinuityNotice = ""
-    /// Ordered Look Closure events (new wait → ended wait → moved).
-    var lookContinuityItems: [LookDeltaItem] = []
-    /// Respond (scene AR): inbound full permission requests matched to rows,
-    /// and the rows whose verdict this session already wrote. State only —
-    /// matching and actions live in StatusStore+Respond.swift, which is also
-    /// the only writer (internal set because extensions live in another file).
-    var respondInboundByRowKey: [String: RespondSpool.InboundRequest] = [:]
-    var respondVerdictSentRowKeys: Set<String> = []
-    /// Verdicts this Mac wrote, and what has become of each. The fate is read
-    /// off disk every scan — `claimVerdict` renames a verdict to `.used`
-    /// before reading it, so the agent taking it is a file fact rather than
-    /// something Pulse infers.
-    var respondDecided: [String: DecidedVerdict] = [:]
-    /// What happened the last time the user pressed a button on this row.
-    ///
-    /// A click that reached nothing used to be indistinguishable from a dead
-    /// button. `TerminalFocus.focus` returns whether it actually got
-    /// anywhere and every caller threw that away; a verdict that could not be
-    /// written went to `debug.log` and nowhere else. Both are honest failures
-    /// with a real cause, and both deserve one short sentence on the row that
-    /// offered the action — especially Deny, which the product documents as
-    /// always available precisely because refusing is the safe move.
+    var updateStatus: UpdateCheck.Status = .idle
+    /// What happened the last time the user pressed a button on this row —
+    /// a click that reached nothing says so, briefly.
     var rowActionNotices: [String: String] = [:]
-    /// Row keys marked “moved while away” until the notice is acknowledged.
-    var lookMovedRowKeys: Set<String> = []
-    /// When the tray was last dismissed, for the missed-wait count.
-    @ObservationIgnored var trayClosedAt: Date?
-    /// Fingerprint of visible rows at last tray close — Look Continuity (0.92).
-    @ObservationIgnored var trayCloseFingerprint: TrayLookFingerprint?
-
-    /// One named Look Closure event (0.93).
-    struct LookDeltaItem: Equatable, Identifiable {
-        enum Kind: Equatable {
-            case newWait
-            case endedWait
-            case moved
-        }
-
-        var id: String { "\(kindTag)|\(rowKey)|\(label)" }
-        var kind: Kind
-        var rowKey: String
-        var label: String
-        /// True when the live tray still has this rowKey (can Go-Look reveal).
-        var revealable: Bool
-
-        private var kindTag: String {
-            switch kind {
-            case .newWait: return "new"
-            case .endedWait: return "ended"
-            case .moved: return "moved"
-            }
-        }
-    }
-
-    /// Compact tray-close snapshot for "what moved since you left".
-    struct TrayLookFingerprint: Equatable {
-        struct RowSnap: Equatable {
-            var rowKey: String
-            var agentRaw: String
-            var label: String
-            var waiting: Bool
-            var waitKind: String
-            var phase: String
-            var tool: String
-            var task: String
-            var harvestMs: Int64
-            var activityChangedMs: Int64
-            var changeTag: String
-            var tokensIn: Int
-            var tokensOut: Int
-            var progressDone: Int
-            /// Wait generation — same row can end one wait and start another.
-            var waitSinceMs: Int64 = 0
-        }
-
-        var closedAt: Date
-        var rows: [RowSnap]
-    }
-    /// Install-copy discovery is diagnostic-only. Keep it off the main thread
-    /// and avoid re-running a process/filesystem scan on every tray open.
-    @ObservationIgnored var installTruthRefreshInFlight = false
-    @ObservationIgnored var installTruthRefreshedAt: Date?
-    @ObservationIgnored var installTruthGeneration = 0
-
-    /// A Waiting row that is no longer waiting — "did I miss something?".
-    struct ResolvedWait: Identifiable, Equatable {
-        var id: String { "\(rowKey)|\(Int(resolvedAt.timeIntervalSince1970))" }
-        var rowKey: String
-        var agent: AgentID
-        var title: String
-        var kind: String
-        var project: String
-        var resolvedAt: Date
-        var waitedSeconds: Double
-    }
-
-    /// Resolved waits kept for the Settings history list.
-    static let maxWaitHistory = 12
-
-    @ObservationIgnored var timer: Timer?
-    /// 5.0-α — the engine boundary. Sources produce rows; the coordinator
-    /// merges; `cachedAll` is the merged cache the display layer reads.
-    let observedSessions = ObservedSessionSource()
-    @ObservationIgnored private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
-    var cachedAll: [AgentRow] = []
-    @ObservationIgnored var lastGoodHarvest: [ActivityHarvest.Row] = []
-    /// Result of the latest attempted adapter scan, including adapters that
-    /// ran successfully but had no recent local session. This is deliberately
-    /// separate from row evidence: zero rows is a useful result, not silence.
-    @ObservationIgnored var collectorHealthByAgent: [AgentID: ActivityHarvest.CollectorHealth] = [:]
-    /// Latest successful collector read by Agent, retained even after its
-    /// session row ages out so Settings can distinguish "not running" from
-    /// "collector has never produced evidence".
-    @ObservationIgnored var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
-    /// Per-Agent retry/backoff/circuit policy. A bad store must not consume the
-    /// next scan budget for every other adapter.
-    @ObservationIgnored var harvestSupervisor = HarvestSupervisor()
-    /// Where the next native harvest should start.
+    /// A new glance is about to start — discard the last one's navigation.
     ///
-    /// The collector walks its adapters in a fixed order, so before 0.98 a
-    /// global budget cutoff always fell in the same place and the same tail
-    /// adapters were reported `unscanned` on every refresh. The scan returns
-    /// the first adapter it could not reach; the next one begins there.
-    // Internal since the 4.0-γ split: the engine extension is the only
-    // reader and writer (StatusStoreEngine.swift).
-    /// True while a finished scan is being landed on the main actor. Views
-    /// that should not redraw per scan read it through `StoreObservation`.
-    @ObservationIgnored var isApplyingScan = false
-    @ObservationIgnored var harvestScanCursor = 0
-    /// Deterministic event ages for visual fixtures only.
-    var previewWaitingEventTimes: [AgentID: Int64]?
+    /// EXPERIENCE §4: "展开状态不持久化". The panel is built once and only
+    /// ordered in and out, so SwiftUI keeps every `@State` it ever had.
+    /// Bumping this token gives `TrayPanel` a new identity, which resets all
+    /// of its state at once.
+    private(set) var traySessionToken = 0
+    /// Where Settings should scroll when it opens from a deep link.
+    private(set) var settingsFocus = SettingsFocus()
+    /// The Health window's buttons and the self-check's last result.
+    var diagnostics = DiagnosticsState()
+
+    // MARK: Not observed
+
+    /// 23.0: the one record of what each session did. Changed only through
+    /// `updateLog`; read by views through `logRevision`.
+    @ObservationIgnored var sessionLog = SessionLog()
+    /// The next scan is the first since the log was loaded.
+    @ObservationIgnored var logAwaitsFirstScan = true
+    /// One-shot tray identity for Go-Look Closure: a banner or a jump seeds
+    /// a `rowKey` (and whether to open its detail); the panel takes it when
+    /// it opens — or at once, when it is already open. Not observed: the
+    /// panel reads it at those two moments, no view draws it.
+    @ObservationIgnored private(set) var pendingRevealRowKey: String?
+    @ObservationIgnored private(set) var pendingRevealDetail = false
     /// Prevent a preview panel opening from immediately replacing its fixture
-    /// with a live scan before the screenshot is taken.
-    var previewFixtureActive = false
-    let powerMonitor = PowerMonitor()
-    /// Tray panel is on screen — worth probing faster while the user reads it.
-    @ObservationIgnored var trayOpen = false
-    /// Close instant to apply Look Continuity *after* the opening scan (0.96).
-    @ObservationIgnored var lookContinuityPendingClosedAt: Date?
-    /// Sample Waiting reveal waits until the row exists in `cachedAll`.
-    @ObservationIgnored var pendingSampleRevealSession = ""
-    @ObservationIgnored var activity: ProbeSchedule.Activity = .empty
-    @ObservationIgnored var currentInterval: TimeInterval?
-    /// Live-process fingerprint; a change forces a harvest even off-cadence.
-    @ObservationIgnored var lastProcessSignature = ""
-    @ObservationIgnored var ticksSinceHarvest = Int.max
+    /// with a live scan before the screenshot is taken. Set by the CLI-only
+    /// fixture before anything renders.
+    @ObservationIgnored var previewFixtureActive = false
+    /// Deterministic event ages for visual fixtures only.
+    @ObservationIgnored var previewWaitingEventTimes: [AgentID: Int64]?
     /// Last value actually pushed to launchd — avoids re-running launchctl
     /// (two synchronous subprocesses) on every settings write.
-    @ObservationIgnored var appliedLaunchAtLogin: Bool?
-    /// Rolling scan counters, so the energy claim can be checked, not believed.
-    @ObservationIgnored var probeStats = ProbeStats()
-    /// When the timer parked, for the parked-duration counter.
-    @ObservationIgnored private var parkedSince: Date?
-    @ObservationIgnored var knownWaitingKeys: Set<String> = []
-    /// First apply seeds waiting keys without firing edge notifications.
-    @ObservationIgnored var waitingNotifySeeded = false
-    /// Waiting edges observed while macOS notification authorization is still
-    /// resolving. Keep one row per session so a delayed permission callback
-    /// cannot make an approval disappear without either a banner or a tray
-    /// prompt.
-    @ObservationIgnored var pendingWaitingNotifications: [String: AgentRow] = [:]
-    /// One interruption per short window keeps a burst of parallel approvals
-    /// useful without turning Notification Center into a stream of duplicates.
-    static let waitingNotificationMinimumIntervalMs: Int64 = 3_000
-    @ObservationIgnored var waitingDeliveryTask: Task<Void, Never>?
-    /// Notification Center accepts requests asynchronously. Keep the event
-    /// in-flight until its callback arrives so a fast follow-up scan cannot
-    /// post a duplicate or mark a failed request as delivered.
-    @ObservationIgnored var waitingDeliveryInFlight: Set<String> = []
-    /// Keep the optional sound as one cue per delivery window, not one cue per
-    /// session when a batch is accepted as separate Notification Center
-    /// requests.
-    @ObservationIgnored var waitingDeliverySounded = false
-    /// Cross-launch Waiting/delivery state. This is deliberately separate from
-    /// the agent-owned attention.tsv bridge so a restart cannot lose the only
-    /// human-confirmation edge or emit it twice.
-    @ObservationIgnored var attentionLedger = AttentionLedger.load()
-    /// 22.0: every session's state spans. Read by the detail view through
-    /// `timelineRevision`, which moves only when a span did.
-    @ObservationIgnored var timelineBook = SessionTimelineStore.load()
-    var timelineRevision = 0
-    /// 22.0: the tray has an open detail view or a typed filter, so Escape
-    /// belongs to it before it closes the panel. Not observed: only the
-    /// panel's key monitor reads it.
-    @ObservationIgnored var trayEscapeConsumed = false
-    @ObservationIgnored var lastApplyLogSignature = ""
-    /// Soft-dismissed Cursor harvest pending until skill clears.
-    @ObservationIgnored var dismissedPendingKeys: Set<String> = []
-    /// Row key → when its "remind me later" runs out.
-    @ObservationIgnored var snoozedUntil: [String: Date] = [:]
-    let attentionWatcher = AttentionWatcher()
-    let scanQueue = DispatchQueue(label: "com.pulse.scan", qos: .userInitiated)
-    @ObservationIgnored var scanTicket: UInt64 = 0
-    @ObservationIgnored var lastAppliedTicket: UInt64 = 0
-    /// Tests exercising store behaviour must not start a real background scan.
-    ///
-    /// A scan is not read-only: it folds session digests and flushes them, so
-    /// an unguarded `refresh()` inside a unit test writes the developer's own
-    /// `session-digests.json` — the same class of accident 1.1 fixed when a
-    /// fixture scan leaked into the real digest store. Same shape as
-    /// `AttentionIO.pathOverride` and `HooksInstaller.homeOverride`.
-    static var suppressBackgroundScansForTesting = false
+    @ObservationIgnored private var appliedLaunchAtLogin: Bool?
+    /// Settings are saved and applied (launchd, the shortcut, a rescan) only
+    /// once `start()` has read them, so a store a test or a fixture builds
+    /// never touches the developer's own file or login items.
+    @ObservationIgnored private var started = false
 
-    @ObservationIgnored var scanInFlight = false
-    /// A refresh that arrived while one was already in flight.
-    ///
-    /// Only the reason used to survive the wait, so a scoped rescan replayed
-    /// as a full scan — and a full scan is precisely what a scoped rescan is
-    /// not. The scope exists to force an agent the supervisor would otherwise
-    /// defer, so toggling that agent's data source during an in-flight scan
-    /// could leave it unread until its backoff expired: "I enabled it and
-    /// nothing happened."
-    struct PendingRefresh {
-        var reason: String
-        /// nil means a full scan, which absorbs any scoped request merged in.
-        var agentFilter: Set<AgentID>?
-
-        mutating func absorb(reason: String, agentFilter: Set<AgentID>?) {
-            self.reason = reason
-            guard let agentFilter, let existing = self.agentFilter else {
-                self.agentFilter = nil
-                return
-            }
-            self.agentFilter = existing.union(agentFilter)
-        }
-    }
-
-    @ObservationIgnored var pendingRefresh: PendingRefresh?
+    let engine: ScanEngine
+    let notifier: WaitNotifier
+    let sessionLogStore = SessionLogStore()
     private let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
         return f
     }()
 
-    var lang: ResolvedLanguage { language.resolved }
-
-    var protectedAppDataAgents: [AgentID] {
-        // `cursorAgent` is merged into Cursor in the tray and shares the same
-        // local store. Showing both aliases as separate switches makes a
-        // single permission look like two independent promises. Keep the
-        // policy aliases internal while exposing one switch per user-facing
-        // data source.
-        AgentID.allCases.filter { $0.requiresAppDataOptIn && $0 != .cursorAgent }
+    init() {
+        engine = ScanEngine()
+        notifier = WaitNotifier()
+        engine.model = self
+        notifier.model = self
     }
 
-    /// The Python collector groups a few vendor identities behind one local
-    /// store. Selecting either public identity must unlock that store, but the
-    /// policy never widens to unrelated agents.
-    var harvestAppDataAgents: Set<AgentID> {
-        var result = appDataAgents
-        if result.contains(.cursor) || result.contains(.cursorAgent) {
-            result.insert(.cursor)
-            result.insert(.cursorAgent)
-        }
-        if result.contains(.cascade) || result.contains(.windsurf) {
-            result.insert(.cascade)
-            result.insert(.windsurf)
-        }
-        return result
-    }
+    // MARK: - Language
 
-    func isAppDataAllowed(for agent: AgentID) -> Bool {
-        allowAppData || harvestAppDataAgents.contains(agent)
-    }
+    /// `--language=` on the command line: wins over `settings.json` for this
+    /// run and is never saved. Set before `start()`; not observed — it does
+    /// not change while the app runs.
+    @ObservationIgnored var languageOverride: AppLanguage?
 
-    func appDataScopeDescription(for agent: AgentID) -> String {
-        switch agent {
-        case .cursor, .cursorAgent: return "Cursor / VS Code workspace and composer stores"
-        case .warpAgent: return "Warp Agent local conversations and task database"
-        case .cascade, .windsurf: return "Windsurf / Cascade local session cache"
-        case .cline, .roo, .kilo: return "VS Code extension session store"
-        default: return "\(agent.displayName) local Application Support session store"
-        }
-    }
-
-    var appDataScanDescription: String {
-        if allowAppData { return "all" }
-        let scoped = appDataAgents.map(\.rawValue).sorted()
-        return scoped.isEmpty ? "disabled" : "scoped:\(scoped.joined(separator: ","))"
-    }
-
-    func setAppDataAccess(for agent: AgentID, enabled: Bool) {
-        if enabled {
-            appDataAgents.insert(agent)
-        } else {
-            appDataAgents.remove(agent)
-        }
-        // Persist without a full roster refresh — only the affected Agent needs
-        // a new harvest pass. Blanket saveSettings→refresh was waking every
-        // adapter after a single privacy toggle.
-        persistSettingsOnly()
-        refresh(reason: "appData:\(agent.rawValue)", agentFilter: [agent])
-    }
-
-    func setAllAppDataAccess(_ enabled: Bool) {
-        allowAppData = enabled
-        if enabled {
-            appDataAgents.formUnion(protectedAppDataAgents)
-        } else {
-            appDataAgents.removeAll()
-        }
-        persistSettingsOnly()
-        refresh(reason: "appData:all", agentFilter: Set(protectedAppDataAgents))
-    }
+    var lang: ResolvedLanguage { (languageOverride ?? settings.language).resolved }
 
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-
-
-    /// the main thread, and never run them when nothing changed.
-    /// A new glance is about to start — discard the last one's navigation.
-    ///
-    /// EXPERIENCE §4: "展开状态不持久化：每次打开托盘都是一次新的扫视，应该从
-    /// 「谁需要我」开始". The panel is built once and only ordered in and out, so
-    /// SwiftUI keeps every `@State` it ever had: a search typed at 11:00 was
-    /// still filtering the list at 15:00, and a group folded to see past it
-    /// stayed folded over the next wait. Bumping this token gives `TrayPanel` a
-    /// new identity, which is the one mechanism that resets *all* of its state
-    /// — including any added later — rather than the subset someone remembered
-    /// to list in a reset function.
-    ///
-    /// Called before the panel is ordered in, so the reset lands in the same
-    /// layout pass rather than a frame after the user is already reading.
-    var traySessionToken: Int = 0
-
-    /// Current cadence, for Settings/diagnostics ("probing every 5s").
-    var probeIntervalDescription: String {
-        guard autoProbe else { return tr(.probePaused) }
-        guard let interval = currentInterval else { return tr(.probeParked) }
-        return String(format: tr(.probeEvery), Int(interval.rounded()))
-    }
-
-    /// Close an open parked span. Switching live updates off is *not* parking —
-    /// settling here too keeps a week with probing disabled out of the parked
-    /// counter, which would otherwise swallow it whole on the next unpark.
-    private func settleParked() {
-        guard let since = parkedSince else { return }
-        probeStats.addParked(Date().timeIntervalSince(since))
-        parkedSince = nil
-    }
-
-    func rescheduleTimer() {
-        timer?.invalidate()
-        timer = nil
-        guard autoProbe else {
-            settleParked()
-            currentInterval = nil
-            return
-        }
-        let interval = ProbeSchedule.interval(
-            activity: activity,
-            power: powerMonitor.state,
-            trayOpen: trayOpen
-        )
-        currentInterval = interval
-        guard let interval else {
-            if parkedSince == nil { parkedSince = Date() }
-            DebugLog.write("probe parked (display asleep / locked)")
-            return
-        }
-        settleParked()
-        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            // Bind before the Task: the timer block is @Sendable, and referencing
-            // the captured `weak self` var from inside a Task is not allowed.
-            guard let store = self else { return }
-            Task { @MainActor in
-                guard store.autoProbe else { return }
-                store.refresh(reason: "timer")
-                // One date comparison unless a day has passed since the last
-                // answer — how a Mac that never sleeps still re-checks.
-                UpdateCheck.shared.startIfEnabled(store: store)
-            }
-        }
-        // Let the system coalesce wakeups — meaningful battery win for a
-        // background poller that does not need millisecond precision.
-        t.tolerance = interval * 0.2
-        timer = t
-        RunLoop.main.add(t, forMode: .common)
-    }
-
-    func toggleShowAllAgents() {
-        showAllAgents.toggle()
-        applyRowWindow()
-    }
-
-
-    /// Withdraw banners that were already handed to Notification Center.
-    ///
-    /// Injected so the clear path can be tested without a bundled app: an
-    /// unbundled test process has no `UNUserNotificationCenter` at all.
-    @ObservationIgnored var withdrawWaitingBanners: () -> Void = { PulseNotify.withdrawWaitingNotifications() }
-
-    /// When set, Settings expands the App Data scopes group and highlights
-    /// this agent — used by Support Health and quality next-step deep links.
-    var settingsFocusAppDataAgent: AgentID? = nil
-    var settingsExpandAppDataScopes = false
-    /// When true, Settings scrolls/highlights the Waiting signals section
-    /// (Attention bridge path for agents without a native Waiting contract).
-    var settingsFocusWaitingSignals = false
-    /// 22.0: moves on every deep link, so a second link to the same place
-    /// still scrolls there.
-    var settingsFocusToken = 0
-    /// Waiting-none Agent named when Support deep-links into Attention Reach.
-    var settingsFocusWaitingAgent: AgentID? = nil
-    /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump
-    /// seeds a `rowKey`, TrayPanel selects+scrolls it, then clears.
-    private(set) var pendingRevealRowKey: String? = nil
-
-    /// Open the tray, optionally selecting a concrete row after it appears.
-    func requestTrayReveal(rowKey: String = "") {
-        if !rowKey.isEmpty {
-            pendingRevealRowKey = rowKey
-        }
-        TrayReveal.show()
-    }
-
-    func clearPendingRevealRowKey() {
-        pendingRevealRowKey = nil
-    }
-
 
     func relative(_ date: Date) -> String {
         if date == .distantPast { return tr(.notYet) }
@@ -551,12 +127,535 @@ final class StatusStore {
         return relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
+    // MARK: - Lifecycle
+
+    func start() {
+        DebugLog.write("start begin \(PulseVersion.fingerprint)")
+        // Restore only Pulse-owned attention state. Agent-owned hooks remain
+        // the source of truth for the current row; the session log supplies
+        // the cross-launch baseline, delivery dedupe and dismissals.
+        loadSessionLog()
+        notifier.seeded = sessionLog.baselineEstablished
+        HooksSupport.seedAssets()
+        landHooksStatus(HooksSupport.probeStatus())
+        loadSettings()
+        applyHotkey()
+        notifier.start()
+        engine.start()
+        UpdateCheck.shared.startIfEnabled(store: self)
+        DebugLog.write("start armed")
+    }
+
+    func quit() {
+        engine.stop()
+        GlobalHotKey.uninstall()
+        NSApp.terminate(nil)
+    }
+
+    func refresh(reason: String, agentFilter: Set<AgentID>? = nil) {
+        engine.refresh(reason: reason, agentFilter: agentFilter)
+    }
+
+    // MARK: - What the engine and the notifier hand over
+
+    /// One finished scan. Each observed property is assigned only when its
+    /// value changed; a scan that finds the same world announces nothing.
+    func land(_ result: SnapshotBuilder.Result, snapshot next: PulseSnapshot, nowMs: Int64) {
+        let previousRows = cachedAll
+        setCachedAll(result.rows)
+        if showAllAgents != result.showAllAgents { showAllAgents = result.showAllAgents }
+        // Reconcile before delivery so a restart can distinguish an already
+        // known wait from a newly crossed edge. Spans, waits, released soft
+        // dismissals and the baseline move in one change; a scan that finds
+        // the same world changes nothing and writes nothing.
+        recordScan(previous: previousRows, result: result, nowMs: nowMs)
+        notifier.scanLanded(result, nowMs: nowMs)
+        // 12.4 Surface: a scan that found the same world leaves `snapshot`
+        // alone — except when a relative-time label on screen is due to move.
+        if PulseSnapshot.needsPublish(next: next, current: snapshot) {
+            snapshot = next
+        }
+    }
+
+    /// The watcher's light path: patch matching rows in place.
+    func landActivityEvents(_ events: [ActivitySpool.Event], nowMs: Int64) {
+        var byKey: [String: ActivitySpool.Event] = [:]
+        for event in events {
+            guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
+            byKey[agent.rawValue + "|" + event.session] = event
+        }
+        guard !byKey.isEmpty else { return }
+        func patch(_ rows: inout [AgentRow]) -> Bool {
+            var changed = false
+            for index in rows.indices where !rows[index].sessionID.isEmpty {
+                let key = rows[index].agent.rawValue + "|" + rows[index].sessionID
+                guard let event = byKey[key] else { continue }
+                var row = rows[index]
+                row.applyActivity(event, nowMs: nowMs)
+                if row != rows[index] {
+                    rows[index] = row
+                    changed = true
+                }
+            }
+            return changed
+        }
+        var rows = cachedAll
+        if patch(&rows) {
+            setCachedAll(rows)
+        }
+        var next = snapshot
+        if patch(&next.rows) {
+            snapshot = next
+        }
+    }
+
+    /// The merged rows every surface reads. Re-merged on every scan, so the
+    /// write is guarded: an identical merge must not wake the tray.
+    func setCachedAll(_ rows: [AgentRow]) {
+        if rows != cachedAll { cachedAll = rows }
+    }
+
+    func landCollectorScanIncomplete(_ value: Bool) {
+        if collectorScanIncomplete != value { collectorScanIncomplete = value }
+    }
+
+    func landNotifyAuthorized(_ value: Bool?) {
+        if notifyAuthorized != value { notifyAuthorized = value }
+    }
+
+    func landWaitingBannerFailed(_ value: Bool) {
+        if waitingBannerFailed != value { waitingBannerFailed = value }
+    }
+
+    func landHooksStatus(_ value: HooksSupport.Status) {
+        if hooksStatus != value { hooksStatus = value }
+    }
+
+    func landUpdateStatus(_ value: UpdateCheck.Status) {
+        if updateStatus != value { updateStatus = value }
+    }
+
+    // MARK: - Settings
+
+    /// Read `settings.json` (a pre-23.0 `settings.txt` is deleted, unread).
+    /// With no file, the defaults stay. A `--language=` from the command line
+    /// is `languageOverride`, not a setting, so a file cannot undo it.
+    func loadSettings() {
+        if let loaded = PulseSettings.loadIfPresent() {
+            if loaded != settings { settings = loaded }
+            DebugLog.write("settings \(loaded.debugDescription)")
+        }
+        started = true
+        // Launchd already reflects the persisted value at load; don't re-run it.
+        appliedLaunchAtLogin = settings.launchAtLogin
+    }
+
+    /// Change one setting, save it, and apply what it affects.
+    func set<Value: Equatable>(_ keyPath: WritableKeyPath<PulseSettings, Value>, _ value: Value) {
+        guard settings[keyPath: keyPath] != value else { return }
+        settings[keyPath: keyPath] = value
+        guard started else { return }
+        settings.save()
+        // Banner button titles are baked into the registered category, so they
+        // go stale on a language switch unless re-registered here.
+        notifier.languageChanged(lang)
+        applyLaunchAtLoginIfChanged()
+        applyHotkey()
+        UpdateCheck.shared.startIfEnabled(store: self)
+        engine.rescheduleTimer()
+        refresh(reason: "saveSettings")
+    }
+
+    /// The one app-data switch. Only the protected agents need a new
+    /// harvest pass, so the rescan is scoped to them.
+    func setReadProtectedAppData(_ enabled: Bool) {
+        guard settings.readProtectedAppData != enabled else { return }
+        settings.readProtectedAppData = enabled
+        persistSettings()
+        let protected = Set(AgentID.allCases.filter(\.requiresAppDataOptIn))
+        refresh(reason: "appData", agentFilter: protected)
+    }
+
+    func toggleMute(_ agent: AgentID) {
+        var muted = settings.mutedAgents
+        if muted.contains(agent) {
+            muted.remove(agent)
+        } else {
+            muted.insert(agent)
+        }
+        set(\.mutedAgents, muted)
+    }
+
+    private func persistSettings() {
+        guard started else { return }
+        settings.save()
+    }
+
+    private func applyLaunchAtLoginIfChanged() {
+        guard appliedLaunchAtLogin != settings.launchAtLogin else { return }
+        appliedLaunchAtLogin = settings.launchAtLogin
+        let enabled = settings.launchAtLogin
+        DispatchQueue.global(qos: .utility).async {
+            let applied = LoginItem.setEnabled(enabled)
+            Task { @MainActor [weak self] in
+                if self?.loginItemApplied != applied { self?.loginItemApplied = applied }
+            }
+        }
+    }
+
+    /// Re-register the global shortcut and report honestly when the system
+    /// refuses (another app already owns the combination).
+    func applyHotkey() {
+        let choice = settings.hotkey
+        let registered = GlobalHotKey.install(choice: choice)
+        if hotkeyRegistered != registered { hotkeyRegistered = registered }
+        if choice != .off, !registered {
+            DebugLog.write("hotkey \(choice.rawValue) registration FAILED — likely taken")
+        }
+    }
+
+    /// Open Settings, optionally scrolled to a section: the app-data switch,
+    /// or the hook connections (how an agent gets a Waiting signal).
+    func openSettings(focus target: SettingsFocus.Target? = nil) {
+        var next = settingsFocus
+        next.target = target
+        if target != nil { next.token &+= 1 }
+        if next != settingsFocus { settingsFocus = next }
+        SettingsWindowController.shared.show(store: self)
+    }
+
+    // MARK: - Tray lifecycle
+
+    func trayWillAppear() {
+        traySessionToken &+= 1
+        // Store-owned, and just as much "last time's rummaging" as the folds.
+        if showAllAgents {
+            showAllAgents = false
+            applyRowWindow()
+        }
+    }
+
+    /// Tray panel appeared — probe faster while the user is looking at it.
+    func trayDidAppear() {
+        engine.setTrayOpen(true)
+        if !previewFixtureActive {
+            refresh(reason: "trayOpen")
+        }
+    }
+
+    func trayDidDisappear() {
+        engine.setTrayOpen(false)
+    }
+
+    func toggleShowAllAgents() {
+        showAllAgents.toggle()
+        applyRowWindow()
+    }
+
+    func applyRowWindow() {
+        var snap = snapshot
+        SnapshotBuilder.window(
+            rows: cachedAll,
+            showAll: showAllAgents,
+            maxVisible: SnapshotBuilder.maxVisibleRows,
+            into: &snap
+        )
+        if snap != snapshot { snapshot = snap }
+    }
+
+    /// Open the tray, optionally selecting a concrete row — and opening its
+    /// detail — once it is on screen.
+    func requestTrayReveal(rowKey: String = "", detail: Bool = false) {
+        pendingRevealRowKey = rowKey.isEmpty ? nil : rowKey
+        pendingRevealDetail = detail && !rowKey.isEmpty
+        TrayReveal.show()
+    }
+
+    func clearPendingRevealRowKey() {
+        pendingRevealRowKey = nil
+        pendingRevealDetail = false
+    }
+
+    /// The pending reveal, once: the panel takes it and it is gone.
+    func takePendingReveal() -> (rowKey: String, detail: Bool)? {
+        guard let key = pendingRevealRowKey, !key.isEmpty else { return nil }
+        let detail = pendingRevealDetail
+        clearPendingRevealRowKey()
+        return (key, detail)
+    }
+
+    // MARK: - Row intents
+
+    func rowActionNotice(_ row: AgentRow) -> String? {
+        rowActionNotices[row.rowKey]
+    }
+
+    /// Say what happened, briefly. Long enough to read, short enough that it
+    /// never settles in and becomes row furniture.
+    func noteRowAction(_ rowKey: String, _ message: String) {
+        rowActionNotices[rowKey] = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
+            guard let self, self.rowActionNotices[rowKey] == message else { return }
+            self.rowActionNotices.removeValue(forKey: rowKey)
+        }
+    }
+
+    /// The focus handle was derived by the scan that produced this row, and a
+    /// window can close between then and the click. When nothing was reached,
+    /// say so and rescan: the next row either carries a handle that works or
+    /// stops offering one.
+    func focusTerminal(_ row: AgentRow) {
+        if row.isYourTurn { markTurnSeen(row) }
+        guard !TerminalFocus.focus(row: row) else { return }
+        noteRowAction(row.rowKey, tr(.focusFailed))
+        refresh(reason: "focus-failed")
+    }
+
+    /// Looking at a finished session is what "your turn" was asking for. A
+    /// session-scoped `done` in the attention file is the record — it
+    /// survives a restart, and it is the same line a new prompt would write.
+    func markTurnSeen(_ row: AgentRow) {
+        guard row.isYourTurn, !row.attentionSession.isEmpty else { return }
+        AttentionIO.appendDone(agent: row.agent, session: row.attentionSession)
+        refresh(reason: "turn-seen")
+    }
+
+    /// A harvest `pending` — or a vendor-reported wait (18.0) — is dismissed
+    /// softly: its source keeps reporting it until the session moves, so the
+    /// log keeps it suppressed until then.
+    nonisolated static func dismissIsSoft(_ row: AgentRow) -> Bool {
+        row.wait?.signal == .pending || row.wait?.signal == .vendor
+    }
+
+    func dismissWaiting(_ row: AgentRow) {
+        let soft = Self.dismissIsSoft(row)
+        // A hook wait is cleared in the attention file under exactly the
+        // session its entry carried (23.0) — an empty one clears only that
+        // agent's session-less entry, never its other sessions. A harvest
+        // or vendor wait writes nothing there: the log keeps it quiet.
+        if let done = Self.doneLine(for: row) {
+            AttentionIO.appendDone(agent: done.agent, session: done.session)
+        }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        updateLog(immediately: true) { log in
+            _ = log.dismiss(row, soft: soft, nowMs: nowMs)
+        }
+        refresh(reason: "dismissWaiting")
+    }
+
+    /// The `done` a dismissal writes: only for a hook wait, and with the
+    /// entry's own session spelling (possibly empty). Pure.
+    nonisolated static func doneLine(for row: AgentRow) -> (agent: AgentID, session: String)? {
+        guard row.wait?.signal == .hooks else { return nil }
+        return (row.agent, row.attentionSession)
+    }
+
+    /// Live Waiting-none session — needs Attention Reach, not a fake Waiting chip.
+    func isWaitingNoneNeedsReach(_ row: AgentRow) -> Bool {
+        !row.isBlocked
+            && row.liveProcess
+            && row.agent.waitingSource == .none
+    }
+
+    /// Open Waiting signals (how an agent without a Waiting path gets one).
+    func openWaitingReach() {
+        openSettings(focus: .waitingSignals)
+    }
+
+    // MARK: - Focus
+
+    nonisolated static func firstWaitingRow(in rows: [AgentRow]) -> AgentRow? {
+        rows.first(where: \.isBlocked)
+    }
+
+    /// Open the tray on the first wait (the builder lists the oldest first).
+    func focusFirstWaiting() {
+        if let row = Self.firstWaitingRow(in: cachedAll) ?? Self.firstWaitingRow(in: snapshot.rows) {
+            requestTrayReveal(rowKey: row.rowKey)
+            return
+        }
+        requestTrayReveal()
+    }
+
+    /// 23.0 · a banner click (or its Go button): the terminal, and nothing
+    /// else, when it can be focused — the tray does not pop up over it. With
+    /// no handle (or one that failed) the tray opens on the row's detail; a
+    /// row that is gone opens the tray. `BannerRoute` decides.
+    func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
+        let row = Self.focusTarget(in: cachedAll, idRaw: idRaw, session: session, rowKey: rowKey)
+        let focused = row.map { $0.canFocusTerminal && TerminalFocus.focus(row: $0) } ?? false
+        if let row, row.isYourTurn { markTurnSeen(row) }
+        switch BannerRoute.decide(target: row?.rowKey, focused: focused) {
+        case .terminal:
+            return
+        case .detail(let key):
+            requestTrayReveal(rowKey: key, detail: true)
+        case .tray:
+            focusFirstWaiting()
+        }
+    }
+
+    /// Prefer exact `rowKey`, then session, then first waiting/live row for
+    /// agent. The session match stays inside the named agent and takes a
+    /// prefix only when exactly one row fits — the same rule the builder
+    /// applies to attention ids, so a truncated id cannot send a banner click
+    /// to the wrong row.
+    nonisolated static func focusTarget(
+        in rows: [AgentRow], idRaw: String, session: String, rowKey: String
+    ) -> AgentRow? {
+        if !rowKey.isEmpty, let row = rows.first(where: { $0.rowKey == rowKey }) {
+            return row
+        }
+        let agent = ActivityHarvest.mapAgent(idRaw)?.surfaceID
+        if !session.isEmpty {
+            let sameAgent = rows.filter { !$0.sessionID.isEmpty && (agent == nil || $0.agent == agent) }
+            if let exact = sameAgent.first(where: { $0.sessionID == session }) { return exact }
+            let prefixed = sameAgent.filter {
+                session.hasPrefix($0.sessionID) || $0.sessionID.hasPrefix(session)
+            }
+            if prefixed.count == 1 { return prefixed[0] }
+        }
+        guard let id = agent else { return nil }
+        let own = rows.filter { $0.agent == id }
+        return firstWaitingRow(in: own) ?? own.first
+    }
+
+    // MARK: - Hooks
+
+    func installHooks() {
+        landHooksStatus(.unknown)
+        setHooksNudgeOff(false)
+        // `Task` inherits this class's main-actor isolation, so the assignment
+        // lands on main while the optional hook installer stays off it.
+        Task { [weak self] in
+            let status = await Task.detached(priority: .userInitiated) {
+                HooksSupport.install()
+            }.value
+            self?.landHooksStatus(status)
+        }
+    }
+
+    func uninstallHooks() {
+        landHooksStatus(.unknown)
+        // An uninstall is a decision: stop suggesting hooks until the user
+        // installs them again.
+        setHooksNudgeOff(true)
+        Task { [weak self] in
+            let status = await Task.detached(priority: .userInitiated) {
+                HooksSupport.uninstall()
+            }.value
+            self?.landHooksStatus(status)
+        }
+    }
+
+    func runHookSelfTest() {
+        hookSelfTestResult = .running
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                HooksSupport.selfTest()
+            }.value
+            self?.hookSelfTestResult = result
+        }
+    }
+
+    /// Persist the "don't suggest hooks" choice without a full rescan.
+    private func setHooksNudgeOff(_ value: Bool) {
+        guard settings.hooksNudgeOff != value else { return }
+        settings.hooksNudgeOff = value
+        persistSettings()
+    }
+
+    var hooksInstalled: Bool {
+        switch hooksStatus {
+        case .installedBoth, .installedClaude, .installedCodex: return true
+        case .unknown, .missing, .failed: return false
+        }
+    }
+
+    // MARK: - Notifications and updates
+
+    /// Notification permission lives in System Settings, not in Pulse.
+    func openSystemNotificationSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")
+        if let url { NSWorkspace.shared.open(url) }
+    }
+
+    /// Notification permission is requested only from an explicit Settings
+    /// action. Launching Pulse or scanning an Agent must remain interruption-
+    /// free, especially for unsigned builds whose identity can change.
+    func requestNotificationAuthorization() {
+        PulseNotify.requestAuthorizationAfterUserAction()
+    }
+
+    func checkForUpdatesNow() {
+        UpdateCheck.shared.check(store: self, force: true)
+    }
+
+    func openDiagnostics() {
+        DiagnosticsWindowController.shared.show(store: self)
+    }
 }
 
-/// Which sentence a token pair belongs to.
-///
-/// The scope is not decoration: "latest model call" and "the agent's own
-/// running total" are different numbers, and a pair printed without saying
-/// which one it is has been a bug report waiting to happen since 2.1. Each
-/// scope carries three phrasings, because a pair with one unmeasured half is
-/// a different sentence — not the same sentence with a zero in it.
+/// Where Settings scrolls when a deep link opens it. The token moves on
+/// every deep link, so a second link to the same place still scrolls there.
+struct SettingsFocus: Equatable {
+    enum Target: Equatable {
+        case appData
+        /// The hooks: how an agent gets a "needs you" signal.
+        case waitingSignals
+        case notifications
+        case updates
+    }
+
+    var target: Target?
+    var token = 0
+}
+
+/// The Health window's transient button states and the self-check's result.
+struct DiagnosticsState: Equatable {
+    var doctorReport: DoctorModel.Report?
+    var isRunningDoctor = false
+    /// The shape report walks the session stores, so the button says so.
+    var isCopyingShapeReport = false
+    var didCopyShapeReport = false
+    /// Transient "Copied" confirmation on "Copy report".
+    var didCopyDiagnostics = false
+}
+
+// MARK: - 12.4 Surface: publish only what changed
+
+extension PulseSnapshot {
+    /// Equal in everything a surface draws — `updatedAt` aside.
+    func sameContent(as other: PulseSnapshot) -> Bool {
+        var mine = self
+        mine.updatedAt = other.updatedAt
+        return mine == other
+    }
+
+    /// Below a minute, durations are drawn in seconds (`DurationFormat`).
+    static let secondsLabelWindowMs: Int64 = 60_000
+    /// Minute labels need a redraw at most this often when nothing else moved.
+    static let minuteLabelRefresh: TimeInterval = 60
+
+    /// Whether `next` must replace `current` for the surfaces to stay true.
+    ///
+    /// Content changed → yes. Otherwise only the clock can make a drawn fact
+    /// stale: a wait younger than a minute shows a seconds count that moves
+    /// every scan, and minute labels move once a minute. Nothing else about
+    /// an unchanged world is worth a redraw.
+    static func needsPublish(next: PulseSnapshot, current: PulseSnapshot) -> Bool {
+        if current.updatedAt == .distantPast { return true }
+        if !next.sameContent(as: current) { return true }
+        // Only a wait's age is drawn in seconds (the row's time while it is
+        // blocked); the menu-bar title's "2 · 4m" is content, so its minute
+        // label moving already made `next` differ above.
+        let nowMs = Int64(next.updatedAt.timeIntervalSince1970 * 1000)
+        let secondsOnScreen = next.rows.contains { row in
+            guard let since = row.wait?.sinceMs, since > 0 else { return false }
+            return nowMs - since < secondsLabelWindowMs
+        }
+        if secondsOnScreen { return true }
+        return next.updatedAt.timeIntervalSince(current.updatedAt) >= minuteLabelRefresh
+    }
+}

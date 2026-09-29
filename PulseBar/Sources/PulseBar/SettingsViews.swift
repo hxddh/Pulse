@@ -1,609 +1,314 @@
-// 3.0-α: the settings scene, moved verbatim out of PulseApp.swift.
+// 3.0-α: the settings scene, moved out of PulseApp.swift.
+//
+// 23.0 · one page of seven short groups and a footer. `SettingsView` builds
+// a `SettingsModel` from the store (settings and a few flags, never a scan)
+// and performs its actions; `SettingsFace` renders the value.
 
 import SwiftUI
 import AppKit
 
 @MainActor
 struct SettingsView: View {
-    /// The store itself (19.0). Under Observation this form is redrawn only
-    /// by the properties it reads, and it reads no per-scan fact:
-    /// `snapshotAgents` rather than `snapshot`. `surface_check.py` keeps it so.
+    /// The store itself (19.0). Under Observation this page is redrawn only
+    /// by the properties it reads, and it reads no per-scan fact
+    /// (`surface_check.py` keeps it so).
     let store: StatusStore
 
     init(store: StatusStore) {
         self.store = store
     }
 
-    /// 22.0 Lamp: one page. Five panes held 28 controls; most of them were
-    /// consent switches for features that are gone, or preferences the
-    /// system already owns (quiet hours → Focus, sound → Notifications).
-    /// What is left fits on one screen; the tools for wiring up an unlisted
-    /// agent stay folded under Advanced.
-
-    /// A binding into the store, like `$store.x`.
-    private func bind<Value>(_ keyPath: ReferenceWritableKeyPath<StatusStore, Value>) -> Binding<Value> {
-        let store = self.store
-        return Binding(get: { store[keyPath: keyPath] }, set: { store[keyPath: keyPath] = $0 })
+    var body: some View {
+        SettingsFace(
+            model: store.settingsModel,
+            focusToken: store.settingsFocus.token
+        ) { action in
+            store.performSettings(action)
+        }
+        .onAppear {
+            store.landHooksStatus(HooksSupport.probeStatus())
+            PulseNotify.refreshAuthorization()
+        }
     }
-    @State private var confirmDuplicateRemoval = false
-    @State private var bridgeExpanded = false
-    @State private var advancedExpanded = false
+}
+
+@MainActor
+extension StatusStore {
+    /// The Settings page as a value.
+    var settingsModel: SettingsModel {
+        let notifications = SettingsModel.notifications(notifyAuthorized)
+        var warning: String?
+        if isVersionMismatch, let bundle = PulseVersion.bundleVersion {
+            warning = String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
+        } else if PulseVersion.distributionChannel == "preview" {
+            warning = tr(.updatePreview)
+        } else if PulseVersion.distributionChannel == "signed" {
+            warning = tr(.updateSignedUnnotarized)
+        }
+        let build = PulseVersion.buildLine
+        let hookTone: PulseTheme.Tone
+        switch hookSelfTestResult {
+        case .failed: hookTone = .waiting
+        case .passed: hookTone = .running
+        case .idle, .running: hookTone = .idle
+        }
+        return SettingsModel(
+            lang: lang,
+            launchAtLogin: settings.launchAtLogin,
+            language: settings.language,
+            hotkey: settings.hotkey,
+            hotkeyTaken: settings.hotkey != .off && !hotkeyRegistered,
+            notifications: notifications,
+            notifyOnWaiting: notifications == .allowed && settings.notifyOnWaiting,
+            mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
+            hooksStatus: hooksStatus.label(lang: lang),
+            hooksInstalled: hooksInstalled,
+            hookTest: hookSelfTestText,
+            hookTestTone: hookTone,
+            hookTestRunning: hookSelfTestResult == .running,
+            allowTerminalAutomation: settings.allowTerminalAutomation,
+            readProtectedAppData: settings.readProtectedAppData,
+            updateCheckEnabled: settings.updateCheckEnabled,
+            updateStatus: updateStatusText,
+            updateAvailable: updateAvailableURL != nil,
+            version: build.isEmpty ? PulseVersion.about : "\(PulseVersion.about) · \(build)",
+            buildWarning: warning,
+            focus: settingsFocus.target.map(SettingsModel.section(for:))
+        )
+    }
+
+    func performSettings(_ action: SettingsModel.Action) {
+        switch action {
+        case .setLaunchAtLogin(let on): set(\.launchAtLogin, on)
+        case .setLanguage(let language): set(\.language, language)
+        case .setHotkey(let choice): set(\.hotkey, choice)
+        case .enableNotifications: requestNotificationAuthorization()
+        case .openNotificationSettings: openSystemNotificationSettings()
+        case .setNotifyOnWaiting(let on):
+            guard notifyAuthorized == true else { return }
+            set(\.notifyOnWaiting, on)
+        case .unmute(let agent):
+            if settings.mutedAgents.contains(agent) { toggleMute(agent) }
+        case .installHooks: installHooks()
+        case .uninstallHooks: uninstallHooks()
+        case .testHooks: runHookSelfTest()
+        case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
+        case .setReadAppData(let on): setReadProtectedAppData(on)
+        case .setUpdateCheck(let on): set(\.updateCheckEnabled, on)
+        case .checkForUpdates: checkForUpdatesNow()
+        case .openRelease:
+            if let url = updateAvailableURL { NSWorkspace.shared.open(url) }
+        case .openDiagnostics: openDiagnostics()
+        }
+    }
+}
+
+/// Renders a `SettingsModel` and sends its actions. A deep link scrolls to
+/// the section it names (the token moves on every link, so a second link to
+/// the same place still lands).
+struct SettingsFace: View {
+    let model: SettingsModel
+    var focusToken = 0
+    /// Sendable: the page's bindings carry it.
+    var send: @MainActor @Sendable (SettingsModel.Action) -> Void = { _ in }
+
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
     var body: some View {
         ScrollViewReader { proxy in
             Form {
-                generalSection
-                shortcutSection
-                notificationsSection
-                hooksSection
-                    .id("settings-connections")
-                controlSection
-                dataAccessSection
-                    .id("settings-data")
-                updatesSection
-                aboutSection
-                installSection
-                advancedSection
-                if advancedExpanded { bridgeSection.id("settings-bridge") }
+                ForEach(SettingsModel.sections, id: \.self) { section in
+                    Section {
+                        rows(section)
+                    } header: {
+                        Text(SettingsModel.title(section, lang: model.lang))
+                    } footer: {
+                        footer(section)
+                    }
+                    .id(section)
+                }
+                about
             }
             .formStyle(.grouped)
-            .onAppear {
-                store.hooksStatus = HooksSupport.probeStatus()
-                store.refreshInstallTruth()
-                PulseNotify.refreshAuthorization()
-                store.refreshPulseHookLauncherStatus()
-                followFocus(proxy)
-            }
-            // A token, not the focus values: a second deep link with the same
-            // target must still land (the values would not change).
-            .onChange(of: store.settingsFocusToken) { _, _ in followFocus(proxy) }
-        }
-        .alert(
-            store.tr(.removeDuplicateApps),
-            isPresented: $confirmDuplicateRemoval
-        ) {
-            Button(store.tr(.cancel), role: .cancel) {}
-            Button(store.tr(.moveToTrash), role: .destructive) {
-                store.recycleDuplicateApps()
-            }
-        } message: {
-            Text(String(
-                format: store.tr(.removeDuplicateAppsConfirm),
-                store.installReport.removableDuplicates.count
-            ))
+            .onAppear { follow(proxy) }
+            .onChange(of: focusToken) { _, _ in follow(proxy) }
         }
     }
 
-    /// A deep link from the tray scrolls to what it names.
-    private func followFocus(_ proxy: ScrollViewProxy) {
-        let target: String?
-        if store.settingsFocusWaitingSignals {
-            advancedExpanded = true
-            bridgeExpanded = store.settingsFocusWaitingAgent != nil
-            target = store.settingsFocusWaitingAgent != nil ? "settings-bridge" : "settings-connections"
-        } else if store.settingsFocusAppDataAgent != nil {
-            target = "settings-data"
-        } else {
-            target = nil
-        }
-        guard let target else { return }
+    private func follow(_ proxy: ScrollViewProxy) {
+        guard let target = model.focus else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             withAnimation(PulseTheme.motion) { proxy.scrollTo(target, anchor: .top) }
         }
     }
 
-    /// Live updates and the Attention-bridge tools: for someone wiring up
-    /// an agent, not for everyday use.
-    private var advancedSection: some View {
-        Section {
-            DisclosureGroup(isExpanded: $advancedExpanded) {
-                explainedToggle(
-                    store.tr(.liveUpdates),
-                    hint: store.tr(.liveUpdatesHint),
-                    isOn: bind(\.autoProbe)
-                )
-                .onChange(of: store.autoProbe) { _, _ in store.saveSettings() }
-            } label: {
-                Text(store.tr(.settingsAdvanced))
-            }
-        }
+    private func binding(_ value: Bool, _ action: @escaping @Sendable (Bool) -> SettingsModel.Action) -> Binding<Bool> {
+        let send = self.send
+        return Binding(get: { value }, set: { send(action($0)) })
     }
 
-    /// A switch with its consequence underneath, the way System Settings
-    /// writes it — not a paragraph floating between two switches.
-    private func explainedToggle(_ title: String, hint: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title)
-            Text(hint)
-        }
+    private var languageBinding: Binding<AppLanguage> {
+        let send = self.send
+        let value = model.language
+        return Binding(get: { value }, set: { send(.setLanguage($0)) })
     }
 
-    // MARK: General
+    private var hotkeyBinding: Binding<HotkeyChoice> {
+        let send = self.send
+        let value = model.hotkey
+        return Binding(get: { value }, set: { send(.setHotkey($0)) })
+    }
 
-    private var generalSection: some View {
-        Section {
-            Toggle(store.tr(.launchAtLogin), isOn: bind(\.launchAtLogin))
-                .onChange(of: store.launchAtLogin) { _, _ in store.saveSettings() }
-            Picker(store.tr(.language), selection: bind(\.language)) {
+    // MARK: Rows
+
+    @ViewBuilder
+    private func rows(_ section: SettingsModel.Section) -> some View {
+        switch section {
+        case .general:
+            Toggle(t(.launchAtLogin), isOn: binding(model.launchAtLogin) { .setLaunchAtLogin($0) })
+            Picker(t(.language), selection: languageBinding) {
                 ForEach(AppLanguage.allCases) { lang in
                     Text(lang.menuLabel).tag(lang)
                 }
             }
-            .onChange(of: store.language) { _, _ in store.saveSettings() }
-        }
-    }
-
-    /// One control for one bit: the shortcut, or Off.
-    private var shortcutSection: some View {
-        Section(store.tr(.shortcuts)) {
-            Picker(selection: bind(\.hotkey)) {
-                Text(store.tr(.shortcutOff)).tag(HotkeyChoice.off)
+        case .shortcut:
+            Picker(selection: hotkeyBinding) {
+                Text(t(.shortcutOff)).tag(HotkeyChoice.off)
                 Divider()
                 ForEach(HotkeyChoice.allCases.filter { $0 != .off }) { choice in
                     Text(choice.label).tag(choice)
                 }
             } label: {
-                Text(store.tr(.revealShortcut))
-                Text(store.tr(.globalShortcutHint))
+                Text(t(.revealShortcut))
             }
-            .onChange(of: store.hotkey) { _, _ in store.saveSettings() }
-            if store.hotkey != .off, !store.hotkeyRegistered {
-                Label(store.tr(.hotkeyTaken), systemImage: "exclamationmark.triangle")
+            if model.hotkeyTaken {
+                Label(t(.hotkeyTaken), systemImage: "exclamationmark.triangle")
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.Tone.attention.color)
             }
-        }
-    }
-
-    // MARK: Alerts
-
-    private var notificationsSection: some View {
-        Section(store.tr(.notificationsSection)) {
-            if store.notifyAuthorized == nil {
+        case .notifications:
+            switch model.notifications {
+            case .notAsked:
                 LabeledContent {
-                    Button(store.tr(.enableNotifications)) {
-                        store.requestNotificationAuthorization()
-                    }
+                    Button(t(.enableNotifications)) { send(.enableNotifications) }
                 } label: {
-                    Label(store.tr(.notifyNotConfigured), systemImage: "bell.badge")
+                    Text(t(.notifyNotConfigured))
                 }
-            } else if store.notifyAuthorized == false {
-                // A denied prompt used to leave these toggles reading "on"
-                // while nothing could ever fire.
+            case .denied:
                 LabeledContent {
-                    Button(store.tr(.openNotificationSettings)) {
-                        store.openSystemNotificationSettings()
-                    }
+                    Button(t(.openNotificationSettings)) { send(.openNotificationSettings) }
                 } label: {
-                    Label(store.tr(.notifyDenied), systemImage: "bell.slash")
+                    Text(t(.notifyDenied))
                         .foregroundStyle(PulseTheme.Tone.attention.color)
-                    Text(store.tr(.notifyDeniedPersistentHint))
+                }
+            case .allowed:
+                EmptyView()
+            }
+            Toggle(t(.notifyWaiting), isOn: binding(model.notifyOnWaiting) { .setNotifyOnWaiting($0) })
+                .disabled(model.notifications != .allowed)
+            ForEach(model.mutedAgents, id: \.self) { agent in
+                LabeledContent {
+                    Button {
+                        send(.unmute(agent))
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(t(.unmute) + " " + agent.displayName)
+                } label: {
+                    Label {
+                        Text(agent.displayName)
+                    } icon: {
+                        AgentIconView(id: agent)
+                    }
                 }
             }
-            notificationToggle(
-                store.tr(.notifyWaiting),
-                preference: \StatusStore.notifyOnWaiting
-            )
-            notificationToggle(
-                store.tr(.notifications),
-                preference: \StatusStore.notifyOnIdle
-            )
-        }
-    }
-
-    /// The stored preference can remain enabled while macOS has denied or not
-    /// configured notification access. Render the effective value instead;
-    /// once permission is granted, the saved preference comes back.
-    private func notificationToggle(
-        _ title: String,
-        preference: ReferenceWritableKeyPath<StatusStore, Bool>
-    ) -> some View {
-        Toggle(title, isOn: Binding(
-            get: { store.notifyAuthorized == true && store[keyPath: preference] },
-            set: { enabled in
-                guard store.notifyAuthorized == true else { return }
-                store[keyPath: preference] = enabled
-                store.saveSettings()
-            }
-        ))
-        .disabled(store.notifyAuthorized != true)
-    }
-
-    // MARK: Connections
-
-    /// Claude and Codex: the two agents Pulse installs hooks for.
-    private var hooksSection: some View {
-        Section {
+        case .hooks:
             LabeledContent {
                 HStack(spacing: PulseTheme.Space.s) {
-                    if store.hooksInstalled {
-                        Button(store.tr(.uninstallHooks), role: .destructive) {
-                            store.uninstallHooks()
-                        }
+                    if model.hooksInstalled {
+                        Button(t(.uninstallHooks), role: .destructive) { send(.uninstallHooks) }
                     }
-                    Button(store.tr(.installHooks)) { store.installHooks() }
+                    Button(t(.installHooks)) { send(.installHooks) }
                 }
             } label: {
-                Text(store.tr(.settingsHooksTitle))
-                Text(store.hooksStatus.label(lang: store.lang))
-                    .foregroundStyle(store.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
+                Text(t(.settingsHooksTitle))
+                Text(model.hooksStatus)
+                    .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
             }
             LabeledContent {
-                Button(store.tr(.testWaitingSignal)) { store.runHookSelfTest() }
-                    .disabled(!store.hooksInstalled || store.hookSelfTestResult == .running)
+                Button(t(.testWaitingSignal)) { send(.testHooks) }
+                    .disabled(!model.hooksInstalled || model.hookTestRunning)
             } label: {
-                Text(store.tr(.settingsHooksTest))
-                Text(store.hookSelfTestText)
-                    .foregroundStyle(hookTestColor)
+                Text(t(.settingsHooksTest))
+                Text(model.hookTest)
+                    .foregroundStyle(model.hookTestTone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(model.hookTestTone.color))
             }
-        } header: {
-            Text(store.tr(.waitingSignals))
-        } footer: {
-            Text(store.tr(.hooksHint))
+        case .terminal:
+            Toggle(isOn: binding(model.allowTerminalAutomation) { .setTerminalAutomation($0) }) {
+                Text(t(.allowTerminalAutomation))
+                Text(t(.allowTerminalAutomationHint))
+            }
+        case .dataAccess:
+            Toggle(isOn: binding(model.readProtectedAppData) { .setReadAppData($0) }) {
+                Text(t(.agentDataAccess))
+                Text(t(.agentDataAccessHint))
+            }
+            .listRowBackground(
+                model.focus == .dataAccess
+                    ? Color.accentColor.opacity(PulseTheme.Fill.selected)
+                    : Color.clear
+            )
+        case .updates:
+            Toggle(t(.checkForUpdates), isOn: binding(model.updateCheckEnabled) { .setUpdateCheck($0) })
+            LabeledContent {
+                if model.updateAvailable {
+                    Button(t(.openRelease)) { send(.openRelease) }
+                } else {
+                    Button(t(.checkNow)) { send(.checkForUpdates) }
+                }
+            } label: {
+                Text(model.updateStatus)
+                    .foregroundStyle(model.updateAvailable ? AnyShapeStyle(PulseTheme.Tone.running.color) : AnyShapeStyle(.secondary))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func footer(_ section: SettingsModel.Section) -> some View {
+        switch section {
+        case .hooks:
+            Text(t(.hooksHint))
                 .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private var hookTestColor: Color {
-        switch store.hookSelfTestResult {
-        case .failed: return PulseTheme.Tone.waiting.color
-        case .passed: return PulseTheme.Tone.running.color
-        case .idle, .running: return .secondary
-        }
-    }
-
-    /// Every other agent reports through the Attention bridge. Its tools are
-    /// for the person wiring an agent up, so they stay folded until asked
-    /// for — or until the tray sent you here for exactly that.
-    private var bridgeSection: some View {
-        Section {
-            Text(store.attentionBridgeHintText())
-                .font(PulseTheme.Font.body)
+        case .dataAccess:
+            Text(t(.agentDataAccessSkipHint))
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup(isExpanded: $bridgeExpanded) {
-                if store.settingsFocusWaitingSignals {
-                    Label(store.attentionBridgeFocusHintText(), systemImage: "link")
-                        .font(PulseTheme.Font.body)
-                    Text(store.waitingReachStepsText())
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                LabeledContent {
-                    Button(store.tr(.ensurePulseHook)) {
-                        store.ensurePulseHookLauncher()
-                    }
-                } label: {
-                    Text("pulse-hook")
-                    Text(store.pulseHookLauncherReady ? store.tr(.pulseHookReady) : store.tr(.pulseHookMissing))
-                        .foregroundStyle(store.pulseHookLauncherReady ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
-                }
-                if let error = store.pulseHookLauncherError {
-                    Text(error)
+        case .general, .shortcut, .notifications, .terminal, .updates:
+            EmptyView()
+        }
+    }
+
+    /// The version, what kind of build it is, and the way into Diagnostics
+    /// — one small block, not two sections.
+    private var about: some View {
+        Section {
+            VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                Text(model.version)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                if let warning = model.buildWarning {
+                    Text(warning)
                         .font(PulseTheme.Font.caption)
                         .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
-                if let agent = store.settingsFocusWaitingAgent {
-                    Button(String(format: store.tr(.attentionBridgeWriteSampleFocused), agent.displayName)) {
-                        store.writeAttentionBridgeSample(for: agent)
-                    }
-                    Button(
-                        store.didCopyAttentionRaise
-                            ? store.tr(.attentionRaiseCopied)
-                            : store.tr(.copyAttentionRaiseCommand)
-                    ) {
-                        store.copyAttentionRaiseCommand(for: agent)
-                    }
-                }
-                HStack(spacing: PulseTheme.Space.s) {
-                    Button(store.tr(.attentionBridgeWriteSample)) {
-                        store.writeAttentionBridgeSample()
-                    }
-                    Button(store.tr(.attentionBridgeClearSample)) {
-                        store.clearAttentionBridgeSample()
-                    }
-                }
-                HStack(spacing: PulseTheme.Space.s) {
-                    Button(store.tr(.revealAttentionFolder)) {
-                        store.revealAttentionBridgeFolder()
-                    }
-                    Button(store.tr(.revealAttentionBridgeKit)) {
-                        store.revealAttentionBridgeKit()
-                    }
-                }
-                Text(store.attentionBridgeWriteSampleHintText())
+                Button(t(.diagnosticsOpen)) { send(.openDiagnostics) }
+                    .buttonStyle(.link)
                     .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } label: {
-                Text(store.tr(.settingsBridgeTools))
-            }
-        } header: {
-            Text(store.tr(.settingsOtherAgents))
-        }
-    }
-
-    // MARK: Permissions
-
-    private var dataAccessSection: some View {
-        Section {
-            explainedToggle(
-                store.tr(.agentDataAccess),
-                hint: store.tr(.agentDataAccessHint),
-                isOn: Binding(
-                    get: { store.allowAppData },
-                    set: { store.setAllAppDataAccess($0) }
-                )
-            )
-            DisclosureGroup(
-                isExpanded: Binding(
-                    get: { store.settingsExpandAppDataScopes },
-                    set: { store.settingsExpandAppDataScopes = $0 }
-                ),
-                content: {
-                    Text(store.tr(.agentDataAccessScopeHint) + " " + store.tr(.agentDataAccessSkipHint))
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ForEach(store.protectedAppDataAgents, id: \.self) { agent in
-                        Toggle(isOn: Binding(
-                            get: { store.allowAppData || store.appDataAgents.contains(agent) },
-                            set: { enabled in store.setAppDataAccess(for: agent, enabled: enabled) }
-                        )) {
-                            HStack(spacing: PulseTheme.Space.s) {
-                                AgentIconView(id: agent)
-                                VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-                                    Text(agent.displayName)
-                                    Text(String(format: store.tr(.agentDataAccessAgentDetail), agent.displayName, store.appDataScopeDescription(for: agent)))
-                                        .font(PulseTheme.Font.caption)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-                        .disabled(store.allowAppData)
-                        .listRowBackground(
-                            store.settingsFocusAppDataAgent == agent
-                                ? Color.accentColor.opacity(PulseTheme.Fill.selected)
-                                : Color.clear
-                        )
-                    }
-                },
-                label: { Text(store.tr(.agentDataAccessScopes)) }
-            )
-        } header: {
-            Text(store.tr(.settingsPaneDataHeader))
-        }
-    }
-
-    /// Everything that lets Pulse act on your behalf, each off until you say.
-    private var controlSection: some View {
-        Section {
-            explainedToggle(
-                store.tr(.allowTerminalAutomation),
-                hint: store.tr(.allowTerminalAutomationHint),
-                isOn: bind(\.allowTerminalAutomation)
-            )
-            .onChange(of: store.allowTerminalAutomation) { _, _ in
-                store.saveSettings()
-                store.refresh(reason: "terminalAutomation")
-            }
-            // Off by default, and the switch is a key file: turning it off
-            // stops every hold immediately ("no key, no hold").
-            explainedToggle(
-                store.tr(.respondLocal),
-                hint: store.tr(.respondLocalHint),
-                isOn: Binding(
-                    get: { store.respondLocalEnabled },
-                    set: { store.setRespondLocalEnabled($0) }
-                )
-            )
-        } header: {
-            Text(store.tr(.settingsPaneControlHeader))
-        }
-    }
-
-    // MARK: About
-
-    private var aboutSection: some View {
-        Section {
-            HStack(spacing: PulseTheme.Space.m) {
-                PulseMarkView(size: 28, tone: .secondary)
-                VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-                    Text(PulseVersion.about)
-                        .font(PulseTheme.Font.hero)
-                    Text(store.tr(.tagline))
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                    if PulseVersion.distributionChannel == "preview" {
-                        Text(store.tr(.updatePreview))
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(PulseTheme.Tone.attention.color)
-                    } else if PulseVersion.distributionChannel == "signed" {
-                        Text(store.tr(.updateSignedUnnotarized))
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(PulseTheme.Tone.attention.color)
-                    }
-                }
-                Spacer(minLength: PulseTheme.Space.xs)
-            }
-            // 21.0: the self-check, per-agent support and diagnostics are one
-            // window now — Health — reachable from here and from the tray.
-            LabeledContent {
-                Button(store.tr(.healthOpen)) { store.openSupportHealth() }
-            } label: {
-                Text(store.tr(.healthTitle))
-                Text(store.tr(.healthSettingsHint))
             }
         }
-    }
-
-    private var updatesSection: some View {
-        Section(store.tr(.checkForUpdates)) {
-            Toggle(store.tr(.checkForUpdates), isOn: bind(\.updateCheckEnabled))
-                .onChange(of: store.updateCheckEnabled) { _, _ in store.saveSettings() }
-            LabeledContent {
-                if let url = store.updateAvailableURL {
-                    if store.updateCanVerifyDownload {
-                        Button(store.tr(.downloadAndVerify)) {
-                            store.downloadAndVerifyUpdate()
-                        }
-                        .disabled(
-                            store.updateDownloadStatus == .downloading
-                                || store.updateDownloadStatus == .verifying
-                                || store.updateDownloadStatus == .installing
-                        )
-                    } else {
-                        Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
-                    }
-                } else {
-                    Button(store.tr(.checkNow)) { store.checkForUpdatesNow() }
-                }
-            } label: {
-                Text(store.updateStatusText)
-                    .foregroundStyle(store.updateAvailableURL == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.running.color))
-            }
-            if let download = store.updateDownloadStatusText {
-                Text(download)
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(downloadColor)
-            }
-            if case .ready = store.updateDownloadStatus, store.updateCanInstallInPlace {
-                Button(store.tr(.installUpdate)) { store.installVerifiedUpdate() }
-            } else if case .ready = store.updateDownloadStatus, !store.updateCanInstallInPlace {
-                Text(store.tr(.updateInstallRequiresNotarized))
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var downloadColor: Color {
-        if case .failed = store.updateDownloadStatus { return PulseTheme.Tone.waiting.color }
-        if case .ready = store.updateDownloadStatus { return PulseTheme.Tone.running.color }
-        return .secondary
-    }
-
-    private var installSection: some View {
-        Section {
-            LabeledContent(store.tr(.build)) {
-                Text(buildText)
-                    .font(PulseTheme.Font.code)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            LabeledContent(store.tr(.runningFrom)) {
-                Text(store.installReport.runningURL.path)
-                    .font(PulseTheme.Font.code)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-            }
-            if store.isVersionMismatch, let bundle = PulseVersion.bundleVersion {
-                Text(String(format: store.tr(.versionMismatchHint), PulseVersion.semver, bundle))
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
-            }
-            if !store.installReport.duplicates.isEmpty {
-                VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
-                    Label(
-                        String(
-                            format: store.tr(.duplicateAppsFound),
-                            store.installReport.duplicates.count
-                        ),
-                        systemImage: "square.on.square"
-                    )
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
-                    ForEach(store.installReport.aboutVisibleDuplicates) { copy in
-                        Text("\(copy.version) · \(copy.url.path)")
-                            .font(PulseTheme.Font.code)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    if store.installReport.aboutHiddenDuplicateCount > 0 {
-                        Text(
-                            String(
-                                format: store.tr(.duplicateAppsMore),
-                                store.installReport.aboutHiddenDuplicateCount
-                            )
-                        )
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    if !store.installReport.removableDuplicates.isEmpty {
-                        Button(store.tr(.removeDuplicateApps)) {
-                            confirmDuplicateRemoval = true
-                        }
-                    }
-                    if store.installReport.hasOtherRunningCopy {
-                        Text(store.tr(.duplicateAppRunning))
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(PulseTheme.Tone.attention.color)
-                    }
-                }
-            }
-            Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
-                store.copyDiagnostics()
-            }
-        }
-    }
-
-    /// `a1b2c3d · 2026-07-27`, or an honest `dev build` when unpackaged.
-    private var buildText: String {
-        let line = PulseVersion.buildLine
-        return line.isEmpty ? store.tr(.devBuild) : line
-    }
-}
-
-
-/// Hour+minute picker backed by minutes-since-midnight.
-/// Quiet hours were whole-hour only, so 22:30 was not expressible.
-private struct MinutePicker: View {
-    let label: String
-    @Binding var minutes: Int
-    let onCommit: () -> Void
-
-    var body: some View {
-        LabeledContent(label) {
-            HStack(spacing: 4) {
-                Picker("", selection: hourBinding) {
-                    ForEach(0..<24, id: \.self) { h in
-                        Text(String(format: "%02d", h)).tag(h)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 62)
-                Text(":")
-                Picker("", selection: minuteBinding) {
-                    ForEach([0, 15, 30, 45], id: \.self) { m in
-                        Text(String(format: "%02d", m)).tag(m)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 62)
-            }
-        }
-    }
-
-    private var hourBinding: Binding<Int> {
-        Binding(
-            get: { min(23, max(0, minutes / 60)) },
-            set: { minutes = $0 * 60 + (minutes % 60); onCommit() }
-        )
-    }
-
-    private var minuteBinding: Binding<Int> {
-        Binding(
-            get: {
-                let m = minutes % 60
-                // Snap a legacy/odd value onto the nearest offered step.
-                return [0, 15, 30, 45].min(by: { abs($0 - m) < abs($1 - m) }) ?? 0
-            },
-            set: { minutes = (minutes / 60) * 60 + $0; onCommit() }
-        )
     }
 }

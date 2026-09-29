@@ -7,56 +7,23 @@ package enum ProcessProbe {
     /// the 2 s Waiting cadence would turn one useful fallback fact into a
     /// permanent energy cost.
     private static var cwdCache: [Int: (path: String, observedAt: TimeInterval)] {
-        get { ScanEngine.memory.withValue { $0.cwd } }
-        set { ScanEngine.memory.withValue { $0.cwd = newValue } }
+        get { HarvestMemory.memory.withValue { $0.cwd } }
+        set { HarvestMemory.memory.withValue { $0.cwd = newValue } }
     }
     /// A denied/empty `lsof` result must not become a prompt loop. macOS can
     /// surface the cross-app privacy dialog from this lookup, and retrying it
     /// on every probe cadence is both noisy and wasteful. Keep the negative
     /// result for a bounded period; a later explicit refresh can try again.
     private static var cwdLookupBackoffUntil: TimeInterval {
-        get { ScanEngine.memory.withValue { $0.cwdLookupBackoffUntil } }
-        set { ScanEngine.memory.withValue { $0.cwdLookupBackoffUntil = newValue } }
+        get { HarvestMemory.memory.withValue { $0.cwdLookupBackoffUntil } }
+        set { HarvestMemory.memory.withValue { $0.cwdLookupBackoffUntil = newValue } }
     }
     private static let cwdLookupBackoffSeconds: TimeInterval = 5 * 60
 
-    /// Last accumulated-CPU reading per pid: `(cputime seconds, wall clock ms)`.
-    ///
-    /// Two points make a rate — the same shape `SessionDigest.bytesPerMinute`
-    /// uses for transcript growth. One reading of `cputime` says how much CPU a
-    /// process has burned *since it launched*, which for a three-hour agent is
-    /// a fact about this morning, not about now. The difference between two
-    /// readings is the only thing that answers "is it computing right now".
-    ///
-    /// Kept for matched agent processes only and rebuilt from the pids seen in
-    /// each scan, so a process that exits takes its entry with it.
-    private static var cpuSamples: [Int: (cpuSeconds: Double, atMs: Int64)] {
-        get { ScanEngine.memory.withValue { $0.cpuSamples } }
-        set { ScanEngine.memory.withValue { $0.cpuSamples = newValue } }
-    }
-    /// Hard ceiling on that store. Only agent processes are sampled, so this is
-    /// never reached in practice; it exists so that a pathological machine
-    /// cannot turn a cache into a leak.
-    package static let maxCPUSamples = 512
-    /// Below this the two readings are too close together for their ratio to
-    /// mean anything: `ps cputime` is reported to 1/100 s, so a 200 ms window
-    /// quantises into steps of 5 % — a number about the sampler, not the agent.
-    package static let minCPUWindowMs: Int64 = 1_000
-    /// Reported percentage ceiling. Percentages are per core, so a parallel
-    /// build legitimately exceeds 100; past this the honest statement is "flat
-    /// out", not a bigger number, and a clock jump cannot print an absurdity.
-    package static let maxCPUPercent: Double = 1_600
-    /// Latched once if this `ps` will not accept `cputime`/`rss`, so the
-    /// degraded field list is asked for directly from then on. A probe that
-    /// cannot list processes shows nothing at all, and no new column is worth
-    /// that; the app drops back to the field set it has always used and simply
-    /// reports CPU as unknown.
-    private static var psRejectsCPUFields: Bool {
-        get { ScanEngine.memory.withValue { $0.psRejectsCPUFields } }
-        set { ScanEngine.memory.withValue { $0.psRejectsCPUFields = newValue } }
-    }
-    private static let psFieldsWithCPU = "pid=,ppid=,tty=,etime=,cputime=,rss=,args="
-    private static let psFieldsBase = "pid=,ppid=,tty=,etime=,args="
+    /// 23.0: the probe asks `ps` for what identifies an agent process and
+    /// nothing else. CPU and resident memory were sampled per pid for a
+    /// compute line nothing renders any more; they are gone with it.
+    private static let psFields = "pid=,ppid=,tty=,etime=,args="
 
     package struct Hit: Hashable {
         package var id: AgentID
@@ -75,42 +42,15 @@ package enum ProcessProbe {
         package var evidence: ProcessEvidence = .executable
         /// Parent IDE / editor from `ps` argv walk — Focus host without TCC.
         package var hostApp: HostAppKind? = nil
-        /// Share of one core, in percent, burned between the previous scan and
-        /// this one. **-1 means not known** — a process seen for the first time
-        /// has no earlier reading to subtract from. 0 is a different and
-        /// meaningful answer: sampled, and genuinely not computing.
-        ///
-        /// Highest value among this agent's matched processes. A row that said
-        /// "0 %" while one of its three processes was pegged would be stating
-        /// the one thing that is false.
-        package var cpuPercent: Double = -1
-        /// Resident memory in bytes, summed over this agent's matched
-        /// processes. 0 means not observed.
-        package var rssBytes: Int = 0
     }
 
     /// One parsed row of the process table.
-    ///
-    /// CPU and resident memory are the two facts no transcript can give. A run
-    /// that is compiling, installing dependencies or waiting on a long tool
-    /// call writes nothing at all, and on file evidence alone it looks exactly
-    /// like a run that has stopped.
     package struct Proc: Equatable {
         package var pid: Int
         package var ppid: Int
         package var tty: String = ""
         /// Age of this process, not of the agent session.
         package var elapsedSeconds: Double = 0
-        /// Accumulated CPU seconds since launch (`ps cputime`). -1 when `ps`
-        /// gave nothing parseable — never 0, which is a real answer meaning
-        /// "this process has used no CPU".
-        package var cpuSeconds: Double = -1
-        /// Share of one core over the interval since the previous scan, in
-        /// percent; -1 for not known. Only matched agent processes are sampled
-        /// (see `scan`), so an unmatched row keeps -1 by design.
-        package var cpuPercent: Double = -1
-        /// Resident set size in bytes. `ps` reports KB.
-        package var rssBytes: Int = 0
         package var args: String = ""
     }
 
@@ -123,25 +63,9 @@ package enum ProcessProbe {
         allowAppData: Bool = false,
         appDataAgents: Set<AgentID> = []
     ) -> [Hit] {
-        // `cputime` and `rss` ride along in the fork that already happens.
-        // A second `ps` for them would be a per-tick energy cost for facts the
-        // first one can hand over for free, and cadence is an invariant here.
-        //
         // Field order matters: `args=` is the only column that contains
         // spaces, so it must stay last — everything before it is one token.
-        var output = psRejectsCPUFields ? "" : (shell("/bin/ps", ["-axo", psFieldsWithCPU]) ?? "")
-        var includesCPU = !output.isEmpty
-        if output.isEmpty {
-            output = shell("/bin/ps", ["-axo", psFieldsBase]) ?? ""
-            includesCPU = false
-            // Only latch when the shorter list *worked*: that is the evidence
-            // that the two new keywords were the problem, rather than a probe
-            // that failed for a moment. This costs one extra fork, once.
-            if !output.isEmpty, !psRejectsCPUFields {
-                psRejectsCPUFields = true
-                DebugLog.write("probe ps rejected cputime/rss; CPU reported as unknown")
-            }
-        }
+        let output = shell("/bin/ps", ["-axo", psFields]) ?? ""
         // Node-based agents are allowed to rewrite argv[0] for a polished
         // terminal title. Command Code, for example, appears in `args` as
         // `⌘ Command Code · <user>` while the executable is still Node. Keep
@@ -152,7 +76,7 @@ package enum ProcessProbe {
         if output.isEmpty {
             DebugLog.write("probe ps output EMPTY")
         }
-        var procs = parseProcessLines(output, includesCPU: includesCPU)
+        let procs = parseProcessLines(output)
 
         var commByPid: [Int: String] = [:]
         for line in commOutput.split(whereSeparator: \.isNewline) {
@@ -216,56 +140,11 @@ package enum ProcessProbe {
         }
 
         var acc: [AgentID: Hit] = [:]
-        // One wall-clock stamp for the whole scan: every pid's window is then
-        // measured against the same instant, and the arithmetic cannot drift
-        // with how long the loop below takes.
-        let sampledAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
-        var nextSamples: [Int: (cpuSeconds: Double, atMs: Int64)] = [:]
-        for index in procs.indices {
-            let p = procs[index]
+        for p in procs {
             if p.args.contains("Warp.app") { continue }
             let evidenceArgs = argsByPid[p.pid] ?? p.args
             guard let match = matchEvidence(args: evidenceArgs) else { continue }
             let id = match.id
-            // Sample only what we matched. Sampling the whole process table
-            // would put several hundred entries a tick through a bounded
-            // store, and evict the agents we actually care about.
-            if p.cpuSeconds >= 0 {
-                // A pid the store already knows is only the same *program* if
-                // the process behind it is at least as old as the gap since
-                // that reading. The rewind check below catches a reused pid
-                // whose occupant has burned less CPU than its predecessor; it
-                // is blind to one that has burned more, and dividing two
-                // unrelated totals would print a number about nothing.
-                let previous = cpuSamples[p.pid].flatMap { sample in
-                    isSameProcess(
-                        elapsedSeconds: p.elapsedSeconds,
-                        windowMs: sampledAtMs - sample.atMs
-                    ) ? sample : nil
-                }
-                if let previous {
-                    procs[index].cpuPercent = cpuPercent(
-                        previousCPUSeconds: previous.cpuSeconds,
-                        previousAtMs: previous.atMs,
-                        currentCPUSeconds: p.cpuSeconds,
-                        currentAtMs: sampledAtMs
-                    )
-                }
-                if let previous,
-                   sampledAtMs - previous.atMs < minCPUWindowMs,
-                   p.cpuSeconds >= previous.cpuSeconds {
-                    // Too soon to say anything. Keep the older anchor rather
-                    // than overwriting it, or a fast cadence would reset the
-                    // window every tick and the answer would stay unknown
-                    // forever.
-                    nextSamples[p.pid] = previous
-                } else {
-                    // Includes the pid-reuse / counter-rewind case: a negative
-                    // delta means this is not the process we measured before,
-                    // so its history is dropped and counting restarts here.
-                    nextSamples[p.pid] = (p.cpuSeconds, sampledAtMs)
-                }
-            }
             // The Cursor GUI is itself useful liveness evidence when the
             // protected composer store is unavailable. Previously this was
             // dropped unconditionally, so a user with an active Cursor
@@ -291,15 +170,8 @@ package enum ProcessProbe {
                     hit.elapsedSeconds = p.elapsedSeconds
                 }
             }
-            let percent = procs[index].cpuPercent
-            if percent >= 0 { hit.cpuPercent = max(hit.cpuPercent, percent) }
-            if p.rssBytes > 0 { hit.rssBytes += p.rssBytes }
             acc[id] = hit
         }
-        // Only replace the store when this scan actually saw a process table.
-        // A failed `ps` must not erase every anchor and cost the next scan its
-        // answer; `cputime` is cumulative, so a gap is survivable.
-        if !procs.isEmpty { cpuSamples = boundedCPUSamples(nextSamples) }
         // `lsof` asks the kernel for another process's open cwd and can be
         // classified as cross-app data by macOS. Activity rows already carry
         // their workspace from the agent store; keep this enrichment behind
@@ -338,13 +210,10 @@ package enum ProcessProbe {
     /// very little chance session data moved, so the expensive harvest can be
     /// skipped for a tick or two.
     ///
-    /// **CPU and RSS must never enter this string.** They move every single
-    /// tick by design, so including them would make the fingerprint differ
-    /// from itself forever, the harvest skip would never fire again, and a
-    /// menu-bar app would be running its most expensive path continuously —
-    /// the exact energy failure the cadence invariant exists to prevent. The
-    /// fingerprint answers "did the process set change", not "what are those
-    /// processes doing".
+    /// It answers "did the process set change", never "what are those
+    /// processes doing": a value that moves every tick would make the
+    /// fingerprint differ from itself forever and the harvest skip would
+    /// never fire again.
     package static func signature(_ hits: [Hit]) -> String {
         hits
             .map { "\($0.id.rawValue):\($0.count):\($0.pid)" }
@@ -375,16 +244,13 @@ package enum ProcessProbe {
         return days * 86_400 + hours * 3_600 + minutes * 60 + seconds
     }
 
-    /// Parse one `ps` process table into rows.
+    /// Parse one `ps -axo pid=,ppid=,tty=,etime=,args=` table into rows.
     ///
     /// Pulled out of `scan` so the field order — the part that breaks silently
     /// when a column is added in the wrong place — can be held to real vendor
     /// output in a test without launching a single process.
-    ///
-    /// `includesCPU: false` is the degraded field list, without `cputime` and
-    /// `rss`. Those rows report CPU as -1 (not known) rather than 0.
-    package static func parseProcessLines(_ output: String, includesCPU: Bool = true) -> [Proc] {
-        let columns = includesCPU ? 7 : 5
+    package static func parseProcessLines(_ output: String) -> [Proc] {
+        let columns = 5
         var procs: [Proc] = []
         for line in output.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -396,125 +262,16 @@ package enum ProcessProbe {
             guard parts.count >= columns,
                   let pid = Int(parts[0]),
                   let ppid = Int(parts[1]) else { continue }
-            let rssKB = includesCPU ? (Int(parts[5]) ?? 0) : 0
             procs.append(Proc(
                 pid: pid,
                 ppid: ppid,
                 tty: String(parts[2]),
                 elapsedSeconds: parseElapsed(String(parts[3])),
-                cpuSeconds: includesCPU ? parseCPUTime(String(parts[4])) : -1,
-                rssBytes: rssKB > 0 ? rssKB * 1_024 : 0,
-                // The remainder of the line, spaces and all. Trimmed only at
-                // the front, where a right-aligned `rss` column can leave
-                // padding behind.
+                // The remainder of the line, spaces and all.
                 args: String(parts[columns - 1]).trimmingCharacters(in: .whitespaces)
             ))
         }
         return procs
-    }
-
-    /// `ps cputime`: `mm:ss.cc`, `hh:mm:ss[.cc]`, or `dd-hh:mm:ss[.cc]`.
-    /// Returns accumulated CPU seconds, or **-1 when the field said nothing
-    /// parseable** — distinct from 0, which means the process has burned no
-    /// CPU at all.
-    package static func parseCPUTime(_ raw: String) -> Double {
-        func number(_ field: Substring) -> Double? {
-            guard !field.isEmpty else { return nil }
-            // `Double` would happily take "inf", "nan" or "1e9"; none of those
-            // is a time, and accepting one would put nonsense into a rate.
-            guard field.allSatisfy({ ($0.isASCII && $0.isNumber) || $0 == "." }) else { return nil }
-            guard let value = Double(field), value.isFinite, value >= 0 else { return nil }
-            return value
-        }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return -1 }
-        let daySplit = trimmed.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-        var days: Double = 0
-        var clock = trimmed[trimmed.startIndex...]
-        if daySplit.count == 2 {
-            guard let parsed = number(daySplit[0]) else { return -1 }
-            days = parsed
-            clock = daySplit[1]
-        }
-        let fields = clock.split(separator: ":", omittingEmptySubsequences: false)
-        guard fields.count == 2 || fields.count == 3 else { return -1 }
-        var values: [Double] = []
-        for field in fields {
-            guard let parsed = number(field) else { return -1 }
-            values.append(parsed)
-        }
-        let hours = values.count == 3 ? values[0] : 0
-        let minutes = values.count == 3 ? values[1] : values[0]
-        let seconds = values.count == 3 ? values[2] : values[1]
-        return days * 86_400 + hours * 3_600 + minutes * 60 + seconds
-    }
-
-    /// Can the process wearing this pid now be the one sampled `windowMs` ago?
-    ///
-    /// A process younger than the window started after that reading, so the
-    /// pid has been recycled and its predecessor's accumulated CPU describes a
-    /// different program. `cpuPercent` already refuses a counter that went
-    /// backwards, which covers a replacement that has burned *less* CPU than
-    /// the process it replaced; this covers the other half.
-    ///
-    /// `ps etime` has one-second resolution and truncates, so the reported age
-    /// is a floor. One second of slack keeps a genuine sample from being
-    /// thrown away on rounding — the cost is that a pid recycled within a
-    /// second of the window length still slips through, which is a far smaller
-    /// hole than the one it closes and cannot be shrunk further with a field
-    /// this coarse.
-    package static func isSameProcess(elapsedSeconds: Double, windowMs: Int64) -> Bool {
-        guard windowMs > 0 else { return true }
-        return (elapsedSeconds + 1) * 1_000 >= Double(windowMs)
-    }
-
-    /// CPU actually burned between two readings, as a percentage of one core.
-    ///
-    /// Deliberately **not** `ps %cpu`: on macOS that column is an average over
-    /// the whole life of the process, so an agent that worked hard for ten
-    /// minutes and has been parked for three hours still reports a healthy
-    /// number. Presenting it as "busy now" would be a lie of exactly the kind
-    /// this product exists to avoid. Two readings of the cumulative counter,
-    /// subtracted, describe the interval between them and nothing else — the
-    /// same construction `SessionDigest.bytesPerMinute` uses for transcript
-    /// growth.
-    ///
-    /// Returns -1 for "not known": no previous reading, a window too short to
-    /// divide by, or a counter that went backwards (pid reuse — a new process
-    /// wearing a dead one's number, whose history means nothing).
-    package static func cpuPercent(
-        previousCPUSeconds: Double,
-        previousAtMs: Int64,
-        currentCPUSeconds: Double,
-        currentAtMs: Int64
-    ) -> Double {
-        guard previousAtMs > 0,
-              previousCPUSeconds >= 0,
-              currentCPUSeconds >= 0,
-              previousCPUSeconds.isFinite,
-              currentCPUSeconds.isFinite else { return -1 }
-        let elapsedMs = currentAtMs - previousAtMs
-        guard elapsedMs >= minCPUWindowMs else { return -1 }
-        let burned = currentCPUSeconds - previousCPUSeconds
-        guard burned >= 0 else { return -1 }
-        let percent = (burned / (Double(elapsedMs) / 1_000)) * 100
-        guard percent.isFinite else { return -1 }
-        return min(percent, maxCPUPercent)
-    }
-
-    /// Keep the per-pid sample store bounded. Entries already belong to
-    /// processes seen in this scan, so the usual eviction is simply that a pid
-    /// stopped appearing; this is the floor under a machine with an
-    /// implausible number of live agents.
-    package static func boundedCPUSamples(
-        _ samples: [Int: (cpuSeconds: Double, atMs: Int64)]
-    ) -> [Int: (cpuSeconds: Double, atMs: Int64)] {
-        guard samples.count > maxCPUSamples else { return samples }
-        var trimmed: [Int: (cpuSeconds: Double, atMs: Int64)] = [:]
-        for entry in samples.sorted(by: { $0.value.atMs > $1.value.atMs }).prefix(maxCPUSamples) {
-            trimmed[entry.key] = entry.value
-        }
-        return trimmed
     }
 
     /// Parse `lsof -Ffpn -a -d cwd -p ...` without depending on column spacing.

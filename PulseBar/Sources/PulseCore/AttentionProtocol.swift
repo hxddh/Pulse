@@ -1,11 +1,5 @@
 import Foundation
 
-/// Frozen Attention bridge contract (v1) — the public Waiting path for any
-/// agent that can invoke `pulse-hook` / `PulseBar --hook` without expanding
-/// the Claude/Codex hook installer.
-///
-/// Writers: `PulseHookReceiver`, `AttentionIO`, optional legacy `pulse_hook.py`.
-/// Reader: `AttentionReader`. Spec: `docs/attention-protocol.md`.
 /// 16.0 · what an attention event means, as a type.
 ///
 /// Until 15.0 the canonical kinds were bare strings, and one of them —
@@ -42,49 +36,44 @@ public enum AttentionKind: String, Sendable, CaseIterable {
 /// agent that can invoke `pulse-hook` / `PulseBar --hook` without expanding
 /// the Claude/Codex hook installer.
 ///
-/// Writers: `PulseHookReceiver`, `AttentionIO`, optional legacy `pulse_hook.py`.
-/// Reader: `AttentionReader`. Spec: `docs/attention-protocol.md`.
+/// Writers: `PulseHookReceiver`, `AttentionIO`, and external integrators
+/// appending lines directly. Reader: `AttentionReader`. Spec:
+/// `docs/attention-protocol.md`.
 public enum AttentionProtocol {
     public static let version = 3
 
     /// Comment header written at the top of `attention.tsv`.
     ///
-    /// v2 added `host` (since 22.0 accepted and ignored: every line in
-    /// `attention.tsv` is this Mac's). v3 adds `front`: `1` when the prompt's own window was the
-    /// frontmost application as the event was raised, `0` when it was not,
-    /// empty when that could not be established. v1 and v2 lines stay valid;
-    /// a missing column reads as unknown.
+    /// `host` (column 7) is written empty and ignored: every line in
+    /// `attention.tsv` is this Mac's. `front` (column 8) is `1` when the
+    /// prompt's own window was the frontmost application as the event was
+    /// raised, `0` when it was not, empty when that could not be established.
+    /// Since 23.0 every record has all eight columns; a shorter line (v1/v2)
+    /// is not read.
     public static let header =
         "# pulse-attention v3 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\thost\\tfront)\n"
-
-    /// The v1 header, still written by older installed hooks. Readers must
-    /// accept it; an upgrade that darkened the lamp would be a worse bug
-    /// than anything a newer column adds.
-    public static let headerV1 =
-        "# pulse-attention v1 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
-
-    /// Any line starting with this is a header, whatever version it names.
-    public static let headerPrefix = "# pulse-attention "
 
     /// Column count of a complete v3 record.
     public static let columnCount = 8
 
-    /// Canonical kinds, as strings, for the writers and older call sites.
-    public static let waitingKinds: Set<String> = Set(
-        AttentionKind.allCases.filter(\.isBlocking).map(\.rawValue)
-    )
-    public static let clearKinds: Set<String> = [AttentionKind.done.rawValue]
-    public static let turnKinds: Set<String> = [AttentionKind.turn.rawValue]
-    public static let lifecycleKinds: Set<String> = [
-        AttentionKind.subagentStart.rawValue, AttentionKind.subagentStop.rawValue,
-    ]
+    /// The columns of one v3 record, or nil for a blank line, a comment or
+    /// header, or a line without exactly `columnCount` columns. Only line
+    /// breaks are trimmed: a v3 line's trailing columns are often empty, so
+    /// trailing tabs are part of the record.
+    public static func columns<S: StringProtocol>(of line: S) -> [String]? {
+        let raw = String(line).trimmingCharacters(in: .newlines)
+        if raw.isEmpty || raw.hasPrefix("#") { return nil }
+        let cols = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        return cols.count == columnCount ? cols : nil
+    }
 
     public static var acceptedWriteKinds: Set<String> {
         Set(AttentionKind.allCases.map(\.rawValue))
     }
 
-    /// Vendor event names onto the v3 kinds. Unknown tokens stay as-is so
-    /// `acceptsWrite(kind:)` can reject them.
+    /// Vendor event names onto the v3 kinds. Unknown tokens stay as-is — and
+    /// an empty one stays empty — so `acceptsWrite(kind:)` rejects them: a
+    /// line that does not say what it is about is never Waiting.
     ///
     /// v3 changes three meanings on purpose (docs/attention-protocol.md):
     /// `idle_prompt` / `idle` and `stop` are **your turn**, not blocked and
@@ -141,7 +130,7 @@ public enum AttentionProtocol {
         if low.contains("user_input"), !low.contains("response") {
             return AttentionKind.question.rawValue
         }
-        return k.isEmpty ? AttentionKind.waiting.rawValue : low
+        return low
     }
 
     /// The typed kind of a token, or nil when the protocol does not know it.
@@ -149,30 +138,8 @@ public enum AttentionProtocol {
         AttentionKind(rawValue: normalizeKind(raw))
     }
 
-    /// A host label is an identity, not free text: it lands in a `rowKey` and
-    /// on the identity line, so it must not carry the separators those rely on
-    /// and must not grow unbounded.
-    ///
-    /// An empty result means "this machine" — the same thing a v1 line means.
-    public static func normalizeHost(_ raw: String) -> String {
-        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        for separator in ["\t", "\n", "|", "/"] {
-            value = value.replacingOccurrences(of: separator, with: "-")
-        }
-        // `devbox.local` and `devbox` are the same machine to a human.
-        if value.lowercased().hasSuffix(".local") {
-            value = String(value.dropLast(".local".count))
-        }
-        if value.count > 32 { value = String(value.prefix(32)) }
-        return value
-    }
-
     public static func acceptsWrite(kind: String) -> Bool {
         acceptedWriteKinds.contains(normalizeKind(kind))
-    }
-
-    public static func isWaitingKind(_ kind: String) -> Bool {
-        Self.kind(kind)?.isBlocking == true
     }
 
     /// Column 8 as written: `1` in front, `0` not, empty unknown.

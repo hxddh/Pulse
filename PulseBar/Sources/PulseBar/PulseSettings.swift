@@ -1,236 +1,137 @@
 import Foundation
 
-/// How the tray groups its rows.
-enum TrayGrouping: String, CaseIterable, Identifiable {
-    case status
-    case project
-
-    var id: String { rawValue }
-
-    var labelKey: L10n.Key {
-        switch self {
-        case .status: return .groupByAgent
-        case .project: return .groupByProject
-        }
-    }
-}
-
-/// User settings as a value, plus the flat `key=value` format they persist in.
+/// User settings as a value, saved as `settings.json` (0600, `PrivateFile`).
 ///
-/// Split out of `StatusStore` so the parts that can silently lose a user's
-/// configuration — the parser, the serializer, and the 0.22 whole-hours →
-/// minutes migration that runs once on every upgrade — are testable without
-/// touching `~/Library/Application Support`.
-struct PulseSettings: Equatable {
-    /// Deep app-data grants are intentionally versioned. A pre-0.48 settings
-    /// file may contain `appData=1` from the old all-or-nothing switch; carrying
-    /// that grant into the scoped policy can immediately trigger a new TCC
-    /// prompt after an ad-hoc update. The user must opt in again under the
-    /// current, per-agent policy.
-    static let appDataPolicyVersion = 2
-
-    var autoProbe = true
-    var notifyOnIdle = true
-    var notifyOnWaiting = true
-    var quietHoursEnabled = false
-    /// Minutes since midnight — whole hours were too coarse for a 22:30 bedtime.
-    var quietStartMinute = 22 * 60
-    var quietEndMinute = 8 * 60
+/// 23.0 replaced the flat `key=value` `settings.txt` with this `Codable`
+/// struct and carries nothing over: a `settings.txt` found at load is
+/// deleted and the defaults apply. Only settings a person can reach from the
+/// UI (or that Pulse genuinely needs) are kept. Decoding is tolerant — a
+/// missing key is its default, an unknown enum value is its default, and an
+/// unknown agent in the mute list is dropped — so one bad field never costs
+/// the rest of the file.
+struct PulseSettings: Equatable, Codable, Sendable {
     var launchAtLogin = false
     var language: AppLanguage = .auto
-    var updateCheckEnabled = true
-    /// Deep app-data reads are protected by macOS TCC. Keep them opt-in so a
-    /// new ad-hoc build never interrupts the tray with a cross-app prompt.
-    var allowAppData = false
-    /// Per-agent scope for the deep scan. An empty set means no protected
-    /// source is enabled; `allowAppData` is the explicit "all" switch.
-    var appDataAgents: Set<AgentID> = []
     /// Carbon global-hotkey registration can trigger an Apple Events privacy
     /// request on unsigned builds, so it stays opt-in: `.off` until chosen.
-    /// 21.0: one control. The shortcut was a picker disabled until a toggle
-    /// below it was switched on — two controls for one bit, in the wrong
-    /// order. `.off` is the picker's own first choice now.
     var hotkey: HotkeyChoice = .off
-    var hotkeyEnabled: Bool { hotkey != .off }
+    var notifyOnWaiting = true
+    /// Muted agents still appear in the tray; they just stop notifying.
+    var mutedAgents: Set<AgentID> = []
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
     var allowTerminalAutomation = false
-    // 22.0 removed `workbenchActuation`, `workspaceEffect` and
-    // `fleetBroadcast` with the features they switched. Older files still
-    // carry the keys; `parse` ignores keys it does not know.
-    /// Muted agents still appear in the tray; they just stop notifying.
-    var mutedAgents: Set<AgentID> = []
-    /// How the tray groups rows. Status is the default because "who needs me"
-    /// is the question the product exists to answer; project grouping is for
-    /// people running several repos at once.
-    var trayGrouping: TrayGrouping = .status
-    /// Off by default — an unsolicited sound is a bigger interruption than the
-    /// one it is reporting.
-    var playSoundOnWaiting = false
-    /// Minutes of silence before a live row is called stalled; 0 turns it off.
-    ///
-    /// Was a hardcoded twenty. Twenty fits nobody in particular: a long build
-    /// is not stalled at twenty minutes, and a short back-and-forth is stuck
-    /// well before it.
-    var stallMinutes = 20
-    /// How long "Later" silences a wait, in minutes.
-    var snoozeMinutes = 10
+    /// One switch for every agent whose sessions live in data macOS protects
+    /// (`AgentID.requiresAppDataOptIn`). Off by default: reading it can
+    /// trigger the cross-app privacy prompt. 23.0 folded the per-agent
+    /// scopes into this one boolean.
+    var readProtectedAppData = false
+    var updateCheckEnabled = true
     /// Set when the user uninstalls the hooks: the tray stops suggesting
     /// them. Installing again clears it.
     var hooksNudgeOff = false
 
-    static let minutesPerDay = 24 * 60
+    init() {}
 
-    static func clampMinute(_ m: Int) -> Int {
-        min(minutesPerDay - 1, max(0, m))
+    private enum CodingKeys: String, CodingKey {
+        case launchAtLogin, language, hotkey, notifyOnWaiting, mutedAgents
+        case allowTerminalAutomation, readProtectedAppData, updateCheckEnabled, hooksNudgeOff
     }
 
-    /// Tolerant on purpose: a settings file is not a contract, and a stray line
-    /// must never cost the user the rest of their configuration.
-    static func parse(_ text: String) -> PulseSettings {
-        var s = PulseSettings()
-        // Pre-0.22 wrote whole hours; keep reading them so nobody loses a window.
-        var legacyStartHour: Int?
-        var legacyEndHour: Int?
-        var sawMinuteKeys = false
-        var sawCurrentAppDataPolicy = false
-        var sawHotkeyEnabled = false
-
-        for line in text.split(whereSeparator: \.isNewline) {
-            let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { continue }
-            let key = parts[0].trimmingCharacters(in: .whitespaces)
-            let raw = parts[1]
-            let on = !(raw == "0" || raw == "false")
-
-            switch key {
-            case "auto": s.autoProbe = on
-            case "notify": s.notifyOnIdle = on
-            case "notifyWaiting": s.notifyOnWaiting = on
-            case "quiet": s.quietHoursEnabled = on
-            case "quietStart": legacyStartHour = Int(raw)
-            case "quietEnd": legacyEndHour = Int(raw)
-            case "quietStartMin":
-                if let v = Int(raw) { s.quietStartMinute = v; sawMinuteKeys = true }
-            case "quietEndMin":
-                if let v = Int(raw) { s.quietEndMinute = v; sawMinuteKeys = true }
-            case "login": s.launchAtLogin = on
-            case "updates": s.updateCheckEnabled = on
-            case "appData": s.allowAppData = on
-            case "appDataAgents":
-                s.appDataAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
-            case "appDataPolicyVersion":
-                sawCurrentAppDataPolicy = Int(raw) == Self.appDataPolicyVersion
-            case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .off
-            case "hotkeyEnabled": sawHotkeyEnabled = on
-            case "terminalAutomation": s.allowTerminalAutomation = on
-            case "mute":
-                s.mutedAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
-            case "lang": s.language = AppLanguage(rawValue: raw) ?? .auto
-            case "grouping": s.trayGrouping = TrayGrouping(rawValue: raw) ?? .status
-            case "waitSound": s.playSoundOnWaiting = on
-            case "stallMin": if let v = Int(raw) { s.stallMinutes = max(0, min(240, v)) }
-            case "snoozeMin": if let v = Int(raw) { s.snoozeMinutes = max(1, min(240, v)) }
-            case "hooksNudgeOff": s.hooksNudgeOff = on
-            default: break
-            }
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = PulseSettings()
+        func bool(_ key: CodingKeys, _ fallback: Bool) -> Bool {
+            (try? c.decodeIfPresent(Bool.self, forKey: key)) ?? fallback
         }
-
-        // Only migrate when the file predates the minute-precision keys.
-        if !sawMinuteKeys {
-            if let h = legacyStartHour { s.quietStartMinute = h * 60 }
-            if let h = legacyEndHour { s.quietEndMinute = h * 60 }
+        func string(_ key: CodingKeys) -> String? {
+            try? c.decodeIfPresent(String.self, forKey: key)
         }
-        if !sawCurrentAppDataPolicy {
-            // Do not silently replay an old broad TCC grant. The next explicit
-            // toggle writes the scoped policy marker and makes the choice
-            // durable without reintroducing a background permission request.
-            s.allowAppData = false
-            s.appDataAgents.removeAll()
-        }
-        // Before 21.0 a chosen shortcut only counted with `hotkeyEnabled=1`;
-        // 21.0 still writes that line, so older and newer builds agree.
-        if !sawHotkeyEnabled { s.hotkey = .off }
-        s.quietStartMinute = clampMinute(s.quietStartMinute)
-        s.quietEndMinute = clampMinute(s.quietEndMinute)
-        return s
+        launchAtLogin = bool(.launchAtLogin, d.launchAtLogin)
+        language = string(.language).flatMap(AppLanguage.init(rawValue:)) ?? d.language
+        hotkey = string(.hotkey).flatMap(HotkeyChoice.init(rawValue:)) ?? d.hotkey
+        notifyOnWaiting = bool(.notifyOnWaiting, d.notifyOnWaiting)
+        let muted = (try? c.decodeIfPresent([String].self, forKey: .mutedAgents)) ?? []
+        mutedAgents = Set(muted.compactMap(AgentID.init(rawValue:)))
+        allowTerminalAutomation = bool(.allowTerminalAutomation, d.allowTerminalAutomation)
+        readProtectedAppData = bool(.readProtectedAppData, d.readProtectedAppData)
+        updateCheckEnabled = bool(.updateCheckEnabled, d.updateCheckEnabled)
+        hooksNudgeOff = bool(.hooksNudgeOff, d.hooksNudgeOff)
     }
 
-    func serialized() -> String {
-        let muted = mutedAgents.map(\.rawValue).sorted().joined(separator: ",")
-        let appData = appDataAgents.map(\.rawValue).sorted().joined(separator: ",")
-        return """
-            auto=\(autoProbe ? 1 : 0)
-            notify=\(notifyOnIdle ? 1 : 0)
-            notifyWaiting=\(notifyOnWaiting ? 1 : 0)
-            quiet=\(quietHoursEnabled ? 1 : 0)
-            quietStartMin=\(Self.clampMinute(quietStartMinute))
-            quietEndMin=\(Self.clampMinute(quietEndMinute))
-            lang=\(language.rawValue)
-            login=\(launchAtLogin ? 1 : 0)
-            updates=\(updateCheckEnabled ? 1 : 0)
-            appData=\(allowAppData ? 1 : 0)
-            appDataAgents=\(appData)
-            appDataPolicyVersion=\(Self.appDataPolicyVersion)
-            hotkey=\(hotkey.rawValue)
-            hotkeyEnabled=\(hotkeyEnabled ? 1 : 0)
-            terminalAutomation=\(allowTerminalAutomation ? 1 : 0)
-            grouping=\(trayGrouping.rawValue)
-            waitSound=\(playSoundOnWaiting ? 1 : 0)
-            stallMin=\(stallMinutes)
-            snoozeMin=\(snoozeMinutes)
-            hooksNudgeOff=\(hooksNudgeOff ? 1 : 0)
-            mute=\(muted)
-            """
+    func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(launchAtLogin, forKey: .launchAtLogin)
+        try c.encode(language.rawValue, forKey: .language)
+        try c.encode(hotkey.rawValue, forKey: .hotkey)
+        try c.encode(notifyOnWaiting, forKey: .notifyOnWaiting)
+        try c.encode(mutedAgents.map(\.rawValue).sorted(), forKey: .mutedAgents)
+        try c.encode(allowTerminalAutomation, forKey: .allowTerminalAutomation)
+        try c.encode(readProtectedAppData, forKey: .readProtectedAppData)
+        try c.encode(updateCheckEnabled, forKey: .updateCheckEnabled)
+        try c.encode(hooksNudgeOff, forKey: .hooksNudgeOff)
     }
 
-    /// Quiet window may wrap midnight (e.g. 22:30 → 08:00). Equal start/end
-    /// disables it rather than silencing the whole day.
-    func isInQuietHours(now: Date, calendar: Calendar = .current) -> Bool {
-        guard quietHoursEnabled else { return false }
-        let start = Self.clampMinute(quietStartMinute)
-        let end = Self.clampMinute(quietEndMinute)
-        if start == end { return false }
-        let comps = calendar.dateComponents([.hour, .minute], from: now)
-        let minute = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
-        if start < end {
-            return minute >= start && minute < end
-        }
-        return minute >= start || minute < end
+    /// Whether this agent's sessions are out of reach under these settings.
+    func isPrivacyLimited(_ agent: AgentID) -> Bool {
+        agent.requiresAppDataOptIn && !readProtectedAppData
     }
 
     /// One-line summary for the debug log.
     var debugDescription: String {
-        "auto=\(autoProbe) notifyIdle=\(notifyOnIdle) notifyWait=\(notifyOnWaiting) "
-            + "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) "
-            + "lang=\(language.rawValue) login=\(launchAtLogin) "
-            + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) "
-            + "terminalAutomation=\(allowTerminalAutomation) "
+        "notifyWait=\(notifyOnWaiting) lang=\(language.rawValue) login=\(launchAtLogin) "
+            + "hotkey=\(hotkey.rawValue) terminalAutomation=\(allowTerminalAutomation) "
             + "muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
-            + "appData=\(allowAppData) "
-            + "appDataAgents=\(appDataAgents.count) "
-            + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
-            + "stall=\(stallMinutes) snooze=\(snoozeMinutes) "
-            + "hooksNudgeOff=\(hooksNudgeOff)"
+            + "appData=\(readProtectedAppData) hooksNudgeOff=\(hooksNudgeOff)"
     }
 
-    /// Shared on-disk path so the menu-bar store and `--harvest-test` CLI read
-    /// the same privacy grants.
-    static func settingsFileURL(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> URL {
-        home
-            .appendingPathComponent("Library/Application Support/Pulse/settings.txt")
+    // MARK: - On disk
+
+    static let readLimit = 64 * 1024
+
+    /// Where `settings.json` lives: next to `attention.tsv` and
+    /// `session-log.json`, so `PULSE_HOME` moves all three. A `home` (tests)
+    /// names a home directory instead.
+    static func directory(home: URL? = nil) -> URL {
+        guard let home else { return AttentionIO.path.deletingLastPathComponent() }
+        return home.appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
     }
 
-    /// Load the user settings file, or defaults when missing/unreadable.
-    static func loadFromDisk(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> PulseSettings {
-        let url = settingsFileURL(home: home)
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-            return PulseSettings()
+    /// Shared on-disk path so the menu-bar store and the `--harvest-*` CLI
+    /// read the same privacy choice.
+    static func fileURL(home: URL? = nil) -> URL {
+        directory(home: home).appendingPathComponent("settings.json")
+    }
+
+    /// The pre-23.0 file. Deleted at load, never read.
+    static func retiredFileURL(home: URL? = nil) -> URL {
+        directory(home: home).appendingPathComponent("settings.txt")
+    }
+
+    /// The saved settings, or the defaults when there is no readable file.
+    /// A `settings.txt` from before 23.0 is removed, unread.
+    static func load(home: URL? = nil) -> PulseSettings {
+        loadIfPresent(home: home) ?? PulseSettings()
+    }
+
+    /// The saved settings, or nil when there is no readable `settings.json`.
+    /// A `settings.txt` from before 23.0 is removed, unread.
+    static func loadIfPresent(home: URL? = nil) -> PulseSettings? {
+        let retired = retiredFileURL(home: home)
+        if FileManager.default.fileExists(atPath: retired.path) {
+            try? FileManager.default.removeItem(at: retired)
         }
-        return parse(text)
+        guard let data = SafeRead.regularFile(atPath: fileURL(home: home).path, limit: readLimit) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(PulseSettings.self, from: data)
+    }
+
+    @discardableResult
+    func save(home: URL? = nil) -> Bool {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+        guard let data = try? encoder.encode(self) else { return false }
+        return PrivateFile.write(data, to: Self.fileURL(home: home))
     }
 }

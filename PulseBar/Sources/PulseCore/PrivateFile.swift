@@ -10,13 +10,13 @@ import Foundation
 /// the rename. Creating the file with the mode we want, before a byte goes
 /// into it, closes the window instead of narrowing it.
 ///
-/// 2.2 established this for the session digest, which by design stores only
+/// 2.2 established this for the session digest, which by design stored only
 /// counts and vendor tool names. The two files holding actual prose had the
-/// weakest protection of anything Pulse writes: `attention-ledger.json` keeps
-/// session titles — the user's own words, up to 160 characters — and project
-/// names, and set no mode at all; `attention.tsv` keeps the command an agent
-/// asked to run and the directory it asked from, and was created 0644. The
-/// respond spool sitting in the same folder was already 0600.
+/// weakest protection of anything Pulse writes: the attention ledger kept
+/// session titles — the user's own words, up to 160 characters — and set no
+/// mode at all; `attention.tsv` keeps the command an agent asked to run and
+/// the directory it asked from, and was created 0644. Since 23.0 the titles
+/// live in `session-log.json`, written through here.
 public enum PrivateFile {
     public static let mode: mode_t = 0o600
 
@@ -31,8 +31,7 @@ public enum PrivateFile {
     /// Write `data` privately, then publish it atomically.
     ///
     /// `rename(2)` carries the mode across whether or not a file was already
-    /// there, which is the same shape `RespondSpool.atomicWrite0600` uses for
-    /// verdicts, and for the same reason.
+    /// there.
     @discardableResult
     public static func write(_ data: Data, to url: URL) -> Bool {
         let fm = FileManager.default
@@ -90,19 +89,6 @@ public enum SafeRead {
         defer { try? handle.close() }
         guard size <= limit else { return nil }
         return read(handle, upTo: limit)
-    }
-
-    /// At most the last `limit` bytes of a regular file, and whether anything
-    /// before them was skipped. For append-only logs, whose newest lines are
-    /// the ones that matter.
-    public static func regularFileTail(atPath path: String, limit: Int) -> (data: Data, truncated: Bool)? {
-        guard let opened = open(path) else { return nil }
-        let (handle, size) = opened
-        defer { try? handle.close() }
-        let truncated = size > limit
-        do { try handle.seek(toOffset: UInt64(truncated ? size - limit : 0)) } catch { return nil }
-        guard let data = read(handle, upTo: limit) else { return nil }
-        return (data, truncated)
     }
 
     private static func open(_ path: String) -> (FileHandle, Int)? {

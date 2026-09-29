@@ -9,6 +9,6 @@ if [ ${#agents[@]} -eq 0 ]; then
   agents=(replit devin warpAgent trae antigravity junie zcode)
 fi
 for agent in "${agents[@]}"; do
-  printf '%s\tdone\t%s\t\t\t\n' "$agent" "$ms" >> "$PULSE/attention.tsv"
+  printf '%s\tdone\t%s\t\t\t\t\t\n' "$agent" "$ms" >> "$PULSE/attention.tsv"
   echo "Cleared $agent"
 done

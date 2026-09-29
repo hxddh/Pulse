@@ -27,8 +27,17 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private var iconCache: [String: NSImage] = [:]
     private var lastIconKey = ""
     private let hosting: NSHostingController<TrayPanelHost>
+    /// 23.0: the tray's per-open state — keys, frozen order, height budget.
+    let ui: TrayUI
     /// Follows only `snapshot` — a settings write does not touch the lamp.
     private var snapshotLoop: ObservationLoop?
+    /// Follows the tray's own state (a filter, the detail page), the tray
+    /// notice and the row notices to re-fit the panel.
+    private var uiLoop: ObservationLoop?
+    /// What the last fit measured, so only a change in the number of rows
+    /// animates the frame (EXPERIENCE §4: nothing moves on a plain scan).
+    private var lastFitRowCount = -1
+    private var lastFitDetail: String?
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var lastAnnouncedState: String?
@@ -46,7 +55,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 
     init(store: StatusStore) {
         self.store = store
-        hosting = NSHostingController(rootView: TrayPanelHost(store: store))
+        let ui = TrayUI(store: store)
+        self.ui = ui
+        hosting = NSHostingController(rootView: TrayPanelHost(store: store, ui: ui))
         effectView = StatusPanelChrome.makeSurface()
         panel = PulseStatusPanel(
             contentRect: .init(
@@ -60,6 +71,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             defer: false
         )
         super.init()
+        ui.onClose = { [weak self] in self?.close() }
         configurePanel()
     }
 
@@ -81,7 +93,20 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         snapshotLoop = ObservationLoop(track: { _ = store.snapshot }) { [weak self] in
             guard let self else { return }
             self.updateStatusItem(self.store.snapshot)
+            if self.panel.isVisible { self.ui.absorbScan() }
             self.scheduleResize()
+        }
+        let ui = self.ui
+        // The tray's own state, and the lines that come and go above and
+        // under the rows — the one notice, a row's brief action notice, the
+        // rows pinned while open — all change the panel's height.
+        uiLoop = ObservationLoop(track: {
+            _ = ui.keys
+            _ = ui.pinned
+            _ = store.trayNotice
+            _ = store.rowActionNotices
+        }) { [weak self] in
+            self?.scheduleResize()
         }
         updateStatusItem(store.snapshot)
     }
@@ -92,6 +117,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         lampAttentionTask = nil
         snapshotLoop?.cancel()
         snapshotLoop = nil
+        uiLoop?.cancel()
+        uiLoop = nil
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -99,15 +126,33 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         panel.isVisible ? close() : show()
     }
 
-    func show() {
+    /// 23.0: the global shortcut always toggles — open closes, closed opens
+    /// with the most urgent row selected.
+    func toggleFromHotkey() {
+        panel.isVisible ? close() : show(selectMostUrgent: true)
+    }
+
+    func show(selectMostUrgent: Bool = false) {
+        // Already open: a reveal (a banner, a jump) is applied in place —
+        // even over an open detail page — and nothing else resets.
+        if panel.isVisible {
+            ui.applyPendingReveal()
+            panel.makeKeyAndOrderFront(nil)
+            return
+        }
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
         // Every open is a fresh glance. Do it before the first layout pass so
         // the panel is never ordered in showing the previous visit's search
         // text or folded groups (EXPERIENCE §4); `settleLayout` below flushes
         // the rebuilt tree, so the reset and the measurement agree.
         store.trayWillAppear()
+        let anchor = buttonWindow.convertToScreen(button.frame)
+        ui.maxListHeight = Double(Self.listHeightBudget(on: buttonWindow.screen ?? NSScreen.main))
+        ui.open(selectMostUrgent: selectMostUrgent)
+        lastFitRowCount = ui.displayRows.count
+        lastFitDetail = ui.keys.detail
         settleLayout()
-        positionPanel(below: buttonWindow.convertToScreen(button.frame))
+        positionPanel(below: anchor)
         panel.makeKeyAndOrderFront(nil)
         StatusPanelChrome.apply(
             to: panel,
@@ -258,7 +303,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 
     private func updateStatusItem(_ snapshot: PulseSnapshot) {
         guard let button = statusItem.button else { return }
-        let key = "\(snapshot.glance)|\(button.effectiveAppearance.name.rawValue)"
+        let lamp = snapshot.lamp
+        let key = "\(lamp.shape.rawValue)|\(lamp.tone)|\(button.effectiveAppearance.name.rawValue)"
         if key != lastIconKey {
             let image: NSImage
             if let cached = iconCache[key] {
@@ -267,10 +313,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
                 // Draw against the menu bar's own appearance, not the app's:
                 // the cache key names that appearance, so the pixels must
                 // match it (the system colours resolve at draw time).
-                let glance = snapshot.glance
                 var rendered = NSImage()
                 button.effectiveAppearance.performAsCurrentDrawingAppearance {
-                    rendered = PulseBrand.statusBarIcon(for: glance)
+                    rendered = PulseBrand.statusBarIcon(for: lamp)
                 }
                 rendered.size = NSSize(width: 15, height: 15)
                 iconCache[key] = rendered
@@ -279,16 +324,15 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             button.image = image
             lastIconKey = key
         }
-        // A status button's effective appearance belongs to the menu bar, not
-        // necessarily to the app's Aqua/Dark Aqua appearance. A forced
         // The image owns its state colour. `contentTintColor` stays nil so
         // AppKit keeps the adjacent title readable against the actual menu bar
         // appearance instead of tinting both icon and text together.
         button.contentTintColor = nil
-        button.title = snapshot.glance == .idle ? "" : snapshot.title
-        button.toolTip = ([snapshot.tooltip] + snapshot.lampLines)
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
+        // 23.0: the icon alone unless something is blocked; then how many
+        // and how long the oldest has waited ("2 · 4m").
+        if button.title != snapshot.title { button.title = snapshot.title }
+        // One line: the rule that set the lamp.
+        button.toolTip = snapshot.tooltip
         button.setAccessibilityLabel(snapshot.accessibilityLabel)
 
         let waitingCount = snapshot.sectionTotals[.needsYou] ?? 0
@@ -337,8 +381,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     }
 
     /// 21.0: one deferred measure per change, and only a real change moves
-    /// the frame. Every scan used to schedule two resizes, each an
-    /// un-animated jump of the bottom edge.
+    /// the frame. 23.0: only a change in the number of rows animates it; a
+    /// plain scan, a filter keystroke or the detail page (which has its own
+    /// transition) moves the edge at once, so nothing moves twice.
     private var resizeScheduled = false
 
     private func scheduleResize() {
@@ -347,7 +392,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.resizeScheduled = false
-            self.resizeToFit(animated: true)
+            let count = self.ui.displayRows.count
+            let detail = self.ui.keys.detail
+            let animated = count != self.lastFitRowCount && detail == self.lastFitDetail && detail == nil
+            self.lastFitRowCount = count
+            self.lastFitDetail = detail
+            self.resizeToFit(animated: animated)
         }
     }
 
@@ -363,12 +413,23 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         resizeToFit()
     }
 
+    /// The tallest the list may be on this screen: the panel never runs off
+    /// the bottom of the visible frame.
+    static func listHeightBudget(on screen: NSScreen?) -> CGFloat {
+        let visible = screen?.visibleFrame.height ?? TrayChrome.maxHeight
+        let panel = min(TrayChrome.maxHeight, visible - 24 - StatusPanelChrome.shadowInset * 2)
+        return max(120, min(TrayChrome.maxListHeight, panel - (TrayChrome.maxHeight - TrayChrome.maxListHeight)))
+    }
+
     private func resizeToFit(animated: Bool = false) {
         hosting.view.layoutSubtreeIfNeeded()
         let fitting = hosting.view.fittingSize
-        // The list scrolls past `maxListHeight`; the panel itself stops at
-        // `maxHeight` (one number, shared with the view).
-        let height = min(TrayChrome.maxHeight, max(96, fitting.height))
+        let screen = statusItem.button?.window?.screen ?? NSScreen.main
+        let visibleHeight = screen?.visibleFrame.height ?? TrayChrome.maxHeight
+        // The list scrolls past its budget; the panel itself stops at
+        // `maxHeight` and at the screen's visible frame.
+        let limit = min(TrayChrome.maxHeight, visibleHeight - 24 - StatusPanelChrome.shadowInset * 2)
+        let height = min(limit, max(96, fitting.height))
         let inset = StatusPanelChrome.shadowInset
         let target = NSSize(
             width: max(TrayChrome.width, fitting.width) + inset * 2,
@@ -381,6 +442,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         let oldTop = frame.maxY
         frame.size = target
         frame.origin.y = oldTop - target.height
+        if let visible = screen?.visibleFrame {
+            frame.origin.y = max(frame.origin.y, visible.minY + 8 - inset)
+        }
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if animated, !reduceMotion {
             NSAnimationContext.runAnimationGroup({ context in
@@ -434,15 +498,27 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             matching: [.leftMouseDown, .rightMouseDown, .keyDown]
         ) { [weak self] event in
             guard let self else { return event }
-            if event.type == .keyDown, event.keyCode == 53 {
-                // Escape in the search field clears the search first
-                // (`onExitCommand`); only a second Escape closes the panel.
-                if self.panel.firstResponder is NSTextView { return event }
-                // 22.0: the tray has something Escape should undo first — an
-                // open detail view or a typed filter.
-                if self.store.trayEscapeConsumed { return event }
-                self.close()
-                return nil
+            if event.type == .keyDown {
+                // 23.0: every tray key goes through one reducer
+                // (`TrayKeys.reduce`), whatever view has focus — so Esc works
+                // in every state and ⌫ only edits the filter.
+                guard event.window === self.panel else { return event }
+                let flags = event.modifierFlags
+                guard let key = TrayKeys.key(
+                    keyCode: event.keyCode,
+                    characters: event.charactersIgnoringModifiers ?? "",
+                    command: flags.contains(.command),
+                    control: flags.contains(.control),
+                    option: flags.contains(.option)
+                ) else { return event }
+                let typed: TrayKeys.Key
+                if case .character = key, let text = event.characters, !text.isEmpty {
+                    // Keep the shifted character ("A", "?") the person typed.
+                    typed = .character(text)
+                } else {
+                    typed = key
+                }
+                return self.ui.handle(typed) ? nil : event
             }
             // A click on the status item itself is the button's to handle:
             // closing here on mouse-down let its mouse-up action reopen the

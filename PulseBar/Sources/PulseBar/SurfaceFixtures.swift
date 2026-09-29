@@ -8,56 +8,63 @@ import Foundation
 /// product's rules over them.
 enum SurfaceFixtures {
     enum Value {
-        /// 17.0: the tray row's face; `expanded` shows the why line.
-        case row(TrayRowModel, expanded: Bool, hovering: Bool = false)
+        /// 17.0: the tray row's face (23.0: at rest, or under the pointer).
+        case row(TrayRowModel, hovering: Bool = false)
+        /// 23.0: the tray header — the why and its freshness.
+        case header(TrayHeaderModel)
+        /// 23.0: the tray's one notice.
+        case notice(TrayNoticeModel)
+        /// 23.0: the visible type-to-filter field.
+        case filter(query: String, matches: Int, lang: ResolvedLanguage)
         /// 22.0: a session's last hour.
         case timeline(TimelineStripModel, ResolvedLanguage)
-        case why(WhyCardModel)
-        /// 19.0: the cards under a row — `asks` is the in-list "needs you
-        /// now" card, `expanded` the in-place inspector.
-        case asks(RowCardModel)
-        case expanded(RowCardModel)
+        /// 23.0: one session in full.
+        case detail(DetailModel)
+        /// 23.0: the Settings page.
+        case settings(SettingsModel)
+        /// 23.0: the Diagnostics window.
+        case diagnostics(DiagnosticsModel)
         /// 19.0: the self-check's report.
         case doctor(DoctorModel.Report)
     }
 
     struct Fixture {
         var name: String
-        /// Render width in points — the inspector column is about this wide.
+        /// Render width in points.
         var width: Double
         var value: Value
     }
 
     static let names = [
-        "row-permission", "row-question-front", "row-turn", "row-pending",
-        "row-stalled", "row-snoozed", "row-process-only",
-        "row-running", "row-running-hover", "timeline-strip",
-        "why-permission", "why-turn",
-        "card-respond", "card-respond-truncated", "card-respond-decided",
-        "card-expanded",
-        "doctor-report",
+        "row-blocked", "row-blocked-front", "row-pending", "row-running", "row-running-hover",
+        "row-stalled", "row-your-turn", "row-process-only", "row-muted",
+        "header-fresh", "header-stale", "notice-hooks", "filter",
+        "timeline-strip", "detail-blocked", "detail-your-turn",
+        "settings", "diagnostics", "doctor-report",
     ]
 
     static func all(lang: ResolvedLanguage) -> [Fixture] {
         [
-            Fixture(name: "row-permission", width: 420, value: .row(rowModel(rowPermission(), lang: lang), expanded: true)),
-            Fixture(name: "row-question-front", width: 420, value: .row(rowModel(rowQuestionFront(), lang: lang), expanded: true)),
-            Fixture(name: "row-turn", width: 420, value: .row(rowModel(rowTurn(), lang: lang), expanded: true)),
-            Fixture(name: "row-pending", width: 420, value: .row(rowModel(rowPending(), lang: lang), expanded: true)),
-            Fixture(name: "row-stalled", width: 420, value: .row(rowModel(rowStalled(), lang: lang), expanded: false)),
-            Fixture(name: "row-snoozed", width: 420, value: .row(rowModel(rowSnoozed(), lang: lang, snoozeLabel: "Later · 12m"), expanded: false)),
-            Fixture(name: "row-process-only", width: 420, value: .row(rowModel(rowProcessOnly(), lang: lang), expanded: false)),
-            // 21.0: the common row, at rest and under the pointer — the
-            // trailing controls must sit beside the time, never on it.
-            Fixture(name: "row-running", width: 420, value: .row(rowModel(rowRunning(), lang: lang), expanded: false)),
-            Fixture(name: "row-running-hover", width: 420, value: .row(rowModel(rowRunning(), lang: lang), expanded: false, hovering: true)),
+            Fixture(name: "row-blocked", width: 448, value: .row(rowModel(rowPermission(), lang: lang))),
+            Fixture(name: "row-blocked-front", width: 448, value: .row(rowModel(rowQuestionFront(), lang: lang))),
+            Fixture(name: "row-pending", width: 448, value: .row(rowModel(rowPending(), lang: lang))),
+            Fixture(name: "row-running", width: 448, value: .row(rowModel(rowRunning(), lang: lang))),
+            // The common row under the pointer — the chevron sits beside the
+            // time, never on it.
+            Fixture(name: "row-running-hover", width: 448, value: .row(rowModel(rowRunning(), lang: lang), hovering: true)),
+            Fixture(name: "row-stalled", width: 448, value: .row(rowModel(rowStalled(), lang: lang))),
+            Fixture(name: "row-your-turn", width: 448, value: .row(rowModel(rowTurn(), lang: lang))),
+            Fixture(name: "row-process-only", width: 448, value: .row(rowModel(rowProcessOnly(), lang: lang))),
+            Fixture(name: "row-muted", width: 448, value: .row(rowModel(rowRunning(), lang: lang, muted: true))),
+            Fixture(name: "header-fresh", width: 448, value: .header(header(lang: lang, scanAgoMs: 3_000))),
+            Fixture(name: "header-stale", width: 448, value: .header(header(lang: lang, scanAgoMs: 4 * minute))),
+            Fixture(name: "notice-hooks", width: 432, value: .notice(noticeHooks(lang: lang))),
+            Fixture(name: "filter", width: 432, value: .filter(query: "login", matches: 2, lang: lang)),
             Fixture(name: "timeline-strip", width: 400, value: .timeline(timelineStrip(), lang)),
-            Fixture(name: "why-permission", width: 520, value: .why(whyPermission(lang: lang))),
-            Fixture(name: "why-turn", width: 520, value: .why(whyTurn(lang: lang))),
-            Fixture(name: "card-respond", width: 380, value: .asks(cardRespond(lang: lang))),
-            Fixture(name: "card-respond-truncated", width: 380, value: .asks(cardRespond(lang: lang, truncated: true))),
-            Fixture(name: "card-respond-decided", width: 380, value: .asks(cardRespond(lang: lang, decided: true))),
-            Fixture(name: "card-expanded", width: 380, value: .expanded(cardExpanded(lang: lang))),
+            Fixture(name: "detail-blocked", width: 448, value: .detail(detailPermission(lang: lang))),
+            Fixture(name: "detail-your-turn", width: 448, value: .detail(detailTurn(lang: lang))),
+            Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
+            Fixture(name: "diagnostics", width: 620, value: .diagnostics(diagnostics(lang: lang))),
             Fixture(name: "doctor-report", width: 520, value: .doctor(doctorReport(lang: lang))),
         ]
     }
@@ -68,17 +75,12 @@ enum SurfaceFixtures {
 
     // MARK: - 17.0 · Tray rows
 
-    /// Tray rows are measured against the real clock (`waitAgeSeconds`,
-    /// `lastActivitySeconds` read it), so their world is built around now.
+    /// Tray rows are drawn against now, so their world is built around it.
     static var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     static let minute: Int64 = 60_000
 
-    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, snoozeLabel: String = "") -> TrayRowModel {
-        TrayRowModel.make(TrayRowModel.Input(
-            row: row,
-            narrator: RowNarrator(lang: lang, nowMs: nowMs),
-            snoozeLabel: snoozeLabel
-        ))
+    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, muted: Bool = false) -> TrayRowModel {
+        TrayRowModel.make(TrayRowModel.Input(row: row, lang: lang, nowMs: nowMs, muted: muted))
     }
 
     static func baseRow(_ agent: AgentID, key: String, task: String = "Fix the flaky login test") -> AgentRow {
@@ -87,52 +89,50 @@ enum SurfaceFixtures {
         row.task = task
         row.cwd = "/Users/me/code/app"
         row.project = "app"
-        row.observationSource = .session
+        row.source = .session
         row.liveProcess = true
-        row.processCount = 1
+        row.pid = 4312
+        row.state = .running
         row.harvestMs = nowMs - 1 * minute
         row.startedMs = nowMs - 40 * minute
-        row.records = 212
         row.focusTier = .tty
         return row
     }
 
     static func rowPermission() -> AgentRow {
         var row = baseRow(.claude, key: "fx-perm")
-        row.waiting = true
-        row.waitKind = "Permission"
-        row.waitMessage = "Bash: npm run build"
-        row.waitSignal = .hooks
-        row.waitSinceMs = nowMs - 8 * minute
+        row.model = "claude-sonnet-4"
+        row.state = .blocked(RowWait(
+            kind: "Permission", ask: "Bash: npm run build", sinceMs: nowMs - 8 * minute, signal: .hooks
+        ))
         return row
     }
 
     static func rowQuestionFront() -> AgentRow {
         var row = baseRow(.claude, key: "fx-question")
-        row.waiting = true
-        row.waitKind = "Input"
-        row.waitMessage = "Which database should the migration target?"
-        row.waitSignal = .hooks
-        row.waitSinceMs = nowMs - 30_000
-        row.waitRaisedInFront = true
+        row.state = .blocked(RowWait(
+            kind: "Input", ask: "Which database should the migration target?",
+            sinceMs: nowMs - 30_000, signal: .hooks, inFront: true
+        ))
         return row
     }
 
     static func rowTurn() -> AgentRow {
         var row = baseRow(.codex, key: "fx-turn", task: "Add an offline queue for login")
-        row.yourTurn = true
-        row.turnSinceMs = nowMs - 3 * minute
+        row.state = .yourTurn(sinceMs: nowMs - 3 * minute)
         row.lastWord = "All 42 tests pass; the queue drains on reconnect."
+        row.model = "gpt-5"
+        row.planSteps = [
+            ActivityHarvest.PlanStep(text: "Queue writes while offline", state: .done),
+            ActivityHarvest.PlanStep(text: "Drain on reconnect", state: .done),
+            ActivityHarvest.PlanStep(text: "Cover it with tests", state: .done),
+        ]
         return row
     }
 
     static func rowPending() -> AgentRow {
-        var row = baseRow(.cursor, key: "fx-pending", task: "Refactor the settings screen")
-        row.waiting = true
-        row.waitKind = "Permission"
-        row.waitSignal = .pending
-        row.tool = "request_approval"
-        row.waitSinceMs = nowMs - 2 * minute
+        var row = baseRow(.cline, key: "fx-pending", task: "Refactor the settings screen")
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: nowMs - 2 * minute, signal: .pending))
         return row
     }
 
@@ -143,10 +143,18 @@ enum SurfaceFixtures {
         return row
     }
 
-    static func rowSnoozed() -> AgentRow {
-        var row = rowPermission()
-        row.rowKey = "fx-snoozed"
-        row.snoozeRemainingSeconds = 12 * 60
+    static func rowRunning() -> AgentRow {
+        var row = baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
+        row.model = "gpt-5"
+        return row
+    }
+
+    static func rowProcessOnly() -> AgentRow {
+        var row = AgentRow(rowKey: "amp|pid:4242", agent: .amp)
+        row.source = .process
+        row.liveProcess = true
+        row.pid = 4242
+        row.state = .processOnly
         return row
     }
 
@@ -160,101 +168,139 @@ enum SurfaceFixtures {
         ], nowMs: nowMs)
     }
 
-    static func rowRunning() -> AgentRow {
-        var row = baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
-        row.tokensIn = 48_200
-        row.tokensOut = 9_100
-        return row
-    }
+    // MARK: - 23.0 · The tray's header, notice and filter
 
-    static func rowProcessOnly() -> AgentRow {
-        var row = AgentRow(rowKey: "fx-process", agent: .amp)
-        row.observationSource = .process
-        row.liveProcess = true
-        row.processCount = 2
-        return row
-    }
-
-    // MARK: - 17.0 · Why
-
-    static func history(_ row: AgentRow, _ kinds: [(String, Int64, String, Bool?)]) -> [AttentionHistory.Event] {
-        kinds.map { kind, ago, message, front in
-            AttentionHistory.Event(
-                agent: row.agent.rawValue, kind: kind, tsMs: nowMs - ago, message: message,
-                session: row.sessionID, cwd: row.cwd, front: front
-            )
-        }
-    }
-
-    static func whyPermission(lang: ResolvedLanguage) -> WhyCardModel {
-        let row = rowPermission()
-        return WhyCardModel.make(
-            row: row,
-            history: history(row, [
-                ("permission", 40 * minute, "Edit: src/Login.swift", false),
-                ("done", 39 * minute, "", nil),
-                ("turn", 20 * minute, "Refactored the retry loop.", false),
-                ("done", 10 * minute, "", nil),
-                ("permission", 8 * minute, "Bash: npm run build", false),
-            ]),
-            narrator: RowNarrator(lang: lang, nowMs: nowMs)
-        )
-    }
-
-    static func whyTurn(lang: ResolvedLanguage) -> WhyCardModel {
-        let row = rowTurn()
-        return WhyCardModel.make(
-            row: row,
-            history: history(row, [
-                ("permission", 9 * minute, "git push origin main", false),
-                ("turn", 3 * minute, "All 42 tests pass; the queue drains on reconnect.", false),
-            ]),
-            narrator: RowNarrator(lang: lang, nowMs: nowMs)
-        )
-    }
-
-    // MARK: - 19.0 · The cards under a row
-
-    static func cardRespond(lang: ResolvedLanguage, truncated: Bool = false, decided: Bool = false) -> RowCardModel {
-        let row = rowPermission()
-        let full = #"{"tool_name":"Bash","tool_input":{"command":"rm -rf build && npm run build","description":"Clean rebuild"}}"#
-        let inbound = RespondSpool.InboundRequest(
-            request: PermissionRequest(
-                id: "toolu_fx", agent: .claude, session: row.sessionID,
-                fullRequest: truncated ? String(full.prefix(48)) : full,
-                truncated: truncated, receivedAtMs: nowMs - 8 * minute
-            ),
-            toolName: "Bash", expiresAtMs: nowMs + 10 * minute
-        )
-        let narrator = RowNarrator(lang: lang, nowMs: nowMs)
-        return RowCardModel.make(RowCardModel.Input(
-            row: row, narrator: narrator, inbound: inbound,
-            fateNote: decided ? narrator.tr(.respondTakenNote) : nil
+    static func header(lang: ResolvedLanguage, scanAgoMs: Int64) -> TrayHeaderModel {
+        TrayHeaderModel.make(TrayHeaderModel.Input(
+            rows: [rowPermission(), rowPending(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()],
+            lang: lang,
+            nowMs: nowMs,
+            lastScanMs: nowMs - scanAgoMs,
+            intervalSeconds: 2
         ))
     }
 
-    static func cardExpanded(lang: ResolvedLanguage) -> RowCardModel {
-        var row = baseRow(.claude, key: "fx-expanded", task: "Add an offline queue for login")
-        row.lastWord = "The queue drains on reconnect; writing the retry test next."
-        row.tool = "Edit"
-        row.progressDone = 2
-        row.progressTotal = 5
-        row.planSteps = [
-            .init(text: "Read the login flow", state: .done),
-            .init(text: "Add the offline queue", state: .done),
-            .init(text: "Retry on reconnect", state: .current),
-            .init(text: "Tests for the retry", state: .pending),
-            .init(text: "Update the changelog", state: .pending),
+    static func noticeHooks(lang: ResolvedLanguage) -> TrayNoticeModel {
+        TrayNoticeModel.pick(TrayNoticeModel.Input(
+            lang: lang, notifyOnWaiting: true, notifyAuthorized: true,
+            bannerFailed: false, hooksMissing: true, scanIncomplete: false
+        )) ?? TrayNoticeModel(
+            kind: .hooksMissing, text: "", actionTitle: "", action: .installHooks, systemImage: "link", tone: .idle
+        )
+    }
+
+    // MARK: - 23.0 · The detail page
+
+    static func detail(_ row: AgentRow, lang: ResolvedLanguage, audit: NotificationAuditModel? = nil) -> DetailModel {
+        DetailModel.make(row: row, lang: lang, nowMs: nowMs, audit: audit, timeline: timelineStrip())
+    }
+
+    static func detailPermission(lang: ResolvedLanguage) -> DetailModel {
+        var wait = SessionLog.Wait(
+            id: "fx-perm|1", kind: "Permission", title: "Fix the flaky login test",
+            raisedMs: nowMs - 8 * minute, holdsDismissal: false
+        )
+        wait.outcome = "posted"
+        wait.outcomeMs = nowMs - 8 * minute
+        return detail(rowPermission(), lang: lang, audit: NotificationAuditModel.make(wait: wait, nowMs: nowMs, lang: lang))
+    }
+
+    static func detailTurn(lang: ResolvedLanguage) -> DetailModel {
+        detail(rowTurn(), lang: lang)
+    }
+
+    // MARK: - 23.0 · Settings
+
+    static func settings(lang: ResolvedLanguage) -> SettingsModel {
+        SettingsModel(
+            lang: lang,
+            launchAtLogin: true,
+            language: .auto,
+            hotkey: .commandShiftP,
+            hotkeyTaken: false,
+            notifications: .allowed,
+            notifyOnWaiting: true,
+            mutedAgents: SettingsModel.sortedMuted([.gemini, .aider]),
+            hooksStatus: HooksSupport.Status.installedBoth.label(lang: lang),
+            hooksInstalled: true,
+            hookTest: L10n.t(.hookTestPassed, lang),
+            hookTestTone: .running,
+            hookTestRunning: false,
+            allowTerminalAutomation: false,
+            readProtectedAppData: false,
+            updateCheckEnabled: true,
+            updateStatus: String(format: L10n.t(.updateAvailable, lang), "23.1.0"),
+            updateAvailable: true,
+            version: "Pulse \(PulseVersion.semver) · a1b2c3d · 2026-09-29",
+            buildWarning: L10n.t(.updatePreview, lang),
+            focus: nil
+        )
+    }
+
+    // MARK: - 23.0 · Diagnostics
+
+    static func diagnostics(lang: ResolvedLanguage) -> DiagnosticsModel {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        let agents: [DiagnosticsModel.Agent] = [
+            .init(
+                agent: .claude, name: AgentID.claude.displayName,
+                state: DiagnosticsModel.stateWord(.available, lang: lang),
+                tone: DiagnosticsModel.tone(.available), severity: DiagnosticsModel.severity(.available),
+                details: [t(.supportStructured), t(.supportFocusTTY), t(.supportDepthSession)]
+            ),
+            .init(
+                agent: .codex, name: AgentID.codex.displayName,
+                state: DiagnosticsModel.stateWord(.needsAction, lang: lang),
+                tone: DiagnosticsModel.tone(.needsAction), severity: DiagnosticsModel.severity(.needsAction),
+                fix: .installHooks, fixTitle: DiagnosticsModel.fixTitle(.installHooks, lang: lang),
+                details: [t(.supportStructured), t(.supportMissingWaiting)]
+            ),
+            .init(
+                agent: .gemini, name: AgentID.gemini.displayName,
+                state: DiagnosticsModel.stateWord(.limited, lang: lang),
+                tone: DiagnosticsModel.tone(.limited), severity: DiagnosticsModel.severity(.limited),
+                warning: t(.supportYieldDrifted),
+                details: [t(.supportStructured)]
+            ),
+            .init(
+                agent: .aider, name: AgentID.aider.displayName,
+                state: DiagnosticsModel.stateWord(.notInstalled, lang: lang),
+                tone: DiagnosticsModel.tone(.notInstalled), severity: DiagnosticsModel.severity(.notInstalled),
+                details: [t(.supportCollectorSourceAbsentDetail)]
+            ),
         ]
-        return RowCardModel.make(RowCardModel.Input(
-            row: row, narrator: RowNarrator(lang: lang, nowMs: nowMs)
+        let activity = ActivityLogModel(entries: [
+            .init(
+                id: "a", atMs: t0 - 4 * minute, clock: "14:02", agent: .claude, place: "app · Fix the flaky login test",
+                text: t(.needsYou) + " · " + L10n.waitKind("Permission", lang) + " · " + t(.signalHooks), tone: .waiting
+            ),
+            .init(
+                id: "b", atMs: t0 - 12 * minute, clock: "13:54", agent: .codex, place: "app",
+                text: t(.running) + " · " + t(.activityFromSession), tone: .running
+            ),
+        ])
+        return DiagnosticsModel.make(DiagnosticsModel.Input(
+            lang: lang,
+            scanLine: t(.lastReadJustNow) + " · " + String(format: t(.probeEvery), 2),
+            banners: [
+                .init(
+                    id: "scan", text: t(.supportScanIncomplete),
+                    fix: .retryScan, fixTitle: DiagnosticsModel.fixTitle(.retryScan, lang: lang)
+                ),
+            ],
+            doctor: doctorReport(lang: lang),
+            doctorRunning: false,
+            agents: agents,
+            activity: activity,
+            activityAgents: [.claude, .codex],
+            copied: false
         ))
     }
 
     // MARK: - 19.0 · The self-check
 
     /// A Mac with a realistic mix: Claude proven, an old Claude without
-    /// `agents`, Codex installed but not yet trusted, Respond never tried.
+    /// `agents`, Codex installed but not yet trusted.
     static func doctorReport(lang: ResolvedLanguage) -> DoctorModel.Report {
         var f = DoctorModel.Facts()
         f.version = PulseVersion.semver
@@ -270,7 +316,6 @@ enum SurfaceFixtures {
         f.codexHookEvents = Set(DoctorModel.codexEvents)
         f.codexRollout = .paginated
         f.codexCompressedRollouts = 3
-        f.respondEnabled = true
         return DoctorModel.evaluate(f, lang: lang)
     }
 }

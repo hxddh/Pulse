@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "22.0.0"
+    static let semver = "23.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -93,199 +93,11 @@ enum PulseVersion {
 
 
 
-/// Named fact keys for the 0.50 Signal Quality envelope.
-///
-/// Every observed row must either present these facts or explain why they are
-/// missing. Unknown is shown as unknown; Pulse never invents a goal, phase, or
-/// wait reason from process noise.
-enum ObservationFactKey: String, CaseIterable, Equatable, Hashable {
-    case task
-    case workspace
-    case action
-    case phase
-    case model
-    case progress
-    case error
-    case waitingReason
-    case evidence
-    case freshness
-}
-
-enum ObservationConfidence: String, Equatable, Hashable {
-    case high
-    case medium
-    case low
-}
-
-enum FreshnessSource: String, Equatable, Hashable {
-    case sourceMtime = "source_mtime"
-    case harvest
-    case processStart = "process_start"
-    case unknown
-}
-
-/// One missing fact with a stable reason/next-step code for localization.
-struct ObservationGap: Equatable, Hashable {
-    var key: ObservationFactKey
-    /// Stable code — never a free-form path or payload.
-    var reason: String
-    var nextStep: String
-}
-
-/// Per-row signal quality. Drives Limited-data copy and Support Health depth.
-struct ObservationQuality: Equatable, Hashable {
-    var facts: Set<ObservationFactKey> = []
-    var missing: [ObservationGap] = []
-    var freshnessMs: Int64 = 0
-    var freshnessSource: FreshnessSource = .unknown
-    var confidence: ObservationConfidence = .low
-
-    var isLimited: Bool {
-        confidence != .high
-            || !facts.contains(.evidence)
-            || (!facts.contains(.task) && !facts.contains(.workspace) && !facts.contains(.action))
-    }
-
-    /// Derive quality from the final merged row fields. Call after harvest,
-    /// process attach, and Waiting merge so the envelope matches what the tray
-    /// shows.
-    static func derive(
-        task: String,
-        workspace: String,
-        action: String,
-        phase: String,
-        model: String,
-        progressDone: Int,
-        progressTotal: Int,
-        errors: Int,
-        waiting: Bool,
-        waitMessage: String,
-        evidence: ObservationSource,
-        harvestMs: Int64,
-        processStartedMs: Int64,
-        privacyLimited: Bool,
-        agentHarvestSource: HarvestSource,
-        waitingSource: WaitingSource
-    ) -> ObservationQuality {
-        var facts: Set<ObservationFactKey> = [.evidence]
-        var missing: [ObservationGap] = []
-
-        func present(_ key: ObservationFactKey, when ok: Bool, reason: String, next: String) {
-            if ok {
-                facts.insert(key)
-            } else {
-                missing.append(ObservationGap(key: key, reason: reason, nextStep: next))
-            }
-        }
-
-        let hasTask = !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasWorkspace = !workspace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasAction = !action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasPhase = !phase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasModel = !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasProgress = progressTotal > 0
-        let hasError = errors > 0
-        let hasWaitReason = waiting && !waitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
-        let baseReason: String
-        let baseNext: String
-        switch evidence {
-        case .process:
-            baseReason = privacyLimited ? "privacy_limited" : "process_only"
-            baseNext = privacyLimited ? "enable_app_data" : "open_agent_for_session"
-        case .cache:
-            if privacyLimited {
-                baseReason = "privacy_limited"
-                baseNext = "enable_app_data"
-            } else {
-                // Rich Limited ≈ goal + workspace/action present; thin is title-only.
-                let previewCore = [hasTask, hasWorkspace, hasAction].filter { $0 }.count
-                baseReason = previewCore >= 2 ? "cache_conditional" : "cache_thin"
-                baseNext = "wait_for_vendor_cache"
-            }
-        case .session:
-            baseReason = "not_emitted"
-            baseNext = "open_agent_for_session"
-        }
-
-        present(.task, when: hasTask, reason: baseReason, next: baseNext)
-        present(.workspace, when: hasWorkspace, reason: baseReason, next: baseNext)
-        present(.action, when: hasAction, reason: baseReason, next: baseNext)
-        present(.phase, when: hasPhase, reason: baseReason, next: baseNext)
-        present(.model, when: hasModel, reason: baseReason, next: baseNext)
-        present(.progress, when: hasProgress, reason: "not_emitted", next: "open_agent_for_session")
-        if hasError {
-            facts.insert(.error)
-        } else {
-            // Errors are enhancements when zero — do not demand a failure.
-        }
-        if waiting {
-            if hasWaitReason {
-                facts.insert(.waitingReason)
-            } else {
-                missing.append(ObservationGap(
-                    key: .waitingReason,
-                    reason: "waiting_no_detail",
-                    nextStep: "open_agent_for_session"
-                ))
-            }
-        } else if waitingSource == .none {
-            missing.append(ObservationGap(
-                key: .waitingReason,
-                reason: "waiting_unsupported",
-                nextStep: "use_attention_bridge"
-            ))
-        }
-
-        let freshnessMs: Int64
-        let freshnessSource: FreshnessSource
-        if harvestMs > 0 {
-            freshnessMs = harvestMs
-            freshnessSource = evidence == .process ? .harvest : .sourceMtime
-            facts.insert(.freshness)
-        } else if processStartedMs > 0 {
-            freshnessMs = processStartedMs
-            freshnessSource = .processStart
-            facts.insert(.freshness)
-        } else {
-            freshnessMs = 0
-            freshnessSource = .unknown
-            missing.append(ObservationGap(
-                key: .freshness,
-                reason: baseReason,
-                nextStep: baseNext
-            ))
-        }
-
-        let coreCount = [.task, .workspace, .action, .evidence]
-            .filter { facts.contains($0) }.count
-        let confidence: ObservationConfidence
-        switch evidence {
-        case .session:
-            confidence = coreCount >= 4 ? .high : (coreCount >= 2 ? .medium : .low)
-        case .cache:
-            confidence = coreCount >= 3 ? .medium : .low
-            if agentHarvestSource == .bestEffortCache, coreCount < 3 {
-                // Keep confidence honest for thin cache adapters.
-            }
-        case .process:
-            confidence = .low
-        }
-
-        return ObservationQuality(
-            facts: facts,
-            missing: missing,
-            freshnessMs: freshnessMs,
-            freshnessSource: freshnessSource,
-            confidence: confidence
-        )
-    }
-}
-
-
-/// How this row's Waiting was raised (shown as a short credibility tag).
-enum WaitSignalKind: String, Equatable {
+/// How this row's Waiting was raised.
+enum WaitSignalKind: String, Equatable, Sendable {
+    /// A Claude / Codex hook (or an Attention bridge line) said so.
     case hooks
+    /// The vendor's own session file holds an open ask (`skill=pending`).
     case pending
     /// 18.0: the vendor's own report of a blocked session (`claude agents`).
     case vendor
@@ -308,7 +120,6 @@ enum GlanceKind: Equatable {
     case running
     case stalled
     case waiting
-    case error
 
     /// VoiceOver reads this instead of the icon. It used to be hardcoded
     /// English, so a Chinese user heard "Needs attention" in an otherwise
@@ -319,359 +130,218 @@ enum GlanceKind: Equatable {
         case .running: return .a11yRunning
         case .stalled: return .a11yStalled
         case .waiting: return .a11yWaiting
-        case .error: return .a11yError
         }
     }
 }
 
+/// 23.0 · what a blocked row is blocked on, and on what evidence.
+struct RowWait: Hashable, Sendable {
+    /// Protocol token (`Permission` / `Input` / `Waiting`), never user copy —
+    /// `L10n.waitKind` translates it.
+    var kind: String
+    /// What the agent asked, in its own words (sanitized); "" when unknown.
+    var ask: String = ""
+    /// When the wait was raised, by the evidence's own clock; 0 = unknown.
+    var sinceMs: Int64 = 0
+    var signal: WaitSignalKind
+    /// 16.0: the prompt's own window was frontmost when it was raised — the
+    /// lamp still lights, but no banner and no sound.
+    var inFront: Bool = false
+}
+
+/// 23.0 · the one state a row is in. It replaces the booleans that used to
+/// say it in pieces (`waiting`, `yourTurn`, `isProcessOnly`, a completed
+/// phase…), which could disagree. Decided once, by `SnapshotBuilder`.
+enum RowState: Hashable, Sendable {
+    /// Red: a permission, a question, or a wait the vendor reported.
+    case blocked(RowWait)
+    /// A live session (a process, an explicit running phase, or subagents).
+    case running
+    /// 16.0: the agent finished its turn and nobody has looked since. From
+    /// hooks only; never red.
+    case yourTurn(sinceMs: Int64)
+    /// A session with no live evidence — finished or gone quiet.
+    case recent
+    /// A process and nothing else: no session file, no hook. Ephemeral — it
+    /// is not built once a session row for the agent exists.
+    case processOnly
+}
+
+/// 23.0 · where a row's facts came from, in the words `Explain` uses.
+enum RowSource: String, Equatable, Hashable, Sendable {
+    /// The vendor's structured session file.
+    case session
+    /// A vendor cache or database.
+    case cache
+    /// Only a hook said anything (no session file found yet).
+    case hooks
+    /// Only a process.
+    case process
+
+    init(_ evidence: ObservationSource) {
+        switch evidence {
+        case .session: self = .session
+        case .cache: self = .cache
+        case .process: self = .process
+        }
+    }
+}
+
+/// One tray row: a session (or a process, or a hook wait) and exactly what
+/// the tray row, the detail page, the lamp and the notifier read.
+///
+/// 23.0 cut ~70 stored and ~36 computed fields down to these. Tokens, CPU,
+/// memory, context, files, tool histograms, subagent counts, phase and
+/// outcome strings and the observation-quality envelope existed for
+/// narration sentences that are gone; `Explain` builds the few sentences
+/// left from what is here.
 struct AgentRow: Identifiable, Hashable {
-    /// Unique tray row (multi-session: agent|session or agent|project).
+    // MARK: Identity — `RowIdentity` decides the key, and it never changes.
+
     var rowKey: String
-    /// Agent product identity.
     var agent: AgentID
-    /// Optional session / composer / rollout id for attention matching.
+    /// The vendor's session id; "" for a process-only row.
     var sessionID: String = ""
-    var project: String = ""
-    var task: String = ""
-    var cwd: String = ""
-    var waiting: Bool = false
-    var waitKind: String = ""
-    var waitMessage: String = ""
-    /// hooks vs harvest pending — for tray credibility tag.
-    var waitSignal: WaitSignalKind? = nil
-    /// 16.0: the blocked prompt's own window was frontmost when it was
-    /// raised — the lamp still lights, but no banner and no sound.
-    var waitRaisedInFront: Bool = false
-    /// 16.0 · "your turn": the agent finished its turn and is idle at its
-    /// prompt, and nobody has looked since. From hooks only (a `turn` event),
-    /// never inferred. Never the red lamp; a quiet count in the tray.
-    var yourTurn: Bool = false
-    var turnSinceMs: Int64 = 0
-    /// The session id the attention file used for this row's raise or turn,
-    /// when a hook event was matched onto it. It can be a prefix of
-    /// `sessionID` (or the other way round); a `done` must name the file's
-    /// spelling or it clears nothing.
+    /// The session the attention entry behind this row's hook raise or turn
+    /// carried — exactly as the file spells it, possibly empty. It can be a
+    /// prefix of `sessionID` (or the other way round); a `done` must name the
+    /// file's spelling or it clears nothing, and an empty one clears only
+    /// the agent's session-less entry.
     var attentionSession: String = ""
-    /// The session a `done` line for this row must carry.
-    var doneSession: String { attentionSession.isEmpty ? sessionID : attentionSession }
+    var cwd: String = ""
+    /// The workspace path was reconstructed from a dash-encoded vendor
+    /// directory name and the disk could not confirm it. Display only —
+    /// `focusTier` never offers workspace precision for it.
+    var cwdBestEffort: Bool = false
+    var project: String = ""
+
+    // MARK: The process and how to reach it
+
+    /// A live process of this agent was attached to this row.
+    var liveProcess: Bool = false
+    var pid: Int = 0
+    var tty: String = ""
     var viaWarp: Bool = false
     /// Host IDE detected by walking the process parent chain (`ps` only).
     var hostApp: HostAppKind? = nil
-    var processCount: Int = 0
-    var tokensIn: Int = 0
-    var tokensOut: Int = 0
-    var tool: String = ""
-    var skill: String = ""
-    var waitSinceMs: Int64 = 0
-    var pid: Int = 0
-    /// Real CPU share of this agent's processes, sampled across two probe
-    /// ticks; **-1 means unknown**, which is not the same answer as 0.
-    ///
-    /// This is the one fact that separates "thinking" from "stuck". Transcript
-    /// growth (2.1) reports output, and the minutes spent compiling, running a
-    /// test suite or waiting inside one long tool call produce no output at
-    /// all — indistinguishable from a dead session when only files are
-    /// watched. Deliberately not `ps %cpu`, which averages over the process's
-    /// whole life and would answer a question about *now* with a number about
-    /// the last three hours.
-    var cpuPercent: Double = -1
-    /// Resident memory of this agent's processes in bytes; 0 = not observed.
-    var rssBytes: Int = 0
-    /// Whether the CPU sample is a real answer rather than "not yet known".
-    var hasCPUSample: Bool { cpuPercent >= 0 }
-    /// Busy enough that a quiet transcript means thinking, not stalling.
-    var isComputing: Bool { cpuPercent >= 15 }
-    var tty: String = ""
-    var harvestMs: Int64 = 0
-    var subRunning: Int = 0
-    var subTotal: Int = 0
-    /// True when a live process was matched (not harvest-only).
-    var liveProcess: Bool = false
     /// How this row can be focused — resolved once per scan, never in a view body.
     var focusTier: FocusTier? = nil
+
+    // MARK: What it is doing
+
+    var task: String = ""
+    var model: String = ""
+    /// The first line of the agent's latest message (self-report tier).
+    var lastWord: String = ""
+    /// The agent's own plan (TodoWrite / update_plan), bounded.
+    var planSteps: [ActivityHarvest.PlanStep] = []
+    var errors: Int = 0
+    var lastErrorText: String = ""
+
+    // MARK: State
+
+    var state: RowState = .recent
+    /// Resolved once per scan against the scan's clock and the stall rule
+    /// (`SnapshotBuilder`), never against `Date()` in a view.
+    var isStalled: Bool = false
+    /// The session file's last change, in ms; 0 = unknown.
+    var harvestMs: Int64 = 0
+    /// The live-signal clock: a hook activity event, or a fact that moved
+    /// while the file's mtime did not. 0 = none.
+    var activityMs: Int64 = 0
+    /// When the session (or, for a process-only row, the process) began.
+    var startedMs: Int64 = 0
+    var source: RowSource = .process
     /// Sessions of this agent that exist but did not fit the per-agent cap.
     var hiddenSessions: Int = 0
-    /// Records in the session file. 0 = unknown, never estimated.
-    ///
-    /// Not conversational turns — the transcript counts tool calls, tool
-    /// results and token events too. Shipped as "turns" in 0.28.0, which
-    /// promised a precision the number does not have.
-    var records: Int = 0
-    var phase: String = ""
-    var outcome: String = ""
-    var model: String = ""
-    var mode: String = ""
-    var errors: Int = 0
-    var files: Int = 0
-    var contextPercent: Int = 0
-    var progressDone: Int = 0
-    var progressTotal: Int = 0
-    /// 2.8 Progress · the agent's own plan and words, read from the
-    /// structures it writes for itself (TodoWrite / update_plan). Self-report
-    /// tier — the same epistemic level as `task` and `tool`, and under the
-    /// same rules: sanitized, aged out when stale, and **never** a source of
-    /// Waiting.
-    var selfReport = SessionSelfReport()
-    var planStep: String { get { selfReport.planStep } set { selfReport.planStep = newValue } }
-    var planSteps: [ActivityHarvest.PlanStep] { get { selfReport.planSteps } set { selfReport.planSteps = newValue } }
-    var lastWord: String { get { selfReport.lastWord } set { selfReport.lastWord = newValue } }
-    var lastErrorText: String { get { selfReport.lastErrorText } set { selfReport.lastErrorText = newValue } }
-    /// Whether the self-report above may be quoted as *now*. One rule for
-    /// every surface: past 30 minutes of transcript silence, a plan labelled
-    /// "Current step" — on the story line or in Details — would be stale
-    /// wearing fresh clothes. The tray withdrew it; Details must not keep
-    /// presenting it (Codex review on #74 caught Details skipping this gate).
-    var selfReportFresh: Bool { lastActivitySeconds <= 30 * 60 }
-    /// 2.9 · push-fresh action from the hook's activity spool. `liveTool` /
-    /// `liveTarget` are what a `PreToolUse` event said is running right now;
-    /// a prompt event clears them (the previous tool finished with its turn).
-    var liveAction = SessionLiveAction()
-    var liveTool: String { get { liveAction.tool } set { liveAction.tool = newValue } }
-    var liveTarget: String { get { liveAction.target } set { liveAction.target = newValue } }
-    var liveAtMs: Int64 { get { liveAction.atMs } set { liveAction.atMs = newValue } }
-    /// Present tense is allowed only for second-grade evidence — past the
-    /// window, the polled story takes back over and this says nothing.
-    var liveActionFresh: Bool {
-        guard liveAtMs > 0 else { return false }
-        let age = Date().timeIntervalSince1970 * 1000 - Double(liveAtMs)
-        return age <= Double(ActivitySpool.liveWindowMs)
-    }
-
-    /// One application rule shared by the builder and the watcher's light
-    /// path — two implementations would drift. The stamp feeds
-    /// `activityChangedMs` (the live-signal clock), never `harvestMs`: the
-    /// session moved now, but its harvested facts are still as old as their
-    /// harvest. A prompt event clears the tool — the previous tool finished
-    /// with its turn, and claiming it as "now" would be stale.
-    mutating func applyActivity(_ event: ActivitySpool.Event, nowMs: Int64) {
-        let stamp = min(event.tsMs, nowMs)
-        if event.event == "tool" {
-            liveTool = event.tool
-            liveTarget = event.target
-        } else {
-            liveTool = ""
-            liveTarget = ""
-        }
-        liveAtMs = max(liveAtMs, stamp)
-        activityChangedMs = max(activityChangedMs, stamp)
-    }
-    /// 1.2 · facts only a full read of the transcript can produce.
-    ///
-    /// An agent calling the same tool back to back is busy without being any
-    /// closer to done — a state the lamp cannot express, because it is running
-    /// and its clock is moving. Naming it is the whole point.
-    var digest = SessionDigestFacts()
-    var loopTool: String { get { digest.loopTool } set { digest.loopTool = newValue } }
-    var loopCount: Int { get { digest.loopCount } set { digest.loopCount = newValue } }
-    /// Errors across the whole session, not just the read window.
-    var sessionErrors: Int { get { digest.sessionErrors } set { digest.sessionErrors = newValue } }
-    /// `Edit 12 · Bash 5` — bounded; Details only, never the tray row.
-    var toolSummary: String { get { digest.toolSummary } set { digest.toolSummary = newValue } }
-
-    /// 2.1 Evidence · the rest of what the digest already knew.
-    ///
-    /// Every field below is **carried, never recomputed**. They were produced
-    /// by reading the whole transcript; anything here that tried to re-derive
-    /// them from the read window would be guessing at bytes it never saw.
-    ///
-    /// Tokens across the whole session. Deliberately *not* merged into
-    /// `tokensIn` / `tokensOut`, which are the most recent message: 1.1 named
-    /// this fork and refused to let one overwrite the other. Both numbers are
-    /// true and they are not the same number, so whatever shows them has to
-    /// label them apart rather than let a reader watch two token counts
-    /// disagree.
-    var sessionTokensIn: Int { get { digest.tokensIn } set { digest.tokensIn = newValue } }
-    var sessionTokensOut: Int { get { digest.tokensOut } set { digest.tokensOut = newValue } }
-    /// The last few vendor tool names in order, oldest first (≤12).
-    /// "What it has been doing all along" — a fact the tray never had room for.
-    var recentTools: [String] { get { digest.recentTools } set { digest.recentTools = newValue } }
-    /// 0–100. 100 means the whole transcript has been folded.
-    var digestProgressPercent: Int { get { digest.progressPercent } set { digest.progressPercent = newValue } }
-    /// True when nothing in the file is still unread.
-    ///
-    /// While this is false the counts above are partial, and any surface that
-    /// shows them owes the reader that sentence.
-    var digestCaughtUp: Bool { get { digest.caughtUp } set { digest.caughtUp = newValue } }
-    /// Transcript growth, in bytes per minute. 0 = unknown, never estimated.
-    /// The difference between "moving" and "parked", which no counter states.
-    var bytesPerMinute: Int { get { digest.bytesPerMinute } set { digest.bytesPerMinute = newValue } }
-    /// The workspace path was reconstructed from a dash-encoded vendor
-    /// directory name and the disk could not confirm it.
-    ///
-    /// Display only. `focusTier` refuses to advertise workspace precision for
-    /// such a path: an existence check at click time cannot tell the correct
-    /// decode from a wrong one that happens to exist, and opening the wrong
-    /// workspace under someone's hands is the failure the flag exists for.
-    var cwdBestEffort: Bool = false
-    /// 4.0-α · path of the structured transcript this row was read from.
-    ///
-    /// A local read handle, opened only on an explicit click. Never rendered
-    /// as text, never on the tray, never in any channel that leaves the
-    /// machine. Empty for cache-tier and process-only rows.
-    var transcriptPath: String = ""
-    /// The session's real start, in ms. More reliable than `startedMs`, which
-    /// some adapters can only fill from a file stamp. 0 = unknown.
-    var sessionStartedMs: Int64 { get { digest.startedMs } set { digest.startedMs = newValue } }
-
-    /// Enough repetition to be worth saying out loud.
-    var isLooping: Bool { !loopTool.isEmpty && loopCount >= 3 }
-
-    /// Whether a transcript digest exists for this row at all.
-    ///
-    /// Matters because `digestCaughtUp == false` has two very different
-    /// causes: a digest that is genuinely behind, and no digest at all (a
-    /// cache-only adapter has no transcript to read). Saying "still catching
-    /// up · 0% read" for the second would be inventing a state.
-    var hasSessionDigest: Bool {
-        digestCaughtUp || digestProgressPercent > 0 || !recentTools.isEmpty
-            || sessionTokensIn > 0 || sessionTokensOut > 0
-    }
-
-    /// How long this session has really been going, in seconds; 0 when unknown.
-    ///
-    /// Uses the digest's own start rather than `startedMs`.
-    func sessionDurationSeconds(nowMs: Int64) -> Double {
-        guard sessionStartedMs > 0, nowMs > sessionStartedMs else { return 0 }
-        return Double(nowMs - sessionStartedMs) / 1000.0
-    }
-
-    /// The most tool names a timeline will render before it starts eliding.
-    static let maxTimelineTools = 12
-
-    /// `Read → Edit → Bash → Edit` — the path it took, not a count of it.
-    ///
-    /// Older entries are dropped from the **front**, because the useful end of
-    /// a walk is the end you are standing on. When anything was dropped the
-    /// string says so with a leading `…`, so a truncated timeline is never
-    /// mistaken for the whole session.
-    static func toolTimeline(_ tools: [String], limit: Int = AgentRow.maxTimelineTools) -> String {
-        let cleaned = tools
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard !cleaned.isEmpty, limit > 0 else { return "" }
-        let shown = cleaned.suffix(limit).joined(separator: " → ")
-        return cleaned.count > limit ? "… → " + shown : shown
-    }
-
-    /// `840 B` / `12 KB` / `1.4 MB`. Empty when the rate is unknown — an
-    /// invented "0 KB" would read as "parked", which is a different claim.
-    static func compactBytes(_ n: Int) -> String {
-        guard n > 0 else { return "" }
-        if n < 1024 { return "\(n) B" }
-        if n < 1024 * 1024 { return "\(n / 1024) KB" }
-        return String(format: "%.1f MB", Double(n) / (1024.0 * 1024.0))
-    }
-    /// A bounded, cross-scan change signal. Static counters answer "how much";
-    /// this answers the more useful operational question: "what just moved?"
-    var activityChange: AgentActivityChange? = nil
-    var activityChangedMs: Int64 = 0
-    /// When the session began, in ms. 0 = unknown.
-    var startedMs: Int64 = 0
-    /// What this concrete row is backed by.
-    var observationSource: ObservationSource = .process
-    /// When the matched OS process began, in ms. Never presented as session age.
-    var processStartedMs: Int64 = 0
-    /// Why the process probe matched, without retaining argv.
-    var processEvidence: ProcessEvidence? = nil
-    /// Named Signal Quality envelope — facts present, gaps with reasons, freshness.
-    var quality: ObservationQuality = ObservationQuality()
-
-    /// Recompute `quality` from the merged row. Safe to call after every scan merge.
-    mutating func refreshObservationQuality(privacyLimited: Bool = false) {
-        let workspace = cwd.isEmpty ? project : cwd
-        quality = ObservationQuality.derive(
-            task: usefulTask ?? "",
-            workspace: workspace,
-            action: tool.isEmpty ? skill : tool,
-            phase: phase,
-            model: model,
-            progressDone: progressDone,
-            progressTotal: progressTotal,
-            errors: errors,
-            waiting: waiting,
-            waitMessage: waitMessage.isEmpty ? waitKind : waitMessage,
-            evidence: observationSource,
-            harvestMs: harvestMs,
-            processStartedMs: processStartedMs,
-            privacyLimited: privacyLimited,
-            agentHarvestSource: agent.harvestSource,
-            waitingSource: agent.waitingSource
-        )
-    }
-
-    /// How long this session has been going, in seconds; 0 when unknown.
-    ///
-    /// Distinct from `lastActivitySeconds`, which is when it last moved. The
-    /// panel could say "1m ago" for a session that started three hours back and
-    /// had no way to say the three hours.
-    func sessionAgeSeconds(nowMs: Int64) -> Double {
-        guard startedMs > 0, nowMs > startedMs else { return 0 }
-        return Double(nowMs - startedMs) / 1000.0
-    }
-    /// Seconds left on a "remind me later", resolved at scan time. 0 = not snoozed.
-    ///
-    /// Snoozing suppresses the *interruption* — lamp, menu-bar text, banner —
-    /// and nothing else. The row stays in the list, in Needs-you, with the
-    /// remaining time on its chip. This mirrors the rule muting already
-    /// follows: a muted agent stops notifying and still appears. A button that
-    /// makes a row disappear is a button nobody dares press.
-    var snoozeRemainingSeconds: Double = 0
-
-    var isSnoozed: Bool { waiting && snoozeRemainingSeconds > 0 }
 
     var id: String { rowKey }
 
-    var titleLine: String {
-        var parts: [String] = [agent.displayName]
-        let short = Self.shortProject(project)
-        if !short.isEmpty,
-           short.compare(agent.displayName, options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame {
-            parts.append(short)
-        } else if let hint = shortSessionHint {
-            // No project — show short session so multi-row agents stay distinguishable.
-            parts.append(hint)
+    // MARK: - State, read
+
+    var wait: RowWait? {
+        if case .blocked(let wait) = state { return wait }
+        return nil
+    }
+
+    var isBlocked: Bool { wait != nil }
+
+    var isProcessOnly: Bool { state == .processOnly }
+
+    var turnSinceMs: Int64? {
+        if case .yourTurn(let since) = state { return since }
+        return nil
+    }
+
+    var isYourTurn: Bool { turnSinceMs != nil }
+
+    var isRecent: Bool { state == .recent }
+
+    /// Which tray section this row belongs to.
+    var section: TraySection {
+        switch state {
+        case .blocked: return .needsYou
+        case .recent: return .recent
+        case .processOnly: return .running
+        case .running: return isStalled ? .stalled : .running
+        case .yourTurn: return liveProcess ? .running : .recent
         }
-        if viaWarp { parts.append("via Warp") }
-        return parts.joined(separator: " · ")
     }
 
-    /// Short session id for tray disambiguation (never the full uuid).
-    var shortSessionHint: String? {
-        let sid = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sid.isEmpty else { return nil }
-        if sid.count <= 10 { return sid }
-        return String(sid.suffix(8))
+    var canFocusTerminal: Bool { focusTier != nil }
+
+    /// The newest clock this row has, in ms; 0 = unknown.
+    var lastActivityMs: Int64 { max(harvestMs, activityMs) }
+
+    /// Seconds since this session last did anything, against the caller's
+    /// clock (the builder must pass `Context.nowMs`); 0 when unknown.
+    func lastActivitySeconds(at nowMs: Int64) -> Double {
+        let last = lastActivityMs
+        guard last > 0 else { return 0 }
+        return max(0, Double(nowMs - last) / 1000.0)
     }
 
-    // Waiting reason lines are built in `StatusStore.localizedWaitDetail` so
-    // durations and kinds follow the resolved language.
-
-    var taskLine: String? {
-        let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.isEmpty ? nil : t
+    /// Whether the agent's plan and words may be quoted as *now*: past 30
+    /// minutes of silence a "current step" would be stale wearing fresh
+    /// clothes.
+    func selfReportFresh(at nowMs: Int64) -> Bool {
+        lastActivitySeconds(at: nowMs) <= 30 * 60
     }
 
-    /// Drop placeholder harvest titles that aren't real session detail.
-    /// Titles that are never a user goal — vendor placeholders, status words
-    /// and typographic filler.
-    ///
-    /// This is the **one** copy. It used to exist three times: here as a
-    /// `junk` set inside `usefulTask`, and twice inside the collector. 0.98
-    /// collapsed the collector's two after they had already drifted; this one
-    /// was missed and had drifted the same way — it was case-sensitive where
-    /// the collector lowercases, and it never learned `Cascade session`, which
-    /// 0.98 added one layer down. A vocabulary that decides "is this a goal?"
-    /// cannot be maintained in parallel; every layer asks `isChromeTitle`.
-    ///
-    /// Entries are lowercase; callers compare case-insensitively. Exact
-    /// matches only — `hasSuffix(" session")` would drop real Pi `/name`
-    /// titles like "Auth session".
+    /// A 2.9 hook activity event moved this session now. The stamp feeds
+    /// the live-signal clock, never `harvestMs`: the session moved, but its
+    /// harvested facts are as old as their harvest.
+    mutating func applyActivity(_ event: ActivitySpool.Event, nowMs: Int64) {
+        activityMs = max(activityMs, min(event.tsMs, nowMs))
+    }
+
+    // MARK: - Stall
+
+    /// The stall rule: twenty minutes of silence from a live session. Not a
+    /// setting (23.0); `SnapshotBuilder.Context` carries it so a test can
+    /// move it.
+    static let stalledSeconds: Double = 20 * 60
+
+    /// Whether a live row would be stalled at the given instant.
+    /// `threshold <= 0` turns staleness off; a zero clock is unknown, not
+    /// silence.
+    static func stalled(lastActivityMs: Int64, nowMs: Int64, threshold: Double = stalledSeconds) -> Bool {
+        guard threshold > 0, lastActivityMs > 0 else { return false }
+        return Double(nowMs - lastActivityMs) / 1000.0 >= threshold
+    }
+
+
+    // MARK: - Titles
+
     static var chromeTitles: Set<String> { TitleHeuristics.chromeTitles }
 
     static func isChromeTitle(_ value: String) -> Bool { TitleHeuristics.isChromeTitle(value) }
 
+    /// The task, when it is a real goal — not a vendor placeholder, the
+    /// agent's own name, a slash command, a tool identifier or a lone file.
     var usefulTask: String? {
-        guard let raw = taskLine else { return nil }
+        let raw = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
         let t = Self.displayTaskTitle(raw)
         if Self.isChromeTitle(t) { return nil }
         let low = t.lowercased()
@@ -680,24 +350,13 @@ struct AgentRow: Identifiable, Hashable {
         let genericSuffixes = [" session", " thread", " chat", " task", " agent"]
         if genericSuffixes.contains(where: { low == agent + $0 }) { return nil }
         if t.hasPrefix("/"), !t.contains(" ") { return nil }
-        // Harvest sometimes promotes the live tool id (update_plan, Bash) or a
-        // lone filename into `task`. Those are actions/paths, not goals.
-        let toolTrim = tool.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !toolTrim.isEmpty, t.caseInsensitiveCompare(toolTrim) == .orderedSame {
-            return nil
-        }
         if Self.looksLikeInternalToolIdentifier(t) { return nil }
-        if Self.looksLikeFilenameOnlyTitle(t) { return nil }
+        if TitleHeuristics.looksLikeFilenameOnlyTitle(t) { return nil }
         return t
     }
 
-    /// Session titles are plain UI labels, not a Markdown renderer.
-    ///
-    /// Codex can preserve the user's `[label](URL)` prompt syntax as its task
-    /// title. Showing the transport syntax spends scarce tray width on an
-    /// address that is neither actionable nor easier to scan. Keep the label
-    /// and the surrounding sentence; keep the raw task untouched for matching
-    /// and diagnostics.
+    /// Session titles are plain UI labels, not a Markdown renderer: keep a
+    /// `[label](URL)` link's label, and name a few bare commands.
     static func displayTaskTitle(_ raw: String) -> String {
         let cleaned = raw.replacingOccurrences(
             of: #"!?\[([^\]\n]{1,240})\]\((?:https?|file)://[^)\n]+\)"#,
@@ -741,146 +400,33 @@ struct AgentRow: Identifiable, Hashable {
         return false
     }
 
-    /// Pi (and others) sometimes stamp `Read Foo.swift` or bare `Foo.swift`.
-    static func looksLikeFilenameOnlyTitle(_ raw: String) -> Bool { TitleHeuristics.looksLikeFilenameOnlyTitle(raw) }
-
-    /// First-class session detail for tray (real task title only).
-    ///
-    /// Live tool identifiers are not titles — the tray humanizes them as a
-    /// separate hero fallback via `StatusStore.heroToolTitle`.
-    var sessionDetail: String? { usefulTask }
-
-    /// Live/subagent or recent row has a tool string that can stand in after
-    /// humanization when there is no real session title.
-    var hasLiveToolFallback: Bool {
-        guard !waiting else { return false }
-        return !tool.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    /// Recent (not live) rows may soft-prefix with L10n activityPrefix in the view.
-    var isCompletedPhase: Bool {
-        let value = phase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return value == "turn_complete" || value == "completed" || value == "complete"
-    }
-
-    /// Explicit lifecycle evidence from a session store can establish Running
-    /// even when there is no matching local process.
-    var isExplicitlyRunningPhase: Bool {
-        let value = phase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return value == "running"
-            || value == "in_progress"
-            || value == "working"
-            || value == "executing"
-    }
-
-    var isRecentOnly: Bool {
-        !waiting
-            && !isExplicitlyRunningPhase
-            && (!liveProcess || isCompletedPhase)
-            && subRunning == 0
-    }
-
-    /// Live / subagent with nothing to say about the session — secondary in list IA.
-    /// A known live tool still counts as something to say (humanized in the tray).
-    var isProcessOnly: Bool {
-        !waiting && (liveProcess || subRunning > 0) && usefulTask == nil && !hasLiveToolFallback
-    }
-
-    /// Has a first-class session title (sorts above process-only peers).
-    var hasSessionTitle: Bool { usefulTask != nil }
-
-
-    /// `↑12k ↓3k` — how much this session has actually moved.
-    ///
-    /// The only quantity the app has, and until 0.28 it lived behind a hover
-    /// and then behind an expand. A panel whose rows carry a name, a path and
-    /// a relative time has nothing on it that changes as work happens; this
-    /// does. Waiting rows omit it, because there the question is the point.
-    var tokenLine: String? {
-        guard !waiting else { return nil }
-        let tin = Self.compactToken(tokensIn)
-        let tout = Self.compactToken(tokensOut)
-        guard !tin.isEmpty || !tout.isEmpty else { return nil }
-        var tok = ""
-        if !tin.isEmpty { tok += "↑\(tin)" }
-        if !tout.isEmpty {
-            if !tok.isEmpty { tok += " " }
-            tok += "↓\(tout)"
-        }
-        return tok
-    }
-
-    /// Compact meta: "↑12k ↓3k · Bash · sub 2↑/5"
-    /// Waiting rows omit tokens (status first). Tool alone goes to sessionDetail when no task.
-    var metaLine: String? {
-        var bits: [String] = []
-        if let tok = tokenLine { bits.append(tok) }
-        if !tool.isEmpty, usefulTask != nil { bits.append(tool) }
-        if !skill.isEmpty, skill != "pending" { bits.append(skill) }
-        if let sub = subagentLine { bits.append(sub) }
-        // When project already in title, still hint session if both exist (multi-session same project).
-        if let hint = shortSessionHint, !Self.shortProject(project).isEmpty {
-            bits.append(hint)
-        }
-        return bits.isEmpty ? nil : bits.joined(separator: " · ")
-    }
-
-    /// e.g. `sub 2↑/5` when Claude has parallel subagents.
-    var subagentLine: String? {
-        guard subTotal > 0 else { return nil }
-        if subRunning > 0 {
-            return "sub \(subRunning)↑/\(subTotal)"
-        }
-        return "sub \(subTotal)"
-    }
-
-    var canFocusTerminal: Bool { focusTier != nil }
-
     static func shortProject(_ raw: String) -> String { TitleHeuristics.shortProject(raw) }
 
-    static func compactToken(_ n: Int) -> String {
-        guard n > 0 else { return "" }
-        if n < 1000 { return "\(n)" }
-        if n < 10_000 { return String(format: "%.1fk", Double(n) / 1000.0) }
-        if n < 1_000_000 { return "\(n / 1000)k" }
-        // Soft magnitude — avoid accounting-style millions in a status lamp.
-        return String(format: "%.1fM", Double(n) / 1_000_000.0)
-    }
+    /// The short project name a row shows beside the agent.
+    var shortPlace: String { Self.shortProject(project.isEmpty ? cwd : project) }
 
-    /// Seconds a Waiting row has been outstanding (0 when unknown).
-    /// Formatting lives in `StatusStore.waitDurationLabel` so units localize.
-    var waitAgeSeconds: Double {
-        guard waitSinceMs > 0 else { return 0 }
-        return max(0, Date().timeIntervalSince1970 - Double(waitSinceMs) / 1000.0)
+    /// `840 B` / `12 KB` / `1.4 MB`. Empty when unknown — an invented "0 KB"
+    /// would be a different claim.
+    static func compactBytes(_ n: Int) -> String {
+        guard n > 0 else { return "" }
+        if n < 1024 { return "\(n) B" }
+        if n < 1024 * 1024 { return "\(n / 1024) KB" }
+        return String(format: "%.1f MB", Double(n) / (1024.0 * 1024.0))
     }
 
     /// Where this session lives, written the way a person would write it.
-    ///
-    /// `cwd` has been collected since the beginning and never shown. The tray
-    /// could say who and what, but never *where* — so two Claude sessions in
-    /// different repos were indistinguishable.
+    /// The home directory is not a project, and a deep path keeps its tail.
     var displayPath: String {
         let raw = cwd.isEmpty ? project : cwd
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-
-        // The home directory is not a project.
-        //
-        // 0.25 rendered it as "~" and grouped sessions under it, then a session
-        // that had no cwd fell back to its harvest-encoded project name and the
-        // *same* directory appeared a second time as "users-<name>". One
-        // location, two groups, and a header claiming three projects where
-        // there were two.
         if Self.isHomeLike(trimmed, home: home) { return "" }
-
         guard trimmed.hasPrefix("/") else { return Self.shortProject(trimmed) }
         var path = trimmed
         if !home.isEmpty, path.hasPrefix(home + "/") {
             path = "~" + path.dropFirst(home.count)
         }
-        // Keep the tail: the last two components carry the identity, the
-        // middle of a deep path does not.
         let parts = path.split(separator: "/").map(String.init)
         if parts.count > 3 {
             return (path.hasPrefix("~") ? "~/…/" : "/…/") + parts.suffix(2).joined(separator: "/")
@@ -888,12 +434,8 @@ struct AgentRow: Identifiable, Hashable {
         return path
     }
 
-    /// Every spelling of "the home directory" this data can produce.
-    ///
-    /// Harvest hands back either a real path or a decoded form of Claude's
-    /// encoded project directory (`-Users-name` → `users-name`), so the same
-    /// place arrives under several names and has to be collapsed before it can
-    /// be grouped or counted.
+    /// Every spelling of "the home directory" this data can produce
+    /// (`-Users-name` decoded to `users-name`, the bare account name, `~`).
     static func isHomeLike(_ raw: String, home: String) -> Bool {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s == "~" || s == "~/" { return true }
@@ -902,119 +444,8 @@ struct AgentRow: Identifiable, Hashable {
         let user = (home as NSString).lastPathComponent.lowercased()
         guard !user.isEmpty else { return false }
         let low = s.lowercased()
-        // `-Users-name` decoded to `users-name`, and the bare account name.
         return low == user || low == "users-\(user)" || low == "-users-\(user)"
     }
-
-    /// Seconds since this session last did anything (0 when unknown).
-    ///
-    /// Prefer the fresher of harvest mtime and a live signal move
-    /// (`activityChangedMs`) — progress/tokens can advance without a newer
-    /// filesystem stamp.
-    var lastActivitySeconds: Double {
-        lastActivitySeconds(at: Int64(Date().timeIntervalSince1970 * 1000))
-    }
-
-    /// The same age measured against a caller's clock. `SnapshotBuilder`
-    /// must use this form with `Context.nowMs`: the property above reads the
-    /// wall clock, and a builder that reads the wall clock is not pure.
-    func lastActivitySeconds(at nowMs: Int64) -> Double {
-        let lastMs = max(harvestMs, activityChangedMs)
-        guard lastMs > 0 else { return 0 }
-        return max(0, Double(nowMs - lastMs) / 1000.0)
-    }
-
-    /// Running with a live session is the ordinary case, and the ordinary case
-    /// does not need a badge. Only states worth reacting to get one.
-    var needsStatusChip: Bool {
-        if waiting || isProcessOnly || isRecentOnly || isStalled { return true }
-        return false
-    }
-
-    /// Live, but nothing has moved for a long time.
-    ///
-    /// As real a signal as Waiting and never surfaced: an agent that has been
-    /// "running" for twenty minutes without touching anything is usually stuck
-    /// on something, and the tray showed it exactly like a healthy session.
-    /// Default only. The real threshold comes from settings and rides in on
-    /// `SnapshotBuilder.Context` — twenty minutes is right for nobody in
-    /// particular: a long compile is not stalled at twenty, and a short
-    /// question-and-answer session is stuck well before it.
-    static let stalledSeconds: Double = 20 * 60
-
-    /// Resolved once per scan against the scan's own clock, not `Date()`.
-    ///
-    /// As a computed property this reached for the real clock while the builder
-    /// around it ran on an injected `nowMs` — so with a fixed test clock every
-    /// row read as stalled by years. `focusTier` was moved to scan time in
-    /// 0.23 for the same reason.
-    var isStalled: Bool = false
-
-    /// Whether this row would be stalled at the given instant.
-    ///
-    /// `threshold <= 0` means the user turned staleness off, which must read as
-    /// "never stalled" rather than "always stalled".
-    ///
-    /// `activityChangedMs` counts as a live signal (progress / tokens / …) even
-    /// when `harvestMs` did not move — same rule as the change banner. A zero
-    /// clock is still *not* evidence of silence (unknown ≠ stalled row), but
-    /// Glance must not treat thin/process-only Running as healthy green.
-    static func stalled(
-        harvestMs: Int64,
-        nowMs: Int64,
-        waiting: Bool,
-        live: Bool,
-        threshold: Double = stalledSeconds,
-        activityChangedMs: Int64 = 0
-    ) -> Bool {
-        guard threshold > 0, !waiting, live else { return false }
-        let lastMs = max(harvestMs, activityChangedMs)
-        guard lastMs > 0 else { return false }
-        return Double(nowMs - lastMs) / 1000.0 >= threshold
-    }
-
-    /// Session-backed Running that may light a healthy green glance.
-    /// Process-only / no-mtime rows stay live in the tray but are not "healthy".
-    var isHealthyRunning: Bool {
-        section == .running && !isProcessOnly && harvestMs > 0
-    }
-
-    /// Live Running without a trusted activity clock or session title.
-    var isThinRunning: Bool {
-        section == .running && (isProcessOnly || harvestMs == 0)
-    }
-
-    /// A wait old enough to deserve more than the ordinary Waiting treatment.
-    /// This is the *only* place "longer" becomes "louder" — every other visual
-    /// encoding stays constant, so the escalation actually reads as one.
-    static let urgentWaitSeconds: Double = 600
-
-    var isUrgentWait: Bool { waiting && waitAgeSeconds >= Self.urgentWaitSeconds }
-
-    /// Which tray section this row belongs to.
-    var section: TraySection {
-        if waiting { return .needsYou }
-        if isCompletedPhase, subRunning == 0 { return .recent }
-        if isStalled { return .stalled }
-        if liveProcess || isExplicitlyRunningPhase || subRunning > 0 { return .running }
-        return .recent
-    }
-}
-
-enum AgentActivityChange: Hashable {
-    case errors(Int)
-    case files(Int)
-    case progress(done: Int, total: Int)
-    case modelCall
-    /// Vendor tool / lastAction name changed between scans (0.91).
-    case toolChanged
-    /// Lifecycle phase string changed (still never invents Waiting).
-    case phaseChanged
-    /// Session title / goal text changed.
-    case taskChanged
-    case completed
-    case failed
-    case cancelled
 }
 
 /// Tray rows are grouped under a heading rather than relying on sort order
@@ -1232,116 +663,27 @@ enum SupportCapability: String, Equatable {
 struct PulseSnapshot: Equatable {
     var glance: GlanceKind = .idle
     var title: String = ""
+    /// One line: the rule that set the lamp (`LampExplanation.sentence`).
     var tooltip: String = "Pulse"
     /// Glance state spoken by VoiceOver, in the resolved language.
     var accessibilityLabel: String = ""
-    /// Short status word for tray header (Needs you / Running / …).
+    /// The census VoiceOver announces when it changes ("1 needs you · 2
+    /// running"), counted by row state.
     var headerTitle: String = ""
-    /// Supporting line under headerTitle (names · relative time).
-    var headerDetail: String = ""
-    var header: String = "No coding agents"
     var rows: [AgentRow] = []
     /// Section totals over the *whole* list, so a heading can say "3 running"
     /// even when the window is showing two of them.
     var sectionTotals: [TraySection: Int] = [:]
-    /// Distinct projects across the whole list — an aggregate no single row
-    /// can state, which is the only kind of thing the header should say.
-    var projectCount: Int = 0
-    /// Longest outstanding wait, in seconds — the number that decides who to
-    /// deal with first, so it reaches the menu bar rather than staying buried
-    /// in a row's third line.
-    var longestWaitSeconds: Double = 0
     var hiddenCount: Int = 0
-    /// 16.0: sessions whose turn ended unseen, over the whole list.
-    var turnCount: Int = 0
     /// Sessions suppressed by the per-agent cap (never silently dropped).
     var cappedSessions: Int = 0
     /// 21.0: sessions older than the fresh window, left out of the list —
     /// and which agents they belong to. A row that went quiet for 46
     /// minutes used to vanish with no trace outside debug.log.
     var staleHidden: Int = 0
-    /// 22.0: `LampExplanation.lines` — why the lamp is this colour.
-    var lampLines: [String] = []
+    /// 23.0: the menu-bar lamp's shape and tone (`LampFace.glance`).
+    var lamp: LampFace = .idle
     var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0
-    var probeError: String?
     var updatedAt: Date = .distantPast
-}
-
-/// Which tray groups fold, and what a folded group still says.
-///
-/// Screenshots of 0.25.0 showed four rows, two of them Recent — finished
-/// sessions, nothing to act on, taking half the panel and half the reading.
-/// Folding them is the largest space win available without dropping a fact.
-enum TrayFold {
-    /// Groups are visible on every fresh panel open. Folding is an explicit,
-    /// reversible user action; the aggregate count must never promise rows
-    /// that the default view silently hides.
-    static func isCollapsed(_ groupID: String, manuallyFolded: Set<String>) -> Bool {
-        manuallyFolded.contains(groupID)
-    }
-
-    /// Below this many rows the panel is not crowded, so nothing folds.
-    ///
-    /// A 0.27 screenshot showed three sessions with two of them folded away —
-    /// one visible row in a panel that had room for all three. Folding traded a
-    /// line of screen for a click and hidden content, which is only a good
-    /// trade when the screen is the scarce thing. It was not.
-    static let crowdedFrom = 5
-
-    /// A project group folds when nothing in it is waiting.
-    ///
-    /// `foldable` only ever answered for the Recent *section*, so grouping by
-    /// project — the mode built for people running several repos at once — was
-    /// the one mode where nothing folded and the panel was a flat list of every
-    /// project. Same two guards as Recent, plus the one that matters here: a
-    /// project holding a wait is never folded away.
-    static func foldableProject(
-        hasWaiting: Bool,
-        groupCount: Int,
-        rowCount: Int,
-        totalRows: Int
-    ) -> Bool {
-        !hasWaiting && groupCount > 1 && rowCount >= 2 && totalRows >= crowdedFrom
-    }
-
-    /// Recent is foldable, but only when it is not the whole list.
-    ///
-    /// If Recent is all there is, those rows *are* the content and folding
-    /// them leaves a panel that says nothing. The rule is "hide the part you
-    /// are not here for", which requires there to be another part.
-    static func foldable(
-        section: TraySection,
-        groupCount: Int,
-        rowCount: Int,
-        totalRows: Int
-    ) -> Bool {
-        section == .recent && groupCount > 1 && rowCount >= 2 && totalRows >= crowdedFrom
-    }
-
-    /// True when the summary names every row, making the count a repeat.
-    ///
-    /// Three Claude sessions summarise to "Claude" — one name for three rows,
-    /// so the count is still the only thing saying how many. Two rows named
-    /// "Pi · Amp" are a different case: the names *are* the count.
-    static func summaryNamesEveryRow(_ rows: [AgentRow], limit: Int = 3) -> Bool {
-        let distinct = Set(rows.map(\.agent)).count
-        return distinct == rows.count && rows.count <= limit
-    }
-
-    /// Agents in the folded group, in first-seen order, deduplicated.
-    ///
-    /// A folded heading otherwise reads "Recent 3" — a count with no identity,
-    /// which is exactly the question folding creates.
-    static func summary(_ rows: [AgentRow], limit: Int = 3) -> String {
-        var seen = Set<AgentID>()
-        var names: [String] = []
-        for row in rows where !seen.contains(row.agent) {
-            seen.insert(row.agent)
-            names.append(row.agent.displayName)
-        }
-        guard !names.isEmpty else { return "" }
-        if names.count <= limit { return names.joined(separator: " · ") }
-        return names.prefix(limit).joined(separator: " · ") + " +\(names.count - limit)"
-    }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generic Attention Protocol v1 raise — any agent id.
+# Generic Attention Protocol v3 raise — any agent id.
 # Prefers native pulse-hook (no Python); falls back to direct TSV append.
 # See docs/attention-protocol.md and docs/attention-bridge.md
 set -euo pipefail
@@ -17,15 +17,15 @@ if [ -x "$HOOK" ]; then
   exit 0
 fi
 ms=$(($(date +%s) * 1000))
-header='# pulse-attention v1 (agent\tkind\tms\tmessage\tsession\tcwd)'
+header='# pulse-attention v3 (agent\tkind\tms\tmessage\tsession\tcwd\thost\tfront)'
 tsv="$PULSE/attention.tsv"
-if [ ! -f "$tsv" ] || ! grep -q 'pulse-attention v1' "$tsv" 2>/dev/null; then
+if [ ! -f "$tsv" ] || ! grep -q 'pulse-attention v3' "$tsv" 2>/dev/null; then
   printf '%s\n' "$header" > "$tsv.tmp"
   if [ -f "$tsv" ]; then
     grep -v '^#' "$tsv" >> "$tsv.tmp" || true
   fi
   mv "$tsv.tmp" "$tsv"
 fi
-printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t\t\n' \
   "$agent" "$kind" "$ms" "$message" "$session" "${PWD}" >> "$tsv"
 echo "Wrote $agent Waiting → $tsv (session=$session kind=$kind)"

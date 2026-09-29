@@ -264,4 +264,12 @@ enum TrayReveal {
             StatusPanelController.shared?.show()
         }
     }
+
+    /// 23.0: the global shortcut — open closes, closed opens with the most
+    /// urgent row selected.
+    static func toggle() {
+        Task { @MainActor in
+            StatusPanelController.shared?.toggleFromHotkey()
+        }
+    }
 }
