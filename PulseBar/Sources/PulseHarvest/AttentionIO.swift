@@ -3,7 +3,8 @@ import Foundation
 import PulseCore
 
 /// Locked read/write for attention.tsv — same exclusive flock as pulse_hook.py /
-/// `PulseBar --hook`. Columns: agent \\t kind \\t ms \\t message \\t session \\t cwd
+/// `PulseBar --hook`. Columns (v3): agent \\t kind \\t ms \\t message \\t session
+/// \\t cwd \\t host \\t front
 package enum AttentionIO {
     /// Tests and `PULSE_HOME` hook self-tests redirect the ledger without
     /// touching the user's real Application Support file.
@@ -113,23 +114,23 @@ package enum AttentionIO {
     /// drop a still-open permission/waiting line with no `done`.
     package static func compactLines(_ lines: [String], cap: Int = maxRetainedLines) -> [String] {
         guard lines.count > cap else { return lines }
-        var lastKind: [String: String] = [:]
+        var lastOpen: [String: Bool] = [:]
         var lastIndex: [String: Int] = [:]
         for (index, raw) in lines.enumerated() {
             let columns = raw.split(separator: "\t", omittingEmptySubsequences: false)
             guard columns.count >= 3,
                   let agent = ActivityHarvest.mapAgent(String(columns[0]))
             else { continue }
-            let kind = AttentionProtocol.normalizeKind(String(columns[1]))
+            let kind = AttentionProtocol.kind(String(columns[1]))
             let session = columns.count > 4 ? String(columns[4]) : ""
             let key = session.isEmpty ? agent.surfaceID.rawValue : "\(agent.surfaceID.rawValue)|\(session)"
-            lastKind[key] = kind
+            lastOpen[key] = kind?.isOpen == true
             lastIndex[key] = index
         }
-        let openKinds: Set<String> = ["permission", "idle_prompt", "waiting"]
+        // Blocked and your-turn lines are still owed to the user.
         var mustKeep = Set(
             lastIndex.compactMap { key, index -> Int? in
-                openKinds.contains(lastKind[key] ?? "") ? index : nil
+                lastOpen[key] == true ? index : nil
             }
         )
         if mustKeep.count > cap {

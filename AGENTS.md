@@ -39,6 +39,11 @@ compiles and ships.
 
 - **No fake Waiting.** Waiting comes from hooks or harvest `skill=pending`,
   never from inference. An agent with no Waiting path shows Running and says so.
+  Since 16.0 (Attention Protocol v3) **red means blocked** — `permission`,
+  `question`, `waiting`. A finished turn (`turn`: Claude Stop / `idle_prompt`,
+  Codex `agent-turn-complete`) is "your turn": a quiet tray count, never the
+  red lamp, never a banner; it comes only from hooks and never makes a row of
+  its own.
 - **No quota, cost, or reset HUD.** That is a different product.
 - **No judgment transfer, and no blind approve.** Respond (scenes AR, AU)
   delivers the user's own decision to a permission request: key-file opt-in,
@@ -167,21 +172,23 @@ to users.
 
 ## Current state
 
-15.0.0 is the current source version (Witness — the Workbench's judgement
-surfaces are values). `MissionBoard` and `ProofCardModel`
-(`SurfaceModels.swift`) are pure functions of plain inputs; `MissionBoardView`
-and `ProofCardView` render them and send intents, which `StatusStore` maps to
-verbs. `SurfaceFixtures` holds named worlds built through the real `make`
-functions, `scripts/qa_surfaces.sh` renders each in zh/en × light/dark on CI
-(`qa-surfaces` artifact), and `scripts/surface_check.py` fails if a rendering
-view reaches the store again. **A new judgement surface comes with a model, a
-fixture and a capture.** Since 14.0 evidence belongs to the working copy
+16.0.0 is the current source version (Turn — red means blocked). Attention
+Protocol v3 (`AttentionKind` in PulseCore) separates blocked, your turn and
+resolved, and adds column 8 `front`: whether the prompt's window was frontmost
+when an event was raised — a blocked prompt already in front lights the lamp
+but raises no banner. `AgentRow.yourTurn` feeds the tray count and the global
+hotkey (blocked first, then your turn); focusing a turn row writes a
+session-scoped `done`. `TurnTruthTests` pins vendor event sequences end to end.
+Since 15.0 the Workbench's judgement surfaces are values (`MissionBoard`,
+`ProofCardModel`); `scripts/qa_surfaces.sh` renders them on CI and
+`scripts/surface_check.py` keeps views off the store — **a new judgement
+surface comes with a model, a fixture and a capture.** Since 14.0 evidence belongs to the working copy
 (`EvidenceBook`, `Pulse/evidence/<digest>.json`; managed session state schema
 5). 13.0 made the product decision in review-11.0 §4.3: Pulse accepts the
 orchestrator identity, and the Workbench stays in the tray's process until one
 of the split triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
-App Server), blocked on real-machine P0 evidence; it ships as a 15.x.
+App Server), blocked on real-machine P0 evidence; it ships as a 16.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with

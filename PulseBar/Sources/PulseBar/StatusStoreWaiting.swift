@@ -503,9 +503,32 @@ extension StatusStore {
     /// say so and rescan: the next row either carries a handle that works or
     /// stops offering one.
     func focusTerminal(_ row: AgentRow) {
+        if row.yourTurn { markTurnSeen(row) }
         guard !TerminalFocus.focus(row: row) else { return }
         noteRowAction(row.rowKey, tr(.focusFailed))
         refresh(reason: "focus-failed")
+    }
+
+    /// 16.0: the finished session that has waited longest for a look.
+    var oldestTurn: AgentRow? {
+        cachedAll.filter(\.yourTurn).min { $0.turnSinceMs < $1.turnSinceMs }
+    }
+
+    /// Blocked first, then "your turn" — the order of Conductor's "next
+    /// needing attention", with the stakes kept apart.
+    func focusNextTurn() {
+        guard let row = oldestTurn else { return }
+        DebugLog.write("jump to turn \(DebugLog.key(row.rowKey))")
+        focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
+    }
+
+    /// Looking at a finished session is what "your turn" was asking for. A
+    /// session-scoped `done` in the attention file is the record — it
+    /// survives a restart, and it is the same line a new prompt would write.
+    func markTurnSeen(_ row: AgentRow) {
+        guard row.yourTurn, !row.isRemote, !row.sessionID.isEmpty else { return }
+        AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
+        refresh(reason: "turn-seen")
     }
 
     func focusFirstWaiting() {
@@ -523,6 +546,7 @@ extension StatusStore {
         let row = resolveFocusRow(idRaw: idRaw, session: session, rowKey: rowKey)
         if let row {
             let didFocus = row.canFocusTerminal && TerminalFocus.focus(row: row)
+            if row.yourTurn { markTurnSeen(row) }
             if row.waiting || !didFocus {
                 requestTrayReveal(rowKey: row.rowKey)
             }

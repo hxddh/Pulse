@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "15.0.0"
+    static let semver = "16.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -345,6 +345,14 @@ struct AgentRow: Identifiable, Hashable {
     var waitMessage: String = ""
     /// hooks vs harvest pending — for tray credibility tag.
     var waitSignal: WaitSignalKind? = nil
+    /// 16.0: the blocked prompt's own window was frontmost when it was
+    /// raised — the lamp still lights, but no banner and no sound.
+    var waitRaisedInFront: Bool = false
+    /// 16.0 · "your turn": the agent finished its turn and is idle at its
+    /// prompt, and nobody has looked since. From hooks only (a `turn` event),
+    /// never inferred. Never the red lamp; a quiet count in the tray.
+    var yourTurn: Bool = false
+    var turnSinceMs: Int64 = 0
     var viaWarp: Bool = false
     /// Host IDE detected by walking the process parent chain (`ps` only).
     var hostApp: HostAppKind? = nil
@@ -1293,6 +1301,8 @@ struct PulseSnapshot: Equatable {
     /// in a row's third line.
     var longestWaitSeconds: Double = 0
     var hiddenCount: Int = 0
+    /// 16.0: sessions whose turn ended unseen, over the whole list.
+    var turnCount: Int = 0
     /// Sessions suppressed by the per-agent cap (never silently dropped).
     var cappedSessions: Int = 0
     var totalCount: Int = 0

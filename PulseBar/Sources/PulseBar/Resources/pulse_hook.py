@@ -5,7 +5,8 @@ Usage:
   pulse_hook.py <agent> [kind]          # kind from argv or stdin JSON
   echo '{...}' | pulse_hook.py claude
 
-TSV columns (Attention Protocol v1):
+TSV columns (Attention Protocol v1 layout; v3 kinds — readers treat the
+missing host/front columns as this machine / unknown):
   agent \\t kind \\t ms \\t message \\t session \\t cwd
 
 Exit 0 always so agent hooks never block the agent.
@@ -27,10 +28,14 @@ from pathlib import Path
 
 MAX_LINES = 80
 HEADER = "# pulse-attention v1 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
-WAITING_KINDS = frozenset({"permission", "idle_prompt", "waiting"})
-CLEAR_KINDS = frozenset({"done", "stop"})
+# Attention Protocol v3 kinds (docs/attention-protocol.md). Blocked kinds
+# light the red lamp; `turn` is "your turn" (finished, idle at the prompt —
+# never red); `done` resolves.
+WAITING_KINDS = frozenset({"permission", "question", "waiting"})
+TURN_KINDS = frozenset({"turn"})
+CLEAR_KINDS = frozenset({"done"})
 LIFECYCLE_KINDS = frozenset({"subagent_start", "subagent_stop"})
-ACCEPTED_KINDS = WAITING_KINDS | CLEAR_KINDS | LIFECYCLE_KINDS
+ACCEPTED_KINDS = WAITING_KINDS | TURN_KINDS | CLEAR_KINDS | LIFECYCLE_KINDS
 
 # Hooks receive untrusted agent payloads. Redacting only in Swift would leave
 # the same credential in attention.tsv on disk and in any copied diagnostics.
@@ -96,8 +101,10 @@ def parse_kind_from_json(payload: dict) -> str:
     if ntype:
         return str(ntype)
     event = payload.get("hook_event_name") or payload.get("hookEventName") or ""
-    if event in ("Stop", "SubagentStop"):
-        return "stop"
+    if event == "Stop":
+        return "turn"
+    if event == "SubagentStop":
+        return "subagent_stop"
     if event == "Notification":
         return str(payload.get("notification_type") or "waiting")
     if event == "PermissionRequest":
@@ -118,37 +125,41 @@ def normalize_kind(kind: str) -> str:
     low = k.lower().replace("-", "_")
     # Codex / OpenAI notify + rollout-adjacent event names
     mapping = {
-        "agent-turn-complete": "done",
-        "agent_turn_complete": "done",
-        "agent_completed": "done",
-        "turn_complete": "done",
-        "task_complete": "done",
+        # Your turn: the agent finished and is idle at its prompt.
+        "turn": "turn",
+        "stop": "turn",
+        "idle_prompt": "turn",
+        "idle": "turn",
+        "agent_turn_complete": "turn",
+        "agent_completed": "turn",
+        "turn_complete": "turn",
+        "task_complete": "turn",
+        # Blocked on a permission.
+        "permission": "permission",
+        "permission_prompt": "permission",
         "exec_approval_request": "permission",
         "apply_patch_approval_request": "permission",
         "approval_request": "permission",
         "pending_approval": "permission",
-        "request_user_input": "idle_prompt",
-        "user_input_request": "idle_prompt",
-        "elicitation_dialog": "idle_prompt",
-        "permission_prompt": "permission",
-        "idle_prompt": "idle_prompt",
-        "idle": "idle_prompt",
-        "agent_needs_input": "idle_prompt",
-        "needs_input": "idle_prompt",
-        "subagent_start": "subagent_start",
-        "subagent_stop": "subagent_stop",
-        "subagent": "subagent_start",
-        "permission": "permission",
-        "stop": "stop",
-        "done": "done",
+        # Blocked on a question.
+        "question": "question",
+        "request_user_input": "question",
+        "user_input_request": "question",
+        "elicitation_dialog": "question",
+        "agent_needs_input": "question",
+        "needs_input": "question",
         "waiting": "waiting",
+        "done": "done",
+        "subagent_start": "subagent_start",
+        "subagent": "subagent_start",
+        "subagent_stop": "subagent_stop",
     }
     if low in mapping:
         return mapping[low]
     if "approval" in low and "response" not in low and "decision" not in low:
         return "permission"
     if "user_input" in low and "response" not in low:
-        return "idle_prompt"
+        return "question"
     return "waiting" if not k else low
 
 
@@ -821,6 +832,15 @@ def main(argv: list[str]) -> int:
             write_activity(agent, plain, payload)
         except Exception:
             pass
+        # A submitted prompt answers "your turn" (and anything else this
+        # session owed). Session-scoped only.
+        if plain == "prompt":
+            session = session_from_json(payload)
+            if session:
+                try:
+                    append_event(agent, "done", "", session, cwd_from_json(payload))
+                except OSError:
+                    pass
         return 0
 
     kind = normalize_kind(kind_arg or parse_kind_from_json(payload) or "waiting")

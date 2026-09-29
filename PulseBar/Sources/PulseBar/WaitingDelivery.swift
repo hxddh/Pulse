@@ -37,6 +37,10 @@ struct WaitingDelivery: Equatable {
     func plan(_ rows: [AgentRow]) -> Plan {
         let eligible = rows.filter { row in
             row.waiting
+                // 16.0: the prompt was already in front of the user when it
+                // was raised — the lamp says so; a banner and a sound would
+                // only interrupt someone who is looking at it.
+                && !row.waitRaisedInFront
                 && !muted.contains(row.agent)
                 && !acknowledged.contains(row.rowKey)
                 && !inFlight.contains(row.rowKey)

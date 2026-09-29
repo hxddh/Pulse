@@ -478,12 +478,14 @@ enum SnapshotBuilder {
                 row.liveProcess = false
                 row.processCount = 0
                 row.focusTier = nil
-                if att.lostContact {
+                if att.lostContact || att.isTurn {
                     row.waiting = false
                     row.waitKind = ""
                     row.waitMessage = ""
                     row.waitSignal = nil
                     row.waitSinceMs = 0
+                    row.yourTurn = att.isTurn && !att.lostContact
+                    row.turnSinceMs = row.yourTurn ? att.effectiveMs : 0
                 } else {
                     row.waiting = true
                     row.waitKind = att.kind
@@ -497,6 +499,17 @@ enum SnapshotBuilder {
             switch matchAttentionRow(att, in: rowsByKey) {
             case .hit(let targetKey):
                 guard var best = rowsByKey[targetKey] else { continue }
+                // 16.0: a finished turn marks the row it belongs to and
+                // nothing else — no wait, no invented process, no rekey.
+                if att.isTurn {
+                    if !best.waiting {
+                        best.yourTurn = true
+                        best.turnSinceMs = att.tsMs
+                    }
+                    rowsByKey[targetKey] = best
+                    continue
+                }
+                best.waitRaisedInFront = att.front == true
                 best.waiting = true
                 best.waitKind = att.kind
                 best.waitSignal = .hooks
@@ -528,7 +541,9 @@ enum SnapshotBuilder {
                 )
                 continue
             case .unmatched:
-                break
+                // A turn with no row has nothing to mark: a row invented from
+                // "it finished" would have no other evidence.
+                if att.isTurn { continue }
             }
             let key: String = {
                 if !att.session.isEmpty {
@@ -545,6 +560,7 @@ enum SnapshotBuilder {
             row.waitSignal = .hooks
             row.waitMessage = att.message
             row.waitSinceMs = att.tsMs
+            row.waitRaisedInFront = att.front == true
             row.processCount = max(row.processCount, 1)
             rowsByKey[key] = row
         }
@@ -634,6 +650,19 @@ enum SnapshotBuilder {
             where !row.isRemote && row.agent == agent && row.sessionID == event.session {
                 var updated = row
                 updated.applyActivity(event, nowMs: context.nowMs)
+                rowsByKey[key] = updated
+            }
+        }
+
+        // 16.0: "your turn" ends when the session moves again — a tool call
+        // after the turn ended, or the transcript growing well after it (the
+        // user answered in a way no hook reported). A blocked wait is never
+        // also "your turn".
+        for (key, row) in rowsByKey where row.yourTurn {
+            if !SnapshotBuilder.turnStillOwed(row) {
+                var updated = row
+                updated.yourTurn = false
+                updated.turnSinceMs = 0
                 rowsByKey[key] = updated
             }
         }
@@ -870,6 +899,7 @@ enum SnapshotBuilder {
 
         var snap = PulseSnapshot()
         snap.totalCount = all.count
+        snap.turnCount = all.filter(\.yourTurn).count
         snap.sectionTotals = [
             .needsYou: waitingCount,
             .running: liveRunning,
@@ -1151,6 +1181,18 @@ enum SnapshotBuilder {
             return "Permission"
         }
         return "Input"
+    }
+
+    /// How long after a turn ended the transcript may still be written to
+    /// (the vendor's own last bookkeeping) before growth means new work.
+    static let turnResumeSlackMs: Int64 = 15_000
+
+    /// Is a row's "your turn" still owed? Pure, for the builder and tests.
+    static func turnStillOwed(_ row: AgentRow) -> Bool {
+        guard row.yourTurn, !row.waiting, row.turnSinceMs > 0 else { return false }
+        if row.activityChangedMs > row.turnSinceMs { return false }
+        if row.harvestMs > row.turnSinceMs + turnResumeSlackMs { return false }
+        return true
     }
 
     /// Match an attention entry to an existing harvest/process row.

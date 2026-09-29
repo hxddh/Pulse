@@ -2,6 +2,48 @@
 
 All notable changes to Pulse are documented here.
 
+## 16.0.0 — Turn（轮到你）
+
+同类产品里做得最好的几家（Conductor、cmux、Warp、Antigravity 的 Inbox）都把「它卡在你身上」
+和「它做完了、轮到你」分开。Pulse 一直只有一种「等待」，而且有一处在误报：Claude 的
+`idle_prompt` 通知是每个回合结束 60 秒后必发的计时器（anthropics/claude-code #32634、
+#13922），15.0 之前它点红灯 —— 装了 hooks 的用户，每个做完活的 Claude 会话一分钟后都会
+变红，并一直红到你再输入。这和 README 对红灯的定义、和受管会话「轮到你不是 Waiting」的
+既有规矩都相矛盾。
+
+- **红灯只给阻塞。** 权限、提问、原因未知的阻塞照旧点红灯、发通知、响声。
+- **做完了是「轮到你」。** Claude 的 Stop / `idle_prompt`、Codex 的 `agent-turn-complete`
+  不再点红灯、不发通知、不响：托盘头部安静地数「N 轮到你」，行上一个灰色「轮到你」标记。
+  它只来自 hooks，从不推断，也从不凭「做完了」一句话单独造出一行。
+- **有人看过就消失。** 提交下一句 prompt（新增：UserPromptSubmit 写一条会话级 `done`）、
+  从 Pulse 聚焦这一行、会话又动起来（回合结束后的工具调用，或转录在结束 15 秒后仍在增长），
+  或 30 分钟过期。回合结束时提示窗口就在最前 —— 你看着它做完 —— 一开始就不算欠你。
+- **快捷键先轮阻塞，再轮「轮到你」**；托盘菜单在没有阻塞时给「跳到做完的会话」。
+- **在场不打扰。** 阻塞等待发出时若提示窗口正是最前的应用（hook 沿父进程链判断，不需要
+  新权限，与 Respond 2.4 同一套判断），红灯照亮，但不发横幅、不响声。判断不了就当不知道，
+  照常通知。
+
+### 协议（为什么是大版本）
+
+Attention Protocol 升到 **v3**（`AttentionKind` 进 PulseCore，替掉散落的字符串 kind）：
+
+- 新 kind：`question`（提问，原先借用 `idle_prompt`）、`turn`（轮到你）；
+- **含义变化**：`idle_prompt`、`idle`、`stop` 与 Codex 的回合完成别名现在都读作 `turn`，
+  不再是阻塞、也不再是静默清除；`done` 仍是清除。用 `stop` 表示「清除」的第三方桥请改写 `done`；
+- 新增第 8 列 `front`（1 / 0 / 空=未知）；v1 六列、v2 七列行照旧被接受；
+- 旧 hook 写下的 `idle_prompt` 行一律按「轮到你」读，即便那一行原意是提问 —— 计时器是
+  绝大多数情况；原生 hook 就是 App 本身，升级 Pulse 即升级它；可选的 `pulse_hook.py` 同步更新。
+
+### 这一版不说的话
+
+- 这是按厂商 issue 与 Pulse 自己的代码推出的结论，**没有在真机上跑过一遍 Claude / Codex
+  的真实事件序列**；`TurnTruthTests` 用 hooks 实际写下的行、真实的读取器与合并器逐序列钉住了
+  灯、行、计数与通知决定，但厂商事件的真实顺序仍待真机确认。
+- 「轮到你」只对装了 hooks 的 Claude / Codex（及走 Attention 桥的工具）成立；其余 Agent
+  做完就是空闲，和以前一样。
+- 新托盘夹具 `status-turn` 进了 CI 截图；截图我仍看不到，需要在 CI 产物里打开。
+- 手机 / 手表上回答仍不做：分发 iOS App 需要 Apple 开发者账号。下载量仍是每版 0–1 次。
+
 ## 15.0.0 — Witness（见证）
 
 12.x 到 14.0 做出的指挥台判断面 —— Mission 对比卡、工作副本验收卡 —— 至今没有人看过一眼：它们

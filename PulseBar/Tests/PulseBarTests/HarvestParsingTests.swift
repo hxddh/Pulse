@@ -319,7 +319,7 @@ final class AttentionReaderTests: XCTestCase {
     func testLastEventWinsPerSession() {
         let text = tsv([
             ["claude", "permission", "\(now - 5000)", "first", "s1", "/p"],
-            ["claude", "idle_prompt", "\(now - 1000)", "second", "s1", "/p"],
+            ["claude", "question", "\(now - 1000)", "second", "s1", "/p"],
         ])
         let entries = AttentionReader.parse(text, nowMs: now)
         XCTAssertEqual(entries.count, 1)
@@ -345,7 +345,8 @@ final class AttentionReaderTests: XCTestCase {
     }
 
     func testStopKeepsAFreshPermissionWithinGrace() {
-        // Claude emits idle_prompt then Stop; wiping instantly loses the wait.
+        // The order of Claude's events is not ours; a turn ending moments
+        // after a permission was raised must not wipe it.
         let text = tsv([
             ["claude", "permission", "\(now - 1000)", "approve", "s1", "/p"],
             ["claude", "stop", "\(now)", "", "s1", ""],
@@ -354,13 +355,16 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertEqual(entries.count, 1, "recent permission survives a Stop")
     }
 
-    func testStopClearsAnAgedPermission() {
+    func testStopClearsAnAgedPermissionAndLeavesYourTurn() {
         let old = now - AttentionReader.stopGraceMs - 5000
         let text = tsv([
             ["claude", "permission", "\(old)", "approve", "s1", "/p"],
             ["claude", "stop", "\(now)", "", "s1", ""],
         ])
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+        let entries = AttentionReader.parse(text, nowMs: now)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertTrue(entries[0].isTurn)
+        XCTAssertFalse(entries[0].isBlocking, "the permission is gone; what is left is not red")
     }
 
     func testExpiredEntriesAreDropped() {
