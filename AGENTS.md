@@ -168,10 +168,18 @@ fleet (`fleet.d/` snapshots, the `attention.d/` inbox, remote rows; the
 attention `host` column is ignored). The settings `workbenchActuation`,
 `workspaceEffect` and `fleetBroadcast` are gone, as are grouping, sound,
 quiet hours, the per-agent mute list, the stall threshold, snooze length and
-history retention in Settings (old files still parse; muting moved to the row
-menu). `LegacyCleanup.run()` deletes the removed features' directories once
-on launch, behind a marker, and never touches `respond-local.key`,
-`respond.d/requests|verdicts`, attention files, settings or `worktrees/`.
+history retention in Settings (muting moved to the row menu).
+
+23.0 continued the subtraction: no compatibility with older versions. The
+updater only checks GitHub Releases and opens the release page (no download,
+DMG verification, in-place install, rollback, duplicate-install finder or
+crash-after-update banner). `LegacyCleanup` and every settings migration are
+gone (`PulseSettings.parse` ignores keys it does not know), as are the live
+updates switch (the scan always follows `ProbeSchedule`), snooze, look
+continuity / the resolved-wait history, the session digest
+(`session-digests.json`; a transcript past its read window reports its record
+count as unknown) and the `SessionSource` seam. The stall threshold is the
+constant `AgentRow.stalledSeconds`.
 
 What remains was rebuilt around one line per session. The tray
 (`TrayPanel`) has no groups, folds or depth tiers: a row is one line (lamp,
@@ -179,7 +187,7 @@ agent, project, task, time), plus the ask for a wait or the orange reason for
 a stalled/failed row. The lamp has a shape as well as a tone
 (`TrayRowModel.Shape`: waiting/running `filled`, error `half`, process-only
 `dotted`, idle `hollow`, drawn by `LampShapeView`); every other verb lives in
-the row `menu` (details, focus, dismiss, snooze, mute) and VoiceOver actions.
+the row `menu` (details, focus, dismiss, mute) and VoiceOver actions.
 `SessionDetailView` (→ or the menu's Details; ← / Esc back) shows the task,
 the why line, a `TimelineStripView` of the last hour, last words, plan, facts, the notification audit, then
 `WhyDetailSection` / `SessionDiagnosticsCard`. The tray is keyboard-first:
@@ -188,7 +196,7 @@ typing filters (over every retained session), ↑↓ select, ↩ primary, → de
 `StatusStore.trayEscapeConsumed` (unobserved) tells the panel's key monitor
 that the view owns Escape. The header is one line of tone-coloured counts
 with a ⋯ menu (Health, Settings, Quit); at most one notice (maintenance /
-scan incomplete / paused); the footer carries "N more", the stale-hidden
+scan incomplete); the footer carries "N more", the stale-hidden
 count and the key hints; the empty state is a checklist of what is true on
 this Mac. Settings is a single scrolling page of sections (23.0 removed the
 in-app Attention bridge tools); jumping in from elsewhere bumps
@@ -202,7 +210,7 @@ evidence hook / pending / vendor / harvest / process);
 `timelineRevision` only when a span changed — a quiet scan writes nothing.
 `timelineRevision` and `settingsFocusToken` are observed store properties
 listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
-lamp, up to three driving sessions and what was left out (snoozed, older
+lamp, up to three driving sessions and what was left out (older
 hidden); `SnapshotBuilder` stores it as `snapshot.lampLines`, which the status
 item appends to its tooltip. Every Waiting ledger event records its delivery
 outcome (`AttentionLedger.Event.delivery` / `deliveryAtMs`, a

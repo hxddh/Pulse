@@ -63,11 +63,8 @@ enum PulseNotify {
     }
     static let waitingCategoryID = "pulse.waiting"
 
-    /// Buttons on the waiting banner.
-    ///
-    /// Until now a banner could only be clicked as a whole, which meant the
-    /// only thing you could do from it was drop what you were doing. Both real
-    /// answers now live where the interruption actually arrives.
+    /// The button on the waiting banner: go to the session. (23.0 removed
+    /// "Later" with snooze.)
     ///
     /// Registered in the resolved language and re-registered when it changes —
     /// a category is keyed by id, so re-adding replaces the old titles.
