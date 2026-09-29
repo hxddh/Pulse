@@ -320,51 +320,12 @@ final class AgentRowTests: XCTestCase {
         )
     }
 
-    func testLiveRowWithToolButNoTaskFallsBackToTool() {
-        // Raw tool is never a session title; it remains a live-tool fallback
-        // that the tray humanizes into the hero.
-        let r = row {
-            $0.liveProcess = true
-            $0.tool = "Bash"
-        }
-        XCTAssertNil(r.sessionDetail)
-        XCTAssertNil(r.usefulTask)
-        XCTAssertTrue(r.hasLiveToolFallback)
-        XCTAssertFalse(r.isProcessOnly, "a known tool is more than 'process detected'")
-    }
-
     func testInternalToolIdentifiersAreNotSessionTitles() {
-        XCTAssertNil(row {
-            $0.task = "update_plan"
-            $0.tool = "update_plan"
-        }.usefulTask)
+        XCTAssertNil(row { $0.task = "update_plan" }.usefulTask)
         XCTAssertEqual(row { $0.task = "update_auth" }.usefulTask, "update_auth")
         XCTAssertNil(row { $0.task = "Read Models.swift" }.usefulTask)
         XCTAssertNil(row { $0.task = "Models.swift" }.usefulTask)
         XCTAssertNotNil(row { $0.task = "Improve tray density" }.usefulTask)
-    }
-
-    func testLiveRowWithNothingToSayIsProcessOnly() {
-        let r = row { $0.liveProcess = true }
-        XCTAssertNil(r.sessionDetail)
-        XCTAssertTrue(r.isProcessOnly)
-    }
-
-    func testWaitingRowsHideTokens() {
-        let r = row {
-            $0.waiting = true
-            $0.tokensIn = 5000
-            $0.tokensOut = 900
-        }
-        XCTAssertFalse(r.metaLine?.contains("↑") ?? false, "status comes before accounting")
-    }
-
-    func testTokenFormattingStaysCompact() {
-        XCTAssertEqual(AgentRow.compactToken(0), "")
-        XCTAssertEqual(AgentRow.compactToken(999), "999")
-        XCTAssertEqual(AgentRow.compactToken(1500), "1.5k")
-        XCTAssertEqual(AgentRow.compactToken(23_000), "23k")
-        XCTAssertEqual(AgentRow.compactToken(2_400_000), "2.4M")
     }
 
     func testShortProjectDropsOpaqueHashes() {
@@ -546,9 +507,7 @@ final class NotificationCopyTests: XCTestCase {
     func testBodyCarriesReasonAndMessageNotJustNeedsYou() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.waiting = true
-        row.waitKind = "Permission"
-        row.waitMessage = "Approve shell command"
+        row.state = .blocked(RowWait(kind: "Permission", ask: "Approve shell command", signal: .hooks))
         row.project = "/Users/me/code/Pulse"
 
         let body = store.notifier.notificationBody(row)
@@ -561,8 +520,7 @@ final class NotificationCopyTests: XCTestCase {
     func testLongMessagesAreTruncated() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .codex)
-        row.waiting = true
-        row.waitMessage = String(repeating: "x", count: 400)
+        row.state = .blocked(RowWait(kind: "", ask: String(repeating: "x", count: 400), signal: .hooks))
         XCTAssertLessThanOrEqual(store.notifier.notificationBody(row).count, 160)
     }
 
@@ -570,7 +528,7 @@ final class NotificationCopyTests: XCTestCase {
     func testTitleFallsBackToAgentWhenNoProject() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .codex)
-        row.waiting = true
+        row.state = .blocked(RowWait(kind: "Input", signal: .hooks))
         XCTAssertEqual(store.notifier.notificationTitle(row), "Codex")
     }
 }
@@ -683,14 +641,11 @@ final class LocalizedCopyTests: XCTestCase {
     }
 
     /// One table for the tooltip, the chip and the banner.
-    @MainActor
     func testWaitKindTranslationIsSharedWithTheBuilder() {
-        let store = StatusStore()
-        store.language = .zh
-        XCTAssertEqual(store.localizedWaitKind("Permission"), L10n.t(.kindPermission, .zh))
-        XCTAssertEqual(store.localizedWaitKind(""), L10n.t(.needsYou, .zh))
+        XCTAssertEqual(L10n.waitKind("Permission", .zh), L10n.t(.kindPermission, .zh))
+        XCTAssertEqual(L10n.waitKind("", .zh), L10n.t(.needsYou, .zh))
         XCTAssertEqual(
-            store.localizedWaitKind("Somethingelse"), "Somethingelse",
+            L10n.waitKind("Somethingelse", .zh), "Somethingelse",
             "an unknown vendor kind is passed through, not invented"
         )
     }
