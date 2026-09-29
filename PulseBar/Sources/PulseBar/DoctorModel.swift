@@ -3,8 +3,8 @@ import Foundation
 /// 19.0 · the self-check: what this Mac can prove about Pulse's contracts
 /// with the agents, as a value.
 ///
-/// Every vendor contract Pulse depends on — `claude agents --json`, the
-/// Claude and Codex hook files, Codex's rollout format — was written from vendor source and tested on fixtures in CI.
+/// Every vendor contract Pulse depends on — 24.0: each agent's hook, plugin
+/// or extension — was written from vendor source and tested on fixtures in CI.
 /// None of it had been run on a real Mac by the people building it. This
 /// turns "needs real-machine confirmation" into one click: `DoctorProbe`
 /// gathers `Facts` read-only, `evaluate` judges them here (pure, tested),
@@ -36,7 +36,7 @@ enum DoctorModel {
 
     /// 21.0: the next step as a button, where Pulse can take it itself.
     enum Fix: Equatable, Sendable {
-        case installHooks, copyShapeReport, openConnections
+        case installHooks, openConnections
     }
 
     /// Which finding Pulse can fix from the self-check, by what it asked for.
@@ -45,7 +45,6 @@ enum DoctorModel {
         switch check.next {
         case "": return nil
         case c.installHooks, c.reinstallHooks: return .installHooks
-        case c.reportShape: return .copyShapeReport
         case c.fixSettings: return .openConnections
         default: return nil
         }
@@ -64,29 +63,6 @@ enum DoctorModel {
 
     // MARK: - Facts
 
-    /// What `claude agents --json` did, once, on the user's click.
-    enum AgentsAnswer: Equatable, Sendable {
-        case noCLI
-        /// Non-zero exit or timeout — an older Claude without the command.
-        case failed(exitStatus: Int32, timedOut: Bool)
-        /// Exit 0 but the output is not the documented shape.
-        case unreadable(bytes: Int)
-        case parsed(sessions: Int, waiting: Int)
-    }
-
-    enum RolloutShape: String, Equatable, Sendable {
-        /// No rollout written in the window looked at.
-        case none
-        /// `user_message` / `agent_message` event lines.
-        case legacy
-        /// 18.0: `item_completed` turn items (paginated history).
-        case paginated
-        /// Both kinds in one file.
-        case mixed
-        /// Lines Pulse reads neither way.
-        case unknown
-    }
-
     struct HookFire: Equatable, Sendable {
         var kind: String
         var tsMs: Int64
@@ -102,18 +78,8 @@ enum DoctorModel {
         /// Newest hook event per agent, from `attention.tsv`.
         var lastFire: [String: HookFire] = [:]
 
-        var claudeInstalled = false
-        var claudeAgents: AgentsAnswer = .noCLI
-
-        var codexInstalled = false
+        /// Codex's legacy `notify` line carries Pulse's hook.
         var codexNotifyInstalled = false
-        var codexRollout: RolloutShape = .none
-        var codexCompressedRollouts = 0
-
-        /// 20.0: how much Pulse actually read from each agent's sessions this
-        /// run, keyed by agent raw value. A format that drifted does not fail
-        /// — it reads less; this is where that shows.
-        var readCoverage: [String: Coverage] = [:]
 
         var nowMs: Int64 = 0
     }
@@ -138,15 +104,6 @@ enum DoctorModel {
         agent == .codex ? HookContract.gatingEvents.union(["PermissionRequest"]) : HookContract.gatingEvents
     }
 
-    struct Coverage: Equatable, Sendable {
-        var name: String
-        var sessions = 0
-        var withTask = 0
-        var withLastWord = 0
-        /// Whether this agent's format carries the assistant's words at all.
-        var expectsLastWord = true
-    }
-
     /// A hook that has not fired for this long proves little about today.
     static let staleFireMs: Int64 = 7 * 24 * 60 * 60 * 1000
 
@@ -159,12 +116,7 @@ enum DoctorModel {
         // 24.0: each agent's hook, then that it actually fires.
         for agent in AgentID.priority {
             checks += hookChecks(agent, facts: facts, c: c)
-            if agent == .claude { checks.append(claudeAgentsCheck(facts, c: c)) }
-            if agent == .codex, facts.codexInstalled { checks.append(rolloutCheck(facts, c: c)) }
         }
-
-        // Reading · did the parsers get what the formats carry (20.0)
-        checks.append(coverageCheck(facts.readCoverage, c: c))
 
         return Report(
             lang: lang,
@@ -211,76 +163,6 @@ enum DoctorModel {
             installed = Check(id: id, title: title, verdict: .works, detail: c.allEvents(wanted.count) + note)
         }
         return [installed, fireCheck(id: "\(raw)-fired", agent: agent, title: c.agentFired(name), facts: facts, c: c)]
-    }
-
-    /// Claude · its own report of waiting sessions.
-    private static func claudeAgentsCheck(_ facts: Facts, c: Copy) -> Check {
-        switch facts.claudeAgents {
-        case .noCLI:
-            return Check(
-                id: "claude-agents", title: c.claudeAgents,
-                verdict: facts.claudeInstalled ? .attention : .absent,
-                detail: facts.claudeInstalled ? c.noCLI : c.notInstalled("Claude Code"),
-                next: facts.claudeInstalled ? c.cliOnPath : ""
-            )
-        case .failed(let status, let timedOut):
-            return Check(
-                id: "claude-agents", title: c.claudeAgents, verdict: .attention,
-                detail: timedOut ? c.agentsTimedOut : c.agentsFailed(status),
-                next: c.updateClaude
-            )
-        case .unreadable(let bytes):
-            return Check(
-                id: "claude-agents", title: c.claudeAgents, verdict: .attention,
-                detail: c.agentsUnreadable(bytes), next: c.reportShape
-            )
-        case .parsed(let sessions, let waiting):
-            return Check(id: "claude-agents", title: c.claudeAgents, verdict: .works, detail: c.agentsParsed(sessions, waiting))
-        }
-    }
-
-    /// Codex · the rollout format Pulse parses.
-    private static func rolloutCheck(_ facts: Facts, c: Copy) -> Check {
-        let compressed = facts.codexCompressedRollouts > 0 ? c.compressed(facts.codexCompressedRollouts) : ""
-        switch facts.codexRollout {
-        case .none:
-            return Check(id: "codex-rollout", title: c.codexRollout, verdict: .unproven, detail: c.noRollout + compressed)
-        case .legacy, .paginated, .mixed:
-            return Check(id: "codex-rollout", title: c.codexRollout, verdict: .works, detail: c.rollout(facts.codexRollout) + compressed)
-        case .unknown:
-            return Check(id: "codex-rollout", title: c.codexRollout, verdict: .attention, detail: c.rolloutUnknown + compressed, next: c.reportShape)
-        }
-    }
-
-    /// Two or more sessions of an agent and not one title (or, where the
-    /// format carries it, not one last word) is what a drifted format looks
-    /// like from here. Fewer than half is a softer "cannot vouch".
-    static let coverageMinimumSessions = 2
-
-    private static func coverageCheck(_ coverage: [String: Coverage], c: Copy) -> Check {
-        let read = coverage.values.filter { $0.sessions > 0 }
-        guard !read.isEmpty else {
-            return Check(id: "reading", title: c.reading, verdict: .absent, detail: c.noSessions)
-        }
-        var empty: [String] = []
-        var thin: [String] = []
-        for item in read.sorted(by: { $0.name < $1.name }) where item.sessions >= coverageMinimumSessions {
-            let missingTask = item.withTask == 0
-            let missingWords = item.expectsLastWord && item.withLastWord == 0
-            if missingTask || missingWords {
-                empty.append(c.coverageGap(item))
-            } else if item.withTask * 2 < item.sessions || (item.expectsLastWord && item.withLastWord * 2 < item.sessions) {
-                thin.append(c.coverageGap(item))
-            }
-        }
-        let total = read.reduce(0) { $0 + $1.sessions }
-        if !empty.isEmpty {
-            return Check(id: "reading", title: c.reading, verdict: .attention, detail: empty.joined(separator: "; "), next: c.reportShape)
-        }
-        if !thin.isEmpty {
-            return Check(id: "reading", title: c.reading, verdict: .unproven, detail: thin.joined(separator: "; "), next: c.reportShape)
-        }
-        return Check(id: "reading", title: c.reading, verdict: .works, detail: c.coverageFine(total, read.count))
     }
 
     private static func fireCheck(id: String, agent: AgentID, title: String, facts: Facts, c: Copy) -> Check {
@@ -346,18 +228,6 @@ enum DoctorModel {
 
         func agentHooks(_ name: String) -> String { f(.doctorAgentHooks, name) }
         func agentFired(_ name: String) -> String { f(.doctorAgentFired, name) }
-        /// A command's name, the same in every language.
-        var claudeAgents: String { "claude agents --json" }
-        var codexRollout: String { t(.doctorCodexRollout) }
-        var reading: String { t(.doctorReading) }
-        var noSessions: String { t(.doctorNoSessions) }
-        func coverageGap(_ c: Coverage) -> String {
-            let base = f(.doctorCoverageGap, c.name, c.sessions, c.withTask)
-            return c.expectsLastWord ? base + f(.doctorCoverageGapWords, c.withLastWord) : base
-        }
-        func coverageFine(_ sessions: Int, _ agents: Int) -> String {
-            f(.doctorCoverageFine, sessions, agents)
-        }
 
         func notInstalled(_ agent: String) -> String { f(.doctorNotInstalled, agent) }
         var settingsUnreadable: String { t(.doctorSettingsUnreadable) }
@@ -376,31 +246,11 @@ enum DoctorModel {
         func fired(_ kind: String, _ ageMs: Int64) -> String { f(.doctorFired, kind, ago(ageMs)) }
         func firedLongAgo(_ kind: String, _ ageMs: Int64) -> String { f(.doctorFiredLongAgo, kind, ago(ageMs)) }
 
-        var noCLI: String { t(.doctorNoCLI) }
-        var cliOnPath: String { t(.doctorCLIOnPath) }
-        var agentsTimedOut: String { t(.doctorAgentsTimedOut) }
-        func agentsFailed(_ status: Int32) -> String { f(.doctorAgentsFailed, Int(status)) }
-        var updateClaude: String { t(.doctorUpdateClaude) }
-        func agentsUnreadable(_ bytes: Int) -> String { f(.doctorAgentsUnreadable, bytes) }
-        var reportShape: String { t(.doctorReportShape) }
-        func agentsParsed(_ n: Int, _ w: Int) -> String { f(.doctorAgentsParsed, n, w) }
 
         func gatingHook(_ events: [String]) -> String { f(.doctorGatingHook, L10n.joinNames(events, lang)) }
         var notifyOnly: String { t(.doctorNotifyOnly) }
         var codexInstalledNeedsTrust: String { t(.doctorCodexNeedsTrust) }
         var codexTrust: String { t(.doctorCodexTrust) }
-
-        var noRollout: String { t(.doctorNoRollout) }
-        func rollout(_ shape: RolloutShape) -> String {
-            switch shape {
-            case .legacy: return t(.doctorRolloutLegacy)
-            case .paginated: return t(.doctorRolloutPaginated)
-            case .mixed: return t(.doctorRolloutMixed)
-            case .none, .unknown: return ""
-            }
-        }
-        var rolloutUnknown: String { t(.doctorRolloutUnknown) }
-        func compressed(_ n: Int) -> String { f(.doctorCompressed, n) }
 
         func ago(_ ms: Int64) -> String {
             let minutes = Int(ms / 60_000)

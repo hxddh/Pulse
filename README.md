@@ -75,18 +75,20 @@ hook / 插件 / 扩展：设置 → Hooks 一键安装，**只装不能改变 Ag
 移除时每个文件**逐字节**还原。原生通路，无需 Python。Codex 与 Cursor 的 hook 只报
 「运行中」与「轮到你」，不会报告它在等你——Pulse 如实这样写，不伪造 Waiting。
 
-0.49.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
-observed、no_sessions、source_absent、permission_denied、schema_mismatch 或 failed，
-不会再把“没有看到”混成“没有运行”。0.99 起没有第二个采集器：旧版 Python collector 已删除。Waiting 边沿写入 Pulse 自己的会话记录（`session-log.json`），重启后
-仍能去重通知。一次没扫全的采集不会清空上一次有效内容。
+24.0 起状态只来自事件：hook 每报一件事，Pulse 的会话簿（`SessionBook`）就推进一步——
+工作中、需要你、轮到你、已结束。不再扫描各 Agent 的会话目录，也不再读取受 macOS 保护的
+应用数据，因此不会触发跨应用权限弹窗。进程用 libproc 每 30 秒（以及启动、唤醒时）看一次，
+只为找出 Pulse 启动前就在跑、还没报过事件的会话（显示为「检测到进程」），以及知道会话的
+进程何时退出。会话文件只在轮到你、需要你或打开详情时读一次（有界、离开主线程、按大小与
+修改时间缓存），用来补标题、最后的消息、模型和最后的错误。读不到文件或查不到进程，都不会
+让已有的会话消失。Waiting 边沿写入 Pulse 自己的会话记录（`session-log.json`），重启后
+仍能去重通知。
 
-需要读取受 macOS 保护的 App Support / App Group 时，在设置页打开「读取应用数据」这一个开关；默认不
-访问这些目录、不制造跨应用权限弹窗。按 → 或行菜单「详情」进入详情页，可查看任务、为什么是这个状态、
-时间条、最后的消息、计划、通知去向和读取诊断；诊断窗口（托盘「⋯」→「诊断…」）默认展示
-全部 7 个 Agent，逐项给出证据、缺口和下一步动作。
+按 → 或行菜单「详情」进入详情页，可查看任务、为什么是这个状态、时间条、最后的消息、
+通知去向和诊断；诊断窗口（托盘「⋯」→「诊断…」）默认展示全部 7 个 Agent，逐项给出
+hook 是否安装、最近一次事件和下一步动作。
 
-23.0 起设置存为 `settings.json`，不迁移旧的 `settings.txt`（升级后恢复默认值，应用数据读取默认关闭），
-这样不会因 ad-hoc 签名变化在后台反复触发 macOS 权限弹窗。
+设置存为 `settings.json`；24.0 起没有「读取应用数据」开关，旧文件里的这一项会被忽略。
 
 新的 Waiting 会话会逐一发出系统通知（仅在你明确启用通知后），并让状态栏红灯短促脉冲
 三次；红灯持续亮起表示仍有待处理确认。通知未启用或被系统关闭时，托盘会显示可点击的
@@ -96,58 +98,48 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 
 ## 它怎么知道
 
-三层，能力递增，**每层只承诺自己能兑现的**：
+三个来源，**每个只承诺自己能兑现的**：
 
-| 层 | 手段 | 能回答 |
+| 来源 | 手段 | 能回答 |
 | --- | --- | --- |
-| **A · Probe** | `ps` 扫进程 | 有没有人在跑 |
-| **B · Harvest** | Swift 原生读取各 Agent 会话文件 / 可验证缓存（受限目录按 Agent 授权） | 有结构化数据时回答任务、项目、会话与最近活动 |
-| **C · Waiting** | 厂商自己的 hook / 插件 / 扩展事件 | 是不是在等你 |
+| **事件** | 厂商自己的 hook / 插件 / 扩展 | 在干活、在等你、轮到你、结束了 |
+| **进程** | libproc（每 30 秒，及启动 / 唤醒）+ 每个会话进程的退出通知 | 有没有人在跑，会话进程还在不在 |
+| **会话文件** | 轮到你 / 需要你 / 打开详情时有界读一次尾部 | 标题、最后的消息、模型、最后的错误 |
 
 **诚实规则**（写死的产品约束，见 [`AGENTS.md`](AGENTS.md)）：
 
 - 进程在 ≠ 会话在干活。没有任务标题的 live 行只显示「检测到进程」，排在有标题的会话之后。
-- Waiting 只来自厂商 hook 报告的阻塞事件（下一阶段删除 harvest 之前，报告阻塞的 Agent
-  仍兼看会话里的 `skill=pending`），**绝不推断**。Codex 与 Cursor 的 hook 不报等待，
+- Waiting 只来自厂商 hook 报告的阻塞事件，**绝不推断**。Codex 与 Cursor 的 hook 不报等待，
   它们明说「不会报告它在等你」，不假装。
-- 每条 Waiting 行标注来源是 `hooks` 还是 `pending`，你自己判断可信度。
+- 会话只在它的进程还活着时算「运行中」；不知道进程的会话安静 30 分钟后转为「最近」，
+  并在「为什么」里说明。
 - Focus 不吹牛：落地精度分 TTY 标签、宿主工作区、`Warp/宿主 (app)`；Terminal/iTerm
   的 TTY 选择默认关闭（Shortcuts opt-in）。没有可验证句柄时，行保持为观测内容，
   不提供 Finder「打开目录」替代动作。深链边界见 [`docs/landing-hosts.md`](docs/landing-hosts.md)。
 
 ## 支持的 Agent
 
-| Agent | Probe | Harvest | Waiting |
+| Agent | 进程 | 会话文件 | Waiting |
 | --- | --- | --- | --- |
-| Claude | A | Structured session | hooks（PermissionRequest、Notification 权限 / 提问；全部 `async`） |
-| Gemini | A | Structured session | hooks（Notification `ToolPermission`） |
-| Copilot | A | Structured session | hooks（notification `permission_prompt` / `elicitation_dialog`） |
-| OpenCode | A | Structured session | plugin（`permission.asked` / `question.asked`） |
-| Pi | A | Structured session | extension（`ui_prompt_start` / `ui_prompt_end`） |
-| Codex | A | Structured session | **none**（hooks 只报运行中与轮到你；它的 PermissionRequest 在自己的自动审查之前触发） |
-| Cursor | A* | Structured session | **none**（hooks 只报运行中与轮到你；没有不拦截的等待事件） |
+| Claude | libproc | transcript（按需） | hooks（PermissionRequest、Notification 权限 / 提问；全部 `async`） |
+| Gemini | libproc | transcript（按需） | hooks（Notification `ToolPermission`） |
+| Copilot | libproc | transcript（按需） | hooks（notification `permission_prompt` / `elicitation_dialog`） |
+| OpenCode | libproc | 无（用事件自带内容） | plugin（`permission.asked` / `question.asked`） |
+| Pi | libproc | transcript（按需） | extension（`ui_prompt_start` / `ui_prompt_end`） |
+| Codex | libproc | transcript（按需） | **none**（hooks 只报运行中与轮到你；它的 PermissionRequest 在自己的自动审查之前触发） |
+| Cursor | libproc* | transcript（按需） | **none**（hooks 只报运行中与轮到你；没有不拦截的等待事件） |
 
-\* Cursor 编辑器进程常跳过外壳，靠 harvest 认；`cursor-agent` 命令行按进程认，同属 Cursor。
-每个 Agent 装哪些事件、对应 Pulse 的哪种状态、读的是厂商哪份文档或哪个提交，记在
+\* Cursor 编辑器与 `cursor-agent` 命令行按进程认，同属 Cursor；编辑器里的会话以 hook 事件为准。
+每个 Agent 装哪些 hook 事件、对应 Pulse 的哪种状态、读的是厂商哪份文档或哪个提交，记在
 [`docs/vendor-formats.json`](docs/vendor-formats.json) 与
 [`docs/attention-protocol.md`](docs/attention-protocol.md)。
 
-Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、模型/模式、进度、失败数、
-涉及文件和上下文占用。各 Agent 的本地格式能提供什么、缺什么，逐项记录在
-[`docs/observability-matrix.md`](docs/observability-matrix.md)。默认界面不会直接展示
-`exec`、`run_terminal_command` 或内部 skill/script 名；这类实现细节只有在能可靠转换为
-「正在规划 / 编辑 / 响应 / 等待权限 / 本轮完成」等用户可理解的阶段时才有可观测价值。
-未知 skill 不会原样泄露 namespace 或路径；无法映射时只保留安全的叶子名称，以
-`Workflow <name>` 进入默认行，避免丢失有价值的能力信号。
-
-这张表由 `scripts/catalog_check.py` 对着 `AgentCatalog.swift` 里每个 Agent 的采集等级与
-Waiting 来源校验，
+这张表的 Waiting 一列由 `scripts/catalog_check.py` 对着 `AgentCatalog.swift` 校验，
 不一致 CI 就红——它是承诺，不是宣传。
 
 「诊断」窗口展示的是这台 Mac 的运行事实，而不是重复静态名单：问题排在最前，
-每个 Agent 一行、点开看细节，并区分未发现数据源、数据源存在但没有可用会话、
-读取权限不足、供应商格式变化、采集失败和超时未完成。进程命中只展示隐私安全的规则类型，
-不会把完整命令行、参数或私有路径带进 UI。
+每个 Agent 一行、点开看细节，区分 hook 未安装、已安装但还没收到事件、最近没有会话。
+进程命中不会把完整命令行、参数或私有路径带进 UI。
 
 24.0 起名单就是这七个；Attention Protocol（[`docs/attention-bridge.md`](docs/attention-bridge.md)）
 只服务于它们自己的 hook 与脚本。
@@ -171,16 +163,16 @@ CC0，商标归各自所有者）；没有现成图标的 Agent 由
 - **Hooks** —— 七个 Agent 各自的官方 hook / 插件 / 扩展（安装 / 移除 / 测试）；每个 Agent
   一行：已安装、未安装或这台 Mac 上没有，以及「最近事件 12 秒前」；Codex 与 Cursor
   注明「不会报告它在等你」
-- **终端控制** / **数据访问** —— 可以做的事（终端自动化）与可以读取的内容（受保护的应用数据，
-  一个开关），每项默认关闭并写明后果
+- **终端控制** —— 终端自动化（Terminal / iTerm 的 TTY 选择），默认关闭并写明后果
 - **更新** —— 检查更新（有新版本时打开发布页，在浏览器里下载）
 - 页脚：版本与构建、「诊断…」入口
 
-「诊断」窗口把问题、自检、每个 Agent 能读到什么、活动记录（独立标签）、上次读取的时间与耗时
+「诊断」窗口把问题、自检、每个 Agent 的 hook 与最近事件、活动记录（独立标签）
 和一个「复制报告」放在一起。
 
-省电是硬约束：探测节奏跟着状态走（等待 2s / 运行 5s / 最近 15s / 空 30s），
-托盘打开时提速，低电量模式减半，**息屏或锁屏直接停表**。
+省电是硬约束：没有固定的探测间隔。事件文件一变就处理；此外只有一个便宜的时钟
+（托盘打开或刚出现等待时 5s，否则 60s，没有会话时停表）和每 30 秒一次的进程查看，
+低电量模式加倍，**息屏或锁屏直接停表**。
 
 ---
 
@@ -195,11 +187,10 @@ cd PulseBar && swift test    # 测试数量以 SwiftPM / CI 当次输出为准
 
 ```bash
 bash scripts/gates.sh                       # 版本、Agent 目录、图标、外观、表面、场景
-python3 scripts/resource_budget_check.py    # native fixture 墙钟 + RSS（需先构建）
 python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
 ```
 
-`gates.sh` 只读源码，`resource_budget_check.py` 跑 native fixture，`package_check.py` 读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
+`gates.sh` 只读源码，`package_check.py` 读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
 源码没问题、测试全绿，照样连发三个打不开的 DMG。这类 bug 只有对着 `.app` 才看得见。
 
 但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。

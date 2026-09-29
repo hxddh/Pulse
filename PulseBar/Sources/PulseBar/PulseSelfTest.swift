@@ -44,8 +44,6 @@ enum PulseSelfTest {
             }
         }
 
-        print("  ok      native Swift harvest (no external runtime)")
-
         print(ok ? "selftest PASSED" : "selftest FAILED")
         return ok
     }

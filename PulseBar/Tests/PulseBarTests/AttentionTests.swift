@@ -1,14 +1,17 @@
 import Foundation
-import SQLite3
 import Testing
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Attention: the reader and protocol, the hook receiver and activity spool, the hooks installer, `claude agents`.
+// Attention: the protocol read into the session book, the hook receiver and
+// activity spool, the hooks installer.
 
-final class AttentionReaderTests: XCTestCase {
+/// 24.0 · the attention file as the book reads it: every complete v4 line,
+/// in file order. (It was `AttentionReader`, a last-event-wins map with a
+/// TTL; the book keeps sessions, and the time rules live in the projection.)
+final class AttentionBookTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
     /// Rows are padded to the ten v4 columns (front, pid, transcript and
@@ -20,267 +23,165 @@ final class AttentionReaderTests: XCTestCase {
         }.joined(separator: "\n") + "\n"
     }
 
-    func testLastEventWinsPerSession() {
-        let text = tsv([
-            ["claude", "permission", "\(now - 5000)", "first", "s1", "/p"],
-            ["claude", "question", "\(now - 1000)", "second", "s1", "/p"],
-        ])
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0].kind, "Input")
-        XCTAssertEqual(entries[0].message, "second")
+    private func book(_ text: String) -> SessionBook {
+        var book = SessionBook()
+        for line in text.split(whereSeparator: \.isNewline) {
+            if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
+        }
+        return book
     }
 
-    func testDoneClearsTheSession() {
-        let text = tsv([
+    private func state(_ book: SessionBook, _ key: String) -> String {
+        HookFeed.word(book.sessions[key]?.state)
+    }
+
+    private func block(_ book: SessionBook, _ key: String) -> SessionBook.Block? {
+        if case .blocked(let block) = book.sessions[key]?.state { return block }
+        return nil
+    }
+
+    func testTheLatestEventDecidesTheSession() {
+        let b = book(tsv([
+            ["claude", "permission", "\(now - 5000)", "first", "s1", "/p"],
+            ["claude", "question", "\(now - 1000)", "second", "s1", "/p"],
+        ]))
+        XCTAssertEqual(state(b, "claude|s1"), "blocked:question")
+        XCTAssertEqual(block(b, "claude|s1")?.ask, "second")
+    }
+
+    func testDoneAnswersTheSession() {
+        let b = book(tsv([
             ["claude", "permission", "\(now - 5000)", "approve", "s1", "/p"],
             ["claude", "done", "\(now - 1000)", "", "s1", ""],
-        ])
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+        ]))
+        XCTAssertEqual(state(b, "claude|s1"), "working")
     }
 
     /// 23.0 bug: dismissing a session-less hook wait wrote a session-less
-    /// `done`, which cleared every session of that agent — the other
-    /// terminals' permissions went dark with them. A `done` clears exactly
-    /// what it names: an empty session, only the session-less entry.
+    /// `done`, which cleared every session of that agent. A `done` clears
+    /// exactly what it names: an empty session, only session-less entries.
     func testASessionlessDoneClearsOnlyTheSessionlessEntry() {
-        let text = tsv([
+        let b = book(tsv([
             ["claude", "permission", "\(now - 5000)", "a", "s1", "/p"],
             ["claude", "permission", "\(now - 4000)", "b", "s2", "/q"],
             ["claude", "permission", "\(now - 3000)", "c", "", "/r"],
             ["claude", "done", "\(now - 1000)", "", "", ""],
-        ])
-        let entries = AttentionReader.parse(text, nowMs: now)
-        let sessions = Set(entries.map(\.session))
-        XCTAssertEqual(sessions, ["s1", "s2"], "the sessions' own waits stay")
+        ]))
+        XCTAssertEqual(state(b, "claude|s1"), "blocked:permission", "the sessions' own waits stay")
+        XCTAssertEqual(state(b, "claude|s2"), "blocked:permission")
+        XCTAssertEqual(state(b, RowIdentity.session(agent: .claude, session: "", cwd: "/r")), "working")
     }
 
     func testStopKeepsAFreshPermissionWithinGrace() {
         // The order of Claude's events is not ours; a turn ending moments
         // after a permission was raised must not wipe it.
-        let text = tsv([
+        let b = book(tsv([
             ["claude", "permission", "\(now - 1000)", "approve", "s1", "/p"],
             ["claude", "stop", "\(now)", "", "s1", ""],
-        ])
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.count, 1, "recent permission survives a Stop")
+        ]))
+        XCTAssertEqual(state(b, "claude|s1"), "blocked:permission", "recent permission survives a Stop")
     }
 
     func testStopClearsAnAgedPermissionAndLeavesYourTurn() {
-        let old = now - AttentionReader.stopGraceMs - 5000
-        let text = tsv([
+        let old = now - SessionBook.stopGraceMs - 5000
+        let b = book(tsv([
             ["claude", "permission", "\(old)", "approve", "s1", "/p"],
             ["claude", "stop", "\(now)", "", "s1", ""],
-        ])
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertTrue(entries[0].isTurn)
-        XCTAssertFalse(entries[0].isBlocking, "the permission is gone; what is left is not red")
+        ]))
+        XCTAssertEqual(state(b, "claude|s1"), "turn", "the permission is gone; what is left is not red")
     }
 
-    func testExpiredEntriesAreDropped() {
-        let stale = now - AttentionReader.ttlMs - 1
-        let text = tsv([["claude", "permission", "\(stale)", "old", "s1", "/p"]])
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+    /// A wait whose process Pulse cannot see is not red forever: past the
+    /// idle bound it is shown as recent (the projection's rule).
+    func testAnUnprovableWaitGoesQuietAfterTheIdleBound() throws {
+        let b = book(tsv([["claude", "permission", "\(now - 1000)", "old", "s1", "/p"]]))
+        let session = try XCTUnwrap(b.sessions["claude|s1"])
+        XCTAssertEqual(
+            SessionProjection.state(of: session, nowMs: now),
+            .blocked(RowWait(kind: "Permission", ask: "old", sinceMs: now - 1000))
+        )
+        XCTAssertEqual(SessionProjection.state(of: session, nowMs: now + SessionProjection.idleBoundMs + 1), .recent)
     }
 
     func testSubagentEventsNeverRaiseWaiting() {
-        let text = tsv([["claude", "subagent_start", "\(now)", "", "s1", "/p"]])
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+        XCTAssertTrue(book(tsv([["claude", "subagent_start", "\(now)", "", "s1", "/p"]])).sessions.isEmpty)
     }
 
     func testUnknownKindNeverRaisesWaiting() {
-        let text = tsv([["cursor", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]])
-        XCTAssertTrue(
-            AttentionReader.parse(text, nowMs: now).isEmpty,
-            "free-text kinds must never light Waiting"
-        )
+        let b = book(tsv([["gemini", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]]))
+        XCTAssertTrue(b.sessions.isEmpty, "free-text kinds must never light Waiting")
     }
 
     func testProtocolHeaderIsIgnoredAsComment() {
-        let text = AttentionProtocol.header + tsv([
+        let b = book(AttentionProtocol.header + tsv([
             ["gemini", "waiting", "\(now - 1000)", "Need choice", "j1", "/w"],
-        ])
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0].id, .gemini)
-        XCTAssertEqual(entries[0].kind, "Waiting")
+        ]))
+        XCTAssertEqual(Array(b.sessions.keys), ["gemini|j1"])
+        XCTAssertEqual(state(b, "gemini|j1"), "blocked:waiting")
     }
 
     func testCommentsAndShortRowsAreSkipped() {
-        let text = "# header\nclaude\tpermission\n\n"
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+        XCTAssertTrue(book("# header\nclaude\tpermission\n\n").sessions.isEmpty)
     }
 
     /// 24.0: v4 needs all ten columns. A v3 (eight-column) line is not read.
-    func testAnOlderShorterLineIsNotRead() {
+    func testAnOlderShorterLineIsNotRead() throws {
         let v1 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\n"
         let v3 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t\n"
-        XCTAssertTrue(AttentionReader.parse(v1, nowMs: now).isEmpty)
-        XCTAssertTrue(AttentionReader.parse(v3, nowMs: now).isEmpty)
+        XCTAssertTrue(book(v1).sessions.isEmpty)
+        XCTAssertTrue(book(v3).sessions.isEmpty)
         let v4 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\n"
-        let entries = AttentionReader.parse(v4, nowMs: now)
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries.first?.pid, 4242)
-        XCTAssertEqual(entries.first?.transcript, "/t.jsonl")
-        XCTAssertEqual(entries.first?.landing, "tmux:%3")
+        let session = try XCTUnwrap(book(v4).sessions["claude|s1"])
+        XCTAssertEqual(session.pid, 4242)
+        XCTAssertEqual(session.transcript, "/t.jsonl")
+        XCTAssertEqual(session.landing, "tmux:%3")
     }
 
     /// 24.0: a hand-written blocked line for an agent whose hooks cannot
     /// report a block is not a wait; its turn still is its turn.
     func testAWaitingNoneAgentIsNeverBlockedByALine() {
-        let text = tsv([
+        let b = book(tsv([
             ["codex", "permission", "\(now - 3000)", "approve", "x1", "/p"],
             ["cursor", "question", "\(now - 2000)", "which?", "c1", "/p"],
             ["codex", "turn", "\(now - 1000)", "", "x2", "/p"],
-        ])
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.map(\.session), ["x2"])
-        XCTAssertTrue(entries.allSatisfy { !$0.isBlocking })
+        ]))
+        XCTAssertEqual(Array(b.sessions.keys), ["codex|x2"])
+        XCTAssertEqual(state(b, "codex|x2"), "turn")
     }
 
-    /// 24.0: the lifecycle kinds clear a session's entry like `done`.
-    func testStartWorkingAndEndClearTheSession() {
-        for kind in ["start", "working", "end"] {
-            let text = tsv([
+    /// 24.0: the lifecycle kinds each say what the session does next.
+    func testStartWorkingAndEndAfterATurn() {
+        let expected = ["start": "idle", "working": "working", "end": "ended"]
+        for (kind, word) in expected {
+            let b = book(tsv([
                 ["claude", "turn", "\(now - 5000)", "", "s1", "/p"],
                 ["claude", kind, "\(now - 1000)", "", "s1", "/p"],
-            ])
-            XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty, kind)
+            ]))
+            XCTAssertEqual(state(b, "claude|s1"), word, kind)
         }
     }
 
     func testALaterSilentEventDoesNotEraseTheReason() throws {
         // One approval makes Claude raise both Notification and
         // PermissionRequest; only one carries text and the order is not ours.
-        // Last-write-wins alone turned a named ask back into a bare kind.
-        let text = tsv([
+        let b = book(tsv([
             ["claude", "permission", "\(now - 2000)", "Bash: npm run build", "c1", "/w"],
             ["claude", "permission", "\(now - 1000)", "", "c1", "/w"],
-        ])
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0].message, "Bash: npm run build")
-        XCTAssertEqual(entries[0].tsMs, now - 1000, "the newer event still owns the clock")
+        ]))
+        let wait = try XCTUnwrap(block(b, "claude|c1"))
+        XCTAssertEqual(wait.ask, "Bash: npm run build")
+        XCTAssertEqual(wait.sinceMs, now - 1000, "the newer event still owns the clock")
     }
 
-    func testNormalizeTimestampParsesVendorISO8601() {
-        // Regression: the fractional-second form is what Claude and Pi
-        // actually write; it used to parse to 0, so every record fell back to
-        // file mtime and per-record ordering inside one file collapsed.
-        XCTAssertEqual(
-            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01.000Z"),
-            1_733_234_401_000
-        )
-        XCTAssertEqual(
-            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01Z"),
-            1_733_234_401_000
-        )
-        XCTAssertEqual(
-            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01.250Z"),
-            1_733_234_401_250
-        )
-        // T-separated without zone, and the legacy space-separated forms.
-        XCTAssertEqual(
-            NativeActivityHarvest.normalizeTimestamp("2024-12-03T14:00:01.000"),
-            1_733_234_401_000
-        )
-        XCTAssertEqual(
-            NativeActivityHarvest.normalizeTimestamp("2024-12-03 14:00:01"),
-            1_733_234_401_000
-        )
-        // Numbers keep their seconds/milliseconds heuristic.
-        XCTAssertEqual(NativeActivityHarvest.normalizeTimestamp(1_733_234_401), 1_733_234_401_000)
-        XCTAssertEqual(NativeActivityHarvest.normalizeTimestamp("garbage"), 0)
-    }
-
-    // MARK: - 2.2 · `incomplete` is not `complete`
-
-    /// Regression (B-13): `isCompleted` matched substrings, so the vendor
-    /// word **`incomplete`** satisfied `contains("complete")` and a run that
-    /// had explicitly not finished was classified as finished. A row that
-    /// says "done" about work still going is the one direction of this error
-    /// that costs the user something.
-    func testIncompleteIsNotMistakenForCompleted() {
-        var row = ActivityHarvest.Row(id: .codex, task: "", project: "", cwd: "", skill: "")
-        for state in ["incomplete", "not_completed", "never completed"] {
-            row.phase = state
-            row.outcome = ""
-            XCTAssertFalse(row.isCompleted, "\(state) is the opposite of completed")
-            row.phase = ""
-            row.outcome = state
-            XCTAssertFalse(row.isCompleted, "\(state) is the opposite of completed")
-        }
-        // The shapes vendors actually write still classify.
-        row.outcome = ""
-        for phase in ["turn_complete", "task_complete", "completed", "complete", "cancelled", "canceled"] {
-            row.phase = phase
-            XCTAssertTrue(row.isCompleted, phase)
-        }
-        row.phase = ""
-        row.outcome = "failed"
-        XCTAssertTrue(row.isCompleted)
-    }
-
-    // MARK: - 2.2 · one shared root, one lamp — across scans
-
-    /// A reached adapter's fresh row is kept by the partial merge.
-    func testAReachedAdaptersRowSurvivesThePartialMerge() {
-        let windsurf = ActivityHarvest.Row(
-            id: .copilot,
-            task: "Approve the edit",
-            project: "Pulse",
-            cwd: "/Users/me/Pulse",
-            skill: "pending",
-            harvestMs: 1_700_000_000_500,
-            sessionID: "shared-2"
-        )
-        let health = [ActivityHarvest.CollectorHealth(
-            id: .copilot,
-            state: .observed,
-            durationMs: 8,
-            rowCount: 1,
-            sourcePresent: true,
-            errorKind: ""
-        )]
-        let merged = ActivityHarvest.mergePartialRows(
-            current: [windsurf], health: health, previous: []
-        )
-        XCTAssertEqual(merged.map(\.sessionID), ["shared-2"])
-    }
-
-    // MARK: - 2.2 · the stop grace
-
-    /// Claude emits `Stop` right after a permission prompt; a Stop inside
-    /// the grace window must not put the lamp out while the agent waits.
-    func testAStopInsideTheGraceKeepsThePermission() throws {
-        let now: Int64 = 1_700_000_000_000
-        let raised = now - 60_000
-        let text = [
-            "claude\tpermission\t\(raised)\tBash: npm run build\tsession-9\t/Users/me/Pulse\t\t\t\t",
-            "claude\tstop\t\(raised + 1)\t\tsession-9\t\t\t\t\t",
-        ].joined(separator: "\n") + "\n"
-        let entries = AttentionReader.parse(text, nowMs: now)
-        let entry = try XCTUnwrap(entries.first, "the permission survived its own Stop")
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entry.kind, "Permission")
-    }
-
-    /// And the grace still expires on the clock it is measured against: a
-    /// permission that really has been open past the window is cleared —
-    /// and since 16.0 what is left is "your turn", never a blocked wait.
+    /// The grace is measured between the two lines, not against the clock
+    /// the file is read at.
     func testAStopStillClearsAPermissionPastTheGraceWindow() {
-        let now: Int64 = 1_700_000_000_000
         let old = now - 60_000
-        let text = [
+        let b = book([
             "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t\t\t",
-            // The Stop itself lands past the window: the grace is measured
-            // between the two lines, not against the reader's clock.
-            "claude\tstop\t\(old + AttentionReader.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t",
-        ].joined(separator: "\n") + "\n"
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertFalse(entries.contains(where: \.isBlocking))
-        XCTAssertEqual(entries.map(\.isTurn), [true])
+            "claude\tstop\t\(old + SessionBook.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t",
+        ].joined(separator: "\n") + "\n")
+        XCTAssertEqual(state(b, "claude|session-10"), "turn")
     }
 }
 
@@ -466,11 +367,10 @@ final class PulseHookReceiverTests: XCTestCase {
         deliver("opencode", "session.idle", #"{"sessionID":"ses_1","directory":"/w"}"#)
         XCTAssertEqual(kinds(), ["permission", "done", "question", "turn"])
         XCTAssertEqual(records()[2].message, "Which database?")
-        let entries = AttentionReader.parse(
-            (try? String(contentsOf: AttentionIO.path, encoding: .utf8)) ?? "",
-            nowMs: Int64(Date().timeIntervalSince1970 * 1000)
-        )
-        XCTAssertEqual(entries.map(\.kind), ["Input"], "an idle moments after a question does not wipe it (stop grace)")
+        var book = SessionBook()
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        for record in records() { book.apply(record, nowMs: nowMs) }
+        XCTAssertEqual(HookFeed.word(book.sessions["opencode|ses_1"]?.state), "blocked:question", "an idle moments after a question does not wipe it (stop grace)")
     }
 
     // MARK: - Cursor (hooks.json, observe-only events)
@@ -557,8 +457,11 @@ final class PulseHookReceiverTests: XCTestCase {
         try bytes.write(to: AttentionIO.path)
         let text = AttentionIO.readText()
         XCTAssertFalse(text.isEmpty)
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.map(\.session), ["s1"])
+        var book = SessionBook()
+        for line in text.split(whereSeparator: \.isNewline) {
+            if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
+        }
+        XCTAssertEqual(Array(book.sessions.keys), ["claude|s1"])
     }
 
     func testRunnerPathRefusesTestHarnessBinaries() throws {
@@ -682,8 +585,8 @@ final class HookLandingTests: XCTestCase {
         bytes += Array("node".utf8) + [0]
         bytes += Array("/opt/homebrew/bin/gemini".utf8) + [0]
         bytes += Array("SECRET=env".utf8) + [0]
-        XCTAssertEqual(HookLanding.parseProcArgs(bytes), "node /opt/homebrew/bin/gemini", "argc bounds the read: no environment")
-        XCTAssertNil(HookLanding.parseProcArgs([0, 0]))
+        XCTAssertEqual(AgentProcesses.parseProcArgs(bytes), "node /opt/homebrew/bin/gemini", "argc bounds the read: no environment")
+        XCTAssertNil(AgentProcesses.parseProcArgs([0, 0]))
     }
 }
 
@@ -1010,8 +913,8 @@ final class AttentionWatcherReArmTests: XCTestCase {
 /// and one named test in the report, so a failing vendor order reads as
 /// "claude · finished turn → your turn, not red" rather than as one assertion
 /// buried in a hundred-line method. Each row is a sequence of lines exactly as
-/// the hooks write them, read by the real reader and merged by the real
-/// builder; the expectations are what the user would see.
+/// the hooks write them, read into the real session book and projected by the
+/// real projection and builder; the expectations are what the user would see.
 @Suite("Turn truth table", .serialized)
 struct TurnTruthTests {
     static let now: Int64 = 1_800_000_000_000
@@ -1027,35 +930,23 @@ struct TurnTruthTests {
         return cols.joined(separator: "\t")
     }
 
-    static func session(_ id: AgentID, _ session: String = "s1", ageMs: Int64 = 70_000) -> ActivityHarvest.Row {
-        ActivityHarvest.Row(
-            id: id, task: "Fix the login flow", project: "p", cwd: "/p", skill: "",
-            tool: "", harvestMs: now - ageMs, subRunning: 0, subTotal: 0, sessionID: session,
-            evidence: .session
-        )
-    }
-
     static func world(
         _ lines: [String],
-        harvest: [ActivityHarvest.Row],
         activity: [ActivitySpool.Event] = []
     ) -> SnapshotBuilder.Result {
         let text = AttentionProtocol.header + lines.joined(separator: "\n") + "\n"
-        let entries = AttentionReader.parse(text, nowMs: now)
-        return SnapshotBuilder.build(
-            SnapshotBuilder.Input(procs: [], harvest: harvest, attention: entries, activity: activity),
-            previous: .init(),
-            context: SnapshotBuilder.Context(
-                nowMs: now,
-                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                lang: .en,
-                maxSessionsPerAgent: SnapshotBuilder.maxSessionsPerAgent,
-                maxVisibleRows: SnapshotBuilder.maxVisibleRows,
-                dismissedPendingKeys: [],
-                showAllAgents: false,
-                stalledSeconds: AgentRow.stalledSeconds
+        var book = SessionBook()
+        for line in text.split(whereSeparator: \.isNewline) {
+            if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
+        }
+        for event in activity { book.apply(activity: event, nowMs: now) }
+        let rows = SessionProjection.rows(
+            book: book, processes: [], transcripts: [:],
+            context: SessionProjection.Context(
+                nowMs: now, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false)
             )
-        )
+        ).rows
+        return SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: now, lang: .en))
     }
 
     static func delivery(_ rows: [AgentRow]) -> WaitingDelivery.Plan {
@@ -1081,7 +972,6 @@ struct TurnTruthTests {
         var name: String
         var lines: [String]
         var agent: AgentID = .claude
-        var harvestAgeMs: Int64 = 70_000
         var expect: Expect
         var testDescription: String { name }
     }
@@ -1132,18 +1022,6 @@ struct TurnTruthTests {
             name: "claude · submitted prompt after a turn → cleared",
             lines: [line("claude", "stop", ago: 30 * second), line("claude", "done", ago: 2 * second)],
             expect: quiet
-        ),
-        Case(
-            name: "claude · transcript grew well after the turn → work resumed",
-            lines: [line("claude", "stop", ago: 60 * second)],
-            harvestAgeMs: 10 * second,
-            expect: quiet
-        ),
-        Case(
-            name: "claude · vendor's last write right after Stop → still your turn",
-            lines: [line("claude", "stop", ago: 60 * second)],
-            harvestAgeMs: 55 * second,
-            expect: turn
         ),
         Case(
             name: "claude · StopFailure (18.0) → your turn, never red",
@@ -1203,21 +1081,13 @@ struct TurnTruthTests {
     /// 23.0: a finished turn is grey even while its CLI stays open — the
     /// green ring is for a session that is working, and "your turn" is not.
     @Test func aFinishedTurnWithALiveProcessIsAGreyLamp() throws {
-        let text = AttentionProtocol.header + Self.line("claude", "turn", ago: 2 * Self.second, front: "") + "\n"
-        let entries = AttentionReader.parse(text, nowMs: Self.now)
-        let r = SnapshotBuilder.build(
-            SnapshotBuilder.Input(
-                procs: [ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 42)],
-                harvest: [Self.session(.claude)],
-                attention: entries
-            ),
-            previous: .init(),
-            context: SnapshotBuilder.Context(
-                nowMs: Self.now,
-                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                lang: .en
-            )
-        )
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: Self.now - 2 * Self.second, session: "s1", cwd: "/p", pid: 42), nowMs: Self.now)
+        let rows = SessionProjection.rows(
+            book: book, processes: [], transcripts: [:],
+            context: SessionProjection.Context(nowMs: Self.now, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+        ).rows
+        let r = SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: Self.now, lang: .en))
         let row = try #require(r.rows.first)
         #expect(row.isYourTurn)
         #expect(row.liveProcess)
@@ -1229,8 +1099,12 @@ struct TurnTruthTests {
 
     @Test(arguments: cases)
     func sequence(_ c: Case) throws {
-        let r = Self.world(c.lines, harvest: [Self.session(c.agent, ageMs: c.harvestAgeMs)])
-        let row = try #require(r.rows.first)
+        let r = Self.world(c.lines)
+        guard let row = r.rows.first else {
+            // A line that is not a protocol kind makes no session at all.
+            #expect(!c.expect.waiting && !c.expect.yourTurn && !c.expect.red && !c.expect.banner)
+            return
+        }
         #expect(row.isBlocked == c.expect.waiting)
         #expect(row.isYourTurn == c.expect.yourTurn)
         #expect((r.snapshot.glance == .waiting) == c.expect.red)
@@ -1254,14 +1128,14 @@ struct TurnTruthTests {
             agent: "claude", session: "s1", event: "tool", tool: "Edit", target: "a.swift",
             prompt: "", cwd: "/p", tsMs: Self.now - 5 * Self.second
         )
-        let r = Self.world([Self.line("claude", "stop", ago: 30 * Self.second)], harvest: [Self.session(.claude)], activity: [tool])
+        let r = Self.world([Self.line("claude", "stop", ago: 30 * Self.second)], activity: [tool])
         let row = try #require(r.rows.first)
         #expect(!row.isYourTurn)
     }
 
-    @Test func aFinishedTurnNeverInventsARow() {
-        let r = Self.world([Self.line("claude", "stop", ago: 5 * Self.second, session: "unknown")], harvest: [])
-        #expect(r.rows.isEmpty, "a row made only of 'it finished' would have no other evidence")
+    @Test func aTurnThatNamesNoSessionMakesNoRow() {
+        let r = Self.world([Self.line("claude", "stop", ago: 5 * Self.second, session: "")])
+        #expect(r.rows.isEmpty, "with no session there is no row it could belong to")
     }
 
     @Test func theReceiverWritesTheV4Kinds() throws {
@@ -1309,131 +1183,6 @@ struct TurnTruthTests {
     }
 }
 
-/// 18.0 · Claude's own report of who is waiting (`claude agents --json`).
-@Suite("Claude agents probe")
-struct ClaudeAgentsProbeTests {
-    let now: Int64 = 1_800_000_000_000
-
-    // MARK: - Parse
-
-    @Test func aTopLevelArrayOrAWrappedListParses() throws {
-        let array = #"[{"sessionId":"s1","pid":4242,"cwd":"/p","status":"waiting","waitingFor":"permission prompt","kind":"interactive"}]"#
-        let wrapped = #"{"agents":[{"sessionId":"s2","pid":7,"cwd":"/q","status":"busy"}]}"#
-        #expect(try #require(ClaudeAgentsProbe.parse(Data(array.utf8))).first?.waitingFor == "permission prompt")
-        #expect(try #require(ClaudeAgentsProbe.parse(Data(wrapped.utf8))).first?.sessionID == "s2")
-        #expect(ClaudeAgentsProbe.parse(Data("Unknown command: agents".utf8)) == nil, "an older claude is no answer, not an empty fleet")
-    }
-
-    @Test(arguments: [
-        ("waiting", "permission prompt", AttentionKind?.some(.permission)),
-        ("waiting", "sandbox request", .some(.permission)),
-        ("waiting", "input needed", .some(.question)),
-        ("waiting", "dialog open", .some(.waiting)),
-        ("blocked", "worker request", .some(.waiting)),
-        ("busy", "permission prompt", nil),
-        ("idle", "", nil),
-    ])
-    func onlyAWaitingStatusIsAWait(status: String, waitingFor: String, expected: AttentionKind?) {
-        #expect(ClaudeAgentsProbe.kind(status: status, waitingFor: waitingFor) == expected)
-    }
-
-    @Test func aWaitKeepsTheTimePulseFirstSawIt() {
-        let agent = ClaudeAgentsProbe.Agent(sessionID: "s1", pid: 1, cwd: "/p", status: "waiting", waitingFor: "permission prompt")
-        let first = ClaudeAgentsProbe.waits([agent], previous: [], nowMs: now)
-        let later = ClaudeAgentsProbe.waits([agent], previous: first, nowMs: now + 60_000)
-        #expect(later.first?.sinceMs == now, "the vendor gives no stamp; the wait's age must not reset every sample")
-    }
-
-    // MARK: - The ration
-
-    @Test func itRunsOnlyWhereItAddsSomethingAndNotTooOften() {
-        var state = ClaudeAgentsProbe.State()
-        #expect(!ClaudeAgentsProbe.shouldRun(state: state, nowMs: now, claudeLive: false, hooksInstalled: false))
-        #expect(!ClaudeAgentsProbe.shouldRun(state: state, nowMs: now, claudeLive: true, hooksInstalled: true),
-                "the hooks already say it, sooner")
-        #expect(ClaudeAgentsProbe.shouldRun(state: state, nowMs: now, claudeLive: true, hooksInstalled: false))
-        state.lastRunMs = now
-        #expect(!ClaudeAgentsProbe.shouldRun(state: state, nowMs: now + 5_000, claudeLive: true, hooksInstalled: false))
-        #expect(ClaudeAgentsProbe.shouldRun(state: state, nowMs: now + ClaudeAgentsProbe.minIntervalMs, claudeLive: true, hooksInstalled: false))
-    }
-
-    @Test func repeatedFailuresBackOffAndClearTheWaits() {
-        var state = ClaudeAgentsProbe.State()
-        state.waits = [ClaudeAgentsProbe.Wait(sessionID: "s1", pid: 1, cwd: "", kind: .permission, reason: "", sinceMs: now)]
-        for index in 0..<ClaudeAgentsProbe.failuresBeforeBackoff {
-            ClaudeAgentsProbe.record(nil, into: &state, nowMs: now + Int64(index))
-        }
-        #expect(state.waits.isEmpty, "no answer is never 'still waiting'")
-        #expect(state.disabledUntilMs > now)
-        #expect(!ClaudeAgentsProbe.shouldRun(state: state, nowMs: now + ClaudeAgentsProbe.minIntervalMs * 2, claudeLive: true, hooksInstalled: false))
-    }
-
-    // MARK: - Into the tray
-
-    private func build(_ waits: [ClaudeAgentsProbe.Wait], attention: [AttentionReader.Entry] = [], dismissed: Set<String> = []) -> SnapshotBuilder.Result {
-        let row = ActivityHarvest.Row(
-            id: .claude, task: "Fix the login flow", project: "p", cwd: "/p", skill: "", tool: "",
-            harvestMs: now - 30_000, subRunning: 0, subTotal: 0, sessionID: "s1", evidence: .session
-        )
-        return SnapshotBuilder.build(
-            SnapshotBuilder.Input(harvest: [row], attention: attention, vendorWaits: waits),
-            previous: .init(),
-            context: SnapshotBuilder.Context(
-                nowMs: now,
-                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                lang: .en,
-                maxSessionsPerAgent: SnapshotBuilder.maxSessionsPerAgent,
-                maxVisibleRows: SnapshotBuilder.maxVisibleRows,
-                dismissedPendingKeys: dismissed,
-                showAllAgents: false,
-                stalledSeconds: AgentRow.stalledSeconds
-            )
-        )
-    }
-
-    private var permissionWait: ClaudeAgentsProbe.Wait {
-        ClaudeAgentsProbe.Wait(sessionID: "s1", pid: 0, cwd: "/p", kind: .permission, reason: "permission prompt", sinceMs: now - 90_000)
-    }
-
-    @Test func aVendorReportedWaitLightsTheLampAndSaysSo() throws {
-        let r = build([permissionWait])
-        let row = try #require(r.rows.first)
-        #expect(row.isBlocked)
-        #expect(row.wait?.kind == "Permission")
-        #expect(row.wait?.signal == .vendor)
-        #expect(row.wait?.sinceMs == now - 90_000)
-        #expect(r.snapshot.glance == .waiting)
-        let explain = Explain.make(row, lang: .en, nowMs: now)
-        #expect(explain.why.hasPrefix("Claude itself"))
-        #expect(explain.ask == "permission prompt", "Claude's own words are the ask")
-    }
-
-    @Test func aHookRaiseForTheSameSessionWins() throws {
-        let hook = AttentionReader.Entry(id: .claude, kind: "Input", message: "Which DB?", tsMs: now - 1_000, session: "s1", cwd: "/p")
-        let row = try #require(build([permissionWait], attention: [hook]).rows.first)
-        #expect(row.wait?.signal == .hooks)
-        #expect(row.wait?.kind == "Input")
-    }
-
-    @Test func aDismissedVendorWaitStaysQuietAndNoRowIsInvented() throws {
-        let key = try #require(build([]).rows.first).rowKey
-        let dismissed = try #require(build([permissionWait], dismissed: [key]).rows.first)
-        #expect(!dismissed.isBlocked)
-        var stranger = permissionWait
-        stranger.sessionID = "someone-else"
-        #expect(build([stranger]).rows.count == 1, "a report with no row has no other evidence")
-        let strangerRow = try #require(build([stranger]).rows.first)
-        #expect(!strangerRow.isBlocked)
-    }
-}
-
-/// 2.9 Quality — second-grade freshness, and the measurement measuring itself.
-///
-/// The hook has stood in the vendor's event stream since 1.0, but only for
-/// waits. These tests hold the new deal for activity events: state not
-/// ledger, never a wait, present tense only inside the live window — and the
-/// yield rules that stop "the agent is idle" and "Pulse stopped seeing" from
-/// wearing the same clothes.
 final class ActivitySpoolTests: XCTestCase {
     private var wallNow: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     private var directory: URL!
@@ -1592,37 +1341,6 @@ struct AttentionFixTests {
             }
             return file
         }
-
-        func database(_ relative: String, _ statements: [String]) throws {
-            let file = url.appendingPathComponent(relative)
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            var db: OpaquePointer?
-            guard sqlite3_open(file.path, &db) == SQLITE_OK, let db else { throw CocoaError(.fileWriteUnknown) }
-            defer { sqlite3_close(db) }
-            for sql in statements {
-                guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-                    throw NSError(domain: "clarity", code: 1, userInfo: [NSLocalizedDescriptionKey: sql])
-                }
-            }
-        }
-
-        func rows(_ id: AgentID) -> [ActivityHarvest.Row] {
-            NativeActivityHarvest.scan(
-                allowAppData: true, appDataAgents: [id], home: url, agentFilter: [id]
-            ).rows.filter { $0.id == id }
-        }
-    }
-
-    // MARK: - 6 · a failed probe run is no answer
-
-    @Test func aFailedAgentsRunKeepsTheLastAnswer() {
-        var state = ClaudeAgentsProbe.State()
-        let wait = ClaudeAgentsProbe.Wait(sessionID: "s1", pid: 1, cwd: "", kind: .permission, reason: "", sinceMs: now)
-        state.waits = [wait]
-        ClaudeAgentsProbe.record(nil, into: &state, nowMs: now)
-        #expect(state.waits == [wait], "one timeout must not blink a real wait off")
-        ClaudeAgentsProbe.record([], into: &state, nowMs: now + 20_000)
-        #expect(state.waits.isEmpty, "a successful empty answer clears")
     }
 
     // MARK: - 2 · the stop grace is a function of the two lines
@@ -1633,12 +1351,15 @@ struct AttentionFixTests {
             ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", "", "", ""],
             ["claude", "stop", "\(raise + 1_000)", "", "s1", "", "", "", "", ""],
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
-        let soon = AttentionReader.parse(text, nowMs: raise + 2_000)
-        let later = AttentionReader.parse(text, nowMs: now)
-        let soonKinds = soon.map { $0.kind }
-        let laterKinds = later.map { $0.kind }
-        #expect(soonKinds == ["Permission"])
-        #expect(laterKinds == soonKinds, "re-reading ten minutes later flipped the verdict")
+        func read(at nowMs: Int64) -> String {
+            var book = SessionBook()
+            for line in text.split(whereSeparator: \.isNewline) {
+                if let record = AttentionRecord(line: line) { book.apply(record, nowMs: nowMs) }
+            }
+            return HookFeed.word(book.sessions["claude|s1"]?.state)
+        }
+        #expect(read(at: raise + 2_000) == "blocked:permission")
+        #expect(read(at: now) == read(at: raise + 2_000), "re-reading ten minutes later flipped the verdict")
     }
 
     // MARK: - 17 · one bad byte never erases the attention file

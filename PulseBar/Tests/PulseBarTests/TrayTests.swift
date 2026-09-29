@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import SQLite3
 import Testing
 import XCTest
 @testable import PulseBar
@@ -54,14 +53,14 @@ struct TrayInteractionTests {
         row.project = "app"
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = now - minute
-        row.source = .session
+        row.eventMs = now - minute
+        row.source = .hooks
         return row
     }
 
     private func blocked(_ key: String, ask: String = "Bash: npm test") -> AgentRow {
         var row = session(key)
-        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: now - 4 * minute, signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: now - 4 * minute))
         return row
     }
 
@@ -428,26 +427,24 @@ struct TrayInteractionTests {
 
     private func notice(
         notify: Bool = true, authorized: Bool? = true, banner: Bool = false,
-        hooks: Bool = false, scan: Bool = false
+        hooks: Bool = false
     ) -> TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: .en, notifyOnWaiting: notify, notifyAuthorized: authorized,
-            bannerFailed: banner, hooksMissing: hooks, scanIncomplete: scan
+            bannerFailed: banner, hooksMissing: hooks
         ))
     }
 
     @Test func atMostOneNoticeInItsOrder() {
-        let all = notice(authorized: false, banner: true, hooks: true, scan: true)
+        let all = notice(authorized: false, banner: true, hooks: true)
         #expect(all?.kind == .notificationsDenied)
         #expect(all?.action == .openNotificationSettings)
         let notAsked = notice(authorized: nil, hooks: true)
         #expect(notAsked?.kind == .notificationsOff)
         #expect(notAsked?.action == .enableNotifications)
-        let hooks = notice(hooks: true, scan: true)
+        let hooks = notice(hooks: true)
         #expect(hooks?.kind == .hooksMissing)
         #expect(hooks?.action == .installHooks)
-        let scan = notice(scan: true)
-        #expect(scan?.action == .openDiagnostics)
         #expect(notice() == nil)
         let optedOut = notice(notify: false, authorized: false)
         #expect(optedOut == nil, "notifications turned off in Pulse are not a problem")
@@ -467,10 +464,9 @@ struct TrayInteractionTests {
         #expect(stalled.secondLine?.kind == .warning)
         var failingRow = session("f")
         failingRow.state = .recent
-        failingRow.errors = 1
+        failingRow.lastErrorText = "npm ERR!"
         let failing = face(failingRow)
-        #expect(failing.secondLine?.kind == .warning)
-        #expect(failing.lamp == LampFace(shape: .hollow, tone: .attention))
+        #expect(failing.secondLine == nil, "24.0: an error is a detail-page fact, not an orange row")
         var turnRow = session("t")
         turnRow.state = .yourTurn(sinceMs: now)
         let turn = face(turnRow)
@@ -674,12 +670,8 @@ final class AccessibilityLocalizationTests: XCTestCase {
     }
 
     func testSnapshotCarriesTheResolvedLabelSoTheViewNeedsNoLanguage() {
-        let ctx = SnapshotBuilder.Context(
-            nowMs: 1_700_000_000_000,
-            terminal: .init(warpRunning: false, ttyHostRunning: false),
-            lang: .zh
-        )
-        let result = SnapshotBuilder.build(.init(), previous: .init(), context: ctx)
+        let ctx = SnapshotBuilder.Context(nowMs: 1_700_000_000_000, lang: .zh)
+        let result = SnapshotBuilder.build(rows: [], previous: .init(), context: ctx)
         XCTAssertEqual(result.snapshot.accessibilityLabel, L10n.t(.a11yIdle, .zh))
     }
 
@@ -974,76 +966,47 @@ final class GlanceTitleTests: XCTestCase {
     @MainActor
     func testIdleGlanceStaysEmpty() {
         let r = SnapshotBuilder.build(
-            SnapshotBuilder.Input(procs: [], harvest: [], attention: []),
+            rows: [],
             previous: .init(),
-            context: SnapshotBuilder.Context(
-                nowMs: 1_700_000_000_000,
-                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                lang: .en
-            )
+            context: SnapshotBuilder.Context(nowMs: 1_700_000_000_000, lang: .en)
         )
         XCTAssertEqual(r.snapshot.glance, .idle)
         XCTAssertEqual(r.snapshot.title, "")
     }
 }
 
-/// 2.8 Progress — the agent's own plan, words, and errors.
-///
-/// The most valuable structure in a transcript is the one the agent writes
-/// for itself: its todo list. It used to be filtered out wholesale because
-/// plan-step titles once polluted the tray hero. These tests hold the new
-/// deal: the structure is read on purpose, into fields that are not the
-/// hero, under self-report rules — sanitized, aged, and never Waiting.
+/// The agent's own words are quoted as *now* only while they are fresh —
+/// one rule for every surface.
 final class DetailPlanTests: XCTestCase {
-
     private let now: Int64 = 1_800_000_000_000
+
     func testSelfReportFreshnessIsOneRuleForEverySurface() {
         // Codex review on #74: Details showed "Current step" past the 30
         // minutes where the story line had already withdrawn it. Every
         // surface reads this one rule.
-        let clock: Int64 = 1_800_000_000_000
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.harvestMs = clock - 5 * 60 * 1000
-        XCTAssertTrue(row.selfReportFresh(at: clock))
-        row.harvestMs = clock - 31 * 60 * 1000
-        XCTAssertFalse(row.selfReportFresh(at: clock), "the headline and the detail page share this gate")
+        row.eventMs = now - 5 * 60 * 1000
+        XCTAssertTrue(row.selfReportFresh(at: now))
+        row.eventMs = now - 31 * 60 * 1000
+        XCTAssertFalse(row.selfReportFresh(at: now), "the headline and the detail page share this gate")
     }
 
-    // MARK: - The plan on the detail page: informs, ages, never implies Waiting
-
-    private func planRow(step: String = "Running the gates") -> AgentRow {
+    func testTheLastMessageNeverImpliesWaiting() {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.task = "Fix the auth module"
-        row.planSteps = [ActivityHarvest.PlanStep(text: step, state: .current)]
-        row.liveProcess = true
+        row.lastWord = "Waiting for your review."
         row.state = .running
-        row.harvestMs = now
-        return row
-    }
-
-    private func detail(_ row: AgentRow) -> DetailModel {
-        DetailModel.make(row: row, lang: .en, nowMs: now)
-    }
-
-    func testTheDetailPageShowsTheCurrentStep() {
-        XCTAssertEqual(detail(planRow()).plan?.steps.first?.text, "Running the gates")
-        XCTAssertEqual(detail(planRow()).plan?.steps.first?.current, true)
-    }
-
-    func testAStaleStepIsNotQuotedAsNow() {
-        var row = planRow()
-        row.harvestMs = now - 31 * 60 * 1000
-        XCTAssertNil(detail(row).plan, "a 31-minute-old plan is stale wearing fresh clothes")
-    }
-
-    func testAStepNeverImpliesWaiting() {
-        let row = planRow()
-        XCTAssertFalse(row.isBlocked, "nothing here may write Waiting")
-        XCTAssertFalse(detail(row).canDismiss)
+        row.eventMs = now
+        let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
+        XCTAssertEqual(detail.lastMessage, "Waiting for your review.")
+        XCTAssertFalse(row.isBlocked, "words never write Waiting")
+        XCTAssertFalse(detail.canDismiss)
     }
 }
 
 /// Clarity fixes — each test pins one defect found by reading the code: the
+/// value the user would have seen, before and after.
+@MainActor
+@Suite("Terminal tab script", .serialized)/// Clarity fixes — each test pins one defect found by reading the code: the
 /// value the user would have seen, before and after.
 @MainActor
 @Suite("Terminal tab script", .serialized)
@@ -1077,8 +1040,8 @@ final class RowActionNoticeTests: XCTestCase {
         row.task = "Fix the auth module"
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.source = .session
+        row.eventMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.source = .hooks
         return row
     }
 

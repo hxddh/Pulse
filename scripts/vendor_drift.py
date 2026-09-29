@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""20.0 Drift sentinel: has a vendor changed the files its format lives in?
+"""20.0 Drift sentinel: has a vendor changed the files its hooks live in?
 
-For every ``source: "repo"`` entry in docs/vendor-formats.json — an agent's
-format and, since 24.0, its ``hooks`` contract — this makes a
+For every ``source: "repo"`` hooks block in docs/vendor-formats.json (24.0
+keeps only each agent's hook contract; it reads no session store) this makes a
 blob-less clone of the vendor repository (history only, no file contents)
 and lists the commits since the pinned one that touched a ``watch`` path.
 Any such commit fails the run and is printed — vendor, path, commit, date,
-subject — so the weekly job goes red exactly when a parser may have gone
+subject — so the weekly job goes red exactly when a hook contract may have gone
 stale. It never edits anything: it reads public repositories and prints.
 
-A changed file is not proof the format changed. The fix is to read the
-commits, update the parser and its fixture if needed, and move the pin.
+A changed file is not proof the contract changed. The fix is to read the
+commits, update the receiver and its test if needed, and move the pin.
 
 Run: python3 scripts/vendor_drift.py [--only gemini,codex] [--workdir DIR]
 """
@@ -47,12 +47,9 @@ def main() -> int:
     drifted: list[str] = []
     failed: list[str] = []
     clones: dict[str, Path] = {}
-    # 24.0: each agent's hook contract has its own pin beside its format's.
-    pins = []
-    for raw, entry in sorted(agents.items()):
-        pins.append((raw, entry))
-        if isinstance(entry.get("hooks"), dict):
-            pins.append((f"{raw} hooks", entry["hooks"]))
+    # 24.0: only the hook contract is pinned.
+    pins = [(f"{raw} hooks", entry["hooks"]) for raw, entry in sorted(agents.items())
+            if isinstance(entry.get("hooks"), dict)]
     for raw, entry in pins:
         if entry.get("source") != "repo" or (only and raw.split()[0] not in only):
             continue
@@ -75,7 +72,7 @@ def main() -> int:
         if log:
             lines = log.splitlines()
             drifted.append(raw)
-            print(f"::warning::{raw}: {len(lines)} commit(s) since {pin[:12]} touch its format files")
+            print(f"::warning::{raw}: {len(lines)} commit(s) since {pin[:12]} touch its hook files")
             for line in lines[:20]:
                 print(f"    {line}")
             if len(lines) > 20:
@@ -86,7 +83,7 @@ def main() -> int:
     for failure in failed:
         print(f"::error::could not check {failure}")
     if drifted:
-        print(f"::error::format files moved for: {', '.join(drifted)} — read the commits, fix the parser and fixture, move the pin")
+        print(f"::error::hook files moved for: {', '.join(drifted)} — read the commits, fix the receiver and test, move the pin")
     return 1 if drifted or failed else 0
 
 

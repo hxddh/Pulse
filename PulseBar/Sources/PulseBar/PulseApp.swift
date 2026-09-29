@@ -17,8 +17,8 @@ enum PulseBarMain {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
         if ProcessInfo.processInfo.arguments.contains("--hook") {
-            // Native Waiting path for Claude/Codex — no Python. Always exit 0
-            // so vendor hooks never block the agent process.
+            // Every supported agent's hook lands here. Always exit 0 so a
+            // vendor hook never blocks the agent process.
             let arguments = ProcessInfo.processInfo.arguments
             var stdinText = ""
             // Vendors pipe JSON on stdin. Never read when attached to a TTY,
@@ -29,60 +29,6 @@ enum PulseBarMain {
                 stdinText = PulseHookReceiver.readStdin()
             }
             exit(Int32(PulseHookReceiver.run(arguments: arguments, stdin: stdinText)))
-        }
-        if ProcessInfo.processInfo.arguments.contains("--harvest-test") {
-            let started = Date()
-            // Match the menu-bar store: the app-data switch lives in
-            // settings.json. Ignoring it made A/B harvest dumps always look
-            // process-only.
-            let settings = PulseSettings.load()
-            let result = ActivityHarvest.scan(allowAppData: settings.readProtectedAppData)
-            print(
-                "harvest rows=\(result.rows.count) adapters=\(result.health.count) "
-                    + "complete=\(result.complete) "
-                    + "appData=\(settings.readProtectedAppData ? 1 : 0) "
-                    + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
-            )
-            if ProcessInfo.processInfo.arguments.contains("--harvest-dump") {
-                for health in result.health.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
-                    print("  health \(health.id.rawValue)=\(health.state.rawValue) rows=\(health.rowCount) source=\(health.sourcePresent) duration_ms=\(health.durationMs) error=\(health.errorKind)")
-                    if let row = result.rows.first(where: { $0.id == health.id }) {
-                        let title = row.task.isEmpty ? "<no title>" : row.task
-                        let action = row.tool.isEmpty ? "-" : row.tool
-                        print("    sample \(title) · \(row.cwd) · action=\(action) · evidence=\(row.evidence.rawValue)")
-                    }
-                }
-                if ProcessInfo.processInfo.arguments.contains("--harvest-dump-all") {
-                    for row in result.rows {
-                        print("    row \(row.id.rawValue) sid=\(row.sessionID) task=\(row.task) cwd=\(row.cwd) tool=\(row.tool) model=\(row.model) phase=\(row.phase) outcome=\(row.outcome) tokens=\(row.tokensIn)/\(row.tokensOut) errors=\(row.errors) progress=\(row.progressDone)/\(row.progressTotal) records=\(row.records) evidence=\(row.evidence.rawValue)")
-                    }
-                }
-            }
-            exit(0)
-        }
-        if ProcessInfo.processInfo.arguments.contains("--native-fixture-test") {
-            exit(NativeHarvestSelfTest.run() ? 0 : 1)
-        }
-        // Donate a sample without donating your work. Prints the *shape* of the
-        // newest session records — key names and value kinds, no values — so a
-        // parsing bug can be fixed against what the vendor actually writes
-        // instead of against a format someone inferred. Opt-in, off by
-        // default, and short enough to read before sharing.
-        if ProcessInfo.processInfo.arguments.contains("--harvest-shape") {
-            let settings = PulseSettings.load()
-            print(NativeActivityHarvest.shapeReport(allowAppData: settings.readProtectedAppData))
-            exit(0)
-        }
-        // Per-adapter account of the last scan: files, bytes, truncation,
-        // facts, which record kind produced the hero, and which layer lost it
-        // when there is none.
-        if ProcessInfo.processInfo.arguments.contains("--harvest-explain") {
-            let settings = PulseSettings.load()
-            let result = ActivityHarvest.scan(allowAppData: settings.readProtectedAppData)
-            for health in result.health.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
-                print("\(health.id.rawValue) \(health.state.rawValue) \(health.explain.summary)")
-            }
-            exit(0)
         }
         let guardLock = SingleInstanceGuard()
         guard guardLock.acquire() else {
@@ -112,11 +58,9 @@ enum PulseBarMain {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Visual QA captures must represent the first completed scan, not the
-    /// transient launch state where every adapter is still `unscanned`.
-    /// ActivityHarvest has a 6s hard deadline, so 6.8s covers either a
-    /// completed scan or its honest timeout result.
-    private static let captureDelay: TimeInterval = 6.8
+    /// Visual QA captures must represent the first landed reads (the
+    /// attention file, the spool, the process table), not the launch state.
+    private static let captureDelay: TimeInterval = 3
 
     /// Windows Pulse intentionally owns. Orphan titled windows without these
     /// ids are closed as defense-in-depth (should not appear without a Settings scene).
@@ -180,11 +124,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.arguments.contains("--open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 AppServices.store.openSettings()
-            }
-        }
-        if ProcessInfo.processInfo.arguments.contains("--open-settings-data") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                AppServices.store.openSettings(focus: .appData)
             }
         }
         if ProcessInfo.processInfo.arguments.contains("--open-support-health") {

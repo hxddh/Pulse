@@ -1,15 +1,15 @@
 import Foundation
 
-/// 23.0 · Settings as a value: one page, seven short groups, a footer.
+/// 23.0 · Settings as a value: one page, six short groups, a footer.
 ///
 /// General (login, language) · Shortcut · Notifications (and the muted
 /// agents, each with ✕) · Hooks (one line per agent, 24.0) · Terminal control ·
-/// Data access · Updates. About, build and "running from" collapsed into a
+/// Updates (24.0: Data access went — Pulse reads no other app's data). About, build and "running from" collapsed into a
 /// footer line. `SettingsFace` renders this and sends `Action`s; the store
 /// builds it from `settings` and a few flags — never from a scan. Pure.
 struct SettingsModel: Equatable {
     enum Section: String, CaseIterable, Equatable {
-        case general, shortcut, notifications, hooks, terminal, dataAccess, updates
+        case general, shortcut, notifications, hooks, terminal, updates
     }
 
     /// Whether macOS lets Pulse post a banner.
@@ -27,7 +27,6 @@ struct SettingsModel: Equatable {
         case uninstallHooks
         case testHooks
         case setTerminalAutomation(Bool)
-        case setReadAppData(Bool)
         case setUpdateCheck(Bool)
         case checkForUpdates
         case openRelease
@@ -55,9 +54,8 @@ struct SettingsModel: Equatable {
     var hookTest: String
     var hookTestTone: PulseTheme.Tone
     var hookTestRunning: Bool
-    // Terminal control, data access
+    // Terminal control
     var allowTerminalAutomation: Bool
-    var readProtectedAppData: Bool
     // Updates
     var updateCheckEnabled: Bool
     var updateStatus: String
@@ -124,12 +122,11 @@ struct SettingsModel: Equatable {
     }
 
     /// The page, top to bottom.
-    static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .terminal, .dataAccess, .updates]
+    static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .terminal, .updates]
 
     /// A deep link's target, as the section it scrolls to.
     static func section(for target: SettingsFocus.Target) -> Section {
         switch target {
-        case .appData: return .dataAccess
         case .waitingSignals: return .hooks
         case .notifications: return .notifications
         case .updates: return .updates
@@ -144,7 +141,6 @@ struct SettingsModel: Equatable {
         case .notifications: return t(.notificationsSection)
         case .hooks: return t(.settingsHooksSection)
         case .terminal: return t(.settingsTerminalSection)
-        case .dataAccess: return t(.settingsDataSection)
         case .updates: return t(.settingsUpdatesSection)
         }
     }

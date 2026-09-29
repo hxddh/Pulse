@@ -6,7 +6,9 @@ import Foundation
 /// The hook runs inside the agent's own process tree and environment, so it
 /// can say — at no cost to the scan — which process is the agent and how its
 /// terminal can be reached. Both go into the v4 attention record (`pid`,
-/// `landing`). No fork, no `ps`, no `lsof`: `sysctl` and the environment only.
+/// `landing`). No fork, no `ps`, no `lsof`: `sysctl`, libproc and the
+/// environment only, matched by the same rule as the process scan
+/// (`AgentProcesses.match(args:)`).
 enum HookLanding {
     /// A parent chain longer than this is not a chain (see PromptVisibility).
     static let maxDepth = 16
@@ -44,35 +46,13 @@ enum HookLanding {
         for _ in 0..<maxDepth {
             guard current > 1, !seen.contains(current) else { break }
             seen.insert(current)
-            if let args = argumentsOf(current), ProcessProbe.match(args: args) == agent {
+            if let args = argumentsOf(current), AgentProcesses.match(args: args) == agent {
                 return current
             }
             guard let parent = parentOf(current) else { break }
             current = parent
         }
         return start
-    }
-
-    /// `KERN_PROCARGS2` bytes: argc (a 32-bit little-endian int), the exec
-    /// path, NUL padding, then argc NUL-terminated argv strings. The argv
-    /// joined by spaces — the shape `ProcessProbe.match(args:)` reads.
-    static func parseProcArgs(_ bytes: [UInt8]) -> String? {
-        guard bytes.count > 4 else { return nil }
-        let argc = Int(bytes[0]) | Int(bytes[1]) << 8 | Int(bytes[2]) << 16 | Int(bytes[3]) << 24
-        guard argc > 0 else { return nil }
-        var index = 4
-        while index < bytes.count, bytes[index] != 0 { index += 1 }
-        while index < bytes.count, bytes[index] == 0 { index += 1 }
-        var args: [String] = []
-        var start = index
-        while index < bytes.count, args.count < argc {
-            if bytes[index] == 0 {
-                args.append(String(decoding: bytes[start..<index], as: UTF8.self))
-                start = index + 1
-            }
-            index += 1
-        }
-        return args.isEmpty ? nil : args.joined(separator: " ")
     }
 
     /// One field of a `;`-separated list inside a TSV column.
@@ -93,7 +73,13 @@ enum HookLanding {
             agent: agent,
             start: parent,
             parentOf: PromptVisibility.parentPID(of:),
-            argumentsOf: arguments(of:)
+            argumentsOf: { pid in
+                // The executable path first, as the process scan matches it.
+                let argv = AgentProcesses.arguments(of: pid) ?? ""
+                let path = AgentProcesses.executablePath(of: pid)
+                let joined = [path, argv].filter { !$0.isEmpty }.joined(separator: " ")
+                return joined.isEmpty ? nil : joined
+            }
         )
         let terminal = ownTTY() ?? tty(of: pid) ?? tty(of: parent)
         return (pid, handles(environment: environment, tty: terminal))
@@ -122,27 +108,5 @@ enum HookLanding {
         let value = String(cString: name)
         guard !value.isEmpty, value != "??" else { return nil }
         return "/dev/" + value
-    }
-
-    /// A process's argv, from `sysctl(KERN_PROCARGS2)`.
-    static func arguments(of pid: Int32) -> String? {
-        guard pid > 1 else { return nil }
-        var argmax: Int32 = 0
-        var argmaxSize = MemoryLayout<Int32>.size
-        var argmaxMIB: [Int32] = [CTL_KERN, KERN_ARGMAX]
-        let gotMax = argmaxMIB.withUnsafeMutableBufferPointer { buffer -> Bool in
-            sysctl(buffer.baseAddress, UInt32(buffer.count), &argmax, &argmaxSize, nil, 0) == 0
-        }
-        guard gotMax, argmax > 0 else { return nil }
-        var size = Int(argmax)
-        var bytes = [UInt8](repeating: 0, count: size)
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        let ok = mib.withUnsafeMutableBufferPointer { buffer -> Bool in
-            bytes.withUnsafeMutableBytes { raw -> Bool in
-                sysctl(buffer.baseAddress, UInt32(buffer.count), raw.baseAddress, &size, nil, 0) == 0
-            }
-        }
-        guard ok, size > 0 else { return nil }
-        return parseProcArgs(Array(bytes.prefix(size)))
     }
 }

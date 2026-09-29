@@ -1,21 +1,29 @@
 import CoreGraphics
 import Foundation
 
-/// How hard Pulse should be looking right now.
+/// How often Pulse looks, now that events drive it (24.0).
 ///
-/// A status lamp that walks every vendor store every 3 seconds regardless of
-/// context gets flagged by macOS as an energy hog — which is fatal for a
-/// permanently-resident menu bar tool. The cadence therefore follows what is
-/// actually happening: loud when something needs you, near-silent when nothing
-/// is running, and fully parked when the screen is off.
+/// Nothing here polls a vendor. The attention file and the activity spool
+/// wake Pulse when a hook writes (a file-system watch), and a process exit
+/// wakes it through kqueue. Two timers remain, both cheap:
+///
+/// - the **tick** re-projects the in-memory session book so facts that move
+///   with the clock alone move on screen — a wait's age, the stall rule, the
+///   idle bound, the recent window. No IO. It stops when nothing is on
+///   screen or the display is asleep;
+/// - the **process scan** (libproc) finds agent processes that have no
+///   session yet — sessions started before Pulse was running — every 30 s,
+///   and at launch and wake.
+///
+/// A resident menu-bar app flagged for energy use is a dead product.
 public enum ProbeSchedule {
-    /// What the last scan found — drives the base interval.
-    public enum Activity: Equatable {
-        /// At least one agent needs the user.
+    /// What the last projection found — drives the tick.
+    public enum Activity: Equatable, Sendable {
+        /// At least one session needs the user.
         case waiting
-        /// Something is live, nothing is waiting.
+        /// Something is running, nothing is waiting.
         case running
-        /// Only recent (harvest-only) rows.
+        /// Only quiet rows (your turn, recent, process only).
         case recent
         /// Nothing at all.
         case empty
@@ -69,39 +77,37 @@ public enum ProbeSchedule {
         }
     }
 
-    /// Seconds between probes. `nil` means "stop the timer entirely" — the
-    /// attention-file watcher still wakes us if an agent starts waiting.
-    public static func interval(
+    /// Seconds between ticks; `nil` stops the tick (the watchers and the
+    /// exit sources still wake Pulse when something happens).
+    ///
+    /// A minute is enough for minute labels and every time rule; a wait
+    /// younger than a minute is drawn in seconds, and an open tray is a
+    /// person reading, so both tick every five seconds.
+    public static func tick(
         activity: Activity,
         power: Power,
-        trayOpen: Bool
+        trayOpen: Bool,
+        freshWait: Bool = false
     ) -> TimeInterval? {
         if power.parked, !trayOpen { return nil }
-
         var base: TimeInterval
-        switch activity {
-        case .waiting: base = 2.0
-        case .running: base = 5.0
-        case .recent: base = 15.0
-        case .empty: base = 30.0
+        if trayOpen || freshWait {
+            base = 5
+        } else if activity == .empty {
+            return nil
+        } else {
+            base = 60
         }
-
-        // An open tray is a user actively reading the panel — worth the cost.
-        if trayOpen { base = min(base, 2.0) }
         if power.lowPowerMode { base *= 2 }
         return base
     }
 
-    /// Harvest (a bounded walk of dozens of directories) is far more expensive
-    /// than probe (`ps`), so it does not have to run every tick.
-    /// Returns how many probe ticks may pass between harvests.
-    public static func harvestEveryNTicks(activity: Activity, trayOpen: Bool) -> Int {
-        if trayOpen { return 1 }
-        switch activity {
-        case .waiting: return 1
-        case .running: return 2
-        case .recent: return 2
-        case .empty: return 4
-        }
+    /// Seconds between process scans; `nil` while the display sleeps or the
+    /// screen is locked (a scan runs again on wake).
+    public static let processScanSeconds: TimeInterval = 30
+
+    public static func processScan(power: Power) -> TimeInterval? {
+        if power.parked { return nil }
+        return power.lowPowerMode ? processScanSeconds * 2 : processScanSeconds
     }
 }

@@ -5,7 +5,7 @@ import Foundation
 /// Until 23.0 four files overlapped: `attention-ledger.json` (each wait and
 /// what became of its banner), `attention-history.json` (every hook line,
 /// again), `session-timeline.json` (state spans) and `dismissed-pending.json`
-/// (soft-dismissed waits) — plus in-memory copies of the same facts on the
+/// (dismissed waits) — plus in-memory copies of the same facts on the
 /// store (`knownWaitingKeys`, a queue of frozen rows). Each could disagree
 /// with the others, and several did: a queued banner for a wait that had
 /// already resolved, spans left open across a restart forever, a click
@@ -29,9 +29,10 @@ import Foundation
 /// Pure: every mutation returns whether anything durable changed, so the
 /// store writes `session-log.json` (via `SessionLogStore`) only when it did.
 struct SessionLog: Codable, Equatable, Sendable {
-    /// 2 since row keys became stable (`RowIdentity`): a version-1 file's
-    /// keys name rows that no longer exist, so it is not read.
-    static let schemaVersion = 2
+    /// 2 since row keys became stable (`RowIdentity`); 3 since the events
+    /// are the only evidence (24.0: no harvest or vendor-reported spans, no
+    /// soft dismissals). An older file is not read.
+    static let schemaVersion = 3
     static let maxSessions = 128
     static let maxSpansPerSession = 48
     /// Resolved waits kept per session (open waits are never evicted).
@@ -61,10 +62,6 @@ struct SessionLog: Codable, Equatable, Sendable {
         var outcomeMs: Int64?
         var clickedMs: Int64?
         var dismissedMs: Int64?
-        /// A soft dismissal: a harvest `pending` or vendor-reported wait the
-        /// source keeps reporting. It stays suppressed until the source stops
-        /// (the builder releases it) or a different wait takes the key.
-        var holdsDismissal: Bool
         var resolvedMs: Int64?
 
         var isOpen: Bool { resolvedMs == nil }
@@ -74,7 +71,6 @@ struct SessionLog: Codable, Equatable, Sendable {
             if let sinceMs, sinceMs > 0 { return sinceMs }
             return raisedMs
         }
-        var suppresses: Bool { isOpen && dismissedMs != nil && holdsDismissal }
         var isQueued: Bool { isOpen && queuedMs != nil && notifiedMs == nil && dismissedMs == nil }
     }
 
@@ -126,8 +122,8 @@ struct SessionLog: Codable, Equatable, Sendable {
         return out
     }
 
-    /// Keys waiting as of the last reconcile — the previous scan's edge set.
-    var waitingKeys: Set<String> { keys { $0.isOpen && !$0.suppresses } }
+    /// Keys waiting as of the last reconcile — the previous projection's edge set.
+    var waitingKeys: Set<String> { keys { $0.isOpen } }
     /// For each key in `waitingKeys`, when its open wait was raised
     /// (`Wait.raiseClockMs`) — the edge identity the builder compares a new
     /// raise with.
@@ -135,14 +131,10 @@ struct SessionLog: Codable, Equatable, Sendable {
         var out: [String: Int64] = [:]
         for (key, session) in sessions {
             guard let index = session.openWaitIndex() else { continue }
-            let wait = session.waits[index]
-            guard !wait.suppresses else { continue }
-            out[key] = wait.raiseClockMs
+            out[key] = session.waits[index].raiseClockMs
         }
         return out
     }
-    /// Soft-dismissed keys the builder must keep quiet.
-    var suppressedKeys: Set<String> { keys { $0.suppresses } }
     /// Open waits whose banner is still owed.
     var queuedKeys: Set<String> { keys { $0.isQueued } }
     /// Open waits the person already dismissed.
@@ -180,13 +172,11 @@ struct SessionLog: Codable, Equatable, Sendable {
 
     /// Whether the row's wait is a *new* raise on a key that was already
     /// waiting since `previousSinceMs`: a second permission, a new question.
-    /// Only a hook or vendor raise carries a raise time; a harvest `pending`
-    /// stamps the file's clock, which moves while the same ask stands. A
-    /// later raise counts when the session moved after the old one (its
+    /// A later raise counts when the session moved after the old one (its
     /// next tool call is how a second ask begins) or when it is past the
     /// slack.
     static func isNewRaise(_ row: AgentRow, previousSinceMs: Int64) -> Bool {
-        guard let wait = row.wait, wait.signal != .pending else { return false }
+        guard let wait = row.wait else { return false }
         let since = wait.sinceMs
         guard since > 0, previousSinceMs > 0, since > previousSinceMs else { return false }
         return row.activityMs > previousSinceMs || since - previousSinceMs > reraiseSlackMs
@@ -269,25 +259,17 @@ struct SessionLog: Codable, Equatable, Sendable {
 
     // MARK: - Waits
 
-    /// Brings the wait records in line with this scan's rows. A key that is
-    /// waiting has exactly one open wait; one that is not has none — except
-    /// a soft dismissal, which stays open (and suppressing) until the builder
-    /// reports it `released` or a new wait takes the key.
+    /// Brings the wait records in line with this projection's rows. A key
+    /// that is waiting has exactly one open wait; one that is not has none.
     @discardableResult
-    mutating func reconcileWaits(rows: [AgentRow], released: Set<String>, nowMs: Int64) -> Bool {
+    mutating func reconcileWaits(rows: [AgentRow], nowMs: Int64) -> Bool {
         var waiting: [String: AgentRow] = [:]
         for row in rows where row.isBlocked && waiting[row.rowKey] == nil { waiting[row.rowKey] = row }
         var changed = false
         for (key, session) in sessions {
             var copy = session
-            for index in copy.waits.indices where copy.waits[index].isOpen {
-                let wait = copy.waits[index]
-                let ends = wait.suppresses
-                    ? released.contains(key) || waiting[key] != nil
-                    : waiting[key] == nil
-                if ends {
-                    copy.waits[index].resolvedMs = max(wait.raisedMs, nowMs)
-                }
+            for index in copy.waits.indices where copy.waits[index].isOpen && waiting[key] == nil {
+                copy.waits[index].resolvedMs = max(copy.waits[index].raisedMs, nowMs)
             }
             if copy != session {
                 sessions[key] = copy
@@ -323,8 +305,7 @@ struct SessionLog: Codable, Equatable, Sendable {
     private static func newWait(key: String, row: AgentRow, title: String, nowMs: Int64) -> Wait {
         Wait(
             id: "\(key)|\(nowMs)", kind: row.wait?.kind ?? "", title: title,
-            raisedMs: raisedMs(row, nowMs: nowMs), sinceMs: row.wait?.sinceMs,
-            holdsDismissal: false
+            raisedMs: raisedMs(row, nowMs: nowMs), sinceMs: row.wait?.sinceMs
         )
     }
 
@@ -385,10 +366,10 @@ struct SessionLog: Codable, Equatable, Sendable {
         return false
     }
 
-    /// The person dismissed the row's wait. `soft` keeps it suppressed while
-    /// its source keeps reporting it (harvest `pending`, `claude agents`).
+    /// The person dismissed the row's wait (the `done` it wrote resolves it
+    /// on the next projection).
     @discardableResult
-    mutating func dismiss(_ row: AgentRow, soft: Bool, nowMs: Int64) -> Bool {
+    mutating func dismiss(_ row: AgentRow, nowMs: Int64) -> Bool {
         let key = row.rowKey
         var session = sessions[key] ?? Session()
         let index: Int
@@ -401,7 +382,6 @@ struct SessionLog: Codable, Equatable, Sendable {
         }
         let before = session.waits[index]
         if session.waits[index].dismissedMs == nil { session.waits[index].dismissedMs = nowMs }
-        if soft { session.waits[index].holdsDismissal = true }
         guard session.waits[index] != before else { return false }
         sessions[key] = session
         return true

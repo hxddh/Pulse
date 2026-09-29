@@ -1,22 +1,23 @@
 import Foundation
 import AppKit
 import Observation
-import SQLite3
 import Testing
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Engine: ScanEngine, the probe schedule and stats, the harvest supervisor, scan quiet.
+// Engine: ScanEngine (the event feed and the projection), the tick and the
+// process-scan cadence, scan quiet.
 
-/// 12.4 Surface — a scan that found the same world wakes no surface.
+/// 12.4 Surface — a projection that found the same world wakes no surface.
 ///
 /// 19.0: the store is `@Observable`. A view is invalidated by the properties
 /// its body read, and Observation announces every assignment, equal or not.
 /// This is the counter wall: track every observed property of the store,
-/// apply the same scan twice, and nothing may fire. When it fails, it names
-/// the property that did.
+/// project the same world twice, and nothing may fire. When it fails, it
+/// names the property that did. 24.0: an event-free period is exactly that
+/// — the tick re-projects with no event, and must announce nothing.
 @Suite("Scan quiet", .serialized)
 @MainActor
 struct ScanQuietTests {
@@ -33,7 +34,6 @@ struct ScanQuietTests {
     static var observed: [(String, PartialKeyPath<StatusStore>)] {
         [
             ("cachedAll", \StatusStore.cachedAll),
-            ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
             ("diagnostics", \StatusStore.diagnostics),
             ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
             ("hooksStatus", \StatusStore.hooksStatus),
@@ -53,12 +53,13 @@ struct ScanQuietTests {
     }
 
     private func quietStore() -> StatusStore {
-        // This test drives the scans itself.
+        // This test drives the engine itself.
         StatusStore()
     }
 
-    private func scan(_ store: StatusStore, ticket: UInt64) {
-        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: ticket)
+    /// A tick: the book re-projected with no event.
+    private func tick(_ store: StatusStore, at nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+        store.engine.project(nowMs: nowMs)
     }
 
     private func watch(_ store: StatusStore, _ properties: [(String, PartialKeyPath<StatusStore>)]) -> Fired {
@@ -73,42 +74,53 @@ struct ScanQuietTests {
         return fired
     }
 
-    @Test func aSecondIdenticalScanAnnouncesNothing() {
+    @Test func aSecondIdenticalProjectionAnnouncesNothing() {
         let store = quietStore()
-        scan(store, ticket: 1)
+        tick(store)
         let fired = watch(store, Self.observed)
 
-        scan(store, ticket: 2)
-        scan(store, ticket: 3)
+        tick(store)
+        tick(store)
 
-        #expect(fired.names == [], "observed properties written by an unchanged scan: \(fired.names)")
+        #expect(fired.names == [], "observed properties written by an unchanged projection: \(fired.names)")
+    }
+
+    /// An event-free period with sessions on the list: the tick moves no
+    /// observed property while nothing on screen is due to change.
+    @Test func anEventFreePeriodPublishesNothing() {
+        let store = quietStore()
+        let t0 = Int64(Date().timeIntervalSince1970 * 1000)
+        store.engine.apply(records: [
+            AttentionRecord(agent: "claude", kind: "working", ms: t0 - 10 * 60_000, session: "s-quiet", cwd: "/w/app"),
+        ], nowMs: t0)
+        let fired = watch(store, Self.observed)
+        tick(store, at: t0 + 2_000)
+        tick(store, at: t0 + 4_000)
+        #expect(fired.names == [], "\(fired.names)")
     }
 
     /// 23.0: a wait that crossed while macOS had not yet allowed Pulse to
-    /// notify is owed a banner once. The ledger used to be rewritten on every
-    /// scan after that for as long as authorization stayed unresolved; the
-    /// session log changes (and `logRevision` moves) only when the wait did.
+    /// notify is owed a banner once; the session log changes (and
+    /// `logRevision` moves) only when the wait did.
     @Test func anOwedBannerWhileUnauthorizedIsRecordedOnce() {
         let store = quietStore()
         store.notifyAuthorized = nil
-        scan(store, ticket: 1)
+        tick(store)
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let raised = AttentionReader.Entry(
-            id: .claude, kind: "Permission", message: "Bash: npm test",
-            tsMs: nowMs - 1_000, session: "s-owed", cwd: "/w/app"
-        )
-        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 2)
+        store.engine.apply(records: [
+            AttentionRecord(agent: "claude", kind: "permission", ms: nowMs - 1_000, message: "Bash: npm test", session: "s-owed", cwd: "/w/app"),
+        ], nowMs: nowMs)
         let owed = store.sessionLog.queuedKeys
         #expect(owed.count == 1, "the edge is owed its banner")
         let fired = watch(store, [("logRevision", \StatusStore.logRevision)])
-        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 3)
-        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 4)
+        tick(store, at: nowMs + 1)
+        tick(store, at: nowMs + 2)
         #expect(fired.names == [], "the same owed wait is not news")
     }
 
     @Test func aChangedWorldIsStillAnnounced() {
         let store = quietStore()
-        scan(store, ticket: 1)
+        tick(store)
         let fired = watch(store, Self.observed)
         var next = store.snapshot
         next.headerTitle = "1 running"
@@ -121,8 +133,8 @@ struct ScanQuietTests {
     /// observed but missing from `observed`, so the wall above cannot go
     /// quietly partial.
     @Test func everyObservedPropertyIsListed() throws {
-        // 23.0: the model stays small — engine and banner bookkeeping live in
-        // `ScanEngine` and `WaitNotifier`, which nothing observes.
+        // The model stays small — the book, the watchers and banner
+        // bookkeeping live in `ScanEngine` and `WaitNotifier`.
         let count = Self.observed.count
         #expect(count <= 25, "the observed model grew to \(count) properties")
         let listed = Set(Self.observed.map(\.0))
@@ -150,7 +162,6 @@ struct ScanQuietTests {
         let store = quietStore()
         let fired = watch(store, Self.observed)
         store.set(\.notifyOnWaiting, true)
-        store.setReadProtectedAppData(false)
         #expect(fired.names == [])
     }
 
@@ -198,30 +209,27 @@ struct ScanQuietTests {
     /// republished — the tray and the lamp woke on every tick.
     @Test func aStandingWaitIsQuietBetweenMinuteLabels() {
         let t0: Int64 = 1_800_000_000_000
-        func scan(at nowMs: Int64) -> PulseSnapshot {
-            let entry = AttentionReader.Entry(
-                id: .claude, kind: "Permission", message: "Bash: make", tsMs: t0 - 10 * 60_000, session: "s1", cwd: "/w"
-            )
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 10 * 60_000, message: "Bash: make", session: "s1", cwd: "/w", pid: 0), nowMs: t0)
+        func project(at nowMs: Int64) -> PulseSnapshot {
+            let rows = SessionProjection.rows(
+                book: book, processes: [], transcripts: [:],
+                context: SessionProjection.Context(nowMs: nowMs, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+            ).rows
             var snap = SnapshotBuilder.build(
-                SnapshotBuilder.Input(attention: [entry]),
-                previous: .init(),
-                context: SnapshotBuilder.Context(
-                    nowMs: nowMs,
-                    terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                    lang: .en
-                )
+                rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: nowMs, lang: .en)
             ).snapshot
             snap.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
             return snap
         }
-        let first = scan(at: t0)
-        let second = scan(at: t0 + 2_000)
+        let first = project(at: t0)
+        let second = project(at: t0 + 2_000)
         #expect(second.sameContent(as: first), "a ten-minute wait two seconds later is the same world")
         #expect(!PulseSnapshot.needsPublish(next: second, current: first))
     }
 
     /// Only a wait's age is drawn in seconds; a running row's fresh activity
-    /// is no reason to redraw every scan.
+    /// is no reason to redraw every tick.
     @Test func freshActivityOnARunningRowDoesNotRepublish() {
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
         var current = PulseSnapshot()
@@ -246,14 +254,14 @@ struct ScanQuietTests {
         var current = PulseSnapshot()
         current.updatedAt = t0
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.state = .blocked(RowWait(kind: "Permission", sinceMs: Int64(t0.timeIntervalSince1970 * 1000) - 20_000, signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: Int64(t0.timeIntervalSince1970 * 1000) - 20_000))
         current.rows = [row]
 
         var next = current
         next.updatedAt = t0.addingTimeInterval(2)
-        #expect(PulseSnapshot.needsPublish(next: next, current: current), "a 20 s wait is drawn in seconds — it moves every scan")
+        #expect(PulseSnapshot.needsPublish(next: next, current: current), "a 20 s wait is drawn in seconds — it moves every tick")
 
-        current.rows[0].state = .blocked(RowWait(kind: "Permission", sinceMs: Int64(t0.timeIntervalSince1970 * 1000) - 600_000, signal: .hooks))
+        current.rows[0].state = .blocked(RowWait(kind: "Permission", sinceMs: Int64(t0.timeIntervalSince1970 * 1000) - 600_000))
         next.rows = current.rows
         #expect(!PulseSnapshot.needsPublish(next: next, current: current), "a ten-minute wait holds for a minute")
         next.updatedAt = t0.addingTimeInterval(61)
@@ -261,287 +269,134 @@ struct ScanQuietTests {
     }
 }
 
-/// Cadence policy — the fix for "Pulse is using significant energy".
+/// 24.0 · the engine's feed: the attention file is re-read whole, and only
+/// the lines it has not seen reach the book.
+@Suite("Event feed", .serialized)
+@MainActor
+struct EventFeedTests {
+    private let t0 = Int64(Date().timeIntervalSince1970 * 1000)
+
+    private func file(_ records: [AttentionRecord]) -> String {
+        AttentionProtocol.header + records.map(\.line).joined(separator: "\n") + "\n"
+    }
+
+    @Test func aLineIsAppliedOnceHoweverOftenTheFileIsRead() {
+        let store = StatusStore()
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 60_000, message: "Bash: npm test", session: "s1", cwd: "/w/app")
+        store.engine.landAttention(file([raise]), nowMs: t0)
+        #expect(store.cachedAll.first?.isBlocked == true)
+        // The person answers in the vendor's prompt: the tool runs.
+        store.engine.apply(activity: [
+            ActivitySpool.Event(agent: "claude", session: "s1", event: "tool", tool: "Bash", target: "", prompt: "", cwd: "/w/app", tsMs: t0 - 30_000),
+        ], nowMs: t0)
+        #expect(store.cachedAll.first?.state == .running)
+        // The same file again must not raise the answered wait a second time.
+        store.engine.landAttention(file([raise]), nowMs: t0 + 1_000)
+        #expect(store.cachedAll.first?.state == .running, "a line already applied is not news")
+    }
+
+    @Test func aCompactedFileDoesNotReplayWhatItKept() {
+        let store = StatusStore()
+        let start = AttentionRecord(agent: "codex", kind: "start", ms: t0 - 120_000, session: "c1", cwd: "/w/app")
+        let turn = AttentionRecord(agent: "codex", kind: "turn", ms: t0 - 60_000, session: "c1", cwd: "/w/app")
+        store.engine.landAttention(file([start, turn]), nowMs: t0)
+        #expect(store.cachedAll.first?.isYourTurn == true)
+        // Compaction dropped the start; the turn is the same line, not a new one.
+        store.engine.landAttention(file([turn]), nowMs: t0 + 1_000)
+        #expect(store.cachedAll.first?.isYourTurn == true)
+        #expect(store.engine.book.sessions.count == 1)
+    }
+
+    @Test func theLastEventPerAgentOutlivesCompaction() {
+        let store = StatusStore()
+        let early = AttentionRecord(agent: "gemini", kind: "turn", ms: t0 - 60_000, session: "g1")
+        store.engine.landAttention(file([early]), nowMs: t0)
+        store.engine.landAttention(file([]), nowMs: t0 + 1_000)
+        #expect(store.engine.latestHookEventMs[.gemini] == t0 - 60_000)
+    }
+
+    @Test func aProcessScanThatFailsKeepsTheLastGoodList() {
+        let store = StatusStore()
+        let hit = AgentProcesses.Hit(agent: .codex, pid: 999_999, cwd: "/w/app")
+        store.engine.apply(processes: [hit], nowMs: t0)
+        #expect(store.cachedAll.map(\.rowKey) == ["codex|pid:999999"])
+        store.engine.apply(processes: nil, nowMs: t0 + 1_000)
+        #expect(store.cachedAll.map(\.rowKey) == ["codex|pid:999999"], "a failed read never removes a row")
+    }
+
+    @Test func anExitEndsTheSessionAndDropsTheProcess() {
+        let store = StatusStore()
+        let hit = AgentProcesses.Hit(agent: .claude, pid: 999_998, cwd: "/w/app")
+        store.engine.apply(processes: [hit], nowMs: t0)
+        store.engine.processExited(999_998, nowMs: t0 + 1_000)
+        #expect(store.cachedAll.isEmpty)
+    }
+
+    /// A transcript is read at the moments a person looks: a finished turn
+    /// or a wait — never while it works, and never without a path.
+    @Test func aTranscriptIsWantedOnlyAtATurnOrAWait() {
+        func session(_ state: SessionBook.State, transcript: String = "/t.jsonl") -> SessionBook.Session {
+            var s = SessionBook.Session(key: "claude|s1", agent: .claude, session: "s1")
+            s.state = state
+            s.transcript = transcript
+            s.pid = 42
+            s.lastEventMs = t0
+            return s
+        }
+        #expect(ScanEngine.wantsTranscript(session(.yourTurn(sinceMs: t0)), nowMs: t0))
+        #expect(ScanEngine.wantsTranscript(session(.blocked(.init(kind: .permission, ask: "", sinceMs: t0, inFront: false))), nowMs: t0))
+        #expect(!ScanEngine.wantsTranscript(session(.working), nowMs: t0))
+        #expect(!ScanEngine.wantsTranscript(session(.yourTurn(sinceMs: t0), transcript: ""), nowMs: t0))
+    }
+}
+
+/// 24.0 cadence policy — no fixed probe interval: a tick for time-based
+/// facts, a slow process scan, nothing while the display sleeps.
 final class ProbeScheduleTests: XCTestCase {
     private let awake = ProbeSchedule.Power()
 
-    func testBusierStatesProbeFaster() {
-        let waiting = ProbeSchedule.interval(activity: .waiting, power: awake, trayOpen: false)!
-        let running = ProbeSchedule.interval(activity: .running, power: awake, trayOpen: false)!
-        let recent = ProbeSchedule.interval(activity: .recent, power: awake, trayOpen: false)!
-        let empty = ProbeSchedule.interval(activity: .empty, power: awake, trayOpen: false)!
-        XCTAssertLessThan(waiting, running)
-        XCTAssertLessThan(running, recent)
-        XCTAssertLessThan(recent, empty)
+    func testNothingOnScreenMeansNoTick() {
+        XCTAssertNil(ProbeSchedule.tick(activity: .empty, power: awake, trayOpen: false))
+        XCTAssertNotNil(ProbeSchedule.tick(activity: .empty, power: awake, trayOpen: true))
     }
 
-    func testIdleMachineIsDramaticallyCheaperThanTheOldFixedCadence() {
-        let empty = ProbeSchedule.interval(activity: .empty, power: awake, trayOpen: false)!
-        XCTAssertGreaterThanOrEqual(empty, 30, "pre-0.22 probed every 3s regardless")
+    func testTheTickIsAMinuteUnlessSecondsAreOnScreen() {
+        XCTAssertEqual(ProbeSchedule.tick(activity: .running, power: awake, trayOpen: false), 60)
+        XCTAssertEqual(ProbeSchedule.tick(activity: .waiting, power: awake, trayOpen: false), 60)
+        XCTAssertEqual(ProbeSchedule.tick(activity: .waiting, power: awake, trayOpen: false, freshWait: true), 5)
+        XCTAssertEqual(ProbeSchedule.tick(activity: .recent, power: awake, trayOpen: true), 5)
     }
 
-    func testParkedWhenDisplayAsleepUnlessTrayIsOpen() {
+    func testDisplayAsleepParksEverythingUnlessTheTrayIsOpen() {
         var power = ProbeSchedule.Power()
         power.displayAsleep = true
-        XCTAssertNil(ProbeSchedule.interval(activity: .waiting, power: power, trayOpen: false))
-        XCTAssertNotNil(ProbeSchedule.interval(activity: .waiting, power: power, trayOpen: true))
+        XCTAssertNil(ProbeSchedule.tick(activity: .waiting, power: power, trayOpen: false))
+        XCTAssertNotNil(ProbeSchedule.tick(activity: .waiting, power: power, trayOpen: true))
+        XCTAssertNil(ProbeSchedule.processScan(power: power))
     }
 
-    func testScreenLockAlsoParks() {
+    func testLockedScreenParksToo() {
         var power = ProbeSchedule.Power()
         power.screenLocked = true
-        XCTAssertTrue(power.parked)
-        XCTAssertNil(ProbeSchedule.interval(activity: .running, power: power, trayOpen: false))
+        XCTAssertNil(ProbeSchedule.tick(activity: .running, power: power, trayOpen: false))
+        XCTAssertNil(ProbeSchedule.processScan(power: power))
     }
 
-    func testLowPowerModeSlowsButNeverParks() {
+    func testLowPowerModeSlowsBoth() {
         var power = ProbeSchedule.Power()
         power.lowPowerMode = true
-        let normal = ProbeSchedule.interval(activity: .running, power: awake, trayOpen: false)!
-        let saving = ProbeSchedule.interval(activity: .running, power: power, trayOpen: false)!
-        XCTAssertEqual(saving, normal * 2)
+        XCTAssertGreaterThan(
+            ProbeSchedule.tick(activity: .running, power: power, trayOpen: false)!,
+            ProbeSchedule.tick(activity: .running, power: awake, trayOpen: false)!
+        )
+        XCTAssertGreaterThan(ProbeSchedule.processScan(power: power)!, ProbeSchedule.processScan(power: awake)!)
     }
 
-    func testOpenTrayNeverSlowsThingsDown() {
-        for activity in [ProbeSchedule.Activity.waiting, .running, .recent, .empty] {
-            let closed = ProbeSchedule.interval(activity: activity, power: awake, trayOpen: false)!
-            let open = ProbeSchedule.interval(activity: activity, power: awake, trayOpen: true)!
-            XCTAssertLessThanOrEqual(open, closed, "\(activity) got slower with the tray open")
-        }
-    }
-
-    func testHarvestRunsEveryTickWhileWaitingOrWatching() {
-        XCTAssertEqual(ProbeSchedule.harvestEveryNTicks(activity: .waiting, trayOpen: false), 1)
-        XCTAssertEqual(ProbeSchedule.harvestEveryNTicks(activity: .running, trayOpen: true), 1)
-        XCTAssertGreaterThan(ProbeSchedule.harvestEveryNTicks(activity: .running, trayOpen: false), 1)
-        // Idle machines should not harvest every probe tick — empty cadence is
-        // already ~30s; multiplying ticks keeps the menu bar cheap.
-        XCTAssertGreaterThan(ProbeSchedule.harvestEveryNTicks(activity: .empty, trayOpen: false), 1)
-        XCTAssertEqual(ProbeSchedule.harvestEveryNTicks(activity: .empty, trayOpen: true), 1)
+    func testTheProcessScanIsSlow() {
+        XCTAssertEqual(ProbeSchedule.processScan(power: awake), 30)
     }
 }
 
-/// The 0.22 release note claims the energy rework cut Python forks from
-/// ~28,800/day to ~2,880/day. That was arithmetic. These counters are what
-/// makes it checkable on a real machine.
-final class ProbeStatsTests: XCTestCase {
-    private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
-
-    private func stats(probes: Int, harvestEvery: Int, spacing: TimeInterval, harvestMs: Int? = 300) -> ProbeStats {
-        var s = ProbeStats()
-        for i in 0..<probes {
-            let harvested = i % harvestEvery == 0
-            s.record(.init(
-                at: t0.addingTimeInterval(Double(i) * spacing),
-                harvested: harvested,
-                harvestMs: harvested ? harvestMs : nil
-            ))
-        }
-        return s
-    }
-
-    func testCountsSeparateProbesFromHarvests() {
-        let s = stats(probes: 20, harvestEvery: 4, spacing: 5)
-        let now = t0.addingTimeInterval(100)
-        XCTAssertEqual(s.probeCount(now: now), 20)
-        XCTAssertEqual(s.harvestCount(now: now), 5, "only every 4th tick pays for Python")
-    }
-
-    func testSamplesOlderThanAnHourFallOut() {
-        var s = ProbeStats()
-        s.record(.init(at: t0, harvested: true, harvestMs: 100))
-        s.record(.init(at: t0.addingTimeInterval(30), harvested: false, harvestMs: nil))
-        let muchLater = t0.addingTimeInterval(ProbeStats.window + 60)
-        XCTAssertEqual(s.probeCount(now: muchLater), 0)
-    }
-
-    func testPruningKeepsTheWindowBounded() {
-        var s = ProbeStats()
-        // A full day at the busiest cadence must not grow without bound.
-        for i in 0..<43_200 {
-            s.record(.init(at: t0.addingTimeInterval(Double(i) * 2), harvested: false, harvestMs: nil))
-        }
-        let end = t0.addingTimeInterval(86_398)
-        XCTAssertLessThan(s.samples.count, 2_000, "an hour at 2s is ~1800 samples, not a day's worth")
-        XCTAssertEqual(s.probeCount(now: end), 1_801, "exactly the trailing hour")
-        XCTAssertEqual(
-            s.probeCount(now: end.addingTimeInterval(ProbeStats.window + 1)),
-            0,
-            "an idle hour empties the window"
-        )
-    }
-
-    func testAverageHarvestDurationIgnoresSkippedTicks() {
-        var s = ProbeStats()
-        s.record(.init(at: t0, harvested: true, harvestMs: 200))
-        s.record(.init(at: t0.addingTimeInterval(5), harvested: false, harvestMs: nil))
-        s.record(.init(at: t0.addingTimeInterval(10), harvested: true, harvestMs: 400))
-        XCTAssertEqual(s.averageHarvestMs(now: t0.addingTimeInterval(15)), 300)
-    }
-
-    func testNoHarvestsMeansNoAverageRatherThanZero() {
-        var s = ProbeStats()
-        s.record(.init(at: t0, harvested: false, harvestMs: nil))
-        XCTAssertNil(s.averageHarvestMs(now: t0.addingTimeInterval(5)))
-    }
-
-    func testProjectionMatchesTheObservedRate() {
-        // Idle cadence: a harvest every 30s → 2,880 a day, the 0.22 claim.
-        let s = stats(probes: 120, harvestEvery: 1, spacing: 30)
-        let now = t0.addingTimeInterval(120 * 30)
-        let daily = s.projectedDailyHarvests(now: now)
-        XCTAssertNotNil(daily)
-        XCTAssertEqual(Double(daily!), 2880, accuracy: 100, "should land on the published figure")
-    }
-
-    func testProjectionRefusesToExtrapolateFromAlmostNothing() {
-        var s = ProbeStats()
-        s.record(.init(at: t0, harvested: true, harvestMs: 100))
-        s.record(.init(at: t0.addingTimeInterval(2), harvested: true, harvestMs: 100))
-        XCTAssertNil(
-            s.projectedDailyHarvests(now: t0.addingTimeInterval(2)),
-            "two samples over two seconds must not become a daily figure"
-        )
-    }
-
-    func testParkedTimeAccumulatesAndIgnoresNonsense() {
-        var s = ProbeStats()
-        s.addParked(600)
-        s.addParked(-50)
-        s.addParked(300)
-        XCTAssertEqual(s.parkedSeconds, 900)
-    }
-
-    func testSummaryIsHonestBeforeAnythingHappened() {
-        XCTAssertEqual(ProbeStats().summary(now: t0), "1h: no scans yet")
-    }
-
-    func testSummaryCarriesTheNumbersABugReportNeeds() {
-        var s = stats(probes: 120, harvestEvery: 2, spacing: 30)
-        s.addParked(720)
-        let line = s.summary(now: t0.addingTimeInterval(120 * 30))
-        XCTAssertTrue(line.contains("probes"))
-        XCTAssertTrue(line.contains("harvests"))
-        XCTAssertTrue(line.contains("/day"), "the projection is the point")
-        XCTAssertTrue(line.contains("avg"))
-        XCTAssertTrue(line.contains("parked 12m"))
-    }
-
-    func testShortParkingIsNotWorthReporting() {
-        var s = stats(probes: 4, harvestEvery: 1, spacing: 5)
-        s.addParked(20)
-        XCTAssertFalse(s.summary(now: t0.addingTimeInterval(20)).contains("parked"))
-    }
-}
-
-final class HarvestSupervisorTests: XCTestCase {
-    func testSupervisorBacksOffOnlyFailedAdapterAndRecovers() {
-        var supervisor = HarvestSupervisor()
-        let now: Int64 = 1_000
-        let failed = ActivityHarvest.CollectorHealth(
-            id: .cursor, state: .failed, durationMs: 6_000, rowCount: 0,
-            sourcePresent: true, errorKind: "timeout"
-        )
-        supervisor.record([failed], nowMs: now)
-        let plan = supervisor.plan(nowMs: now + 100, agents: [.cursor, .codex])
-        XCTAssertFalse(plan.attempted.contains(.cursor))
-        XCTAssertTrue(plan.attempted.contains(.codex))
-        XCTAssertTrue(plan.deferred.contains(.cursor))
-        supervisor.record([.init(id: .cursor, state: .observed, durationMs: 1, rowCount: 1, sourcePresent: true, errorKind: "")], nowMs: now + 2_000)
-        XCTAssertEqual(supervisor.state(for: .cursor).consecutiveFailures, 0)
-        XCTAssertTrue(supervisor.plan(nowMs: now + 2_001, agents: [.cursor]).attempted.contains(.cursor))
-    }
-
-    func testSupervisorOpensCircuitAfterThreeFailuresAndAllowsHalfOpenProbe() {
-        var supervisor = HarvestSupervisor()
-        let failed = ActivityHarvest.CollectorHealth(
-            id: .copilot, state: .failed, durationMs: 10, rowCount: 0,
-            sourcePresent: true, errorKind: "locked"
-        )
-        for index in 0..<3 { supervisor.record([failed], nowMs: Int64(index * 10_000)) }
-        let blocked = supervisor.plan(nowMs: 30_001, agents: [.copilot, .codex])
-        XCTAssertTrue(blocked.deferred.contains(.copilot))
-        XCTAssertTrue(blocked.attempted.contains(.codex))
-        let probe = supervisor.plan(nowMs: 60_001, agents: [.copilot])
-        XCTAssertTrue(probe.attempted.contains(.copilot))
-    }
-
-    @MainActor
-    func testSupervisorDeferralDoesNotMakeHealthyPartialScanUnreliable() {
-        var supervisor = HarvestSupervisor()
-        let failure = ActivityHarvest.CollectorHealth(
-            id: .copilot, state: .failed, durationMs: 10, rowCount: 0,
-            sourcePresent: true, errorKind: "locked"
-        )
-        supervisor.record([failure], nowMs: 1_000)
-        let plan = supervisor.plan(nowMs: 1_100, agents: [.copilot, .codex])
-        let healthyCodex = ActivityHarvest.CollectorHealth(
-            id: .codex, state: .observed, durationMs: 10, rowCount: 1,
-            sourcePresent: true, errorKind: ""
-        )
-
-        XCTAssertTrue(
-            ScanEngine.isIntentionalSupervisorPartial(
-                health: [healthyCodex],
-                plan: plan
-            )
-        )
-
-        let failedCodex = ActivityHarvest.CollectorHealth(
-            id: .codex, state: .failed, durationMs: 10, rowCount: 0,
-            sourcePresent: true, errorKind: "timeout"
-        )
-        XCTAssertFalse(
-            ScanEngine.isIntentionalSupervisorPartial(
-                health: [failedCodex],
-                plan: plan
-            )
-        )
-
-        let store = StatusStore()
-        store.engine.recordCollectorHealth([healthyCodex], complete: false, intentionalPartial: true)
-        XCTAssertFalse(store.collectorScanIncomplete)
-        store.engine.recordCollectorHealth([failedCodex], complete: false, intentionalPartial: false)
-        XCTAssertTrue(store.collectorScanIncomplete)
-    }
-
-    func testSupervisorFailureTimelineOrdersNewestFirst() {
-        var supervisor = HarvestSupervisor()
-        let now: Int64 = 100_000
-        supervisor.record(
-            [
-                .init(
-                    id: .codex,
-                    state: .failed,
-                    durationMs: 10,
-                    rowCount: 0,
-                    sourcePresent: true,
-                    errorKind: "locked"
-                )
-            ],
-            nowMs: now
-        )
-        supervisor.record(
-            [
-                .init(
-                    id: .claude,
-                    state: .failed,
-                    durationMs: 10,
-                    rowCount: 0,
-                    sourcePresent: true,
-                    errorKind: "native_timeout"
-                )
-            ],
-            nowMs: now + 5_000
-        )
-        let timeline = supervisor.failureTimeline(nowMs: now + 6_000)
-        XCTAssertEqual(timeline.map(\.agent), [.claude, .codex])
-        XCTAssertEqual(timeline.map(\.error), ["native_timeout", "locked"])
-    }
-}
-
-/// Clarity fixes — each test pins one defect found by reading the code: the
-/// value the user would have seen, before and after.
 @MainActor
 @Suite("Coalescing throttle", .serialized)
 struct CoalescingThrottleTests {
@@ -558,68 +413,5 @@ struct CoalescingThrottleTests {
         #expect(throttle.event(at: 11.0) == .absorbed, "the armed trailing fire carries it")
         throttle.trailingFired(at: 11.0)
         #expect(throttle.event(at: 11.5) == .fire)
-    }
-}
-
-/// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
-///
-/// Each of these is a place where the code said something it had not
-/// measured, dropped work it had been asked to do, or let a click reach
-/// nothing without saying so.
-final class PendingRefreshTests: XCTestCase {
-    // MARK: D-3 · a coalesced refresh keeps its scope
-
-    @MainActor
-    func testMergingTwoScopedRefreshesKeepsBoth() {
-        var pending = ScanEngine.PendingRefresh(
-            reason: "permission-cursor",
-            agentFilter: [.cursor]
-        )
-        pending.absorb(reason: "permission-opencode", agentFilter: [.opencode])
-        XCTAssertEqual(pending.agentFilter, [.cursor, .opencode])
-        XCTAssertEqual(pending.reason, "permission-opencode")
-    }
-
-    @MainActor
-    func testAFullScanAbsorbsAScopedOne() {
-        var pending = ScanEngine.PendingRefresh(
-            reason: "permission-cursor",
-            agentFilter: [.cursor]
-        )
-        pending.absorb(reason: "timer", agentFilter: nil)
-        XCTAssertNil(pending.agentFilter, "a full scan already covers the scoped one")
-
-        var full = ScanEngine.PendingRefresh(reason: "timer", agentFilter: nil)
-        full.absorb(reason: "permission-cursor", agentFilter: [.cursor])
-        XCTAssertNil(full.agentFilter, "and narrowing it afterwards would drop the rest")
-    }
-}
-
-/// 0.99 Quiet Data — what Pulse writes down, and whether it says so.
-///
-/// 0.90–0.97 made the display honest and 0.98 made the collector honest. These
-/// cover the surface neither of them touched: the bytes that outlive the scan.
-final class SupervisorBudgetTests: XCTestCase {
-    // MARK: - Budget starvation leaves a trace
-
-    /// 0.98 made the global cutoff rotate. The supervisor still treated
-    /// `unscanned` as nothing at all, so a diagnostic could not show it.
-    func testSupervisorRecordsBudgetCutoffWithoutCallingItAFailure() {
-        var supervisor = HarvestSupervisor()
-        let now: Int64 = 1_800_000_000_000
-        supervisor.record([.unscanned(.opencode)], nowMs: now)
-
-        let state = supervisor.state(for: .opencode)
-        XCTAssertEqual(state.lastUnscannedAtMs, now)
-        XCTAssertEqual(state.consecutiveFailures, 0, "a budget cutoff is not an adapter failure")
-        XCTAssertFalse(state.isCircuitOpen)
-        XCTAssertTrue(supervisor.summary(nowMs: now).contains("opencode"))
-    }
-
-    func testAnOldBudgetCutoffFallsOutOfTheSummary() {
-        var supervisor = HarvestSupervisor()
-        let now: Int64 = 1_800_000_000_000
-        supervisor.record([.unscanned(.opencode)], nowMs: now - 60 * 60_000)
-        XCTAssertFalse(supervisor.summary(nowMs: now).contains("opencode"))
     }
 }

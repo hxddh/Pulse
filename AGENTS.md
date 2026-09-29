@@ -11,14 +11,16 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the behaviour spec |
 | [`docs/scenarios.md`](docs/scenarios.md) | You add or change an acceptance scenario — each row names the tests that pin it |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch any vendor parser — each agent's format has a pinned source, a fixture and a weekly drift sentinel |
+| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver or a transcript dialect — each agent's hook contract has a pinned source, a test and a weekly drift sentinel |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/` (23.0 deleted `src/` and the Python
 hook scripts). There are three targets, dependencies pointing down only:
 `PulseCore` (the kernel — the agent catalog, bounded IO, process
-supervision, transcript parsing, probe cadence, the debug log),
-`PulseHarvest` (the collector) and the `PulseBar` app (22.0 removed
+supervision, bounded transcript tails, the cadence, the debug log),
+`PulseHarvest` (events and processes: attention IO, the activity spool,
+libproc `AgentProcesses`, `TranscriptSummary`, `RowIdentity`; 24.0 deleted
+the collector) and the `PulseBar` app (22.0 removed
 `PulseManaged`, 23.0 removed `PulseRespond`). No
 library may import AppKit, SwiftUI or reach `StatusStore`; library members are
 `package`, Core's are `public`. **The roster is seven agents** (24.0, an owner
@@ -26,11 +28,11 @@ decision): Claude, Codex, Cursor (IDE + `cursor-agent` CLI), Pi, Gemini CLI,
 Copilot CLI, OpenCode. Adding one is a product decision; mechanically it is one
 `case` and one `AgentSpec` (with its `HookContract`) in
 `PulseCore/AgentCatalog.swift`, its receiver adapter in `PulseHookReceiver`,
-its icon, README row and an entry in `docs/vendor-formats.json` (format **and**
-`hooks` source) — `scripts/catalog_check.py` fails if the roster is not the
-seven, if a per-agent table grows back anywhere else, if the README matrix
-disagrees with the catalog, if a contract lists a gating event, or if a format
-or hook contract has no stated source. The legacy Python collector was deleted in 0.99 and the Vercel Native
+its icon, README row, a truth table in `SessionBookTests` and a `hooks` entry
+in `docs/vendor-formats.json` — `scripts/catalog_check.py` fails if the roster
+is not the seven, if a per-agent table grows back anywhere else, if the README
+matrix disagrees with the catalog, if a contract lists a gating event, or if a
+hook contract has no stated source or test. The legacy Python collector was deleted in 0.99 and the Vercel Native
 SDK shell in 0.22 — recover either from git history if you ever need it.
 
 ## Invariants
@@ -40,10 +42,8 @@ compiles and ships.
 
 - **No fake Waiting.** Waiting comes from the vendor's own hook / plugin /
   extension event that reports a block (24.0: `waiting: .hooks` in the
-  catalog), or the vendor's own report of a blocked session —
-  `claude agents --json` `status: waiting` — never from inference. Until the
-  harvest layer goes (next phase), a `.hooks` agent's harvest `skill=pending`
-  still counts. Codex and Cursor have `waiting: .none`: their hooks say
+  catalog) — never from inference (24.0 P2 removed harvest `skill=pending`
+  and `claude agents --json`). Codex and Cursor have `waiting: .none`: their hooks say
   running and your turn only, the receiver refuses a blocked line for them,
   and the product says "doesn't report when it waits".
   Since 16.0 (Attention Protocol v3) **red means blocked** — `permission`,
@@ -62,13 +62,20 @@ compiles and ships.
   no managed runtimes, no worktrees, no running the user's checks, no typing
   into terminals. 22.0 removed all of it (see Current state); bringing any of
   it back is a product decision, not a feature.
-- **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
-  per-agent bounded adapter; the optional legacy `guard()` path has the same
-  isolation. One broken collector cannot blind the other six.
-- **No fixed probe interval.** Cadence follows `ProbeSchedule` — a resident
-  menu-bar app flagged for energy use is a dead product.
-- **The builder stays pure.** `SnapshotBuilder` takes the world through
-  `Context` and returns intents. Side effects belong in `StatusStore`.
+- **A source failure must not blank the tray.** A failed libproc scan keeps
+  the last good process list; an unreadable transcript only thins a row;
+  neither ever removes a session. Sessions leave only by an event (`end`), a
+  process exit, the idle bound or the one-day prune.
+- **Event-driven, no fixed probe interval.** State moves when an event file
+  changes (`DispatchSource`) or a session's process exits (a per-pid exit
+  source). Besides that there is one cheap tick (`ProbeSchedule.tick`: 5 s
+  with the tray open or a fresh wait, else 60 s, stopped when nothing is
+  listed) and the 30 s libproc scan (`ProbeSchedule.processScan`); low power
+  doubles both, a sleeping display stops both — a resident menu-bar app
+  flagged for energy use is a dead product.
+- **The reducer and the builder stay pure.** `SessionBook.apply`,
+  `SessionProjection.rows` and `SnapshotBuilder.build` take the world as
+  values and return values. Side effects belong in `ScanEngine` / `StatusStore`.
 - **Install only each supported vendor's documented hook/plugin, only events
   that cannot change the agent's decisions** (never PreToolUse /
   beforeShellExecution-style gating hooks, never anything that returns a
@@ -86,10 +93,11 @@ cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
 Tests live in `PulseBar/Tests/PulseBarTests/`, one file per component (23.0):
-`CoreTests` (catalog, bounded IO, processes), `HarvestTests`,
-`TranscriptTests`, `VendorFormatTests` (fixtures built from vendor source),
-`AttentionTests` (reader, protocol, hook receiver, installer, `claude
-agents`), `BuilderTests`, `ExplainTests`, `SessionLogTests`, `NotifierTests`,
+`CoreTests` (catalog, bounded IO, libproc processes), `TranscriptTests`
+(bounded tails, the six transcript dialects), `VendorFormatTests` (hook
+contracts and drift), `AttentionTests` (the book reading attention lines,
+protocol, hook receiver, installer), `SessionTests` (the seven agents' truth
+tables, projection, process-only rows, the builder, identity), `ExplainTests`, `SessionLogTests`, `NotifierTests`,
 `TrayTests`, `SettingsTests`, `DiagnosticsTests`, `EngineTests`. A new test
 goes in the file of the component it tests — never a file named after a
 release. A file may hold several suites; `docs/scenarios.md` names suites
@@ -100,33 +108,30 @@ Gates, from the repo root — CI, `release.yml`, `scripts/release.sh` and
 
 ```bash
 bash scripts/gates.sh                        # every source gate (below)
-python3 scripts/resource_budget_check.py     # native fixture wall + RSS (needs a build)
 python3 scripts/package_check.py             # reads the built .app
 ./scripts/qa_surfaces.sh                     # surface fixture PNGs (needs the .app)
 ./scripts/qa_observation_truth.sh            # status fixture PNGs (needs the .app; CI)
 ```
 
 `gates.sh` runs `version_check` (one semver), `catalog_check` (roster,
-harvest roots, probe and privacy rules, README matrix, vendor formats —
-23.0 merged four gates into it), `make_agent_icons --check`,
+libproc-only process rules and deleted-harvest guard, privacy rules, README
+matrix, hook sources), `make_agent_icons --check`,
 `appearance_check`, `surface_check`, `scenario_map` and a `Bundle.module`
 grep. A gate earns its place by guarding a real fact; one that only checks
 prose or long-deleted code is removed, not kept "just in case".
-`qa_mac_cursor_appdata_ab.sh` is a manual Mac-only A/B for the app-data
-switch, not CI.
 
-`NativeActivityHarvest.swift` is the collector. There is no second one: 0.99
-deleted `src/activity_scan.py`, its bundled copy and `harvest_stats_check.py`
-— 11,470 lines that never ran for a user, could not catch a native regression,
-and were documented as if they could. 23.0 deleted the Python hook scripts
-too; the installer writes only the native `pulse-hook`. A missing Python
-runtime must never block the app, harvest, or self-test.
+There is no collector (24.0 P2). State comes from hook events through
+`SessionBook`; processes from libproc (`AgentProcesses`); a transcript is read
+once, lazily, for the title, the last message, the model and the last error
+(`TranscriptSummary`). No path forks an interpreter to observe a session, and
+a missing Python runtime must never block the app, the hooks, or self-test.
 
-**The wall that catches a parsing regression** is `PulseBar --native-fixture-test`
-(`NativeHarvestSelfTest.swift`) plus `swift test`; both assert hero **values**
-against vendor-shaped files. A wrong tray hero is fixed with a failing test
-there. Believing a source-string gate could do that job is what let 0.96.1,
-0.97.0, 0.97.1 and 0.97.2 each ship green with the hero still wrong.
+**The wall that catches a state regression** is `swift test`:
+`SessionBookTests` holds a truth table per agent, `SessionProjectionTests`
+the running / recent / process-only rules, `TranscriptSummaryTests` a
+vendor-shaped fixture per dialect. A wrong tray state is fixed with a failing
+test there — a source-string gate cannot do that job (0.96.1–0.97.2 each
+shipped green with the hero wrong).
 
 **Version truth:** `PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver`.
 CHANGELOG's newest heading and the README badge follow it.
@@ -202,9 +207,39 @@ agent (`interpret(agent:event:payload:)`); `HookLanding` reads the agent pid
 (parent chain matched against the catalog process rule) and landing handles
 (TMUX_PANE, ITERM_SESSION_ID, tty, TERM_PROGRAM) with `sysctl` only. Settings
 → Hooks and the self-check have one line per agent with "last event N ago".
-The harvest file-scraping layer is still there for the seven and is deleted
-in the next phase; the readers used only by removed agents (Goose, Cline
-family, Kimi, Continue/OpenHands, Grok, Warp, Aider) are gone.
+
+**24.0 phase P2 (event core; also unreleased).** The harvest scanning layer
+is gone: `NativeActivityHarvest`, `ActivityHarvest`, `HarvestSupervisor`,
+`HarvestMemory`, `HarvestDatabases` (and the `sqlite3` link), the vendor
+harvest dialects, `HarvestFacts`, `ClaudeAgentsProbe` / `ClaudeCLI`,
+`ProbeStats`, the `ps` / `lsof` `ProcessProbe`, `--native-fixture-test` /
+`NativeHarvestSelfTest`, `resource_budget_check.py`, the
+`readProtectedAppData` setting (an old `settings.json` key is ignored) and
+the catalog's harvest fields; `docs/vendor-formats.json` entries keep only
+their `hooks` block. `SessionBook` (PulseBar, pure value) is the one place
+state changes: `apply(_ record: AttentionRecord, nowMs:) -> Bool`, keyed by
+`RowIdentity.session` (`agent|<session>` or `agent|hook:<cwd hash>`), states
+`.idle` / `.working` / `.blocked(Block)` / `.yourTurn(sinceMs:)` /
+`.ended(atMs:)`, plus `apply(activity:nowMs:)`, `processExited(pid:atMs:)`,
+`endSessions(whosePidIsDead:)` and `prune(nowMs:)`. `SessionProjection.rows`
+turns the book, the process hits and the transcript summaries into
+`AgentRow`s: a session with a known pid runs only while it lives; one with
+no pid becomes `.recent` (`RecentReason.quiet`) after 30 minutes and
+`Explain.why` says so; unclaimed process families are process-only rows
+(which is how sessions started before Pulse show until their next event);
+a stall needs an agent that reports its work. `SnapshotBuilder` is thin
+(sort, window, lamp, title, edges). `ScanEngine` applies only unseen
+attention lines in file order, re-reads the spool (idempotent by
+`activityMs`), scans libproc every 30 s and at launch / wake, follows each
+session pid with `ProcessExitWatch` (`DispatchSource` exit), and reads a
+transcript (bounded, off the main thread, cached by path + size + mtime) at
+a turn, a wait, or when the detail opens; OpenCode has none and uses what
+its event carries. Orange is only a stall; soft dismissal is gone (a
+dismiss always writes a `done`); `session-log.json` is schema 3 and span
+evidence is hook or process. Diagnostics and the self-check show hooks,
+last events, session and process-only counts only. Paragraphs below that
+name the harvest, `claude agents`, `pending`, `ProbeStats` or
+`applyScan` describe 23.0.
 
 23.0.0 is the last released version (Essence; see below). 22.0 (Lamp) was subtractive: a status
 lamp should watch orchestrators, not be one, so it removed the `PulseManaged`
@@ -253,9 +288,8 @@ reports), `StatusStoreFixture.swift` (CLI fixtures), `ScanEngine.swift` and
 saved as `settings.json` (0600, `PrivateFile`) and changed through
 `StatusStore.set(_:_:)`, which saves and applies only after `start()`: launch
 at login, language, hotkey, notify on waiting, muted agents, terminal
-automation, `readProtectedAppData` (one switch for every agent with
-`requiresAppDataOptIn` — the per-agent scopes are gone), update check and
-hooks-nudge-off. A `settings.txt` is deleted at load, never read. The "notify
+automation, update check and hooks-nudge-off (24.0 removed
+`readProtectedAppData`). A `settings.txt` is deleted at load, never read. The "notify
 when idle" banner is gone.
 
 What remains was rebuilt around one line per session. The tray
@@ -265,7 +299,7 @@ age), plus a second line only for a wait (the ask) or an orange row (the
 why); a your-turn row carries a quiet "your turn" label and a muted agent a
 `bell.slash`. The lamp has a shape as well as a tone (`LampFace`: filled =
 needs you, ring = running, hollow = your turn / recent, dotted = process
-only; orange only for a stall or an error, never for a process-only row),
+only; orange only for a stall (24.0; 23.0 also an error), never for a process-only row),
 drawn by `LampShapeView` in the row and by `PulseBrand.statusBarIcon` in the
 menu bar, whose title is empty unless something is blocked ("2 · 4m",
 within `GlanceTitle`'s budget) and whose tooltip is one `LampExplanation`
@@ -327,14 +361,14 @@ properties listed in `ScanQuietTests`. `LampExplanation` gives the rule that set
 lamp as one sentence — the status item's whole tooltip (23.0) — and
 `LampFace` the lamp's shape and tone, shared by the tray row and the menu
 bar (filled = needs you, ring = running, hollow = your turn / recent,
-dotted = process only; orange only for a stall or an error).
+dotted = process only; orange only for a stall — 24.0 dropped the error).
 `NotificationAuditModel` renders a wait's
 banner fate in the detail view; `ActivityLogModel` merges spans and banner
 fates across sessions into the Diagnostics window's Activity tab,
 filterable by agent; times go through `LogClock` (the day is said when it
 is not today).
 `staleHidden` counts only sessions that stopped within the last 24 h
-(`SnapshotBuilder.staleHiddenWindowMs`), and the scan's `apply` debug-log
+(24.0: `SessionProjection.staleHiddenWindowMs`), and the scan's `apply` debug-log
 line is written only when it changed.
 
 Rows (23.0, P2c). **A row's key is decided once and never changes**

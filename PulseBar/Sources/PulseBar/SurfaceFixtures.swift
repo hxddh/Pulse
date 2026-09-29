@@ -36,7 +36,7 @@ enum SurfaceFixtures {
     }
 
     static let names = [
-        "row-blocked", "row-blocked-front", "row-pending", "row-running", "row-running-hover",
+        "row-blocked", "row-blocked-front", "row-running", "row-running-hover",
         "row-stalled", "row-your-turn", "row-process-only", "row-muted",
         "header-fresh", "header-stale", "notice-hooks", "filter",
         "timeline-strip", "detail-blocked", "detail-your-turn",
@@ -47,7 +47,6 @@ enum SurfaceFixtures {
         [
             Fixture(name: "row-blocked", width: 448, value: .row(rowModel(rowPermission(), lang: lang))),
             Fixture(name: "row-blocked-front", width: 448, value: .row(rowModel(rowQuestionFront(), lang: lang))),
-            Fixture(name: "row-pending", width: 448, value: .row(rowModel(rowPending(), lang: lang))),
             Fixture(name: "row-running", width: 448, value: .row(rowModel(rowRunning(), lang: lang))),
             // The common row under the pointer — the chevron sits beside the
             // time, never on it.
@@ -89,11 +88,11 @@ enum SurfaceFixtures {
         row.task = task
         row.cwd = "/Users/me/code/app"
         row.project = "app"
-        row.source = .session
+        row.source = .hooks
         row.liveProcess = true
         row.pid = 4312
         row.state = .running
-        row.harvestMs = nowMs - 1 * minute
+        row.eventMs = nowMs - 1 * minute
         row.startedMs = nowMs - 40 * minute
         row.focusTier = .tty
         return row
@@ -103,7 +102,7 @@ enum SurfaceFixtures {
         var row = baseRow(.claude, key: "fx-perm")
         row.model = "claude-sonnet-4"
         row.state = .blocked(RowWait(
-            kind: "Permission", ask: "Bash: npm run build", sinceMs: nowMs - 8 * minute, signal: .hooks
+            kind: "Permission", ask: "Bash: npm run build", sinceMs: nowMs - 8 * minute
         ))
         return row
     }
@@ -112,7 +111,7 @@ enum SurfaceFixtures {
         var row = baseRow(.claude, key: "fx-question")
         row.state = .blocked(RowWait(
             kind: "Input", ask: "Which database should the migration target?",
-            sinceMs: nowMs - 30_000, signal: .hooks, inFront: true
+            sinceMs: nowMs - 30_000, inFront: true
         ))
         return row
     }
@@ -122,24 +121,14 @@ enum SurfaceFixtures {
         row.state = .yourTurn(sinceMs: nowMs - 3 * minute)
         row.lastWord = "All 42 tests pass; the queue drains on reconnect."
         row.model = "gpt-5"
-        row.planSteps = [
-            ActivityHarvest.PlanStep(text: "Queue writes while offline", state: .done),
-            ActivityHarvest.PlanStep(text: "Drain on reconnect", state: .done),
-            ActivityHarvest.PlanStep(text: "Cover it with tests", state: .done),
-        ]
-        return row
-    }
-
-    static func rowPending() -> AgentRow {
-        var row = baseRow(.opencode, key: "fx-pending", task: "Refactor the settings screen")
-        row.state = .blocked(RowWait(kind: "Permission", sinceMs: nowMs - 2 * minute, signal: .pending))
         return row
     }
 
     static func rowStalled() -> AgentRow {
         var row = baseRow(.gemini, key: "fx-stalled", task: "Port the parser to Swift")
         row.isStalled = true
-        row.harvestMs = nowMs - 25 * minute
+        row.eventMs = nowMs - 25 * minute
+        row.activityMs = nowMs - 25 * minute
         return row
     }
 
@@ -162,9 +151,9 @@ enum SurfaceFixtures {
     /// again — the shape a person should read without the numbers.
     static func timelineStrip() -> TimelineStripModel {
         TimelineStripModel.make(spans: [
-            TimelineSpan(state: .running, evidence: .harvest, startMs: nowMs - 48 * minute, endMs: nowMs - 12 * minute),
+            TimelineSpan(state: .running, evidence: .hook, startMs: nowMs - 48 * minute, endMs: nowMs - 12 * minute),
             TimelineSpan(state: .blocked, evidence: .hook, kind: "Permission", startMs: nowMs - 12 * minute, endMs: nowMs - 8 * minute),
-            TimelineSpan(state: .running, evidence: .harvest, startMs: nowMs - 8 * minute, endMs: nil),
+            TimelineSpan(state: .running, evidence: .hook, startMs: nowMs - 8 * minute, endMs: nil),
         ], nowMs: nowMs)
     }
 
@@ -172,7 +161,7 @@ enum SurfaceFixtures {
 
     static func header(lang: ResolvedLanguage, scanAgoMs: Int64) -> TrayHeaderModel {
         TrayHeaderModel.make(TrayHeaderModel.Input(
-            rows: [rowPermission(), rowPending(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()],
+            rows: [rowPermission(), rowQuestionFront(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()],
             lang: lang,
             nowMs: nowMs,
             lastScanMs: nowMs - scanAgoMs,
@@ -183,7 +172,7 @@ enum SurfaceFixtures {
     static func noticeHooks(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: lang, notifyOnWaiting: true, notifyAuthorized: true,
-            bannerFailed: false, hooksMissing: true, scanIncomplete: false
+            bannerFailed: false, hooksMissing: true
         )) ?? TrayNoticeModel(
             kind: .hooksMissing, text: "", actionTitle: "", action: .installHooks, systemImage: "link", tone: .idle
         )
@@ -198,7 +187,7 @@ enum SurfaceFixtures {
     static func detailPermission(lang: ResolvedLanguage) -> DetailModel {
         var wait = SessionLog.Wait(
             id: "fx-perm|1", kind: "Permission", title: "Fix the flaky login test",
-            raisedMs: nowMs - 8 * minute, holdsDismissal: false
+            raisedMs: nowMs - 8 * minute
         )
         wait.outcome = "posted"
         wait.outcomeMs = nowMs - 8 * minute
@@ -234,7 +223,6 @@ enum SurfaceFixtures {
             hookTestTone: .running,
             hookTestRunning: false,
             allowTerminalAutomation: false,
-            readProtectedAppData: false,
             updateCheckEnabled: true,
             updateStatus: String(format: L10n.t(.updateAvailable, lang), "23.1.0"),
             updateAvailable: true,
@@ -253,27 +241,32 @@ enum SurfaceFixtures {
                 agent: .claude, name: AgentID.claude.displayName,
                 state: DiagnosticsModel.stateWord(.available, lang: lang),
                 tone: DiagnosticsModel.tone(.available), severity: DiagnosticsModel.severity(.available),
-                details: [t(.supportStructured), t(.supportFocusTTY), t(.supportDepthSession)]
+                details: [
+                    t(.settingsHookInstalled),
+                    String(format: t(.settingsHookLastEvent), DurationFormat.label(seconds: 12, lang: lang)),
+                    String(format: t(.supportSessions), 2),
+                    t(.supportWaitingHooks),
+                    t(.supportFocusTTY),
+                ]
             ),
             .init(
                 agent: .codex, name: AgentID.codex.displayName,
                 state: DiagnosticsModel.stateWord(.needsAction, lang: lang),
                 tone: DiagnosticsModel.tone(.needsAction), severity: DiagnosticsModel.severity(.needsAction),
                 fix: .installHooks, fixTitle: DiagnosticsModel.fixTitle(.installHooks, lang: lang),
-                details: [t(.supportStructured), t(.supportMissingWaiting)]
+                details: [t(.hooksMissing), String(format: t(.supportProcessOnly), 1), t(.supportWaitingNoneDetail)]
             ),
             .init(
                 agent: .gemini, name: AgentID.gemini.displayName,
-                state: DiagnosticsModel.stateWord(.limited, lang: lang),
-                tone: DiagnosticsModel.tone(.limited), severity: DiagnosticsModel.severity(.limited),
-                warning: t(.supportYieldDrifted),
-                details: [t(.supportStructured)]
+                state: DiagnosticsModel.stateWord(.unproven, lang: lang),
+                tone: DiagnosticsModel.tone(.unproven), severity: DiagnosticsModel.severity(.unproven),
+                details: [t(.settingsHookInstalled), t(.settingsHookNoEvent), t(.supportWaitingHooks)]
             ),
             .init(
                 agent: .pi, name: AgentID.pi.displayName,
                 state: DiagnosticsModel.stateWord(.notInstalled, lang: lang),
                 tone: DiagnosticsModel.tone(.notInstalled), severity: DiagnosticsModel.severity(.notInstalled),
-                details: [t(.supportCollectorSourceAbsentDetail)]
+                details: [t(.settingsHookNotFound)]
             ),
         ]
         let activity = ActivityLogModel(entries: [
@@ -283,16 +276,16 @@ enum SurfaceFixtures {
             ),
             .init(
                 id: "b", atMs: t0 - 12 * minute, clock: "13:54", agent: .codex, place: "app",
-                text: t(.running) + " · " + t(.activityFromSession), tone: .running
+                text: t(.running) + " · " + t(.signalHooks), tone: .running
             ),
         ])
         return DiagnosticsModel.make(DiagnosticsModel.Input(
             lang: lang,
-            scanLine: t(.lastReadJustNow) + " · " + String(format: t(.probeEvery), 2),
+            scanLine: t(.lastReadJustNow) + " · " + String(format: t(.probeEvery), 30),
             banners: [
                 .init(
-                    id: "scan", text: t(.supportScanIncomplete),
-                    fix: .retryScan, fixTitle: DiagnosticsModel.fixTitle(.retryScan, lang: lang)
+                    id: "hooks", text: t(.hooksNudge),
+                    fix: .installHooks, fixTitle: DiagnosticsModel.fixTitle(.installHooks, lang: lang)
                 ),
             ],
             doctor: doctorReport(lang: lang),
@@ -306,26 +299,20 @@ enum SurfaceFixtures {
 
     // MARK: - 19.0 · The self-check
 
-    /// A Mac with a realistic mix: Claude proven, an old Claude without
-    /// `agents`, Codex installed but not yet trusted, Gemini without Pulse's
-    /// hook.
+    /// A Mac with a realistic mix: Claude proven, Codex installed but not
+    /// yet trusted, Gemini without Pulse's hook.
     static func doctorReport(lang: ResolvedLanguage) -> DoctorModel.Report {
         var f = DoctorModel.Facts()
         f.version = PulseVersion.semver
         f.channel = "preview"
         f.macOS = "26.0.0"
         f.nowMs = t0
-        f.claudeInstalled = true
         f.hooks = [
             "claude": .init(present: true, events: Set(AgentID.claude.spec.hooks.events.map(\.name))),
             "codex": .init(present: true, events: Set(AgentID.codex.spec.hooks.events.map(\.name))),
             "gemini": .init(present: true, events: []),
         ]
         f.lastFire = ["claude": .init(kind: "turn", tsMs: t0 - 12 * 60_000)]
-        f.claudeAgents = .failed(exitStatus: 1, timedOut: false)
-        f.codexInstalled = true
-        f.codexRollout = .paginated
-        f.codexCompressedRollouts = 3
         return DoctorModel.evaluate(f, lang: lang)
     }
 }

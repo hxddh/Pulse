@@ -4,7 +4,7 @@ import AppKit
 enum TerminalFocus {
     /// Scan-time focus environment — no cross-app enumeration.
     ///
-    /// `viaWarp` / `hostApp` evidence already comes from ProcessProbe's `ps`
+    /// `viaWarp` / `hostApp` evidence already comes from the process table
     /// snapshot. TTY tab select is advertised only when the user opted into
     /// Automation; the click itself may prompt TCC once.
     struct Environment: Equatable {

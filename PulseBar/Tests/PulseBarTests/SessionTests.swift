@@ -1,0 +1,965 @@
+import Foundation
+import Testing
+import XCTest
+@testable import PulseBar
+@testable import PulseCore
+@testable import PulseHarvest
+
+// Sessions (24.0): the event reducer (SessionBook), its projection into rows
+// (SessionProjection), the thin snapshot (SnapshotBuilder), row identity, and
+// what a row carries.
+
+/// One vendor hook event as `pulse-hook` writes it — the attention line, the
+/// activity event, both, or nothing — by the receiver's own reading of the
+/// vendor's event name and payload (`PulseHookReceiver.interpret`). The
+/// truth tables below replay recorded sequences through it.
+enum HookFeed {
+    struct Written {
+        var lines: [AttentionRecord] = []
+        var activity: [ActivitySpool.Event] = []
+    }
+
+    static func write(
+        _ agent: AgentID,
+        _ event: String,
+        _ payload: [String: Any] = [:],
+        at ms: Int64,
+        session: String = "s1",
+        cwd: String = "/Users/me/app",
+        pid: Int32 = 4242,
+        front: Bool? = nil,
+        transcript: String = ""
+    ) -> Written {
+        guard let reading = PulseHookReceiver.interpret(agent: agent, event: event, payload: payload) else { return Written() }
+        if case .blocked = reading.action, agent.waitingSource == .none { return Written() }
+        var out = Written()
+        func activity(_ kind: String) -> ActivitySpool.Event {
+            ActivitySpool.Event(agent: agent.rawValue, session: session, event: kind, tool: "", target: "", prompt: "", cwd: cwd, tsMs: ms)
+        }
+        let kind: AttentionKind
+        var message = ""
+        switch reading.action {
+        case .ignore:
+            return out
+        case .activity:
+            out.activity.append(activity("tool"))
+            return out
+        case .prompt:
+            out.activity.append(activity("prompt"))
+            kind = .working
+        case .start: kind = .start
+        case .blocked(let blocked):
+            kind = blocked
+            message = reading.ask.isEmpty ? PulseHookReceiver.genericMessage(from: payload) : reading.ask
+        case .turn:
+            kind = .turn
+            message = PulseHookReceiver.genericMessage(from: payload)
+        case .resolved: kind = .done
+        case .end: kind = .end
+        }
+        out.lines.append(AttentionRecord(
+            agent: agent.rawValue, kind: kind.rawValue, ms: ms, message: message,
+            session: session, cwd: cwd, front: front, pid: pid, transcript: transcript
+        ))
+        return out
+    }
+
+    static func word(_ state: SessionBook.State?) -> String {
+        switch state {
+        case .none: return "none"
+        case .idle: return "idle"
+        case .working: return "working"
+        case .blocked(let block): return "blocked:\(block.kind.rawValue)"
+        case .yourTurn: return "turn"
+        case .ended: return "ended"
+        }
+    }
+}
+
+/// 24.0 · the truth tables: each supported agent's own event sequence,
+/// replayed through the receiver's reading into the book, and the state the
+/// session is in after every step.
+@Suite("Session book")
+struct SessionBookTests {
+    let t0: Int64 = 1_800_000_000_000
+    let minute: Int64 = 60_000
+
+    /// Plays `steps` a minute apart; returns the session's state after each.
+    private func play(_ agent: AgentID, _ steps: [(String, [String: Any])]) -> (states: [String], book: SessionBook) {
+        var book = SessionBook()
+        var states: [String] = []
+        for (index, step) in steps.enumerated() {
+            let ms = t0 + Int64(index) * minute
+            let written = HookFeed.write(agent, step.0, step.1, at: ms)
+            for line in written.lines { book.apply(line, nowMs: ms) }
+            for event in written.activity { book.apply(activity: event, nowMs: ms) }
+            states.append(HookFeed.word(book.sessions["\(agent.rawValue)|s1"]?.state))
+        }
+        return (states, book)
+    }
+
+    @Test func claude() {
+        let run = play(.claude, [
+            ("SessionStart", [:]),
+            ("UserPromptSubmit", ["prompt": "Fix the login test"]),
+            ("PostToolUse", ["tool_name": "Read"]),
+            ("PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]]),
+            ("PostToolUse", ["tool_name": "Bash"]),
+            ("Notification", ["notification_type": "elicitation_dialog", "message": "Pick a database"]),
+            ("Notification", ["notification_type": "elicitation_complete"]),
+            ("Stop", [:]),
+            ("SessionEnd", [:]),
+        ])
+        #expect(run.states == [
+            "idle", "working", "working", "blocked:permission", "working",
+            "blocked:question", "working", "turn", "ended",
+        ])
+    }
+
+    @Test func claudeSaysWhatItAsks() {
+        var book = SessionBook()
+        let written = HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]], at: t0)
+        for line in written.lines { book.apply(line, nowMs: t0) }
+        guard case .blocked(let block) = book.sessions["claude|s1"]?.state else {
+            Issue.record("not blocked")
+            return
+        }
+        #expect(block.ask == "Bash: npm test")
+        #expect(block.sinceMs == t0)
+    }
+
+    @Test func codexIsNeverBlocked() {
+        let run = play(.codex, [
+            ("SessionStart", [:]),
+            ("UserPromptSubmit", ["prompt": "Add a queue"]),
+            ("PermissionRequest", ["tool_name": "shell"]),
+            ("permission", [:]),
+            ("Stop", [:]),
+            ("SessionEnd", [:]),
+        ])
+        #expect(run.states == ["idle", "working", "working", "working", "turn", "ended"])
+    }
+
+    @Test func cursorIsNeverBlocked() {
+        let run = play(.cursor, [
+            ("sessionStart", [:]),
+            ("afterAgentResponse", [:]),
+            ("question", [:]),
+            ("stop", [:]),
+            ("sessionEnd", [:]),
+        ])
+        #expect(run.states == ["idle", "working", "working", "turn", "ended"])
+    }
+
+    @Test func pi() {
+        let run = play(.pi, [
+            ("session_start", [:]),
+            ("agent_start", [:]),
+            ("ui_prompt_start", ["kind": "confirm", "title": "Delete build/?"]),
+            ("ui_prompt_end", [:]),
+            ("tool_execution_end", [:]),
+            ("ui_prompt_start", ["kind": "select", "title": "Which branch?"]),
+            ("ui_prompt_end", [:]),
+            ("agent_settled", [:]),
+            ("session_shutdown", [:]),
+        ])
+        #expect(run.states == [
+            "idle", "working", "blocked:permission", "working", "working",
+            "blocked:question", "working", "turn", "ended",
+        ])
+    }
+
+    @Test func gemini() {
+        let run = play(.gemini, [
+            ("SessionStart", [:]),
+            ("BeforeAgent", [:]),
+            ("Notification", ["notification_type": "ToolPermission", "message": "Run npm test"]),
+            ("AfterAgent", [:]),
+            ("BeforeAgent", [:]),
+            ("SessionEnd", [:]),
+        ])
+        #expect(run.states == ["idle", "working", "blocked:permission", "turn", "working", "ended"])
+    }
+
+    @Test func copilot() {
+        let run = play(.copilot, [
+            ("sessionStart", [:]),
+            ("userPromptSubmitted", [:]),
+            ("notification", ["notification_type": "permission_prompt", "message": "Allow bash?"]),
+            ("postToolUse", [:]),
+            ("notification", ["notification_type": "elicitation_dialog", "message": "Which file?"]),
+            ("agentStop", [:]),
+            ("sessionEnd", [:]),
+        ])
+        #expect(run.states == [
+            "idle", "working", "blocked:permission", "working", "blocked:question", "turn", "ended",
+        ])
+    }
+
+    @Test func openCode() {
+        let run = play(.opencode, [
+            ("session.created", [:]),
+            ("session.status", ["status": ["type": "busy"]]),
+            ("permission.asked", ["permission": "bash", "patterns": ["npm test"]]),
+            ("permission.replied", [:]),
+            ("question.asked", ["questions": [["question": "Which DB?"]]]),
+            ("question.rejected", [:]),
+            ("session.idle", [:]),
+            ("session.deleted", [:]),
+        ])
+        #expect(run.states == [
+            "idle", "working", "blocked:permission", "working", "blocked:question", "working", "turn", "ended",
+        ])
+        let ask = HookFeed.write(.opencode, "permission.asked", ["permission": "bash", "patterns": ["npm test"]], at: t0).lines.first?.message
+        #expect(ask == "bash: npm test")
+    }
+
+    // MARK: - Invariants
+
+    @Test func aBlockedLineForAnAgentThatCannotBlockIsRefused() {
+        for agent in AgentID.waitingNoneAgents {
+            var book = SessionBook()
+            let changed = book.apply(AttentionRecord(agent: agent.rawValue, kind: "permission", ms: t0, session: "s1"), nowMs: t0)
+            #expect(!changed, "\(agent.rawValue)")
+            #expect(book.sessions.isEmpty)
+        }
+    }
+
+    @Test func aProcessExitEndsItsSessions() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "a", pid: 77), nowMs: t0)
+        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "b", pid: 88), nowMs: t0)
+        #expect(book.livePids == [77, 88])
+        #expect(book.processExited(pid: 77, atMs: t0 + minute))
+        #expect(HookFeed.word(book.sessions["claude|a"]?.state) == "ended")
+        #expect(HookFeed.word(book.sessions["claude|b"]?.state) == "working")
+        #expect(book.livePids == [88])
+    }
+
+    @Test func aPidFoundDeadEndsWhenItWasLastHeard() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "codex", kind: "turn", ms: t0, session: "c", pid: 55), nowMs: t0)
+        book.endSessions(whosePidIsDead: { _ in false })
+        #expect(book.sessions["codex|c"]?.state == .ended(atMs: t0))
+    }
+
+    @Test func aDismissClearsExactlyTheSessionItNames() {
+        var book = SessionBook()
+        for session in ["a", "b"] {
+            book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0, session: session), nowMs: t0)
+        }
+        book.apply(AttentionRecord(agent: "claude", kind: "done", ms: t0 + 1_000, session: "a"), nowMs: t0 + 1_000)
+        #expect(HookFeed.word(book.sessions["claude|a"]?.state) == "working")
+        #expect(HookFeed.word(book.sessions["claude|b"]?.state) == "blocked:permission")
+    }
+
+    @Test func anEmptyDoneClearsOnlyTheSessionlessEntries() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "gemini", kind: "permission", ms: t0, session: "", cwd: "/w/a"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "gemini", kind: "permission", ms: t0, session: "g1", cwd: "/w/a"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "gemini", kind: "done", ms: t0 + 1_000, session: ""), nowMs: t0 + 1_000)
+        let folder = RowIdentity.session(agent: .gemini, session: "", cwd: "/w/a")
+        #expect(HookFeed.word(book.sessions[folder]?.state) == "working")
+        #expect(HookFeed.word(book.sessions["gemini|g1"]?.state) == "blocked:permission", "a session with an id is never cleared by an empty done")
+    }
+
+    @Test func aDoneAfterATurnMeansItWasSeen() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0, session: "s1"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "claude", kind: "done", ms: t0 + 1_000, session: "s1"), nowMs: t0 + 1_000)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "idle")
+    }
+
+    @Test func aTurnRightAfterABlockDoesNotClearIt() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0, session: "s1"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0 + 5_000, session: "s1"), nowMs: t0 + 5_000)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission", "inside the grace")
+        book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0 + 25_000, session: "s1"), nowMs: t0 + 25_000)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "turn")
+    }
+
+    @Test func aTurnWatchedFinishIsOwedToNobody() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0, session: "s1", front: true), nowMs: t0)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "idle")
+    }
+
+    @Test func aSecondAskIsItsOwnRaiseAndKeepsTheWords() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0, message: "Bash: npm test", session: "s1"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 + minute, message: "", session: "s1"), nowMs: t0 + minute)
+        guard case .blocked(let block) = book.sessions["claude|s1"]?.state else {
+            Issue.record("not blocked")
+            return
+        }
+        #expect(block.sinceMs == t0 + minute)
+        #expect(block.ask == "Bash: npm test")
+    }
+
+    @Test func activityBeforeTheRaiseOrInAnotherSessionDoesNotAnswerIt() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0, session: "s1"), nowMs: t0)
+        func event(_ session: String, _ ms: Int64) -> ActivitySpool.Event {
+            ActivitySpool.Event(agent: "claude", session: session, event: "tool", tool: "Bash", target: "", prompt: "", cwd: "", tsMs: ms)
+        }
+        book.apply(activity: event("s1", t0 - 1_000), nowMs: t0)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission", "the PreToolUse before the raise")
+        book.apply(activity: event("s2", t0 + 1_000), nowMs: t0 + 1_000)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission", "another session's tool")
+        book.apply(activity: event("s1", t0 + 2_000), nowMs: t0 + 2_000)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "working", "answered in the vendor's prompt")
+    }
+
+    @Test func anEventWithNothingToSayMakesNoSession() {
+        var book = SessionBook()
+        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "done", ms: t0, session: "x"), nowMs: t0))
+        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "end", ms: t0, session: "x"), nowMs: t0))
+        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0, session: ""), nowMs: t0))
+        #expect(book.sessions.isEmpty)
+    }
+
+    @Test func theSpoolReadAgainIsNotNews() {
+        var book = SessionBook()
+        let event = ActivitySpool.Event(agent: "pi", session: "p", event: "tool", tool: "", target: "", prompt: "", cwd: "/w", tsMs: t0)
+        #expect(book.apply(activity: event, nowMs: t0))
+        #expect(!book.apply(activity: event, nowMs: t0 + 1_000))
+        let stale = ActivitySpool.Event(agent: "pi", session: "q", event: "tool", tool: "", target: "", prompt: "", cwd: "/w", tsMs: t0 - 2 * 60 * minute)
+        #expect(!book.apply(activity: stale, nowMs: t0), "a day-old spool file introduces nothing")
+    }
+
+    @Test func aStampFromTheFutureIsRefused() {
+        var book = SessionBook()
+        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 + 60 * minute, session: "s1"), nowMs: t0))
+    }
+
+    @Test func aStartMidWorkKeepsItWorking() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1"), nowMs: t0)
+        book.apply(AttentionRecord(agent: "claude", kind: "start", ms: t0 + 1_000, session: "s1"), nowMs: t0 + 1_000)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "working")
+    }
+
+    @Test func aDayOfSilenceIsForgotten() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0, session: "s1"), nowMs: t0)
+        #expect(!book.prune(nowMs: t0 + 60 * minute))
+        #expect(book.prune(nowMs: t0 + SessionBook.retentionMs + 1))
+        #expect(book.sessions.isEmpty)
+    }
+}
+
+/// 24.0 · the book as rows: process-only discovery, the time rules, and what
+/// a transcript and a landing add.
+@Suite("Session projection")
+struct SessionProjectionTests {
+    let t0: Int64 = 1_800_000_000_000
+    let minute: Int64 = 60_000
+
+    private func rows(
+        _ book: SessionBook,
+        processes: [AgentProcesses.Hit] = [],
+        transcripts: [String: TranscriptSummary] = [:],
+        at nowMs: Int64? = nil
+    ) -> SessionProjection.Output {
+        SessionProjection.rows(
+            book: book, processes: processes, transcripts: transcripts,
+            context: SessionProjection.Context(
+                nowMs: nowMs ?? t0,
+                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false)
+            )
+        )
+    }
+
+    private func book(_ records: [AttentionRecord]) -> SessionBook {
+        var book = SessionBook()
+        for record in records { book.apply(record, nowMs: record.ms) }
+        return book
+    }
+
+    @Test func aProcessNoSessionClaimedIsAProcessOnlyRow() throws {
+        let hit = AgentProcesses.Hit(agent: .claude, pid: 10, cwd: "/Users/me/app", tty: "ttys004", startedMs: t0 - minute)
+        let row = try #require(rows(SessionBook(), processes: [hit]).rows.first)
+        #expect(row.rowKey == "claude|pid:10")
+        #expect(row.state == .processOnly)
+        #expect(row.source == .process)
+        #expect(row.project == "app")
+        #expect(row.tty == "ttys004")
+    }
+
+    @Test func aSessionClaimsItsProcessFamily() {
+        let b = book([AttentionRecord(agent: "codex", kind: "working", ms: t0, session: "c1", pid: 11)])
+        let hit = AgentProcesses.Hit(agent: .codex, pid: 10, family: [10, 11])
+        #expect(rows(b, processes: [hit]).rows.map(\.rowKey) == ["codex|c1"], "the wrapper and its child are one process")
+    }
+
+    @Test func aSessionWithNoPidClaimsTheProcessInItsFolder() {
+        let b = book([AttentionRecord(agent: "gemini", kind: "working", ms: t0, session: "g1", cwd: "/w/app")])
+        let same = AgentProcesses.Hit(agent: .gemini, pid: 20, cwd: "/w/app")
+        let other = AgentProcesses.Hit(agent: .gemini, pid: 21, cwd: "/w/other")
+        #expect(rows(b, processes: [same, other]).rows.map(\.rowKey).sorted() == ["gemini|g1", "gemini|pid:21"])
+    }
+
+    @Test func anEndedSessionClaimsNothing() {
+        let b = book([
+            AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 30),
+            AttentionRecord(agent: "claude", kind: "end", ms: t0 + 1_000, session: "s1", pid: 30),
+        ])
+        let hit = AgentProcesses.Hit(agent: .claude, pid: 30)
+        #expect(rows(b, processes: [hit]).rows.map(\.rowKey).sorted() == ["claude|pid:30", "claude|s1"])
+    }
+
+    @Test func aKnownPidStaysRunningWhileTheProcessLives() throws {
+        let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 40)])
+        let row = try #require(rows(b, at: t0 + 120 * minute).rows.first)
+        #expect(row.state == .running)
+        #expect(row.liveProcess)
+    }
+
+    @Test func anUnknownPidIsRecentAfterTheIdleBoundAndSaysWhy() throws {
+        let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1")])
+        #expect(rows(b, at: t0 + 29 * minute).rows.first?.state == .running)
+        let row = try #require(rows(b, at: t0 + 31 * minute).rows.first)
+        #expect(row.state == .recent)
+        #expect(row.recentReason == .quiet)
+        #expect(row.stateSinceMs == t0 + SessionProjection.idleBoundMs)
+        let why = Explain.why(row, lang: .en, nowMs: t0 + 31 * minute)
+        #expect(why.contains("no process Pulse can see"), "\(why)")
+    }
+
+    @Test func aTurnIsOwedForHalfAnHour() throws {
+        let b = book([AttentionRecord(agent: "codex", kind: "turn", ms: t0, session: "c1", pid: 50)])
+        #expect(rows(b, at: t0 + 10 * minute).rows.first?.isYourTurn == true)
+        let row = try #require(rows(b, at: t0 + 31 * minute).rows.first)
+        #expect(row.state == .recent)
+        #expect(row.recentReason == .atPrompt)
+    }
+
+    @Test func aRecentSessionLeavesTheListAndIsCountedForADay() {
+        let b = book([
+            AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1"),
+            AttentionRecord(agent: "claude", kind: "end", ms: t0 + minute, session: "s1"),
+        ])
+        #expect(rows(b, at: t0 + 30 * minute).rows.count == 1)
+        let later = rows(b, at: t0 + 60 * minute)
+        #expect(later.rows.isEmpty)
+        #expect(later.staleHidden == [.claude: 1])
+        #expect(rows(b, at: t0 + 25 * 60 * minute).staleHidden.isEmpty, "a session that went quiet yesterday is not news")
+    }
+
+    @Test func aLiveSessionAtItsPromptStaysListed() throws {
+        let b = book([AttentionRecord(agent: "claude", kind: "start", ms: t0, session: "s1", pid: 60)])
+        let row = try #require(rows(b, at: t0 + 120 * minute).rows.first)
+        #expect(row.state == .recent)
+        #expect(row.recentReason == .atPrompt)
+    }
+
+    @Test func theTranscriptSummaryFillsTheRow() throws {
+        let b = book([AttentionRecord(agent: "claude", kind: "turn", ms: t0, message: "Done.", session: "s1", pid: 70, transcript: "/t/s1.jsonl")])
+        let summary = TranscriptSummary(title: "Fix the login test", lastMessage: "All green.", model: "claude-sonnet-4", lastError: "npm ERR! missing script")
+        let row = try #require(rows(b, transcripts: ["/t/s1.jsonl": summary]).rows.first)
+        #expect(row.task == "Fix the login test")
+        #expect(row.lastWord == "All green.")
+        #expect(row.model == "claude-sonnet-4")
+        #expect(row.lastErrorText == "npm ERR! missing script")
+    }
+
+    @Test func withoutATranscriptTheTurnSaysTheLastWords() throws {
+        let b = book([AttentionRecord(agent: "opencode", kind: "turn", ms: t0, message: "Queue drains on reconnect", session: "o1", pid: 71)])
+        #expect(try #require(rows(b).rows.first).lastWord == "Queue drains on reconnect")
+    }
+
+    @Test func theLandingNamesTheTerminal() throws {
+        let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 0, landing: "tmux:%3;tty:/dev/ttys009;term:WarpTerminal")])
+        let row = try #require(rows(b).rows.first)
+        #expect(row.tty == "ttys009")
+        #expect(row.viaWarp)
+        #expect(SessionProjection.Landing("term:Apple_Terminal").warp == false)
+    }
+
+    @Test func aStallNeedsAnAgentThatReportsItsWork() throws {
+        var b = book([AttentionRecord(agent: "codex", kind: "working", ms: t0, session: "c1", pid: 80)])
+        #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled == false, "no activity events: silence is not evidence")
+        b.apply(activity: ActivitySpool.Event(agent: "codex", session: "c1", event: "tool", tool: "", target: "", prompt: "", cwd: "", tsMs: t0 + minute), nowMs: t0 + minute)
+        #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled)
+    }
+
+    @Test func aBlockedRowCarriesTheProtocolToken() throws {
+        let b = book([AttentionRecord(agent: "pi", kind: "question", ms: t0, message: "Which branch?", session: "p1", pid: 90)])
+        let wait = try #require(rows(b).rows.first?.wait)
+        #expect(wait.kind == "Input")
+        #expect(wait.ask == "Which branch?")
+        #expect(wait.sinceMs == t0)
+    }
+}
+
+/// The thin end: rows in, the tray's snapshot out.
+final class SnapshotBuilderTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
+    private func row(_ key: String, _ agent: AgentID = .claude, state: RowState = .running, task: String = "") -> AgentRow {
+        var r = AgentRow(rowKey: key, agent: agent)
+        r.sessionID = key
+        r.task = task
+        r.state = state
+        r.eventMs = now - 1_000
+        return r
+    }
+
+    private func blocked(_ key: String, sinceAgoMs: Int64 = 10 * 60_000) -> AgentRow {
+        row(key, state: .blocked(RowWait(kind: "Permission", ask: "Bash: make", sinceMs: now - sinceAgoMs)))
+    }
+
+    private func build(
+        _ rows: [AgentRow],
+        staleHidden: [AgentID: Int] = [:],
+        previous: SnapshotBuilder.Previous = .init(),
+        showAll: Bool = false,
+        maxRows: Int = SnapshotBuilder.maxVisibleRows
+    ) -> SnapshotBuilder.Result {
+        SnapshotBuilder.build(
+            rows: rows, staleHidden: staleHidden, previous: previous,
+            context: SnapshotBuilder.Context(nowMs: now, lang: .en, maxVisibleRows: maxRows, showAllAgents: showAll)
+        )
+    }
+
+    func testNothingAtAllIsIdleNotError() {
+        let r = build([])
+        XCTAssertTrue(r.rows.isEmpty)
+        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.activity, .empty)
+    }
+
+    func testWaitingSortsAboveEverythingElse() {
+        let r = build([row("a", task: "Titled"), blocked("b")])
+        XCTAssertEqual(r.rows.map(\.rowKey), ["b", "a"])
+        XCTAssertEqual(r.snapshot.glance, .waiting)
+        XCTAssertEqual(r.activity, .waiting)
+    }
+
+    func testWaitingRowsAreOrderedOldestFirst() {
+        let r = build([blocked("new", sinceAgoMs: 60_000), blocked("old", sinceAgoMs: 600_000)])
+        XCTAssertEqual(r.rows.map(\.rowKey), ["old", "new"])
+    }
+
+    func testMenuBarTitleCarriesCountAndAge() {
+        XCTAssertEqual(build([blocked("a")]).snapshot.title, "1 · 10m")
+        XCTAssertEqual(build([blocked("a", sinceAgoMs: 1_000)]).snapshot.title, "1", "a fresh wait does not spend space on now")
+    }
+
+    func testNothingBlockedMeansNoTitle() {
+        XCTAssertEqual(build([row("a")]).snapshot.title, "")
+        XCTAssertEqual(build([row("a")]).snapshot.glance, .running)
+    }
+
+    func testProcessOnlyRunningIsAGreyDottedGlance() {
+        let r = build([row("claude|pid:1", state: .processOnly)])
+        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.snapshot.lamp, LampFace(shape: .dotted, tone: .idle))
+        XCTAssertEqual(r.activity, .recent, "a bare process does not hold the running tick")
+    }
+
+    func testAFinishedTurnIsNotRunning() {
+        let r = build([row("a", state: .yourTurn(sinceMs: now - 60_000))])
+        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.activity, .recent)
+    }
+
+    func testRowsFoldAtTheVisibleLimit() {
+        let r = build((0..<5).map { row("k\($0)") }, maxRows: 3)
+        XCTAssertEqual(r.snapshot.rows.count, 3)
+        XCTAssertEqual(r.snapshot.hiddenCount, 2)
+        XCTAssertEqual(r.snapshot.totalCount, 5)
+    }
+
+    func testShowAllCollapsesOnceTheListIsShortAgain() {
+        XCTAssertTrue(build((0..<5).map { row("k\($0)") }, showAll: true, maxRows: 3).showAllAgents)
+        XCTAssertFalse(build((0..<2).map { row("k\($0)") }, showAll: true, maxRows: 3).showAllAgents)
+    }
+
+    func testSectionTotalsCountTheWholeListNotTheWindow() {
+        let r = build([blocked("w")] + (0..<4).map { row("k\($0)") }, maxRows: 2)
+        XCTAssertEqual(r.snapshot.sectionTotals[.needsYou], 1)
+        XCTAssertEqual(r.snapshot.sectionTotals[.running], 4)
+    }
+
+    func testFirstSightOfAWaitIsReportedAsNew() {
+        XCTAssertEqual(build([blocked("a")]).newlyWaiting.map(\.rowKey), ["a"])
+    }
+
+    func testAWaitAlreadyKnownIsNotReportedAgain() {
+        let wait = blocked("a")
+        let previous = SnapshotBuilder.Previous(rows: [wait], waitingKeys: ["a"], waitingSince: ["a": wait.wait?.sinceMs ?? 0])
+        XCTAssertTrue(build([wait], previous: previous).newlyWaiting.isEmpty)
+    }
+
+    func testASecondAskOnAWaitingRowIsANewEdge() {
+        let first = blocked("a", sinceAgoMs: 120_000)
+        let previous = SnapshotBuilder.Previous(rows: [first], waitingKeys: ["a"], waitingSince: ["a": now - 120_000])
+        XCTAssertEqual(build([blocked("a", sinceAgoMs: 30_000)], previous: previous).newlyWaiting.map(\.rowKey), ["a"])
+    }
+
+    func testResolvedWaitsAreReported() {
+        let previous = SnapshotBuilder.Previous(rows: [blocked("a")], waitingKeys: ["a"])
+        XCTAssertEqual(build([row("a")], previous: previous).resolvedWaits.map(\.rowKey), ["a"])
+    }
+
+    /// 21.0/24.0: "N older not shown" counts only sessions that went quiet
+    /// within the last day — the projection's count, carried to the snapshot.
+    func testStaleHiddenCountsOnlyTheLastDay() {
+        var book = SessionBook()
+        let minute: Int64 = 60_000
+        book.apply(AttentionRecord(agent: "claude", kind: "end", ms: now - 2 * 60 * minute, session: "x"), nowMs: now)
+        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: now - 3 * 60 * minute, session: "y"), nowMs: now)
+        book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now - 30 * 60 * minute, session: "z"), nowMs: now)
+        let output = SessionProjection.rows(
+            book: book, processes: [], transcripts: [:],
+            context: SessionProjection.Context(nowMs: now, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+        )
+        let r = build(output.rows, staleHidden: output.staleHidden)
+        XCTAssertEqual(r.snapshot.staleHidden, 1, "the end line made no session; y went quiet today; z yesterday")
+        XCTAssertEqual(r.snapshot.staleHiddenAgents, [.claude])
+    }
+
+    func testTheGlanceTooltipIsInTheResolvedLanguage() {
+        let en = SnapshotBuilder.build(rows: [blocked("a")], previous: .init(), context: .init(nowMs: now, lang: .en)).snapshot.tooltip
+        let zh = SnapshotBuilder.build(rows: [blocked("a")], previous: .init(), context: .init(nowMs: now, lang: .zh)).snapshot.tooltip
+        XCTAssertNotEqual(en, zh)
+    }
+}
+
+/// 23.0 · a row's key is decided once and never changes.
+@Suite("Row identity")
+struct RowIdentityTests {
+    @Test func eachKindOfRowHasItsOwnKey() {
+        #expect(RowIdentity.session(agent: .claude, session: "abc") == "claude|abc")
+        #expect(RowIdentity.process(agent: .codex, pid: 7) == "codex|pid:7")
+        #expect(RowIdentity.session(agent: .claude, session: "", cwd: "/w").hasPrefix("claude|hook:"))
+        #expect(RowIdentity.isProcessKey("codex|pid:7"))
+        #expect(!RowIdentity.isProcessKey("codex|abc"))
+        #expect(RowIdentity.isFolderKey(RowIdentity.session(agent: .gemini, session: "", cwd: "/w")))
+    }
+
+    @Test func theHashIsStableAcrossLaunches() {
+        #expect(RowIdentity.stableHash("/Users/me/app") == RowIdentity.stableHash("/Users/me/app"))
+        #expect(RowIdentity.stableHash("/Users/me/app") != RowIdentity.stableHash("/Users/me/other"))
+        #expect(!RowIdentity.session(agent: .claude, session: "", cwd: "/Users/me/app").contains("/Users"), "a key never carries a path")
+    }
+
+    /// The session's key comes from its first event and every later event
+    /// finds the same session — a start, a prompt, a turn.
+    @Test func everyEventOfASessionFindsTheSameKey() {
+        var book = SessionBook()
+        let t0: Int64 = 1_800_000_000_000
+        for (index, kind) in ["start", "working", "permission", "turn"].enumerated() {
+            book.apply(AttentionRecord(agent: "claude", kind: kind, ms: t0 + Int64(index) * 60_000, session: "abc", cwd: "/w/\(index)"), nowMs: t0 + 600_000)
+        }
+        #expect(Array(book.sessions.keys) == ["claude|abc"])
+        #expect(book.sessions["claude|abc"]?.cwd == "/w/3", "facts move; the key does not")
+    }
+
+    /// A process-only row simply is not built once a hook names the
+    /// session that process runs.
+    @Test func whenTheSessionSpeaksTheProcessRowSimplyGoes() {
+        let t0: Int64 = 1_800_000_000_000
+        let hit = AgentProcesses.Hit(agent: .claude, pid: 4242, cwd: "/w/app")
+        let context = SessionProjection.Context(nowMs: t0, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+        var book = SessionBook()
+        #expect(SessionProjection.rows(book: book, processes: [hit], transcripts: [:], context: context).rows.map(\.rowKey) == ["claude|pid:4242"])
+        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "abc", pid: 4242), nowMs: t0)
+        #expect(SessionProjection.rows(book: book, processes: [hit], transcripts: [:], context: context).rows.map(\.rowKey) == ["claude|abc"])
+    }
+}
+
+/// Row presentation rules from EXPERIENCE.md.
+final class AgentRowTests: XCTestCase {
+    private func row(_ mutate: (inout AgentRow) -> Void) -> AgentRow {
+        var r = AgentRow(rowKey: "claude|s1", agent: .claude)
+        mutate(&r)
+        return r
+    }
+
+    func testPlaceholderTitlesAreNotTreatedAsSessions() {
+        for junk in [
+            "-", "—", "Running", "Active", "none", "Agent session", "Chat",
+            "Amp session", "OpenCode session", "Windsurf session", "Cline session",
+        ] {
+            let r = row { $0.task = junk }
+            XCTAssertNil(r.usefulTask, "\(junk) is not a real session title")
+        }
+    }
+
+    func testBarePathIsNotASessionTitle() {
+        XCTAssertNil(row { $0.task = "/Users/me/code" }.usefulTask)
+        XCTAssertNotNil(row { $0.task = "/Users/me fix the parser" }.usefulTask)
+    }
+
+    func testMarkdownLinksBecomeReadablePlainTitles() {
+        let raw = "[hxddh/Pulse](https://github.com/hxddh/Pulse) 本地有安装最新版"
+        let r = row { $0.task = raw }
+        XCTAssertEqual(r.usefulTask, "hxddh/Pulse 本地有安装最新版")
+        XCTAssertEqual(r.task, raw, "presentation cleanup must not rewrite evidence")
+    }
+
+    func testMarkdownImageSyntaxDoesNotLeakIntoTheTray() {
+        XCTAssertEqual(
+            row { $0.task = "Inspect ![failure](file:///tmp/failure.png)" }.usefulTask,
+            "Inspect failure"
+        )
+    }
+
+    func testInternalToolIdentifiersAreNotSessionTitles() {
+        XCTAssertNil(row { $0.task = "update_plan" }.usefulTask)
+        XCTAssertEqual(row { $0.task = "update_auth" }.usefulTask, "update_auth")
+        XCTAssertNil(row { $0.task = "Read Models.swift" }.usefulTask)
+        XCTAssertNil(row { $0.task = "Models.swift" }.usefulTask)
+        XCTAssertNotNil(row { $0.task = "Improve tray density" }.usefulTask)
+    }
+
+    func testShortProjectDropsOpaqueHashes() {
+        XCTAssertEqual(AgentRow.shortProject("/Users/me/code/Pulse"), "Pulse")
+        XCTAssertEqual(AgentRow.shortProject("a1b2c3d4e5f60718"), "", "hash is not a project name")
+        XCTAssertEqual(AgentRow.shortProject(""), "")
+    }
+
+    func testLongProjectNamesAreTruncated() {
+        let long = String(repeating: "x", count: 40)
+        let short = AgentRow.shortProject(long)
+        XCTAssertLessThanOrEqual(short.count, 24)
+        XCTAssertTrue(short.hasSuffix("…"))
+    }
+}
+
+/// Screenshots of 0.24.0 showed one fact stated three and four times over.
+final class RowRedundancyTests: XCTestCase {
+    private func row(agent: AgentID, task: String = "", project: String = "") -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: agent)
+        r.task = task
+        r.project = project
+        r.liveProcess = true
+        r.state = .running
+        return r
+    }
+
+    /// `Cursor · Cursor` — the dedupe compared the project to the hero only.
+    func testProjectThatRestatesTheAgentIsDropped() {
+        let r = row(agent: .cursor, task: "Pulse installation guide", project: "Cursor")
+        XCTAssertEqual(AgentRow.shortProject(r.project), "Cursor")
+        XCTAssertEqual(r.agent.displayName, "Cursor")
+    }
+
+    /// A bare process row said "Process detected", "process", and the agent's name.
+    func testProcessOnlyRowHasNoSessionTitleToShow() {
+        var r = row(agent: .codex)
+        r.state = .processOnly
+        XCTAssertNil(r.usefulTask)
+        // Hero must not fall back to the agent product name (already on identity).
+        let hero = Explain.make(r, lang: .en, nowMs: 1_700_000_000_000).headline
+        XCTAssertNotEqual(hero, r.agent.displayName)
+    }
+
+    func testEveryAgentDropsItsOwnGenericSessionPlaceholder() {
+        for agent in AgentID.allCases {
+            var r = row(agent: agent, task: "\(agent.displayName) session")
+            r.sessionID = "real-id"
+            XCTAssertNil(r.usefulTask, "\(agent.displayName) placeholder escaped as a task")
+        }
+    }
+
+    func testEveryAgentDropsItsOwnBareDisplayName() {
+        for agent in AgentID.allCases {
+            var r = row(agent: agent, task: agent.displayName)
+            r.sessionID = "real-id"
+            XCTAssertNil(r.usefulTask, "\(agent.displayName) alone is identity, not a goal")
+        }
+    }
+}
+
+/// The two facts a row could never state, both collected from the start.
+final class RowContextTests: XCTestCase {
+    private func row(cwd: String = "", project: String = "", eventMs: Int64 = 0) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.cwd = cwd
+        r.project = project
+        r.eventMs = eventMs
+        return r
+    }
+
+    /// Home itself is not a location worth naming; anything under it is.
+    func testPathsUnderHomeUseTilde() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        XCTAssertEqual(row(cwd: home).displayPath, "", "home is not a project")
+        XCTAssertEqual(row(cwd: home + "/code").displayPath, "~/code")
+    }
+
+    /// The middle of a deep path carries no identity; the tail does.
+    func testDeepPathsKeepTheirTail() {
+        let p = row(cwd: "/a/b/c/d/e/Pulse").displayPath
+        XCTAssertTrue(p.hasSuffix("e/Pulse"), p)
+        XCTAssertTrue(p.contains("…"), p)
+    }
+
+    func testShallowPathsAreLeftAlone() {
+        XCTAssertEqual(row(cwd: "/tmp/alpha").displayPath, "/tmp/alpha")
+    }
+
+    func testNoLocationYieldsNoPathRatherThanAPlaceholder() {
+        XCTAssertEqual(row().displayPath, "")
+    }
+
+    func testProjectIsUsedWhenThereIsNoCwd() {
+        XCTAssertEqual(row(project: "Pulse").displayPath, "Pulse")
+    }
+
+    func testUnknownActivityIsZeroNotEpoch() {
+        XCTAssertEqual(row().lastActivitySeconds(at: 1_700_000_000_000), 0)
+    }
+
+    func testActivityAgeCountsFromTheLastEvent() {
+        let now: Int64 = 1_700_000_000_000
+        XCTAssertEqual(row(eventMs: now - 600_000).lastActivitySeconds(at: now), 600, accuracy: 0.001)
+    }
+}
+
+/// Each of these is a defect visible in a 0.25.0 screenshot.
+final class RowPresentationTests: XCTestCase {
+    private let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+    private func row(cwd: String = "", project: String = "", eventMs: Int64 = 0, live: Bool = false) -> AgentRow {
+        var r = AgentRow(rowKey: "k", agent: .claude)
+        r.cwd = cwd
+        r.project = project
+        r.eventMs = eventMs
+        r.liveProcess = live
+        r.state = live ? .running : .recent
+        return r
+    }
+
+    /// The panel grouped two sessions under "~" and a third under
+    /// "users-rustjia" — the same directory, twice, and a header claiming
+    /// three projects where there were two.
+    func testHomeIsNotAProject() {
+        XCTAssertEqual(row(cwd: home).displayPath, "")
+        XCTAssertEqual(row(project: "~").displayPath, "")
+    }
+
+    func testEncodedHomeCollapsesToTheSamePlaceAsHome() {
+        let user = (home as NSString).lastPathComponent
+        XCTAssertTrue(AgentRow.isHomeLike("users-\(user)", home: home))
+        XCTAssertTrue(AgentRow.isHomeLike(user, home: home))
+        XCTAssertEqual(row(project: "users-\(user)").displayPath, "")
+    }
+
+    func testARealProjectIsStillAProject() {
+        XCTAssertEqual(row(cwd: home + "/Documents/Cursor").displayPath, "~/Documents/Cursor")
+        XCTAssertFalse(AgentRow.isHomeLike("/tmp/alpha", home: home))
+    }
+
+    /// "New Session" was shown as a row title.
+    func testPlaceholderTitlesAreNotTitles() {
+        for junk in ["New Session", "Untitled", "New Chat", "Agent session"] {
+            var r = row()
+            r.task = junk
+            XCTAssertNil(r.usefulTask, "\(junk) is a placeholder, not a task")
+        }
+    }
+
+    /// Live for twenty minutes with nothing happening looked like health.
+    ///
+    /// Evaluated against the scan's clock, so these pass an explicit `nowMs`
+    /// rather than depending on when the suite happens to run.
+    private let now: Int64 = 1_700_000_000_000
+
+    private func stalled(agoSeconds: Double) -> Bool {
+        AgentRow.stalled(lastActivityMs: now - Int64(agoSeconds * 1000), nowMs: now)
+    }
+
+    func testLongSilenceWhileLiveIsStalled() {
+        XCTAssertTrue(stalled(agoSeconds: 25 * 60))
+    }
+
+    func testRecentActivityIsNotStalled() {
+        XCTAssertFalse(stalled(agoSeconds: 60))
+    }
+
+    func testUnknownActivityIsNotStalled() {
+        XCTAssertFalse(
+            AgentRow.stalled(lastActivityMs: 0, nowMs: now),
+            "no timestamp is not evidence of silence"
+        )
+    }
+
+    /// A stalled row is one the user should react to: an orange ring, and
+    /// its why on a second line (23.0 — no badge).
+    func testStalledRowsSayWhy() {
+        var r = row(eventMs: now - 25 * 60 * 1000, live: true)
+        r.isStalled = true
+        let face = TrayRowModel.make(TrayRowModel.Input(row: r, lang: .en, nowMs: now))
+        XCTAssertEqual(face.lamp, LampFace(shape: .ring, tone: .attention))
+        XCTAssertEqual(face.secondLine?.kind, .warning)
+        XCTAssertEqual(face.secondLine?.text, face.why)
+    }
+}
+
+/// The stall threshold used to be compiled in at twenty minutes.
+final class StallThresholdTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
+    private func stalled(agoSeconds: Double, threshold: Double) -> Bool {
+        AgentRow.stalled(lastActivityMs: now - Int64(agoSeconds * 1000), nowMs: now, threshold: threshold)
+    }
+
+    func testAShorterThresholdCatchesAShorterSilence() {
+        XCTAssertTrue(stalled(agoSeconds: 6 * 60, threshold: 5 * 60))
+        XCTAssertFalse(stalled(agoSeconds: 6 * 60, threshold: 20 * 60))
+    }
+
+    /// "Never" must read as never stalled, not as always stalled.
+    func testZeroDisablesRatherThanTripping() {
+        XCTAssertFalse(stalled(agoSeconds: 10 * 60 * 60, threshold: 0))
+        XCTAssertFalse(stalled(agoSeconds: 10 * 60 * 60, threshold: -1))
+    }
+
+    func testTheDefaultIsUnchanged() {
+        XCTAssertEqual(AgentRow.stalledSeconds, 20 * 60)
+        XCTAssertTrue(stalled(agoSeconds: 21 * 60, threshold: AgentRow.stalledSeconds))
+    }
+}
+
+/// A vendor placeholder title is chrome, whatever its case — one list.
+final class ChromeVocabularyTests: XCTestCase {
+    // MARK: - One chrome vocabulary, not three
+
+    /// 0.98 collapsed the collector's two copies. The third lived in
+    /// `usefulTask`, was case-sensitive where the collector lowercases, and had
+    /// never learned `Cascade session`.
+    @MainActor
+    func testChromeTitlesAreRejectedWhateverTheirCase() {
+        for title in ["Cascade session", "CASCADE SESSION", "cascade session",
+                      "New Chat", "new chat", "Running", "running", "  Untitled  "] {
+            var row = AgentRow(rowKey: "k", agent: .copilot)
+            row.task = title
+            XCTAssertNil(row.usefulTask, "\(title) is not a user goal")
+        }
+    }
+
+    /// One list, case-insensitive: every entry is chrome in either case,
+    /// and none reaches a row as a goal.
+    @MainActor
+    func testCollectorAndRowShareOneVocabulary() {
+        for title in AgentRow.chromeTitles {
+            XCTAssertTrue(
+                AgentRow.isChromeTitle(title.uppercased()),
+                "\(title) must be chrome in either case"
+            )
+            var row = AgentRow(rowKey: "k", agent: .claude)
+            row.task = title
+            XCTAssertNil(row.usefulTask, "\(title) reached a row as a goal")
+        }
+    }
+
+    func testARealGoalIsNotMistakenForChrome() {
+        XCTAssertFalse(AgentRow.isChromeTitle("Auth session"))
+        XCTAssertFalse(AgentRow.isChromeTitle("Fix the tray hero"))
+    }
+}

@@ -42,7 +42,7 @@ package enum AttentionIO {
         for (index, raw) in lines.enumerated() {
             let columns = raw.split(separator: "\t", omittingEmptySubsequences: false)
             guard columns.count >= 3,
-                  let agent = ActivityHarvest.mapAgent(String(columns[0]))
+                  let agent = AgentCatalog.agent(named: String(columns[0]))
             else { continue }
             let kind = AttentionProtocol.kind(String(columns[1]))
             let session = columns.count > 4 ? String(columns[4]) : ""
@@ -100,7 +100,7 @@ package enum AttentionIO {
                 omittingEmptySubsequences: false
             )
             guard columns.count == AttentionProtocol.columnCount,
-                  let agent = ActivityHarvest.mapAgent(String(columns[0])),
+                  let agent = AgentCatalog.agent(named: String(columns[0])),
                   let ms = Int64(columns[2])
             else { continue }
             latest[agent] = max(latest[agent] ?? 0, ms)
@@ -120,7 +120,7 @@ package enum AttentionIO {
         var latest: [AgentID: (kind: String, tsMs: Int64)] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
             guard let cols = AttentionProtocol.columns(of: line),
-                  let agent = ActivityHarvest.mapAgent(cols[0]),
+                  let agent = AgentCatalog.agent(named: cols[0]),
                   AttentionProtocol.acceptsWrite(kind: cols[1]),
                   let ms = Int64(cols[2]), ms > 0
             else { continue }

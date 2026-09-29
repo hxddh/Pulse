@@ -43,7 +43,7 @@ extension StatusStore {
             lang: lang,
             nowMs: Int64(now.timeIntervalSince1970 * 1000),
             lastScanMs: lastRead.map { Int64($0.timeIntervalSince1970 * 1000) },
-            intervalSeconds: engine.currentInterval,
+            intervalSeconds: engine.expectedInterval,
             lastScanIntervalSeconds: engine.lastScanInterval,
             asleep: engine.powerParked
         ))
@@ -86,8 +86,7 @@ extension StatusStore {
             notifyOnWaiting: settings.notifyOnWaiting,
             notifyAuthorized: notifyAuthorized,
             bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
-            hooksMissing: needsHooksNudge,
-            scanIncomplete: collectorScanIncomplete
+            hooksMissing: needsHooksNudge
         ))
     }
 
@@ -96,7 +95,6 @@ extension StatusStore {
         case .openNotificationSettings: openSystemNotificationSettings()
         case .enableNotifications: requestNotificationAuthorization()
         case .installHooks: installHooks()
-        case .openDiagnostics: openDiagnostics()
         }
     }
 

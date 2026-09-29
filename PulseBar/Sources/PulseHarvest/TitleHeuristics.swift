@@ -1,8 +1,8 @@
 import Foundation
 import PulseCore
 
-/// What a session title is not (12.3: moved out of `AgentRow` so the harvest
-/// library can ask without depending on the app's row model; `AgentRow`'s
+/// What a session title is not (12.3: moved out of `AgentRow` so a library
+/// can ask without depending on the app's row model; `AgentRow`'s
 /// static functions forward here, so there is still one vocabulary).
 package enum TitleHeuristics {
     package static let chromeTitles: Set<String> = [

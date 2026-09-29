@@ -96,15 +96,15 @@ struct TrayHeaderModel: Equatable {
 
 /// 23.0 · the tray's one notice: something on this Mac needs fixing, with
 /// the one action that fixes it. At most one, in this order: notifications
-/// (a "needs you" cannot reach a closed tray), hooks for a live Claude or
-/// Codex, a scan that did not finish. Pure.
+/// (a "needs you" cannot reach a closed tray), then a hook missing for a
+/// live agent. Pure.
 struct TrayNoticeModel: Equatable {
     enum Kind: Equatable {
-        case notificationsDenied, notificationsOff, bannerFailed, hooksMissing, scanIncomplete
+        case notificationsDenied, notificationsOff, bannerFailed, hooksMissing
     }
 
     enum Action: Equatable {
-        case openNotificationSettings, enableNotifications, installHooks, openDiagnostics
+        case openNotificationSettings, enableNotifications, installHooks
     }
 
     var kind: Kind
@@ -121,9 +121,8 @@ struct TrayNoticeModel: Equatable {
         var notifyAuthorized: Bool?
         /// Notification Center refused the last banner while a wait is open.
         var bannerFailed: Bool
-        /// Claude or Codex is live and its hooks are not installed.
+        /// A live agent's hook is not installed.
         var hooksMissing: Bool
-        var scanIncomplete: Bool
     }
 
     static func pick(_ input: Input) -> TrayNoticeModel? {
@@ -154,13 +153,6 @@ struct TrayNoticeModel: Equatable {
                 kind: .hooksMissing, text: t(.hooksNudge),
                 actionTitle: t(.installHooks), action: .installHooks,
                 systemImage: "link", tone: .idle
-            )
-        }
-        if input.scanIncomplete {
-            return TrayNoticeModel(
-                kind: .scanIncomplete, text: t(.trayScanIncomplete),
-                actionTitle: t(.diagnosticsOpen), action: .openDiagnostics,
-                systemImage: "clock.badge.exclamationmark", tone: .attention
             )
         }
         return nil

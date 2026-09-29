@@ -16,21 +16,21 @@ struct ExplainTests {
     let minute: Int64 = 60_000
 
     private func session(_ agent: AgentID = .claude, task: String = "Refactor the settings panes") -> AgentRow {
-        var row = AgentRow(rowKey: RowIdentity.session(agent: agent, sessionID: "s1"), agent: agent)
+        var row = AgentRow(rowKey: RowIdentity.session(agent: agent, session: "s1"), agent: agent)
         row.sessionID = "s1"
         row.task = task
         row.project = "pulse"
         row.cwd = "/Users/me/pulse"
-        row.source = .session
+        row.source = .hooks
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = now - minute
+        row.eventMs = now - minute
         return row
     }
 
-    private func blocked(_ signal: WaitSignalKind, kind: String = "Permission", inFront: Bool = false) -> AgentRow {
+    private func blocked(kind: String = "Permission", inFront: Bool = false) -> AgentRow {
         var row = session()
-        row.state = .blocked(RowWait(kind: kind, ask: "Bash: npm test", sinceMs: now - 4 * minute, signal: signal, inFront: inFront))
+        row.state = .blocked(RowWait(kind: kind, ask: "Bash: npm test", sinceMs: now - 4 * minute, inFront: inFront))
         return row
     }
 
@@ -41,7 +41,7 @@ struct ExplainTests {
     // MARK: - Why: which evidence, and since when
 
     @Test func aHookWaitNamesItsEvidenceAndItsAge() {
-        let text = why(blocked(.hooks))
+        let text = why(blocked())
         #expect(text.contains("Claude"))
         #expect(text.contains(L10n.t(.explainKindPermission, .en)))
         #expect(text.contains(Explain.ago(now - 4 * minute, nowMs: now, lang: .en)))
@@ -49,19 +49,14 @@ struct ExplainTests {
     }
 
     @Test func aWaitRaisedInFrontSaysWhyThereWasNoBanner() {
-        let text = why(blocked(.hooks, inFront: true))
+        let text = why(blocked(inFront: true))
         #expect(text.hasSuffix(L10n.t(.explainHookFront, .en)))
     }
 
-    @Test func aPendingWaitNamesTheSessionFile() {
-        let text = why(blocked(.pending, kind: "Input"))
+    @Test func aQuestionSaysInput() {
+        let text = why(blocked(kind: "Input"))
         #expect(text.contains("Claude"))
         #expect(text.contains(L10n.t(.explainKindInput, .en)))
-    }
-
-    @Test func aVendorWaitSaysClaudeReportedIt() {
-        let text = why(blocked(.vendor))
-        #expect(text.hasPrefix("Claude itself"))
     }
 
     @Test func yourTurnSaysHowToClearItWithoutNowAgo() {
@@ -84,7 +79,7 @@ struct ExplainTests {
     /// silence and nothing the person could not have set.
     @Test func aStalledRowNamesTheSilence() {
         var row = session()
-        row.harvestMs = now - 23 * minute
+        row.eventMs = now - 23 * minute
         row.isStalled = true
         let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en)
         let expected = String(format: L10n.t(.explainStalled, .en), quiet)
@@ -93,49 +88,56 @@ struct ExplainTests {
 
     @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
         var row = session()
-        row.harvestMs = 0
+        row.eventMs = 0
         row.isStalled = true
         #expect(why(row) == L10n.t(.explainStalledUnknown, .en))
     }
 
-    @Test func aRunningRowSaysWhereItsClockCameFrom() {
+    @Test func aRunningRowSaysItsHookReportedWork() {
         let text = why(session())
-        #expect(text.hasPrefix(L10n.t(.sourceSession, .en)))
+        #expect(text.hasPrefix("Claude's hook"), "\(text)")
         var noClock = session()
-        noClock.harvestMs = 0
+        noClock.eventMs = 0
         #expect(why(noClock) == L10n.t(.explainRunningNoClock, .en))
     }
 
-    @Test func errorsExplainTheOrangeLamp() {
+    /// 24.0: orange is only a stall — an error in the transcript is a fact
+    /// in the detail page, not a lamp.
+    @Test func anErrorIsNotAnOrangeLamp() {
         var row = session()
-        row.errors = 3
-        #expect(why(row) == String(format: L10n.t(.explainErrors, .en), 3))
+        row.lastErrorText = "npm ERR! missing script: test"
         let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        #expect(face.lamp == LampFace(shape: .ring, tone: .attention))
-        #expect(face.secondLine?.kind == .warning)
+        #expect(face.lamp == LampFace(shape: .ring, tone: .running))
     }
 
-    @Test func aRecentRowSaysThereIsNoProcess() {
+    /// 24.0: a recent row says which rule made it recent.
+    @Test func aRecentRowSaysWhichRuleMadeItRecent() {
         var row = session()
         row.liveProcess = false
         row.state = .recent
-        #expect(why(row).hasPrefix("No live process"))
+        row.recentReason = .ended
+        row.stateSinceMs = now - 5 * minute
+        #expect(why(row).hasPrefix("The session ended"))
+        row.recentReason = .atPrompt
+        #expect(why(row).hasPrefix("At its prompt"))
+        row.recentReason = .quiet
+        #expect(why(row).contains("no process Pulse can see"))
     }
 
     @Test func theSameRowAndInstantAlwaysSayTheSameThing() {
-        let row = blocked(.hooks)
+        let row = blocked()
         #expect(Explain.make(row, lang: .en, nowMs: now) == Explain.make(row, lang: .en, nowMs: now))
     }
 
     @Test func thePinnedClockIsTheOneTheSentenceMeasuresFrom() {
-        let row = blocked(.hooks)
+        let row = blocked()
         let early = Explain.make(row, lang: .en, nowMs: now).why
         let later = Explain.make(row, lang: .en, nowMs: now + 60 * minute).why
         #expect(early != later)
     }
 
     @Test func languageIsAnInput() {
-        let row = blocked(.hooks)
+        let row = blocked()
         #expect(why(row, .en) != why(row, .zh))
     }
 
@@ -151,7 +153,7 @@ struct ExplainTests {
         var row = session(task: "")
         row.lastWord = "All tests pass."
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == "All tests pass.")
-        row.harvestMs = now - 45 * minute
+        row.eventMs = now - 45 * minute
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == "pulse", "stale words fall back to the project")
     }
 
@@ -164,7 +166,7 @@ struct ExplainTests {
     }
 
     @Test func aWaitLeadsWithWhatThePersonMustRecognise() {
-        var row = blocked(.hooks)
+        var row = blocked()
         row.lastWord = "Fresh words never displace the question."
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == "Refactor the settings panes")
         row.task = ""
@@ -183,7 +185,7 @@ struct ExplainTests {
     }
 
     @Test func aBlockedRowCarriesItsAsk() {
-        let explain = Explain.make(blocked(.hooks), lang: .en, nowMs: now)
+        let explain = Explain.make(blocked(), lang: .en, nowMs: now)
         #expect(explain.ask == "Bash: npm test")
         #expect(explain.state == L10n.t(.needsYou, .en), "one word per concept")
     }
@@ -191,7 +193,7 @@ struct ExplainTests {
     // MARK: - The lamp explanation
 
     @Test func aRedLampSaysOneLine() {
-        let waiting = blocked(.hooks)
+        let waiting = blocked()
         var other = session(.codex)
         other.rowKey = "codex|b"
         let explanation = LampExplanation.make(rows: [waiting, other], glance: .waiting)
@@ -212,7 +214,7 @@ struct ExplainTests {
 
     @Test func aStalledLampNamesNoThreshold() {
         var stalled = session()
-        stalled.harvestMs = now - 30 * minute
+        stalled.eventMs = now - 30 * minute
         stalled.isStalled = true
         let explanation = LampExplanation.make(rows: [stalled], glance: .stalled)
         #expect(explanation.rule == .stalled)
@@ -233,12 +235,10 @@ struct ExplainTests {
 
     @Test func everyStateHasItsShapeAndTone() {
         var blockedRow = session()
-        blockedRow.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        blockedRow.state = .blocked(RowWait(kind: "Permission"))
         let running = session()
         var stalled = session()
         stalled.isStalled = true
-        var failing = session()
-        failing.errors = 2
         var turn = session()
         turn.state = .yourTurn(sinceMs: now)
         var recent = session()
@@ -249,7 +249,6 @@ struct ExplainTests {
         #expect(LampFace.row(blockedRow) == LampFace(shape: .filled, tone: .waiting))
         #expect(LampFace.row(running) == LampFace(shape: .ring, tone: .running))
         #expect(LampFace.row(stalled) == LampFace(shape: .ring, tone: .attention))
-        #expect(LampFace.row(failing) == LampFace(shape: .ring, tone: .attention))
         #expect(LampFace.row(turn) == LampFace(shape: .hollow, tone: .idle))
         #expect(LampFace.row(recent) == LampFace(shape: .hollow, tone: .idle))
         #expect(LampFace.row(process) == LampFace(shape: .dotted, tone: .idle), "a process is never orange")
@@ -309,7 +308,9 @@ struct ExplainTests {
     }
 
     @Test func aWaitWithoutWordsNamesItsKind() {
-        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPending(), lang: .en)
+        var row = SurfaceFixtures.rowPermission()
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: SurfaceFixtures.nowMs - 2 * 60_000))
+        let model = SurfaceFixtures.rowModel(row, lang: .en)
         #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: L10n.waitKind("Permission", .en)))
     }
 
@@ -340,23 +341,18 @@ struct ExplainTests {
         #expect(labels.contains(L10n.t(.detailSource, .en)))
     }
 
-    @Test func theDetailPlanCountsItsOwnSteps() {
+    @Test func theTurnDetailQuotesTheLastMessage() {
         let fixture = SurfaceFixtures.detailTurn(lang: .en)
-        let plan = fixture.plan
-        #expect(plan?.steps.count == 3)
-        #expect(plan?.progress == String(format: L10n.t(.progressFact, .en), 3, 3))
         #expect(fixture.lastMessage != nil)
         #expect(!fixture.canDismiss)
     }
 
-    @Test func staleWordsAndPlansAreNotQuotedAsNow() {
+    @Test func staleWordsAreNotQuotedAsNow() {
         var row = session()
-        row.harvestMs = now - 45 * minute
+        row.eventMs = now - 45 * minute
         row.lastWord = "old"
-        row.planSteps = [ActivityHarvest.PlanStep(text: "old step", state: .current)]
         let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
         #expect(detail.lastMessage == nil)
-        #expect(detail.plan == nil)
     }
 
     /// No placeholder rows: a fact Pulse does not have is not listed, and
@@ -387,24 +383,24 @@ final class ExplainErrorTests: XCTestCase {
         row.task = "Fix the auth module"
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.source = .session
+        row.eventMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.source = .hooks
         return row
     }
 
     // MARK: D-2 · a fault is not crowded out
 
-    /// 23.0: D-1 (token pairs) went with the facts; D-2 is one rule now —
-    /// a row that reported errors explains its orange lamp with them.
-    func testARowThatReportedErrorsSaysSo() {
+    /// 24.0: a transcript's last error is shown on the detail page, where
+    /// it can be read in full — not guessed into a count.
+    func testALastErrorIsTheDetailPagesError() {
         var row = liveRow()
-        row.errors = 7
-        let why = Explain.make(row, lang: .en, nowMs: row.harvestMs).why
-        XCTAssertTrue(why.contains("7"), why)
+        row.lastErrorText = "npm ERR! missing script: test"
+        XCTAssertEqual(DetailModel.make(row: row, lang: .en, nowMs: row.eventMs).error, "npm ERR! missing script: test")
+        XCTAssertNil(DetailModel.make(row: liveRow(), lang: .en, nowMs: row.eventMs).error)
     }
 
     func testNoErrorsIsNoFault() {
-        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().harvestMs).why
+        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().eventMs).why
         XCTAssertFalse(why.contains("error"), why)
     }
 }

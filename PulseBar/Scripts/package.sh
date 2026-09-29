@@ -18,7 +18,7 @@ if [[ -n "$CHECK_PYTHON" ]]; then
 else
   # Python is an optional legacy/verification tool. The application and the
   # release artifact must still be buildable on a clean Swift-only machine;
-  # the native fixture and packaged Swift selftest below remain mandatory.
+  # the packaged Swift selftest below remains mandatory.
   echo "note: python3 unavailable — optional Python source gates skipped"
 fi
 
@@ -47,12 +47,6 @@ BIN="$(swift build -c release --show-bin-path)/PulseBar"
 APP="$ROOT/zig-out/package/Pulse.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-
-# Exercise the real Swift-native adapters against all source families before
-# assembling the app. This is headless and does not require XCTest/Xcode, so a
-# clean Command Line Tools machine cannot accidentally ship a dead collector.
-echo "running --native-fixture-test..."
-"$BIN" --native-fixture-test
 
 cp "$BIN" "$APP/Contents/MacOS/PulseBar"
 # Brand marks (template PNGs + SVG sources)
@@ -137,7 +131,6 @@ PLIST
 # passed all of them and still crashed on launch.
 if [[ -n "$CHECK_PYTHON" ]]; then
   "$CHECK_PYTHON" "$ROOT/scripts/package_check.py" "$APP"
-  "$CHECK_PYTHON" "$ROOT/scripts/resource_budget_check.py"
 else
   test -x "$APP/Contents/MacOS/PulseBar"
   test -f "$APP/Contents/Info.plist"

@@ -28,11 +28,10 @@ public enum DebugLog {
 
     /// A row key without the project name.
     ///
-    /// `ActivityHarvest.sessionKey` falls back to the workspace leaf when an
-    /// agent has no session id, so `claude|Pulse` — a directory name off the
-    /// user's disk — was landing in a log file that support reports quote. The
-    /// agent stays readable and the tail becomes a stable digest, so lines
-    /// about the same row still correlate across a whole log.
+    /// A key's tail can name a session or hash a folder; neither belongs in a
+    /// log file that support reports quote. The agent stays readable and the
+    /// tail becomes a stable digest, so lines about the same row still
+    /// correlate across a whole log.
     public static func key(_ rowKey: String) -> String {
         guard let split = rowKey.firstIndex(of: "|") else { return rowKey }
         let agent = rowKey[..<split]

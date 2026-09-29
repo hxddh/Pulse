@@ -129,7 +129,7 @@ public struct AttentionRecord: Equatable, Sendable {
 /// `pulse-hook` / `PulseBar --hook`.
 ///
 /// Writers: `PulseHookReceiver`, `AttentionIO`, and external integrators
-/// appending lines directly. Reader: `AttentionReader`. Spec:
+/// appending lines directly. Reader: `SessionBook` (the app). Spec:
 /// `docs/attention-protocol.md`.
 public enum AttentionProtocol {
     public static let version = 4

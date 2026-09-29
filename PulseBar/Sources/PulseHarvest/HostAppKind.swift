@@ -1,36 +1,12 @@
 import Foundation
 import PulseCore
 
-// Vocabulary the collector and the app share (12.3: moved out of the app's
-// Models.swift and TerminalFocus.swift into the harvest library).
-
-/// Evidence carried by this specific row, not a blanket promise for an agent.
-///
-/// An agent may have a structured collector and still degrade to a process
-/// row when its local session store is unavailable. The view uses this value
-/// to choose an information architecture instead of making every row look
-/// equally certain.
-package enum ObservationSource: String, Equatable, Hashable {
-    case session
-    case cache
-    case process
-}
-
-/// Privacy-safe reason a process rule matched.
-///
-/// The support window needs to explain why Pulse believes an Agent is live,
-/// but the full command line can contain paths, prompts, tokens, and secrets.
-/// Keep only the rule class.
-package enum ProcessEvidence: String, Equatable, Hashable {
-    case executable
-    case pathSignature = "path_signature"
-}
-
-/// Host IDE / editor that owns an agent process (parent walk from `ps`).
+/// Host IDE / editor that owns an agent process (the process table's parent
+/// walk, `AgentProcesses`).
 ///
 /// Activation uses `NSWorkspace.open` / bundle-id activate on an explicit user
 /// click — never a scan-time enumeration of every running application.
-package enum HostAppKind: String, Equatable, Hashable, CaseIterable {
+package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
     case cursor
     case vsCode
     case windsurf
@@ -51,7 +27,7 @@ package enum HostAppKind: String, Equatable, Hashable, CaseIterable {
         }
     }
 
-    /// Path fragments seen in `ps` parent argv.
+    /// Path fragments seen in a parent's executable path or argv.
     package var pathNeedles: [String] {
         switch self {
         case .cursor: return ["Cursor.app/"]

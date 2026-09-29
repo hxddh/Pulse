@@ -28,9 +28,8 @@ VIEWS = [
     ("TrayPanelViews.swift", "TrayHeaderFace"),
     ("TrayPanelViews.swift", "TrayNoticeFace"),
     ("TrayPanelViews.swift", "TrayFilterField"),
-    # 23.0: one session in full, its plan and facts.
+    # 23.0: one session in full and its facts (24.0 dropped the plan).
     ("SessionDetailView.swift", "SessionDetailFace"),
-    ("SessionDetailView.swift", "PlanFace"),
     ("SessionDetailView.swift", "FactGrid"),
     # 22.0: the session's last hour.
     ("SessionDetailView.swift", "TimelineStripView"),

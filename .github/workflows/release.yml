@@ -167,9 +167,6 @@ jobs:
           PULSE_NOTARY_PROFILE: ${{ steps.signing.outputs.notary_profile }}
         run: ./PulseBar/Scripts/package.sh
 
-      - name: Resource budget (packaged binary)
-        run: python3 scripts/resource_budget_check.py
-
       - name: Release notes from CHANGELOG
         run: |
           VERSION="${{ needs.decide.outputs.version }}"

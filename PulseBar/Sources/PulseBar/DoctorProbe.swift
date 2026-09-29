@@ -1,52 +1,33 @@
 import Foundation
 
 /// 19.0 · the self-check's reads. Read-only by construction: it opens the
-/// agents' own config files and logs for reading, runs `claude agents
-/// --json` once (the same bounded call the scan makes), and reduces all of
-/// it to `DoctorModel.Facts` — counts, event names and timestamps. Nothing
-/// here writes, and nothing it keeps can identify a session or a project.
+/// agents' own hook configurations for reading and reduces them, with the
+/// attention file's newest line per agent, to `DoctorModel.Facts` — event
+/// names and timestamps. Nothing here writes, and nothing it keeps can
+/// identify a session or a project.
 ///
 /// Runs only on the user's click, off the main actor.
 enum DoctorProbe {
-    /// How many bytes of the newest rollout are looked at for its format.
-    static let rolloutHeadBytes = 256 * 1024
-    /// Only logs this recent say anything about the Codex installed today.
-    static let rolloutWindow: TimeInterval = 7 * 24 * 60 * 60
-
-    static func gather(
-        home: URL, coverage: [String: DoctorModel.Coverage] = [:], nowMs: Int64
-    ) -> DoctorModel.Facts {
+    static func gather(home: URL, nowMs: Int64) -> DoctorModel.Facts {
         var facts = DoctorModel.Facts()
-        facts.readCoverage = coverage
         facts.channel = PulseVersion.distributionChannel
         let os = ProcessInfo.processInfo.operatingSystemVersion
         facts.macOS = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
         facts.nowMs = nowMs
 
-        let fm = FileManager.default
         // 24.0: every agent's hook, by its own contract.
         for agent in AgentID.priority {
             facts.hooks[agent.rawValue] = hookFacts(agent, home: home)
         }
-        let claudeCLI = ClaudeCLI.executable()
-        facts.claudeInstalled = facts.hooks[AgentID.claude.rawValue]?.present == true || claudeCLI != nil
-        facts.claudeAgents = agentsAnswer(executable: claudeCLI)
 
-        // Codex: its legacy notify line and the rollout format.
+        // Codex: its legacy notify line.
         let codexDir = home.appendingPathComponent(".codex", isDirectory: true)
-        facts.codexInstalled = fm.fileExists(atPath: codexDir.path)
         if let config = try? String(contentsOf: codexDir.appendingPathComponent("config.toml"), encoding: .utf8) {
             facts.codexNotifyInstalled = config.split(separator: "\n").contains { line in
                 line.trimmingCharacters(in: .whitespaces).hasPrefix("notify")
                     && HooksInstaller.containsPulseMarker(String(line))
             }
         }
-        let rollouts = recentRollouts(codexDir.appendingPathComponent("sessions", isDirectory: true), nowMs: nowMs)
-        facts.codexCompressedRollouts = rollouts.compressed
-        if let newest = rollouts.newest {
-            facts.codexRollout = rolloutShape(head(of: newest, bytes: rolloutHeadBytes))
-        }
-
         // What the hooks said, newest per agent, from the attention file.
         for (agent, event) in AttentionIO.latestEvents() {
             facts.lastFire[agent.rawValue] = DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs)
@@ -101,75 +82,5 @@ enum DoctorProbe {
             }
         }
         return (events, matcher)
-    }
-
-    static func rolloutShape(_ text: String) -> DoctorModel.RolloutShape {
-        var legacy = false
-        var paginated = false
-        var any = false
-        for line in text.split(separator: "\n") where line.contains("\"event_msg\"") {
-            any = true
-            if line.contains("\"item_completed\"") { paginated = true }
-            if line.contains("\"user_message\"") || line.contains("\"agent_message\"") { legacy = true }
-        }
-        switch (legacy, paginated) {
-        case (true, true): return .mixed
-        case (true, false): return .legacy
-        case (false, true): return .paginated
-        case (false, false): return any || !text.isEmpty ? .unknown : .none
-        }
-    }
-
-    static func agentsAnswer(executable: String?) -> DoctorModel.AgentsAnswer {
-        guard let executable else { return .noCLI }
-        guard let result = ProcessIO.run(
-            executable: executable,
-            arguments: ["agents", "--json"],
-            timeout: ClaudeAgentsProbe.timeoutSeconds,
-            outputLimit: ClaudeAgentsProbe.outputLimit
-        ) else { return .failed(exitStatus: -1, timedOut: false) }
-        guard result.status == 0, !result.timedOut else {
-            return .failed(exitStatus: result.status, timedOut: result.timedOut)
-        }
-        guard let agents = ClaudeAgentsProbe.parse(result.stdout) else {
-            return .unreadable(bytes: result.stdout.count)
-        }
-        let waiting = agents.filter { ClaudeAgentsProbe.kind(status: $0.status, waitingFor: $0.waitingFor) != nil }.count
-        return .parsed(sessions: agents.count, waiting: waiting)
-    }
-
-    // MARK: - Files
-
-    private static func recentRollouts(_ root: URL, nowMs: Int64) -> (newest: URL?, compressed: Int) {
-        let fm = FileManager.default
-        guard let walker = fm.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return (nil, 0) }
-        let horizon = Date(timeIntervalSince1970: TimeInterval(nowMs) / 1000 - rolloutWindow)
-        var newest: (URL, Date)?
-        var compressed = 0
-        var visited = 0
-        for case let url as URL in walker {
-            visited += 1
-            if visited > 20_000 { break }
-            let name = url.lastPathComponent
-            guard name.hasPrefix("rollout-") else { continue }
-            if name.hasSuffix(".zst") { compressed += 1; continue }
-            guard url.pathExtension == "jsonl",
-                  let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                  date >= horizon
-            else { continue }
-            if newest == nil || date > newest!.1 { newest = (url, date) }
-        }
-        return (newest?.0, compressed)
-    }
-
-    private static func head(of url: URL, bytes: Int) -> String {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
-        defer { try? handle.close() }
-        let data = (try? handle.read(upToCount: bytes)) ?? Data()
-        return String(decoding: data, as: UTF8.self)
     }
 }

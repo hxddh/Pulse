@@ -1,19 +1,8 @@
 {
   "schema": 1,
-  "about": "Where each agent's on-disk format and hook contract were checked. Gate: scripts/catalog_check.py. Weekly sentinel: scripts/vendor_drift.py.",
+  "about": "Where each agent's hook contract was checked (24.0 reads no session store). Gate: scripts/catalog_check.py. Weekly sentinel: scripts/vendor_drift.py.",
   "agents": {
     "claude": {
-      "source": "docs",
-      "urls": [
-        "https://code.claude.com/docs/en/hooks",
-        "https://code.claude.com/docs/en/cli-reference"
-      ],
-      "checked": "2026-09-29",
-      "tests": [
-        "AttentionTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ],
-      "note": "Closed source; transcripts are the documented JSONL and hooks are the documented events.",
       "hooks": {
         "source": "docs",
         "urls": [
@@ -30,22 +19,14 @@
           "Notification",
           "Stop",
           "StopFailure"
+        ],
+        "tests": [
+          "AttentionTests.swift",
+          "SessionTests.swift"
         ]
       }
     },
     "codex": {
-      "source": "repo",
-      "repo": "https://github.com/openai/codex",
-      "commit": "0d7b8117d3cc6d9ffe21d22375d70307133e9f16",
-      "checked": "2026-09-29",
-      "watch": [
-        "codex-rs/core/src/rollout.rs",
-        "codex-rs/protocol/src/protocol.rs"
-      ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ],
       "hooks": {
         "source": "repo",
         "repo": "https://github.com/openai/codex",
@@ -62,12 +43,14 @@
           "SessionEnd",
           "UserPromptSubmit",
           "Stop"
+        ],
+        "tests": [
+          "AttentionTests.swift",
+          "SessionTests.swift"
         ]
       }
     },
     "cursor": {
-      "source": "unverified",
-      "why": "Closed source; the composer store in state.vscdb is undocumented and read as found.",
       "hooks": {
         "source": "docs",
         "urls": [
@@ -80,22 +63,14 @@
           "sessionEnd",
           "afterAgentResponse",
           "stop"
+        ],
+        "tests": [
+          "AttentionTests.swift",
+          "SessionTests.swift"
         ]
       }
     },
     "pi": {
-      "source": "repo",
-      "repo": "https://github.com/badlogic/pi-mono",
-      "commit": "b485fa3128c3d8dae87cb59da6e95db0f991c5bc",
-      "checked": "2026-09-29",
-      "watch": [
-        "packages/coding-agent/src/core/session-manager.ts",
-        "packages/ai/src/types.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ],
       "hooks": {
         "source": "repo",
         "repo": "https://github.com/badlogic/pi-mono",
@@ -114,25 +89,14 @@
           "ui_prompt_start",
           "ui_prompt_end",
           "agent_settled"
+        ],
+        "tests": [
+          "AttentionTests.swift",
+          "SessionTests.swift"
         ]
       }
     },
     "gemini": {
-      "source": "repo",
-      "repo": "https://github.com/google-gemini/gemini-cli",
-      "commit": "fe6350238c1862dade66a9dea9080c6508475bec",
-      "checked": "2026-09-29",
-      "watch": [
-        "packages/core/src/services/chatRecordingService.ts",
-        "packages/core/src/services/chatRecordingTypes.ts",
-        "packages/core/src/config/storage.ts",
-        "packages/core/src/config/projectRegistry.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "HarvestTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ],
       "hooks": {
         "source": "repo",
         "repo": "https://github.com/google-gemini/gemini-cli",
@@ -149,21 +113,14 @@
           "BeforeAgent",
           "AfterAgent",
           "Notification"
+        ],
+        "tests": [
+          "AttentionTests.swift",
+          "SessionTests.swift"
         ]
       }
     },
     "copilot": {
-      "source": "repo",
-      "repo": "https://github.com/github/copilot-sdk",
-      "commit": "d3e90e04cd2c973dcb490889f8ecd85ce61b7611",
-      "checked": "2026-09-29",
-      "watch": [
-        "nodejs/src/generated/session-events.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift"
-      ],
-      "note": "Storage layout from github/docs copilot-cli config-dir reference.",
       "hooks": {
         "source": "repo",
         "repo": "https://github.com/github/docs",
@@ -180,24 +137,14 @@
           "agentStop",
           "notification",
           "errorOccurred"
+        ],
+        "tests": [
+          "AttentionTests.swift",
+          "SessionTests.swift"
         ]
       }
     },
     "opencode": {
-      "source": "repo",
-      "repo": "https://github.com/anomalyco/opencode",
-      "commit": "7945de208964a49300d7f770d1a71d078db9a4c4",
-      "checked": "2026-09-29",
-      "watch": [
-        "packages/core/src/session/sql.ts",
-        "packages/core/src/database/schema.gen.ts",
-        "packages/opencode/src/session/processor.ts",
-        "packages/schema/src/v1/session.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ],
       "hooks": {
         "source": "repo",
         "repo": "https://github.com/anomalyco/opencode",
@@ -221,6 +168,10 @@
           "question.asked",
           "question.replied",
           "question.rejected"
+        ],
+        "tests": [
+          "AttentionTests.swift",
+          "SessionTests.swift"
         ]
       }
     }

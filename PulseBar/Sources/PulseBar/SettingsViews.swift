@@ -74,7 +74,6 @@ extension StatusStore {
             hookTestTone: hookTone,
             hookTestRunning: hookSelfTestResult == .running,
             allowTerminalAutomation: settings.allowTerminalAutomation,
-            readProtectedAppData: settings.readProtectedAppData,
             updateCheckEnabled: settings.updateCheckEnabled,
             updateStatus: updateStatusText,
             updateAvailable: updateAvailableURL != nil,
@@ -100,7 +99,6 @@ extension StatusStore {
         case .uninstallHooks: uninstallHooks()
         case .testHooks: runHookSelfTest()
         case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
-        case .setReadAppData(let on): setReadProtectedAppData(on)
         case .setUpdateCheck(let on): set(\.updateCheckEnabled, on)
         case .checkForUpdates: checkForUpdatesNow()
         case .openRelease:
@@ -275,16 +273,6 @@ struct SettingsFace: View {
                 Text(t(.allowTerminalAutomation))
                 Text(t(.allowTerminalAutomationHint))
             }
-        case .dataAccess:
-            Toggle(isOn: binding(model.readProtectedAppData) { .setReadAppData($0) }) {
-                Text(t(.agentDataAccess))
-                Text(t(.agentDataAccessHint))
-            }
-            .listRowBackground(
-                model.focus == .dataAccess
-                    ? Color.accentColor.opacity(PulseTheme.Fill.selected)
-                    : Color.clear
-            )
         case .updates:
             Toggle(t(.checkForUpdates), isOn: binding(model.updateCheckEnabled) { .setUpdateCheck($0) })
             LabeledContent {
@@ -305,10 +293,6 @@ struct SettingsFace: View {
         switch section {
         case .hooks:
             Text(t(.hooksHint))
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(.secondary)
-        case .dataAccess:
-            Text(t(.agentDataAccessSkipHint))
                 .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
         case .general, .shortcut, .notifications, .terminal, .updates:

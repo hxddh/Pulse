@@ -30,7 +30,7 @@ struct TrayRowModel: Equatable {
         enum Kind: Equatable {
             /// What a blocked row is asking, in the agent's words.
             case ask
-            /// Why a stalled or failing row is orange.
+            /// Why a stalled row is orange.
             case warning
         }
         var kind: Kind
