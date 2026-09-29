@@ -356,7 +356,8 @@ enum SnapshotBuilder {
                 // used to report every non-pending row on every scan, so the
                 // store received a large non-empty set two to five seconds
                 // apart, subtracted nothing from its tombstones, and rewrote
-                // `dismissed-pending.json` anyway (U-5).
+                // its dismiss file anyway (U-5). Since 23.0 the dismissals
+                // are soft-dismissed waits in `SessionLog`, released here.
                 result.clearedPendingKeys.insert(finalKey)
             }
 

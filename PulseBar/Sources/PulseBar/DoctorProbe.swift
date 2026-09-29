@@ -63,14 +63,9 @@ enum DoctorProbe {
             facts.codexRollout = rolloutShape(head(of: newest, bytes: rolloutHeadBytes))
         }
 
-        // What the hooks said, newest per agent.
-        for events in AttentionHistoryStore.current.events.values {
-            for event in events {
-                let agent = ActivityHarvest.mapAgent(event.agent)?.surfaceID.rawValue ?? event.agent
-                if (facts.lastFire[agent]?.tsMs ?? 0) < event.tsMs {
-                    facts.lastFire[agent] = DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs)
-                }
-            }
+        // What the hooks said, newest per agent, from the attention file.
+        for (agent, event) in AttentionIO.latestEvents() {
+            facts.lastFire[agent.rawValue] = DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs)
         }
         return facts
     }

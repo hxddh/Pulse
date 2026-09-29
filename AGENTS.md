@@ -202,22 +202,29 @@ this Mac. Settings is a single scrolling page of sections (23.0 removed the
 in-app Attention bridge tools); jumping in from elsewhere bumps
 `settingsFocusToken` and scrolls to the section.
 
-Observability: `SessionTimeline` turns each scan's rows into state
-transitions (running / thin / stalled / blocked / turn / recent, with
-evidence hook / pending / vendor / harvest / process);
-`StatusStore.recordTimeline` keeps them in `SessionTimelineBook`
-(`session-timeline.json`, 128 sessions × 48 spans, 24 h) and bumps
-`timelineRevision` only when a span changed — a quiet scan writes nothing.
-`timelineRevision` and `settingsFocusToken` are observed store properties
-listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
+Observability (23.0): one event store, `SessionLog` (pure value) in
+`session-log.json` via `SessionLogStore` (debounced, `PrivateFile`), replaced
+the attention ledger, the hook history, the session timeline and the
+dismiss list (their files are deleted at launch, never migrated). Per row
+key it keeps state spans (`SessionTimeline.transitions`: running / thin /
+stalled / blocked / turn / recent, evidence hook / pending / vendor /
+harvest / process) and wait records (raised, queued, notified, banner
+outcome — a `WaitingDelivery.SkipReason` raw value or posted / summary —
+clicked by wait id, dismissed, resolved); owed banners (`queuedKeys`), soft
+dismissals (`suppressedKeys`) and the edge baseline (`waitingKeys`) derive
+from it. Bounded: 128 sessions, 48 spans, 24 h after end; open spans and
+waits are never evicted, and spans a quit left open close at the last
+save. Every change goes through `StatusStore.updateLog`, which bumps the
+observed `logRevision` and writes only when content changed — a quiet scan
+writes nothing. `logRevision` and `settingsFocusToken` are observed store
+properties listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
 lamp, up to three driving sessions and what was left out (older
 hidden); `SnapshotBuilder` stores it as `snapshot.lampLines`, which the status
-item appends to its tooltip. Every Waiting ledger event records its delivery
-outcome (`AttentionLedger.Event.delivery` / `deliveryAtMs`, a
-`WaitingDelivery.SkipReason` raw value or posted / summary) and
-`clickedAtMs`; `NotificationAuditModel` renders it in the detail view.
-`ActivityLogModel` merges state transitions and notification fates across
-sessions into the Health window's Activity section, filterable by agent.
+item appends to its tooltip. `NotificationAuditModel` renders a wait's
+banner fate in the detail view; `ActivityLogModel` merges spans and banner
+fates across sessions into the Health window's Activity section,
+filterable by agent; times go through `LogClock` (the day is said when it
+is not today).
 `staleHidden` counts only sessions that stopped within the last 24 h
 (`SnapshotBuilder.staleHiddenWindowMs`), and the scan's `apply` debug-log
 line is written only when it changed.
@@ -283,10 +290,9 @@ elicitation, adds `StopFailure`, and treats a PermissionRequest for
 `~/.codex/hooks.json` gets `Stop` + `UserPromptSubmit` only — never
 `PermissionRequest`, which fires before Codex's own auto-review. Since 17.0
 `RowNarrator.whyLine` says which evidence put a row in its state and never
-guesses; `AttentionHistory` (PulseHarvest) keeps what the hooks said, bounded
-and sanitized, in `attention-history.json` next to `attention.tsv`, and a
-session's events export on click as a v3 TSV that `AttentionReader` and
-`TurnTruthTests` replay as-is. The tray row's face is a value
+guesses (23.0: the Why card under it lists the session's spans from
+`SessionLog`; the hook-history copy and its TSV export are gone —
+`TurnTruthTests` replays static fixtures through `AttentionReader`). The tray row's face is a value
 (`TrayRowModel` → `TrayRowFace`, gated by `surface_check.py`). Since 16.0 red means blocked: Attention
 Protocol v3 (`AttentionKind`) separates blocked, your turn (a quiet count) and
 resolved, and column 8 `front` keeps banners away from a prompt already in

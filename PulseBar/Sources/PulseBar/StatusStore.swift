@@ -136,14 +136,8 @@ final class StatusStore {
     @ObservationIgnored var probeStats = ProbeStats()
     /// When the timer parked, for the parked-duration counter.
     @ObservationIgnored private var parkedSince: Date?
-    @ObservationIgnored var knownWaitingKeys: Set<String> = []
     /// First apply seeds waiting keys without firing edge notifications.
     @ObservationIgnored var waitingNotifySeeded = false
-    /// Waiting edges observed while macOS notification authorization is still
-    /// resolving. Keep one row per session so a delayed permission callback
-    /// cannot make an approval disappear without either a banner or a tray
-    /// prompt.
-    @ObservationIgnored var pendingWaitingNotifications: [String: AgentRow] = [:]
     /// One interruption per short window keeps a burst of parallel approvals
     /// useful without turning Notification Center into a stream of duplicates.
     static let waitingNotificationMinimumIntervalMs: Int64 = 3_000
@@ -152,30 +146,32 @@ final class StatusStore {
     /// in-flight until its callback arrives so a fast follow-up scan cannot
     /// post a duplicate or mark a failed request as delivered.
     @ObservationIgnored var waitingDeliveryInFlight: Set<String> = []
-    /// Cross-launch Waiting/delivery state. This is deliberately separate from
-    /// the agent-owned attention.tsv bridge so a restart cannot lose the only
-    /// human-confirmation edge or emit it twice.
-    @ObservationIgnored var attentionLedger = AttentionLedger.load()
-    /// 22.0: every session's state spans. Read by the detail view through
-    /// `timelineRevision`, which moves only when a span did.
-    @ObservationIgnored var timelineBook = SessionTimelineStore.load()
-    var timelineRevision = 0
+    /// 23.0: the one record of what each session did — state spans, and
+    /// every wait with its banner's fate, the owed banners (`queuedKeys`),
+    /// dismissals (`suppressedKeys`) and the edge baseline (`waitingKeys`).
+    /// Deliberately separate from the agent-owned attention.tsv bridge so a
+    /// restart cannot lose the only human-confirmation edge or emit it
+    /// twice. Changed only through `updateLog`; read by views through
+    /// `logRevision`, which moves only when the log did.
+    @ObservationIgnored var sessionLog = SessionLog()
+    var logRevision = 0
+    let sessionLogStore = SessionLogStore()
+    /// The next scan is the first since the log was loaded.
+    @ObservationIgnored var logAwaitsFirstScan = true
     /// 22.0: the tray has an open detail view or a typed filter, so Escape
     /// belongs to it before it closes the panel. Not observed: only the
     /// panel's key monitor reads it.
     @ObservationIgnored var trayEscapeConsumed = false
     @ObservationIgnored var lastApplyLogSignature = ""
-    /// Soft-dismissed Cursor harvest pending until skill clears.
-    @ObservationIgnored var dismissedPendingKeys: Set<String> = []
     let attentionWatcher = AttentionWatcher()
     let scanQueue = DispatchQueue(label: "com.pulse.scan", qos: .userInitiated)
     @ObservationIgnored var scanTicket: UInt64 = 0
     @ObservationIgnored var lastAppliedTicket: UInt64 = 0
     /// Tests exercising store behaviour must not start a real background scan.
     ///
-    /// A scan is not read-only: it writes the attention ledger and the
-    /// timeline, so an unguarded `refresh()` inside a unit test would touch
-    /// the developer's own files. Same shape as `AttentionIO.pathOverride`
+    /// A scan is not read-only: it writes attention files and, once
+    /// `start()` has loaded it, the session log — so an unguarded `refresh()`
+    /// inside a unit test would touch the developer's own files. Same shape as `AttentionIO.pathOverride`
     /// and `HooksInstaller.homeOverride`.
     static var suppressBackgroundScansForTesting = false
 

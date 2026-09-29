@@ -103,20 +103,13 @@ struct RowNarrator {
         return String(format: tr(.agoFormat), DurationFormat.label(seconds: seconds, lang: lang))
     }
 
-    /// One line of the Details timeline: when, what, and the words sent.
-    func historyLine(_ event: AttentionHistory.Event) -> String {
-        let kind: String
-        switch AttentionKind(rawValue: event.kind) {
-        case .permission: kind = tr(.kindPermission)
-        case .question: kind = tr(.kindInput)
-        case .waiting: kind = tr(.kindWaiting)
-        case .turn: kind = tr(.yourTurn)
-        case .done: kind = tr(.whyResolved)
-        case .subagentStart, .subagentStop, .none: kind = event.kind
-        }
-        var parts = [agoPhrase(sinceMs: event.tsMs), kind]
-        if event.front == true { parts.append("⌂") }
-        if !event.message.isEmpty { parts.append(event.message) }
+    /// One line of the Why card: when, what state (and which wait), on what
+    /// evidence, and the words the agent sent with a block.
+    func spanLine(_ span: TimelineSpan) -> String {
+        var state = ActivityLogModel.stateText(span.state, lang: lang)
+        if !span.kind.isEmpty { state += " · " + L10n.waitKind(span.kind, lang) }
+        var parts = [agoPhrase(sinceMs: span.startMs), state, ActivityLogModel.evidenceText(span.evidence, lang: lang)]
+        if !span.note.isEmpty { parts.append(span.note) }
         return parts.joined(separator: " · ")
     }
 

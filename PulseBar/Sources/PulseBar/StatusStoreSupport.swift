@@ -69,14 +69,11 @@ extension StatusStore {
         let notificationAuthorization = notifyAuthorized.map { String($0) } ?? "unknown"
         lines.append(
             "notifications: authorization=\(notificationAuthorization) "
-                + "notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count) "
-                + "queued=\(attentionLedger.queuedKeys.count)"
+                + "notifyWaiting=\(notifyOnWaiting) queued=\(sessionLog.queuedKeys.count) "
+                + "inFlight=\(waitingDeliveryInFlight.count)"
         )
         lines.append("harvestSupervisor: \(harvestSupervisor.summary(nowMs: Int64(Date().timeIntervalSince1970 * 1000)))")
-        lines.append(
-            "attentionLedger: active=\(attentionLedger.activeKeys.count) "
-                + "events=\(attentionLedger.events.count) baseline=\(attentionLedger.baselineEstablished)"
-        )
+        lines.append(sessionLogDiagnostics)
         let failedCollectors = collector.filter { $0.collectorState.isIssue }
         if !failedCollectors.isEmpty {
             lines.append(
@@ -149,14 +146,14 @@ extension StatusStore {
             "gatekeeperReady: \(PulseVersion.isGatekeeperReady)",
             "appDataScan: \(appDataScanDescription)",
             "appDataGrant: \(grantLabel)",
-            "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) pending=\(pendingWaitingNotifications.count)",
+            "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) queued=\(sessionLog.queuedKeys.count)",
             "probeCadence: \(probeIntervalDescription)",
             "launchAtLogin: \(launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
             "harvest: native (no external runtime)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
             "factCoverage: present=\(factPresent) possible=\(factPossible) limitedAgents=\(limitedAgents)",
-            "attentionLedger: active=\(attentionLedger.activeKeys.count) events=\(attentionLedger.events.count) baseline=\(attentionLedger.baselineEstablished)",
+            sessionLogDiagnostics,
             "harvestSupervisor: \(harvestSupervisor.summary(nowMs: nowMs))",
         ]
         if failures.isEmpty {
@@ -480,9 +477,11 @@ extension StatusStore {
         }
     }
 
-    func attentionEvent(for rowKey: String) -> AttentionLedger.Event? {
-        attentionLedger.events.last(where: { $0.rowKey == rowKey && $0.isActive })
-            ?? attentionLedger.events.last(where: { $0.rowKey == rowKey })
+    /// One line on the session log for the diagnostics copy — counts only.
+    var sessionLogDiagnostics: String {
+        "sessionLog: sessions=\(sessionLog.sessions.count) waiting=\(sessionLog.waitingKeys.count) "
+            + "suppressed=\(sessionLog.suppressedKeys.count) waits=\(sessionLog.waitCount) "
+            + "baseline=\(sessionLog.baselineEstablished)"
     }
 
     private func waitingSignalReady(for agent: AgentID) -> Bool {

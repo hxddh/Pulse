@@ -397,12 +397,6 @@ enum L10n {
         case .qualityConfidenceMedium: return "Medium confidence"
         case .qualityConfidenceLow: return "Low confidence"
         case .trayScanIncomplete: return "The last read did not finish · open Health"
-        case .waitingTimeline: return "Waiting timeline"
-        case .waitingQueuedAt: return "Queued"
-        case .waitingNotifiedAt: return "Notified"
-        case .waitingAcknowledgedAt: return "Acknowledged"
-        case .waitingResolvedAt: return "Resolved"
-        case .waitingNotifyPending: return "Notification pending"
         case .recordsSuffix: return " events"
         case .sessionAge: return "Started %@ ago"
         case .phaseResponding: return "Responding"
@@ -434,13 +428,10 @@ enum L10n {
         case .whyHookFront: return " — its window was in front, so no banner"
         case .whyPending: return "Red: %@'s session log shows it stopped at %@"
         case .whyTurn: return "Your turn: %@'s hook reported the turn ended, %@ — focus it or reply to clear"
-        case .whyTimeline: return "What the hooks said"
-        case .whyExport: return "Copy events (for a bug report)"
-        case .whyExported: return "Copied %d events"
-        case .whyNoHistory: return "No hook events kept for this session"
+        case .whyTimeline: return "What this session did"
+        case .whyNoHistory: return "Nothing recorded for this session yet"
         case .doctorRun: return "Run self-check"
         case .doctorHint: return "Reads the Claude and Codex hook files and logs on this Mac, runs claude agents --json once, and says which contracts are proven here. Writes nothing; the copied report has no paths, prompts or session ids."
-        case .whyResolved: return "Resolved"
         case .yourTurn: return "Your turn"
         case .turnCount: return "%d your turn"
         case .jumpToTurn: return "Go to the next finished session"
@@ -854,12 +845,6 @@ enum L10n {
         case .qualityConfidenceMedium: return "中等可信"
         case .qualityConfidenceLow: return "低可信"
         case .trayScanIncomplete: return "上次读取没有完成 · 打开健康检查"
-        case .waitingTimeline: return "等待时间线"
-        case .waitingQueuedAt: return "已排队"
-        case .waitingNotifiedAt: return "已通知"
-        case .waitingAcknowledgedAt: return "已确认"
-        case .waitingResolvedAt: return "已解决"
-        case .waitingNotifyPending: return "通知待发送"
         case .recordsSuffix: return " 条事件"
         case .sessionAge: return "始于%@前"
         case .phaseResponding: return "正在响应"
@@ -891,13 +876,10 @@ enum L10n {
         case .whyHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
         case .whyPending: return "红灯：%@ 的会话记录显示它停在「%@」上"
         case .whyTurn: return "轮到你：%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
-        case .whyTimeline: return "hook 说过什么"
-        case .whyExport: return "复制事件（用于报告问题）"
-        case .whyExported: return "已复制 %d 条事件"
-        case .whyNoHistory: return "这个会话没有保留的 hook 事件"
+        case .whyTimeline: return "这个会话的经过"
+        case .whyNoHistory: return "这个会话还没有记录"
         case .doctorRun: return "运行自检"
         case .doctorHint: return "读取这台 Mac 上 Claude 与 Codex 的 hook 文件和记录，运行一次 claude agents --json，说明哪些约定在这里已被证实。不写任何东西；复制出的报告不含路径、提示词或会话 id。"
-        case .whyResolved: return "已解决"
         case .yourTurn: return "轮到你"
         case .turnCount: return "%d 轮到你"
         case .jumpToTurn: return "跳到做完的会话"
@@ -1085,8 +1067,6 @@ enum L10n {
         case qualityNextOpenAgent, qualityNextWaitCache, qualityNextAttentionBridge, qualityNextRetryScan
         case supportFailureTimelineEntry
         case qualityConfidenceHigh, qualityConfidenceMedium, qualityConfidenceLow
-        case waitingTimeline, waitingQueuedAt, waitingNotifiedAt, waitingAcknowledgedAt
-        case waitingResolvedAt, waitingNotifyPending
         case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting
         case phaseBuilding, phasePublishing
         case nowActivity, outcomeActivity
@@ -1097,7 +1077,7 @@ enum L10n {
         case trayScanIncomplete
         case yourTurn, turnCount, jumpToTurn
         case whyHook, whyHookFront, whyPending, whyTurn, whyVendor, signalVendor
-        case whyTimeline, whyExport, whyExported, whyNoHistory, whyResolved
+        case whyTimeline, whyNoHistory
         case doctorRun, doctorHint
         case shortcutOff
         case settingsHooksTitle

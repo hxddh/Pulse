@@ -213,7 +213,7 @@ enum NativeHarvestSelfTest {
             failures.append("per-agent timeout did not produce an isolated partial health result")
         }
 
-        var ledger = AttentionLedger()
+        var log = SessionLog()
         var waitingRows: [AgentRow] = []
         for index in 0..<10 {
             var row = AgentRow(rowKey: "codex|waiting-\(index)", agent: .codex)
@@ -223,14 +223,14 @@ enum NativeHarvestSelfTest {
             row.waitKind = "Permission"
             waitingRows.append(row)
         }
-        ledger.reconcile(activeRows: waitingRows, nowMs: 1_800_000_000_000)
-        ledger.markBaseline()
-        for row in waitingRows { ledger.markNotified(rowKey: row.rowKey, nowMs: 1_800_000_000_001) }
-        let ledgerURL = home.appendingPathComponent("attention-ledger.json")
-        ledger.save(to: ledgerURL)
-        let restartedLedger = AttentionLedger.load(from: ledgerURL)
-        if !restartedLedger.baselineEstablished || restartedLedger.activeKeys.count != 10
-            || restartedLedger.events.contains(where: { $0.notifiedAtMs == 0 }) {
+        log.reconcileWaits(rows: waitingRows, released: [], nowMs: 1_800_000_000_000)
+        log.markBaseline()
+        for row in waitingRows { log.markNotified(row.rowKey, nowMs: 1_800_000_000_001) }
+        let logURL = home.appendingPathComponent("session-log.json")
+        SessionLogFile.save(log, to: logURL, nowMs: 1_800_000_000_002)
+        let restartedLog = SessionLogFile.load(from: logURL, nowMs: 1_800_000_000_003)
+        if !restartedLog.baselineEstablished || restartedLog.waitingKeys.count != 10
+            || waitingRows.contains(where: { restartedLog.openWait($0.rowKey)?.notifiedMs == nil }) {
             failures.append("10 concurrent Waiting events did not survive atomic restart recovery")
         }
 

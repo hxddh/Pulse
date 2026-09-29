@@ -74,7 +74,7 @@ always-allow / 自动批准、对着截断摘要的盲批，以及替你派活�
 
 0.49.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
 observed、no_sessions、source_absent、permission_denied、schema_mismatch 或 failed，
-不会再把“没有看到”混成“没有运行”。0.99 起没有第二个采集器：旧版 Python collector 已删除。Waiting 边沿写入 Pulse 自己的原子事件账本，重启后
+不会再把“没有看到”混成“没有运行”。0.99 起没有第二个采集器：旧版 Python collector 已删除。Waiting 边沿写入 Pulse 自己的会话记录（`session-log.json`），重启后
 仍能去重通知。一次没扫全的采集不会清空上一次有效内容。
 
 需要读取受 macOS 保护的 App Support / App Group 时，设置页可以按 Agent 单独授权；默认不

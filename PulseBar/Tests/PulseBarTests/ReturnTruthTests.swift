@@ -52,14 +52,15 @@ final class ReturnTruthTests: XCTestCase {
     }
 
     @MainActor
-    func testAttentionLedgerRemapFollowsNewRowKey() {
-        var ledger = AttentionLedger()
+    func testSessionLogRemapFollowsNewRowKey() {
+        var log = SessionLog()
         var row = AgentRow(rowKey: "codex", agent: .codex)
         row.waiting = true
         row.waitKind = "Permission"
-        ledger.reconcile(activeRows: [row], nowMs: 1_000)
-        ledger.remapRowKey(from: "codex", to: "codex|sess")
-        XCTAssertEqual(ledger.activeKeys, ["codex|sess"])
+        log.reconcileWaits(rows: [row], released: [], nowMs: 1_000)
+        log.remap(from: "codex", to: "codex|sess")
+        XCTAssertEqual(log.waitingKeys, ["codex|sess"])
+        XCTAssertNil(log.openWait("codex"))
     }
 
     // MARK: P2 Details / story honesty

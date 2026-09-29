@@ -3,51 +3,6 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
-final class AttentionLedgerTests: XCTestCase {
-    private func row(_ key: String, agent: AgentID = .codex) -> AgentRow {
-        AgentRow(
-            rowKey: key,
-            agent: agent,
-            project: "Pulse",
-            task: "Approve release",
-            waiting: true,
-            waitKind: "Permission"
-        )
-    }
-
-    func testBaselineAndActiveWaitSurviveRoundTrip() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-ledger-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: url) }
-        var ledger = AttentionLedger()
-        ledger.reconcile(activeRows: [row("codex|1")], nowMs: 1_700_000_000_000)
-        ledger.markBaseline()
-        ledger.markNotified(rowKey: "codex|1", nowMs: 1_700_000_000_100)
-        ledger.save(to: url)
-        let loaded = AttentionLedger.load(from: url)
-        XCTAssertTrue(loaded.baselineEstablished)
-        XCTAssertEqual(loaded.activeKeys, ["codex|1"])
-        XCTAssertEqual(loaded.events.first?.notifiedAtMs, 1_700_000_000_100)
-        XCTAssertEqual(loaded.events.first?.id, "codex|1|1700000000000")
-    }
-
-    func testReconcileMarksMissingWaitResolved() {
-        var ledger = AttentionLedger()
-        ledger.reconcile(activeRows: [row("claude|1", agent: .claude)], nowMs: 1_000)
-        ledger.reconcile(activeRows: [], nowMs: 2_000)
-        XCTAssertTrue(ledger.activeKeys.isEmpty)
-        XCTAssertEqual(ledger.latestEvent(rowKey: "claude|1")?.resolvedAtMs, 2_000)
-    }
-
-    func testRemapRowKeyMovesTheActiveEvent() {
-        var ledger = AttentionLedger()
-        ledger.reconcile(activeRows: [row("codex")], nowMs: 1_000)
-        ledger.remapRowKey(from: "codex", to: "codex|sess")
-        XCTAssertEqual(ledger.activeKeys, ["codex|sess"])
-        XCTAssertNil(ledger.eventID(for: "codex"))
-    }
-}
-
 /// Re-arming attention.tsv used to tear down every other watch with it
 /// (U-4). Since 22.0 removed the remote inbox the other watch is the
 /// activity spool, and the rule is the same: each watch re-arms alone.

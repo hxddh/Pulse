@@ -9,73 +9,60 @@ import XCTest
 /// cover the surface neither of them touched: the bytes that outlive the scan.
 final class QuietDataTests: XCTestCase {
 
-    // MARK: - The ledger stores what its comment says it stores
+    // MARK: - The session log stores what its comment says it stores
 
-    /// The retention the type documents is the retention `prune` enforces.
-    /// Before 0.99 the numbers were literals inside `prune` and the doc comment
-    /// above them claimed the file "never stores prompts" — which stopped being
-    /// true the moment 0.98 defined the hero as the user's real goal.
-    func testResolvedEventsExpireAtTheDocumentedRetention() {
-        var ledger = AttentionLedger()
+    /// The retention the type documents is the retention `prune` enforces:
+    /// a resolved wait and a closed span outlive their end by a day, no more.
+    func testResolvedWaitsAndClosedSpansExpireAtTheDocumentedRetention() {
         let now: Int64 = 1_800_000_000_000
-        let day: Int64 = 24 * 60 * 60 * 1000
-        let retention = Int64(AttentionLedger.retentionDays) * day
+        let hour: Int64 = 60 * 60 * 1000
+        var log = SessionLog()
+        var row = AgentRow(rowKey: "claude|a", agent: .claude)
+        row.waiting = true
+        log.reconcileWaits(rows: [row], released: [], nowMs: now - 30 * hour)
+        log.reconcileWaits(rows: [], released: [], nowMs: now - 26 * hour)
+        var fresh = AgentRow(rowKey: "claude|b", agent: .claude)
+        fresh.waiting = true
+        log.reconcileWaits(rows: [fresh], released: [], nowMs: now - 2 * hour)
+        log.reconcileWaits(rows: [], released: [], nowMs: now - hour)
 
-        var fresh = AttentionLedger.Event(
-            id: "fresh", rowKey: "claude|a", agent: "claude", session: "a",
-            title: "recent", kind: "Permission", project: "p",
-            observedAtMs: now - day, lastSeenAtMs: now - day
-        )
-        fresh.resolvedAtMs = now - day
-        var stale = fresh
-        stale.id = "stale"
-        stale.rowKey = "claude|b"
-        stale.resolvedAtMs = now - retention - 1
-        ledger.events = [fresh, stale]
-
-        ledger.prune(nowMs: now)
-        XCTAssertEqual(ledger.events.map(\.id), ["fresh"])
+        log.prune(nowMs: now)
+        XCTAssertNil(log.latestWait("claude|a"), "resolved more than a day ago")
+        XCTAssertNotNil(log.latestWait("claude|b"))
     }
 
     /// The cap trims history, never live state.
-    func testActiveWaitsAreNeverEvictedByTheHistoryCap() {
-        var ledger = AttentionLedger()
+    func testOpenWaitsAreNeverEvictedByTheSessionCap() {
         let now: Int64 = 1_800_000_000_000
-        for index in 0..<(AttentionLedger.maxEvents + 40) {
-            var event = AttentionLedger.Event(
-                id: "resolved-\(index)", rowKey: "claude|r\(index)", agent: "claude",
-                session: "r\(index)", title: "t", kind: "Input", project: "p",
-                observedAtMs: now - 1000, lastSeenAtMs: now - 1000
-            )
-            event.resolvedAtMs = now - Int64(index) - 1
-            ledger.events.append(event)
+        var log = SessionLog()
+        let resolved = (0..<(SessionLog.maxSessions + 40)).map { index -> AgentRow in
+            var row = AgentRow(rowKey: "claude|r\(index)", agent: .claude)
+            row.waiting = true
+            return row
         }
-        let active = AttentionLedger.Event(
-            id: "active", rowKey: "codex|live", agent: "codex", session: "live",
-            title: "still waiting", kind: "Permission", project: "p",
-            observedAtMs: now, lastSeenAtMs: now
-        )
-        ledger.events.append(active)
+        log.reconcileWaits(rows: resolved, released: [], nowMs: now - 2_000)
+        log.reconcileWaits(rows: [], released: [], nowMs: now - 1_000)
+        var live = AgentRow(rowKey: "codex|live", agent: .codex)
+        live.task = "still waiting"
+        live.waiting = true
+        log.reconcileWaits(rows: [live], released: [], nowMs: now)
 
-        ledger.prune(nowMs: now)
-        XCTAssertLessThanOrEqual(ledger.events.count, AttentionLedger.maxEvents)
-        XCTAssertTrue(
-            ledger.events.contains { $0.id == "active" },
-            "a live Waiting event is product state, not history"
-        )
+        log.prune(nowMs: now)
+        XCTAssertLessThanOrEqual(log.sessions.count, SessionLog.maxSessions)
+        XCTAssertNotNil(log.openWait("codex|live"), "a live wait is product state, not history")
     }
 
-    /// The stored title is bounded — the ledger records a headline, not a
+    /// The stored title is bounded — the log records a headline, not a
     /// transcript.
     func testStoredTitleIsBoundedToOneHundredAndSixtyCharacters() throws {
-        var ledger = AttentionLedger()
+        var log = SessionLog()
         var row = AgentRow(rowKey: "claude|long", agent: .claude)
         row.task = String(repeating: "goal ", count: 200)
         row.waiting = true
-        ledger.observe(row: row, nowMs: 1_800_000_000_000)
-        let title = try XCTUnwrap(ledger.events.first?.title)
+        log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
+        let title = try XCTUnwrap(log.openWait("claude|long")?.title)
         XCTAssertFalse(title.isEmpty)
-        XCTAssertLessThanOrEqual(title.count, 160, "the ledger records a headline, not a transcript")
+        XCTAssertLessThanOrEqual(title.count, SessionLog.titleLimit, "the log records a headline, not a transcript")
         XCTAssertLessThan(title.count, row.task.count)
     }
 

@@ -110,6 +110,29 @@ package enum AttentionIO {
         return latest
     }
 
+    /// The newest protocol event per agent (surface id), with its v3 kind —
+    /// the self-check's "the hooks actually fire". 23.0: read from the file
+    /// itself; Pulse no longer keeps a second copy of every hook line.
+    package static func latestEvents() -> [AgentID: (kind: String, tsMs: Int64)] {
+        latestEvents(in: readText())
+    }
+
+    /// Pure: `latestEvents` over a file's text.
+    package static func latestEvents(in text: String) -> [AgentID: (kind: String, tsMs: Int64)] {
+        var latest: [AgentID: (kind: String, tsMs: Int64)] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            guard let cols = AttentionProtocol.columns(of: line),
+                  let agent = ActivityHarvest.mapAgent(cols[0])?.surfaceID,
+                  AttentionProtocol.acceptsWrite(kind: cols[1]),
+                  let ms = Int64(cols[2]), ms > 0
+            else { continue }
+            if (latest[agent]?.tsMs ?? 0) < ms {
+                latest[agent] = (AttentionProtocol.normalizeKind(cols[1]), ms)
+            }
+        }
+        return latest
+    }
+
     /// `read(2)` may return fewer bytes than asked for; the old single call
     /// silently truncated whenever it did.
     private static func readAll(_ fd: Int32, size: Int) -> Data {

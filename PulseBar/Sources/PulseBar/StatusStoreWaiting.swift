@@ -11,15 +11,13 @@ extension StatusStore {
         // 12.3 δ: the decision is `WaitingDelivery`; this method carries it out.
         let delivery = WaitingDelivery(
             muted: mutedAgents,
-            acknowledged: Set(
-                rows.filter(\.waiting).map(\.rowKey).filter { attentionLedger.isAcknowledged(rowKey: $0) }
-            ),
+            acknowledged: sessionLog.dismissedKeys,
             inFlight: waitingDeliveryInFlight,
-            canDeliverNow: attentionLedger.canDeliver(
+            canDeliverNow: sessionLog.canDeliver(
                 nowMs: nowMs,
                 minimumIntervalMs: Self.waitingNotificationMinimumIntervalMs
             ),
-            msSinceLastNotification: nowMs - attentionLedger.lastNotificationAtMs,
+            msSinceLastNotification: nowMs - sessionLog.lastNotificationMs,
             minimumIntervalMs: Self.waitingNotificationMinimumIntervalMs
         )
         // 22.0: the rows this plan leaves out say why, on their own event.
@@ -30,11 +28,10 @@ extension StatusStore {
         case .nothing:
             return
         case .hold(let held, let retryAfterMs):
-            for waiting in held {
-                pendingWaitingNotifications[waiting.rowKey] = waiting
-                attentionLedger.markQueued(rowKey: waiting.rowKey, nowMs: nowMs)
+            // Owed, on the wait's own record — written only if that is news.
+            updateLog { log in
+                for waiting in held { log.markQueued(waiting.rowKey, nowMs: nowMs) }
             }
-            attentionLedger.save()
             scheduleWaitingDelivery(afterMs: retryAfterMs)
             return
         case .post(let ready, let summary):
@@ -43,15 +40,13 @@ extension StatusStore {
         }
 
         let deliveryKeys = candidates.map(\.rowKey)
-        for waiting in candidates {
-            pendingWaitingNotifications[waiting.rowKey] = waiting
-            waitingDeliveryInFlight.insert(waiting.rowKey)
-            attentionLedger.markQueued(rowKey: waiting.rowKey, nowMs: nowMs)
-        }
+        for waiting in candidates { waitingDeliveryInFlight.insert(waiting.rowKey) }
         // Persist before asking Notification Center to accept the request. A
-        // crash between those two operations leaves a durable queued edge,
-        // which the next launch can rehydrate and deliver exactly once.
-        attentionLedger.save()
+        // crash between those two operations leaves a durable queued wait,
+        // which the next launch can deliver exactly once.
+        updateLog(immediately: true) { log in
+            for waiting in candidates { log.markQueued(waiting.rowKey, nowMs: nowMs) }
+        }
 
         let batchCompletion: (Bool) -> Void = { [weak self] success in
             guard let self else { return }
@@ -63,7 +58,7 @@ extension StatusStore {
         }
 
         if asSummary {
-            let eventIDs = candidates.compactMap { attentionLedger.eventID(for: $0.rowKey) }
+            let eventIDs = candidates.compactMap { sessionLog.openWait($0.rowKey)?.id }
             let title = String(format: tr(.waitingSummaryTitle), candidates.count)
             let body = candidates.prefix(3).map(notificationBody).joined(separator: " · ")
                 + (candidates.count > 3 ? " …" : "")
@@ -85,10 +80,10 @@ extension StatusStore {
                     agent: waiting.agent.rawValue,
                     session: waiting.sessionID,
                     rowKey: waiting.rowKey,
-                    eventID: attentionLedger.eventID(for: waiting.rowKey) ?? "",
+                    eventID: sessionLog.openWait(waiting.rowKey)?.id ?? "",
                     completion: { success in
-                        // Each individual request owns one event; commit that
-                        // event independently so one rejected request never
+                        // Each individual request owns one wait; commit that
+                        // wait independently so one rejected request never
                         // hides the other accepted Waiting notifications.
                         self.finishWaitingDelivery(
                             keys: [waiting.rowKey],
@@ -126,6 +121,23 @@ extension StatusStore {
         Dictionary(rows.map { ($0.rowKey, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
+    /// 23.0: the rows whose banner is still owed, taken from *this* scan.
+    /// The queue used to hold frozen copies of rows and filter them by
+    /// `row.waiting` — always true on a copy made while it waited — so a wait
+    /// that had resolved could still get its banner, and the queue grew with
+    /// every session that ever waited unannounced. Only a key that is
+    /// waiting now, in a current row, qualifies.
+    nonisolated static func queuedDeliveryRows(
+        queued: Set<String>,
+        rows: [AgentRow],
+        muted: Set<AgentID>
+    ) -> [AgentRow] {
+        guard !queued.isEmpty else { return [] }
+        return Array(byRowKey(rows.filter { row in
+            row.waiting && queued.contains(row.rowKey) && !muted.contains(row.agent)
+        }).values)
+    }
+
     nonisolated static func waitingDeliveryRows(
         edges: [AgentRow],
         queued: [AgentRow]
@@ -153,21 +165,21 @@ extension StatusStore {
         let outcome = success
             ? (rows.count > WaitingDelivery.summaryAbove ? "summary" : "posted")
             : WaitingDelivery.SkipReason.rejected.rawValue
-        for row in rows { attentionLedger.markDelivery(rowKey: row.rowKey, outcome: outcome, nowMs: nowMs) }
-        if success {
+        // One change: the outcome, and either the banner shown or still owed.
+        // A wait that resolved meanwhile has no open record and is left alone.
+        // 22.0: the banner carries the system sound the person chose in
+        // System Settings → Notifications; Pulse no longer plays its own.
+        updateLog(immediately: true) { log in
             for row in rows {
-                attentionLedger.markNotified(rowKey: row.rowKey, nowMs: nowMs)
-                pendingWaitingNotifications.removeValue(forKey: row.rowKey)
+                log.markDelivery(row.rowKey, outcome: outcome, nowMs: nowMs)
+                if success {
+                    log.markNotified(row.rowKey, nowMs: nowMs)
+                } else {
+                    log.markQueued(row.rowKey, nowMs: nowMs)
+                }
             }
-            attentionLedger.save()
-            // 22.0: the banner carries the system sound the person chose in
-            // System Settings → Notifications; Pulse no longer plays its own.
-        } else {
-            for row in rows where row.waiting {
-                pendingWaitingNotifications[row.rowKey] = row
-                attentionLedger.markQueued(rowKey: row.rowKey, nowMs: nowMs)
-            }
-            attentionLedger.save()
+        }
+        if !success {
             DebugLog.write("waiting notification requeued keys=\(keys.joined(separator: ","))")
             scheduleWaitingDelivery(afterMs: Self.waitingNotificationMinimumIntervalMs)
         }
@@ -189,15 +201,9 @@ extension StatusStore {
     /// should not reappear as a stale notification when the user returns from
     /// System Settings.
     func deliverPendingWaitingNotificationsIfPossible() {
-        guard notifyAuthorized == true, notifyOnWaiting, !pendingWaitingNotifications.isEmpty else {
-            if !notifyOnWaiting { pendingWaitingNotifications.removeAll() }
-            return
-        }
-        let current = Self.byRowKey(cachedAll)
-        let rows = pendingWaitingNotifications.values.compactMap { pending -> AgentRow? in
-            guard let row = current[pending.rowKey], row.waiting else { return nil }
-            return row
-        }
+        guard notifyAuthorized == true, notifyOnWaiting else { return }
+        let rows = Self.queuedDeliveryRows(queued: sessionLog.queuedKeys, rows: cachedAll, muted: mutedAgents)
+        guard !rows.isEmpty else { return }
         postWaitingNotifications(rows)
     }
 
@@ -238,23 +244,20 @@ extension StatusStore {
     func clearWaiting() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         // 0.95: extinguish delivery synchronously so a queued banner cannot
-        // fire after the user already cleared Waiting.
-        pendingWaitingNotifications.removeAll()
+        // fire after the user already cleared Waiting — a dismissed wait is
+        // no longer owed a banner (`SessionLog.queuedKeys`).
         // 2.2: emptying our own queue only covers the requests we had not
         // submitted yet. `center.add` is asynchronous — a request accepted a
         // moment before the click is already past that queue and still lands
         // on screen after the user cleared Waiting. Scene AH promises no late
         // notification, so take back what was already submitted too (U-7).
         withdrawWaitingBanners()
-        var dismissedChanged = false
-        for row in cachedAll where row.waiting {
-            attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
-            if row.waitSignal == .pending || row.waitSignal == .vendor || row.skill == "pending" {
-                dismissedChanged = dismissedPendingKeys.insert(row.rowKey).inserted || dismissedChanged
+        let waiting = cachedAll.filter(\.waiting)
+        updateLog(immediately: true) { log in
+            for row in waiting {
+                log.dismiss(row, soft: Self.dismissIsSoft(row), nowMs: nowMs)
             }
         }
-        attentionLedger.save()
-        if dismissedChanged { persistDismissedPendingKeys() }
         AttentionIO.clearAll()
         refresh(reason: "clearWaiting")
     }
@@ -339,10 +342,15 @@ extension StatusStore {
         return harvest
     }
 
+    /// A harvest `pending` — or a vendor-reported wait (18.0) — is dismissed
+    /// softly: its source keeps reporting it until the session moves, so the
+    /// log keeps it suppressed until then.
+    nonisolated static func dismissIsSoft(_ row: AgentRow) -> Bool {
+        row.waitSignal == .pending || row.waitSignal == .vendor || row.skill == "pending"
+    }
+
     func dismissWaiting(_ row: AgentRow) {
-        // A vendor-reported wait (18.0) is dismissed the same soft way: the
-        // vendor will keep reporting it until the session moves.
-        let isHarvestPending = row.waitSignal == .pending || row.waitSignal == .vendor || row.skill == "pending"
+        let isHarvestPending = Self.dismissIsSoft(row)
         // 0.95: pure harvest soft-dismiss must not write agent-wide Attention
         // done (empty session clears every wait for that agent).
         if row.waitSignal == .hooks {
@@ -351,12 +359,8 @@ extension StatusStore {
             AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
         }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
-        attentionLedger.save()
-        pendingWaitingNotifications.removeValue(forKey: row.rowKey)
-        if isHarvestPending {
-            dismissedPendingKeys.insert(row.rowKey)
-            persistDismissedPendingKeys()
+        updateLog(immediately: true) { log in
+            _ = log.dismiss(row, soft: isHarvestPending, nowMs: nowMs)
         }
         refresh(reason: "dismissWaiting")
     }
@@ -477,21 +481,23 @@ extension StatusStore {
 // MARK: - 22.0 · the banner's audit
 
 extension StatusStore {
-    /// Records a banner outcome per row on its active ledger event; writes
-    /// the ledger only when an outcome actually changed.
+    /// Records a banner outcome per row on its open wait; the log changes
+    /// (and is written) only when an outcome actually changed.
     func recordDelivery(_ outcomes: [String: String], nowMs: Int64) {
-        var changed = false
-        for (key, outcome) in outcomes where attentionLedger.markDelivery(rowKey: key, outcome: outcome, nowMs: nowMs) {
-            changed = true
+        guard !outcomes.isEmpty else { return }
+        updateLog { log in
+            for (key, outcome) in outcomes { log.markDelivery(key, outcome: outcome, nowMs: nowMs) }
         }
-        if changed { attentionLedger.save() }
     }
 
-    /// The person clicked the banner for this row.
-    func recordBannerClick(rowKey: String) {
-        guard !rowKey.isEmpty else { return }
-        if attentionLedger.markClicked(rowKey: rowKey, nowMs: Int64(Date().timeIntervalSince1970 * 1000)) {
-            attentionLedger.save()
+    /// The person clicked a banner. 23.0: the banner carries the ids of the
+    /// waits it was posted for, and those are what is credited — a click on
+    /// an old banner no longer lands on whatever the row waits for now.
+    func recordBannerClick(waitIDs: [String]) {
+        guard !waitIDs.isEmpty else { return }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        updateLog(immediately: true) { log in
+            for id in waitIDs { log.markClicked(waitID: id, nowMs: nowMs) }
         }
     }
 }

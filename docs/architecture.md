@@ -14,8 +14,7 @@
            │
            ▼
       StatusStore          定时器、通知策略、设置、I/O
-           │               ├─ attention-ledger.json   等待边沿 + 通知去向（22.0）
-           │               └─ session-timeline.json   每会话状态段（22.0）
+           │               └─ session-log.json   每会话状态段 + 等待记录与通知去向（23.0）
            ▼
    StatusItem（StatusPanelController，tooltip = snapshot.lampLines）
    / TrayPanelViews（列表 + SessionDetailView）/ SettingsViews / SupportViews（健康检查 + 活动）
@@ -37,8 +36,8 @@ PulseBar/Sources/
                  15.0 起表面是纯值：视图只渲染值、发 intent，由 StatusStore 执行；
                  SurfaceFixtures 的每个夹具在 CI 里经 SurfaceCapture 渲染成 PNG
                  （scripts/qa_surfaces.sh）。17.0：托盘行的脸同样是纯值（TrayRowModel →
-                 TrayRowFace）；AttentionHistory（PulseHarvest）把每次扫描读到的 hook 事件
-                 留成有界历史，供「为什么」与导出夹具。
+                 TrayRowFace）。23.0：会话发生过什么只记一处 —— SessionLog（纯值）
+                 与 SessionLogStore（读写）。
                  PulseCoreExports.swift 以 @_exported 引入两个库。
 ```
 
@@ -180,41 +179,52 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 想让外界做的事——发通知、写日志、清除某个 key——全部作为数据返回。
 这就是为什么它能被专门的纯逻辑回归测试覆盖，并可在完整 XCTest 环境中独立验证。
 
-## Attention ledger 与 StatusStore（外壳）
+## 会话记录（SessionLog，23.0）与 StatusStore（外壳）
 
-AttentionReader 仍读取 agent-owned 的 attention.tsv，但 Waiting 边沿、通知时间、
-排队、确认、稳定事件 ID 和已解决历史由 Pulse-owned 的 attention-ledger.json 原子写入
-Library/Application Support/Pulse。账本只保留 row key、Agent、会话短标识、项目尾部和
-时间戳，不保存提示内容或 tool 参数；首次扫描播种 baseline，崩溃/重启不会重复通知。
+AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的一切只在一个文件里：
+`session-log.json`（与 attention.tsv 同目录，`PULSE_HOME` 一起搬；经 `PrivateFile` 以 `0600`
+写入）。23.0 之前这件事分在四个互相重叠的文件里 —— `attention-ledger.json`（等待与通知去向）、
+`attention-history.json`（每条 hook 事件的副本，供「为什么」与导出）、`session-timeline.json`
+（状态段）和 `dismissed-pending.json`（软忽略） —— 外加 store 上的 `knownWaitingKeys` 与一个冻结
+行副本的通知队列。它们会彼此不一致，也确实不一致过。23.0 不迁移：启动时把这四个旧文件删掉，
+不读。
 
-22.0 起每个等待事件还记下**通知去向**：`delivery`（`posted` / `summary`，或
-`WaitingDelivery.SkipReason` 的原始值 —— `inFront`、`muted`、`acknowledged`、`held`、
-`notifyOff`、`notAuthorized`、`atLaunch`、`rejected`）、`deliveryAtMs` 与 `clickedAtMs`。
-`WaitingDelivery` 规划时给每个没发的行一个 `SkipReason`，store 执行后经
-`AttentionLedger.markDelivery` / 点击回调写回；同一结局再写一次不算变化，所以第二轮扫描不重写账本。
-详情页用 `NotificationAuditModel` 把它渲染成「这条通知发生了什么」。
+`SessionLog` 是纯值，按 row key 存：
 
-## 会话时间线（22.0）
+- **状态段**（`TimelineSpan`）：running / thin / stalled / blocked / turn / recent，依据
+  hook / pending / vendor / harvest / process，起止时间（没有证据时钟时记扫描时刻、标
+  `exact = false`），等待段另存 agent 发来的那句请求（`note`，脱敏，≤ 200 字）。
+- **等待记录**（`SessionLog.Wait`）：`id`（`rowKey|扫描时刻`，通知带着它）、kind、标题
+  （`usefulTask`，脱敏，≤ 160 字）、`raisedMs`、`queuedMs`（欠一条横幅）、`notifiedMs`、
+  `outcome` / `outcomeMs`（`posted` / `summary`，或 `WaitingDelivery.SkipReason` 的原始值）、
+  `clickedMs`、`dismissedMs`（软忽略另记 `holdsDismissal`）、`resolvedMs`。
 
-每轮扫描应用完快照后，`StatusStore.recordTimeline(previous:current:remapped:nowMs:)` 把上一轮与
-这一轮的行交给纯函数 `SessionTimeline.transitions`：每行归类为 running / thin / stalled /
-blocked / turn / recent，依据为 hook / pending / vendor / harvest / process；等待段用 hook 自己的
-时间戳，没有证据时钟就用扫描时刻并标 `exact = false`。变化写进 `SessionTimelineBook`
-（`~/Library/Application Support/Pulse/session-timeline.json`，`0600`，至多 128 个会话、每个 48 段、
-关上的段 24 小时后清掉），键是 row key，不存标题、正文或路径。进程行换成更好的键时，历史随
-`remapped` 迁过去。
+由它导出的集合就是 store 从前各存一份的东西：`waitingKeys`（上一轮的等待边沿基线）、
+`suppressedKeys`（交给 builder 的软忽略）、`queuedKeys`（欠横幅的等待，每轮从**当前行**重建）、
+`dismissedKeys`，以及全局限流锚点 `lastNotificationMs` 与首次扫描的 `baselineEstablished`。
 
-**扫描静默**：只有某段真的变了才写文件并让 `timelineRevision`（被观察的属性，登记在
-`ScanQuietTests`）前进；读时间线的视图（详情页的 `TimelineStripView`、健康检查的
-`ActivityLogView`）只经这个版本号订阅。`ActivityLogModel` 把时间线与账本的通知去向合成一条
-倒序记录，按 Agent 过滤。
+边界：至多 128 个会话、每个 48 段、每个 16 条已解决等待；关上的段与已解决的等待 24 小时后清掉；
+开着的段与未解决的等待是「现在」，从不被上限挤掉。退出时开着的段在重启后第一轮扫描按上次写盘
+时刻（`savedAtMs`）关上；此后任何不在当前行里的会话都没有开着的段。进程行换成更好的键时两边的
+历史合并（`SessionLog.remap`）。
+
+**扫描静默**：每次修改都经 `StatusStore.updateLog`：只有持久内容真的变了，被观察的
+`logRevision`（登记在 `ScanQuietTests`）才前进、`SessionLogStore` 才写盘（1.5 秒防抖；发横幅前的
+「欠一条」与忽略立即写；退出时 flush）。异步到达的通知结局与点击同样走这里，所以详情页的
+「这条通知」会跟着更新。点击按横幅携带的等待 `id` 记账，不按 row key 记到最新的那条。
+
+读它的视图只经 `logRevision` 订阅：详情页的 `TimelineStripView`、`NotificationAuditModel`
+（「这条通知发生了什么」）与 Why 卡片（`WhyCardModel`，该会话的状态段，新的在上），健康检查的
+`ActivityLogModel`（状态段与通知去向合成一条倒序记录，按 Agent 过滤）。时间一律经
+`LogClock`：今天 `HH:mm`，一周内 `周一 HH:mm` / `Mon HH:mm`，更早 `M/d HH:mm`。自检的「hook
+真的触发过」直接读 attention.tsv 每个 Agent 最新的一行（`AttentionIO.latestEvents`）。
 
 拥有 builder 刻意不碰的东西：
 
 - **定时器与节奏**。`ProbeSchedule` 给出间隔，`PowerMonitor` 提供息屏 / 锁屏 /
   低电量状态。息屏即停表——attention 文件变化仍会唤醒。
 - **通知策略**。builder 报告边沿，store 决定要不要发：按 agent 静音（行菜单）、在最前、
-  开关、授权、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）；每个决定都作为去向写进账本。
+  开关、授权、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）；每个决定都作为去向写进会话记录（`SessionLog`）。
   安静时段与声音 22.0 起交给 macOS 的专注模式与通知设置。
 - **设置**。`PulseSettings` 负责解析和序列化，store 只做桥接和落盘。
 - **权限边界**。受保护的应用数据默认关闭，用户逐 Agent（或全部）打开；23.0 起不再迁移旧版授权。

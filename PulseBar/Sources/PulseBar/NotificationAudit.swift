@@ -1,42 +1,43 @@
 import Foundation
 
-/// 22.0 · Lamp — "why didn't I get a banner?", answered from the ledger.
+/// 22.0 · Lamp — "why didn't I get a banner?", answered from the log.
 ///
-/// Every wait already had a durable event (`AttentionLedger`); what it did
-/// not keep was the decision about the banner, and the timeline the UI drew
-/// from it lost its first line (`queuedAtMs` is zeroed once delivered) and
-/// vanished the moment the wait resolved. This value renders one event as a
+/// Every wait has a record in `SessionLog` (23.0; the ledger before it) that
+/// keeps the decision about its banner. This value renders one wait as a
 /// short, ordered account: raised, what happened to the banner and why,
-/// clicked, resolved.
+/// clicked, dismissed, resolved — each time with its day when it was not
+/// today (`LogClock`).
 struct NotificationAuditModel: Equatable {
     var lines: [String]
 
-    static func make(event: AttentionLedger.Event, lang: ResolvedLanguage) -> NotificationAuditModel {
+    static func make(
+        wait: SessionLog.Wait,
+        nowMs: Int64,
+        lang: ResolvedLanguage,
+        timeZone: TimeZone = .current
+    ) -> NotificationAuditModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: lang == .zh ? "zh-Hans" : "en")
-        formatter.dateFormat = "HH:mm"
         func clock(_ ms: Int64) -> String {
-            formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+            LogClock.label(ms: ms, nowMs: nowMs, lang: lang, timeZone: timeZone)
         }
         var lines: [String] = []
-        lines.append(String(format: t(.auditRaised), clock(event.observedAtMs)))
-        if let outcome = event.delivery {
-            let at = event.deliveryAtMs.map(clock) ?? ""
+        lines.append(String(format: t(.auditRaised), clock(wait.raisedMs)))
+        if let outcome = wait.outcome {
+            let at = wait.outcomeMs.map(clock) ?? ""
             lines.append(String(format: outcomeText(outcome, lang: lang), at))
-        } else if event.notifiedAtMs > 0 {
-            lines.append(String(format: t(.auditPosted), clock(event.notifiedAtMs)))
-        } else if event.queuedAtMs > 0 {
-            lines.append(String(format: t(.auditQueued), clock(event.queuedAtMs)))
+        } else if let notified = wait.notifiedMs {
+            lines.append(String(format: t(.auditPosted), clock(notified)))
+        } else if let queued = wait.queuedMs {
+            lines.append(String(format: t(.auditQueued), clock(queued)))
         }
-        if let clicked = event.clickedAtMs {
+        if let clicked = wait.clickedMs {
             lines.append(String(format: t(.auditClicked), clock(clicked)))
         }
-        if event.acknowledgedAtMs > 0 {
-            lines.append(String(format: t(.auditAcknowledged), clock(event.acknowledgedAtMs)))
+        if let dismissed = wait.dismissedMs {
+            lines.append(String(format: t(.auditAcknowledged), clock(dismissed)))
         }
-        if event.resolvedAtMs > 0 {
-            lines.append(String(format: t(.auditResolved), clock(event.resolvedAtMs)))
+        if let resolved = wait.resolvedMs {
+            lines.append(String(format: t(.auditResolved), clock(resolved)))
         }
         return NotificationAuditModel(lines: lines)
     }

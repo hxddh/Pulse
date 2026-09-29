@@ -10,13 +10,13 @@ import Foundation
 /// the rename. Creating the file with the mode we want, before a byte goes
 /// into it, closes the window instead of narrowing it.
 ///
-/// 2.2 established this for the session digest, which by design stores only
+/// 2.2 established this for the session digest, which by design stored only
 /// counts and vendor tool names. The two files holding actual prose had the
-/// weakest protection of anything Pulse writes: `attention-ledger.json` keeps
-/// session titles — the user's own words, up to 160 characters — and project
-/// names, and set no mode at all; `attention.tsv` keeps the command an agent
-/// asked to run and the directory it asked from, and was created 0644. The
-/// respond spool sitting in the same folder was already 0600.
+/// weakest protection of anything Pulse writes: the attention ledger kept
+/// session titles — the user's own words, up to 160 characters — and set no
+/// mode at all; `attention.tsv` keeps the command an agent asked to run and
+/// the directory it asked from, and was created 0644. Since 23.0 the titles
+/// live in `session-log.json`, written through here.
 public enum PrivateFile {
     public static let mode: mode_t = 0o600
 

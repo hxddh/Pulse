@@ -11,30 +11,29 @@ import Foundation
 
 // MARK: - 17.0 · Why
 
-/// Why a row is in its state, and what the hooks said to put it there.
+/// Why a row is in its state, and what the session did to get there.
+///
+/// 23.0: the lines are the session's spans from `SessionLog` — the state,
+/// the wait kind, the evidence, and for a block the words the agent sent —
+/// newest first. The hook-by-hook copy (`attention-history.json`) and its
+/// TSV export are gone; the span record already says what the lamp showed
+/// and why.
 struct WhyCardModel: Equatable {
     var lang: ResolvedLanguage
     /// The one sentence; nil when the state needs no explaining.
     var why: String?
     /// Newest first, at most `maxLines`.
     var lines: [String]
-    /// Events kept for this session (what an export would copy).
-    var eventCount: Int
 
     static let maxLines = 12
 
     var isEmpty: Bool { why == nil && lines.isEmpty }
 
-    static func make(row: AgentRow, history: [AttentionHistory.Event], narrator: RowNarrator) -> WhyCardModel {
+    static func make(row: AgentRow, spans: [TimelineSpan], narrator: RowNarrator) -> WhyCardModel {
         WhyCardModel(
             lang: narrator.lang,
             why: narrator.whyLine(row),
-            lines: history.suffix(maxLines).reversed().map(narrator.historyLine),
-            eventCount: history.count
+            lines: spans.suffix(maxLines).reversed().map(narrator.spanLine)
         )
     }
-}
-
-enum WhyIntent: Equatable {
-    case export
 }

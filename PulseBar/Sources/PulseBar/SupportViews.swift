@@ -644,7 +644,7 @@ struct ActivityLogView: View {
             } else {
                 ForEach(model.entries) { entry in
                     HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
-                        Text(clock(entry.atMs))
+                        Text(entry.clock)
                             .font(PulseTheme.Font.code)
                             .foregroundStyle(.secondary)
                         Circle()
@@ -667,13 +667,6 @@ struct ActivityLogView: View {
                 }
             }
         }
-    }
-
-    private func clock(_ ms: Int64) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: lang == .zh ? "zh-Hans" : "en")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
     }
 }
 

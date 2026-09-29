@@ -83,50 +83,14 @@ extension StatusStore {
         try? currentSettings.serialized().write(to: settingsURL(), atomically: true, encoding: .utf8)
     }
 
-    /// Soft-dismiss tombstones for harvest pending — survive relaunch until
-    /// the builder observes a natural clear or complete absence (0.95).
-    private static func dismissedPendingURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Pulse/dismissed-pending.json")
-    }
-
-    static func loadDismissedPendingKeys() -> Set<String> {
-        let url = dismissedPendingURL()
-        guard let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([String].self, from: data)
-        else { return [] }
-        return Set(decoded.filter { !$0.isEmpty })
-    }
-
-    func persistDismissedPendingKeys() {
-        let url = Self.dismissedPendingURL()
-        let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let keys = Array(dismissedPendingKeys).sorted()
-        guard let data = try? JSONEncoder().encode(keys) else { return }
-        try? data.write(to: url, options: .atomic)
-    }
-
-    /// Follow a process-only → session identity change so dismiss and delivery state survive.
+    /// Follow a process-only → session identity change so in-flight delivery
+    /// state survives it. The session log moves its own records
+    /// (`SessionLog.remap`, in `recordScan`).
     func migrateRowIdentity(from oldKey: String, to newKey: String) {
         guard oldKey != newKey, !newKey.isEmpty else { return }
-        if dismissedPendingKeys.remove(oldKey) != nil {
-            dismissedPendingKeys.insert(newKey)
-            persistDismissedPendingKeys()
-        }
-        if let queued = pendingWaitingNotifications.removeValue(forKey: oldKey) {
-            var moved = queued
-            moved.rowKey = newKey
-            pendingWaitingNotifications[newKey] = moved
-        }
-        if knownWaitingKeys.remove(oldKey) != nil {
-            knownWaitingKeys.insert(newKey)
-        }
         if waitingDeliveryInFlight.remove(oldKey) != nil {
             waitingDeliveryInFlight.insert(newKey)
         }
-        attentionLedger.remapRowKey(from: oldKey, to: newKey)
-        attentionLedger.save()
         DebugLog.write("row identity \(DebugLog.key(oldKey)) → \(DebugLog.key(newKey))")
     }
 

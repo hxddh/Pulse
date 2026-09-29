@@ -41,24 +41,24 @@ struct LampTests {
     }
 
     @Test func aSessionThatLeavesClosesItsSpan() {
-        var book = SessionTimelineBook()
+        var log = SessionLog()
         let r = row("claude|a")
-        book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now))
-        book.apply(SessionTimeline.transitions(previous: [r], current: [], nowMs: now + 5 * minute))
-        let spans = book.spans["claude|a"] ?? []
+        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now))
+        log.applyTimeline(SessionTimeline.transitions(previous: [r], current: [], nowMs: now + 5 * minute))
+        let spans = log.spans("claude|a")
         #expect(spans.count == 1)
         #expect(spans.first?.endMs == now + 5 * minute)
     }
 
     @Test func relaunchingDoesNotDuplicateAnOpenSpan() {
-        var book = SessionTimelineBook()
+        var log = SessionLog()
         let r = row("claude|a")
-        let first = book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now))
+        let first = log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now))
         #expect(first)
         // A fresh process has no previous rows and re-sees the same session.
-        let again = book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now + minute))
+        let again = log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now + minute))
         #expect(!again)
-        #expect(book.spans["claude|a"]?.count == 1)
+        #expect(log.spans("claude|a").count == 1)
     }
 
     @Test func aRemappedKeyKeepsItsHistory() {
@@ -71,23 +71,23 @@ struct LampTests {
         #expect(edges.isEmpty, "the same session under a better key is not a new edge")
     }
 
-    @Test func theBookIsBounded() {
-        var book = SessionTimelineBook()
+    @Test func theLogIsBounded() {
+        var log = SessionLog()
         var previous: [AgentRow] = []
         for i in 0..<120 {
             var r = row("claude|a")
             r.waiting = i % 2 == 0
             r.waitSignal = r.waiting ? .hooks : nil
             r.waitSinceMs = r.waiting ? now + Int64(i) * minute : 0
-            book.apply(SessionTimeline.transitions(previous: previous, current: [r], nowMs: now + Int64(i) * minute))
+            log.applyTimeline(SessionTimeline.transitions(previous: previous, current: [r], nowMs: now + Int64(i) * minute))
             previous = [r]
         }
-        #expect((book.spans["claude|a"]?.count ?? 0) <= SessionTimelineBook.maxSpansPerSession)
+        #expect(log.spans("claude|a").count <= SessionLog.maxSpansPerSession)
         // The session leaves, closing its span; a day later nothing is kept.
         // (An open span is the session's present state and stays.)
-        book.apply(SessionTimeline.transitions(previous: previous, current: [], nowMs: now + 121 * minute))
-        book.prune(nowMs: now + SessionTimelineBook.retentionMs * 3)
-        #expect(book.spans.isEmpty, "a day later nothing is kept")
+        log.applyTimeline(SessionTimeline.transitions(previous: previous, current: [], nowMs: now + 121 * minute))
+        log.prune(nowMs: now + SessionLog.retentionMs * 3)
+        #expect(log.sessions.isEmpty, "a day later nothing is kept")
     }
 
     @Test func theStripSplitsTheHourByState() {
@@ -156,18 +156,18 @@ struct LampTests {
     }
 
     @Test func theAuditKeepsWhenTheWaitBeganAndWhyThereWasNoBanner() {
-        var ledger = AttentionLedger()
+        var log = SessionLog()
         var r = row("claude|a")
         r.waiting = true
-        ledger.observe(row: r, nowMs: now)
-        let marked = ledger.markDelivery(rowKey: "claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now)
+        log.reconcileWaits(rows: [r], released: [], nowMs: now)
+        let marked = log.markDelivery("claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now)
         #expect(marked)
-        let markedAgain = ledger.markDelivery(rowKey: "claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now + 1)
+        let markedAgain = log.markDelivery("claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now + 1)
         #expect(!markedAgain, "the same outcome twice is not a write")
-        let event = ledger.latestEvent(rowKey: "claude|a")
-        #expect(event != nil)
-        if let event {
-            let lines = NotificationAuditModel.make(event: event, lang: .en).lines
+        let wait = log.latestWait("claude|a")
+        #expect(wait != nil)
+        if let wait {
+            let lines = NotificationAuditModel.make(wait: wait, nowMs: now, lang: .en).lines
             #expect(lines.count == 2)
             #expect(lines.first?.hasPrefix("Raised ") == true)
             #expect(lines.last?.contains("in front of you") == true)
@@ -177,20 +177,19 @@ struct LampTests {
     // MARK: - Activity
 
     @Test func theActivityLogMergesStateAndBanners() {
-        var book = SessionTimelineBook()
+        var log = SessionLog()
         var r = row("claude|a")
-        book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now - 10 * minute))
+        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now - 10 * minute))
         let before = r
         r.waiting = true
         r.waitSignal = .hooks
         r.waitSinceMs = now - 5 * minute
-        book.apply(SessionTimeline.transitions(previous: [before], current: [r], nowMs: now))
-        var ledger = AttentionLedger()
-        ledger.observe(row: r, nowMs: now - 5 * minute)
-        let marked = ledger.markDelivery(rowKey: "claude|a", outcome: "posted", nowMs: now - 5 * minute + 1_000)
+        log.applyTimeline(SessionTimeline.transitions(previous: [before], current: [r], nowMs: now))
+        log.reconcileWaits(rows: [r], released: [], nowMs: now - 5 * minute)
+        let marked = log.markDelivery("claude|a", outcome: "posted", nowMs: now - 5 * minute + 1_000)
         #expect(marked)
-        let log = ActivityLogModel.make(book: book, ledger: ledger, rows: [r], lang: .en)
-        let texts = log.entries.map { $0.text }
+        let model = ActivityLogModel.make(log: log, rows: [r], lang: .en, nowMs: now)
+        let texts = model.entries.map { $0.text }
         #expect(texts.count == 3)
         #expect(texts.first == L10n.t(.auditPosted, .en).replacingOccurrences(of: " %@", with: ""))
         #expect(texts.contains { $0.hasPrefix(L10n.t(.needsYou, .en)) })

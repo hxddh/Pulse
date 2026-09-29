@@ -294,6 +294,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         GlobalHotKey.uninstall()
         statusPanel?.uninstall()
+        // A debounced session-log change still in memory goes down now.
+        AppServices.store.sessionLogStore.flush()
     }
 }
 

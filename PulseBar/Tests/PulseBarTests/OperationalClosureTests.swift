@@ -14,32 +14,33 @@ final class OperationalClosureTests: XCTestCase {
         return row
     }
 
-    func testAttentionLedgerPersistsQueueAcknowledgementAndRateLimit() throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ledger-\(UUID().uuidString).json")
+    func testSessionLogPersistsQueueDismissalAndRateLimit() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("session-log-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
-        var ledger = AttentionLedger()
-        ledger.reconcile(activeRows: [waitingRow()], nowMs: 100)
-        ledger.markQueued(rowKey: "codex|session-1", nowMs: 110)
-        XCTAssertTrue(ledger.queuedKeys.contains("codex|session-1"))
-        ledger.markNotified(rowKey: "codex|session-1", nowMs: 200)
-        XCTAssertFalse(ledger.canDeliver(nowMs: 1_000, minimumIntervalMs: 3_000))
-        ledger.acknowledge(rowKey: "codex|session-1", nowMs: 300)
-        ledger.save(to: url)
-        let restored = AttentionLedger.load(from: url)
-        XCTAssertTrue(restored.isAcknowledged(rowKey: "codex|session-1"))
-        XCTAssertTrue(restored.events.contains { $0.notifiedAtMs == 200 })
+        var log = SessionLog()
+        log.reconcileWaits(rows: [waitingRow()], released: [], nowMs: 100)
+        log.markQueued("codex|session-1", nowMs: 110)
+        XCTAssertTrue(log.queuedKeys.contains("codex|session-1"))
+        log.markNotified("codex|session-1", nowMs: 200)
+        XCTAssertFalse(log.queuedKeys.contains("codex|session-1"), "a shown banner is no longer owed")
+        XCTAssertFalse(log.canDeliver(nowMs: 1_000, minimumIntervalMs: 3_000))
+        log.dismiss(waitingRow(), soft: false, nowMs: 300)
+        SessionLogFile.save(log, to: url, nowMs: 400)
+        let restored = SessionLogFile.load(from: url, nowMs: 500)
+        XCTAssertTrue(restored.dismissedKeys.contains("codex|session-1"))
+        XCTAssertEqual(restored.openWait("codex|session-1")?.notifiedMs, 200)
+        XCTAssertEqual(restored.openWait("codex|session-1")?.queuedMs, 110, "the audit keeps when it was queued")
     }
 
-    func testAttentionLedgerNeverEvictsActiveWaitingEvents() {
-        var ledger = AttentionLedger()
+    func testSessionLogNeverEvictsOpenWaits() {
+        var log = SessionLog()
         let rows = (0..<300).map { index in
             waitingRow("codex|session-\(index)")
         }
-        ledger.reconcile(activeRows: rows, nowMs: 100)
-        ledger.prune(nowMs: 100)
+        log.reconcileWaits(rows: rows, released: [], nowMs: 100)
+        log.prune(nowMs: 100)
 
-        XCTAssertEqual(ledger.activeKeys.count, 300)
-        XCTAssertEqual(ledger.events.count, 300)
+        XCTAssertEqual(log.waitingKeys.count, 300, "a live wait is product state, not history")
     }
 
     func testSupervisorBacksOffOnlyFailedAdapterAndRecovers() {

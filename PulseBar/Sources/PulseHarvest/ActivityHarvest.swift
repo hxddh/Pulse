@@ -537,11 +537,7 @@ package enum AttentionReader {
     }
 
     package static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
-        let sources = AttentionIO.readSources()
-        // 17.0: everything read is also kept, bounded, so a lamp can later
-        // say which event lit it (`AttentionHistory`).
-        AttentionHistoryStore.ingest(sources, nowMs: nowMs)
-        return sources.flatMap { parse($0.text, nowMs: nowMs) }
+        AttentionIO.readSources().flatMap { parse($0.text, nowMs: nowMs) }
     }
 
     /// Pure TSV → entries. Split out from `load` so the last-event-wins,

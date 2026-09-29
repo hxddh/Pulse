@@ -8,12 +8,10 @@ extension StatusStore {
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
         // Restore only Pulse-owned attention state. Agent-owned hooks remain
-        // the source of truth for the current row; the ledger supplies the
-        // cross-launch baseline and delivery dedupe.
-        attentionLedger = AttentionLedger.load()
-        knownWaitingKeys = attentionLedger.activeKeys
-        waitingNotifySeeded = attentionLedger.baselineEstablished
-        dismissedPendingKeys = Self.loadDismissedPendingKeys()
+        // the source of truth for the current row; the session log supplies
+        // the cross-launch baseline, delivery dedupe and dismissals.
+        loadSessionLog()
+        waitingNotifySeeded = sessionLog.baselineEstablished
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
         loadSettings()
@@ -432,14 +430,14 @@ extension StatusStore {
                 activity: activityEvents,
                 vendorWaits: vendorWaits
             ),
-            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: knownWaitingKeys),
+            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: sessionLog.waitingKeys),
             context: SnapshotBuilder.Context(
                 nowMs: Int64(now.timeIntervalSince1970 * 1000),
                 terminal: TerminalFocus.Environment.current(
                     allowTTYAutomation: allowTerminalAutomation
                 ),
                 lang: lang,
-                dismissedPendingKeys: dismissedPendingKeys,
+                dismissedPendingKeys: sessionLog.suppressedKeys,
                 showAllAgents: showAllAgents,
                 privacyLimitedAgents: Set(
                     AgentID.allCases.filter {
@@ -453,52 +451,16 @@ extension StatusStore {
         for (oldKey, newKey) in result.remappedRowKeys {
             migrateRowIdentity(from: oldKey, to: newKey)
         }
-        // Write only when the set actually moved. A non-empty `clearedPendingKeys`
-        // is not evidence of a change — it lists what the builder saw clear,
-        // most of which the store never held — and taking it as one rewrote
-        // `dismissed-pending.json` every two to five seconds for as long as any
-        // session was running (U-5). `subtract` can only remove, so the count
-        // settles the question.
-        let dismissedCountBefore = dismissedPendingKeys.count
-        dismissedPendingKeys.subtract(result.clearedPendingKeys)
-        if dismissedPendingKeys.count != dismissedCountBefore {
-            persistDismissedPendingKeys()
-        }
         let previousRows = cachedAll
         setCachedAll(result.rows)
-        recordTimeline(
-            previous: previousRows,
-            current: result.rows,
-            remapped: result.remappedRowKeys,
-            nowMs: Int64(now.timeIntervalSince1970 * 1000)
-        )
         if showAllAgents != result.showAllAgents { showAllAgents = result.showAllAgents }
-        knownWaitingKeys = result.waitingKeys
 
         // Reconcile before delivery so a restart can distinguish an already
-        // known wait from a newly crossed edge. The ledger is written
-        // atomically; a crash during this scan leaves the previous complete
-        // state intact.
-        do {
-            let nowMs = Int64(now.timeIntervalSince1970 * 1000)
-            let ledgerBefore = attentionLedger
-            attentionLedger.reconcile(
-                activeRows: result.rows.filter(\.waiting),
-                nowMs: nowMs
-            )
-            // A queued edge can outlive both the scan and the process. Rebuild
-            // the in-memory delivery queue from the durable ledger before any
-            // notification decision so a relaunch never loses it.
-            for row in result.rows where row.waiting && attentionLedger.queuedKeys.contains(row.rowKey) {
-                pendingWaitingNotifications[row.rowKey] = row
-            }
-            attentionLedger.markBaseline()
-            // A scan that finds the same world writes nothing (scan-quiet
-            // applies to the disk too).
-            if !attentionLedger.hasSameDurableState(as: ledgerBefore) {
-                attentionLedger.save()
-            }
-        }
+        // known wait from a newly crossed edge. Spans, waits, released soft
+        // dismissals and the baseline move in one change; a scan that finds
+        // the same world changes nothing and writes nothing (scan-quiet
+        // applies to the disk too).
+        recordScan(previous: previousRows, result: result, nowMs: Int64(now.timeIntervalSince1970 * 1000))
 
         var snap = result.snapshot
         snap.updatedAt = now
@@ -530,25 +492,25 @@ extension StatusStore {
         }
         if notifyOnWaiting, waitingNotifySeeded {
             let waitingEdges = result.newlyWaiting.filter { !mutedAgents.contains($0.agent) }
-            let queuedRows = pendingWaitingNotifications.values.filter { row in
-                row.waiting && !mutedAgents.contains(row.agent)
-            }
+            // Owed banners come from the log, rebuilt from this scan's rows:
+            // a wait that resolved has no open record, so it can neither
+            // linger in a queue nor bring back a banner for a prompt that is
+            // gone.
+            let queuedRows = Self.queuedDeliveryRows(
+                queued: sessionLog.queuedKeys, rows: result.rows, muted: mutedAgents
+            )
             let deliveryRows = Self.waitingDeliveryRows(edges: waitingEdges, queued: queuedRows)
             if notifyAuthorized == true {
                 postWaitingNotifications(deliveryRows)
-            } else if notifyAuthorized != true {
+            } else {
                 // Permission resolution is asynchronous, and a previously
                 // denied permission may be enabled later in System Settings.
-                // Preserve every edge until the callback arrives instead of
-                // dropping the only interruption for a just-started session.
-                for waiting in waitingEdges {
-                    pendingWaitingNotifications[waiting.rowKey] = waiting
-                    attentionLedger.markQueued(
-                        rowKey: waiting.rowKey,
-                        nowMs: Int64(now.timeIntervalSince1970 * 1000)
-                    )
+                // Keep every edge owed until the callback arrives instead of
+                // dropping the only interruption for a just-started session —
+                // written once, not on every scan while it waits.
+                updateLog { log in
+                    for waiting in waitingEdges { log.markQueued(waiting.rowKey, nowMs: edgeNowMs) }
                 }
-                attentionLedger.save()
             }
         }
         if !waitingNotifySeeded {

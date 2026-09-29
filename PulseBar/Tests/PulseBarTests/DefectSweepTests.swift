@@ -210,23 +210,26 @@ final class DefectSweepTests: XCTestCase {
         XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
-    func testTheLedgerRoundTripsThroughItsPrivateWrite() throws {
+    func testTheSessionLogRoundTripsThroughItsPrivateWrite() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-ledger-\(UUID().uuidString)")
+            .appendingPathComponent("pulse-log-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent("attention-ledger.json")
+        let url = directory.appendingPathComponent("session-log.json")
 
-        var ledger = AttentionLedger()
+        var log = SessionLog()
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.task = "Something the user actually typed"
         row.waiting = true
-        ledger.observe(row: row, nowMs: 1_800_000_000_000)
-        ledger.save(to: url)
+        log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
+        XCTAssertTrue(SessionLogFile.save(log, to: url, nowMs: 1_800_000_000_100))
 
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
-        XCTAssertEqual(AttentionLedger.load(from: url).activeKeys, ["claude|s1"])
+        let loaded = SessionLogFile.load(from: url, nowMs: 1_800_000_000_200)
+        XCTAssertEqual(loaded.waitingKeys, ["claude|s1"])
+        XCTAssertEqual(loaded.savedAtMs, 1_800_000_000_100, "the write is stamped, for closing spans after a quit")
+        XCTAssertTrue(loaded.hasSameDurableState(as: log))
     }
 
     // MARK: D-6 / D-7 · a click that reached nothing says so

@@ -3,9 +3,6 @@ import SwiftUI
 /// 17.0 · renders a `WhyCardModel` and nothing else (`SurfaceCapture`).
 struct WhyCardView: View {
     let model: WhyCardModel
-    var send: (WhyIntent) -> Void = { _ in }
-    /// What the last export did, set by the owner.
-    var notice: String = ""
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
@@ -31,16 +28,6 @@ struct WhyCardView: View {
                             .font(PulseTheme.Font.code)
                             .lineLimit(2)
                             .textSelection(.enabled)
-                    }
-                }
-                HStack(spacing: 10) {
-                    Button(t(.whyExport)) { send(.export) }
-                        .buttonStyle(.link)
-                        .font(PulseTheme.Font.caption)
-                    if !notice.isEmpty {
-                        Text(notice)
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
             }

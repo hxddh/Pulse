@@ -3,116 +3,12 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
-/// 17.0 · Why — the history that remembers what the hooks said, the one
-/// sentence that says which evidence lit a row, the export that turns a real
-/// sequence into a fixture, and the tray row's face as a value.
+/// 17.0 · Why — the one sentence that says which evidence lit a row, the
+/// session's record under it (23.0: its spans in `SessionLog`), and the tray
+/// row's face as a value.
 final class WhyTests: XCTestCase {
     private let now: Int64 = 1_800_000_000_000
     private let minute: Int64 = 60_000
-
-    private func source(_ lines: [String]) -> AttentionIO.Source {
-        AttentionIO.Source(text: AttentionProtocol.header + lines.joined(separator: "\n") + "\n")
-    }
-
-    private func line(_ kind: String, ago: Int64, message: String = "", session: String = "s1", front: String = "") -> String {
-        ["claude", kind, "\(now - ago)", message, session, "/Users/me/code/app", "", front].joined(separator: "\t")
-    }
-
-    // MARK: - History
-
-    func testHistoryKeepsEverySequenceNotJustTheLastEvent() {
-        var history = AttentionHistory()
-        let changed = history.ingest([source([
-            line("permission", ago: 5 * minute, message: "Bash: npm test"),
-            line("done", ago: 4 * minute),
-            line("stop", ago: 1 * minute, message: "All green."),
-        ])], nowMs: now)
-        XCTAssertTrue(changed)
-        let events = history.history(agent: "claude", session: "s1")
-        XCTAssertEqual(events.map(\.kind), ["permission", "done", "turn"], "stored as v3 kinds, in order")
-        XCTAssertEqual(events.last?.message, "All green.")
-    }
-
-    func testTheSameFileTwiceChangesNothing() {
-        var history = AttentionHistory()
-        let lines = [line("permission", ago: minute, message: "x")]
-        history.ingest([source(lines)], nowMs: now)
-        XCTAssertFalse(history.ingest([source(lines)], nowMs: now), "an unchanged scan writes nothing")
-    }
-
-    func testHistoryIsBoundedAndForgetsTheSilent() {
-        var history = AttentionHistory()
-        let many = (0..<(AttentionHistory.perKey + 10)).map { line("turn", ago: Int64(100 - $0) * 1_000) }
-        history.ingest([source(many)], nowMs: now)
-        XCTAssertEqual(history.history(agent: "claude", session: "s1").count, AttentionHistory.perKey)
-
-        history.ingest([source([line("permission", ago: minute, session: "old")])], nowMs: now)
-        history.ingest([], nowMs: now + AttentionHistory.retentionMs + 2 * minute)
-        XCTAssertTrue(history.events.isEmpty, "a day of silence forgets the session")
-    }
-
-    func testHistoryNeverKeepsWhatTheProtocolRejects() {
-        var history = AttentionHistory()
-        history.ingest([source([
-            ["claude", "totally_made_up", "\(now)", "nope", "s1", "", "", ""].joined(separator: "\t"),
-            ["not-an-agent", "permission", "\(now)", "nope", "s1", "", "", ""].joined(separator: "\t"),
-        ])], nowMs: now)
-        XCTAssertTrue(history.events.isEmpty)
-    }
-
-    func testHistoryIsSanitizedOnTheWayIn() {
-        var history = AttentionHistory()
-        history.ingest([source([line("permission", ago: minute, message: "Bash: curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstu' api")])], nowMs: now)
-        let message = history.history(agent: "claude", session: "s1").first?.message ?? ""
-        XCTAssertFalse(message.contains("sk-abcdefghijklmnopqrstu"))
-    }
-
-    /// Every line is this Mac's, so a value in the `host` column does not
-    /// split a session's history in two.
-    func testAHostColumnDoesNotSplitASessionsHistory() {
-        var history = AttentionHistory()
-        var named = line("turn", ago: minute / 2).split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        named[6] = "devbox"
-        history.ingest([source([line("permission", ago: minute), named.joined(separator: "\t")])], nowMs: now)
-        XCTAssertEqual(history.history(agent: "claude", session: "s1").map(\.kind), ["permission", "turn"])
-    }
-
-    func testTheStoreWritesAPrivateFileNextToTheAttentionFile() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("pulse-why-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        AttentionIO.pathOverride = home.appendingPathComponent("attention.tsv")
-        AttentionHistoryStore.reset()
-        defer {
-            AttentionIO.pathOverride = nil
-            AttentionHistoryStore.reset()
-            try? FileManager.default.removeItem(at: home)
-        }
-        AttentionHistoryStore.ingest([source([line("permission", ago: minute)])], nowMs: now)
-        let attributes = try FileManager.default.attributesOfItem(atPath: AttentionHistory.fileURL.path)
-        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
-        AttentionHistoryStore.reset()
-        XCTAssertEqual(AttentionHistoryStore.current.history(agent: "claude", session: "s1").count, 1, "survives a restart")
-    }
-
-    // MARK: - Export → fixture
-
-    func testAnExportReplaysToTheSameConclusion() {
-        var history = AttentionHistory()
-        history.ingest([source([
-            line("permission", ago: 5 * minute, message: "Bash: npm test"),
-            line("stop", ago: 1 * minute, message: "All green."),
-        ])], nowMs: now)
-        let fixture = AttentionHistory.fixture(history.history(agent: "claude", session: "s1"))
-        XCTAssertTrue(fixture.hasPrefix(AttentionProtocol.header))
-        XCTAssertFalse(fixture.contains("/Users/me"), "a fixture needs to match rows, not know where the code lives")
-        let lines = fixture.split(separator: "\n").filter { !$0.hasPrefix("#") }
-        XCTAssertTrue(lines.allSatisfy {
-            $0.split(separator: "\t", omittingEmptySubsequences: false).count == AttentionProtocol.columnCount
-        })
-        let replayed = AttentionReader.parse(fixture, nowMs: now)
-        XCTAssertEqual(replayed.count, 1)
-        XCTAssertTrue(replayed[0].isTurn, "the replay reaches the conclusion the live reader reached")
-    }
 
     // MARK: - The why line
 
@@ -160,15 +56,37 @@ final class WhyTests: XCTestCase {
         XCTAssertNil(narrator().whyLine(row))
     }
 
-    func testTheDetailsTimelineIsNewestFirstAndBounded() {
+    func testTheWhyCardIsTheSessionsSpansNewestFirstAndBounded() {
         let row = SurfaceFixtures.rowPermission()
-        let events = (0..<30).map {
-            AttentionHistory.Event(agent: "claude", kind: "turn", tsMs: now - Int64(30 - $0) * minute, session: row.sessionID)
+        let spans = (0..<30).map { index -> TimelineSpan in
+            let start = now - Int64(30 - index) * minute
+            let last = index == 29
+            return TimelineSpan(
+                state: last ? .blocked : .running, evidence: last ? .hook : .harvest,
+                kind: last ? "Permission" : "", startMs: start,
+                endMs: last ? nil : start + minute, note: last ? "Bash: npm test" : ""
+            )
         }
-        let card = WhyCardModel.make(row: row, history: events, narrator: narrator())
+        let card = WhyCardModel.make(row: row, spans: spans, narrator: narrator())
         XCTAssertEqual(card.lines.count, WhyCardModel.maxLines)
-        XCTAssertEqual(card.eventCount, 30)
         XCTAssertTrue(card.lines[0].hasPrefix(String(format: L10n.t(.agoFormat, .en), DurationFormat.label(seconds: 60, lang: .en))))
+        XCTAssertTrue(card.lines[0].contains(L10n.t(.kindPermission, .en)), card.lines[0])
+        XCTAssertTrue(card.lines[0].hasSuffix("Bash: npm test"), "a block says what was asked")
+    }
+
+    /// The note a blocked span keeps is bounded and sanitized on the way in.
+    func testABlockedSpanKeepsTheRequestSanitizedAndBounded() throws {
+        var before = AgentRow(rowKey: "claude|s1", agent: .claude)
+        before.liveProcess = true
+        var after = before
+        after.waiting = true
+        after.waitSignal = .hooks
+        after.waitKind = "Permission"
+        after.waitSinceMs = now - minute
+        after.waitMessage = "Bash: curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstu' api " + String(repeating: "x", count: 400)
+        let edge = try XCTUnwrap(SessionTimeline.transitions(previous: [before], current: [after], nowMs: now).first)
+        XCTAssertFalse(edge.note.contains("sk-abcdefghijklmnopqrstu"))
+        XCTAssertLessThanOrEqual(edge.note.count, SessionLog.noteLimit)
     }
 
     /// 21.0: the orange states explain themselves.

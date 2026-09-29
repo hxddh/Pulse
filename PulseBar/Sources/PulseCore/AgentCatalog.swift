@@ -37,7 +37,7 @@ public enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
     /// User-facing identity used when several vendor processes share one
     /// surface. Cursor's `cursor-agent` worker is observed separately by the
     /// collectors, but it is deliberately one Cursor row in the tray,
-    /// support matrix, and attention ledger.
+    /// support matrix, and session log.
     public var surfaceID: AgentID {
         self == .cursorAgent ? .cursor : self
     }

@@ -308,12 +308,12 @@ struct ClarityFixTests {
         #expect(UpdateCheck.Failure.http(503).detail == "HTTP 503")
     }
 
-    // MARK: - 12 · a summary banner's click is audited on every row it counted
+    // MARK: - 12 · a summary banner's click is audited on every wait it counted
 
-    @Test func aSummaryBannerStandsForEveryRow() {
-        #expect(PulseNotify.bannerTargets(rowKey: "a", rowKeys: ["a", "b", "c", "b", ""]) == ["a", "b", "c"])
-        #expect(PulseNotify.bannerTargets(rowKey: "solo", rowKeys: []) == ["solo"])
-        #expect(PulseNotify.bannerTargets(rowKey: "", rowKeys: []).isEmpty)
+    @Test func aSummaryBannerStandsForEveryWait() {
+        #expect(PulseNotify.bannerWaitIDs(["a|1", "b|1", "c|1", "b|1", ""]) == ["a|1", "b|1", "c|1"])
+        #expect(PulseNotify.bannerWaitIDs(["solo|1"]) == ["solo|1"])
+        #expect(PulseNotify.bannerWaitIDs([]).isEmpty)
     }
 
     // MARK: - 13 / 14 · jumping to a wait
@@ -362,17 +362,18 @@ struct ClarityFixTests {
         #expect(throttle.event(at: 11.5) == .fire)
     }
 
-    // MARK: - 16 · a scan that finds the same world writes no ledger
+    // MARK: - 16 · a scan that finds the same world writes no log
 
     @Test func reconcilingTheSameWaitsIsNotADurableChange() {
         let row = waitingRow("claude|s1", .claude, session: "s1", since: now)
-        var ledger = AttentionLedger()
-        ledger.reconcile(activeRows: [row], nowMs: now)
-        let before = ledger
-        ledger.reconcile(activeRows: [row], nowMs: now + 3_000)
-        #expect(ledger.hasSameDurableState(as: before))
-        ledger.reconcile(activeRows: [], nowMs: now + 6_000)
-        #expect(!ledger.hasSameDurableState(as: before), "a resolved wait is a change")
+        var log = SessionLog()
+        log.reconcileWaits(rows: [row], released: [], nowMs: now)
+        let before = log
+        let again = log.reconcileWaits(rows: [row], released: [], nowMs: now + 3_000)
+        #expect(!again)
+        #expect(log.hasSameDurableState(as: before))
+        log.reconcileWaits(rows: [], released: [], nowMs: now + 6_000)
+        #expect(!log.hasSameDurableState(as: before), "a resolved wait is a change")
     }
 
     // MARK: - 17 · one bad byte never erases the attention file

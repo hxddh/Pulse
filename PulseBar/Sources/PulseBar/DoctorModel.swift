@@ -104,7 +104,7 @@ enum DoctorModel {
         /// The matcher on Pulse's Notification entry, when there is one.
         var claudeNotificationMatcher: String?
         var claudeSettingsUnreadable = false
-        /// Newest hook event per agent, from `attention-history.json`.
+        /// Newest hook event per agent, from `attention.tsv`.
         var lastFire: [String: HookFire] = [:]
 
         var codexInstalled = false

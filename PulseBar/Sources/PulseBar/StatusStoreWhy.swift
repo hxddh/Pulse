@@ -1,19 +1,10 @@
-import AppKit
 import Foundation
 
-/// 17.0 · Why — the store's side: which history belongs to a row, and the
-/// user's click that copies it out as a replayable fixture.
+/// 17.0 · Why — the store's side: which record belongs to a row. 23.0: the
+/// session log's spans; the export of raw hook events went with the copy of
+/// them Pulse used to keep.
 @MainActor
 extension StatusStore {
-    /// The hook events kept for this row's session, oldest first. Empty for a
-    /// row with no session: an agent-wide history would mix other sessions in.
-    func attentionHistory(for row: AgentRow) -> [AttentionHistory.Event] {
-        guard !row.sessionID.isEmpty else { return [] }
-        return AttentionHistoryStore.current.history(
-            agent: row.agent.rawValue, session: row.sessionID
-        )
-    }
-
     /// 17.0: the tray row's face, as a value — the store contributes only
     /// what only it knows.
     func trayRowModel(_ row: AgentRow) -> TrayRowModel {
@@ -27,19 +18,7 @@ extension StatusStore {
     }
 
     func whyCard(_ row: AgentRow) -> WhyCardModel {
-        WhyCardModel.make(row: row, history: attentionHistory(for: row), narrator: narrator)
-    }
-
-    /// Copy this session's events as a v3 TSV — only on the user's click,
-    /// only to their own clipboard. Returns how many events went.
-    @discardableResult
-    func copyAttentionFixture(_ row: AgentRow) -> Int {
-        let events = attentionHistory(for: row)
-        guard !events.isEmpty else { return 0 }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(AttentionHistory.fixture(events), forType: .string)
-        DebugLog.write("why export events=\(events.count) \(DebugLog.key(row.rowKey))")
-        return events.count
+        _ = logRevision
+        return WhyCardModel.make(row: row, spans: sessionLog.spans(row.rowKey), narrator: narrator)
     }
 }

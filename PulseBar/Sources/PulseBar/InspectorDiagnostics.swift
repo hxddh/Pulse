@@ -1,32 +1,24 @@
 import SwiftUI
 
-// 21.0 Clarity: the Why card with its hook history, the waiting timeline,
-// and how Pulse reads the session. 22.0 removed the Workbench that hosted
-// them; they wait here for the row's detail pane.
+// 21.0 Clarity: the Why card and how Pulse reads the session, shown in the
+// row's detail view (22.0). 23.0: the Why card reads the session log; the
+// waiting timeline that repeated the notification audit is gone.
 
-/// The store-bound owner of the Why card: builds the value, carries out the
-/// export, remembers what the export did.
+/// The store-bound owner of the Why card: builds the value.
 struct WhyDetailSection: View {
     var store: StatusStore
     let row: AgentRow
-    @State private var notice = ""
 
     var body: some View {
         let model = store.whyCard(row)
         if !model.isEmpty {
-            WhyCardView(model: model, send: { intent in
-                switch intent {
-                case .export:
-                    let count = store.copyAttentionFixture(row)
-                    notice = String(format: store.tr(.whyExported), count)
-                }
-            }, notice: notice)
+            WhyCardView(model: model)
         }
     }
 }
 
 /// How Pulse sees this session: the evidence it has, what it is missing and
-/// why, when it last read, the waiting timeline, and the raw identifiers —
+/// why, when it last read, and the raw identifiers —
 /// folded, because it answers "why does the row say that", not "what is it
 /// doing".
 struct SessionDiagnosticsCard: View {
@@ -74,9 +66,6 @@ struct SessionDiagnosticsCard: View {
                         .font(PulseTheme.Font.caption)
                         .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
-                if row.waiting, let event = store.attentionEvent(for: row.rowKey) {
-                    timeline(event)
-                }
                 VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
                     Text("\(store.tr(.detailTool)): \(row.tool.isEmpty ? "—" : row.tool)")
                     Text("\(store.tr(.detailSkill)): \(row.skill.isEmpty ? "—" : row.skill)")
@@ -95,32 +84,6 @@ struct SessionDiagnosticsCard: View {
                 .font(PulseTheme.Font.heading)
         }
         .pulseCard()
-    }
-
-    private func timeline(_ event: AttentionLedger.Event) -> some View {
-        VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-            Text(store.tr(.waitingTimeline))
-                .font(PulseTheme.Font.bodyEmphasis)
-            line(store.tr(.waitingQueuedAt), ms: event.queuedAtMs)
-            if event.notifiedAtMs > 0 {
-                line(store.tr(.waitingNotifiedAt), ms: event.notifiedAtMs)
-            } else if event.queuedAtMs > 0 {
-                Text(store.tr(.waitingNotifyPending))
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
-            line(store.tr(.waitingAcknowledgedAt), ms: event.acknowledgedAtMs)
-            line(store.tr(.waitingResolvedAt), ms: event.resolvedAtMs)
-        }
-    }
-
-    @ViewBuilder
-    private func line(_ label: String, ms: Int64) -> some View {
-        if ms > 0 {
-            Text("\(label) · \(relative(ms))")
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     private func relative(_ ms: Int64) -> String {

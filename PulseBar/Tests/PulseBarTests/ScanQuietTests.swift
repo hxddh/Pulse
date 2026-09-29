@@ -30,7 +30,6 @@ struct ScanQuietTests {
             ("allowAppData", \StatusStore.allowAppData),
             ("allowTerminalAutomation", \StatusStore.allowTerminalAutomation),
             ("appDataAgents", \StatusStore.appDataAgents),
-            ("timelineRevision", \StatusStore.timelineRevision),
             ("cachedAll", \StatusStore.cachedAll),
             ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
             ("didCopyDiagnostics", \StatusStore.didCopyDiagnostics),
@@ -48,6 +47,7 @@ struct ScanQuietTests {
             ("language", \StatusStore.language),
             ("launchAtLogin", \StatusStore.launchAtLogin),
             ("loginItemApplied", \StatusStore.loginItemApplied),
+            ("logRevision", \StatusStore.logRevision),
             ("mutedAgents", \StatusStore.mutedAgents),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
             ("notifyOnIdle", \StatusStore.notifyOnIdle),
@@ -100,6 +100,28 @@ struct ScanQuietTests {
         scan(store, ticket: 3)
 
         #expect(fired.names == [], "observed properties written by an unchanged scan: \(fired.names)")
+    }
+
+    /// 23.0: a wait that crossed while macOS had not yet allowed Pulse to
+    /// notify is owed a banner once. The ledger used to be rewritten on every
+    /// scan after that for as long as authorization stayed unresolved; the
+    /// session log changes (and `logRevision` moves) only when the wait did.
+    @Test func anOwedBannerWhileUnauthorizedIsRecordedOnce() {
+        let store = quietStore()
+        store.notifyAuthorized = nil
+        scan(store, ticket: 1)
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let raised = AttentionReader.Entry(
+            id: .claude, kind: "Permission", message: "Bash: npm test",
+            tsMs: nowMs - 1_000, session: "s-owed", cwd: "/w/app"
+        )
+        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 2)
+        let owed = store.sessionLog.queuedKeys
+        #expect(owed.count == 1, "the edge is owed its banner")
+        let fired = watch(store, [("logRevision", \StatusStore.logRevision)])
+        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 3)
+        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 4)
+        #expect(fired.names == [], "the same owed wait is not news")
     }
 
     @Test func aChangedWorldIsStillAnnounced() {

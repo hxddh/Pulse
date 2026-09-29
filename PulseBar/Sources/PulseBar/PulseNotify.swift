@@ -21,11 +21,11 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let session = info["session"] as? String ?? ""
         let rowKey = info["rowKey"] as? String ?? ""
         let summaryRowKeys = info["rowKeys"] as? [String] ?? []
+        let waitIDs = PulseNotify.bannerWaitIDs(info["eventIDs"] as? [String] ?? [])
         DispatchQueue.main.async {
-            // 22.0: the click is part of the wait's audit.
-            for key in PulseNotify.bannerTargets(rowKey: rowKey, rowKeys: summaryRowKeys) {
-                AppServices.store.recordBannerClick(rowKey: key)
-            }
+            // 22.0: the click is part of the wait's audit — 23.0: of the
+            // waits this banner was posted for, by id.
+            AppServices.store.recordBannerClick(waitIDs: waitIDs)
             // Prefer the concrete rowKey (summary posts it as rowKeys.first too).
             // Never open the tray without an identity when one was carried.
             if !rowKey.isEmpty {
@@ -55,11 +55,12 @@ enum PulseNotify {
 
     static let focusActionID = "pulse.focus"
 
-    /// The rows a banner stands for: every key a summary carried, else the
-    /// single banner's own key. Order kept, duplicates and blanks dropped.
-    static func bannerTargets(rowKey: String, rowKeys: [String]) -> [String] {
+    /// The waits a banner stands for (`SessionLog.Wait.id`): one for a
+    /// single banner, every one a summary carried. Order kept, duplicates
+    /// and blanks dropped.
+    static func bannerWaitIDs(_ ids: [String]) -> [String] {
         var seen = Set<String>()
-        return (rowKeys.isEmpty ? [rowKey] : rowKeys).filter { !$0.isEmpty && seen.insert($0).inserted }
+        return ids.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
     static let waitingCategoryID = "pulse.waiting"
 
@@ -198,13 +199,14 @@ enum PulseNotify {
             agent: agent,
             session: session,
             rowKey: rowKey,
-            eventID: eventID,
+            eventIDs: eventID.isEmpty ? [] : [eventID],
             completion: completion
         )
     }
 
-    /// A single, actionable summary for a burst of approvals. Each event ID
-    /// remains in the ledger; the summary only reduces interruption count.
+    /// A single, actionable summary for a burst of approvals. Each wait keeps
+    /// its own record in the session log; the summary only reduces
+    /// interruption count.
     static func postWaitingSummary(
         title: String,
         body: String,
@@ -226,7 +228,7 @@ enum PulseNotify {
             agent: agent,
             session: session,
             rowKey: rowKeys.first ?? "",
-            eventID: eventIDs.joined(separator: ","),
+            eventIDs: eventIDs,
             rowKeys: rowKeys,
             completion: completion
         )
@@ -239,12 +241,12 @@ enum PulseNotify {
         agent: String,
         session: String,
         rowKey: String,
-        eventID: String = "",
+        eventIDs: [String] = [],
         rowKeys: [String] = [],
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
-        // Delivery is asynchronous. The caller owns the durable ledger and
-        // must not mark an event as notified until Notification Center accepts
+        // Delivery is asynchronous. The caller owns the durable session log
+        // and must not mark a wait as notified until Notification Center accepts
         // the request; otherwise a transient add failure loses the only
         // interruption until the agent emits a brand-new Waiting edge.
         guard let center else {
@@ -273,7 +275,7 @@ enum PulseNotify {
         if !agent.isEmpty { info["agent"] = agent }
         if !session.isEmpty { info["session"] = session }
         if !rowKey.isEmpty { info["rowKey"] = rowKey }
-        if !eventID.isEmpty { info["eventID"] = eventID }
+        if !eventIDs.isEmpty { info["eventIDs"] = eventIDs }
         if !rowKeys.isEmpty { info["rowKeys"] = rowKeys }
         content.userInfo = info
         let req = UNNotificationRequest(identifier: id, content: content, trigger: nil)

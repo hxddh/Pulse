@@ -158,37 +158,42 @@ enum SurfaceFixtures {
 
     // MARK: - 17.0 · Why
 
-    static func history(_ row: AgentRow, _ kinds: [(String, Int64, String, Bool?)]) -> [AttentionHistory.Event] {
-        kinds.map { kind, ago, message, front in
-            AttentionHistory.Event(
-                agent: row.agent.rawValue, kind: kind, tsMs: nowMs - ago, message: message,
-                session: row.sessionID, cwd: row.cwd, front: front
+    /// Back-to-back spans ending now (the last one open): `(state, kind,
+    /// evidence, minutes ago it began, note)`.
+    static func spans(_ items: [(TimelineState, String, TimelineEvidence, Int64, String)]) -> [TimelineSpan] {
+        items.enumerated().map { index, item in
+            let (state, kind, evidence, ago, note) = item
+            let end: Int64? = index + 1 < items.count ? nowMs - items[index + 1].3 * minute : nil
+            return TimelineSpan(
+                state: state, evidence: evidence, kind: kind,
+                startMs: nowMs - ago * minute, endMs: end, note: note
             )
         }
     }
 
     static func whyPermission(lang: ResolvedLanguage) -> WhyCardModel {
-        let row = rowPermission()
-        return WhyCardModel.make(
-            row: row,
-            history: history(row, [
-                ("permission", 40 * minute, "Edit: src/Login.swift", false),
-                ("done", 39 * minute, "", nil),
-                ("turn", 20 * minute, "Refactored the retry loop.", false),
-                ("done", 10 * minute, "", nil),
-                ("permission", 8 * minute, "Bash: npm run build", false),
+        WhyCardModel.make(
+            row: rowPermission(),
+            spans: spans([
+                (.running, "", .harvest, 48, ""),
+                (.blocked, "Permission", .hook, 40, "Edit: src/Login.swift"),
+                (.running, "", .harvest, 39, ""),
+                (.turn, "", .hook, 20, ""),
+                (.running, "", .harvest, 10, ""),
+                (.blocked, "Permission", .hook, 8, "Bash: npm run build"),
             ]),
             narrator: RowNarrator(lang: lang, nowMs: nowMs)
         )
     }
 
     static func whyTurn(lang: ResolvedLanguage) -> WhyCardModel {
-        let row = rowTurn()
-        return WhyCardModel.make(
-            row: row,
-            history: history(row, [
-                ("permission", 9 * minute, "git push origin main", false),
-                ("turn", 3 * minute, "All 42 tests pass; the queue drains on reconnect.", false),
+        WhyCardModel.make(
+            row: rowTurn(),
+            spans: spans([
+                (.running, "", .harvest, 15, ""),
+                (.blocked, "Permission", .hook, 9, "git push origin main"),
+                (.running, "", .harvest, 8, ""),
+                (.turn, "", .hook, 3, ""),
             ]),
             narrator: RowNarrator(lang: lang, nowMs: nowMs)
         )
