@@ -17,7 +17,7 @@ Pulse 没有第三方 Swift 包；它真正依赖的是工具链、CI 和两家�
   cache@v6、upload-artifact@v7、setup-python@v7、action-gh-release@v3。
 - **Swift 6 语言模式。** `swift-tools-version: 6.2`；五个产品 target 都进入 Swift 6 模式，
   「警告即错误」改用官方的 `.treatAllWarnings(as: .error)`，不再靠 `unsafeFlags`。迁移只暴露了
-  7 处原先编译器看不见的问题（格式化器缓存、图标缓存、通知中心与回调跨队列），逐一给出理由修掉。
+  5 处原先编译器看不见的问题（两处日期格式化器缓存、图标缓存、通知中心、回收回调跨队列），逐一给出理由修掉。
 - **Swift Testing。** 新的测试用 `import Testing`：16.0 的「轮到你」真值表改写成参数化测试，
   15 条厂商事件序列各是报告里一条有名字的用例；Codex 分页格式、Claude 自报探针也各有一组。
   XCTest 的 1205 个用例照旧；测试 target 暂留 Swift 5 模式（二十个 `@MainActor` 的 XCTestCase
