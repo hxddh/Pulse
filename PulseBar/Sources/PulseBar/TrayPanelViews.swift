@@ -428,6 +428,14 @@ struct TrayPanel: View {
                                 .monospacedDigit()
                         }
                     }
+                    // 16.0: finished sessions nobody has looked at. A count,
+                    // in the quiet colour — the red lamp stays for blocked.
+                    if !store.isRefreshing, store.snapshot.turnCount > 0 {
+                        Text("·").foregroundStyle(.tertiary)
+                        Text(String(format: store.tr(.turnCount), store.snapshot.turnCount))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
                 }
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .lineLimit(1)
@@ -456,6 +464,9 @@ struct TrayPanel: View {
                         if store.snapshot.rows.contains(where: \.waiting) {
                             Button(store.tr(.jumpToOldest)) { store.focusOldestWait() }
                             Button(store.tr(.clearWaiting)) { store.clearWaiting() }
+                            Divider()
+                        } else if store.snapshot.turnCount > 0 {
+                            Button(store.tr(.jumpToTurn)) { store.focusNextTurn() }
                             Divider()
                         }
                         Button(store.tr(.searchSessions)) { searchActive = true }
@@ -1615,6 +1626,9 @@ private struct AgentRowButton: View {
             // Live for twenty minutes with nothing happening. Never surfaced
             // before, and it looked exactly like a healthy session.
             StatusChip(kind: .process, label: store.tr(.stalled))
+        } else if row.yourTurn {
+            // 16.0: finished, unseen. Quiet on purpose — red is for blocked.
+            StatusChip(kind: .recent, label: store.tr(.yourTurn))
         } else if store.lookMarkedWhileAway(row) {
             // Look Closure (0.93): session moved while the tray was closed.
             // Waiting / stalled chips win; this is only for quiet motion.

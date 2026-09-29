@@ -61,6 +61,9 @@ enum GlobalHotKey {
                 if AppServices.store.snapshot.rows.contains(where: \.waiting)
                     || AppServices.store.allRowsForDisplay.contains(where: \.waiting) {
                     AppServices.store.focusFirstWaiting()
+                } else if AppServices.store.oldestTurn != nil {
+                    // 16.0: nothing blocked — the next finished session.
+                    AppServices.store.focusNextTurn()
                 } else {
                     TrayReveal.show()
                 }

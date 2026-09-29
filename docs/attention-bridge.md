@@ -8,10 +8,10 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 1. **什么都不做** —— harvest 会尽力从它们的会话文件里认出 `pending`
    （Cursor、Droid、Kimi、OpenCode…… 见 README 的支持矩阵）；
 2. **走这座桥** —— 想要 hooks 级别的准确度（明确的授权 / 输入等待，而不是猜），
-   让工具在等待时按 **Attention Protocol**（现行 v2；v1 六列行仍被接受）写一行 TSV。
+   让工具在等待时按 **Attention Protocol**（现行 v3；v1 六列、v2 七列行仍被接受）写一行 TSV。
 
-**契约正文：** [`attention-protocol.md`](attention-protocol.md)（header、七列
-（第七列 `host`，v1 六列行视为本机）、kind 白名单、raise / clear）。桥接进来的等待在 Tray 上标注为 `hooks`，与
+**契约正文：** [`attention-protocol.md`](attention-protocol.md)（header、八列
+（第七列 `host`、第八列 `front`，缺列视为本机 / 未知）、kind 白名单、raise / clear）。桥接进来的等待在 Tray 上标注为 `hooks`，与
 Claude / Codex 同级。
 
 ---
@@ -78,7 +78,7 @@ pulse-hook / Protocol 路径。
 | 列 | 内容 |
 | --- | --- |
 | `agent` | Pulse 的 agent id：`droid`、`kimi`、`replit`、`devin`… |
-| `kind` | 白名单：`permission` · `idle_prompt` · `waiting` · `done` · `stop` · `subagent_*` |
+| `kind` | 白名单（v3）：阻塞 `permission` · `question` · `waiting`；轮到你 `turn`；已解决 `done`；`subagent_*` |
 | `ms` | Unix 毫秒时间戳 |
 | `message` | 一句原因，无制表符和换行 |
 | `session` | 可选，会话 id —— 有它才能挂到正确的会话行 |
@@ -88,8 +88,9 @@ Pulse 的读取规则：
 
 - 同一 `(agent, session)` **后写覆盖先写**；
 - `done` 清除该会话（`session` 留空则清除该 agent 全部）；
-- `stop` 也清除，但**20 秒宽限内**不会清掉刚发生的 `permission` / `idle_prompt`
-  —— Claude 常常先发 idle_prompt 紧接着发 Stop；
+- `turn`（16.0）表示「做完了、轮到你」：清掉该会话的阻塞等待（20 秒宽限内不清掉刚发生的
+  阻塞），并把会话标为「轮到你」—— 这**不点红灯**，只在托盘里安静计数；旧的 `stop`、
+  `idle_prompt` 现在都按 `turn` 读；
 - 未知 kind **不写、不亮**（No fake Waiting）；
 - 超过 **30 分钟**的条目自动过期；
 - 文件保留最近 80 行。

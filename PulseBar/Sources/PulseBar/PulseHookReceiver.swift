@@ -33,6 +33,16 @@ enum PulseHookReceiver {
         let plain = kindSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if plain == "activity" || plain == "prompt" {
             writeActivity(agent: agentRaw, kind: plain, payload: payload)
+            // 16.0: a prompt the user just submitted answers "your turn" —
+            // and anything else this session owed. Session-scoped only: an
+            // agent-wide clear from one terminal must not clear another's.
+            let session = session(from: payload)
+            if plain == "prompt", !session.isEmpty {
+                _ = appendEvent(
+                    agent: agentRaw, kind: AttentionKind.done.rawValue, message: "",
+                    session: session, cwd: cwd(from: payload)
+                )
+            }
             return 0
         }
         let kind = AttentionProtocol.normalizeKind(kindSource.isEmpty ? "waiting" : kindSource)
@@ -43,9 +53,21 @@ enum PulseHookReceiver {
         let message = message(from: payload)
         let session = session(from: payload)
         let cwd = cwd(from: payload)
+        // 16.0: was the prompt's own window in front as this was raised? A
+        // turn the user watched finish is not owed to them, and a blocked
+        // prompt already on screen needs no banner. Local only — a bridge on
+        // another machine has no idea what is in front of this one.
+        let front: Bool? = {
+            guard AttentionProtocol.kind(kind)?.isOpen == true,
+                  (ProcessInfo.processInfo.environment["PULSE_HOST"] ?? "").isEmpty
+            else { return nil }
+            return PromptVisibility.promptIsFrontmost()
+        }()
         // The lamp lights first: the attention line is written before any
         // hold, so the tray shows Waiting even while the hook is parked.
-        _ = appendEvent(agent: agentRaw, kind: kind, message: message, session: session, cwd: cwd)
+        _ = appendEvent(
+            agent: agentRaw, kind: kind, message: message, session: session, cwd: cwd, front: front
+        )
         if kind == "permission" {
             let decision = respondDecisionJSON(
                 agent: agentRaw,
@@ -73,6 +95,7 @@ enum PulseHookReceiver {
         message: String,
         session: String = "",
         cwd: String = "",
+        front: Bool? = nil,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
     ) -> Bool {
         let normalized = AttentionProtocol.normalizeKind(kind)
@@ -92,6 +115,8 @@ enum PulseHookReceiver {
             cleanField(session, limit: 80),
             cleanField(cwd, limit: 240),
             cleanField(host, limit: 32),
+            // v3 column 8.
+            AttentionProtocol.frontField(front),
         ].joined(separator: "\t")
         AttentionIO.appendRawLine(line)
         return true
@@ -320,7 +345,10 @@ enum PulseHookReceiver {
         if !ntype.isEmpty { return ntype }
         let event = string(payload, keys: ["hook_event_name", "hookEventName"])
         switch event {
-        case "Stop", "SubagentStop": return "stop"
+        // 16.0: a turn ending is "your turn"; a subagent ending is only
+        // lifecycle — it used to share `stop` with the parent.
+        case "Stop": return "turn"
+        case "SubagentStop": return "subagent_stop"
         case "Notification":
             let nested = string(payload, keys: ["notification_type", "notificationType"])
             return nested.isEmpty ? "waiting" : nested

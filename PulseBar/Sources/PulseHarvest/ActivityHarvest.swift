@@ -508,12 +508,14 @@ package enum ActivityHarvest {
     }
 }
 
-/// Attention TSV reader — last event wins per (agent, session); done clears; stop has short grace.
+/// Attention TSV reader — last event wins per (agent, session); `done` clears;
+/// `turn` ends a blocked wait (after a short grace) and leaves "your turn".
 package enum AttentionReader {
     package static let ttlMs: Int64 = 30 * 60 * 1000
     /// How long a remote row stays visible after it went quiet.
     package static let lostContactRetentionMs: Int64 = 2 * 30 * 60 * 1000
-    /// Claude often emits idle_prompt then Stop; don't wipe Input/Permission for this long.
+    /// A turn ending right after a blocked raise must not wipe it: the order
+    /// of Claude's Notification, PermissionRequest and Stop is not ours.
     package static let stopGraceMs: Int64 = 20_000
 
     package struct Entry {
@@ -535,8 +537,16 @@ package enum AttentionReader {
         /// down — Pulse has no evidence it is still open — but the row stays,
         /// because "I stopped hearing from it" is not "it finished".
         package var lostContact: Bool = false
+        /// v3 column 8: the prompt's window was frontmost when this was
+        /// raised (`true`), was not (`false`), or nobody could tell (`nil`).
+        package var front: Bool? = nil
 
         package var isRemote: Bool { !host.isEmpty }
+        /// 16.0: "your turn" — the agent finished and is idle at its prompt.
+        /// Never the red lamp.
+        package var isTurn: Bool { kind == Kind.turn.label }
+        /// Blocked on the user: permission, question, or unknown reason.
+        package var isBlocking: Bool { !kind.isEmpty && !isTurn }
 
         /// A suspect stamp corrected by the host's file-level skew (12.1);
         /// 0 when the stamp was usable or there was nothing to correct by.
@@ -558,37 +568,29 @@ package enum AttentionReader {
         }
     }
 
-    private enum Kind {
-        case permission, idlePrompt, waiting, stop, done, ignore
+    fileprivate enum Kind {
+        case permission, question, waiting, turn, done, ignore
 
-        package static func parse(_ raw: String) -> Kind {
-            // Protocol v1: only canonical / aliased waiting+clear kinds light
-            // or clear Waiting. Unknown free-text never becomes a red lamp.
-            let normalized = AttentionProtocol.normalizeKind(raw)
-            switch normalized {
-            case "permission":
-                return .permission
-            case "idle_prompt":
-                return .idlePrompt
-            case "waiting":
-                return .waiting
-            case "stop":
-                return .stop
-            case "done":
-                return .done
-            case "subagent_start", "subagent_stop":
-                return .ignore
-            default:
-                return .ignore
+        static func parse(_ raw: String) -> Kind {
+            // Only the protocol's own kinds light, clear or mark anything.
+            // Unknown free text never becomes a red lamp.
+            switch AttentionProtocol.kind(raw) {
+            case .permission: return .permission
+            case .question: return .question
+            case .waiting: return .waiting
+            case .turn: return .turn
+            case .done: return .done
+            case .subagentStart, .subagentStop, .none: return .ignore
             }
         }
 
-        package var label: String {
+        var label: String {
             switch self {
             case .permission: return "Permission"
-            case .idlePrompt: return "Input"
+            case .question: return "Input"
             case .waiting: return "Waiting"
-            case .stop, .done, .ignore: return ""
+            case .turn: return "Turn"
+            case .done, .ignore: return ""
             }
         }
     }
@@ -729,7 +731,11 @@ package enum AttentionReader {
                 }
                 continue
             }
-            if kind == .stop {
+            // A turn ending clears a blocked wait — unless that wait was
+            // raised moments ago (see `stopGraceMs`) — and then says "your
+            // turn" below, like any other raise. A session-less turn only
+            // clears: with no session there is no row it could belong to.
+            if kind == .turn {
                 func shouldKeep(_ existing: Entry) -> Bool {
                     // `effectiveMs`, not the raw stamp: this is the same
                     // choice `clockVerdict` already made a few lines below,
@@ -740,7 +746,7 @@ package enum AttentionReader {
                     // instantly, because the grace window alone was still
                     // measured against the stamp everything else had refused
                     // to trust.
-                    (existing.kind == "Permission" || existing.kind == "Input" || existing.kind == "Waiting")
+                    existing.isBlocking
                         && existing.effectiveMs > 0
                         && nowMs - existing.effectiveMs < stopGraceMs
                 }
@@ -749,12 +755,12 @@ package enum AttentionReader {
                         if let existing = byKey[k], shouldKeep(existing) { continue }
                         byKey[k] = nil
                     }
-                } else if let existing = byKey[mapKey], shouldKeep(existing) {
-                    // keep
-                } else {
-                    byKey[mapKey] = nil
+                    continue
                 }
-                continue
+                if let existing = byKey[mapKey], shouldKeep(existing) { continue }
+                byKey[mapKey] = nil
+                // The user watched it finish: nothing is owed.
+                if AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "") == true { continue }
             }
 
             // A clock-skewed or malformed hook event must not become a
@@ -804,6 +810,7 @@ package enum AttentionReader {
             entry.clockSuspect = suspect
             if suspect { entry.correctedMs = effective }
             entry.lostContact = expired
+            entry.front = AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "")
             // A later event with nothing to say must not erase what an earlier
             // one said. One approval makes Claude raise both `Notification`
             // and `PermissionRequest`, only one of them carries text, and

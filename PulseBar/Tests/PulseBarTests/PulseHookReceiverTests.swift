@@ -27,11 +27,17 @@ final class PulseHookReceiverTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempHome)
     }
 
-    func testRequestUserInputBecomesIdlePrompt() {
-        XCTAssertEqual(PulseHookReceiver.normalizeKind("request_user_input"), "idle_prompt")
+    func testV3SeparatesAQuestionFromYourTurn() {
+        XCTAssertEqual(PulseHookReceiver.normalizeKind("request_user_input"), "question")
         XCTAssertEqual(PulseHookReceiver.normalizeKind("exec_approval_request"), "permission")
-        XCTAssertEqual(PulseHookReceiver.normalizeKind("agent-turn-complete"), "done")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("idle"), "idle_prompt")
+        // 16.0: a finished turn is "your turn", not a clear and not a wait.
+        XCTAssertEqual(PulseHookReceiver.normalizeKind("agent-turn-complete"), "turn")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("idle"), "turn")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("idle_prompt"), "turn",
+                       "Claude's idle_prompt is a 60 s timer after every finished turn")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("stop"), "turn")
+        XCTAssertFalse(AttentionProtocol.isWaitingKind("idle_prompt"))
+        XCTAssertTrue(AttentionProtocol.isWaitingKind("elicitation_dialog"))
         XCTAssertTrue(AttentionProtocol.acceptsWrite(kind: "permission"))
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "totally_made_up_kind"))
     }
@@ -43,11 +49,11 @@ final class PulseHookReceiverTests: XCTestCase {
         )
         XCTAssertEqual(code, 0)
         let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
-        XCTAssertTrue(text.contains("codex\tidle_prompt\t"))
+        XCTAssertTrue(text.contains("codex\tquestion\t"))
         XCTAssertTrue(text.contains("\tApprove shell\tsess-1\t/tmp/pulse"))
         XCTAssertTrue(
             text.hasPrefix(AttentionProtocol.header.trimmingCharacters(in: .newlines)),
-            "writer must stamp Attention Protocol v1 header"
+            "writer must stamp the current Attention Protocol header"
         )
     }
 

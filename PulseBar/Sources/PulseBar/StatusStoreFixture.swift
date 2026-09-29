@@ -67,6 +67,12 @@ extension StatusStore {
             case "status-running":
                 fixtureRow.progressDone = 12
                 fixtureRow.progressTotal = 31
+            case "status-turn":
+                // 16.0: finished, unseen — a quiet count, not the red lamp.
+                fixtureRow.phase = "completed"
+                fixtureRow.tool = ""
+                fixtureRow.yourTurn = true
+                fixtureRow.turnSinceMs = now - 3 * 60 * 1000
             default:
                 fixtureRow.liveProcess = false
                 fixtureRow.processCount = 0
@@ -89,6 +95,10 @@ extension StatusStore {
                 snap.glance = .waiting
                 snap.title = "1"
                 snap.sectionTotals[.needsYou] = 1
+            case "status-turn":
+                snap.glance = .running
+                snap.sectionTotals[.running] = 1
+                snap.turnCount = 1
             default:
                 snap.glance = .idle
             }

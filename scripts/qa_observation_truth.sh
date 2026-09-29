@@ -111,7 +111,7 @@ capture_fixture() {
   ls -lah "$tray" "$lamp"
 }
 
-for fixture in status-waiting status-running status-stalled; do
+for fixture in status-waiting status-running status-stalled status-turn; do
   capture_fixture "$fixture"
 done
 

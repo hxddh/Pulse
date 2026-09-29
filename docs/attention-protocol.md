@@ -1,4 +1,4 @@
-# Attention Protocol v2
+# Attention Protocol v3
 
 Public contract for raising a Pulse **Waiting** lamp from any agent, IDE, or
 shell — without expanding the Claude/Codex hook installer.
@@ -20,13 +20,14 @@ Companion:
 UTF-8 TSV, one event per line. Header must be the first line:
 
 ```text
-# pulse-attention v2 (agent\tkind\tms\tmessage\tsession\tcwd\thost)
-<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<host>
+# pulse-attention v3 (agent\tkind\tms\tmessage\tsession\tcwd\thost\tfront)
+<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<host>\t<front>
 ```
 
-**v1 lines stay valid.** Six columns means `host` is empty, which means this
-Mac — exactly what every v1 line already meant. Readers accept the v1 header
-too, so an installed older hook keeps working after an upgrade.
+**v1 and v2 lines stay valid.** Six columns means `host` is empty, which means
+this Mac — exactly what every v1 line already meant; seven means `front` is
+unknown. Readers accept every header version, so an installed older hook keeps
+lighting the lamp after an upgrade (but see the v3 kind changes below).
 
 | Column | Rules |
 | --- | --- |
@@ -37,28 +38,38 @@ too, so an installed older hook keeps working after an upgrade.
 | `session` | Opaque session key; empty allowed |
 | `cwd` | Absolute project path hint; empty allowed |
 | `host` | Machine label; **empty means this Mac**. `|`, `/`, tabs and newlines are replaced with `-`; a trailing `.local` is dropped; capped at 32 chars |
+| `front` | v3. `1` when the prompt's own window was the frontmost application as the event was raised, `0` when it was not, **empty when unknown**. Only the local native receiver fills it (parent-chain walk, no new permission). Unknown is never read as "the user is looking" |
 
 Readers skip blank lines, `#` comments, and unknown kinds. Writers rewrite the
 header when truncating the file (keep last 80 data lines).
 
 ## Kind allowlist
 
-### Waiting (raises / refreshes red)
+v3 separates what a person can owe an agent: **blocked** (it cannot go on
+without you — the red lamp, a banner, a sound), **your turn** (it finished and
+is idle at its prompt — a quiet count, never red) and **resolved**.
+
+### Blocked (raises / refreshes the red lamp)
 
 | Kind | Meaning |
 | --- | --- |
 | `permission` | Tool / filesystem / network approval |
-| `idle_prompt` | Clarifying question / user input |
-| `waiting` | Generic Waiting (prefer a more specific kind when known) |
+| `question` | A clarifying question or requested input |
+| `waiting` | Blocked, reason unknown (prefer a more specific kind when known) |
 
-### Clear (ends Waiting for that agent+session)
+### Your turn (never red)
 
 | Kind | Meaning |
 | --- | --- |
-| `done` | Explicit clear / turn complete |
-| `stop` | Stop / interrupt — clears unless a fresh Waiting is within the 20s grace |
+| `turn` | The turn ended and the agent is idle at its prompt. Ends a blocked wait for that session (unless the wait was raised inside the 20 s grace) and marks the session "your turn" until someone looks: a later `done`, a submitted prompt, a Focus from Pulse, or the session moving again. A `turn` with `front` = `1` only clears — the user watched it finish |
 
-### Lifecycle (stored for diagnostics; never lights Waiting)
+### Resolved
+
+| Kind | Meaning |
+| --- | --- |
+| `done` | Nothing is owed: clears blocked and your-turn for that session (`session` empty → the whole agent) |
+
+### Lifecycle (stored for diagnostics; never lights anything)
 
 | Kind | Meaning |
 | --- | --- |
@@ -69,9 +80,28 @@ Anything else is **rejected** by `pulse-hook` / `PulseBar --hook` (exit 0, no
 write) and **ignored** by `AttentionReader` (never free-text Waiting). That is
 the No fake Waiting gate for this channel.
 
-Common vendor aliases (`request_user_input` → `idle_prompt`,
-`exec_approval_request` → `permission`, `agent_turn_complete` → `done`, …) are
-normalized before the allowlist check. See `AttentionProtocol.normalizeKind`.
+Vendor aliases are normalized before the allowlist check
+(`AttentionProtocol.normalizeKind`):
+
+| Tokens | v3 kind |
+| --- | --- |
+| `permission_prompt`, `exec_approval_request`, `apply_patch_approval_request`, `approval_request`, `pending_approval`, any `…approval…` that is not a response or decision | `permission` |
+| `request_user_input`, `user_input_request`, `elicitation_dialog`, `agent_needs_input`, `needs_input`, any `…user_input…` that is not a response | `question` |
+| `stop`, `idle_prompt`, `idle`, `agent_turn_complete`, `agent_completed`, `turn_complete`, `task_complete` | `turn` |
+
+### What v3 changed, and why
+
+- **`idle_prompt` is your turn, not blocked.** Claude's `idle_prompt`
+  notification is a 60-second timer that fires after every finished turn
+  (anthropics/claude-code #32634, #13922). Until v2 it lit the red lamp, so
+  every Claude session that finished its work went red a minute later and
+  stayed red. A question now has its own kind.
+- **`stop` and Codex's `agent-turn-complete` mark your turn** instead of
+  silently clearing. A bridge that used `stop` to mean "clear" should write
+  `done`.
+- **A line from an older hook that says `idle_prompt` reads as your turn**,
+  even where that hook meant a question. The timer is by far the common case;
+  the native receiver is the app binary, so upgrading Pulse upgrades it.
 
 ## Raise (preferred)
 
@@ -88,19 +118,23 @@ echo '{"notification_type":"permission","message":"Approve deploy?","session_id"
 
 Generic sample: [`samples/attention-bridge/raise.sh`](samples/attention-bridge/raise.sh).
 
-Clear:
+Your turn / clear:
 
 ```bash
-"$HOOK" replit done
-echo '{"session_id":"sess-1"}' | "$HOOK" replit done
+echo '{"session_id":"sess-1"}' | "$HOOK" replit turn   # finished, over to you
+echo '{"session_id":"sess-1"}' | "$HOOK" replit done   # nothing owed
 ```
 
-## Reader rules (unchanged)
+## Reader rules
 
 - Same `(agent, session)` — last write wins.
 - `done` clears that session (`session` empty → clear all for that agent).
-- `stop` clears, but within **20s** does not wipe a fresh `permission` /
-  `idle_prompt` / `waiting` (Claude often emits idle then Stop).
+- `turn` clears a blocked wait, but within **20s** does not wipe a fresh
+  `permission` / `question` / `waiting` (the order of a vendor's events is not
+  ours); then it marks the session your turn. A session-less `turn` only
+  clears. A `turn` never creates a row of its own.
+- A blocked line with `front` = `1` lights the lamp but raises no banner and
+  no sound.
 - Entries older than **30 minutes** expire.
 - Named session with no matching sibling → **new** Waiting row (0.60); never
   smear onto a brother session. Empty-session process rows may adopt.
@@ -119,7 +153,9 @@ that infers Waiting from silence. Waiting-none agents never raise harvest
 
 ## Versioning
 
-- **v1** is additive only for new allowlisted kinds.
+- **v1** was additive only for new allowlisted kinds; **v2** added `host`;
+  **v3** added `front` and changed the meaning of `idle_prompt`, `stop` and the
+  turn-complete aliases (above) — Pulse 16.0.
 - Breaking changes require a new header version and a coexisting reader path.
 - Divergent headers historically confused readers — keep this byte-identical
   across Swift and optional Python writers.

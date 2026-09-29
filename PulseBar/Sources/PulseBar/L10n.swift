@@ -665,6 +665,9 @@ enum L10n {
         case .workbenchDispatch: return "New session"
         case .workbenchDispatchRepo: return "Repository"
         case .workbenchDispatchTask: return "What should it do?"
+        case .yourTurn: return "Your turn"
+        case .turnCount: return "%d your turn"
+        case .jumpToTurn: return "Go to the next finished session"
         case .proofFact: return "checks %d/%d passing"
         case .proofFailing: return " · %d failing"
         case .proofStale: return " · %d stale"
@@ -1359,6 +1362,9 @@ enum L10n {
         case .workbenchDispatch: return "派活"
         case .workbenchDispatchRepo: return "仓库"
         case .workbenchDispatchTask: return "要它做什么？"
+        case .yourTurn: return "轮到你"
+        case .turnCount: return "%d 轮到你"
+        case .jumpToTurn: return "跳到做完的会话"
         case .proofFact: return "检查 %d/%d 通过"
         case .proofFailing: return " · %d 失败"
         case .proofStale: return " · %d 已过期"
@@ -1646,6 +1652,7 @@ enum L10n {
         case trayOpenInWorkbench, trayExpandRow, trayCollapseRow
         case trayScanIncomplete
         // 14.0 · Proof
+        case yourTurn, turnCount, jumpToTurn
         case proofFact, proofFailing, proofStale, proofCard
         case proofHint, proofSaveChecks, proofRunChecks, proofSideEffects
         case proofJoinMission, proofJoined, proofLeaveMission, missionExternal

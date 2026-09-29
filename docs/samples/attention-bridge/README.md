@@ -22,7 +22,7 @@ Usage:
 ```bash
 # Generic — preferred entry for bridge authors
 ./docs/samples/attention-bridge/raise.sh replit
-./docs/samples/attention-bridge/raise.sh cursor sess-42 idle_prompt "Need a model choice"
+./docs/samples/attention-bridge/raise.sh cursor sess-42 question "Need a model choice"
 
 # Agent-specific samples
 ./docs/samples/attention-bridge/raise-replit.sh

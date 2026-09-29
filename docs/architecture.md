@@ -141,8 +141,10 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 [`attention-protocol.md`](attention-protocol.md)；产品政策见
 [`attention-bridge.md`](attention-bridge.md)。
 
-规则：同一 `(agent, session)` 后写的覆盖先写的；`done` 清除；`stop` 也清除，
-但 20 秒宽限内不清掉刚发生的 Permission/Input——Claude 常常先发 idle_prompt 再发 Stop。
+规则（v3，16.0）：同一 `(agent, session)` 后写的覆盖先写的；`done` 清除；`turn`
+（Claude 的 Stop / idle_prompt、Codex 的 agent-turn-complete）清掉阻塞等待并标记「轮到你」，
+但 20 秒宽限内不清掉刚发生的阻塞等待。「轮到你」不点红灯，只进托盘计数（`AgentRow.yourTurn`）；
+第 8 列 `front` 记下提示窗口当时是否在最前，在最前的阻塞等待只亮灯、不发通知。
 未知 kind 拒绝写入且读者忽略（永不自由文本 Waiting）。超过 30 分钟的条目直接过期。
 
 `AttentionWatcher` 用 `DispatchSource` 盯着这个文件，写入即触发刷新，
