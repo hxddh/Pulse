@@ -6,17 +6,18 @@ import XCTest
 @testable import PulseRespond
 
 final class GoLookClosureTests: XCTestCase {
-    private var store: StatusStore!
-
-    override func setUp() {
-        MainActor.assumeIsolated {
-            store = StatusStore()
-            store.installPreviewFixture("status-waiting")
-        }
+    /// 19.0 (Swift 6 mode): built per test on the main actor — a
+    /// nonisolated `setUp` cannot hand a main-actor store to `self`.
+    @MainActor
+    private func makeStore() -> StatusStore {
+        let store = StatusStore()
+        store.installPreviewFixture("status-waiting")
+        return store
     }
 
     @MainActor
     func testFocusAgentSeedsPendingRevealForWaitingRow() {
+        let store = makeStore()
         let row = try! XCTUnwrap(store.snapshot.rows.first(where: \.waiting) ?? store.allRowsForDisplay.first(where: \.waiting))
         store.clearPendingRevealRowKey()
         store.focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
@@ -25,6 +26,7 @@ final class GoLookClosureTests: XCTestCase {
 
     @MainActor
     func testFocusAgentPrefersExactRowKey() {
+        let store = makeStore()
         store.installPreviewFixture("waiting")
         let rows = store.allRowsForDisplay.filter(\.waiting)
         guard rows.count >= 2 else {
@@ -41,6 +43,7 @@ final class GoLookClosureTests: XCTestCase {
 
     @MainActor
     func testFocusFirstWaitingSeedsReveal() {
+        let store = makeStore()
         store.clearPendingRevealRowKey()
         store.focusFirstWaiting()
         let expected = store.allRowsForDisplay.first(where: \.waiting)?.rowKey
@@ -49,6 +52,7 @@ final class GoLookClosureTests: XCTestCase {
 
     @MainActor
     func testFocusOldestWaitUsesRevealPath() {
+        let store = makeStore()
         store.clearPendingRevealRowKey()
         store.focusOldestWait()
         XCTAssertNotNil(store.pendingRevealRowKey)
@@ -57,6 +61,7 @@ final class GoLookClosureTests: XCTestCase {
 
     @MainActor
     func testClearPendingReveal() {
+        let store = makeStore()
         store.requestTrayReveal(rowKey: "demo-key")
         XCTAssertEqual(store.pendingRevealRowKey, "demo-key")
         store.clearPendingRevealRowKey()
@@ -65,6 +70,7 @@ final class GoLookClosureTests: XCTestCase {
 
     @MainActor
     func testStaleRowKeyStillOpensTrayIdentity() {
+        let store = makeStore()
         store.clearPendingRevealRowKey()
         store.focusAgent(idRaw: "claude", session: "", rowKey: "missing|session")
         // May resolve to a waiting claude from fixture, or keep the stale key.
@@ -73,6 +79,7 @@ final class GoLookClosureTests: XCTestCase {
 
     @MainActor
     func testLookClosureActivateReusesGoLookReveal() {
+        let store = makeStore()
         store.installPreviewFixture("status-running")
         let prior = store.captureLookFingerprint()
         store.installPreviewFixture("status-waiting")
