@@ -755,7 +755,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | --- | --- |
 | Glance 标题 / 灯 | `PulseBar/StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
 | Tray 结构 | `PulseBar/TrayPanelViews.swift` → `TrayPanel` |
-| Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（经 `StoreObservation`，扫描不重绘） |
+| Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（19.0 Observation：只读 `snapshotAgents`，扫描不重绘） |
 | 状态合并 / 编码 | `PulseBar/SnapshotBuilder.swift` |
 | 行的每一句话 | `PulseBar/RowNarrator.swift`（纯值：语言、时刻、拥挤、受管事实都是输入；store 只转发） |
 | 扫描静默 | `PulseBar/StatusStoreEngine.swift` → `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |

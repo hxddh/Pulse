@@ -52,8 +52,11 @@ PulseBar/Sources/
 `AgentCatalog.swift` 的一条 `AgentSpec` 里；`scripts/agent_catalog_check.py` 扫描所有 target，
 防止按 Agent 分支的表在别处重新长出来。
 
-设置窗口经 `StoreObservation` 观察 store：扫描落地期间（`isApplyingScan`）的变更最多每
-30 秒转发一次，扫描不再逐次重绘设置表单。
+19.0 起 `StatusStore` 是 `@Observable`：视图只因它的 body 实际读到的属性变化而重绘，
+不再因 store 上任何一个 `@Published` 被写而整体失效。引擎的簿记（计时器、票号、没有视图
+画的缓存）标 `@ObservationIgnored`；扫描路径只在值变化时写被观察的属性（`ScanQuietTests`
+逐个跟踪每个被观察属性）。设置窗口只读 `snapshotAgents` 而不读 `snapshot`，所以扫描不重绘
+它（`surface_check.py` 把守）；AppKit 侧（状态栏图标）用 `ObservationLoop` 只跟随 `snapshot`。
 
 ## 三个来源
 
