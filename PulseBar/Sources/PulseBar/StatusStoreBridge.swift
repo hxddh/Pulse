@@ -47,9 +47,13 @@ extension StatusStore {
             HooksInstaller.refreshRunnerPath()
             HooksSupport.seedAttentionBridgeKit()
             refreshPulseHookLauncherStatus()
+            if pulseHookLauncherError != nil { pulseHookLauncherError = nil }
             DebugLog.write("pulse-hook launcher ensured ready=\(pulseHookLauncherReady)")
         } catch {
             refreshPulseHookLauncherStatus()
+            // 21.0: a click leaves a visible trace — the reason, beside the
+            // button, not only in debug.log.
+            pulseHookLauncherError = error.localizedDescription
             DebugLog.write("pulse-hook launcher ensure failed \(error.localizedDescription)")
         }
     }

@@ -117,143 +117,161 @@ struct SupportCoverageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(store.tr(.supportHealth))
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                Text(store.tr(.supportHealthHint))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let privacy = store.privacyBannerText {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Label(
-                            privacy,
-                            systemImage: "lock"
-                        )
-                        .foregroundStyle(.orange)
-                        Spacer(minLength: 8)
-                        Button(store.tr(.settings)) {
-                            store.openSettings(focusAppDataFor: store.firstPrivacyLimitedAgent)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .font(.caption)
-                }
-                if let incomplete = store.scanIncompleteBannerText {
-                    HStack(spacing: 8) {
-                        Label(incomplete, systemImage: "clock.badge.exclamationmark")
-                            .foregroundStyle(.orange)
-                        Spacer(minLength: 8)
-                        Button(store.tr(.supportRetry)) {
-                            store.refresh(reason: "support-retry")
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .font(.caption)
-                }
-                HStack(spacing: 12) {
-                    Label(
-                        String(format: store.tr(.supportNeedsActionCount), needsActionCount),
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    Label(
-                        String(format: store.tr(.supportLimitedCount), limitedCount),
-                        systemImage: "info.circle"
-                    )
-                    Label(
-                        String(format: store.tr(.supportAvailableCount), availableCount),
-                        systemImage: "checkmark.circle"
-                    )
-                    Label(
-                        String(format: store.tr(.supportNotInstalledCount), notInstalledCount),
-                        systemImage: "square.dashed"
-                    )
-                    Label(
-                        String(format: store.tr(.supportPermissionDeniedCount), permissionDeniedCount),
-                        systemImage: "lock"
-                    )
-                    Spacer()
-                    Button(store.tr(.supportSafeReport)) { showSafeReport.toggle() }
-                        .buttonStyle(.borderless)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                Text(summaryLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Picker("", selection: $filter) {
-                    ForEach(SupportFilter.allCases) {
-                        Text(filterLabel($0)).tag($0)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(maxWidth: 240, alignment: .leading)
-                .labelsHidden()
-                if showSafeReport {
-                    VStack(alignment: .trailing, spacing: 6) {
-                        ScrollView {
-                            Text(store.safeSupportReport())
-                                .font(.system(size: 10, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(height: 108)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(Color.primary.opacity(0.045))
-                        )
-                        HStack(spacing: 10) {
-                            Button(store.tr(.exportSafeReport)) { store.exportSafeSupportReport() }
-                            Button(
-                                store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.supportCopySafeReport)
-                            ) { store.copySafeSupportReport() }
-                        }
-                        // The one diagnostic that used to need a terminal.
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text(store.tr(.supportShapeHint))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Button(shapeButtonTitle) { store.copyHarvestShapeReport() }
-                                .disabled(store.isCopyingShapeReport)
-                                .accessibilityLabel(store.tr(.supportCopyShapeReport))
-                                .accessibilityValue(store.tr(.supportShapeHint))
-                        }
-                    }
-                }
-            }
-            .padding(20)
-
-            Divider()
-
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(filtered) { item in
-                        SupportHealthRow(item: item, store: store)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 10)
-                        if item.id != filtered.last?.id {
-                            Divider().padding(.leading, 54)
+                VStack(alignment: .leading, spacing: PulseTheme.Space.m) {
+                    header
+                    selfCheck
+                    banners
+                    HStack(spacing: PulseTheme.Space.s) {
+                        Text(store.tr(.healthAgentsHeading))
+                            .font(PulseTheme.Font.heading)
+                        Spacer(minLength: PulseTheme.Space.s)
+                        Picker("", selection: $filter) {
+                            ForEach(SupportFilter.allCases) {
+                                Text(filterLabel($0)).tag($0)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .labelsHidden()
+                    }
+                    Text(summaryLine)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if showSafeReport { safeReport }
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(filtered) { item in
+                            SupportHealthRow(item: item, store: store)
+                                .padding(.vertical, PulseTheme.Space.s + 2)
+                            if item.id != filtered.last?.id {
+                                Divider().padding(.leading, 34)
+                            }
+                        }
+                    }
+                    .overlay {
+                        if filtered.isEmpty {
+                            ContentUnavailableView(
+                                store.tr(.supportNoFilterResults),
+                                systemImage: "line.3.horizontal.decrease.circle"
+                            )
                         }
                     }
                 }
-            }
-            .overlay {
-                if filtered.isEmpty {
-                    ContentUnavailableView(
-                        store.tr(.supportNoFilterResults),
-                        systemImage: "line.3.horizontal.decrease.circle"
-                    )
-                }
+                .padding(PulseTheme.Space.xl)
             }
         }
-        .frame(minWidth: 580, minHeight: 280)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 580, minHeight: 320)
         .searchable(text: $query, prompt: store.tr(.supportSearch))
+    }
+
+    /// Title, what was last read and when, and the one report to copy.
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.m) {
+            VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                Text(store.tr(.healthTitle))
+                    .font(PulseTheme.Font.title)
+                // 21.0: when Pulse last read, how often, what it cost —
+                // until now only in the clipboard dump.
+                Text(store.scanHealthLine)
+                    .font(PulseTheme.Font.body)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Spacer(minLength: PulseTheme.Space.s)
+            Menu {
+                Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
+                    store.copyDiagnostics()
+                }
+                Button(store.tr(.supportCopySafeReport)) { store.copySafeSupportReport() }
+                Button(store.tr(.exportSafeReport)) { store.exportSafeSupportReport() }
+                Button(shapeButtonTitle) { store.copyHarvestShapeReport() }
+                    .disabled(store.isCopyingShapeReport)
+                Divider()
+                Button(showSafeReport ? store.tr(.healthHideReport) : store.tr(.healthShowReport)) {
+                    showSafeReport.toggle()
+                }
+            } label: {
+                Label(store.tr(.healthReport), systemImage: "doc.on.clipboard")
+            }
+            .fixedSize()
+            Button(store.tr(.supportRetry)) { store.refresh(reason: "health-refresh") }
+                .disabled(store.isRefreshing)
+        }
+    }
+
+    /// The self-check first: what this Mac can prove about the contracts
+    /// Pulse depends on, with the fix beside each finding.
+    private var selfCheck: some View {
+        VStack(alignment: .leading, spacing: PulseTheme.Space.s) {
+            HStack(spacing: PulseTheme.Space.s) {
+                Text(store.tr(.doctorRun))
+                    .font(PulseTheme.Font.heading)
+                if store.isRunningDoctor { ProgressView().controlSize(.small) }
+                Spacer(minLength: PulseTheme.Space.s)
+                Button(store.doctorReport == nil ? store.tr(.healthRunCheck) : store.tr(.healthRunAgain)) {
+                    store.runDoctor()
+                }
+                .disabled(store.isRunningDoctor)
+            }
+            if let report = store.doctorReport {
+                DoctorReportView(
+                    report: report,
+                    copied: store.didCopyDoctorReport,
+                    onCopy: { store.copyDoctorReport() },
+                    onFix: { store.performDoctorFix($0) }
+                )
+            } else {
+                Text(store.tr(.doctorHint))
+                    .font(PulseTheme.Font.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .pulseCard()
+    }
+
+    @ViewBuilder
+    private var banners: some View {
+        if let privacy = store.privacyBannerText {
+            HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
+                Label(privacy, systemImage: "lock")
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
+                Spacer(minLength: PulseTheme.Space.s)
+                Button(store.tr(.settings)) {
+                    store.openSettings(focusAppDataFor: store.firstPrivacyLimitedAgent)
+                }
+            }
+            .font(PulseTheme.Font.body)
+        }
+        if let incomplete = store.scanIncompleteBannerText {
+            HStack(spacing: PulseTheme.Space.s) {
+                Label(incomplete, systemImage: "clock.badge.exclamationmark")
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
+                Spacer(minLength: PulseTheme.Space.s)
+                Button(store.tr(.supportRetry)) {
+                    store.refresh(reason: "support-retry")
+                }
+            }
+            .font(PulseTheme.Font.body)
+        }
+    }
+
+    private var safeReport: some View {
+        VStack(alignment: .leading, spacing: PulseTheme.Space.s) {
+            ScrollView {
+                Text(store.safeSupportReport())
+                    .font(PulseTheme.Font.code)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 120)
+            .pulseInner()
+            Text(store.tr(.supportShapeHint))
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var shapeButtonTitle: String {
@@ -282,36 +300,38 @@ struct SupportCoverageView: View {
 struct SupportHealthRow: View {
     let item: AgentSupportHealth
     var store: StatusStore
-    @State private var diagnosticsExpanded = true
+    @State private var diagnosticsExpanded = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 7, height: 7)
-                .padding(.top, 6)
-                .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: PulseTheme.Space.s) {
             AgentIconView(id: item.agent)
                 .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                HStack(spacing: PulseTheme.Space.s) {
                     Text(item.agent.displayName)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(dispositionLabel)
-                        .font(.caption)
-                        .foregroundStyle(statusLabelColor)
+                        .font(PulseTheme.Font.hero)
+                    PulseChip(label: dispositionLabel, tone: tone)
                     Text(store.supportEvidenceLabel(item))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                }
+                // 2.9 / 21.0: declared vs measured. Drift is the difference
+                // between "the agent is idle" and "Pulse stopped seeing"; it
+                // was four clicks deep inside a disclosure.
+                if item.looksDrifted {
+                    Label(store.supportYieldDetail(item), systemImage: "exclamationmark.triangle")
+                        .font(PulseTheme.Font.body)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Text(store.supportFocusDetail(item))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
 
                 Text(store.supportDepthDetail(item))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
 
                 if item.isObserved {
                     HStack(spacing: 6) {
@@ -343,7 +363,7 @@ struct SupportHealthRow: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                     }
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
 
                     HStack(spacing: 6) {
                         SupportFactPill(
@@ -362,12 +382,12 @@ struct SupportHealthRow: View {
                             store: store
                         )
                     }
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
 
                     let observed = store.supportObservedDetail(item)
                     Text(observed.isEmpty ? store.tr(.supportNoObservedSignals) : observed)
-                        .font(.caption)
-                        .foregroundStyle(observed.isEmpty ? .tertiary : .secondary)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .truncationMode(.tail)
                 } else if item.privacyLimited
@@ -384,27 +404,27 @@ struct SupportHealthRow: View {
                         SupportFactPill(label: store.tr(.supportActivity), present: false, store: store)
                         SupportFactPill(label: store.tr(.supportProgress), present: false, store: store)
                     }
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                 }
 
                 let timeline = store.supportTimelineDetail(item)
                 if !timeline.isEmpty {
                     Text(timeline)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if item.collectorErrorKind == "native_timeout" {
                     Label(store.tr(.qualityReasonScanTimeout), systemImage: "clock")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
 
                 if let missing = store.supportMissingDetail(item) {
                     Label(missing, systemImage: "info.circle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
 
                 if item.repair != .none {
@@ -423,7 +443,7 @@ struct SupportHealthRow: View {
                         }
                     }
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                 }
 
                 // `repair` is the actionable primary path. Privacy-limited and
@@ -435,33 +455,33 @@ struct SupportHealthRow: View {
                     if item.privacyLimited {
                         Button(action) { store.openSettings(focusAppDataFor: item.agent) }
                             .buttonStyle(.link)
-                            .font(.caption)
+                            .font(PulseTheme.Font.caption)
                     } else if [.failed, .permissionDenied, .schemaMismatch, .unscanned].contains(item.collectorState) {
                         Button(action) { store.refresh(reason: "support-retry-\(item.agent.rawValue)") }
                             .buttonStyle(.link)
-                            .font(.caption)
+                            .font(PulseTheme.Font.caption)
                     } else if item.agent.harvestSource == .bestEffortCache,
                               item.evidence == .cache || item.evidence == .process {
                         Label(action, systemImage: "arrow.right.circle")
-                            .font(.caption)
+                            .font(PulseTheme.Font.caption)
                             .foregroundStyle(.secondary)
                     } else {
                         Label(action, systemImage: "arrow.right.circle")
-                            .font(.caption)
+                            .font(PulseTheme.Font.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 if let failure = store.supportFailureTimelineDetail(item) {
                     Label(failure, systemImage: "exclamationmark.triangle")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
 
                 DisclosureGroup(isExpanded: $diagnosticsExpanded) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(store.supportAdapterDetail(item))
-                            .font(.caption)
+                            .font(PulseTheme.Font.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         // How the adapter got there. Collected since 1.2 and
@@ -470,15 +490,15 @@ struct SupportHealthRow: View {
                         let reading = store.supportReadingDetail(item)
                         if !reading.isEmpty {
                             Text(reading)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .font(PulseTheme.Font.caption)
+                                .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         let outcome = store.supportCollectorOutcomeDetail(item)
                         if !outcome.isEmpty {
                             Text(outcome)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .font(PulseTheme.Font.caption)
+                                .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         // 2.9: declared vs measured. Drift is the one line
@@ -486,10 +506,10 @@ struct SupportHealthRow: View {
                         // between "the agent is idle" and "Pulse stopped
                         // seeing", and it was invisible until now.
                         let yield = store.supportYieldDetail(item)
-                        if !yield.isEmpty {
+                        if !yield.isEmpty, !item.looksDrifted {
                             Text(yield)
-                                .font(.caption2)
-                                .foregroundStyle(item.looksDrifted ? Color.orange : Color.secondary)
+                                .font(PulseTheme.Font.caption)
+                                .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -498,7 +518,7 @@ struct SupportHealthRow: View {
                 } label: {
                     Text(store.tr(.supportAdapterDiagnostics))
                 }
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
@@ -510,23 +530,13 @@ struct SupportHealthRow: View {
         )
     }
 
-    private var statusLabelColor: Color {
+    /// 21.0: the product's tones, not a palette of its own — no purple,
+    /// no second red. Red is for a blocked agent, so nothing here is red.
+    private var tone: PulseTheme.Tone {
         switch item.disposition {
-        case .needsAction: return .red
-        case .limited: return .orange
-        case .available: return GlanceKind.running.lampColor
-        case .notInstalled, .noRecentSession, .unscanned: return .secondary.opacity(0.65)
-        case .permissionDenied: return .purple
-        }
-    }
-
-    private var statusColor: Color {
-        switch item.disposition {
-        case .needsAction: return .red
-        case .limited: return .orange
-        case .available: return GlanceKind.running.lampColor
-        case .notInstalled, .noRecentSession, .unscanned: return .gray
-        case .permissionDenied: return .purple
+        case .needsAction, .limited, .permissionDenied: return .attention
+        case .available: return .running
+        case .notInstalled, .noRecentSession, .unscanned: return .idle
         }
     }
 

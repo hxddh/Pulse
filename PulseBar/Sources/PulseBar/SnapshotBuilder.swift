@@ -25,6 +25,11 @@ enum SnapshotBuilder {
     /// for non-waiting rows and the panel is sized by its content now, so this
     /// can be what it should always have been.
     static let maxVisibleRows = 12
+    /// How long a harvest `pending` (an ask written into a vendor's own
+    /// session file) may stay red with no process of that agent alive. The
+    /// file keeps the ask forever when the app was quit mid-question; past
+    /// this bound it is a record of an old ask, not someone blocked now.
+    static let pendingWithoutProcessMaxAgeMs: Int64 = 30 * 60 * 1000
 
     /// Outside-world facts, captured once per scan.
     struct Context {
@@ -179,6 +184,9 @@ enum SnapshotBuilder {
         var liveHits: [AgentID: ProcessProbe.Hit] = [:]
         var perAgentSessionCount: [AgentID: Int] = [:]
         var droppedSessionsByAgent: [AgentID: Int] = [:]
+        /// 21.0: sessions left out for being older than the fresh window,
+        /// by agent — said in the tray instead of only in debug.log.
+        var staleHiddenByAgent: [AgentID: Int] = [:]
         var observedHarvestKeys: Set<String> = []
 
         for hit in input.procs {
@@ -255,6 +263,7 @@ enum SnapshotBuilder {
             let isStaleFallback = staleFallbackIndices.contains(harvestIndex)
             if !fresh, act.subRunning == 0, !isStaleFallback {
                 result.debugNotes.append("drop stale harvest \(agentID.rawValue) hm=\(act.harvestMs)")
+                staleHiddenByAgent[agentID, default: 0] += 1
                 continue
             }
 
@@ -458,6 +467,25 @@ enum SnapshotBuilder {
             }
         }
 
+        // A vendor-file `pending` with no process of that agent alive and
+        // no activity for `pendingWithoutProcessMaxAgeMs` is not red: the
+        // ask was written down, but nothing on this Mac is still waiting on
+        // it (Cline's ui_messages ask, Goose's elicitation, Kimi's
+        // interaction.request, OpenHands' waiting_for_confirmation all
+        // survive the app being quit). Hooks, below, may still raise it.
+        for (key, row) in rowsByKey
+        where row.waiting && row.waitSignal == .pending && liveHits[row.agent] == nil
+            && row.waitSinceMs > 0
+            && context.nowMs - row.waitSinceMs > pendingWithoutProcessMaxAgeMs {
+            var updated = row
+            updated.waiting = false
+            updated.waitKind = ""
+            updated.waitSignal = nil
+            updated.waitSinceMs = 0
+            rowsByKey[key] = updated
+            result.debugNotes.append("stale pending without process \(row.agent.rawValue)")
+        }
+
         // Hooks attention — prefer session / cwd match, else best row for agent.
         for att in input.attention {
             // A wait raised on another machine is its own row, always. Matching
@@ -507,10 +535,15 @@ enum SnapshotBuilder {
                     if !best.waiting {
                         best.yourTurn = true
                         best.turnSinceMs = att.tsMs
+                        // A process-only row that adopts a turn needs the
+                        // session, or "seen" / dismiss have nothing to name.
+                        if best.sessionID.isEmpty, !att.session.isEmpty { best.sessionID = att.session }
+                        if !att.session.isEmpty { best.attentionSession = att.session }
                     }
                     rowsByKey[targetKey] = best
                     continue
                 }
+                if !att.session.isEmpty { best.attentionSession = att.session }
                 best.waitRaisedInFront = att.front == true
                 best.waiting = true
                 best.waitKind = att.kind
@@ -576,8 +609,17 @@ enum SnapshotBuilder {
                 row.agent == .claude && !row.isRemote
                     && ((!wait.sessionID.isEmpty && row.sessionID == wait.sessionID)
                         || (wait.sessionID.isEmpty && wait.pid > 0 && row.pid == wait.pid))
-            })?.key, var row = rowsByKey[key], !row.waiting else { continue }
-            if context.dismissedPendingKeys.contains(key) { continue }
+            })?.key, var row = rowsByKey[key] else { continue }
+            if context.dismissedPendingKeys.contains(key) {
+                // The user soft-dismissed this wait and Claude still reports
+                // it: the tombstone has not served its purpose yet. The
+                // harvest pass above released it (the harvest row is not
+                // `pending`, or the key is process-only), and releasing it
+                // here would bring the red lamp straight back next scan.
+                result.clearedPendingKeys.remove(key)
+                continue
+            }
+            guard !row.waiting else { continue }
             row.waiting = true
             // The same protocol tokens a hook raise carries.
             switch wait.kind {
@@ -1122,6 +1164,10 @@ enum SnapshotBuilder {
             if !snap.tooltip.isEmpty {
                 snap.accessibilityLabel = snap.tooltip
             }
+        }
+        snap.staleHidden = staleHiddenByAgent.values.reduce(0, +)
+        snap.staleHiddenAgents = staleHiddenByAgent.keys.sorted {
+            (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
         }
         result.snapshot = snap
 

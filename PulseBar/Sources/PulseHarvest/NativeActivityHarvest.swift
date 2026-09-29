@@ -807,6 +807,10 @@ package enum NativeActivityHarvest {
                 enumerator.skipDescendants()
                 continue
             }
+            if walk.skippedDirectoryNames.contains(name.lowercased()) {
+                enumerator.skipDescendants()
+                continue
+            }
             guard let values = try? item.resourceValues(forKeys: Set(keys)) else {
                 error = true
                 continue

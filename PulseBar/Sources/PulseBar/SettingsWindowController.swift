@@ -32,13 +32,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         win.title = store.tr(.settingsTitle)
         win.identifier = NSUserInterfaceItemIdentifier("pulse-settings")
         win.styleMask = [.titled, .closable, .miniaturizable]
-        // Spec width band is 420–460 (EXPERIENCE.md §6); the form grew a
-        // notifications and a shortcuts section in 0.22.
-        // Keep the quiet-hours and waiting-signal controls from ending as a
-        // half-visible row on first launch. The form still scrolls on smaller
-        // displays, but the normal canvas shows a complete section boundary.
-        win.setContentSize(NSSize(width: 460, height: 640))
-        win.contentMinSize = NSSize(width: 420, height: 440)
+        // 21.0: five panes, each short enough to read without scrolling on
+        // a laptop display (EXPERIENCE.md §6).
+        win.setContentSize(NSSize(width: 520, height: 560))
+        win.contentMinSize = NSSize(width: 480, height: 420)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]

@@ -16,14 +16,14 @@ final class SupportCoverageWindowController: NSObject, NSWindowDelegate {
         SettingsPresenter.prepareToOpen()
         if let window, let hosting {
             hosting.rootView = SupportCoverageView(store: store)
-            window.title = store.tr(.supportHealth)
+            window.title = store.tr(.healthTitle)
             present(window)
             return
         }
 
         let host = NSHostingController(rootView: SupportCoverageView(store: store))
         let win = NSWindow(contentViewController: host)
-        win.title = store.tr(.supportHealth)
+        win.title = store.tr(.healthTitle)
         win.identifier = NSUserInterfaceItemIdentifier("pulse-support-coverage")
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         // The support matrix is the place to inspect all covered agents, so a

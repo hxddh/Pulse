@@ -152,6 +152,9 @@ extension StatusStore {
         for key in keys {
             waitingDeliveryInFlight.remove(key)
         }
+        // 21.0: a banner Notification Center refused is said in the tray,
+        // not only in debug.log; the next accepted one clears it.
+        if waitingBannerFailed == success { waitingBannerFailed = !success }
         if success {
             for row in rows {
                 attentionLedger.markNotified(rowKey: row.rowKey, nowMs: nowMs)
@@ -314,7 +317,7 @@ extension StatusStore {
         var dismissedChanged = false
         for row in cachedAll where row.waiting {
             attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
-            if row.waitSignal == .pending || row.skill == "pending" {
+            if row.waitSignal == .pending || row.waitSignal == .vendor || row.skill == "pending" {
                 dismissedChanged = dismissedPendingKeys.insert(row.rowKey).inserted || dismissedChanged
             }
         }
@@ -345,10 +348,26 @@ extension StatusStore {
     /// but the lookup does not rely on that, because a caller reaching for
     /// "the most urgent thing" should not silently depend on sort order.
     var oldestWait: AgentRow? {
-        cachedAll
-            .filter { $0.waiting && $0.waitSinceMs > 0 }
-            .min { $0.waitSinceMs < $1.waitSinceMs }
-            ?? cachedAll.first(where: \.waiting)
+        Self.oldestWaitRow(in: cachedAll)
+    }
+
+    /// A snoozed wait is one the user already said "later" to: the jump goes
+    /// to an unsnoozed wait first and falls back to a snoozed one only when
+    /// nothing else is waiting.
+    nonisolated static func oldestWaitRow(in rows: [AgentRow]) -> AgentRow? {
+        func oldest(_ candidates: [AgentRow]) -> AgentRow? {
+            candidates
+                .filter { $0.waitSinceMs > 0 }
+                .min { $0.waitSinceMs < $1.waitSinceMs }
+                ?? candidates.first
+        }
+        let waiting = rows.filter(\.waiting)
+        return oldest(waiting.filter { !$0.isSnoozed }) ?? oldest(waiting)
+    }
+
+    /// Same preference for "the first waiting row".
+    nonisolated static func firstWaitingRow(in rows: [AgentRow]) -> AgentRow? {
+        rows.first { $0.waiting && !$0.isSnoozed } ?? rows.first(where: \.waiting)
     }
 
     /// Focus the longest-outstanding wait. One step from "something needs me"
@@ -454,6 +473,22 @@ extension StatusStore {
         refresh(reason: "snoozeNotification")
     }
 
+    /// Snooze several rows at once — a summary banner's "Later". One ledger
+    /// write and one refresh, however many rows it names.
+    func snooze(rowKeys: [String]) {
+        let keys = rowKeys.filter { !$0.isEmpty }
+        guard !keys.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
+        let untilMs = Int64(deadline.timeIntervalSince1970 * 1000)
+        for key in keys {
+            snoozedUntil[key] = deadline
+            attentionLedger.snooze(rowKey: key, untilMs: untilMs)
+        }
+        attentionLedger.save()
+        DebugLog.write("snooze(notif) \(keys.count) rows for \(snoozeMinutes)m")
+        refresh(reason: "snoozeNotification")
+    }
+
     func snoozeLabel(_ row: AgentRow) -> String {
         String(format: tr(.snoozedFor), DurationFormat.label(seconds: row.snoozeRemainingSeconds, lang: lang))
     }
@@ -465,9 +500,9 @@ extension StatusStore {
         // 0.95: pure harvest soft-dismiss must not write agent-wide Attention
         // done (empty session clears every wait for that agent).
         if row.waitSignal == .hooks {
-            AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
-        } else if !isHarvestPending, !row.sessionID.isEmpty {
-            AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
+            AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
+        } else if !isHarvestPending, !row.doneSession.isEmpty {
+            AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
         }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         attentionLedger.acknowledge(rowKey: row.rowKey, nowMs: nowMs)
@@ -528,13 +563,13 @@ extension StatusStore {
     /// session-scoped `done` in the attention file is the record — it
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
-        guard row.yourTurn, !row.isRemote, !row.sessionID.isEmpty else { return }
-        AttentionIO.appendDone(agent: row.agent, session: row.sessionID)
+        guard row.yourTurn, !row.isRemote, !row.doneSession.isEmpty else { return }
+        AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
         refresh(reason: "turn-seen")
     }
 
     func focusFirstWaiting() {
-        if let row = cachedAll.first(where: \.waiting) ?? snapshot.rows.first(where: \.waiting) {
+        if let row = Self.firstWaitingRow(in: cachedAll) ?? Self.firstWaitingRow(in: snapshot.rows) {
             focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
             return
         }
@@ -564,16 +599,31 @@ extension StatusStore {
 
     /// Prefer exact `rowKey`, then session, then first waiting/live row for agent.
     private func resolveFocusRow(idRaw: String, session: String, rowKey: String) -> AgentRow? {
-        if !rowKey.isEmpty, let row = cachedAll.first(where: { $0.rowKey == rowKey }) {
+        Self.focusTarget(in: cachedAll, idRaw: idRaw, session: session, rowKey: rowKey)
+    }
+
+    /// The session match stays inside the named agent and takes a prefix
+    /// only when exactly one row fits — the same rule the builder applies to
+    /// attention ids, so a truncated id (or another agent's session that
+    /// happens to share a prefix) cannot send a banner click to the wrong
+    /// row.
+    nonisolated static func focusTarget(
+        in rows: [AgentRow], idRaw: String, session: String, rowKey: String
+    ) -> AgentRow? {
+        if !rowKey.isEmpty, let row = rows.first(where: { $0.rowKey == rowKey }) {
             return row
         }
-        if !session.isEmpty, let row = cachedAll.first(where: {
-            !$0.sessionID.isEmpty && ($0.sessionID == session || session.hasPrefix($0.sessionID))
-        }) {
-            return row
+        let agent = ActivityHarvest.mapAgent(idRaw)?.surfaceID
+        if !session.isEmpty {
+            let sameAgent = rows.filter { !$0.sessionID.isEmpty && (agent == nil || $0.agent == agent) }
+            if let exact = sameAgent.first(where: { $0.sessionID == session }) { return exact }
+            let prefixed = sameAgent.filter {
+                session.hasPrefix($0.sessionID) || $0.sessionID.hasPrefix(session)
+            }
+            if prefixed.count == 1 { return prefixed[0] }
         }
-        guard let id = ActivityHarvest.mapAgent(idRaw) else { return nil }
-        return cachedAll.first(where: { $0.agent == id && $0.waiting })
-            ?? cachedAll.first(where: { $0.agent == id })
+        guard let id = agent else { return nil }
+        let own = rows.filter { $0.agent == id }
+        return firstWaitingRow(in: own) ?? own.first
     }
 }

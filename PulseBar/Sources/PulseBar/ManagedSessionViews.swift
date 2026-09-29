@@ -75,7 +75,7 @@ struct ManagedSessionInspector: View {
     private var runCheckCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(store.tr(.managedRunCheck))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             HStack(spacing: 8) {
                 TextField(store.tr(.managedRunCheckPlaceholder), text: $runCheckCommand)
                     .textFieldStyle(.roundedBorder)
@@ -99,7 +99,7 @@ struct ManagedSessionInspector: View {
             }
             if let evidence = runner?.acceptanceEvidence.last {
                 Text(evidence.command)
-                    .font(.caption.monospaced())
+                    .font(PulseTheme.Font.code)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                 CheckCellView(
@@ -113,22 +113,16 @@ struct ManagedSessionInspector: View {
                !evidenceOutput(evidence).isEmpty {
                 ScrollView {
                     Text(evidenceOutput(evidence))
-                        .font(.caption.monospaced())
+                        .font(PulseTheme.Font.code)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                 }
                 .frame(maxHeight: 220)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
+                .pulseInner(padding: 0)
             }
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
     }
 
     private func runCheck() {
@@ -165,12 +159,11 @@ struct ManagedSessionInspector: View {
         PermissionCardFace(model: store.permissionCardModel(request)) { action in
             store.performRowCard(action, row: row)
         }
-            .padding(PulseTheme.cardPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-            .overlay(
-                RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                    .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
+            .pulseCard()
+            // Red means blocked: the session is stopped on this ask.
+            .background(
+                PulseTheme.Tone.waiting.color.opacity(PulseTheme.Fill.waitTint),
+                in: RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
             )
     }
 
@@ -180,9 +173,9 @@ struct ManagedSessionInspector: View {
     private var acceptanceCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(store.tr(.managedAcceptance))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             Text(store.tr(.managedAcceptanceHint))
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             TextField(store.tr(.managedCommitPlaceholder), text: $commitMessage, axis: .vertical)
@@ -229,19 +222,13 @@ struct ManagedSessionInspector: View {
             .buttonStyle(.bordered)
             if !acceptanceNotice.isEmpty {
                 Text(acceptanceNotice)
-                    .font(.caption)
-                    .foregroundStyle(acceptanceNoticeIsError ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(acceptanceNoticeIsError ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
     }
 
     private func runAcceptance(
@@ -277,26 +264,22 @@ struct ManagedSessionInspector: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(row.agent.displayName)
-                    .font(.title2.weight(.semibold))
-                Text(store.tr(.managedBadge))
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
+                    .font(PulseTheme.Font.title)
+                PulseChip(label: store.tr(.managedBadge))
                 if !row.model.isEmpty {
                     Text(row.model)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             if !row.task.isEmpty {
                 Text(row.task)
-                    .font(.title3)
+                    .font(PulseTheme.Font.hero)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(row.cwd)
-                .font(.caption.monospaced())
+                .font(PulseTheme.Font.code)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
         }
@@ -305,12 +288,12 @@ struct ManagedSessionInspector: View {
     private var conversationCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(store.tr(.managedConversation))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             if let model = runner?.model {
                 if model.entriesCapped {
                     Text(String(format: store.tr(.workbenchTranscriptCapped), ManagedSession.maxEntries))
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -325,7 +308,7 @@ struct ManagedSessionInspector: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(minHeight: 200, maxHeight: 460)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
+                    .pulseInner(padding: 0)
                     .onChange(of: model.entries.count) { _, count in
                         proxy.scrollTo(count - 1, anchor: .bottom)
                     }
@@ -336,13 +319,7 @@ struct ManagedSessionInspector: View {
             }
             replyRow
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
     }
 
     private var replyRow: some View {
@@ -353,7 +330,7 @@ struct ManagedSessionInspector: View {
                     Text(row.tool.isEmpty
                          ? store.tr(.managedRunning)
                          : store.tr(.managedRunning) + " · " + row.tool)
-                        .font(.callout)
+                        .font(PulseTheme.Font.body)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button(store.tr(.managedCancel)) { runner?.cancel() }
@@ -361,7 +338,7 @@ struct ManagedSessionInspector: View {
                 }
             } else if runner?.model.status == .queued {
                 Text(store.tr(.managedQueuedNote))
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
             } else {
                 TextField(store.tr(.managedReplyPlaceholder), text: $reply, axis: .vertical)
@@ -386,54 +363,54 @@ struct ManagedSessionInspector: View {
             switch model.status {
             case .idle:
                 Text(store.tr(.managedIdle))
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
             case .running:
                 EmptyView()
             case .queued:
                 Text(store.tr(.managedQueuedNote))
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
             case .interrupted:
                 Text(store.tr(.managedInterrupted))
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.body)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
             case .cancelled:
                 Text(store.tr(.managedCancelled))
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.body)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
             case .failed(let reason):
                 Text(String(format: store.tr(.managedFailed), reason))
-                    .font(.callout)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.body)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) {
                 Text(String(format: store.tr(.managedCost), model.totalCostUSD, model.turns))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
                 if model.tokensIn > 0 || model.tokensOut > 0 {
                     Text("↑\(AgentRow.compactToken(model.tokensIn)) ↓\(AgentRow.compactToken(model.tokensOut))")
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                 }
                 if model.unknownEvents > 0 || model.unparsedLines > 0 {
                     // Format drift stated out loud, never swallowed.
                     Text(String(format: store.tr(.managedUnknownEvents),
                                 model.unknownEvents + model.unparsedLines))
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
             }
             if let effect = model.lastTurnEffect {
                 Text(String(format: store.tr(.managedTurnEffect), effect.insertions, effect.deletions))
-                    .font(.caption.monospaced())
+                    .font(PulseTheme.Font.code)
                     .foregroundStyle(.secondary)
             }
             if model.isWorktree {
                 Text(store.tr(.managedWorktreeNote))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -447,35 +424,23 @@ struct ManagedSessionInspector: View {
                     }
                     .buttonStyle(.bordered)
                     Text(store.tr(.managedRemoveNote))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
     }
 
     private var effectCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(store.tr(.workbenchDiff))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             // The same read-only plumbing card the observed inspector uses —
             // against the worktree Pulse created, which is disk-confirmed by
             // construction.
             WorkspaceDiffSection(store: store, row: row)
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
     }
 }

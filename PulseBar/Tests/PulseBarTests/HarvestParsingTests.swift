@@ -614,7 +614,9 @@ final class AttentionReaderTests: XCTestCase {
         let old = now - 60_000
         let text = [
             "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse",
-            "claude\tstop\t\(old + 1)\t\tsession-10\t",
+            // The Stop itself lands past the window: the grace is measured
+            // between the two lines, not against the reader's clock.
+            "claude\tstop\t\(old + AttentionReader.stopGraceMs + 1)\t\tsession-10\t",
         ].joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: now)
         XCTAssertFalse(entries.contains(where: \.isBlocking))

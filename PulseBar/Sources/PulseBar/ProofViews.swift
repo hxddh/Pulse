@@ -33,9 +33,9 @@ struct ProofCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(t(.proofCard))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             Text(t(.proofHint))
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             TextField(t(.missionChecks), text: $checksText, axis: .vertical)
@@ -60,7 +60,7 @@ struct ProofCardView: View {
                     ForEach(model.lines) { line in
                         GridRow {
                             Text(line.command)
-                                .font(.caption.monospaced())
+                                .font(PulseTheme.Font.code)
                                 .lineLimit(1)
                                 .frame(maxWidth: 280, alignment: .leading)
                                 .help(line.command)
@@ -69,19 +69,13 @@ struct ProofCardView: View {
                     }
                 }
                 Text(t(.proofSideEffects))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             missionJoin
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
         .onAppear {
             guard !loaded else { return }
             loaded = true
@@ -95,7 +89,7 @@ struct ProofCardView: View {
         if let joined = model.joined {
             HStack(spacing: 8) {
                 Text(String(format: t(.proofJoined), joined.title))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let externalID = joined.externalID {
@@ -103,7 +97,7 @@ struct ProofCardView: View {
                         send(.leave(missionID: joined.missionID, externalID: externalID))
                     }
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                 }
             }
         } else if !model.joinable.isEmpty {
@@ -114,7 +108,7 @@ struct ProofCardView: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .font(.caption)
+            .font(PulseTheme.Font.caption)
         }
     }
 }

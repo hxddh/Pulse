@@ -168,7 +168,28 @@ struct UpdateInstaller {
         try FileManager.default.copyItem(at: source, to: staged)
         try verifySignature(candidate: staged, replacing: targetApp)
         try replace(stagedApp: staged, targetApp: targetApp)
-        _ = run(targetApp.appendingPathComponent("Contents/MacOS/PulseBar").path, [])
+        relaunch(targetApp)
+    }
+
+    /// How the helper starts the new app: through Launch Services, as a new
+    /// instance, and without waiting for it. Running the executable directly
+    /// and waiting (the old path) kept this helper alive for the whole life
+    /// of the new app, launched it outside Launch Services, and hard-coded
+    /// the executable name instead of the bundle's `CFBundleExecutable`.
+    static func relaunchCommand(for app: URL) -> (executable: String, arguments: [String]) {
+        ("/usr/bin/open", ["-n", app.path])
+    }
+
+    private static func relaunch(_ app: URL) {
+        let command = relaunchCommand(for: app)
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: command.executable)
+        task.arguments = command.arguments
+        do {
+            try task.run()
+        } catch {
+            DebugLog.write("update relaunch failed \(error.localizedDescription)")
+        }
     }
 
     /// Re-hash the image right before it is mounted. An empty or malformed
@@ -302,7 +323,11 @@ struct UpdateInstaller {
         task.standardOutput = pipe
         task.standardError = pipe
         do { try task.run() } catch { return (-1, error.localizedDescription) }
+        // Drain before waiting: a child that fills the pipe buffer blocks on
+        // write and never exits, so waiting first would deadlock (hdiutil
+        // and codesign -dv can both be chatty).
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
-        return (task.terminationStatus, String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+        return (task.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 }

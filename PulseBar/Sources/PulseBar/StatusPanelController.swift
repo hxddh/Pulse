@@ -19,7 +19,13 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private let panel: PulseStatusPanel
     private let rootView = NSView()
     private let shadowView = NSView()
-    private let effectView = NSVisualEffectView()
+    /// The panel's surface: Liquid Glass on macOS 26, the menu material
+    /// before it. One view either way, so chrome and capture treat it alike.
+    private let effectView: NSView
+    /// 21.0: one rendered lamp per state and appearance, not a fresh
+    /// rasterisation on every scan.
+    private var iconCache: [String: NSImage] = [:]
+    private var lastIconKey = ""
     private let hosting: NSHostingController<TrayPanelHost>
     /// Follows only `snapshot` — a settings write does not touch the lamp.
     private var snapshotLoop: ObservationLoop?
@@ -41,11 +47,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     init(store: StatusStore) {
         self.store = store
         hosting = NSHostingController(rootView: TrayPanelHost(store: store))
+        effectView = StatusPanelChrome.makeSurface()
         panel = PulseStatusPanel(
             contentRect: .init(
                 x: 0,
                 y: 0,
-                width: 448 + StatusPanelChrome.shadowInset * 2,
+                width: TrayChrome.width + StatusPanelChrome.shadowInset * 2,
                 height: 180 + StatusPanelChrome.shadowInset * 2
             ),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -63,7 +70,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         button.sendAction(on: [.leftMouseUp])
         button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
-        button.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        // The menu bar's own font, with digits that do not change width as
+        // "4m" becomes "5m" — the title no longer nudges its neighbours.
+        button.font = NSFont.monospacedDigitSystemFont(
+            ofSize: NSFont.menuBarFont(ofSize: 0).pointSize,
+            weight: .medium
+        )
 
         let store = self.store
         snapshotLoop = ObservationLoop(track: { _ = store.snapshot }) { [weak self] in
@@ -218,15 +230,6 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.transient, .moveToActiveSpace, .fullScreenAuxiliary]
         panel.animationBehavior = .utilityWindow
 
-        // A `.popover` material blended behind a borderless panel produced a
-        // flat mid-gray surface (and a different gray in each capture mode),
-        // because there is no system popover host behind this app-owned window.
-        // `.menu` with within-window blending is the native menu-bar surface:
-        // adaptive in light/dark mode, readable, and deterministic in QA.
-        effectView.material = .menu
-        effectView.blendingMode = .withinWindow
-        effectView.state = .active
-
         shadowView.translatesAutoresizingMaskIntoConstraints = false
         effectView.translatesAutoresizingMaskIntoConstraints = false
         rootView.addSubview(shadowView)
@@ -243,15 +246,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             effectView.bottomAnchor.constraint(equalTo: shadowView.bottomAnchor),
         ])
 
-        let content = hosting.view
-        content.translatesAutoresizingMaskIntoConstraints = false
-        effectView.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
-            content.topAnchor.constraint(equalTo: effectView.topAnchor),
-            content.bottomAnchor.constraint(equalTo: effectView.bottomAnchor),
-        ])
+        StatusPanelChrome.embed(hosting.view, in: effectView)
         panel.contentView = rootView
         StatusPanelChrome.apply(
             to: panel,
@@ -263,9 +258,19 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
 
     private func updateStatusItem(_ snapshot: PulseSnapshot) {
         guard let button = statusItem.button else { return }
-        let image = PulseBrand.statusBarIcon(for: snapshot.glance)
-        image.size = NSSize(width: 15, height: 15)
-        button.image = image
+        let key = "\(snapshot.glance)|\(button.effectiveAppearance.name.rawValue)"
+        if key != lastIconKey {
+            let image: NSImage
+            if let cached = iconCache[key] {
+                image = cached
+            } else {
+                image = PulseBrand.statusBarIcon(for: snapshot.glance)
+                image.size = NSSize(width: 15, height: 15)
+                iconCache[key] = image
+            }
+            button.image = image
+            lastIconKey = key
+        }
         // A status button's effective appearance belongs to the menu bar, not
         // necessarily to the app's Aqua/Dark Aqua appearance. A forced
         // The image owns its state colour. `contentTintColor` stays nil so
@@ -306,28 +311,33 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// A new wait dips the lamp once (EXPERIENCE §3: "flash once") — it
+    /// flashed three times, which is a blink, and a blink is an alarm. With
+    /// Reduce Motion on, the steady red is the whole signal.
     private func pulseStatusLamp(_ button: NSStatusBarButton) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         lampAttentionTask?.cancel()
         lampAttentionTask = Task { @MainActor [weak self, weak button] in
             guard let self else { return }
-            for _ in 0..<3 {
-                guard !Task.isCancelled else { break }
-                button?.alphaValue = 0.28
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                guard !Task.isCancelled else { break }
-                button?.alphaValue = 1
-                try? await Task.sleep(nanoseconds: 230_000_000)
-            }
+            button?.alphaValue = 0.3
+            try? await Task.sleep(nanoseconds: 180_000_000)
             button?.alphaValue = 1
             self.lampAttentionTask = nil
         }
     }
 
+    /// 21.0: one deferred measure per change, and only a real change moves
+    /// the frame. Every scan used to schedule two resizes, each an
+    /// un-animated jump of the bottom edge.
+    private var resizeScheduled = false
+
     private func scheduleResize() {
-        guard panel.isVisible, !captureInProgress else { return }
-        DispatchQueue.main.async { [weak self] in self?.resizeToFit() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            self?.resizeToFit()
+        guard panel.isVisible, !captureInProgress, !resizeScheduled else { return }
+        resizeScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.resizeScheduled = false
+            self.resizeToFit(animated: true)
         }
     }
 
@@ -343,29 +353,34 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         resizeToFit()
     }
 
-    private func resizeToFit() {
+    private func resizeToFit(animated: Bool = false) {
         hosting.view.layoutSubtreeIfNeeded()
         let fitting = hosting.view.fittingSize
-        // Keep the default seven-row glance intact. The list itself remains
-        // scrollable, but a panel that ends halfway through a row reads as a
-        // layout failure rather than an intentional viewport.
-        // Keep the default information-rich glance intact. The SwiftUI list
-        // already scrolls when there are many sessions, but capping the host
-        // at 720pt clipped the final row in the common seven-row case.
-        let height = min(780, max(96, fitting.height))
+        // The list scrolls past `maxListHeight`; the panel itself stops at
+        // `maxHeight` (one number, shared with the view).
+        let height = min(TrayChrome.maxHeight, max(96, fitting.height))
         let inset = StatusPanelChrome.shadowInset
         let target = NSSize(
-            width: max(448, fitting.width) + inset * 2,
+            width: max(TrayChrome.width, fitting.width) + inset * 2,
             height: height + inset * 2
         )
         guard abs(panel.frame.width - target.width) > 0.5
                 || abs(panel.frame.height - target.height) > 0.5 else { return }
 
-        let oldTop = panel.frame.maxY
-        panel.setContentSize(target)
         var frame = panel.frame
-        frame.origin.y = oldTop - frame.height
-        panel.setFrame(frame, display: true)
+        let oldTop = frame.maxY
+        frame.size = target
+        frame.origin.y = oldTop - target.height
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if animated, !reduceMotion {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
         rootView.layoutSubtreeIfNeeded()
         StatusPanelChrome.apply(
             to: panel,
@@ -399,6 +414,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         ) { [weak self] event in
             guard let self else { return event }
             if event.type == .keyDown, event.keyCode == 53 {
+                // Escape in the search field clears the search first
+                // (`onExitCommand`); only a second Escape closes the panel.
+                if self.panel.firstResponder is NSTextView { return event }
                 self.close()
                 return nil
             }
@@ -436,14 +454,50 @@ private final class PulseStatusPanel: NSPanel {
 /// the exact same path.
 @MainActor
 enum StatusPanelChrome {
-    static let cornerRadius: CGFloat = 12
+    static let cornerRadius: CGFloat = PulseTheme.Radius.panel
     static let shadowInset: CGFloat = 12
+
+    /// 21.0: macOS 26's Liquid Glass where the system has it — the material
+    /// the system's own menu-bar panels use there — and the menu material
+    /// before it. A `.popover` material behind a borderless panel had no
+    /// popover host and rendered flat grey; `.menu` within the window is the
+    /// adaptive, deterministic fallback.
+    static func makeSurface() -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.cornerRadius = cornerRadius
+            return glass
+        }
+        let effect = NSVisualEffectView()
+        effect.material = .menu
+        effect.blendingMode = .withinWindow
+        effect.state = .active
+        return effect
+    }
+
+    /// Pins the tray's SwiftUI host edge to edge inside the surface. Glass
+    /// hosts its content through `contentView`, so it is tinted and lit
+    /// correctly; the material takes a plain subview.
+    static func embed(_ content: NSView, in surface: NSView) {
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.contentView = content
+            return
+        }
+        content.translatesAutoresizingMaskIntoConstraints = false
+        surface.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: surface.trailingAnchor),
+            content.topAnchor.constraint(equalTo: surface.topAnchor),
+            content.bottomAnchor.constraint(equalTo: surface.bottomAnchor),
+        ])
+    }
 
     static func apply(
         to panel: NSPanel,
         rootView: NSView,
         shadowView: NSView,
-        effectView: NSVisualEffectView
+        effectView: NSView
     ) {
         panel.hasShadow = false
         rootView.wantsLayer = true
@@ -470,6 +524,11 @@ enum StatusPanelChrome {
         effectView.layer?.cornerRadius = cornerRadius
         effectView.layer?.cornerCurve = .continuous
         effectView.layer?.masksToBounds = true
+        // A hairline edge: dark mode lost the panel's outline against a dark
+        // desktop. Resolved against the panel's own appearance on each open.
+        let dark = effectView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        effectView.layer?.borderColor = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.18 : 0.12).cgColor
+        effectView.layer?.borderWidth = 0.5
 
         if let frameView = rootView.superview {
             frameView.wantsLayer = true

@@ -43,7 +43,10 @@ struct WorkbenchView: View {
         }
         .frame(minWidth: 760, minHeight: 480)
         .onAppear {
-            if selectedKey == nil {
+            if let key = store.workbenchSelectKey {
+                selectedKey = key
+                store.workbenchSelectKey = nil
+            } else if selectedKey == nil {
                 // Open on whoever needs the user first — the tray's own
                 // priority, carried over.
                 selectedKey = rows.first(where: \.waiting)?.rowKey ?? rows.first?.rowKey
@@ -95,7 +98,7 @@ struct WorkbenchView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Text(rows.isEmpty ? store.tr(.workbenchNoSessions) : store.tr(.workbenchSelectHint))
-                .font(.title3)
+                .font(PulseTheme.Font.heroQuiet)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -107,30 +110,33 @@ private struct WorkbenchSidebarRow: View {
     var store: StatusStore
     let row: AgentRow
 
-    private var lamp: Color {
-        if row.waiting { return .red }
-        if row.isStalled { return .orange }
-        if row.isRecentOnly { return .secondary.opacity(0.6) }
-        return GlanceKind.running.lampColor
+    /// The tray row's own lamp rule (`TrayRowModel.lamp`), in the shared
+    /// tone — the sidebar never decides a state the tray did not.
+    private var lamp: PulseTheme.Tone {
+        switch TrayRowModel.lamp(row) {
+        case .waiting: return .waiting
+        case .error, .process: return .attention
+        case .running: return .running
+        case .idle: return .idle
+        }
     }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Circle().fill(lamp).frame(width: 8, height: 8)
-                .accessibilityHidden(true)
+            PulseLamp(tone: lamp, size: 8)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(row.agent.displayName)
-                        .font(.callout.weight(.semibold))
+                        .font(PulseTheme.Font.label)
                     if row.isRemote, !row.host.isEmpty {
                         Text(row.host)
-                            .font(.caption2)
+                            .font(PulseTheme.Font.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 if let task = row.usefulTask {
                     Text(task)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -174,6 +180,8 @@ struct SessionInspectorView: View {
                     }
                 } else {
                     header
+                    // 17.0 / 21.0: why this row is in its state, first.
+                    WhyDetailSection(store: store, row: row)
                     if row.waiting { waitCard }
                     nowCard
                     // Same freshness rule as the tray and Details: a
@@ -189,6 +197,7 @@ struct SessionInspectorView: View {
                         WorkingCopyProofCard(store: store, row: row)
                     }
                 }
+                SessionDiagnosticsCard(store: store, row: row)
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -201,32 +210,32 @@ struct SessionInspectorView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(row.agent.displayName)
-                    .font(.title2.weight(.semibold))
+                    .font(PulseTheme.Font.title)
                 if row.isRemote, !row.host.isEmpty {
                     Text(row.host)
-                        .font(.callout)
+                        .font(PulseTheme.Font.body)
                         .foregroundStyle(.secondary)
                 }
                 if !row.model.isEmpty {
                     Text(row.model)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             if let task = row.usefulTask {
                 Text(task)
-                    .font(.title3)
+                    .font(PulseTheme.Font.hero)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
             HStack(spacing: 10) {
                 if !row.displayPath.isEmpty {
                     Text(row.displayPath)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                 }
                 Text(store.lastActivityLabel(row))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -269,8 +278,8 @@ struct SessionInspectorView: View {
             // a copy, a refusal, a verdict that could not be written.
             if let notice = store.rowActionNotice(row) {
                 Text(notice)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -292,7 +301,7 @@ struct SessionInspectorView: View {
     private var typeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(store.tr(.workbenchAnswerHeading))
-                .font(.caption.weight(.semibold))
+                .font(PulseTheme.Font.chip)
                 .foregroundStyle(.secondary)
             TextField(store.tr(.workbenchAnswerPlaceholder), text: $answerDraft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -303,7 +312,7 @@ struct SessionInspectorView: View {
             .buttonStyle(.borderedProminent)
             .disabled(answerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Text(store.tr(.workbenchSendHint))
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -314,7 +323,7 @@ struct SessionInspectorView: View {
     private var resumeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(store.tr(.workbenchAnswerHeading))
-                .font(.caption.weight(.semibold))
+                .font(PulseTheme.Font.chip)
                 .foregroundStyle(.secondary)
             TextField(store.tr(.workbenchAnswerPlaceholder), text: $answerDraft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -324,7 +333,7 @@ struct SessionInspectorView: View {
             }
             .buttonStyle(.bordered)
             Text(store.tr(.workbenchAnswerHint))
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -336,13 +345,13 @@ struct SessionInspectorView: View {
     private var reviewCard: some View {
         card(store.tr(.workbenchReview)) {
             Text(store.tr(.workbenchReviewHint))
-                .font(.callout)
+                .font(PulseTheme.Font.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             let story = store.rowStoryLine(row)
             if !story.isEmpty {
                 Text(story)
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -358,13 +367,13 @@ struct SessionInspectorView: View {
             let story = store.rowStoryLine(row)
             if !story.isEmpty {
                 Text(story)
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !(row.liveActionFresh && !row.liveTool.isEmpty) && store.rowStoryLine(row).isEmpty {
                 Text(store.detailPhase(row))
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
             }
         }
@@ -374,7 +383,7 @@ struct SessionInspectorView: View {
         card(store.tr(.detailPlan)) {
             if row.progressTotal > 0 {
                 Text(String(format: store.tr(.progressFact), row.progressDone, row.progressTotal))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             }
             ForEach(Array(row.planSteps.enumerated()), id: \.offset) { _, step in
@@ -404,8 +413,8 @@ struct SessionInspectorView: View {
             if !row.lastErrorText.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(store.tr(.detailLastError))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.chip)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                     Text(row.lastErrorText)
                         .font(.body.monospaced())
                         .textSelection(.enabled)
@@ -449,25 +458,19 @@ struct SessionInspectorView: View {
     private func card<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             content()
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
     }
 
     private func labeled(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
             Text(value.isEmpty ? "—" : value)
-                .font(.callout)
+                .font(PulseTheme.Font.body)
                 .textSelection(.enabled)
         }
     }
@@ -503,10 +506,10 @@ private struct DispatchSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(store.tr(.workbenchDispatch))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             if roots.isEmpty {
                 Text(store.tr(.workbenchDispatchNoRoots))
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
             } else {
                 Picker(store.tr(.workbenchDispatchRepo), selection: $selectedRoot) {
@@ -517,7 +520,7 @@ private struct DispatchSheet: View {
                 }
                 if let selectedRoot {
                     Text(selectedRoot)
-                        .font(.caption.monospaced())
+                        .font(PulseTheme.Font.code)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
@@ -542,7 +545,7 @@ private struct DispatchSheet: View {
                                 .font(.callout.monospaced())
                                 .lineLimit(2...6)
                             Text(store.tr(.missionChecksHint))
-                                .font(.caption)
+                                .font(PulseTheme.Font.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -557,25 +560,25 @@ private struct DispatchSheet: View {
                         )
                     }
                     Text(store.tr(.managedDispatchHint))
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(store.tr(.workbenchDispatchHint))
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let managedError {
                     Text(managedError)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if failed {
                     Text(store.tr(.workbenchDispatchFailed))
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
             }
             HStack {
@@ -633,7 +636,7 @@ private struct TranscriptSection: View {
                 honestyLines(excerpt)
                 if excerpt.entries.isEmpty {
                     Text(store.tr(.workbenchTranscriptEmpty))
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                 } else {
                     ScrollViewReader { proxy in
@@ -647,7 +650,7 @@ private struct TranscriptSection: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxHeight: 420)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
+                        .pulseInner(padding: 0)
                         .onAppear {
                             // The newest turn is why the user opened this.
                             proxy.scrollTo(excerpt.entries.count - 1, anchor: .bottom)
@@ -656,7 +659,7 @@ private struct TranscriptSection: View {
                 }
             } else if failed {
                 Text(store.tr(.workbenchTranscriptUnavailable))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             } else {
                 Button {
@@ -700,27 +703,22 @@ private struct TranscriptSection: View {
         return Group {
             if !bits.isEmpty {
                 Text(bits.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
+    /// 21.0: the same line face the managed conversation uses; only the
+    /// label (no "↳" prefix here) is this view's.
     private func entryView(_ entry: TranscriptReader.Entry) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label(entry))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(labelColor(entry))
-                .frame(width: 76, alignment: .trailing)
-            Text(entry.text.isEmpty ? "—" : entry.text)
-                .font(entry.kind == .tool ? .caption.monospaced() : .callout)
-                .foregroundStyle(entry.isError ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .accessibilityElement(children: .combine)
+        ManagedEntryFace(model: RowCardModel.Entry(
+            label: label(entry),
+            text: entry.text.isEmpty ? "—" : entry.text,
+            tone: entryTone(entry),
+            monospaced: entry.kind == .tool
+        ))
     }
 
     private func label(_ entry: TranscriptReader.Entry) -> String {
@@ -733,11 +731,11 @@ private struct TranscriptSection: View {
         }
     }
 
-    private func labelColor(_ entry: TranscriptReader.Entry) -> Color {
+    private func entryTone(_ entry: TranscriptReader.Entry) -> RowCardModel.Entry.Tone {
         switch entry.kind {
-        case .user: return .accentColor
-        case .agent: return .primary
-        case .tool: return entry.isError ? .orange : .secondary
+        case .user: return .user
+        case .agent: return .agent
+        case .tool: return entry.isError ? .error : .tool
         }
     }
 
@@ -790,7 +788,7 @@ struct WorkspaceDiffSection: View {
         VStack(alignment: .leading, spacing: 8) {
             if let counts {
                 Text(counts)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             }
             if row.isRemote || row.workspaceRoot.isEmpty {
@@ -798,31 +796,31 @@ struct WorkspaceDiffSection: View {
                 // disk is elsewhere; an unconfirmed root is not quoted.
                 if row.changedPaths < 0 {
                     Text(store.tr(.workbenchDiffUnavailable))
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                 }
             } else if row.changedPaths == 0 {
                 Text(store.tr(.workbenchDiffClean))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             } else if let patch {
                 if truncated {
                     Text(store.tr(.workbenchDiffTruncated))
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
                 ScrollView([.vertical, .horizontal]) {
                     Text(patch)
-                        .font(.caption.monospaced())
+                        .font(PulseTheme.Font.code)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                 }
                 .frame(maxHeight: 360)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: PulseTheme.innerRadius))
+                .pulseInner(padding: 0)
             } else if failed {
                 Text(store.tr(.workbenchDiffUnavailable))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             } else {
                 Button {

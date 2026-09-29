@@ -741,9 +741,17 @@ extension NativeActivityHarvest {
             target.cwdBestEffort = source.cwdBestEffort
         }
         prefer(&target.sessionID, source.sessionID)
+        // "Now" facts follow the newer fragment by `activityMs`, not by the
+        // order the fragments happened to be handed over: two files of one
+        // session enumerate in either order, and the older one must not win
+        // merely by arriving second. A fragment with no clock (a record with
+        // no stamp inside one file) keeps the old last-non-empty rule — file
+        // order is the only order it has.
+        let sourceIsNewer = source.activityMs == 0 || target.activityMs == 0
+            || source.activityMs >= target.activityMs
         // Last non-empty tool / model wins — Claude assistant envelopes arrive
         // after the user prompt; prefer-first left rows without telemetry.
-        if !source.tool.isEmpty { target.tool = source.tool }
+        if !source.tool.isEmpty, target.tool.isEmpty || sourceIsNewer { target.tool = source.tool }
         // 0.95: pending follows the newest fragment by activityMs — never OR
         // an older ask onto a newer answered/cleared turn.
         if source.activityMs > target.activityMs {
@@ -766,16 +774,27 @@ extension NativeActivityHarvest {
             prefer(&target.skill, source.skill)
         }
         prefer(&target.phase, source.phase); prefer(&target.outcome, source.outcome)
-        if !source.model.isEmpty { target.model = source.model }
-        if !source.mode.isEmpty { target.mode = source.mode }
+        if !source.model.isEmpty, target.model.isEmpty || sourceIsNewer { target.model = source.model }
+        if !source.mode.isEmpty, target.mode.isEmpty || sourceIsNewer { target.mode = source.mode }
         // Latest turn usage wins (Claude assistant envelopes; matches Codex
         // last_token_usage semantics). Never sum every turn into the tray.
-        if source.tokensIn > 0 { target.tokensIn = source.tokensIn }
-        if source.tokensOut > 0 { target.tokensOut = source.tokensOut }
+        if source.tokensIn > 0, target.tokensIn == 0 || sourceIsNewer { target.tokensIn = source.tokensIn }
+        if source.tokensOut > 0, target.tokensOut == 0 || sourceIsNewer { target.tokensOut = source.tokensOut }
         target.errors = max(target.errors, source.errors); target.files = max(target.files, source.files)
         target.contextPercent = max(target.contextPercent, source.contextPercent)
-        target.progressDone = max(target.progressDone, source.progressDone)
-        target.progressTotal = max(target.progressTotal, source.progressTotal)
+        // A plan is one state: its current step, its checklist and its counts
+        // travel together from the newer fragment. Taking each field's max
+        // separately could pair one list's count with another list's step.
+        let sourceHasPlan = !source.planStep.isEmpty || !source.planSteps.isEmpty
+            || source.progressTotal > 0 || source.progressDone > 0
+        let targetHasPlan = !target.planStep.isEmpty || !target.planSteps.isEmpty
+            || target.progressTotal > 0 || target.progressDone > 0
+        if sourceHasPlan, !targetHasPlan || sourceIsNewer {
+            target.planStep = source.planStep
+            target.planSteps = source.planSteps
+            target.progressDone = source.progressDone
+            target.progressTotal = source.progressTotal
+        }
         target.subRunning = max(target.subRunning, source.subRunning)
         target.subTotal = max(target.subTotal, source.subTotal)
         // explicitPending already resolved above by activityMs order — do not OR.
@@ -786,6 +805,10 @@ extension NativeActivityHarvest {
         if !source.lastWord.isEmpty,
            target.lastWord.isEmpty || source.activityMs > target.activityMs {
             target.lastWord = source.lastWord
+        }
+        if !source.lastErrorText.isEmpty,
+           target.lastErrorText.isEmpty || source.activityMs > target.activityMs {
+            target.lastErrorText = source.lastErrorText
         }
         target.score = max(target.score, source.score)
         target.activityMs = max(target.activityMs, source.activityMs)

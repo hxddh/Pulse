@@ -25,19 +25,24 @@ struct RowNarrator {
     /// 14.0 · check counts per working copy (`EvidenceBook.key`) that has a
     /// ruler and at least one result.
     let proofSummaries: [String: EvidenceBook.Summary]
+    /// 21.0: the user's stall threshold, so a stalled row can say which
+    /// rule it broke. 0 = stall detection off (or unknown).
+    let stallMinutes: Int
 
     init(
         lang: ResolvedLanguage,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         crowded: Bool = false,
         managedModels: [String: ManagedSession.Model] = [:],
-        proofSummaries: [String: EvidenceBook.Summary] = [:]
+        proofSummaries: [String: EvidenceBook.Summary] = [:],
+        stallMinutes: Int = 0
     ) {
         self.lang = lang
         self.nowMs = nowMs
         self.crowded = crowded
         self.managedModels = managedModels
         self.proofSummaries = proofSummaries
+        self.stallMinutes = stallMinutes
     }
 
     /// `checks 2/3 passing · 1 failing` — the user's ruler on this row's
@@ -60,6 +65,8 @@ struct RowNarrator {
     /// 17.0 · Why — the one sentence that says which evidence put this row
     /// in its state. Nil when the state needs no explaining (running, idle).
     /// Built only from what the row already carries; it never guesses.
+    /// 21.0: every non-green state explains itself — stalled, failed and
+    /// process-only rows were the least self-explanatory and said nothing.
     func whyLine(_ row: AgentRow) -> String? {
         if row.waiting {
             switch row.waitSignal {
@@ -82,6 +89,24 @@ struct RowNarrator {
         }
         if row.yourTurn, row.turnSinceMs > 0 {
             return String(format: tr(.whyTurn), row.agent.displayName, agoPhrase(sinceMs: row.turnSinceMs))
+        }
+        if row.isProcessOnly {
+            return String(format: tr(.whyProcessOnly), row.agent.displayName)
+        }
+        if row.isStalled {
+            let quiet = row.harvestMs > 0 || row.activityChangedMs > 0
+                ? durationLabel(seconds: row.lastActivitySeconds) : ""
+            if quiet.isEmpty { return tr(.whyStalledUnknown) }
+            return stallMinutes > 0
+                ? String(format: tr(.whyStalled), quiet, stallMinutes)
+                : String(format: tr(.whyStalledNoRule), quiet)
+        }
+        let outcome = row.outcome.lowercased()
+        if outcome.contains("fail") || outcome.contains("cancel") {
+            return String(format: tr(.whyOutcome), row.outcome)
+        }
+        if row.errors > 0 {
+            return String(format: tr(.whyErrors), row.errors)
         }
         return nil
     }

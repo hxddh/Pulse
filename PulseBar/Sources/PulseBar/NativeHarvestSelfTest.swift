@@ -535,14 +535,16 @@ enum NativeHarvestSelfTest {
     }
 
     /// 20.0: block/goose session_manager.rs `create_schema` (v16), trimmed to
-    /// the columns the reader uses plus the ones that filter.
+    /// the columns the reader uses plus the ones that filter. `updated_at` is
+    /// the moment the fixture is written: the reader reads a session's newest
+    /// messages only while it moved within `gooseRecentMessagesWindowMs`.
     private static func writeGooseFixture(home: URL) throws {
         let url = home.appendingPathComponent(".local/share/goose/sessions/sessions.db")
         let db = try open(url)
         defer { sqlite3_close(db) }
         try exec(db, "CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', session_type TEXT NOT NULL DEFAULT 'user', working_dir TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, accumulated_input_tokens INTEGER, accumulated_output_tokens INTEGER, model_config_json TEXT, archived_at TIMESTAMP, parent_session_id TEXT);")
         try exec(db, "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT, session_id TEXT NOT NULL, role TEXT NOT NULL, content_json TEXT NOT NULL, created_timestamp INTEGER NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, tokens INTEGER, metadata_json TEXT);")
-        try exec(db, "INSERT INTO sessions (id, name, session_type, working_dir, created_at, updated_at, accumulated_input_tokens, accumulated_output_tokens, model_config_json) VALUES ('20260803_1', 'CLI Session', 'user', '/tmp/pulse-goose', '2026-08-03 00:00:00', '2026-08-03 00:00:42', 1200, 300, '{\"model_name\":\"goose-fixture-model\"}');")
+        try exec(db, "INSERT INTO sessions (id, name, session_type, working_dir, created_at, updated_at, accumulated_input_tokens, accumulated_output_tokens, model_config_json) VALUES ('20260803_1', 'CLI Session', 'user', '/tmp/pulse-goose', '2026-08-03 00:00:00', datetime('now'), 1200, 300, '{\"model_name\":\"goose-fixture-model\"}');")
         try exec(db, "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m1', '20260803_1', 'user', '[{\"type\":\"text\",\"text\":\"Goose fixture\"}]', 1785715200);")
         try exec(db, "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m2', '20260803_1', 'assistant', '[{\"type\":\"text\",\"text\":\"Goose fixture reply.\"}]', 1785715242);")
     }

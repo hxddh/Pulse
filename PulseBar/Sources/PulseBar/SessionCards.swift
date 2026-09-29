@@ -23,20 +23,19 @@ struct RespondCardFace: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 6 : 8) {
             Text(model.heading)
-                .font(.caption.weight(.semibold))
+                .font(PulseTheme.Font.chip)
                 .foregroundStyle(.secondary)
             ScrollView {
                 Text(model.fullRequest)
-                    .font(.caption.monospaced())
+                    .font(PulseTheme.Font.code)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: compact ? 120 : 200)
-            .padding(compact ? 6 : 8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
+            .pulseInner(padding: compact ? PulseTheme.Space.xs : PulseTheme.Space.s)
             if let fate = model.fateNote {
                 Text(fate)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 10) {
@@ -61,22 +60,22 @@ struct PermissionCardFace: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+            // Red means blocked: the agent is stopped on this ask.
             Label(model.heading, systemImage: "hand.raised")
-                .font(compact ? .caption.weight(.semibold) : .headline)
-                .foregroundStyle(.orange)
+                .font(compact ? PulseTheme.Font.chip : PulseTheme.Font.heading)
+                .foregroundStyle(PulseTheme.Tone.waiting.color)
             ScrollView {
                 Text(model.input)
-                    .font(.caption.monospaced())
+                    .font(PulseTheme.Font.code)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: compact ? 120 : 220)
-            .padding(compact ? 6 : 8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
+            .pulseInner(padding: compact ? PulseTheme.Space.xs : PulseTheme.Space.s)
             if let note = model.truncatedNote {
                 Text(note)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
             }
             HStack(spacing: 10) {
                 Button(model.deny) { send(.permission(id: model.id, allow: false)) }
@@ -88,7 +87,7 @@ struct PermissionCardFace: View {
             .controlSize(compact ? .small : .regular)
             if !compact {
                 Text(model.hint)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -113,7 +112,7 @@ struct ManagedReplyFace: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(label)
-                        .font(compact ? .caption : .callout)
+                        .font(compact ? PulseTheme.Font.caption : PulseTheme.Font.body)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button(model.cancel) { send(.managedCancel) }
@@ -122,12 +121,12 @@ struct ManagedReplyFace: View {
                 }
             case .queued(let note):
                 Text(note)
-                    .font(compact ? .caption : .callout)
+                    .font(compact ? PulseTheme.Font.caption : PulseTheme.Font.body)
                     .foregroundStyle(.secondary)
             case .interrupted(let note):
                 Text(note)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
                     .fixedSize(horizontal: false, vertical: true)
                 replyField
             case .open:
@@ -161,16 +160,16 @@ struct PlanCompactFace: View {
         VStack(alignment: .leading, spacing: 3) {
             if let progress = model.progress {
                 Text(progress)
-                    .font(.caption2)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             }
             ForEach(Array(model.steps.enumerated()), id: \.offset) { _, step in
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(step.mark)
-                        .font(.caption.monospaced())
+                        .font(PulseTheme.Font.code)
                         .foregroundStyle(step.current ? .primary : .secondary)
                     Text(step.text)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(step.current ? .primary : .secondary)
                         .strikethrough(step.done)
                         .lineLimit(1)
@@ -178,8 +177,8 @@ struct PlanCompactFace: View {
             }
             if model.overflow > 0 {
                 Text("… \(model.overflow)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -197,7 +196,7 @@ struct BriefCardFace: View {
         VStack(alignment: .leading, spacing: 4) {
             if let words = model.fullWords {
                 Text(words)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.primary.opacity(0.85))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -205,17 +204,17 @@ struct BriefCardFace: View {
             if let step = model.planStep {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("▸")
-                        .font(.caption.monospaced())
+                        .font(PulseTheme.Font.code)
                         .foregroundStyle(.secondary)
                     Text(step)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
             if let effect = model.effect {
                 Text(effect)
-                    .font(.caption2.monospaced())
+                    .font(PulseTheme.Font.code)
                     .foregroundStyle(.secondary)
             }
         }
@@ -233,7 +232,7 @@ struct FactLinesFace: View {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                     Text(line)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .lineLimit(2)
@@ -250,12 +249,12 @@ struct ManagedEntryFace: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(model.label)
-                .font(.caption.weight(.semibold))
+                .font(PulseTheme.Font.chip)
                 .foregroundStyle(labelColor)
                 .frame(width: 76, alignment: .trailing)
             Text(model.text)
-                .font(model.monospaced ? .caption.monospaced() : .callout)
-                .foregroundStyle(model.tone == .error ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
+                .font(model.monospaced ? PulseTheme.Font.code : PulseTheme.Font.body)
+                .foregroundStyle(model.tone == .error ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.primary))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -268,7 +267,7 @@ struct ManagedEntryFace: View {
         case .user: return .accentColor
         case .agent: return .primary
         case .tool: return .secondary
-        case .error: return .orange
+        case .error: return PulseTheme.Tone.attention.color
         }
     }
 }
@@ -292,13 +291,7 @@ struct RowAsksFace: View {
                 ManagedReplyFace(model: reply, compact: true, send: send)
             }
         }
-        .padding(TrayChrome.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: TrayChrome.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: TrayChrome.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: 1)
-        )
+        .pulseCard(padding: TrayChrome.cardPadding)
     }
 }
 
@@ -315,7 +308,7 @@ struct TrayExpandedFace: View {
             // — still one glance away.
             if let task = model.task {
                 Text(task)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .textSelection(.enabled)
@@ -323,14 +316,14 @@ struct TrayExpandedFace: View {
             // The agent's latest words in full (the collapsed hero clips).
             if let words = model.lastWord {
                 Text(words)
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = model.errorText {
                 Text(error)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.code)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
                     .lineLimit(3)
                     .textSelection(.enabled)
             }
@@ -352,9 +345,7 @@ struct TrayExpandedFace: View {
                         ManagedEntryFace(model: entry)
                     }
                 }
-                .padding(TrayChrome.cardSpacing)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
+                .pulseInner(padding: TrayChrome.cardSpacing)
             }
 
             // Act where you read: managed asks first, then Respond, then the
@@ -378,12 +369,6 @@ struct TrayExpandedFace: View {
             .buttonStyle(.borderless)
             .font(TrayChrome.actionFont)
         }
-        .padding(TrayChrome.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: TrayChrome.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: TrayChrome.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: 1)
-        )
+        .pulseCard(padding: TrayChrome.cardPadding)
     }
 }

@@ -73,3 +73,41 @@ extension StatusStore {
         }
     }
 }
+
+extension StatusStore {
+    /// 21.0: the self-check's next step, taken from the self-check.
+    func performDoctorFix(_ fix: DoctorModel.Fix) {
+        switch fix {
+        case .installHooks:
+            installHooks()
+        case .copyShapeReport:
+            copyHarvestShapeReport()
+        case .openConnections:
+            openSettings(focusWaitingSignals: true)
+        }
+    }
+
+    /// 21.0: when Pulse last read, how often it reads, and what that has
+    /// cost over the last hour — the facts that were only in the clipboard
+    /// dump. Read by the Health window.
+    var scanHealthLine: String {
+        let now = Date()
+        var parts: [String] = []
+        if snapshot.updatedAt != .distantPast {
+            let ago = now.timeIntervalSince(snapshot.updatedAt)
+            parts.append(ago < 5
+                ? tr(.lastReadJustNow)
+                : String(format: tr(.lastReadAgo), DurationFormat.label(seconds: ago, lang: lang)))
+        }
+        parts.append(probeIntervalDescription)
+        let reads = probeStats.harvestCount(now: now)
+        if reads > 0 {
+            if let avg = probeStats.averageHarvestMs(now: now) {
+                parts.append(String(format: tr(.readsLastHourAvg), reads, avg))
+            } else {
+                parts.append(String(format: tr(.readsLastHour), reads))
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
+}

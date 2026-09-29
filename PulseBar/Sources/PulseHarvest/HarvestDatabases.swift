@@ -536,8 +536,10 @@ extension NativeActivityHarvest {
                 "sessionId": sid,
                 "cwd": cwd,
                 "agentMode": "Pi",
-                "progressTotal": records,
             ]
+            // `event_count` is how many events the session logged — a
+            // record count (`fact.records`), never plan progress. As
+            // `progressTotal` it drew a "0 / 412" bar no plan ever had.
             var fact = fact(from: values, context: "pi.context_mode.session", structured: true, path: url.path)
             fact.sessionID = sid
             fact.startedMs = started

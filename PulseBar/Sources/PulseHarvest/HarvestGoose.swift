@@ -53,14 +53,24 @@ extension NativeActivityHarvest {
         }
         defer { sqlite3_finalize(statement) }
 
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         while sqlite3_step(statement) == SQLITE_ROW {
             let sid = sqliteString(statement, column: 0)
             guard !sid.isEmpty else { continue }
             let cwd = normalizedPath(sqliteString(statement, column: 2))
             let tin = sqlite3_column_int64(statement, 6)
             let tout = sqlite3_column_int64(statement, 7)
+            let sessionUpdatedMs = normalizeTimestamp(sqliteString(statement, column: 3))
 
-            let messages = gooseMessages(database, sessionID: sid)
+            // Decoding sixty message rows for each of up to `maxRowsPerAgent`
+            // sessions spent the adapter's deadline on months-old history.
+            // An old session keeps its title; its last word and wait state are
+            // only read while it could still be live.
+            let messages = gooseMessages(
+                database,
+                sessionID: sid,
+                includeRecent: gooseReadsRecentMessages(updatedMs: sessionUpdatedMs, nowMs: nowMs)
+            )
             var title = clean(sqliteString(statement, column: 1), limit: 160)
             if isGoosePlaceholderTitle(title) { title = messages.firstUserText }
 
@@ -81,7 +91,7 @@ extension NativeActivityHarvest {
             fact.tokensOut = Int(max(0, tout))
             fact.lastWord = messages.lastWord
             fact.startedMs = normalizeTimestamp(sqliteString(statement, column: 4))
-            let updated = max(normalizeTimestamp(sqliteString(statement, column: 3)), messages.latestMs)
+            let updated = max(sessionUpdatedMs, messages.latestMs)
             fact.activityMs = updated > 0 ? updated : fileMTime(url)
             fact.records = messages.count
             if messages.awaitingElicitation {
@@ -107,12 +117,26 @@ extension NativeActivityHarvest {
         package var awaitingElicitation = false
     }
 
+    /// How recently a session must have moved for its newest messages to be
+    /// read at all.
+    package static let gooseRecentMessagesWindowMs: Int64 = 72 * 60 * 60 * 1000
+
+    /// An unknown `updated_at` is read, never assumed old.
+    package static func gooseReadsRecentMessages(updatedMs: Int64, nowMs: Int64) -> Bool {
+        updatedMs <= 0 || nowMs - updatedMs <= gooseRecentMessagesWindowMs
+    }
+
     /// Newest first for the last word and the open elicitation; the first
-    /// user text needs the oldest row, read separately.
-    package static func gooseMessages(_ database: OpaquePointer, sessionID: String) -> GooseMessages {
+    /// user text needs the oldest row, read separately. `includeRecent:
+    /// false` reads only that first user text (the title fallback).
+    package static func gooseMessages(
+        _ database: OpaquePointer,
+        sessionID: String,
+        includeRecent: Bool = true
+    ) -> GooseMessages {
         var out = GooseMessages()
         let recent = "SELECT role, content_json, created_timestamp FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 60"
-        if let statement = sqlitePrepare(database, recent), sqliteBind(statement, index: 1, text: sessionID) {
+        if includeRecent, let statement = sqlitePrepare(database, recent), sqliteBind(statement, index: 1, text: sessionID) {
             defer { sqlite3_finalize(statement) }
             var decidedWaiting = false
             while sqlite3_step(statement) == SQLITE_ROW {

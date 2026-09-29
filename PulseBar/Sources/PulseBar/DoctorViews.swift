@@ -2,48 +2,67 @@ import SwiftUI
 
 /// 19.0 · the self-check's result, rendered from a value. One line per
 /// contract: the verdict, what the facts showed, and — when there is one —
-/// the next thing to do.
+/// the next thing to do. 21.0: where Pulse can take that step itself, it is
+/// a button beside the sentence, not an instruction to go and find one.
 struct DoctorReportView: View {
     let report: DoctorModel.Report
     var copied = false
     var onCopy: () -> Void = {}
+    var onFix: (DoctorModel.Fix) -> Void = { _ in }
 
     private var copy: DoctorModel.Copy { DoctorModel.Copy(lang: report.lang) }
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, report.lang) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: PulseTheme.Space.s) {
             Text(report.header)
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             ForEach(report.checks) { check in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
                     Image(systemName: symbol(check.verdict))
                         .foregroundStyle(tint(check.verdict))
                         .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
                         Text(check.title)
-                            .font(.callout.weight(.semibold))
+                            .font(PulseTheme.Font.bodyEmphasis)
                         Text(check.detail)
-                            .font(.caption)
+                            .font(PulseTheme.Font.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if !check.next.isEmpty {
-                            Text("→ " + check.next)
-                                .font(.caption)
-                                .foregroundStyle(check.verdict == .attention ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                                .fixedSize(horizontal: false, vertical: true)
+                            HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
+                                Text("→ " + check.next)
+                                    .font(PulseTheme.Font.caption)
+                                    .foregroundStyle(check.verdict == .attention
+                                        ? AnyShapeStyle(PulseTheme.Tone.attention.color)
+                                        : AnyShapeStyle(.secondary))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let fix = DoctorModel.fix(for: check, lang: report.lang) {
+                                    Button(fixTitle(fix)) { onFix(fix) }
+                                        .controlSize(.small)
+                                }
+                            }
                         }
                     }
                     Spacer(minLength: 0)
                     Text(copy.verdict(check.verdict))
-                        .font(.caption2.weight(.medium))
+                        .font(PulseTheme.Font.chip)
                         .foregroundStyle(tint(check.verdict))
                 }
                 .accessibilityElement(children: .combine)
             }
-            Button(copied ? (report.lang == .zh ? "已复制" : "Copied") : (report.lang == .zh ? "复制报告" : "Copy report"), action: onCopy)
+            Button(copied ? t(.copied) : t(.doctorCopyReport), action: onCopy)
                 .controlSize(.small)
+        }
+    }
+
+    private func fixTitle(_ fix: DoctorModel.Fix) -> String {
+        switch fix {
+        case .installHooks: return t(.installHooks)
+        case .copyShapeReport: return t(.supportCopyShapeReport)
+        case .openConnections: return t(.settings)
         }
     }
 
@@ -58,10 +77,9 @@ struct DoctorReportView: View {
 
     private func tint(_ verdict: DoctorModel.Verdict) -> Color {
         switch verdict {
-        case .works: return .green
-        case .unproven: return .secondary
-        case .attention: return .orange
-        case .absent: return .secondary
+        case .works: return PulseTheme.Tone.running.color
+        case .unproven, .absent: return .secondary
+        case .attention: return PulseTheme.Tone.attention.color
         }
     }
 }

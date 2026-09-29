@@ -46,7 +46,7 @@ final class PulseVersionTests: XCTestCase {
 
     func testInterpretRejectsGarbage() {
         let status = UpdateCheck.interpret(data: Data("not json".utf8), response: nil, error: nil)
-        XCTAssertEqual(status, .failed("bad response"))
+        XCTAssertEqual(status, .failed(.badResponse))
     }
 
     func testInterpretFindsNewerRelease() {

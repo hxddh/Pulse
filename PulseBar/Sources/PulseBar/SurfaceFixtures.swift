@@ -12,7 +12,7 @@ enum SurfaceFixtures {
         case mission(MissionBoard)
         case proof(ProofCardModel)
         /// 17.0: the tray row's face; `expanded` shows the why line.
-        case row(TrayRowModel, expanded: Bool)
+        case row(TrayRowModel, expanded: Bool, hovering: Bool = false)
         case why(WhyCardModel)
         /// 19.0: the cards under a row — `asks` is the in-list "needs you
         /// now" card, `expanded` the in-place inspector.
@@ -34,6 +34,7 @@ enum SurfaceFixtures {
         "proof-empty", "proof-results", "proof-running",
         "row-permission", "row-question-front", "row-turn", "row-pending",
         "row-stalled", "row-snoozed", "row-remote-lost", "row-process-only",
+        "row-running", "row-running-hover",
         "why-permission", "why-turn",
         "card-respond", "card-respond-truncated", "card-respond-decided",
         "card-managed-ask", "card-managed-recovery", "card-expanded-managed",
@@ -56,6 +57,10 @@ enum SurfaceFixtures {
             Fixture(name: "row-snoozed", width: 420, value: .row(rowModel(rowSnoozed(), lang: lang, snoozeLabel: "Later · 12m"), expanded: false)),
             Fixture(name: "row-remote-lost", width: 420, value: .row(rowModel(rowRemoteLost(), lang: lang), expanded: false)),
             Fixture(name: "row-process-only", width: 420, value: .row(rowModel(rowProcessOnly(), lang: lang), expanded: false)),
+            // 21.0: the common row, at rest and under the pointer — the
+            // trailing controls must sit beside the time, never on it.
+            Fixture(name: "row-running", width: 420, value: .row(rowModel(rowRunning(), lang: lang), expanded: false)),
+            Fixture(name: "row-running-hover", width: 420, value: .row(rowModel(rowRunning(), lang: lang), expanded: false, hovering: true)),
             Fixture(name: "why-permission", width: 520, value: .why(whyPermission(lang: lang))),
             Fixture(name: "why-turn", width: 520, value: .why(whyTurn(lang: lang))),
             Fixture(name: "card-respond", width: 380, value: .asks(cardRespond(lang: lang))),
@@ -393,6 +398,13 @@ enum SurfaceFixtures {
         row.observationSource = .remote
         row.lastHeardMs = nowMs - 70 * minute
         row.lostContact = true
+        return row
+    }
+
+    static func rowRunning() -> AgentRow {
+        var row = baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
+        row.tokensIn = 48_200
+        row.tokensOut = 9_100
         return row
     }
 

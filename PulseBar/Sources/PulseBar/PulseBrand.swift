@@ -56,6 +56,19 @@ enum PulseBrand {
         )
         statusColor(for: glance).setFill()
         NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
+        // 21.0: stalled and idle share the pulse glyph; orange against grey
+        // was the only difference, which fails Differentiate Without Colour.
+        // A notch in the top-right corner is a shape the eye reads without
+        // the hue.
+        if glance == .stalled || glance == .error {
+            let dot: CGFloat = 5.5
+            let badge = NSRect(x: size.width - dot, y: size.height - dot, width: dot, height: dot)
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: badge.insetBy(dx: -1.2, dy: -1.2)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            statusColor(for: glance).setFill()
+            NSBezierPath(ovalIn: badge).fill()
+        }
         image.unlockFocus()
         image.isTemplate = false
         image.size = size
@@ -170,14 +183,7 @@ struct PulseMarkView: View {
 }
 
 extension GlanceKind {
-    /// Traffic-light lamp tint (Glance / header / waiting scream).
-    var lampColor: Color {
-        switch self {
-        case .waiting: return Color(red: 0.92, green: 0.28, blue: 0.22)
-        case .running: return Color(red: 0.22, green: 0.68, blue: 0.40)
-        case .stalled: return Color.orange
-        case .idle: return Color.secondary
-        case .error: return Color.orange
-        }
-    }
+    /// Traffic-light lamp tint. 21.0: the system's dynamic colours through
+    /// `PulseTheme.Tone` — the same red as the menu-bar lamp, not a third one.
+    var lampColor: Color { tone.color }
 }

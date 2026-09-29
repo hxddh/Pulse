@@ -35,6 +35,23 @@ enum DoctorModel {
         var next: String = ""
     }
 
+    /// 21.0: the next step as a button, where Pulse can take it itself.
+    enum Fix: Equatable, Sendable {
+        case installHooks, copyShapeReport, openConnections
+    }
+
+    /// Which finding Pulse can fix from the self-check, by what it asked for.
+    static func fix(for check: Check, lang: ResolvedLanguage) -> Fix? {
+        let c = Copy(lang: lang)
+        switch check.next {
+        case "": return nil
+        case c.installHooks, c.reinstallHooks: return .installHooks
+        case c.reportShape: return .copyShapeReport
+        case c.fixSettings: return .openConnections
+        default: return nil
+        }
+    }
+
     struct Report: Equatable, Sendable {
         var lang: ResolvedLanguage
         var header: String

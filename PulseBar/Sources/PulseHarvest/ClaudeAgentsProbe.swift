@@ -134,9 +134,15 @@ package enum ClaudeAgentsProbe {
     package static func record(_ agents: [Agent]?, into state: inout State, nowMs: Int64) {
         state.lastRunMs = nowMs
         guard let agents else {
+            // A failed run (timeout, non-zero exit, unparseable) is no answer:
+            // it neither raises nor clears. The previous sample's waits stay
+            // until a successful answer replaces them — a single slow run
+            // must not blink a real wait off and back on. Only when the probe
+            // gives up for `backoffMs` do they go, since nothing would
+            // refresh them for that long.
             state.failures += 1
-            state.waits = []
             if state.failures >= failuresBeforeBackoff {
+                state.waits = []
                 state.disabledUntilMs = nowMs + backoffMs
                 state.failures = 0
             }

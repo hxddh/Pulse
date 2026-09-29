@@ -9,74 +9,64 @@ import AppKit
 // MARK: - Tray chrome
 
 enum TrayChrome {
-    /// 360 lost the end of most session titles: after the 12pt accent gutter,
-    /// the 18pt icon, and the status chip, a row title had ~230pt — roughly
-    /// thirty characters, where a real task name is fifty. A menu-bar panel at
-    /// 400 is still narrow next to the calendar and reminder popovers people
-    /// already run, and it is forty characters instead of thirty.
+    /// 360 lost the end of most session titles; 448 is forty characters of
+    /// title instead of thirty, still narrow beside the system popovers.
     static let width: CGFloat = 448
-    static let padX: CGFloat = 16
-    /// Shared identity grid for rows and project/status headings. Keeping the
-    /// columns explicit prevents a section marker from drifting away from the
-    /// lamp it explains when the grouping mode changes.
-    static let rowLeadingInset: CGFloat = 14
+    static let padX: CGFloat = PulseTheme.Space.l
+    /// 21.0: the height the panel may grow to before the list scrolls. One
+    /// number, read by the list and by `StatusPanelController`.
+    static let maxHeight: CGFloat = 760
+    /// The list's share of it: the panel minus header, notice and footer.
+    static let maxListHeight: CGFloat = maxHeight - 120
+    /// Shared identity grid for rows and headings, on the 4-pt grid: the
+    /// icon at 16, the identity line and every card under a row at 44, the
+    /// agent's name at 56.
+    static let rowLeadingInset: CGFloat = PulseTheme.Space.l
     static let iconColumnWidth: CGFloat = 18
-    static let iconToIdentityGap: CGFloat = 11
+    static let iconToIdentityGap: CGFloat = 10
     static let identityLampSize: CGFloat = 6
     static let identityLampToNameGap: CGFloat = 6
     static let rowIdentityStart: CGFloat =
         rowLeadingInset + iconColumnWidth + iconToIdentityGap
     static let rowNameStart: CGFloat =
         rowIdentityStart + identityLampSize + identityLampToNameGap
+    /// Cards, the action strip and notices under a row start where the
+    /// row's text starts — one content column, not a column of their own.
+    static let contentInset: CGFloat = rowIdentityStart
+    /// The row's hover and selection fill is inset from the panel edge.
+    static let highlightInset: CGFloat = PulseTheme.Space.s
     /// Section headers keep their title on the same column as Agent names.
-    /// The accent marker starts where a row's lamp starts, not in the old
-    /// disclosure-column centre.
     static let sectionAccentPrefix: CGFloat = rowIdentityStart - padX
-    /// The heading's first item plus its 9pt inter-item gap must land on the
-    /// same name column as a row (icon → lamp → name). Derive it from the
-    /// actual row grid instead of letting a future icon-size tweak drift the
-    /// heading independently.
     static let sectionHeaderLeadWidth: CGFloat =
-        rowNameStart - padX - 9
-    /// One hit target for every compact header action. SF Symbols have
-    /// different intrinsic boxes; the shared frame aligns their visible
-    /// centres and keeps the title on the same row.
+        rowNameStart - padX - 8
+    /// One hit target for every compact header action.
     static let headerControlSize: CGFloat = 28
-    static let waitAccent = GlanceKind.waiting.lampColor
-    static let runAccent = GlanceKind.running.lampColor
+    /// The row's trailing controls (disclosure + ⋯): reserved in layout so
+    /// they never sit on top of the time and chip.
+    static let rowControlSize = CGSize(width: 22, height: 20)
+    static let rowControlsWidth: CGFloat = rowControlSize.width * 2 + PulseTheme.Space.xs
+    static var waitAccent: Color { PulseTheme.Tone.waiting.color }
+    static var runAccent: Color { PulseTheme.Tone.running.color }
 
-    // MARK: - 9.0 Craft · one type scale, one card chrome
+    // MARK: Type — the row's roles, on PulseTheme's semantic scale
 
-    /// The row's type scale. Six ad-hoc point sizes had accreted across the
-    /// row's lines; the scale names the role a line plays and every call
-    /// site says which role it is, not which number it happened to like.
-    /// (Fonts carry no appearance-dependent colour, so `static let` is safe
-    /// here — the appearance gate's rule is about colour, not metrics.)
-    static let heroSize: CGFloat = 13
-    static let bodySize: CGFloat = 11
-    static let captionSize: CGFloat = 10.5
-    static let microSize: CGFloat = 9.5
     static func heroFont(processOnly: Bool) -> Font {
-        .system(size: heroSize, weight: processOnly ? .regular : .semibold, design: .rounded)
+        processOnly ? PulseTheme.Font.heroQuiet : PulseTheme.Font.hero
     }
     /// Narration — the row's human sentence.
-    static let storyFont: Font = .system(size: bodySize, weight: .medium, design: .rounded)
+    static let storyFont: Font = PulseTheme.Font.bodyEmphasis
     /// Dense fact lines: work, observation, signal.
-    static let detailFont: Font = .system(size: captionSize, weight: .medium)
-    /// The secondary where/when line.
-    static let contextFont: Font = .system(size: 10.75)
-    /// Inline row verbs (dismiss / snooze / focus / open …).
-    static let actionFont: Font = .system(size: bodySize, weight: .medium)
-    static let identityNameFont: Font = .system(size: captionSize, weight: .semibold, design: .rounded)
-    static let sourceLabelFont: Font = .system(size: microSize, weight: .medium, design: .rounded)
+    static let detailFont: Font = PulseTheme.Font.body
+    /// Inline row verbs.
+    static let actionFont: Font = PulseTheme.Font.bodyEmphasis
+    static let identityNameFont: Font = PulseTheme.Font.label
+    static let sourceLabelFont: Font = PulseTheme.Font.caption
 
-    /// Card chrome: every in-list and expanded card shares one radius family
-    /// and one padding rhythm, so the popup reads as a single system instead
-    /// of four slightly different boxes.
-    static let cardRadius: CGFloat = 8
-    static let innerRadius: CGFloat = 6
-    static let cardPadding: CGFloat = 10
-    static let cardSpacing: CGFloat = 8
+    /// Card chrome: the tray shares PulseTheme's family.
+    static let cardRadius: CGFloat = PulseTheme.Radius.card
+    static let innerRadius: CGFloat = PulseTheme.Radius.inner
+    static let cardPadding: CGFloat = PulseTheme.Space.m
+    static let cardSpacing: CGFloat = PulseTheme.Space.s
 }
 
 struct StatusChip: View {
@@ -86,33 +76,17 @@ struct StatusChip: View {
     let label: String
 
     var body: some View {
-        Text(label)
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2.5)
-            .background(background, in: Capsule(style: .continuous))
+        PulseChip(label: label, tone: tone, muted: kind == .snoozed)
     }
 
-    private var foreground: Color {
+    /// 21.0: a chip is in its state's tone — a stalled chip is orange like
+    /// its lamp, not grey.
+    private var tone: PulseTheme.Tone {
         switch kind {
-        case .waiting: return TrayChrome.waitAccent
-        case .running: return TrayChrome.runAccent
-        case .process: return Color.secondary.opacity(0.9)
-        case .recent: return Color.secondary.opacity(0.85)
-        // Still the waiting colour, drained. Snoozed is a waiting row that
-        // agreed to be quiet, not a different kind of thing.
-        case .snoozed: return TrayChrome.waitAccent.opacity(0.6)
-        }
-    }
-
-    private var background: Color {
-        switch kind {
-        case .waiting: return TrayChrome.waitAccent.opacity(0.16)
-        case .running: return TrayChrome.runAccent.opacity(0.12)
-        case .process: return Color.primary.opacity(0.05)
-        case .recent: return Color.primary.opacity(0.04)
-        case .snoozed: return TrayChrome.waitAccent.opacity(0.08)
+        case .waiting, .snoozed: return .waiting
+        case .running: return .running
+        case .process: return .attention
+        case .recent: return .idle
         }
     }
 }
@@ -142,6 +116,7 @@ private struct SectionHeader: View {
     var toggle: (() -> Void)?
     /// False when `summary` already names every row in the group.
     var showCount = true
+    var lang: ResolvedLanguage = .en
 
     var body: some View {
         let line = HStack(spacing: 9) {
@@ -163,9 +138,10 @@ private struct SectionHeader: View {
             } else {
                 Group {
                     if let collapsed {
-                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .opacity(0.6)
+                        Image(systemName: "chevron.right")
+                            .font(PulseTheme.Font.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(collapsed ? 0 : 90))
                     } else {
                         Color.clear
                     }
@@ -179,21 +155,19 @@ private struct SectionHeader: View {
                 .frame(width: TrayChrome.sectionHeaderLeadWidth, height: 14, alignment: .center)
             }
             Text(title)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(PulseTheme.Font.heading)
                 .foregroundStyle(.secondary)
             // "No project 2 Pi · Amp" — two names and a 2. The count only
             // earns its place when the names do not already give it.
             if showCount {
                 Text("\(count)")
-                    .font(TrayChrome.storyFont)
+                    .font(PulseTheme.Font.heading)
                     .monospacedDigit()
-                    .opacity(0.7)
                     .foregroundStyle(accent ? TrayChrome.waitAccent : Color.secondary)
             }
             if !summary.isEmpty {
                 Text(summary)
-                    .font(.system(size: 11))
-                    .opacity(0.55)
+                    .font(PulseTheme.Font.body)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .foregroundStyle(.secondary)
@@ -201,13 +175,17 @@ private struct SectionHeader: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, TrayChrome.padX)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        .padding(.top, PulseTheme.Space.m)
+        .padding(.bottom, PulseTheme.Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
 
         if let toggle {
             Button(action: toggle) { line.contentShape(Rectangle()) }
                 .buttonStyle(.plain)
+                .accessibilityLabel(title)
+                .accessibilityValue(summary)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityHint(collapsed == true ? L10n.t(.trayExpandRow, lang) : L10n.t(.trayCollapseRow, lang))
         } else {
             line
         }
@@ -246,8 +224,6 @@ struct TrayPanel: View {
     @State fileprivate var folded: Set<String> = []
     @State fileprivate var query = ""
     @State fileprivate var searchActive = false
-    @State fileprivate var filterPhase = ""
-    @State fileprivate var filterOutcome = ""
     @State fileprivate var filterAgentRaw = ""
 
     /// Row key the keyboard has selected, if any.
@@ -256,9 +232,10 @@ struct TrayPanel: View {
     /// under live scans and an index would expand a different session.
     @State fileprivate var expandedRowKeys: Set<String> = []
     @FocusState fileprivate var listFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     fileprivate func toggleExpanded(_ key: String) {
-        withAnimation(PulseTheme.motion) {
+        withAnimation(PulseTheme.motion(reduced: reduceMotion)) {
             if expandedRowKeys.contains(key) {
                 expandedRowKeys.remove(key)
             } else {
@@ -272,7 +249,7 @@ struct TrayPanel: View {
         // hard cuts: a block of rows appearing instantly is indistinguishable
         // from a reorder, and you re-read the whole list to find out which it
         // was. Short and flat — this is a menu-bar panel, not a launch screen.
-        withAnimation(PulseTheme.motion) {
+        withAnimation(PulseTheme.motion(reduced: reduceMotion)) {
             if folded.contains(id) { folded.remove(id) } else { folded.insert(id) }
         }
     }
@@ -313,8 +290,6 @@ struct TrayPanel: View {
         // Clear filters so the target row is not hidden by search.
         query = ""
         searchActive = false
-        filterPhase = ""
-        filterOutcome = ""
         filterAgentRaw = ""
         if let group = groups.first(where: { $0.rows.contains(where: { $0.rowKey == key }) }),
            group.foldable {
@@ -342,185 +317,171 @@ struct TrayPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if searchActive || !query.isEmpty || hasSessionFilters {
-                VStack(alignment: .leading, spacing: 6) {
-                    TextField(store.tr(.searchSessions), text: $query)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                    if hasSessionFilters || !query.isEmpty {
-                        HStack(spacing: 6) {
-                            Text(String(format: store.tr(.allSessionsCount), store.allRowsForDisplay.count))
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.tertiary)
-                            Spacer(minLength: 0)
-                            if hasSessionFilters {
-                                Button(store.tr(.filterClear)) {
-                                    filterPhase = ""
-                                    filterOutcome = ""
-                                    filterAgentRaw = ""
-                                }
-                                .font(.system(size: 10.5))
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        sessionFilterBar
-                    }
-                }
-                .padding(.horizontal, TrayChrome.padX)
-                .padding(.bottom, 8)
+                searchBar
             }
-            missedNotice
-            maintenanceNotice
+            notice
 
             if filteredRows.isEmpty {
                 if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !hasSessionFilters {
-                    emptyState
+                    if store.snapshot.glance == .error {
+                        cantRefreshState
+                    } else {
+                        emptyState
+                    }
                 } else {
                     ContentUnavailableView(store.tr(.searchNoResults), systemImage: "magnifyingglass")
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 26)
+                        .padding(.vertical, PulseTheme.Space.xl)
                 }
             } else {
                 agentList
             }
         }
         .frame(width: TrayChrome.width)
-        // StatusPanelController owns the rounded material surface. Content is
-        // transparent and pinned to that surface's exact bounds: one owner,
-        // one rect, no extra top or bottom inset.
-        // Visibility is owned by StatusPanelController. A hosting view appears
-        // when the hidden panel is constructed, not when the user opens it;
-        // tying cadence to SwiftUI onAppear left the app in its 2 s foreground
-        // probe mode permanently.
+        // StatusPanelController owns the rounded surface. Content is
+        // transparent and pinned to that surface's exact bounds. Visibility
+        // is owned by the controller too: a hosting view appears when the
+        // hidden panel is constructed, not when the user opens it.
     }
 
+    // MARK: Header
+
     private var header: some View {
-        // No lamp here.
-        //
-        // The menu-bar mark sits about 40px above this line, same shape, same
-        // colour, driven by the same `glance`. The header's job is to say what
-        // the rows cannot; repeating the thing the user just clicked on is the
-        // opposite. The status word keeps the glance colour, which is the part
-        // that carried information.
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .center, spacing: 10) {
-                HStack(spacing: 6) {
-                    if store.isRefreshing {
-                        ProgressView()
-                            .controlSize(.mini)
-                    }
-                    // Bigger, because it is now the only thing in the header.
-                    // Dropping the 18pt mark was right — it restated the lamp
-                    // the user had just clicked — but the padding stayed, and
-                    // a 13pt label alone in a 40pt band reads as a leftover.
-                    if store.isRefreshing {
-                        Text(store.tr(.refreshing))
-                            .foregroundStyle(.secondary)
-                    } else if headerStates.isEmpty {
-                        Text(headerTitle)
-                            .foregroundStyle(store.snapshot.glance.lampColor)
-                    } else {
-                        ForEach(Array(headerStates.enumerated()), id: \.element.0) { index, item in
-                            if index > 0 {
-                                Text("·").foregroundStyle(.tertiary)
-                            }
-                            Text("\(item.1) \(headerLabel(item.0))")
-                                .foregroundStyle(headerColor(item.0))
-                                .monospacedDigit()
+        // No lamp here: the menu-bar mark sits 40px above, same shape, same
+        // colour. 21.0: the header is the fleet in counts — one capsule per
+        // state in that state's tone — and the line under it says how fresh
+        // they are. Section headings no longer repeat the counts.
+        VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+            HStack(alignment: .center, spacing: PulseTheme.Space.s) {
+                if headerStates.isEmpty, store.snapshot.turnCount == 0 {
+                    Text(headerTitle)
+                        .font(PulseTheme.Font.title)
+                        .foregroundStyle(store.snapshot.glance == .error
+                            ? PulseTheme.Tone.attention.color : Color.primary)
+                        .lineLimit(1)
+                } else {
+                    HStack(spacing: PulseTheme.Space.xs) {
+                        ForEach(headerStates, id: \.0) { item in
+                            HeaderCount(
+                                count: item.1,
+                                label: headerLabel(item.0),
+                                tone: headerTone(item.0)
+                            )
+                        }
+                        // 16.0: finished sessions nobody has looked at — a
+                        // count in the quiet tone; red stays for blocked.
+                        if store.snapshot.turnCount > 0 {
+                            HeaderCount(
+                                count: store.snapshot.turnCount,
+                                label: store.tr(.yourTurn),
+                                tone: .idle
+                            )
                         }
                     }
-                    // 16.0: finished sessions nobody has looked at. A count,
-                    // in the quiet colour — the red lamp stays for blocked.
-                    if !store.isRefreshing, store.snapshot.turnCount > 0 {
-                        Text("·").foregroundStyle(.tertiary)
-                        Text(String(format: store.tr(.turnCount), store.snapshot.turnCount))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
                 }
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .lineLimit(1)
                 Spacer(minLength: 0)
 
-                HStack(alignment: .center, spacing: 4) {
+                HStack(alignment: .center, spacing: PulseTheme.Space.xxs) {
                     TrayIconAction(
                         systemImage: "arrow.clockwise",
                         help: store.tr(.refresh),
-                        shortcut: "r"
+                        shortcut: "r",
+                        busy: store.isRefreshing
                     ) {
                         store.refresh(reason: "manual")
                     }
                     .disabled(store.isRefreshing)
-
-                    Menu {
-                        if store.needsWaitingSignalNudge {
-                            Button(store.tr(.setupWaitingSignals)) {
-                                store.openSettings(
-                                    focusWaitingSignals: true,
-                                    focusWaitingAgent: store.firstLiveWaitingNoneAgent
-                                )
-                            }
-                            Divider()
-                        }
-                        if store.snapshot.rows.contains(where: \.waiting) {
-                            Button(store.tr(.jumpToOldest)) { store.focusOldestWait() }
-                            Button(store.tr(.clearWaiting)) { store.clearWaiting() }
-                            Divider()
-                        } else if store.snapshot.turnCount > 0 {
-                            Button(store.tr(.jumpToTurn)) { store.focusNextTurn() }
-                            Divider()
-                        }
-                        Button(store.tr(.searchSessions)) { searchActive = true }
-                            .keyboardShortcut("f", modifiers: .command)
-                        if !query.isEmpty {
-                            Button(store.tr(.clearSearch)) { query = "" }
-                        }
-                        // 3.0-β: the workbench — the tray answers "who needs
-                        // me", the window answers everything after that.
-                        Button(store.tr(.openWorkbench)) { store.openWorkbench() }
-                            .keyboardShortcut("w", modifiers: [.command, .shift])
-                        Button(store.tr(.supportHealth)) { store.openSupportHealth() }
-                        Button(store.tr(.settings)) { store.openSettings() }
-                            .keyboardShortcut(",", modifiers: .command)
-                        Button("\(store.tr(.copyDiagnostics)) · \(PulseVersion.about)") {
-                            store.copyDiagnostics()
-                        }
-                        Divider()
-                        Button(store.tr(.quit)) { store.quit() }
-                            .keyboardShortcut("q", modifiers: .command)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .frame(
-                                width: TrayChrome.headerControlSize,
-                                height: TrayChrome.headerControlSize,
-                                alignment: .center
-                            )
-                            .contentShape(Rectangle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(
-                        width: TrayChrome.headerControlSize,
-                        height: TrayChrome.headerControlSize,
-                        alignment: .center
-                    )
-                    .help(store.tr(.moreActions))
-                    .accessibilityLabel(store.tr(.moreActions))
+                    moreMenu
                 }
                 .frame(height: TrayChrome.headerControlSize, alignment: .center)
             }
-
-            if !store.isRefreshing, !headerDetail.isEmpty {
-                Text(headerDetail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
+            freshnessLine
         }
         .padding(.horizontal, TrayChrome.padX)
-        .padding(.top, 12)
-        .padding(.bottom, 6)
+        .padding(.top, PulseTheme.Space.m)
+        .padding(.bottom, PulseTheme.Space.s)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            if store.snapshot.rows.contains(where: \.waiting) {
+                Button(store.tr(.jumpToOldest)) { store.focusOldestWait() }
+                Button(store.tr(.clearWaiting)) { store.clearWaiting() }
+                Divider()
+            } else if store.snapshot.turnCount > 0 {
+                Button(store.tr(.jumpToTurn)) { store.focusNextTurn() }
+                Divider()
+            }
+            Button(store.tr(.searchSessions)) { searchActive = true }
+                .keyboardShortcut("f", modifiers: .command)
+            // 3.0-β: the workbench — the tray answers "who needs me", the
+            // window answers everything after that.
+            Button(store.tr(.openWorkbench)) { store.openWorkbench() }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Divider()
+            Button(store.tr(.supportHealth)) { store.openSupportHealth() }
+            Button(store.tr(.settings)) { store.openSettings() }
+                .keyboardShortcut(",", modifiers: .command)
+            Divider()
+            Button(store.tr(.quit)) { store.quit() }
+                .keyboardShortcut("q", modifiers: .command)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(PulseTheme.Font.hero.weight(.regular))
+                .foregroundStyle(.secondary)
+                .frame(
+                    width: TrayChrome.headerControlSize,
+                    height: TrayChrome.headerControlSize,
+                    alignment: .center
+                )
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(
+            width: TrayChrome.headerControlSize,
+            height: TrayChrome.headerControlSize,
+            alignment: .center
+        )
+        .help(store.tr(.moreActions))
+        .accessibilityLabel(store.tr(.moreActions))
+    }
+
+    /// 21.0: how fresh the counts are. "Updated 3 s ago · every 5 s" ticks
+    /// on its own (SwiftUI's relative date), so it costs the store nothing;
+    /// with live updates off it says so instead of looking current.
+    @ViewBuilder
+    private var freshnessLine: some View {
+        let detail = headerDetail
+        HStack(spacing: PulseTheme.Space.xs) {
+            if !detail.isEmpty {
+                Text(detail)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+                Text("·")
+            }
+            if !store.autoProbe {
+                Text(store.tr(.probePaused))
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
+            } else if store.snapshot.updatedAt != .distantPast, store.snapshot.glance != .error {
+                // "Updated %@ ago" / "%@前更新": the relative date is a live
+                // Text, so the format is split around its slot.
+                let parts = store.tr(.freshAgo).components(separatedBy: "%@")
+                (Text(parts.first ?? "")
+                    + Text(store.snapshot.updatedAt, style: .relative)
+                    + Text(parts.count > 1 ? parts[1] : ""))
+                    .monospacedDigit()
+                    .environment(\.locale, store.lang == .zh ? Locale(identifier: "zh-Hans") : Locale(identifier: "en"))
+                    .lineLimit(1)
+                Text("·")
+                Text(store.probeIntervalDescription)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(PulseTheme.Font.caption)
+        .foregroundStyle(.secondary)
     }
 
     private var headerTitle: String {
@@ -549,41 +510,62 @@ struct TrayPanel: View {
         }
     }
 
+    private func headerLabel(_ section: TraySection) -> String {
+        switch section {
+        case .needsYou: return store.tr(.waitingN)
+        case .running: return store.tr(.runningN)
+        case .stalled: return store.tr(.sectionStalled).lowercased()
+        case .recent: return store.tr(.recentN)
+        }
+    }
+
+    private func headerTone(_ section: TraySection) -> PulseTheme.Tone {
+        switch section {
+        case .needsYou: return .waiting
+        case .running: return .running
+        case .stalled: return .attention
+        case .recent: return .idle
+        }
+    }
+
+    // MARK: Search
+
     private var hasSessionFilters: Bool {
-        !filterPhase.isEmpty || !filterOutcome.isEmpty || !filterAgentRaw.isEmpty
+        !filterAgentRaw.isEmpty
     }
 
-    private var sessionFilterBar: some View {
-        HStack(spacing: 6) {
-            filterMenu(
-                title: store.tr(.agents),
-                selection: $filterAgentRaw,
-                options: Array(Set(store.allRowsForDisplay.map(\.agent.rawValue))).sorted()
-            )
-            filterMenu(
-                title: store.tr(.filterPhase),
-                selection: $filterPhase,
-                options: Array(Set(store.allRowsForDisplay.map(\.phase).filter { !$0.isEmpty })).sorted()
-            )
-            filterMenu(
-                title: store.tr(.filterOutcome),
-                selection: $filterOutcome,
-                options: Array(Set(store.allRowsForDisplay.map(\.outcome).filter { !$0.isEmpty })).sorted()
-            )
-        }
-    }
-
-    private func filterMenu(title: String, selection: Binding<String>, options: [String]) -> some View {
-        Menu {
-            Button(store.tr(.supportFilterAll)) { selection.wrappedValue = "" }
-            ForEach(options, id: \.self) { option in
-                Button(option) { selection.wrappedValue = option }
+    private var searchBar: some View {
+        HStack(spacing: PulseTheme.Space.s) {
+            TextField(store.tr(.searchSessions), text: $query)
+                .textFieldStyle(.roundedBorder)
+                .font(PulseTheme.Font.body)
+                // Escape clears the search before it closes the panel.
+                .onExitCommand {
+                    query = ""
+                    filterAgentRaw = ""
+                    searchActive = false
+                    listFocused = true
+                }
+            Menu {
+                Button(store.tr(.supportFilterAll)) { filterAgentRaw = "" }
+                ForEach(Array(Set(store.allRowsForDisplay.map(\.agent))).sorted { $0.displayName < $1.displayName }, id: \.self) { agent in
+                    Button(agent.displayName) { filterAgentRaw = agent.rawValue }
+                }
+            } label: {
+                Text(AgentID(rawValue: filterAgentRaw)?.displayName ?? store.tr(.agents))
+                    .font(PulseTheme.Font.body)
+                    .lineLimit(1)
             }
-        } label: {
-            Text(selection.wrappedValue.isEmpty ? title : "\(title): \(selection.wrappedValue)")
-                .font(.system(size: 10.5))
-                .lineLimit(1)
+            .fixedSize()
+            if !query.isEmpty || hasSessionFilters {
+                Text(String(format: store.tr(.allSessionsCount), filteredRows.count))
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
         }
+        .padding(.horizontal, TrayChrome.padX)
+        .padding(.bottom, PulseTheme.Space.s)
     }
 
     private var filteredRows: [AgentRow] {
@@ -598,8 +580,6 @@ struct TrayPanel: View {
         }
         return base.filter { row in
             if !filterAgentRaw.isEmpty, row.agent.rawValue != filterAgentRaw { return false }
-            if !filterPhase.isEmpty, row.phase != filterPhase { return false }
-            if !filterOutcome.isEmpty, row.outcome != filterOutcome { return false }
             guard !text.isEmpty else { return true }
             return [
                 row.agent.displayName, row.agent.rawValue, row.task, row.project,
@@ -609,142 +589,148 @@ struct TrayPanel: View {
         }
     }
 
-    private func headerLabel(_ section: TraySection) -> String {
-        switch section {
-        case .needsYou: return store.tr(.waitingN)
-        case .running: return store.tr(.runningN)
-        case .stalled: return store.tr(.sectionStalled).lowercased()
-        case .recent: return store.tr(.recentN)
-        }
-    }
+    // MARK: Notice
 
-    private func headerColor(_ section: TraySection) -> Color {
-        switch section {
-        case .needsYou: return GlanceKind.waiting.lampColor
-        case .running: return GlanceKind.running.lampColor
-        case .stalled: return GlanceKind.stalled.lampColor
-        case .recent: return .secondary
+    /// 21.0: one notice at a time, in one component. Up to three bars used
+    /// to stack under the header, each hand-built. The order is what the
+    /// person most needs to act on: something broken on this Mac, then a
+    /// scan that did not finish, then what happened while they were away.
+    private var noticeModel: TrayNotice.Model? {
+        if let text = store.maintenanceNoticeText {
+            return .init(
+                text: text,
+                systemImage: store.waitingNotificationNeedsSetup ? "bell.badge" : "exclamationmark.circle",
+                tone: store.waitingNotificationNeedsSetup ? .waiting : .attention,
+                action: { store.performMaintenanceNoticeAction() }
+            )
         }
-    }
-
-    /// The panel only ever showed the present moment. Coming back to it, the
-    /// first question is what happened while you were gone (0.93 Look Closure).
-    @ViewBuilder
-    private var missedNotice: some View {
+        if let incomplete = store.trayScanIncompleteNotice {
+            return .init(
+                text: store.tr(.trayScanIncomplete),
+                systemImage: "clock.badge.exclamationmark",
+                tone: .attention,
+                accessibility: incomplete,
+                action: { store.openSupportHealth() }
+            )
+        }
         if !store.lookContinuityNotice.isEmpty {
-            Button { store.activateLookContinuity() } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 11))
-                    Text(store.lookContinuityNotice)
-                        .lineLimit(2)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .opacity(0.55)
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, TrayChrome.padX)
-                .padding(.bottom, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(store.tr(.lookClosureHint))
-        } else if store.missedWhileAway > 0 {
-            Button { store.activateLookContinuity() } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 11))
-                    Text(String(format: store.tr(.whileAway), store.missedWhileAway))
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .opacity(0.55)
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, TrayChrome.padX)
-                .padding(.bottom, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } else if let incomplete = store.trayScanIncompleteNotice {
-            Button { store.openSupportHealth() } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "clock.badge.exclamationmark")
-                        .font(.system(size: 11))
-                    Text(store.tr(.trayScanIncomplete))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .opacity(0.55)
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.orange)
-                .padding(.horizontal, TrayChrome.padX)
-                .padding(.bottom, 10)
-                .contentShape(Rectangle())
-                .accessibilityLabel(incomplete)
-            }
-            .buttonStyle(.plain)
+            return .init(
+                text: store.lookContinuityNotice,
+                systemImage: "clock.arrow.circlepath",
+                tone: .idle,
+                accessibility: store.tr(.lookClosureHint),
+                action: { store.activateLookContinuity() }
+            )
         }
+        if store.missedWhileAway > 0 {
+            return .init(
+                text: String(format: store.tr(.whileAway), store.missedWhileAway),
+                systemImage: "clock.arrow.circlepath",
+                tone: .idle,
+                action: { store.activateLookContinuity() }
+            )
+        }
+        return nil
     }
 
     @ViewBuilder
-    private var maintenanceNotice: some View {
-        if let notice = store.maintenanceNoticeText {
-            Button { store.performMaintenanceNoticeAction() } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: store.waitingNotificationNeedsSetup
-                        ? "bell.badge"
-                        : "exclamationmark.circle")
-                        .font(TrayChrome.actionFont)
-                    Text(notice)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .opacity(0.55)
-                }
-                .font(TrayChrome.actionFont)
-                .foregroundStyle(store.waitingNotificationNeedsSetup ? .red : .orange)
-                .padding(.horizontal, TrayChrome.padX)
-                .padding(.bottom, 9)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(store.tr(.settings))
+    private var notice: some View {
+        if let model = noticeModel {
+            TrayNotice(model: model)
+                .padding(.horizontal, TrayChrome.highlightInset)
+                .padding(.bottom, PulseTheme.Space.s)
         }
     }
 
-    /// Empty is the first thing most people see. Say what Pulse is waiting for
-    /// and give the one action that makes Waiting work, instead of a dead end.
+    // MARK: Empty and failed
+
+    /// 21.0: empty is the first thing most people see, so it is a setup
+    /// checklist computed from what is actually true on this Mac — not a
+    /// link into the Attention-bridge developer tools.
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            PulseMarkView(size: 40, tone: Color.secondary.opacity(0.45))
-            Text(store.tr(.noAgentsDetected))
-                .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Text(store.tr(.emptyHint))
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(store.tr(.setupWaitingSignals)) {
-                store.openSettings(
-                    focusWaitingSignals: true,
-                    focusWaitingAgent: store.firstLiveWaitingNoneAgent
-                )
+        VStack(alignment: .leading, spacing: PulseTheme.Space.m) {
+            HStack(spacing: PulseTheme.Space.m) {
+                PulseMarkView(size: 32, tone: .secondary)
+                VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
+                    Text(store.tr(.noAgentsDetected))
+                        .font(PulseTheme.Font.hero)
+                    Text(store.tr(.emptyHint))
+                        .font(PulseTheme.Font.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            VStack(spacing: 0) {
+                SetupStep(
+                    title: store.tr(.setupNotifications),
+                    detail: store.tr(.setupNotificationsDetail),
+                    done: store.notifyAuthorized == true,
+                    actionTitle: store.notifyAuthorized == false
+                        ? store.tr(.openNotificationSettings) : store.tr(.enableNotifications)
+                ) {
+                    if store.notifyAuthorized == false {
+                        store.openSystemNotificationSettings()
+                    } else {
+                        store.requestNotificationAuthorization()
+                    }
+                }
+                Divider().padding(.leading, 28)
+                SetupStep(
+                    title: store.tr(.settingsHooksTitle),
+                    detail: store.tr(.setupHooksDetail),
+                    done: store.hooksInstalled,
+                    actionTitle: store.tr(.installHooks)
+                ) { store.installHooks() }
+                Divider().padding(.leading, 28)
+                SetupStep(
+                    title: store.tr(.agentDataAccess),
+                    detail: store.tr(.setupAppDataDetail),
+                    done: store.allowAppData || !store.appDataAgents.isEmpty,
+                    actionTitle: store.tr(.setupChoose)
+                ) {
+                    store.openSettings(focusAppDataFor: store.protectedAppDataAgents.first)
+                }
+            }
+            .pulseCard(padding: PulseTheme.Space.s)
+            Button(store.tr(.setupOtherAgents)) {
+                store.openSettings(focusWaitingSignals: true)
             }
             .buttonStyle(.link)
-            .font(TrayChrome.actionFont)
+            .font(PulseTheme.Font.body)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, TrayChrome.padX)
+        .padding(.top, PulseTheme.Space.xs)
+        .padding(.bottom, PulseTheme.Space.l)
+    }
+
+    /// Probe and harvest both failed. This used to fall through to "No
+    /// coding agents detected" under a "Can't refresh" header — two
+    /// contradicting sentences and no way forward.
+    private var cantRefreshState: some View {
+        VStack(spacing: PulseTheme.Space.s) {
+            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                .font(PulseTheme.Font.title)
+                .foregroundStyle(PulseTheme.Tone.attention.color)
+                .accessibilityHidden(true)
+            Text(store.tr(.cantRefresh))
+                .font(PulseTheme.Font.hero)
+            Text(store.tr(.cantRefreshHint))
+                .font(PulseTheme.Font.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: PulseTheme.Space.s) {
+                Button(store.tr(.supportRetry)) { store.refresh(reason: "cant-refresh-retry") }
+                    .buttonStyle(.borderedProminent)
+                Button(store.tr(.supportHealth)) { store.openSupportHealth() }
+                    .buttonStyle(.bordered)
+            }
+            .controlSize(.small)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 26)
-        .padding(.horizontal, 20)
+        .padding(.vertical, PulseTheme.Space.xl)
+        .padding(.horizontal, PulseTheme.Space.xl)
     }
 
     /// A tray group: heading, count, and its rows.
@@ -868,7 +854,7 @@ struct TrayPanel: View {
         // session in half even when only seven rows existed. Keep the default
         // glance tall enough for complete rows; scrolling remains the guard
         // for large workspaces.
-        let cap: CGFloat = store.showAllAgents ? 700 : 660
+        let cap: CGFloat = TrayChrome.maxListHeight
 
         let groups = groupedRows
         return VStack(spacing: 0) {
@@ -926,7 +912,11 @@ struct TrayPanel: View {
                                     collapsed: group.foldable ? isFolded : nil,
                                     summary: isFolded ? TrayFold.summary(group.rows) : "",
                                     toggle: group.foldable ? { toggleFold(group.id) } : nil,
-                                    showCount: !(isFolded && TrayFold.summaryNamesEveryRow(group.rows))
+                                    // 21.0: the header already counts each
+                                    // state; a heading counts only what it
+                                    // has folded away.
+                                    showCount: isFolded && !TrayFold.summaryNamesEveryRow(group.rows),
+                                    lang: store.lang
                                 )
                             }
                         }
@@ -935,7 +925,7 @@ struct TrayPanel: View {
                 // Rows fade rather than pop. A list that rebuilds itself every
                 // two seconds otherwise makes "a session appeared" and "the
                 // order changed" look identical.
-                .animation(PulseTheme.motion, value: store.snapshot.rows.map(\.rowKey))
+                .animation(PulseTheme.motion(reduced: reduceMotion), value: store.snapshot.rows.map(\.rowKey))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     GeometryReader { geo in
@@ -981,7 +971,7 @@ struct TrayPanel: View {
                 }
                 .onChange(of: selectedKey) { _, key in
                     guard let key else { return }
-                    withAnimation(.easeOut(duration: 0.12)) {
+                    withAnimation(PulseTheme.motion(reduced: reduceMotion)) {
                         scrollProxy.scrollTo(key, anchor: .center)
                     }
                 }
@@ -1007,27 +997,32 @@ struct TrayPanel: View {
                 overflowButton(store.tr(.showLess)) { store.toggleShowAllAgents() }
             }
 
-            // Sessions beyond the per-agent cap: say so rather than pretend
-            // they do not exist. Always show the searchable total when expanded.
-            if query.isEmpty, !hasSessionFilters {
-                if store.snapshot.cappedSessions > 0 {
-                    Text(String(format: store.tr(.cappedSessions), store.snapshot.cappedSessions))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, TrayChrome.padX)
-                        .padding(.bottom, 4)
-                }
-                if store.snapshot.totalCount > SnapshotBuilder.maxVisibleRows {
-                    Text(String(format: store.tr(.allSessionsCount), store.snapshot.totalCount))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, TrayChrome.padX)
-                        .padding(.bottom, 8)
-                }
+            // What is not on screen, said once: sessions beyond the
+            // per-agent cap and the searchable total, on one quiet line.
+            if query.isEmpty, !hasSessionFilters, !footerFacts.isEmpty {
+                Text(footerFacts.joined(separator: " · "))
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, TrayChrome.padX)
+                    .padding(.bottom, PulseTheme.Space.s)
             }
         }
+    }
+
+    private var footerFacts: [String] {
+        var facts: [String] = []
+        if store.snapshot.totalCount > SnapshotBuilder.maxVisibleRows {
+            facts.append(String(format: store.tr(.allSessionsCount), store.snapshot.totalCount))
+        }
+        if store.snapshot.cappedSessions > 0 {
+            facts.append(String(format: store.tr(.cappedSessions), store.snapshot.cappedSessions))
+        }
+        if store.snapshot.staleHidden > 0 {
+            let names = L10n.joinNames(store.snapshot.staleHiddenAgents.prefix(3).map(\.displayName), store.lang)
+            facts.append(String(format: store.tr(.staleHidden), store.snapshot.staleHidden, names))
+        }
+        return facts
     }
 
     private func overflowButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -1037,7 +1032,7 @@ struct TrayPanel: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, TrayChrome.padX)
-                .padding(.vertical, 10)
+                .padding(.vertical, PulseTheme.Space.s + 2)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1126,8 +1121,8 @@ private struct AgentRowButton: View {
     }
 
     private var highlight: Color {
-        if selected { return Color.primary.opacity(0.10) }
-        return hovering ? Color.primary.opacity(0.055) : .clear
+        if selected { return Color.primary.opacity(PulseTheme.Fill.selected) }
+        return hovering ? Color.primary.opacity(PulseTheme.Fill.hover) : .clear
     }
 
     /// 17.0: the face is a value; this wrapper builds it and carries out
@@ -1175,9 +1170,9 @@ private struct AgentRowButton: View {
             // chevron. Never beside an ask: the question owns that space.
             if depthTier(cards) == .digest, !cards.brief.isEmpty {
                 BriefCardFace(model: cards.brief)
-                    .padding(.leading, 48)
+                    .padding(.leading, TrayChrome.contentInset)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, PulseTheme.Space.s)
             }
 
             // 10.0-γ (scene BU): the in-list card is for "needs you NOW"
@@ -1186,9 +1181,9 @@ private struct AgentRowButton: View {
             // on every row was a wall, not an inbox.
             if !expanded, cards.hasAsks {
                 RowAsksFace(model: cards, send: performCard)
-                    .padding(.leading, 48)
+                    .padding(.leading, TrayChrome.contentInset)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, PulseTheme.Space.s)
             }
 
             // 7.0-β: the in-place mini-inspector (scene BM). Same cards as
@@ -1196,9 +1191,9 @@ private struct AgentRowButton: View {
             // longer require leaving the popup.
             if expanded {
                 TrayExpandedFace(model: cards, send: performCard)
-                    .padding(.leading, 48)
+                    .padding(.leading, TrayChrome.contentInset)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, PulseTheme.Space.s)
             }
         }
         // Inset rounded, not a full-bleed rectangle.
@@ -1209,9 +1204,9 @@ private struct AgentRowButton: View {
         // convention, and in a menu-bar panel it is the single easiest thing to
         // read as "not a Mac app".
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
                 .fill(highlight)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, TrayChrome.highlightInset)
         )
         .onHover { hovering = $0 }
     }
@@ -1221,6 +1216,11 @@ private struct AgentRowButton: View {
 /// 17.0 · the row's face: renders a `TrayRowModel` and nothing else, so a
 /// fixture can render every state of it (`SurfaceCapture`). Hover, selection
 /// and expansion are inputs; every click is an action sent to the owner.
+///
+/// 21.0 Clarity: one red carrier (the row's own tint plus its lamp and
+/// chip, all in one tone), at most two visible verbs, trailing controls that
+/// take part in layout, and nothing that changes the row's height under the
+/// pointer.
 struct TrayRowFace: View {
     let model: TrayRowModel
     var hovering = false
@@ -1232,6 +1232,13 @@ struct TrayRowFace: View {
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
+    /// Space the trailing controls occupy, reserved even while ⋯ is hidden
+    /// so the time and chip never move under the pointer.
+    private var controlsReserve: CGFloat {
+        (onToggleExpand != nil || model.hasSecondaryActions)
+            ? TrayChrome.rowControlsWidth + PulseTheme.Space.xs : 0
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Keep the row action and its overflow menu as sibling controls.
@@ -1241,8 +1248,9 @@ struct TrayRowFace: View {
                 ConditionalRowButton(actionable: model.canPrimary, action: { send(.primary) }) {
                     HStack(alignment: .top, spacing: TrayChrome.iconToIdentityGap) {
                         AgentIconView(id: model.agent)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
                             identityLine
+                                .padding(.trailing, controlsReserve)
                             // A real session is semibold, a bare process is not.
                             Text(model.hero)
                                 .font(TrayChrome.heroFont(processOnly: model.heroProcessOnly))
@@ -1253,8 +1261,8 @@ struct TrayRowFace: View {
                             // own words — a fault changes what you do next.
                             if let error = model.errorLine, !expanded {
                                 Text(error)
-                                    .font(.system(size: TrayChrome.captionSize).monospaced())
-                                    .foregroundStyle(.orange)
+                                    .font(PulseTheme.Font.code)
+                                    .foregroundStyle(PulseTheme.Tone.attention.color)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                             } else if !model.metaLine.isEmpty {
@@ -1266,109 +1274,135 @@ struct TrayRowFace: View {
                                     .truncationMode(.tail)
                             }
                             // The question itself is the point of the product.
+                            // In the primary colour: the row's tint and lamp
+                            // already say "blocked"; the words are for reading.
                             if let detail = model.waitDetail {
                                 Text(detail)
-                                    .font(.system(size: TrayChrome.bodySize))
-                                    .foregroundStyle(TrayChrome.waitAccent)
+                                    .font(PulseTheme.Font.body)
+                                    .foregroundStyle(.primary)
                                     .lineLimit(2)
                             }
-                            // 17.0: open, the row says why it is in this state.
-                            if expanded, let why = model.why {
+                            // 17.0 / 21.0: the row says why it is in this
+                            // state — open, or without a click for the states
+                            // that least explain themselves.
+                            if let why = model.why, expanded || model.whyInline {
                                 Text(why)
-                                    .font(TrayChrome.detailFont)
+                                    .font(PulseTheme.Font.caption)
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(expanded ? nil : 2)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
-                    .padding(.trailing, model.hasSecondaryActions ? TrayChrome.headerControlSize + 4 : 0)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, TrayChrome.rowLeadingInset)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.vertical, compact ? 5 : (model.heroProcessOnly ? 6 : 7))
-                    // The wait gutter overlays its own inset and never takes
-                    // part in layout, so identity columns stay aligned.
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(accentFill)
-                            .frame(width: accentWidth)
-                            .padding(.leading, 6)
-                            .padding(.vertical, 4)
-                    }
+                    .padding(.vertical, compact ? 6 : PulseTheme.Space.s)
                     .contentShape(Rectangle())
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(model.accessibilityLabel)
                 .accessibilityHint(model.accessibilityHint)
+                // Every verb is reachable without a pointer.
+                .accessibilityActions {
+                    ForEach(model.menu) { button in
+                        Button(button.title) { send(button.action) }
+                    }
+                }
                 .help(model.why ?? "")
 
-                HStack(spacing: 4) {
-                    if onToggleExpand != nil { expandChevron }
+                HStack(spacing: PulseTheme.Space.xs) {
                     if model.hasSecondaryActions {
                         menu
                             .opacity(hovering || selected ? 1 : 0)
                             .allowsHitTesting(hovering || selected)
-                            .accessibilityHidden(false)
+                            .accessibilityHidden(!(hovering || selected))
                     }
+                    if onToggleExpand != nil { expandChevron }
                 }
-                .padding(.top, 6)
+                .padding(.top, PulseTheme.Space.s - 1)
                 .padding(.trailing, TrayChrome.padX)
             }
 
-            // Urgent actions stay visible; the rest appear on hover.
-            if model.stripAlwaysVisible || hovering {
-                HStack(spacing: 16) {
+            // Only a wait has verbs outside the menu, and they are always
+            // there — a row never grows under the pointer.
+            if model.stripAlwaysVisible {
+                HStack(spacing: PulseTheme.Space.s) {
                     ForEach(model.strip) { button in
                         Button(button.title) { send(button.action) }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                             .font(TrayChrome.actionFont)
                     }
                     if let fate = model.fateNote {
                         Text(fate)
-                            .font(.system(size: 11))
+                            .font(PulseTheme.Font.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.leading, 48)
+                .padding(.leading, TrayChrome.contentInset)
                 .padding(.trailing, TrayChrome.padX)
-                .padding(.bottom, 8)
+                .padding(.bottom, PulseTheme.Space.s)
+            } else if let fate = model.fateNote {
+                Text(fate)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, TrayChrome.contentInset)
+                    .padding(.trailing, TrayChrome.padX)
+                    .padding(.bottom, PulseTheme.Space.s)
             }
 
             if let notice = model.notice {
                 Text(notice)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 48)
+                    .padding(.leading, TrayChrome.contentInset)
                     .padding(.trailing, TrayChrome.padX)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, PulseTheme.Space.s)
             }
         }
+        // The wait's surface: a quiet tint of the row in the waiting tone
+        // replaces the old gutter bar, chip-red detail text and red border —
+        // five red things became one.
+        .background(
+            RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
+                .fill(waitTint)
+                .padding(.horizontal, TrayChrome.highlightInset)
+        )
         .contextMenu { menuItems }
+    }
+
+    private var waitTint: Color {
+        switch model.accent {
+        case .none, .snoozed: return .clear
+        case .normal: return PulseTheme.Tone.waiting.color.opacity(PulseTheme.Fill.waitTint)
+        case .urgent: return PulseTheme.Tone.waiting.color.opacity(PulseTheme.Fill.waitTintUrgent)
+        }
     }
 
     private var identityLine: some View {
         HStack(alignment: .center, spacing: TrayChrome.identityLampToNameGap) {
-            Circle()
-                .fill(lampColor)
-                .frame(width: TrayChrome.identityLampSize, height: TrayChrome.identityLampSize)
+            PulseLamp(tone: lampTone, size: TrayChrome.identityLampSize)
                 .frame(width: TrayChrome.identityLampSize, height: 18)
-                .accessibilityHidden(true)
             Text(model.agentName)
                 .font(TrayChrome.identityNameFont)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
             if let source = model.sourceLabel {
                 Text(source)
                     .font(TrayChrome.sourceLabelFont)
-                    .foregroundStyle(.secondary.opacity(0.78))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Spacer(minLength: 6)
+            Spacer(minLength: PulseTheme.Space.s)
             if !model.accessoryTime.isEmpty {
                 Text(model.accessoryTime)
-                    .font(TrayChrome.detailFont)
-                    .foregroundStyle(.tertiary)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
                     .monospacedDigit()
+                    .lineLimit(1)
             }
             if let chip = model.chip {
                 StatusChip(kind: chipKind(chip.kind), label: chip.label)
@@ -1376,13 +1410,13 @@ struct TrayRowFace: View {
         }
     }
 
-    private var lampColor: Color {
+    /// One tone per state, shared with the menu-bar lamp and the header.
+    private var lampTone: PulseTheme.Tone {
         switch model.lamp {
-        case .waiting: return GlanceKind.waiting.lampColor
-        case .error: return GlanceKind.error.lampColor
-        case .process: return .orange
-        case .running: return GlanceKind.running.lampColor
-        case .idle: return GlanceKind.idle.lampColor
+        case .waiting: return .waiting
+        case .error, .process: return .attention
+        case .running: return .running
+        case .idle: return .idle
         }
     }
 
@@ -1396,33 +1430,18 @@ struct TrayRowFace: View {
         }
     }
 
-    private var accentFill: Color {
-        switch model.accent {
-        case .none: return .clear
-        case .snoozed: return TrayChrome.waitAccent.opacity(0.28)
-        case .normal, .urgent: return TrayChrome.waitAccent
-        }
-    }
-
-    private var accentWidth: CGFloat {
-        switch model.accent {
-        case .none: return 0
-        case .snoozed, .normal: return 3
-        case .urgent: return 6
-        }
-    }
-
     private var expandChevron: some View {
         Button {
             onToggleExpand?()
         } label: {
-            Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                .font(.system(size: 11, weight: .semibold))
+            Image(systemName: "chevron.down")
+                .font(PulseTheme.Font.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 24, height: 20)
+                .rotationEffect(.degrees(expanded ? 180 : 0))
+                .frame(width: TrayChrome.rowControlSize.width, height: TrayChrome.rowControlSize.height)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(Color.primary.opacity(hovering || expanded ? 0.08 : 0.03))
+                        .fill(Color.primary.opacity(hovering || expanded ? PulseTheme.Fill.hover : 0))
                 )
                 .contentShape(Rectangle())
         }
@@ -1435,12 +1454,12 @@ struct TrayRowFace: View {
             menuItems
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .semibold))
+                .font(PulseTheme.Font.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 24, height: 20)
+                .frame(width: TrayChrome.rowControlSize.width, height: TrayChrome.rowControlSize.height)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(Color.primary.opacity(hovering ? 0.08 : 0.045))
+                        .fill(Color.primary.opacity(PulseTheme.Fill.hover))
                 )
                 .contentShape(Rectangle())
         }
@@ -1463,29 +1482,153 @@ private struct TrayIconAction: View {
     let systemImage: String
     let help: String
     var shortcut: Character? = nil
+    /// 21.0: the refresh control shows its own progress instead of the
+    /// header swapping its counts for "Refreshing…".
+    var busy = false
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 13))
-                .frame(
-                    width: TrayChrome.headerControlSize,
-                    height: TrayChrome.headerControlSize,
-                    alignment: .center
-                )
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(hovering ? Color.primary.opacity(0.08) : Color.clear)
-                )
-                .contentShape(Rectangle())
+            ZStack {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: systemImage)
+                        .font(PulseTheme.Font.hero.weight(.regular))
+                }
+            }
+            .frame(
+                width: TrayChrome.headerControlSize,
+                height: TrayChrome.headerControlSize,
+                alignment: .center
+            )
+            .background(
+                RoundedRectangle(cornerRadius: PulseTheme.Radius.inner, style: .continuous)
+                    .fill(hovering ? Color.primary.opacity(PulseTheme.Fill.hover) : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityLabel(help)
         .modifier(OptionalShortcut(shortcut: shortcut))
+    }
+}
+
+/// One count in the header, in its state's tone.
+private struct HeaderCount: View {
+    let count: Int
+    let label: String
+    let tone: PulseTheme.Tone
+
+    var body: some View {
+        HStack(spacing: PulseTheme.Space.xs) {
+            Text("\(count)")
+                .contentTransition(.numericText())
+                .monospacedDigit()
+            Text(label)
+        }
+        .font(PulseTheme.Font.heading)
+        .foregroundStyle(tone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(tone.color))
+        .padding(.horizontal, PulseTheme.Space.s)
+        .padding(.vertical, 3)
+        .background(
+            (tone == .idle ? Color.primary : tone.color)
+                .opacity(tone == .idle ? PulseTheme.Fill.hover : PulseTheme.Fill.chip),
+            in: Capsule(style: .continuous)
+        )
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// 21.0: the tray's one notice bar.
+struct TrayNotice: View {
+    struct Model {
+        var text: String
+        var systemImage: String
+        var tone: PulseTheme.Tone
+        var accessibility: String = ""
+        var action: () -> Void
+    }
+
+    let model: Model
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: model.action) {
+            HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
+                Image(systemName: model.systemImage)
+                    .foregroundStyle(tint)
+                Text(model.text)
+                    .foregroundStyle(model.tone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(PulseTheme.Font.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(PulseTheme.Font.body)
+            .padding(.horizontal, PulseTheme.Space.s)
+            .padding(.vertical, PulseTheme.Space.s - 2)
+            .background(
+                RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
+                    .fill(background)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(model.accessibility.isEmpty ? model.text : model.accessibility)
+    }
+
+    private var tint: Color {
+        model.tone == .idle ? .secondary : model.tone.color
+    }
+
+    private var background: Color {
+        let base = model.tone == .idle ? Color.primary : model.tone.color
+        let amount = model.tone == .idle ? PulseTheme.Fill.subtle : PulseTheme.Fill.waitTint
+        return base.opacity(hovering ? amount + PulseTheme.Fill.subtle : amount)
+    }
+}
+
+/// One line of the first-run checklist: done, or the button that does it.
+private struct SetupStep: View {
+    let title: String
+    let detail: String
+    let done: Bool
+    let actionTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(done ? AnyShapeStyle(PulseTheme.Tone.running.color) : AnyShapeStyle(.tertiary))
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
+                Text(title)
+                    .font(PulseTheme.Font.bodyEmphasis)
+                Text(detail)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: PulseTheme.Space.s)
+            if !done {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.vertical, PulseTheme.Space.s)
+        .accessibilityElement(children: .combine)
     }
 }
 

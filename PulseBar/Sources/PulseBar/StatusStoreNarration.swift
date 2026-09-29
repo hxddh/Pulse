@@ -17,7 +17,8 @@ extension StatusStore {
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             crowded: snapshot.rows.count >= TrayFold.crowdedFrom,
             managedModels: managed,
-            proofSummaries: proofSummaries
+            proofSummaries: proofSummaries,
+            stallMinutes: stallMinutes
         )
     }
 

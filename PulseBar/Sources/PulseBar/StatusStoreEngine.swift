@@ -63,7 +63,13 @@ extension StatusStore {
                 guard let self else { return }
                 self.rescheduleTimer()
                 // Coming back from sleep/lock: catch up immediately.
-                if !self.powerMonitor.state.parked { self.refresh(reason: "wake") }
+                if !self.powerMonitor.state.parked {
+                    self.refresh(reason: "wake")
+                    // Rationed inside (a day after success, an hour after a
+                    // failure); waking is when a long-lived Mac is most
+                    // likely to have missed a release.
+                    UpdateCheck.shared.startIfEnabled(store: self)
+                }
             }
         }
         UpdateCheck.shared.startIfEnabled(store: self)
@@ -611,6 +617,7 @@ extension StatusStore {
             || !attention.isEmpty
         if attentionBaselineValid {
             let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+            let ledgerBefore = attentionLedger
             attentionLedger.reconcile(
                 activeRows: result.rows.filter(\.waiting),
                 nowMs: nowMs
@@ -622,7 +629,11 @@ extension StatusStore {
                 pendingWaitingNotifications[row.rowKey] = row
             }
             attentionLedger.markBaseline()
-            attentionLedger.save()
+            // A scan that finds the same world writes nothing (scan-quiet
+            // applies to the disk too).
+            if !attentionLedger.hasSameDurableState(as: ledgerBefore) {
+                attentionLedger.save()
+            }
         } else {
             DebugLog.write("attention ledger baseline deferred: harvest unreliable and no wait evidence")
         }
