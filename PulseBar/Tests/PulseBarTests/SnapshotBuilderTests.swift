@@ -122,117 +122,21 @@ final class SnapshotBuilderTests: XCTestCase {
         source.contextPercent = 27
         source.progressDone = 4
 
+        source.lastWord = "Uploaded in 4 parts."
+        source.planStep = "Retry the last part"
+
         let result = build(procs: [hit(.grok)], harvest: [source])
         let row = try! XCTUnwrap(result.rows.first)
-        XCTAssertEqual(row.phase, "turn_complete")
-        XCTAssertEqual(row.outcome, "completed")
         XCTAssertEqual(row.model, "grok-4.5")
-        XCTAssertEqual(row.mode, "build-plan")
         XCTAssertEqual(row.errors, 1)
-        XCTAssertEqual(row.files, 3)
-        XCTAssertEqual(row.contextPercent, 27)
-        XCTAssertEqual(row.progressDone, 4)
+        XCTAssertEqual(row.lastWord, "Uploaded in 4 parts.")
+        XCTAssertEqual(row.planSteps.map(\.text), ["Retry the last part"], "a lone current step is still the plan")
+        XCTAssertEqual(row.state, .recent)
         XCTAssertEqual(row.section, .recent, "a completed turn is not still Running just because its CLI stays open")
         XCTAssertFalse(row.isStalled, "completed work cannot simultaneously be stalled")
         XCTAssertEqual(result.snapshot.sectionTotals[.running], 0)
         XCTAssertEqual(result.snapshot.sectionTotals[.recent], 1)
         XCTAssertEqual(result.snapshot.glance, .idle)
-    }
-
-    func testCrossScanChangeSurfacesAndPersistsBriefly() {
-        var priorSource = harvest(
-            .codex,
-            task: "Ship release",
-            session: "codex-change",
-            cwd: "/Users/me/Pulse",
-            ageMs: 2_000
-        )
-        priorSource.progressDone = 1
-        priorSource.progressTotal = 4
-        let prior = build(harvest: [priorSource])
-
-        var current = priorSource
-        current.harvestMs = now - 1_000
-        current.progressDone = 3
-        let changed = build(
-            harvest: [current],
-            previous: .init(rows: prior.rows, waitingKeys: [])
-        )
-        XCTAssertEqual(
-            changed.rows.first?.activityChange,
-            .progress(done: 3, total: 4)
-        )
-
-        let stable = build(
-            harvest: [current],
-            previous: .init(rows: changed.rows, waitingKeys: [])
-        )
-        XCTAssertEqual(
-            stable.rows.first?.activityChange,
-            .progress(done: 3, total: 4)
-        )
-    }
-
-    func testActivityChangeDoesNotDependOnSubsecondMtime() {
-        var priorSource = harvest(
-            .codex,
-            task: "Fast update",
-            session: "same-mtime",
-            cwd: "/Users/me/Pulse",
-            ageMs: 2_000
-        )
-        priorSource.progressDone = 1
-        priorSource.progressTotal = 4
-        let prior = build(harvest: [priorSource])
-
-        var current = priorSource
-        // A SQLite/cache write can advance the facts before its mtime tick.
-        current.progressDone = 2
-        let changed = build(
-            harvest: [current],
-            previous: .init(rows: prior.rows, waitingKeys: [])
-        )
-        XCTAssertEqual(
-            changed.rows.first?.activityChange,
-            .progress(done: 2, total: 4)
-        )
-    }
-
-    func testToolPhaseTaskChangesSurfaceAsActivityChange() {
-        var priorSource = harvest(
-            .claude,
-            task: "Ship row story",
-            session: "story-1",
-            cwd: "/Users/me/Pulse",
-            ageMs: 5_000
-        )
-        priorSource.tool = "Bash"
-        priorSource.phase = "working"
-        let prior = build(harvest: [priorSource])
-
-        var toolMoved = priorSource
-        toolMoved.tool = "Edit"
-        let toolChange = build(
-            harvest: [toolMoved],
-            previous: .init(rows: prior.rows, waitingKeys: [])
-        )
-        XCTAssertEqual(toolChange.rows.first?.activityChange, .toolChanged)
-
-        var phaseMoved = toolMoved
-        phaseMoved.phase = "testing"
-        let phaseChange = build(
-            harvest: [phaseMoved],
-            previous: .init(rows: toolChange.rows, waitingKeys: [])
-        )
-        XCTAssertEqual(phaseChange.rows.first?.activityChange, .phaseChanged)
-
-        var taskMoved = phaseMoved
-        taskMoved.task = "Ship row story — second pass"
-        let taskChange = build(
-            harvest: [taskMoved],
-            previous: .init(rows: phaseChange.rows, waitingKeys: [])
-        )
-        XCTAssertEqual(taskChange.rows.first?.activityChange, .taskChanged)
     }
 
     func testOldCompletedSessionDoesNotRideForeverOnPersistentCLI() {
@@ -252,11 +156,15 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertNil(result.rows[0].usefulTask)
     }
 
-    func testLiveProcessCarriesPrivacySafeDetectionEvidence() {
+    /// 23.0: how a process was matched is Health's fact, kept by the scan
+    /// engine — the row no longer carries it.
+    func testLiveProcessDetectionEvidenceReachesHealth() {
         var process = hit(.amp)
         process.evidence = .pathSignature
-        let result = build(procs: [process])
-        XCTAssertEqual(result.rows.first?.processEvidence, .pathSignature)
+        process.elapsedSeconds = 60
+        let facts = ProcessFacts.byAgent([process], nowMs: now)
+        XCTAssertEqual(facts[.amp]?.evidence, .pathSignature)
+        XCTAssertEqual(facts[.amp]?.startedMs, now - 60_000)
     }
 
     func testLiveProcessSuppressesErrorEvenWhenHarvestFailed() {
@@ -276,8 +184,8 @@ final class SnapshotBuilderTests: XCTestCase {
                 harvest(.codex, task: "Fix parser", evidence: .session),
             ]
         )
-        XCTAssertEqual(r.rows.first(where: { $0.agent == .roo })?.observationSource, .cache)
-        XCTAssertEqual(r.rows.first(where: { $0.agent == .codex })?.observationSource, .session)
+        XCTAssertEqual(r.rows.first(where: { $0.agent == .roo })?.source, .cache)
+        XCTAssertEqual(r.rows.first(where: { $0.agent == .codex })?.source, .session)
     }
 
     func testHarvestOnlySessionDoesNotInventAProcessCount() {
@@ -285,9 +193,9 @@ final class SnapshotBuilderTests: XCTestCase {
             harvest(.codex, task: "Review telemetry", session: "s1", cwd: "/work/Pulse")
         ])
         let row = try! XCTUnwrap(r.rows.first)
-        XCTAssertFalse(row.liveProcess)
-        XCTAssertEqual(row.processCount, 0, "process count must come only from ProcessProbe")
-        XCTAssertEqual(row.observationSource, .session)
+        XCTAssertFalse(row.liveProcess, "liveness comes only from ProcessProbe")
+        XCTAssertEqual(row.pid, 0)
+        XCTAssertEqual(row.source, .session)
     }
 
     // MARK: Multi-session
@@ -322,7 +230,7 @@ final class SnapshotBuilderTests: XCTestCase {
             ),
         ])
         XCTAssertEqual(r.rows.first?.section, .running)
-        XCTAssertFalse(r.rows.first?.isRecentOnly ?? true)
+        XCTAssertFalse(r.rows.first?.isRecent ?? true)
     }
 
     func testSessionsBeyondTheCapAreCountedNotDropped() {
@@ -365,11 +273,11 @@ final class SnapshotBuilderTests: XCTestCase {
                 )
             }
         )
-        XCTAssertEqual(result.rows.filter(\.waiting).count, 10)
+        XCTAssertEqual(result.rows.filter(\.isBlocked).count, 10)
         XCTAssertEqual(result.newlyWaiting.count, 10)
         XCTAssertEqual(result.snapshot.sectionTotals[.needsYou], 10)
         XCTAssertEqual(result.snapshot.hiddenCount, 0, "ten waits fit within the twelve-row glance")
-        XCTAssertEqual(Set(result.rows.filter(\.waiting).map(\.rowKey)).count, 10)
+        XCTAssertEqual(Set(result.rows.filter(\.isBlocked).map(\.rowKey)).count, 10)
     }
 
     func testSessionsWithoutIdsDoNotCollideIntoOneRow() {
@@ -458,8 +366,8 @@ final class SnapshotBuilderTests: XCTestCase {
             ]
         )
         XCTAssertEqual(r.rows.filter(\.liveProcess).count, 1, "must not smear across sessions")
-        XCTAssertEqual(r.rows.filter { $0.processCount > 1 }.count, 1, "×N must not be inherited")
-        XCTAssertEqual(r.rows.filter { !$0.liveProcess && $0.processCount > 0 }.count, 0, "siblings are harvest-only")
+        XCTAssertEqual(r.rows.filter { $0.pid == 42 }.count, 1, "the pid is not inherited")
+        XCTAssertEqual(r.rows.filter { !$0.liveProcess && !$0.tty.isEmpty }.count, 0, "siblings are harvest-only")
     }
 
     func testLiveProcessWithNoHarvestStillProducesARow() {
@@ -484,7 +392,7 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.rows[0].agent, .cursor)
         XCTAssertTrue(r.rows[0].liveProcess)
         XCTAssertTrue(r.rows[0].isProcessOnly)
-        XCTAssertEqual(r.rows[0].processEvidence, .pathSignature)
+        XCTAssertEqual(r.rows[0].rowKey, "cursor|pid:91")
     }
 
     func testCursorAgentProcessCountsAsCursor() {
@@ -506,8 +414,8 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testPendingSkillRaisesWaiting() {
         let r = build(harvest: [harvest(.gemini, task: "Ask", session: "s1", skill: "pending")])
-        XCTAssertTrue(r.rows[0].waiting)
-        XCTAssertEqual(r.rows[0].waitSignal, .pending)
+        XCTAssertTrue(r.rows[0].isBlocked)
+        XCTAssertEqual(r.rows[0].wait?.signal, .pending)
         XCTAssertEqual(r.snapshot.glance, .waiting)
     }
 
@@ -518,21 +426,21 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(AgentID.cursor.waitingSource, .none)
         let r = build(harvest: [harvest(.cursor, task: "Ask", session: "s1", skill: "pending")])
         XCTAssertEqual(r.rows.count, 1)
-        XCTAssertFalse(r.rows[0].waiting)
-        XCTAssertNotEqual(r.rows[0].waitSignal, .pending)
+        XCTAssertFalse(r.rows[0].isBlocked)
+        XCTAssertNil(r.rows[0].wait)
         XCTAssertNotEqual(r.snapshot.glance, .waiting)
     }
 
     func testDismissedPendingStaysDismissed() {
         let row = harvest(.gemini, task: "Ask", session: "s1", skill: "pending")
-        let key = ActivityHarvest.sessionKey(id: .gemini, sessionID: "s1", project: "", cwd: "")
+        let key = RowIdentity.session(agent: .gemini, sessionID: "s1")
         let r = build(harvest: [row], context: context(dismissed: [key]))
-        XCTAssertFalse(r.rows[0].waiting, "a soft-dismissed pending must not come back")
+        XCTAssertFalse(r.rows[0].isBlocked, "a soft-dismissed pending must not come back")
     }
 
     func testPendingClearingReportsTheKeySoTheDismissCanBeForgotten() {
         let row = harvest(.gemini, task: "Done", session: "s1", skill: "")
-        let key = ActivityHarvest.sessionKey(id: .gemini, sessionID: "s1", project: "", cwd: "")
+        let key = RowIdentity.session(agent: .gemini, sessionID: "s1")
         let r = build(harvest: [row], context: context(dismissed: [key]))
         XCTAssertTrue(r.clearedPendingKeys.contains(key))
     }
@@ -547,10 +455,10 @@ final class SnapshotBuilderTests: XCTestCase {
             ],
             attention: [attention(.claude, message: "approve", session: "sess-bbb")]
         )
-        let waiting = r.rows.filter(\.waiting)
+        let waiting = r.rows.filter(\.isBlocked)
         XCTAssertEqual(waiting.count, 1)
         XCTAssertEqual(waiting[0].sessionID, "sess-bbb", "must not light up the wrong session")
-        XCTAssertEqual(waiting[0].waitSignal, .hooks)
+        XCTAssertEqual(waiting[0].wait?.signal, .hooks)
     }
 
     func testCursorAgentAttentionUsesTheSingleCursorSurfaceRow() {
@@ -561,8 +469,8 @@ final class SnapshotBuilderTests: XCTestCase {
         )
         XCTAssertEqual(r.rows.count, 1, "Cursor Agent is one user-facing Cursor session")
         XCTAssertEqual(r.rows.first?.agent, .cursor)
-        XCTAssertTrue(r.rows.first?.waiting == true)
-        XCTAssertEqual(r.rows.first?.waitSignal, .hooks)
+        XCTAssertTrue(r.rows.first?.isBlocked == true)
+        XCTAssertEqual(r.rows.first?.wait?.signal, .hooks)
     }
 
     func testAttentionFallsBackToCwdWhenSessionIsUnknown() {
@@ -573,15 +481,17 @@ final class SnapshotBuilderTests: XCTestCase {
             ],
             attention: [attention(.codex, session: "", cwd: "/work/beta")]
         )
-        XCTAssertEqual(r.rows.filter(\.waiting).map(\.cwd), ["/work/beta"])
+        XCTAssertEqual(r.rows.filter(\.isBlocked).map(\.cwd), ["/work/beta"])
     }
 
     func testAttentionWithNoMatchingRowCreatesOne() {
         let r = build(attention: [attention(.droid, message: "approve", session: "d1", cwd: "/work/x")])
         XCTAssertEqual(r.rows.count, 1)
-        XCTAssertTrue(r.rows[0].waiting)
+        XCTAssertTrue(r.rows[0].isBlocked)
         XCTAssertEqual(r.rows[0].agent, .droid)
-        XCTAssertEqual(r.rows[0].waitMessage, "approve")
+        XCTAssertEqual(r.rows[0].wait?.ask, "approve")
+        XCTAssertEqual(r.rows[0].rowKey, "droid|d1")
+        XCTAssertEqual(r.rows[0].source, .hooks)
     }
 
     func testAttentionUnknownSessionDoesNotLightSiblingRows() {
@@ -592,47 +502,45 @@ final class SnapshotBuilderTests: XCTestCase {
             ],
             attention: [attention(.claude, message: "approve tool", session: "sess-zzz")]
         )
-        let waiting = r.rows.filter(\.waiting)
+        let waiting = r.rows.filter(\.isBlocked)
         XCTAssertEqual(waiting.count, 1, "must create a dedicated Waiting row")
         XCTAssertEqual(waiting[0].sessionID, "sess-zzz")
-        XCTAssertEqual(waiting[0].waitMessage, "approve tool")
-        XCTAssertEqual(waiting[0].waitSignal, .hooks)
+        XCTAssertEqual(waiting[0].wait?.ask, "approve tool")
+        XCTAssertEqual(waiting[0].wait?.signal, .hooks)
         let siblings = r.rows.filter { ["sess-aaa", "sess-bbb"].contains($0.sessionID) }
         XCTAssertEqual(siblings.count, 2)
-        XCTAssertTrue(siblings.allSatisfy { !$0.waiting }, "named session must not smear onto siblings")
+        XCTAssertTrue(siblings.allSatisfy { !$0.isBlocked }, "named session must not smear onto siblings")
     }
 
-    func testAttentionNamedSessionAdoptsProcessOnlyRow() {
+    /// 23.0: a process-only row never adopts a wait. The hook's session
+    /// gets its own row — keyed like the session it names — and the
+    /// process attaches to it, so there is still one row.
+    func testAttentionNamedSessionMakesOneRowWithTheProcess() {
         let r = build(
             procs: [hit(.codex, pid: 42)],
             attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")]
         )
-        XCTAssertEqual(r.rows.count, 1, "process-only row adopts the named wait")
-        XCTAssertTrue(r.rows[0].waiting)
+        XCTAssertEqual(r.rows.count, 1, "the process attaches to the hook's row")
+        XCTAssertTrue(r.rows[0].isBlocked)
         XCTAssertEqual(r.rows[0].sessionID, "codex-wait-1")
         XCTAssertTrue(r.rows[0].liveProcess)
         XCTAssertEqual(r.rows[0].rowKey, "codex|codex-wait-1")
-        XCTAssertEqual(r.remappedRowKeys["codex"], "codex|codex-wait-1")
         XCTAssertEqual(r.snapshot.hiddenCount, 0)
     }
 
-    func testAttentionAdoptionDoesNotReFireWaitingEdge() {
+    func testTheSameWaitNextScanIsNotANewEdge() {
         let first = build(
             procs: [hit(.codex, pid: 42)],
             attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")]
         )
         XCTAssertEqual(first.newlyWaiting.count, 1)
-        var previousRow = AgentRow(rowKey: "codex", agent: .codex)
-        previousRow.waiting = true
-        previousRow.sessionID = ""
-        previousRow.liveProcess = true
         let second = build(
             procs: [hit(.codex, pid: 42)],
             attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")],
-            previous: .init(rows: [previousRow], waitingKeys: ["codex"])
+            previous: .init(rows: first.rows, waitingKeys: first.waitingKeys)
         )
-        XCTAssertTrue(second.newlyWaiting.isEmpty, "rekey is identity, not a new wait")
-        XCTAssertTrue(second.resolvedWaits.isEmpty, "rekey must not look like a clear")
+        XCTAssertTrue(second.newlyWaiting.isEmpty, "the key never moved, so nothing is new")
+        XCTAssertTrue(second.resolvedWaits.isEmpty)
         XCTAssertEqual(second.rows[0].rowKey, "codex|codex-wait-1")
     }
 
@@ -641,8 +549,8 @@ final class SnapshotBuilderTests: XCTestCase {
             harvest: [harvest(.codex, task: "A", session: "s1", skill: "pending")],
             attention: [attention(.codex, kind: "Permission", message: "approve", session: "s1")]
         )
-        XCTAssertEqual(r.rows[0].waitSignal, .hooks, "hooks is the more credible signal")
-        XCTAssertEqual(r.rows[0].waitKind, "Permission")
+        XCTAssertEqual(r.rows[0].wait?.signal, .hooks, "hooks is the more credible signal")
+        XCTAssertEqual(r.rows[0].wait?.kind, "Permission")
     }
 
     // MARK: Ordering
@@ -655,7 +563,7 @@ final class SnapshotBuilderTests: XCTestCase {
                 harvest(.gemini, task: "Needs input", session: "g1", skill: "pending"),
             ]
         )
-        XCTAssertTrue(r.rows[0].waiting, "Waiting always leads")
+        XCTAssertTrue(r.rows[0].isBlocked, "Waiting always leads")
     }
 
     func testActiveRowsSortAboveRecentTitledSessions() {
@@ -814,7 +722,7 @@ final class SnapshotBuilderTests: XCTestCase {
                 attention(.cursor, ageMs: 5_000),
             ]
         )
-        let waiting = r.rows.filter(\.waiting)
+        let waiting = r.rows.filter(\.isBlocked)
         XCTAssertEqual(waiting.count, 3)
         XCTAssertEqual(waiting.map(\.agent), [.codex, .claude, .cursor], "oldest wait must lead")
     }
@@ -827,7 +735,7 @@ final class SnapshotBuilderTests: XCTestCase {
             procs: [hit(.claude), hit(.cursor)],
             attention: [stale, attention(.claude, ageMs: 30_000)]
         )
-        let waiting = r.rows.filter(\.waiting)
+        let waiting = r.rows.filter(\.isBlocked)
         XCTAssertEqual(waiting.first?.agent, .claude)
     }
 
@@ -997,29 +905,24 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.snapshot.tooltip.lowercased().contains("stalled"), r.snapshot.tooltip)
     }
 
-    /// Progress/tokens can move without a newer harvest mtime — that is still live.
-    func testLiveSignalMovePreventsFalseStall() {
-        var priorSource = harvest(.claude, task: "build", session: "s1", ageMs: 30 * 60 * 1000)
-        priorSource.progressDone = 1
-        priorSource.progressTotal = 10
-        let prior = build(
-            procs: [hit(.claude)],
-            harvest: [priorSource],
-            context: context(stalledSeconds: 5 * 60)
-        )
+    /// A hook activity event moves the live clock even when the transcript's
+    /// mtime did not — that is still live, not stalled.
+    func testALiveActivityEventPreventsAFalseStall() {
+        let quiet = harvest(.claude, task: "build", session: "s1", ageMs: 30 * 60 * 1000)
+        let prior = build(procs: [hit(.claude)], harvest: [quiet], context: context(stalledSeconds: 5 * 60))
         XCTAssertEqual(prior.rows.first?.isStalled, true)
 
-        var current = harvest(.claude, task: "build", session: "s1", ageMs: 30 * 60 * 1000)
-        current.progressDone = 4
-        current.progressTotal = 10
-        let moved = build(
-            procs: [hit(.claude)],
-            harvest: [current],
+        let event = ActivitySpool.Event(
+            agent: "claude", session: "s1", event: "tool", tool: "Bash", target: "",
+            prompt: "", cwd: "", tsMs: now - 10_000
+        )
+        let moved = SnapshotBuilder.build(
+            SnapshotBuilder.Input(procs: [hit(.claude)], harvest: [quiet], activity: [event]),
             previous: .init(rows: prior.rows, waitingKeys: []),
             context: context(stalledSeconds: 5 * 60)
         )
-        XCTAssertEqual(moved.rows.first?.activityChange, .progress(done: 4, total: 10))
-        XCTAssertFalse(moved.rows.contains { $0.isStalled }, "signal move must refresh the stall clock")
+        XCTAssertEqual(moved.rows.first?.activityMs, now - 10_000)
+        XCTAssertFalse(moved.rows.contains { $0.isStalled }, "a live event must refresh the stall clock")
         XCTAssertEqual(moved.snapshot.glance, .running)
     }
 
@@ -1032,20 +935,27 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     /// Running with a live session is ordinary and gets no badge.
-    func testOrdinaryRunningRowNeedsNoChip() {
+    func testOrdinaryRunningRowNeedsNoChip() throws {
         let r = build(
             procs: [hit(.claude)],
             harvest: [harvest(.claude, task: "Refactor", session: "s1", cwd: "/tmp/alpha")]
         )
-        let row = try? XCTUnwrap(r.rows.first)
-        XCTAssertEqual(row?.needsStatusChip, false)
+        let row = try XCTUnwrap(r.rows.first)
+        let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
+        XCTAssertNil(face.chip)
+        XCTAssertEqual(face.lamp, .running)
         XCTAssertEqual(r.snapshot.glance, .running)
     }
 
-    func testProcessOnlyAndWaitingRowsDoGetAChip() {
+    func testProcessOnlyAndWaitingRowsLookDifferent() {
         let r = build(procs: [hit(.amp)], attention: [attention(.claude)])
-        for row in r.rows where row.waiting || row.isProcessOnly {
-            XCTAssertTrue(row.needsStatusChip, "\(row.agent) should be badged")
+        for row in r.rows {
+            let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
+            if row.isBlocked {
+                XCTAssertEqual(face.chip?.kind, .waiting, "\(row.agent) should be badged")
+            } else {
+                XCTAssertEqual(face.lamp, .process, "\(row.agent) should read as a process")
+            }
         }
     }
 
@@ -1057,10 +967,10 @@ final class SnapshotBuilderTests: XCTestCase {
         )
         for row in r.rows {
             switch row.section {
-            case .needsYou: XCTAssertTrue(row.waiting)
-            case .running: XCTAssertTrue(row.liveProcess || row.subRunning > 0)
+            case .needsYou: XCTAssertTrue(row.isBlocked)
+            case .running: XCTAssertTrue(row.liveProcess || row.state == .running)
             case .stalled: XCTAssertTrue(row.isStalled)
-            case .recent: XCTAssertFalse(row.waiting)
+            case .recent: XCTAssertFalse(row.isBlocked)
             }
         }
     }
@@ -1069,16 +979,16 @@ final class SnapshotBuilderTests: XCTestCase {
         let r = build(harvest: [
             harvest(.cline, task: "Ask", session: "s1", skill: "pending", tool: "request_approval"),
         ])
-        XCTAssertTrue(r.rows[0].waiting)
-        XCTAssertEqual(r.rows[0].waitKind, "Permission")
+        XCTAssertTrue(r.rows[0].isBlocked)
+        XCTAssertEqual(r.rows[0].wait?.kind, "Permission")
     }
 
     func testHarvestFollowupToolStaysInputWaitKind() {
         let r = build(harvest: [
             harvest(.roo, task: "Ask", session: "s1", skill: "pending", tool: "ask_followup_question"),
         ])
-        XCTAssertTrue(r.rows[0].waiting)
-        XCTAssertEqual(r.rows[0].waitKind, "Input")
+        XCTAssertTrue(r.rows[0].isBlocked)
+        XCTAssertEqual(r.rows[0].wait?.kind, "Input")
     }
 
     func testSectionTotalsCountTheFleetNotTheWindow() {
@@ -1134,15 +1044,9 @@ final class SnapshotBuilderTests: XCTestCase {
     /// seeded per process; this digest is not, and the literal below is the
     /// wall that keeps it that way.
     func testTheIdentityDigestIsTheSameInEveryProcess() {
-        XCTAssertEqual(SnapshotBuilder.stableIdentityHash("pulse"), "b3f797f2")
-        XCTAssertEqual(
-            SnapshotBuilder.stableIdentityHash("c:/w/Repo/api"),
-            SnapshotBuilder.stableIdentityHash("c:/w/Repo/api")
-        )
-        XCTAssertNotEqual(
-            SnapshotBuilder.stableIdentityHash("c:/w/Repo/api"),
-            SnapshotBuilder.stableIdentityHash("c:/w/Repo/docs")
-        )
+        XCTAssertEqual(RowIdentity.stableHash("pulse"), "b3f797f2")
+        XCTAssertEqual(RowIdentity.stableHash("c:/w/Repo/api"), RowIdentity.stableHash("c:/w/Repo/api"))
+        XCTAssertNotEqual(RowIdentity.stableHash("c:/w/Repo/api"), RowIdentity.stableHash("c:/w/Repo/docs"))
     }
 
     /// Sessions a moving title cannot be told apart by anything else still get
@@ -1159,10 +1063,7 @@ final class SnapshotBuilderTests: XCTestCase {
     /// A session id already makes the key unique; it must not gain a suffix.
     func testASessionIdKeyIsLeftAlone() throws {
         let r = build(harvest: [harvest(.claude, task: "Fix", session: "s-1", cwd: "/w/Repo")])
-        XCTAssertEqual(
-            r.rows.first?.rowKey,
-            ActivityHarvest.sessionKey(id: .claude, sessionID: "s-1", project: "", cwd: "/w/Repo")
-        )
+        XCTAssertEqual(r.rows.first?.rowKey, "claude|s-1")
     }
 
     // MARK: Soft-dismiss bookkeeping (U-5)
@@ -1178,7 +1079,7 @@ final class SnapshotBuilderTests: XCTestCase {
             "a plain running session has no soft dismiss to clear"
         )
 
-        let key = ActivityHarvest.sessionKey(id: .cursor, sessionID: "s1", project: "", cwd: "")
+        let key = RowIdentity.session(agent: .cursor, sessionID: "s1")
         let held = build(harvest: [running], context: context(dismissed: [key]))
         XCTAssertEqual(held.clearedPendingKeys, [key])
     }

@@ -81,31 +81,31 @@ final class DurationFormatTests: XCTestCase {
 /// Ten minutes is where a wait stops being ordinary. It is the only place in
 /// the row where "longer" becomes "louder".
 final class WaitUrgencyTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
     private func waitingRow(ageSeconds: Double) -> AgentRow {
         var row = AgentRow(rowKey: "k", agent: .claude)
-        row.waiting = true
-        row.waitSinceMs = Int64((Date().timeIntervalSince1970 - ageSeconds) * 1000)
+        let since = ageSeconds > 0 ? now - Int64(ageSeconds * 1000) : 0
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks))
         return row
     }
 
     func testShortWaitIsNotUrgent() {
-        XCTAssertFalse(waitingRow(ageSeconds: 60).isUrgentWait)
+        XCTAssertFalse(waitingRow(ageSeconds: 60).isUrgentWait(at: now))
     }
 
     func testLongWaitIsUrgent() {
-        XCTAssertTrue(waitingRow(ageSeconds: 1200).isUrgentWait)
+        XCTAssertTrue(waitingRow(ageSeconds: 1200).isUrgentWait(at: now))
     }
 
     func testNonWaitingRowIsNeverUrgent() {
         var row = waitingRow(ageSeconds: 9999)
-        row.waiting = false
-        XCTAssertFalse(row.isUrgentWait)
+        row.state = .running
+        XCTAssertFalse(row.isUrgentWait(at: now))
     }
 
     func testUnknownStartIsNotUrgent() {
-        var row = waitingRow(ageSeconds: 1200)
-        row.waitSinceMs = 0
-        XCTAssertFalse(row.isUrgentWait, "no timestamp must not read as an old wait")
+        XCTAssertFalse(waitingRow(ageSeconds: 0).isUrgentWait(at: now), "no timestamp must not read as an old wait")
     }
 }
 
@@ -116,8 +116,8 @@ final class RowRedundancyTests: XCTestCase {
         var r = AgentRow(rowKey: "k", agent: agent)
         r.task = task
         r.project = project
-        r.processCount = 1
         r.liveProcess = true
+        r.state = .running
         return r
     }
 
@@ -130,10 +130,12 @@ final class RowRedundancyTests: XCTestCase {
 
     /// A bare process row said "Process detected", "process", and "Amp".
     func testProcessOnlyRowHasNoSessionTitleToShow() {
-        let r = row(agent: .amp)
-        XCTAssertTrue(r.isProcessOnly, "live with no task/tool is process-only")
+        var r = row(agent: .amp)
+        r.state = .processOnly
         XCTAssertNil(r.usefulTask)
         // Hero must not fall back to the agent product name (already on identity).
+        let hero = Explain.make(r, lang: .en, nowMs: 1_700_000_000_000).headline
+        XCTAssertNotEqual(hero, r.agent.displayName)
     }
 
     func testEveryAgentDropsItsOwnGenericSessionPlaceholder() {
@@ -191,12 +193,12 @@ final class RowContextTests: XCTestCase {
     }
 
     func testUnknownActivityIsZeroNotEpoch() {
-        XCTAssertEqual(row().lastActivitySeconds, 0)
+        XCTAssertEqual(row().lastActivitySeconds(at: 1_700_000_000_000), 0)
     }
 
     func testActivityAgeCountsFromTheHarvestStamp() {
-        let tenMinutesAgo = Int64((Date().timeIntervalSince1970 - 600) * 1000)
-        XCTAssertEqual(row(harvestMs: tenMinutesAgo).lastActivitySeconds, 600, accuracy: 5)
+        let now: Int64 = 1_700_000_000_000
+        XCTAssertEqual(row(harvestMs: now - 600_000).lastActivitySeconds(at: now), 600, accuracy: 0.001)
     }
 }
 
@@ -210,7 +212,7 @@ final class ScreenshotRegressionTests: XCTestCase {
         r.project = project
         r.harvestMs = harvestMs
         r.liveProcess = live
-        r.processCount = live ? 1 : 0
+        r.state = live ? .running : .recent
         return r
     }
 
@@ -249,13 +251,8 @@ final class ScreenshotRegressionTests: XCTestCase {
     /// rather than depending on when the suite happens to run.
     private let now: Int64 = 1_700_000_000_000
 
-    private func stalled(agoSeconds: Double, waiting: Bool = false, live: Bool = true) -> Bool {
-        AgentRow.stalled(
-            harvestMs: now - Int64(agoSeconds * 1000),
-            nowMs: now,
-            waiting: waiting,
-            live: live
-        )
+    private func stalled(agoSeconds: Double) -> Bool {
+        AgentRow.stalled(lastActivityMs: now - Int64(agoSeconds * 1000), nowMs: now)
     }
 
     func testLongSilenceWhileLiveIsStalled() {
@@ -266,48 +263,20 @@ final class ScreenshotRegressionTests: XCTestCase {
         XCTAssertFalse(stalled(agoSeconds: 60))
     }
 
-    func testAStalledRowMustBeLive() {
-        XCTAssertFalse(stalled(agoSeconds: 25 * 60, live: false), "a finished session is not stalled")
-    }
-
-    func testAWaitingRowIsNotAlsoStalled() {
-        XCTAssertFalse(stalled(agoSeconds: 25 * 60, waiting: true), "Waiting already says why it is idle")
-    }
-
     func testUnknownActivityIsNotStalled() {
         XCTAssertFalse(
-            AgentRow.stalled(harvestMs: 0, nowMs: now, waiting: false, live: true),
+            AgentRow.stalled(lastActivityMs: 0, nowMs: now),
             "no timestamp is not evidence of silence"
-        )
-    }
-
-    func testFreshActivitySignalPreventsStallDespiteOldHarvest() {
-        XCTAssertFalse(
-            AgentRow.stalled(
-                harvestMs: now - 30 * 60 * 1000,
-                nowMs: now,
-                waiting: false,
-                live: true,
-                activityChangedMs: now - 30_000
-            ),
-            "progress/token moves refresh the stall clock"
-        )
-        XCTAssertTrue(
-            AgentRow.stalled(
-                harvestMs: now - 30 * 60 * 1000,
-                nowMs: now,
-                waiting: false,
-                live: true,
-                activityChangedMs: now - 30 * 60 * 1000
-            )
         )
     }
 
     /// A stalled row is one the user should react to, so it keeps its badge.
     func testStalledRowsAreBadged() {
-        var r = row(live: true)
+        var r = row(harvestMs: now - 25 * 60 * 1000, live: true)
         r.isStalled = true
-        XCTAssertTrue(r.needsStatusChip)
+        let face = TrayRowModel.make(TrayRowModel.Input(row: r, lang: .en, nowMs: now))
+        XCTAssertEqual(face.chip?.label, L10n.t(.stalled, .en))
+        XCTAssertEqual(face.lamp, .error)
     }
 }
 
@@ -316,13 +285,7 @@ final class StallThresholdTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
     private func stalled(agoSeconds: Double, threshold: Double) -> Bool {
-        AgentRow.stalled(
-            harvestMs: now - Int64(agoSeconds * 1000),
-            nowMs: now,
-            waiting: false,
-            live: true,
-            threshold: threshold
-        )
+        AgentRow.stalled(lastActivityMs: now - Int64(agoSeconds * 1000), nowMs: now, threshold: threshold)
     }
 
     func testAShorterThresholdCatchesAShorterSilence() {
@@ -341,848 +304,3 @@ final class StallThresholdTests: XCTestCase {
         XCTAssertTrue(stalled(agoSeconds: 21 * 60, threshold: AgentRow.stalledSeconds))
     }
 }
-
-/// A running row said the same two things at minute one and minute forty.
-///
-/// `tool` is the only live fact the harvest collects, and it only ever
-/// appeared behind a hover or an expand.
-final class LiveToolTests: XCTestCase {
-    @MainActor
-    private func store() -> StatusStore {
-        let s = StatusStore()
-        s.language = .en
-        return s
-    }
-
-    private func row(tool: String, task: String, live: Bool, waiting: Bool = false) -> AgentRow {
-        var r = AgentRow(rowKey: "k", agent: .claude)
-        r.tool = tool
-        r.task = task
-        r.liveProcess = live
-        r.processCount = live ? 1 : 0
-        r.waiting = waiting
-        return r
-    }
-
-    @MainActor
-    func testALiveRowShowsWhatItIsRunning() {
-        XCTAssertEqual(store().narrator.liveTool(row(tool: "Bash", task: "Fix the parser", live: true)), "Bash")
-    }
-
-    /// On a finished session the last tool is history, not status.
-    @MainActor
-    func testAFinishedRowDoesNotClaimToBeRunningATool() {
-        XCTAssertNil(store().narrator.liveTool(row(tool: "Bash", task: "Fix the parser", live: false)))
-    }
-
-    /// Waiting rows already spend their third line on the actual question.
-    @MainActor
-    func testAWaitingRowKeepsItsQuestionInstead() {
-        XCTAssertNil(store().narrator.liveTool(row(tool: "Bash", task: "x", live: true, waiting: true)))
-    }
-
-    /// With no task the humanized tool is the hero, so repeating it on the
-    /// line below would be the same claim twice.
-    @MainActor
-    func testTheToolIsNotSaidTwiceWhenItIsAlreadyTheTitle() {
-        let r = row(tool: "Bash", task: "", live: true)
-        XCTAssertNil(r.sessionDetail, "raw tool is not a session title")
-        XCTAssertTrue(r.hasLiveToolFallback)
-        XCTAssertEqual(store().narrator.heroToolTitle(r), "Terminal command")
-        XCTAssertNil(store().narrator.liveTool(r))
-        let context = store().narrator.rowContextLine(r)
-        XCTAssertFalse(context.contains("Terminal command"), context)
-    }
-
-    @MainActor
-    func testUpdatePlanNeverBecomesTheHeroTitle() {
-        var r = row(tool: "update_plan", task: "update_plan", live: true)
-        XCTAssertNil(r.usefulTask)
-        XCTAssertEqual(store().narrator.heroToolTitle(r), "Planning")
-        r.task = "Improve observability"
-        XCTAssertEqual(r.usefulTask, "Improve observability")
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Last action: Planning") || story.contains("Planning"), story)
-        XCTAssertFalse(story.contains("update_plan"), story)
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertFalse(line.contains("Last action:"), "story owns last-action: \(line)")
-        XCTAssertFalse(line.contains("update_plan"), line)
-    }
-}
-
-/// The row keeps useful session evidence visible without a disclosure. Last
-/// activity and the latest tool are covered above.
-final class RowMetricsTests: XCTestCase {
-    @MainActor
-    private func store() -> StatusStore { StatusStore() }
-
-    private func row(
-        inTok: Int = 0, outTok: Int = 0, subRunning: Int = 0, subTotal: Int = 0,
-        waiting: Bool = false, records: Int = 0, startedAgo: Double = 0
-    ) -> AgentRow {
-        var r = AgentRow(rowKey: "k", agent: .claude)
-        r.tokensIn = inTok
-        r.tokensOut = outTok
-        r.subRunning = subRunning
-        r.subTotal = subTotal
-        r.waiting = waiting
-        r.records = records
-        if startedAgo > 0 {
-            r.startedMs = Int64((Date().timeIntervalSince1970 - startedAgo) * 1000)
-        }
-        return r
-    }
-
-    @MainActor
-    func testTokenSnapshotIsVisibleByDefault() {
-        let line = store().narrator.rowMetrics(row(inTok: 12_000, outTok: 3_000))
-        XCTAssertTrue(line.contains("Latest model call"), line)
-        XCTAssertTrue(line.contains("12k input"), line)
-        XCTAssertTrue(line.contains("3.0k output"), line)
-    }
-
-    @MainActor
-    func testSubagentProgressIsVisibleByDefault() {
-        XCTAssertTrue(store().narrator.rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
-    }
-
-    @MainActor
-    func testProcessOnlyRowReportsHonestProcessAge() {
-        var r = AgentRow(rowKey: "amp", agent: .amp)
-        r.liveProcess = true
-        r.processStartedMs = Int64((Date().timeIntervalSince1970 - 3_600) * 1000)
-        let line = store().narrator.rowMetrics(r)
-        XCTAssertTrue(line.contains("Process started"), line)
-        XCTAssertTrue(line.contains("1h"), line)
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Process started") || story.contains("进程"), story)
-        let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.isEmpty, "opaque story owns process age (0.92): \(signal)")
-        XCTAssertFalse(signal.contains("events"), signal)
-    }
-
-    @MainActor
-    func testStalledRowExposesHowLongItHasBeenQuiet() {
-        var r = row(startedAgo: 54 * 60)
-        r.task = "Check the process detector"
-        r.isStalled = true
-        r.harvestMs = Int64((Date().timeIntervalSince1970 - 32 * 60) * 1000)
-        let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("No activity for"), signal)
-        XCTAssertTrue(signal.contains("32m"), signal)
-        // 0.80: session start stays on the context trailing edge even when stalled.
-        XCTAssertTrue(store().narrator.rowContextLine(r).contains("Started"), store().narrator.rowContextLine(r))
-    }
-
-    @MainActor
-    func testRecordCountIsVisibleByDefault() {
-        XCTAssertTrue(store().narrator.rowMetrics(row(records: 34)).contains("34"))
-    }
-
-    /// On a waiting row the question is the point; numbers beside it are noise
-    /// competing with the one thing that needs an answer.
-    ///
-    /// 0.28.0 asserted this with a row that carried *only* tokens, and tokens
-    /// were the only metric actually suppressed — age, records and sub-agent
-    /// progress went on appearing. A test that can only see the one case that
-    /// works is how the gap survived a release, so this row carries all four.
-    @MainActor
-    func testAWaitingRowSpendsItsSpaceOnTheQuestion() {
-        let loaded = row(
-            inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
-            waiting: true, records: 34, startedAgo: 3 * 3600
-        )
-        XCTAssertEqual(store().narrator.rowMetrics(loaded), "", "a waiting row carries no metrics at all")
-        XCTAssertEqual(store().rowObservationLine(loaded), "", "a waiting row carries no telemetry line")
-    }
-
-    /// The same row, not waiting, keeps stable model context separate from two
-    /// complementary execution facts. Session age shares the context line
-    /// instead of creating another row.
-    @MainActor
-    func testTheSameRowNotWaitingKeepsComplementaryExecutionFacts() {
-        var loaded = row(
-            inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
-            records: 34, startedAgo: 3 * 3600
-        )
-        loaded.task = "Refactor observability"
-        let metrics = store().narrator.rowMetrics(loaded)
-        let observation = store().rowObservationLine(loaded)
-        let context = store().narrator.rowContextLine(loaded)
-        XCTAssertTrue(metrics.contains("2 of 5"), metrics)
-        XCTAssertTrue(store().rowWorkLine(loaded).contains("12k"), store().rowWorkLine(loaded))
-        XCTAssertTrue(observation.contains("2 of 5") || observation.contains("2"), observation)
-        XCTAssertFalse(
-            observation.contains("34 events"),
-            "subagents displace diagnostic record counts: \(observation)"
-        )
-        XCTAssertTrue(context.contains("3h"), context)
-        XCTAssertTrue(metrics.contains("12k"), metrics)
-        XCTAssertFalse(metrics.contains("34"), metrics)
-    }
-
-    /// Nothing to say means no text, not a placeholder.
-    @MainActor
-    func testARowWithNoNumbersShowsNothing() {
-        XCTAssertEqual(store().narrator.rowMetrics(row()), "")
-        XCTAssertEqual(store().rowObservationLine(row()), "")
-    }
-
-    func testTokenLineIsSuppressedWhileWaiting() {
-        XCTAssertNil(row(inTok: 5_000, waiting: true).tokenLine)
-        XCTAssertNotNil(row(inTok: 5_000).tokenLine)
-    }
-
-    func testIdentityDoesNotRepeatAgentOrUseAnUnlabelledMultiplier() {
-        var r = AgentRow(rowKey: "cursor", agent: .cursor)
-        r.project = "Cursor"
-        r.processCount = 2
-        XCTAssertEqual(r.titleLine, "Cursor")
-        XCTAssertFalse(r.titleLine.contains("×"))
-    }
-
-    @MainActor
-    func testRawToolIdentifierReadsAsALastAction() {
-        var r = row()
-        r.task = "Improve observability"
-        r.tool = "update_plan"
-        r.liveProcess = true
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Last action: Planning") || story.contains("Planning"), story)
-        XCTAssertFalse(story.contains("update_plan"), story)
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertFalse(line.contains("Last action:"), "story owns last-action (0.92): \(line)")
-    }
-
-    @MainActor
-    func testTestingToolReadsAsAUsefulLastAction() {
-        var r = row()
-        r.task = "Run checks"
-        r.tool = "swift_test"
-        r.liveProcess = true
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertFalse(line.contains("Last action:"), line)
-    }
-
-    @MainActor
-    func testRecentDynamicRowKeepsSessionStartOnContext() {
-        var r = row(startedAgo: 54 * 60)
-        r.task = "Run checks"
-        r.tool = "swift_test"
-        r.liveProcess = true
-        let line = store().narrator.rowContextLine(r)
-        // EXPERIENCE 次行右端: Started stays visible (0.80 Tray Legibility).
-        XCTAssertTrue(line.contains("Started"), line)
-        // 0.92: last-action lives on story, not context.
-        XCTAssertFalse(line.contains("Last action:"), line)
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
-    }
-
-    @MainActor
-    func testRecentSessionKeepsLastMeaningfulActionVisible() {
-        var r = row()
-        r.task = "Review release"
-        r.tool = "view_image"
-        r.liveProcess = false
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(
-            story.contains("Reviewing image") || story.contains("查看图片") || story.contains("Last action"),
-            story
-        )
-    }
-
-    @MainActor
-    func testGenericCommandIsHumanizedAsLastAction() {
-        var r = row()
-        r.task = "Improve observability"
-        r.tool = "run_terminal_command"
-        r.liveProcess = true
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Last action:") || story.localizedCaseInsensitiveContains("command"), story)
-        XCTAssertFalse(story.contains("run_terminal_command"), story)
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertFalse(line.contains("Last action:"), line)
-    }
-
-    @MainActor
-    func testStructuredPhaseBeatsRawToolAndRichFactsStayVisible() {
-        var r = row()
-        r.task = "Fix multipart upload"
-        r.tool = "run_terminal_command"
-        r.phase = "turn_complete"
-        r.model = "grok-4.5"
-        r.mode = "grok-build-plan"
-        r.errors = 1
-        r.contextPercent = 27
-        r.liveProcess = true
-
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.localizedCaseInsensitiveContains("command") || story.contains("Turn"), story)
-        let context = store().narrator.rowContextLine(r)
-        XCTAssertFalse(context.contains("Last action:"), "story owns tool gist: \(context)")
-        let lifecycle = store().narrator.rowNowLine(r)
-        XCTAssertTrue(lifecycle.contains("Outcome"), lifecycle)
-        XCTAssertTrue(lifecycle.contains("Turn complete"), lifecycle)
-        XCTAssertFalse(lifecycle.contains("Now"), lifecycle)
-
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("Build Plan"), work)
-        XCTAssertTrue(work.contains("Model grok 4.5"), work)
-        XCTAssertTrue(store().narrator.rowMetrics(r).contains("1 failure"))
-
-        r.errors = 0
-        XCTAssertTrue(store().narrator.rowMetrics(r).contains("Context 27%"))
-    }
-
-    @MainActor
-    func testSignalLineCombinesChangingAndStableFactsWithoutProgressDuplication() {
-        var r = row(inTok: 12_000, outTok: 3_000)
-        r.task = "Improve observability"
-        r.phase = "testing"
-        r.progressDone = 18
-        r.progressTotal = 31
-        r.activityChange = .progress(done: 18, total: 31)
-        r.model = "gpt-5"
-        r.liveProcess = true
-
-        // 0.92: story owns Now + Changed; signal yields.
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
-        XCTAssertTrue(story.contains("18/31"), story)
-        let signal = store().rowSignalLine(r)
-        XCTAssertFalse(signal.contains("Now"), "signal yields Now to story: \(signal)")
-        XCTAssertFalse(signal.contains("18/31"), "signal yields Changed to story: \(signal)")
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("Model gpt 5"), work)
-        XCTAssertTrue(work.contains("12k") || work.contains("3.0k") || work.contains("3k"), work)
-    }
-
-    @MainActor
-    func testSignalLineKeepsCompactEvidenceWhenAChangeAndModelContextCompete() {
-        var r = row(inTok: 12_000, outTok: 3_000)
-        r.task = "Improve observability"
-        r.phase = "testing"
-        r.model = "gpt-5"
-        r.contextPercent = 42
-        r.errors = 1
-        r.activityChange = .modelCall
-        r.liveProcess = true
-
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Model call") || story.contains("模型"), story)
-        let signal = store().rowSignalLine(r)
-        XCTAssertFalse(signal.contains("Model call"), "story owns Changed: \(signal)")
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("Model gpt 5"), work)
-        XCTAssertTrue(
-            work.contains("12k") || work.contains("Context 42%"),
-            work
-        )
-        XCTAssertFalse(signal.contains("Latest model call"), "default signal should stay scan-friendly: \(signal)")
-    }
-
-    @MainActor
-    func testDefaultSignalPrioritizesAgentContextOverRawEventCount() {
-        var r = row(inTok: 12_000, outTok: 3_000, records: 126)
-        r.task = "Run collector fixtures"
-        r.phase = "testing"
-        r.model = "claude-sonnet-4"
-        r.contextPercent = 68
-        r.liveProcess = true
-
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
-        let signal = store().rowSignalLine(r)
-        XCTAssertFalse(signal.contains("Now"), signal)
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("Model claude sonnet 4"), work)
-        XCTAssertTrue(
-            work.contains("12k") || work.contains("Context 68%"),
-            work
-        )
-        let observation = store().rowObservationLine(r)
-        XCTAssertFalse(observation.contains("126 events"), "raw record count should yield to model/tokens: \(observation)")
-    }
-
-    @MainActor
-    func testStableAgentFactsRemainVisibleWhenThereIsNoDynamicMetric() {
-        var r = row(records: 126)
-        r.task = "Inspect adapter"
-        r.model = "gpt-5"
-        r.contextPercent = 31
-        r.liveProcess = true
-
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("Model gpt 5"), work)
-        XCTAssertTrue(work.contains("Context 31%"), work)
-        let observation = store().rowObservationLine(r)
-        XCTAssertFalse(observation.contains("126 events"), "rich stable facts should hide diagnostic-only records: \(observation)")
-        let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.isEmpty || !signal.contains("126 events"), signal)
-    }
-
-    @MainActor
-    func testSignalLineDoesNotDuplicateContextWhenNoChange() {
-        var r = row()
-        r.task = "Quiet session"
-        r.model = "gpt-5"
-        r.contextPercent = 19
-        r.liveProcess = true
-        r.observationSource = .session
-        r.activityChange = nil
-
-        let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.isEmpty, "quiet motion line stays empty: \(signal)")
-        let work = store().rowWorkLine(r)
-        let contextHits = work.components(separatedBy: "Context 19%").count - 1
-        XCTAssertEqual(contextHits, 1, "work line duplicated Context: \(work)")
-        XCTAssertFalse(store().rowObservationLine(r).contains("Context"), "one fact, one line")
-    }
-
-    @MainActor
-    func testSignalLineShowsMultipleLiveProcessesOnlyForARealSessionRow() {
-        var r = row()
-        r.task = "Cursor work"
-        r.liveProcess = true
-        r.processCount = 4
-        let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.contains("4"), signal)
-    }
-
-    @MainActor
-    func testSessionWithoutDynamicFactsDoesNotInventSignalChrome() {
-        var r = row()
-        r.task = "A session with no telemetry"
-        r.liveProcess = true
-        r.observationSource = .session
-        let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.isEmpty, "empty signal must hide, not invent chrome: \(signal)")
-    }
-
-    @MainActor
-    func testUnknownSkillKeepsASafeWorkflowCapabilityLabel() {
-        var r = row()
-        r.skill = "openai-developers:agents-sdk"
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("Workflow Agents Sdk"), work)
-        XCTAssertFalse(work.contains("openai-developers:"), work)
-    }
-
-    @MainActor
-    func testProcessOnlyAppStatesTheVisibilityLimit() {
-        var r = row()
-        r.liveProcess = true
-        r.processCount = 3
-        // Gap lives on the hero (terminalDetectedNoDetails / appDetectedNoDetails);
-        // context keeps detection evidence only.
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertFalse(line.contains("3"), line)
-        XCTAssertFalse(line.localizedCaseInsensitiveContains("process"), line)
-        XCTAssertFalse(line.localizedCaseInsensitiveContains("agent app running"), line)
-    }
-
-    @MainActor
-    func testProcessOnlyRowExplainsItsDetectionEvidence() {
-        var r = row()
-        r.liveProcess = true
-        r.processEvidence = .pathSignature
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertTrue(line.localizedCaseInsensitiveContains("detected by path signature"), line)
-        XCTAssertFalse(
-            line.localizedCaseInsensitiveContains("activity feed unavailable"),
-            "hero owns the feed gap; context must not repeat it: \(line)"
-        )
-    }
-
-    @MainActor
-    func testContextLineNeverFallsBackToAgentDisplayName() {
-        var r = row()
-        r.task = "Real goal"
-        r.liveProcess = true
-        r.observationSource = .session
-        r.cwd = ""
-        r.project = ""
-        r.tool = ""
-        r.harvestMs = 0
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertFalse(line.contains(r.agent.displayName), "agent name is identity chrome, not context: \(line)")
-    }
-
-    @MainActor
-    func testObservationLineSurfacesTokensAndModelByDefault() {
-        var r = row(inTok: 12_000, outTok: 3_000)
-        r.task = "Ship tray legibility"
-        r.model = "claude-sonnet-4"
-        r.liveProcess = true
-        r.activityChange = nil
-        let signal = store().rowSignalLine(r)
-        XCTAssertTrue(signal.isEmpty, "quiet motion stays empty: \(signal)")
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("Model claude sonnet 4"), work)
-        XCTAssertTrue(work.contains("12k"), work)
-        XCTAssertTrue(work.contains("3.0k") || work.contains("3k"), work)
-    }
-
-    @MainActor
-    func testGenericToolNamesStillEarnLastAction() {
-        var r = row()
-        r.task = "Improve observability"
-        r.tool = "LS"
-        r.liveProcess = true
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Last action:") || story.contains("LS"), story)
-        let line = store().narrator.rowContextLine(r)
-        XCTAssertFalse(line.contains("Last action:"), "story owns last-action: \(line)")
-    }
-
-    @MainActor
-    func testOmitPathStillKeepsLastActionWhenHeroIsTool() {
-        var r = row()
-        r.task = ""
-        r.tool = "Bash"
-        r.cwd = "/Users/me/Pulse"
-        r.liveProcess = true
-        r.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
-        XCTAssertTrue(r.hasLiveToolFallback)
-        // 8.1: the tool's home is the hero here (fallback title) — the work
-        // line must not say it twice, and context keeps where/when only.
-        let line = store().narrator.rowContextLine(r, omitPath: true)
-        XCTAssertFalse(line.contains("Last action:"), line)
-        XCTAssertFalse(line.isEmpty, line)
-        XCTAssertFalse(
-            store().rowWorkLine(r).localizedCaseInsensitiveContains("command"),
-            "hero owns the tool: \(store().rowWorkLine(r))"
-        )
-    }
-
-    @MainActor
-    func testClaudeShapedObservationSurfacesModelAndTokens() {
-        var r = row(inTok: 1_500, outTok: 80)
-        r.task = "Fix the tray density"
-        r.model = "claude-sonnet-4"
-        r.tool = "Edit"
-        r.liveProcess = true
-        r.activityChange = nil
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("claude sonnet 4") || work.contains("Model"), work)
-        XCTAssertTrue(work.contains("1.5k") || work.contains("1500") || work.contains("1,500") || work.contains("↑"), work)
-        let context = store().narrator.rowContextLine(r)
-        XCTAssertFalse(context.contains("Last action:"), "story owns last-action (0.92): \(context)")
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Last action:") || story.localizedCaseInsensitiveContains("edit"), story)
-    }
-
-    @MainActor
-    func testCacheRowObservationSurfacesModelWithoutSessionUpgrade() {
-        var r = row()
-        r.agent = .windsurf
-        r.task = "Windsurf thin"
-        r.model = "cascade"
-        r.observationSource = .cache
-        r.liveProcess = false
-        r.activityChange = nil
-        r.refreshObservationQuality()
-        XCTAssertTrue(r.quality.isLimited)
-        XCTAssertEqual(r.observationSource, .cache)
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("cascade") || work.contains("Model"), work)
-        let now = store().narrator.rowNowLine(r)
-        XCTAssertTrue(now.isEmpty, "cache without phase must not invent Now: \(now)")
-    }
-
-    @MainActor
-    func testQuietLiveRowKeepsEmptyNowWhenPhaseMissing() {
-        var r = row(inTok: 900, outTok: 40)
-        r.task = "Quiet live session"
-        r.model = "gpt-5"
-        r.phase = ""
-        r.tool = ""
-        r.liveProcess = true
-        r.activityChange = nil
-        let now = store().narrator.rowNowLine(r)
-        XCTAssertTrue(now.isEmpty, "no phase → empty Now (never last-tool): \(now)")
-        let work = store().rowWorkLine(r)
-        XCTAssertTrue(work.contains("gpt 5") || work.contains("Model"), work)
-        XCTAssertTrue(work.contains("900") || work.contains("40") || work.contains("↑"), work)
-    }
-
-    @MainActor
-    func testRowStoryNarratesPhaseAndToolWithoutFakeNow() {
-        var r = row(inTok: 1_200, outTok: 80)
-        r.task = "Ship row story"
-        r.phase = "working"
-        r.tool = "Edit"
-        r.liveProcess = true
-        r.activityChange = nil
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Working") || story.contains("正在执行"), story)
-        XCTAssertTrue(story.localizedCaseInsensitiveContains("edit") || story.contains("编辑"), story)
-        XCTAssertFalse(story.contains("Now"), "story must not invent a Now label: \(story)")
-    }
-
-    @MainActor
-    func testQuietLiveStoryFallsBackToLastActionOrObservation() {
-        var r = row(inTok: 900, outTok: 40)
-        r.task = "Quiet live session"
-        r.model = "gpt-5"
-        r.phase = ""
-        r.tool = "Bash"
-        r.liveProcess = true
-        r.activityChange = nil
-        let story = store().rowStoryLine(r)
-        XCTAssertFalse(story.isEmpty, story)
-        XCTAssertTrue(
-            story.contains("Last action") || story.contains("最近动作") || story.contains("Model") || story.contains("模型"),
-            story
-        )
-        XCTAssertFalse(story.contains("Now"), story)
-        let now = store().narrator.rowNowLine(r)
-        XCTAssertTrue(now.isEmpty, now)
-    }
-
-    @MainActor
-    func testProcessOnlyStorySurfacesEvidenceAndNextStep() {
-        var r = row()
-        r.agent = .amp
-        r.task = ""
-        r.tool = ""
-        r.liveProcess = true
-        r.observationSource = .process
-        r.harvestMs = 0
-        r.refreshObservationQuality()
-        XCTAssertTrue(r.isProcessOnly)
-        let story = store().rowStoryLine(r)
-        XCTAssertFalse(story.isEmpty, story)
-        XCTAssertTrue(
-            story.localizedCaseInsensitiveContains("process")
-                || story.contains("进程")
-                || story.contains("Limited")
-                || story.contains("有限"),
-            story
-        )
-    }
-
-    @MainActor
-    func testWaitingChipOwnsKindDurationStoryYieldsSignal() {
-        var r = row()
-        r.waiting = true
-        r.waitKind = "Permission"
-        r.waitSignal = .hooks
-        r.waitMessage = ""
-        r.waitSinceMs = Int64(Date().timeIntervalSince1970 * 1000) - 8 * 60 * 1000
-        let story = store().rowStoryLine(r)
-        // Chip owns kind·duration; story only carries signal when no message.
-        XCTAssertFalse(story.localizedCaseInsensitiveContains("permission"), story)
-        XCTAssertTrue(story.contains(store().tr(.signalHooks)), story)
-        let dur = store().narrator.waitDurationLabel(r)
-        XCTAssertFalse(dur.isEmpty)
-        XCTAssertNil(store().narrator.localizedWaitDetail(r))
-    }
-
-    @MainActor
-    func testWaitingDetailIsMessageFirst() {
-        var r = row()
-        r.waiting = true
-        r.waitKind = "Permission"
-        r.waitSignal = .hooks
-        r.waitMessage = "Allow network access?"
-        r.waitSinceMs = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
-        XCTAssertEqual(store().rowStoryLine(r), "")
-        let detail = store().narrator.localizedWaitDetail(r)
-        XCTAssertNotNil(detail)
-        XCTAssertTrue(detail!.hasPrefix("↳ Allow network"), detail!)
-        XCTAssertTrue(detail!.contains(store().tr(.signalHooks)), detail!)
-        // Duration stays on the chip — not leading the detail.
-        XCTAssertFalse(detail!.hasPrefix("↳ 1m"), detail!)
-        XCTAssertFalse(detail!.hasPrefix("↳ 60"), detail!)
-    }
-
-    @MainActor
-    func testToolChangedAppearsOnStoryNotSignalWhenOwned() {
-        var r = row()
-        r.task = "Ship row story"
-        r.liveProcess = true
-        r.activityChange = .toolChanged
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Tool") || story.contains("工具") || story.contains("Changed") || story.contains("变化"), story)
-        let signal = store().rowSignalLine(r)
-        XCTAssertFalse(
-            signal.contains("Tool") || signal.contains("工具"),
-            "signal yields Changed when story owns it: \(signal)"
-        )
-    }
-
-    @MainActor
-    func testStoryAndContextDoNotBothCarryLastAction() {
-        var r = row()
-        r.task = "Clarity"
-        r.tool = "Edit"
-        r.phase = "working"
-        r.liveProcess = true
-        let story = store().rowStoryLine(r)
-        let context = store().narrator.rowContextLine(r)
-        XCTAssertFalse(story.isEmpty, story)
-        XCTAssertFalse(context.contains("Last action:"), context)
-        XCTAssertTrue(store().narrator.storyOwnsLastAction(r))
-    }
-
-    @MainActor
-    func testLimitedQualitySummaryOnceOnStoryNotIdentity() {
-        var r = row()
-        r.agent = .amp
-        r.task = ""
-        r.tool = ""
-        r.liveProcess = true
-        r.observationSource = .process
-        r.harvestMs = 0
-        r.refreshObservationQuality()
-        let story = store().rowStoryLine(r)
-        XCTAssertFalse(story.isEmpty, story)
-        let label = store().rowSourceLabel(r)
-        XCTAssertEqual(label, store().tr(.limitedData))
-        // Identity is the short tag; full next-step lives on story.
-        XCTAssertNotEqual(label, story)
-    }
-
-    @MainActor
-    func testOpaqueStoryCarriesAgeStrongestAndNextStep() {
-        var r = row()
-        r.agent = .amp
-        r.task = ""
-        r.tool = ""
-        r.model = "amp-1"
-        r.liveProcess = true
-        r.observationSource = .process
-        r.processStartedMs = Int64((Date().timeIntervalSince1970 - 120) * 1000)
-        r.harvestMs = 0
-        r.refreshObservationQuality()
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.contains("Process started") || story.contains("进程"), story)
-        XCTAssertTrue(story.contains("amp") || story.contains("Model") || story.contains("模型"), story)
-        XCTAssertFalse(story.contains("Now"), story)
-        XCTAssertFalse(r.waiting)
-    }
-
-    @MainActor
-    func testDependingPhaseReadsAsWorkingNotWaiting() {
-        var r = row()
-        r.task = "Goose busy"
-        r.phase = "depending"
-        r.liveProcess = true
-        r.waiting = false
-        let now = store().narrator.rowNowLine(r)
-        XCTAssertTrue(now.contains("Working") || now.contains("正在执行"), now)
-        XCTAssertFalse(now.localizedCaseInsensitiveContains("wait"), now)
-    }
-
-    @MainActor
-    func testInProgressPhaseReadsAsWorking() {
-        var r = row()
-        r.task = "Gemini turn"
-        r.phase = "in_progress"
-        r.liveProcess = true
-        let now = store().narrator.rowNowLine(r)
-        XCTAssertTrue(now.contains("Working") || now.contains("正在执行"), now)
-    }
-
-    @MainActor
-    func testRecentToolCanBeHeroWithoutLiveProcess() {
-        var r = row()
-        r.tool = "Bash"
-        r.task = ""
-        r.liveProcess = false
-        XCTAssertTrue(r.hasLiveToolFallback)
-        XCTAssertEqual(store().narrator.heroToolTitle(r), "Terminal command")
-    }
-
-    @MainActor
-    func testProcessOnlyRowDoesNotPromoteStaleSessionRecords() {
-        var r = row(records: 126)
-        r.liveProcess = true
-        r.processStartedMs = Int64((Date().timeIntervalSince1970 - 3_600) * 1000)
-        let story = store().rowStoryLine(r)
-        XCTAssertTrue(story.localizedCaseInsensitiveContains("process started") || story.contains("进程"), story)
-        XCTAssertFalse(story.localizedCaseInsensitiveContains("events"), story)
-        let line = store().rowSignalLine(r)
-        XCTAssertTrue(line.isEmpty, "process-only signal yields to story: \(line)")
-    }
-
-    @MainActor
-    func testProcessOnlyTerminalStatesItsActionableEvidence() {
-        var r = row()
-        r.liveProcess = true
-        r.processCount = 1
-        r.focusTier = .warp
-        let line = store().narrator.rowContextLine(r)
-        // Context stays quiet when there is no path/evidence; hero owns the gap.
-        XCTAssertFalse(line.localizedCaseInsensitiveContains("terminal session running"), line)
-        XCTAssertFalse(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)
-    }
-}
-
-/// The two facts every file-backed agent can answer, and none were answering.
-///
-/// Measured before building this: of 32 harvesters, 5 produced tokens and 5
-/// produced a tool name. Twenty-six produced nothing that changes while work
-/// happens, so their rows could only ever say a title and a path — both fixed
-/// for the session's whole life.
-final class SessionAgeTests: XCTestCase {
-    private let now: Int64 = 1_700_000_000_000
-
-    private func row(startedAgo: Double) -> AgentRow {
-        var r = AgentRow(rowKey: "k", agent: .claude)
-        r.startedMs = now - Int64(startedAgo * 1000)
-        return r
-    }
-
-    func testASessionKnowsHowLongItHasBeenGoing() {
-        XCTAssertEqual(row(startedAgo: 3 * 3600).sessionAgeSeconds(nowMs: now), 10_800, accuracy: 1)
-    }
-
-    /// Distinct from "last moved": a session can be three hours old and have
-    /// touched something a minute ago. The panel only ever had the minute.
-    ///
-    /// The two facts read different clocks — `lastActivitySeconds` is a
-    /// computed property against `Date()`, `sessionAgeSeconds` takes the scan's
-    /// injected `nowMs` — so the row has to be built against both. The first
-    /// version of this test stamped `harvestMs` from the fixed 2023 constant
-    /// and asserted it was a minute old, which against the wall clock is three
-    /// years. Same shape as the 0.25 `isStalled` bug: a fixed test clock next
-    /// to a function that reaches for the real one.
-    func testAgeIsNotLastActivity() {
-        let wallNow = Int64(Date().timeIntervalSince1970 * 1000)
-        var r = AgentRow(rowKey: "k", agent: .claude)
-        r.harvestMs = wallNow - 60_000
-        r.startedMs = wallNow - Int64(3 * 3600 * 1000)
-        XCTAssertEqual(r.lastActivitySeconds, 60, accuracy: 5)
-        XCTAssertEqual(r.sessionAgeSeconds(nowMs: wallNow), 10_800, accuracy: 5)
-        XCTAssertGreaterThan(
-            r.sessionAgeSeconds(nowMs: wallNow),
-            r.lastActivitySeconds,
-            "a long session that just moved must still read as long"
-        )
-    }
-
-    /// No start stamp is unknown, and unknown is 0 — never a guess.
-    func testUnknownStartIsZero() {
-        var r = AgentRow(rowKey: "k", agent: .claude)
-        r.startedMs = 0
-        XCTAssertEqual(r.sessionAgeSeconds(nowMs: now), 0)
-    }
-
-    /// A clock that disagrees with the file system must not produce a negative
-    /// age that formats as a time in the future.
-    func testAStartInTheFutureIsNotNegativeAge() {
-        var r = AgentRow(rowKey: "k", agent: .claude)
-        r.startedMs = now + 60_000
-        XCTAssertEqual(r.sessionAgeSeconds(nowMs: now), 0)
-    }
-
-    func testRecordsDefaultToUnknown() {
-        XCTAssertEqual(AgentRow(rowKey: "k", agent: .claude).records, 0)
-    }
-}
-
