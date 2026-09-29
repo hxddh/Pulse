@@ -32,6 +32,7 @@ enum NativeHarvestSelfTest {
             try writePiFixture(home: home)
             try writeGrokFixture(home: home)
             try writeWarpFixture(home: home)
+            try writeGooseFixture(home: home)
         } catch {
             print("native fixture FAILED: \(error.localizedDescription)")
             return false
@@ -114,6 +115,27 @@ enum NativeHarvestSelfTest {
             }
         }
         require(.codex, { $0.task == "Compacted rollout fixture" && $0.tool == "bash" }, "compacted task/action")
+        // 20.0 Drift: vendor-shaped stores read for values, not for a row.
+        require(
+            .gemini,
+            { $0.task == "Gemini fixture" && $0.lastWord == "Gemini fixture reply." && $0.cwd == "/tmp/pulse-gemini" },
+            "JSONL chat task, last word and project root"
+        )
+        require(
+            .kimi,
+            { $0.task == "Kimi fixture" && $0.lastWord == "Kimi fixture reply." && $0.cwd == "/tmp/pulse-kimi" && $0.skill == "pending" },
+            "wire.jsonl words, state.json cwd, the open approval"
+        )
+        require(
+            .cline,
+            { $0.task == "Cline fixture" && $0.lastWord == "Cline fixture reply." && $0.skill == "pending" },
+            "ui_messages.json task, words and the newest interactive ask"
+        )
+        require(
+            .goose,
+            { $0.task == "Goose fixture" && $0.lastWord == "Goose fixture reply." && $0.cwd == "/tmp/pulse-goose" },
+            "sessions.db title, last word and working dir"
+        )
 
         // Flagship hero fidelity. Everything below asserts the *value* of the
         // tray hero against a vendor-shaped file, not merely that a row
@@ -313,11 +335,42 @@ enum NativeHarvestSelfTest {
                 """
                 try codex.write(to: url, atomically: true, encoding: .utf8)
             } else if id == .gemini {
-                try #"{"type":"user","message":{"role":"user","content":"Gemini fixture"},"model":"gemini-fixture","status":"success"}"#.write(to: url, atomically: true, encoding: .utf8)
+                // 20.0: what Gemini CLI writes (chatRecordingService.ts):
+                // metadata, `type: user` with a part list, `type: gemini`
+                // with a plain string, `$set` patches.
+                let gemini = """
+                {"sessionId":"gemini-fixture","projectHash":"f1","startTime":"2026-08-03T00:00:00.000Z","lastUpdated":"2026-08-03T00:00:00.000Z"}
+                {"id":"u1","timestamp":"2026-08-03T00:00:01.000Z","type":"user","content":[{"text":"Gemini fixture"}]}
+                {"$set":{"lastUpdated":"2026-08-03T00:00:01.001Z"}}
+                {"id":"g1","timestamp":"2026-08-03T00:00:09.000Z","type":"gemini","content":"Gemini fixture reply.","thoughts":[],"model":"gemini-fixture"}
+                {"$set":{"lastUpdated":"2026-08-03T00:00:09.001Z"}}
+                """
+                try gemini.write(to: url, atomically: true, encoding: .utf8)
                 let marker = url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".project_root")
                 try fm.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try "/tmp/pulse-gemini\n".write(to: marker, atomically: true, encoding: .utf8)
-            } else if id == .claude || id == .commandCode || id == .droid || id == .kimi {
+            } else if id == .kimi {
+                // 20.0: Kimi Code's session directory — the main agent's
+                // wire stream plus state.json (agent-core-v2).
+                let wire = """
+                {"type":"metadata","protocol_version":"1.5","created_at":1785715200000}
+                {"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"Kimi fixture"}],"turnId":1,"time":1785715201000}
+                {"type":"llm.request","agentId":"main","model":"kimi-fixture","time":1785715201100}
+                {"type":"context.append_loop_event","agentId":"main","event":{"type":"content.part","stepUuid":"s-1","part":{"type":"text","text":"Kimi fixture reply."}},"time":1785715209000}
+                {"type":"interaction.request","agentId":"main","id":"i_1","kind":"approval","toolCallId":"call_1","request":{},"time":1785715209500}
+                """
+                try wire.write(to: url, atomically: true, encoding: .utf8)
+                let state = url.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                    .appendingPathComponent("state.json")
+                try #"{"id":"session_fixture","version":2,"cwd":"/tmp/pulse-kimi","createdAt":1785715200000,"updatedAt":1785715209500,"title":"Kimi fixture","lastPrompt":"Kimi fixture"}"#
+                    .write(to: state, atomically: true, encoding: .utf8)
+            } else if id == .cline {
+                // 20.0: a Cline task directory, waiting on approval to run a
+                // command (shared/ExtensionMessage.ts); the earlier, long
+                // granted ask must not count.
+                let messages = #"[{"ts":1785715200000,"type":"say","say":"task","text":"Cline fixture"},{"ts":1785715201000,"type":"ask","ask":"tool","text":"{}"},{"ts":1785715202000,"type":"say","say":"text","text":"Cline fixture reply.","partial":false},{"ts":1785715203000,"type":"ask","ask":"command","text":"npm test","partial":false}]"#
+                try messages.write(to: url, atomically: true, encoding: .utf8)
+            } else if id == .claude || id == .commandCode || id == .droid {
                 try (generic.replacingOccurrences(of: "ID", with: id.rawValue)
                     .replacingOccurrences(of: "TITLE", with: id.displayName))
                     .write(to: url, atomically: true, encoding: .utf8)
@@ -479,6 +532,19 @@ enum NativeHarvestSelfTest {
         defer { sqlite3_close(db) }
         try exec(db, "CREATE TABLE session_docs (session_id TEXT, cwd TEXT, updated_at INTEGER, title TEXT, content TEXT);")
         try exec(db, "INSERT INTO session_docs VALUES ('grok-fixture', '/tmp/pulse-grok', 1785715200000, 'Grok fixture', 'tool bash completed');")
+    }
+
+    /// 20.0: block/goose session_manager.rs `create_schema` (v16), trimmed to
+    /// the columns the reader uses plus the ones that filter.
+    private static func writeGooseFixture(home: URL) throws {
+        let url = home.appendingPathComponent(".local/share/goose/sessions/sessions.db")
+        let db = try open(url)
+        defer { sqlite3_close(db) }
+        try exec(db, "CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', session_type TEXT NOT NULL DEFAULT 'user', working_dir TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, accumulated_input_tokens INTEGER, accumulated_output_tokens INTEGER, model_config_json TEXT, archived_at TIMESTAMP, parent_session_id TEXT);")
+        try exec(db, "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT, session_id TEXT NOT NULL, role TEXT NOT NULL, content_json TEXT NOT NULL, created_timestamp INTEGER NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, tokens INTEGER, metadata_json TEXT);")
+        try exec(db, "INSERT INTO sessions (id, name, session_type, working_dir, created_at, updated_at, accumulated_input_tokens, accumulated_output_tokens, model_config_json) VALUES ('20260803_1', 'CLI Session', 'user', '/tmp/pulse-goose', '2026-08-03 00:00:00', '2026-08-03 00:00:42', 1200, 300, '{\"model_name\":\"goose-fixture-model\"}');")
+        try exec(db, "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m1', '20260803_1', 'user', '[{\"type\":\"text\",\"text\":\"Goose fixture\"}]', 1785715200);")
+        try exec(db, "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m2', '20260803_1', 'assistant', '[{\"type\":\"text\",\"text\":\"Goose fixture reply.\"}]', 1785715242);")
     }
 
     private static func writeWarpFixture(home: URL) throws {

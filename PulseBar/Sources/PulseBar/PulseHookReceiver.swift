@@ -14,10 +14,16 @@ import Foundation
 enum PulseHookReceiver {
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
     @discardableResult
-    static func run(arguments: [String], stdin: String = "") -> Int32 {
+    static func run(
+        arguments: [String],
+        stdin: String = "",
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
-        let agentRaw = (args.first ?? "claude").lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let agentRaw = attributedAgent(
+            (args.first ?? "claude").lowercased().trimmingCharacters(in: .whitespacesAndNewlines),
+            environment: environment
+        )
         let kindArg = args.count > 1 ? args[1] : ""
         var payload = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil, kindArg: kindArg)
         if let msg = payload["msg"] as? [String: Any], payload["type"] == nil {
@@ -175,6 +181,20 @@ enum PulseHookReceiver {
     /// Poll cadence while parked. (= RESPOND_POLL_SECONDS)
     static let respondPollMs = 250
 
+    /// 20.0: xAI's Grok Build runs the hooks in `~/.claude/settings.json`
+    /// by default (xai-org/grok-build xai-grok-hooks discovery.rs, compat.rs)
+    /// and marks its own calls with `GROK_HOOK_EVENT` / `GROK_SESSION_ID`
+    /// (runner/command.rs). Without this its permission prompts and finished
+    /// turns landed on Claude's rows — a red lamp on the wrong agent, or a
+    /// Claude row that was never there.
+    static func attributedAgent(_ agent: String, environment: [String: String]) -> String {
+        guard agent == "claude" else { return agent }
+        let grok = ["GROK_HOOK_EVENT", "GROK_SESSION_ID"].contains {
+            !(environment[$0] ?? "").isEmpty
+        }
+        return grok ? "grok" : agent
+    }
+
     /// Same test as `pulse_hook.py is_permission_request`: the vendor's event
     /// name, or a permission kind whose payload actually carries `tool_input`.
     static func isPermissionRequest(payload: [String: Any], kind: String) -> Bool {
@@ -270,6 +290,11 @@ enum PulseHookReceiver {
         sleepMs: (Int) -> Void
     ) -> String? {
         guard isPermissionRequest(payload: payload, kind: kind) else { return nil }
+        // 20.0: only an agent whose decision point Respond actually reaches
+        // may be held. Other tools that borrow Claude's hook file (Grok Build,
+        // Copilot's repo-level compatibility) would be frozen for nothing —
+        // their verdict channel does not exist.
+        guard AgentID(rawValue: agent)?.spec.respondReach == .hookSite else { return nil }
         // Without the verbatim request bytes there is nothing the user could
         // actually review, so there is nothing Pulse may hold for.
         guard !rawStdin.isEmpty else { return nil }
@@ -358,14 +383,23 @@ enum PulseHookReceiver {
         case "StopFailure": return "stop_failure"
         case "SubagentStop": return "subagent_stop"
         case "Notification":
+            // 20.0: a Notification that does not say what it is about is
+            // not evidence of a block. Factory Droid fires one after 60 s
+            // of an idle prompt, some builds without `notification_type`;
+            // reading that as `waiting` lit a fake red lamp.
             let nested = string(payload, keys: ["notification_type", "notificationType"])
-            return nested.isEmpty ? "waiting" : nested
+            return nested.isEmpty ? "notification" : nested
         case "PermissionRequest": return "permission"
         // 2.9 activity events — never attention, never a hold; they branch
         // off in `run` before the attention pipeline.
         case "PreToolUse": return "activity"
         case "UserPromptSubmit": return "prompt"
-        default: break
+        default:
+            // 20.0: any other named vendor event is that event, not a wait.
+            // Bridged agents spell theirs `stop`, `agentStop`, `preToolUse`…;
+            // the known aliases normalise (`stop` → your turn) and the rest
+            // are rejected as unknown kinds instead of falling through to red.
+            if !event.isEmpty { return event }
         }
         let t = string(payload, keys: ["type", "event", "method"])
         return t.isEmpty ? "waiting" : t

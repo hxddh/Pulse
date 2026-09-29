@@ -108,7 +108,8 @@ def parse_kind_from_json(payload: dict) -> str:
     if event == "SubagentStop":
         return "subagent_stop"
     if event == "Notification":
-        return str(payload.get("notification_type") or "waiting")
+        # 20.0: an untyped Notification is not evidence of a block.
+        return str(payload.get("notification_type") or "notification")
     if event == "PermissionRequest":
         return "permission"
     # 2.9 activity events: never attention, never a hold — see write_activity.
@@ -116,6 +117,9 @@ def parse_kind_from_json(payload: dict) -> str:
         return "activity"
     if event == "UserPromptSubmit":
         return "prompt"
+    # 20.0: any other named vendor event is that event, never a wait.
+    if event:
+        return str(event)
     t = payload.get("type") or payload.get("event") or payload.get("method") or ""
     if t:
         return str(t)
@@ -681,6 +685,10 @@ def respond_decision_json(
     """
     if not is_permission_request(payload, kind):
         return None
+    # Only the agent whose decision point Respond reaches may be held (20.0):
+    # tools borrowing Claude's hook file would be frozen for nothing.
+    if agent != "claude":
+        return None
     if not raw_bytes:
         # Without the verbatim request bytes there is nothing the user could
         # actually review, so there is nothing Pulse may hold for.
@@ -800,8 +808,18 @@ def append_event(agent: str, kind: str, message: str, session: str = "", cwd: st
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+def attributed_agent(agent: str, environ=os.environ) -> str:
+    """Grok Build runs the hooks in ~/.claude/settings.json and marks its own
+    calls with GROK_HOOK_EVENT / GROK_SESSION_ID (20.0)."""
+    if agent != "claude":
+        return agent
+    if environ.get("GROK_HOOK_EVENT") or environ.get("GROK_SESSION_ID"):
+        return "grok"
+    return agent
+
+
 def main(argv: list[str]) -> int:
-    agent = (argv[1] if len(argv) > 1 else "claude").lower().strip()
+    agent = attributed_agent((argv[1] if len(argv) > 1 else "claude").lower().strip())
     kind_arg = argv[2] if len(argv) > 2 else ""
     payload: dict = {}
     raw_bytes = b""

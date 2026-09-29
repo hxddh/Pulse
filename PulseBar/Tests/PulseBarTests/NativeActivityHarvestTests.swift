@@ -292,6 +292,8 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.skill, "code-review", "the workflow fact lives in the Skill call's input")
     }
 
+    /// 20.0: the legacy whole-file layout Gemini CLI migrates on resume —
+    /// `messages[{type: "user"|"gemini"}]`, never `history/role/parts`.
     func testGeminiWholeFileChatYieldsTheModelLastWord() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-gemini-chat-\(UUID().uuidString)")
@@ -300,12 +302,13 @@ final class NativeActivityHarvestTests: XCTestCase {
             .appendingPathComponent("session-chat.json")
         try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
-        let document = #"{"sessionId":"gem-chat","title":"Fix the lamp","cwd":"/Users/me/Pulse","history":[{"role":"user","parts":[{"text":"Fix the lamp"}]},{"role":"model","parts":[{"text":"First pass done."}]},{"role":"user","parts":[{"text":"and the badge"}]},{"role":"model","parts":[{"text":"Badge is green now."}]}]}"#
+        let document = #"{"sessionId":"gem-chat","projectHash":"p","startTime":"2026-09-29T10:00:00.000Z","lastUpdated":"2026-09-29T10:05:00.000Z","messages":[{"id":"1","timestamp":"2026-09-29T10:00:01.000Z","type":"user","content":[{"text":"Fix the lamp"}]},{"id":"2","timestamp":"2026-09-29T10:01:00.000Z","type":"gemini","content":"First pass done."},{"id":"3","timestamp":"2026-09-29T10:02:00.000Z","type":"user","content":[{"text":"and the badge"}]},{"id":"4","timestamp":"2026-09-29T10:05:00.000Z","type":"gemini","content":"Badge is green now."}]}"#
         try document.write(to: session, atomically: true, encoding: .utf8)
 
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.gemini])
         let row = try XCTUnwrap(result.rows.first { $0.id == .gemini })
-        XCTAssertEqual(row.lastWord, "Badge is green now.", "the LAST model turn wins")
+        XCTAssertEqual(row.lastWord, "Badge is green now.", "the LAST gemini turn wins")
+        XCTAssertEqual(row.task, "and the badge")
     }
 
     func testOpenCodeLastWordComesFromTheAssistantMessage() throws {
@@ -556,14 +559,14 @@ final class NativeActivityHarvestTests: XCTestCase {
     func testGooseAskFollowupIsPendingButDependingIsNot() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-ask-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
 
         try #"{"sessionId":"g-ask","title":"Need input","cwd":"/tmp/goose","status":"running","currentTool":"ask_followup_question"}"#
             .write(to: goose, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.skill, "pending")
         XCTAssertEqual(row.evidence, .session)
     }
@@ -1189,43 +1192,54 @@ final class NativeActivityHarvestTests: XCTestCase {
     func testDependingStatusIsNotHarvestPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-pending-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
 
         try #"{"sessionId":"g-dep","title":"Real goose goal","cwd":"/tmp/goose","status":"depending","currentTool":"bash"}"#
             .write(to: goose, atomically: true, encoding: .utf8)
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.task, "Real goose goal")
         XCTAssertNotEqual(row.skill, "pending", "depending must not substring-match pending")
         XCTAssertEqual(row.phase, "working", "Goose depending is lifecycle busy, not Waiting (0.82)")
     }
 
+    /// 20.0: the JSONL Gemini CLI writes today (chatRecordingService.ts):
+    /// tokens, model and completed tool calls ride the `gemini` message; the
+    /// same id re-appended replaces the earlier record.
     func testGeminiFunctionCallAndUsageMetadataReachTray() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-gemini-\(UUID().uuidString)")
         let session = home
             .appendingPathComponent(".gemini/tmp/pulse/chats", isDirectory: true)
-            .appendingPathComponent("session-gemini.jsonl")
+            .appendingPathComponent("session-2026-09-29T10-15-1a2b3c4d.jsonl")
         let projectRoot = home.appendingPathComponent(".gemini/tmp/pulse/.project_root")
         try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
-        try "/Users/me/Pulse\n".write(to: projectRoot, atomically: true, encoding: .utf8)
+        try "/Users/me/Pulse".write(to: projectRoot, atomically: true, encoding: .utf8)
         let lines = [
-            #"{"sessionId":"gem-1","title":"Ship fleet substance","cwd":"/Users/me/Pulse","modelName":"gemini-2.5-pro","status":"in_progress","functionCall":{"name":"run_shell"},"usageMetadata":{"promptTokenCount":800,"candidatesTokenCount":120}}"#,
+            #"{"sessionId":"gem-1","projectHash":"p","startTime":"2026-09-29T10:15:02.114Z","lastUpdated":"2026-09-29T10:15:02.114Z"}"#,
+            #"{"id":"u1","timestamp":"2026-09-29T10:15:09.500Z","type":"user","content":[{"text":"Ship fleet substance"}]}"#,
+            #"{"$set":{"lastUpdated":"2026-09-29T10:15:09.501Z"}}"#,
+            #"{"id":"g1","timestamp":"2026-09-29T10:16:00.000Z","type":"gemini","content":"","thoughts":[],"model":"gemini-2.5-pro"}"#,
+            #"{"id":"g1","timestamp":"2026-09-29T10:16:40.020Z","type":"gemini","content":"Fleet shipped.","thoughts":[],"tokens":{"input":800,"output":120,"cached":0,"thoughts":0,"tool":0,"total":920},"model":"gemini-2.5-pro","toolCalls":[{"id":"t1","name":"run_shell_command","args":{},"status":"success","timestamp":"2026-09-29T10:16:30.000Z"}]}"#,
         ].joined(separator: "\n") + "\n"
         try lines.write(to: session, atomically: true, encoding: .utf8)
 
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.gemini])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .gemini })
+        let rows = result.rows.filter { $0.id == .gemini }
+        XCTAssertEqual(rows.count, 1, "one chat, one row — re-appended ids are updates")
+        let row = try XCTUnwrap(rows.first)
         XCTAssertEqual(row.task, "Ship fleet substance")
+        XCTAssertEqual(row.lastWord, "Fleet shipped.")
         XCTAssertEqual(row.model, "gemini-2.5-pro")
-        XCTAssertEqual(row.tool, "run_shell")
+        XCTAssertEqual(row.tool, "run_shell_command")
         XCTAssertEqual(row.tokensIn, 800)
         XCTAssertEqual(row.tokensOut, 120)
-        XCTAssertEqual(row.phase, "working", "in_progress must normalize to working")
+        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
+        XCTAssertEqual(row.sessionID, "gem-1")
         XCTAssertEqual(row.evidence, .session)
     }
 
@@ -1328,15 +1342,15 @@ final class NativeActivityHarvestTests: XCTestCase {
     func testAwaitingUserStatusIsHarvestPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-await-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
 
         try #"{"sessionId":"g-wait","title":"Need approval","cwd":"/tmp/goose","status":"awaiting_user","currentTool":"bash"}"#
             .write(to: goose, atomically: true, encoding: .utf8)
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.skill, "pending")
     }
 
@@ -1540,29 +1554,85 @@ final class NativeActivityHarvestTests: XCTestCase {
     func testGooseNameIsSessionTitle() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-goose-name-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"{"sessionId":"g-name","name":"Need input","cwd":"/tmp/goose","status":"running","currentTool":"bash"}"#
             .write(to: goose, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.task, "Need input")
         XCTAssertEqual(row.cwd, "/tmp/goose")
     }
 
+    /// 20.0: Kimi Code's layout (agent-core-v2): `sessions/<workspace>/
+    /// session_<uuid>/state.json` beside `agents/main/wire.jsonl`.
     func testKimiLastPromptAndWorkDirReachTray() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-kimi-\(UUID().uuidString)")
-        let state = home.appendingPathComponent(".kimi-code/sessions/k1/state.json")
-        try fm.createDirectory(at: state.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let session = home.appendingPathComponent(".kimi-code/sessions/wd_app_844551840eba/session_k1", isDirectory: true)
+        try fm.createDirectory(at: session.appendingPathComponent("agents/main"), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
-        try #"{"sessionId":"k1","lastPrompt":"Refactor auth","workDir":"/Users/me/app"}"#
-            .write(to: state, atomically: true, encoding: .utf8)
+        try #"{"id":"session_k1","version":2,"cwd":"/Users/me/app","lastPrompt":"Refactor auth","title":"Refactor auth","titleKind":"replaceable"}"#
+            .write(to: session.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi])
         let row = try XCTUnwrap(result.rows.first { $0.id == .kimi })
         XCTAssertEqual(row.task, "Refactor auth")
         XCTAssertEqual(row.cwd, "/Users/me/app")
+    }
+
+    func testKimiWireCarriesWordsModelAndTheOpenApproval() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-kimi-wire-\(UUID().uuidString)")
+        let session = home.appendingPathComponent(".kimi-code/sessions/wd_app_844551840eba/session_k2", isDirectory: true)
+        let wire = session.appendingPathComponent("agents/main/wire.jsonl")
+        let child = session.appendingPathComponent("agents/sub_1/wire.jsonl")
+        try fm.createDirectory(at: wire.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: child.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        func lines(resolved: Bool) -> String {
+            var out = [
+                #"{"type":"metadata","protocol_version":"1.5","created_at":\#(now - 9_000)}"#,
+                #"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"Add an offline queue for login"}],"turnId":1,"time":\#(now - 8_000)}"#,
+                #"{"type":"llm.request","agentId":"main","provider":"kimi","model":"kimi-k2","time":\#(now - 7_900)}"#,
+                #"{"type":"context.append_loop_event","agentId":"main","event":{"type":"content.part","stepUuid":"s-1","part":{"type":"text","text":"The queue drains "}},"time":\#(now - 3_000)}"#,
+                #"{"type":"context.append_loop_event","agentId":"main","event":{"type":"content.part","stepUuid":"s-1","part":{"type":"text","text":"on reconnect; 42 tests pass."}},"time":\#(now - 2_900)}"#,
+                #"{"type":"interaction.request","agentId":"main","id":"i_1","kind":"approval","toolCallId":"call_1","request":{},"time":\#(now - 2_000)}"#,
+            ]
+            if resolved {
+                out.append(#"{"type":"interaction.resolved","agentId":"main","id":"i_1","response":{},"time":\#(now - 1_000)}"#)
+            }
+            return out.joined(separator: "\n") + "\n"
+        }
+        try lines(resolved: false).write(to: wire, atomically: true, encoding: .utf8)
+        try #"{"type":"turn.prompt","agentId":"sub_1","input":[{"type":"text","text":"subagent chore"}],"turnId":1,"time":1}"#
+            .write(to: child, atomically: true, encoding: .utf8)
+
+        var rows = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi]).rows.filter { $0.id == .kimi }
+        XCTAssertEqual(rows.count, 1, "a subagent's stream is not a session of its own")
+        var row = try XCTUnwrap(rows.first)
+        XCTAssertEqual(row.task, "Add an offline queue for login")
+        XCTAssertEqual(row.lastWord, "The queue drains on reconnect; 42 tests pass.")
+        XCTAssertEqual(row.model, "kimi-k2")
+        XCTAssertEqual(row.skill, "pending", "an unanswered approval is the vendor saying it waits")
+
+        try lines(resolved: true).write(to: wire, atomically: true, encoding: .utf8)
+        rows = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi]).rows.filter { $0.id == .kimi }
+        row = try XCTUnwrap(rows.first)
+        XCTAssertNotEqual(row.skill, "pending", "answered is answered")
+    }
+
+    func testKimiCredentialsAreNeverRead() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-kimi-cred-\(UUID().uuidString)")
+        let credential = home.appendingPathComponent(".kimi-code/credentials/oauth.json")
+        try fm.createDirectory(at: credential.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"tok","title":"access token holder","cwd":"/Users/me/secret"}"#
+            .write(to: credential, atomically: true, encoding: .utf8)
+        let rows = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi]).rows.filter { $0.id == .kimi }
+        XCTAssertTrue(rows.isEmpty)
     }
 
     // MARK: - 2.2 · a record count is exact or it is not offered

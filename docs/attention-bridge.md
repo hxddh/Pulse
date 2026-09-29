@@ -31,6 +31,8 @@ Claude / Codex 同级。
 | `antigravity` | Antigravity |
 | `junie` | Junie |
 | `zcode` | ZCode |
+| `aider` | Aider（20.0：历史写在项目目录，里面没有等待信号） |
+| `continue_` | Continue（20.0：待批准的工具调用与普通调用在磁盘上无法区分） |
 
 设置 → Waiting signals 是 **Waiting Reach 漏斗**（0.90）：
 
@@ -38,7 +40,7 @@ Claude / Codex 同级。
 2. **打开 Attention 文件夹** / **打开桥接工具包** ——
    `~/Library/Application Support/Pulse/` 与同级 `attention-bridge/`（`raise.sh` /
    `clear.sh`，默认含 zcode）；
-3. **写入样本 Waiting** —— 可为单个聚焦 Agent 或全部七个 Waiting-none 追加
+3. **写入样本 Waiting** —— 可为单个聚焦 Agent 或全部 Waiting-none 追加
    `pulse-sample` 会话；可复制 raise 命令给桥接作者；
 4. 托盘应亮红并可清除 —— **不扩 hook 安装器，不伪造原生 Waiting**。
 

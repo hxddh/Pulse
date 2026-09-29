@@ -62,7 +62,7 @@ final class AgentCatalogTests: XCTestCase {
     func testEveryCollectorHasAPlaceOnTheFixtureWall() {
         // Agents with a hand-written fixture in NativeHarvestSelfTest, plus
         // Cursor Agent, which has no collector of its own.
-        let handWritten: Set<AgentID> = [.cursor, .cursorAgent, .grok, .pi, .opencode, .warpAgent]
+        let handWritten: Set<AgentID> = [.cursor, .cursorAgent, .grok, .pi, .opencode, .warpAgent, .goose]
         for spec in AgentCatalog.all where !handWritten.contains(spec.id) {
             XCTAssertNotNil(spec.walk.fixturePath, "\(spec.id.rawValue) has no generic fixture")
         }
@@ -73,6 +73,7 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertEqual(AgentID.opencode.spec.walk.database, .openCode)
         XCTAssertEqual(AgentID.warpAgent.spec.walk.database, .warp)
         XCTAssertEqual(AgentID.pi.spec.walk.database, .pi)
+        XCTAssertEqual(AgentID.goose.spec.walk.database, .goose)
         XCTAssertEqual(AgentID.grok.spec.walk.database, .grok)
         XCTAssertEqual(AgentCatalog.all.filter { $0.walk.database != nil }.count, 5)
         XCTAssertTrue(DatabaseAdapter.pi.runsAfterTranscripts)

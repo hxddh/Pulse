@@ -764,6 +764,14 @@ extension NativeActivityHarvest {
         target.subRunning = max(target.subRunning, source.subRunning)
         target.subTotal = max(target.subTotal, source.subTotal)
         // explicitPending already resolved above by activityMs order — do not OR.
+        // 20.0: a session split across files (a task directory's messages and
+        // its history entry, a database row and its stream) keeps the words
+        // of whichever fragment has them — the newer one when both do. Until
+        // now the second fragment's last word was simply dropped.
+        if !source.lastWord.isEmpty,
+           target.lastWord.isEmpty || source.activityMs > target.activityMs {
+            target.lastWord = source.lastWord
+        }
         target.score = max(target.score, source.score)
         target.activityMs = max(target.activityMs, source.activityMs)
         target.startedMs = target.startedMs == 0 ? source.startedMs : min(target.startedMs, source.startedMs == 0 ? target.startedMs : source.startedMs)
@@ -913,16 +921,14 @@ extension NativeActivityHarvest {
         let normalized = ask.lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
-        let waitingAsks: Set<String> = [
-            "followup", "command", "command_output", "completion_result",
-            "tool", "use_mcp_server", "browser_action_launch",
-            "resume_task", "resume_completed_task", "plan_mode_response",
-            "clarifying_question", "user_input", "permission",
-            "auto_approval_max_req_reached", "mistake_limit_reached",
-            "new_task",
-            // 0.94 — additional Cline-family ask enums (exact tokens).
-            "yolo_mode_toggled", "api_req_failed",
-        ]
+        // 20.0: the vendors' own interactive asks only. `completion_result`,
+        // `api_req_failed`, `resume_*`, `mistake_limit_reached`,
+        // `auto_approval_max_req_reached` and `command_output` are idle,
+        // resumable or non-blocking in the vendors' classification (Roo
+        // `message.ts`) — every finished task ends on a `completion_result`
+        // ask, so counting it made every finished task red.
+        if anyTruthy(dict, keys: ["isAnswered"]) { return false }
+        let waitingAsks = clineBlockingAsks.union(["clarifying_question", "user_input", "permission"])
         return waitingAsks.contains(normalized) || pendingPhase(ask)
     }
 

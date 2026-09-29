@@ -91,6 +91,7 @@ extension NativeActivityHarvest {
         var compactionUsers: [String] = []
         var compactionSummaries: [String] = []
         var latestTimestamp: Int64 = 0
+        var anyTimestamp: Int64 = 0
         var f = Fact()
         f.structured = true
         f.sourcePath = path
@@ -115,7 +116,20 @@ extension NativeActivityHarvest {
             let stamped = normalizeTimestamp(firstValue(object, keys: [
                 "timestamp", "created_at", "createdAt", "updated_at", "updatedAt",
             ]))
-            if stamped > 0 { latestTimestamp = max(latestTimestamp, stamped) }
+            // 20.0 Drift (badlogic/pi-mono session-manager.ts
+            // buildSessionInfo): a session's activity is its conversation —
+            // user, assistant and tool-result messages. Pi's cache warmer
+            // appends `usage` entries for up to 30 minutes while the session
+            // sits idle, and labels / model changes are not work either;
+            // counting them made an idle Pi session look busy.
+            if stamped > 0 {
+                let role = firstString(object["message"] as? [String: Any] ?? [:], keys: ["role"]).lowercased()
+                if recordType == "message", ["user", "assistant", "toolresult"].contains(role) {
+                    latestTimestamp = max(latestTimestamp, stamped)
+                } else {
+                    anyTimestamp = max(anyTimestamp, stamped)
+                }
+            }
 
             if recordType == "session" {
                 let sid = firstString(object, keys: ["id", "sessionId", "session_id"])
@@ -205,7 +219,8 @@ extension NativeActivityHarvest {
             if !decoded.path.isEmpty { f.cwdBestEffort = !decoded.verified }
         }
         if f.project.isEmpty, !f.cwd.isEmpty { f.project = lastPathComponent(f.cwd) }
-        f.activityMs = latestTimestamp > 0 ? latestTimestamp : fileMTime(URL(fileURLWithPath: path))
+        let clock = latestTimestamp > 0 ? latestTimestamp : anyTimestamp
+        f.activityMs = clock > 0 ? clock : fileMTime(URL(fileURLWithPath: path))
         f.task = clean(f.task, limit: 160)
         f.cwd = clean(f.cwd, limit: 240)
         f.sessionID = clean(f.sessionID, limit: 80)

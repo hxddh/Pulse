@@ -15,6 +15,7 @@ python3 scripts/coverage_check.py
 python3 scripts/matrix_check.py
 python3 scripts/scenario_map.py
 python3 scripts/surface_check.py
+python3 scripts/vendor_formats_check.py
 python3 scripts/make_agent_icons.py --check
 python3 scripts/appearance_check.py
 python3 -m py_compile src/*.py scripts/*.py

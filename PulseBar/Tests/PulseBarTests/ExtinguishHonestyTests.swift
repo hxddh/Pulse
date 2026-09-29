@@ -66,15 +66,15 @@ final class ExtinguishHonestyTests: XCTestCase {
     func testAnsweredAskWithStaleAskToolDoesNotStampPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-answered-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"""
         {"sessionId":"g-ans","title":"Answered","cwd":"/tmp/g","status":"running",
          "ask":"followup","askResponse":"messageResponse","currentTool":"ask_followup_question"}
         """#.write(to: goose, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertNotEqual(row.skill, "pending", "askResponse must veto ask-tool pending")
     }
 
@@ -82,15 +82,15 @@ final class ExtinguishHonestyTests: XCTestCase {
     func testCompletedStatusWithAskToolDoesNotStampPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-done-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"""
         {"sessionId":"g-done","title":"Done","cwd":"/tmp/g","status":"completed",
          "currentTool":"ask_user_question"}
         """#.write(to: goose, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertNotEqual(row.skill, "pending")
     }
 
@@ -98,15 +98,15 @@ final class ExtinguishHonestyTests: XCTestCase {
     func testConflictingBoolFlagsAnyTrueWins() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-flags-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"""
         {"sessionId":"g-flag","title":"Block","cwd":"/tmp/g","status":"running",
          "needsApproval":false,"isBlockedOnUser":true}
         """#.write(to: goose, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.skill, "pending")
     }
 
