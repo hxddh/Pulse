@@ -184,7 +184,7 @@ constant `AgentRow.stalledSeconds`.
 23.0 split the app layer's state three ways. `StatusStore` is the one
 `@Observable` model views read — the snapshot and `cachedAll` rows, `settings`,
 `logRevision`, and a few UI flags (`settingsFocus`, `diagnostics`, hook and
-notification status, update status); 19 observed properties, every one listed
+notification status, update status); 17 observed properties, every one listed
 in `ScanQuietTests` (which fails past 25), plus the intents views send.
 `ScanEngine` (`@MainActor`, not observed) owns the probe timer and
 `ProbeSchedule` cadence, runs the probe / harvest / attention / `claude
@@ -196,7 +196,7 @@ observed) owns the "needs you" banner: `WaitingDelivery` planning, posting,
 rate limiting, outcomes and clicks on the `SessionLog`, and banner-click
 routing. Tests drive a scan with `store.engine.applyScan(...)`. The files are
 `StatusStore.swift` (model and intents), `StatusStoreViews.swift` (the row
-and detail values, the tray notice), `StatusStoreHealth.swift` (Health and
+and detail values, the tray notice), `StatusStoreHealth.swift` (Diagnostics and
 reports), `StatusStoreFixture.swift` (CLI fixtures), `ScanEngine.swift` and
 `WaitNotifier.swift`; the harvest's own between-scan memory is
 `HarvestMemory` in PulseHarvest. Settings are a `Codable` `PulseSettings`
@@ -209,26 +209,40 @@ hooks-nudge-off. A `settings.txt` is deleted at load, never read. The "notify
 when idle" banner is gone.
 
 What remains was rebuilt around one line per session. The tray
-(`TrayPanel`) has no groups, folds or depth tiers: a row is one line (lamp,
-agent, project, task, time), plus the ask for a wait or the orange reason for
-a stalled/failed row. The lamp has a shape as well as a tone
-(`TrayRowModel.Shape`: waiting/running `filled`, error `half`, process-only
-`dotted`, idle `hollow`, drawn by `LampShapeView`); every other verb lives in
-the row `menu` (details, focus, dismiss, mute) and VoiceOver actions.
-`SessionDetailView` (→ or the menu's Details; ← / Esc back) renders a
-`DetailModel` through `SessionDetailFace`: the task, the why, the full ask,
-a `TimelineStripView` of the last hour, last words, plan, the last error,
-the notification audit and a few facts (model, source, folder, start). The tray is keyboard-first:
-typing filters (over every retained session), ↑↓ select, ↩ primary, → details,
-⌫ dismiss a wait, Esc clears the filter, then closes the panel —
-`StatusStore.trayEscapeConsumed` (unobserved) tells the panel's key monitor
-that the view owns Escape. The header is one line of tone-coloured counts
-with a ⋯ menu (Health, Settings, Quit); at most one notice (maintenance /
-scan incomplete); the footer carries "N more", the stale-hidden
-count and the key hints; the empty state is a checklist of what is true on
-this Mac. Settings is a single scrolling page of sections (23.0 removed the
-in-app Attention bridge tools); jumping in from elsewhere bumps
-`settingsFocus.token` and scrolls to the section.
+(`TrayPanel`) has no groups, folds, chips, row tint or refresh button: a row
+is one line (lamp, agent, project unless it is the headline, headline, one
+age), plus a second line only for a wait (the ask) or an orange row (the
+why); a your-turn row carries a quiet "your turn" label and a muted agent a
+`bell.slash`. The lamp has a shape as well as a tone (`LampFace`: filled =
+needs you, ring = running, hollow = your turn / recent, dotted = process
+only; orange only for a stall or an error, never for a process-only row),
+drawn by `LampShapeView` in the row and by `PulseBrand.statusBarIcon` in the
+menu bar, whose title is empty unless something is blocked ("2 · 4m",
+within `GlanceTitle`'s budget) and whose tooltip is one `LampExplanation`
+sentence. Every verb lives in the row `menu` (go, details, dismiss,
+mute/unmute) and VoiceOver actions. `SessionDetailView` (→ / Space or the
+menu's Details; ← / Esc back) renders a `DetailModel` through
+`SessionDetailFace`: header, the full ask with Go / Dismiss, the why once, a
+`TimelineStripView` of the last hour, the last message, plan, the last
+error, the notification audit, a facts grid (model, source, folder, start)
+and a folded diagnostics block. Every tray key goes through one pure
+reducer, `TrayKeys.reduce`, called by the panel's key monitor through
+`TrayUI` (the per-open state: keys, the frozen `TrayOrder`, the list's
+height budget): typing shows a visible filter (over every retained
+session), ⌫ only edits it, ↑↓ select, ↩ go (the terminal, else the detail),
+D dismiss, M mute, Esc clears the filter, then closes; ⌘R refreshes, ⌘,
+opens Settings. The header (`TrayHeaderModel`) is one line of tone-coloured
+counts and the freshness (orange when the scan is late or the Mac asleep)
+with a ⋯ menu (Diagnostics, Settings, Quit); at most one notice
+(`TrayNoticeModel`, one action); the footer carries "N more" and the key
+hints; the empty state is one sentence. A banner click focuses the
+terminal and nothing else, or opens the row's detail when there is no
+handle (`BannerRoute`); the global shortcut toggles the tray. Settings is a
+single scrolling page of seven sections (`SettingsModel`); jumping in from
+elsewhere bumps `settingsFocus.token` and scrolls to the section.
+Diagnostics (it was Health; `DiagnosticsModel`) lists problems first, then
+the self-check, then one line per agent, with the activity log in its own
+tab and one "Copy report".
 
 Observability (23.0): one event store, `SessionLog` (pure value) in
 `session-log.json` via `SessionLogStore` (debounced, `PrivateFile`), replaced
@@ -279,7 +293,7 @@ Warp, host app, `focusTier`), what it is doing (task, model, `lastWord`,
 `.recent`, `.processOnly` — plus `isStalled`, `harvestMs` / `activityMs`,
 `startedMs` and `source` (`RowSource`: session / cache / hooks / process).
 Process evidence, start and count live on `ScanEngine.processesByAgent`
-(`ProcessFacts`) for Health. **One Explain**: `Explain` (pure) gives a row's
+(`ProcessFacts`) for Diagnostics. **One Explain**: `Explain` (pure) gives a row's
 `headline` (the tray hero), `why` (which evidence put it in this state and
 since when), `source`, `state` and `ask`; `TrayRowModel`, `DetailModel` and
 `LampExplanation` all say its words. `RowNarrator`, `RowCardModel`, the Why
@@ -287,7 +301,7 @@ card, the diagnostics card, `ObservationQuality`, `TrayRowLead` and
 `RowValueEngine` are gone, with tokens, CPU/memory, context %, files, tool,
 phase/outcome, subagent counts and the activity-change diff on the row
 (the harvest still reads tool, tokens, phase and subagents for waits,
-freshness, state and Health's fact classes; files and context % are no
+freshness, state and Diagnostics' fact classes; files and context % are no
 longer read). User copy is L10n only — `DoctorModel`'s inline pairs became
 keys.
 

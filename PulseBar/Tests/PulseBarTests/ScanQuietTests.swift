@@ -33,7 +33,6 @@ struct ScanQuietTests {
             ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
             ("hooksStatus", \StatusStore.hooksStatus),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
-            ("isRefreshing", \StatusStore.isRefreshing),
             ("logRevision", \StatusStore.logRevision),
             ("loginItemApplied", \StatusStore.loginItemApplied),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),

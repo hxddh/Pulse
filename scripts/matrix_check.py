@@ -129,7 +129,7 @@ def main() -> int:
     # Contract Honesty (0.70): fleet-count prose must not lag AgentID growth.
     experience = (ROOT / "EXPERIENCE.md").read_text(encoding="utf-8")
     if "32 个用户可见 Agent" not in experience:
-        print("FAIL: EXPERIENCE.md Support Health must say 32 visible Agents", file=sys.stderr)
+        print("FAIL: EXPERIENCE.md Diagnostics must say 32 visible Agents", file=sys.stderr)
         return 1
     scenarios = (ROOT / "docs" / "scenarios.md").read_text(encoding="utf-8")
     if "| Y |" not in scenarios or "Contract Honesty" not in scenarios:

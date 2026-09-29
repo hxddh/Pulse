@@ -85,10 +85,11 @@ extension StatusStore {
                 snap.sectionTotals[.stalled] = 1
             case "status-waiting":
                 snap.glance = .waiting
-                snap.title = "1"
+                snap.title = "1 · 8m"
                 snap.sectionTotals[.needsYou] = 1
             case "status-turn":
-                snap.glance = .running
+                // A finished turn is grey, even while its process lives.
+                snap.glance = .idle
                 snap.sectionTotals[.running] = 1
                 snap.turnCount = 1
             default:
@@ -196,8 +197,8 @@ extension StatusStore {
             engine.lastSuccessfulReadByAgent[.cursor] = cursor.harvestMs
             snapshot = PulseSnapshot(
                 glance: .running,
-                title: "2",
-                tooltip: "coverage",
+                title: "",
+                tooltip: LampExplanation.make(rows: cachedAll, glance: .running).sentence(lang),
                 accessibilityLabel: tr(.a11yRunning),
                 headerTitle: "2 running",
                 headerDetail: "",
@@ -205,6 +206,7 @@ extension StatusStore {
                 rows: cachedAll,
                 sectionTotals: [.running: 2, .recent: 1],
                 projectCount: 2,
+                lamp: LampFace.glance(.running),
                 totalCount: cachedAll.count,
                 updatedAt: Date()
             )

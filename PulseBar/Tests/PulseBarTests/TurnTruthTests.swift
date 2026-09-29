@@ -178,6 +178,33 @@ struct TurnTruthTests {
         ),
     ]
 
+    /// 23.0: a finished turn is grey even while its CLI stays open — the
+    /// green ring is for a session that is working, and "your turn" is not.
+    @Test func aFinishedTurnWithALiveProcessIsAGreyLamp() throws {
+        let text = AttentionProtocol.header + Self.line("claude", "turn", ago: 2 * Self.second, front: "") + "\n"
+        let entries = AttentionReader.parse(text, nowMs: Self.now)
+        let r = SnapshotBuilder.build(
+            SnapshotBuilder.Input(
+                procs: [ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 42)],
+                harvest: [Self.session(.claude)],
+                attention: entries
+            ),
+            previous: .init(),
+            context: SnapshotBuilder.Context(
+                nowMs: Self.now,
+                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
+                lang: .en
+            )
+        )
+        let row = try #require(r.rows.first)
+        #expect(row.isYourTurn)
+        #expect(row.liveProcess)
+        #expect(r.snapshot.glance == .idle)
+        #expect(r.snapshot.lamp == LampFace(shape: .hollow, tone: .idle))
+        #expect(r.snapshot.title == "")
+        #expect(r.snapshot.tooltip == L10n.t(.lampRuleTurn, .en))
+    }
+
     @Test(arguments: cases)
     func sequence(_ c: Case) throws {
         let r = Self.world(c.lines, harvest: [Self.session(c.agent, ageMs: c.harvestAgeMs)])

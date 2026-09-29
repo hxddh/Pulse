@@ -74,7 +74,7 @@ PulseBar/Sources/
 - **`WaitNotifier`**（`@MainActor`，不被观察）：横幅的规划（`WaitingDelivery`）、发送
   （`PulseNotify`）、限流、欠账、去向与点击写进 `SessionLog`，以及点横幅回到对应行。
 - **`StatusStore`**（`@Observable`）：只放视图要读的 —— `snapshot`、`cachedAll`、`settings`、
-  `logRevision`、`settingsFocus`、`diagnostics` 与几个状态标志（共 19 个被观察属性），外加视图
+  `logRevision`、`settingsFocus`、`diagnostics` 与几个状态标志（共 17 个被观察属性），外加视图
   发出的 intent（聚焦、忽略、静音、打开设置、安装 hooks……），这些 intent 再委托给引擎、
   通知器或服务。`land` 与各个 `land…` 方法只在值变化时赋值。
 
@@ -266,16 +266,17 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
   `settings.txt` 直接删掉、用默认值。「全部空闲时通知」已删除。
 - **权限边界**。受保护的应用数据默认关闭，由**一个**开关 `readProtectedAppData` 打开：打开后所有
   `requiresAppDataOptIn` 的 Agent 都会被读取（23.0 删除了逐 Agent 的范围）。
-- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息、忽略 / 静音。
+- **动作**。可靠 Focus、安装 / 移除 hooks、复制报告、忽略 / 静音。
 
 ## 视图
 
 `StatusPanelController` 拥有原生状态项和单表面 `NSPanel`；其中承载
-`TrayPanel`（22.0：一行一个会话的列表 + 彩色计数 Header + 至多一条提示 + 底部按键提示；
-→ 进入 `SessionDetailView`，← / Esc 返回），`SettingsView` 是一页偏好（Attention 桥工具在「高级」折叠区；
-深链经 `settingsFocus.token` 滚到对应一节）。托盘键盘优先：打字即过滤、↑↓ / ↩ / → / ⌫；
-详情页打开或有过滤词时 `trayEscapeConsumed` 让面板的按键监视器把 Esc 留给视图（先返回 / 清过滤，
-再关面板）。行的灯形来自 `TrayRowModel.Shape`（`LampShapeView` 绘制）。SwiftUI 视图都标了
+`TrayPanel`（23.0：一行一个会话的列表 + 一行「为什么 + 新鲜度」的 Header + 至多一条提示 + 底部按键提示；
+→ 进入 `SessionDetailView`，← / Esc 返回），`SettingsView` 是一页七组的偏好（`SettingsModel`；
+深链经 `settingsFocus.token` 滚到对应一节），`DiagnosticsView` 是诊断窗口（`DiagnosticsModel`）。
+托盘每次打开的状态（过滤、选中、详情页、冻结的顺序、列表高度预算）在 `TrayUI`；面板的按键监视器
+把每个键交给纯函数 `TrayKeys.reduce`，所以 Esc 在详情页、无结果的过滤和空列表里都有效，⌫ 只编辑过滤框。
+行与菜单栏的灯形都来自 `LampFace`（`LampShapeView` / `PulseBrand.statusBarIcon` 绘制）。SwiftUI 视图都标了
 `@MainActor`——SwiftUI 只有 `body` 隐式主 actor 隔离，
 辅助计算属性不是，调 store 的 `@MainActor` 方法会编译失败。
 

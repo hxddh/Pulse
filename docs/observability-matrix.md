@@ -114,7 +114,7 @@ separation lets Pulse observe more than it shows without allowing unbounded
 vendor stores to consume menu-bar memory.
 
 `bestEffortCache` Agents may still miss goal / workspace / activity; that shows
-up in Health's per-agent facts and as a cache source on the row — never as a silent “full session”
+up in Diagnostics' per-agent facts and as a cache source on the row — never as a silent “full session”
 claim. Agents with `waitingSource=none` stay Running-only unless the Attention
 bridge writes a real Waiting line.
 
@@ -170,7 +170,7 @@ without exposing namespaces, paths, URLs, or arbitrary implementation text.
   不发明;厂商日后开始写,形状匹配的通路自动接住(形状优先于厂商名,2.9)。
 - **→** = 记录里可能有、采集器尚未提取(附原因;需真机样本才能安全落地)。
 
-真机核对仪器:Support Health 每拍显示每家「声明 vs 实测」的事实类;
+真机核对仪器:诊断窗口每拍显示每家「声明 vs 实测」的事实类;
 `PulseBar --harvest-test` 打印每行实测值。
 
 ### 第一梯队:structured session(16 家)

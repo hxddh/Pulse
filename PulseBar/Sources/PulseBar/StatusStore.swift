@@ -34,7 +34,6 @@ final class StatusStore {
     var settings = PulseSettings()
     /// Moves only when the session log did; views that draw the log read it.
     var logRevision = 0
-    var isRefreshing = false
     /// The tray shows every row rather than its visible window.
     var showAllAgents = false
     var hooksStatus: HooksSupport.Status = .unknown
@@ -218,10 +217,6 @@ final class StatusStore {
     /// write is guarded: an identical merge must not wake the tray.
     func setCachedAll(_ rows: [AgentRow]) {
         if rows != cachedAll { cachedAll = rows }
-    }
-
-    func setRefreshing(_ value: Bool) {
-        if isRefreshing != value { isRefreshing = value }
     }
 
     func landCollectorScanIncomplete(_ value: Bool) {
@@ -408,11 +403,6 @@ final class StatusStore {
             guard let self, self.rowActionNotices[rowKey] == message else { return }
             self.rowActionNotices.removeValue(forKey: rowKey)
         }
-    }
-
-    func primaryAction(_ row: AgentRow) {
-        guard row.canFocusTerminal else { return }
-        focusTerminal(row)
     }
 
     /// The focus handle was derived by the scan that produced this row, and a

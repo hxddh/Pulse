@@ -580,8 +580,9 @@ enum SnapshotBuilder {
 
         // 23.0 · the lamp. Red when anything is blocked; orange only for a
         // stalled session; green for a running session; grey otherwise — a
-        // process with no session is grey, never orange and never green.
-        let sessionRunning = all.contains { $0.section == .running && !$0.isProcessOnly }
+        // finished turn is grey even while its process lives, and a process
+        // with no session is grey, never orange and never green.
+        let sessionRunning = all.contains { $0.state == .running && !$0.isStalled }
         if waitingCount > 0 {
             snap.glance = .waiting
         } else if stalledCount > 0 {

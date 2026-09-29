@@ -235,10 +235,6 @@ final class ScanEngine {
         scanInFlight = true
         scanTicket &+= 1
         let ticket = scanTicket
-        let showSpinner = reason == "manual" || reason == "start"
-        if showSpinner {
-            model.setRefreshing(true)
-        }
         DebugLog.write("refresh enqueue #\(ticket) reason=\(reason)")
 
         // Native harvest walks bounded vendor roots; probe is one `ps` call.
@@ -348,7 +344,6 @@ final class ScanEngine {
                     attention: attention,
                     ticket: ticket,
                     harvestMs: completedHarvestMs,
-                    clearRefreshing: showSpinner,
                     reason: reason,
                     activityEvents: activityEvents,
                     vendorWaits: vendorWaits
@@ -463,7 +458,6 @@ final class ScanEngine {
         attention: [AttentionReader.Entry],
         ticket: UInt64,
         harvestMs: Int? = nil,
-        clearRefreshing: Bool = false,
         reason: String = "",
         activityEvents: [ActivitySpool.Event] = [],
         vendorWaits: [ClaudeAgentsProbe.Wait] = []
@@ -473,7 +467,6 @@ final class ScanEngine {
 
         if ticket < lastAppliedTicket {
             DebugLog.write("apply skip stale #\(ticket) lastApplied=\(lastAppliedTicket)")
-            if clearRefreshing { model.setRefreshing(false) }
             return
         }
         lastAppliedTicket = ticket
@@ -553,7 +546,6 @@ final class ScanEngine {
         var snap = result.snapshot
         snap.updatedAt = now
         model.land(result, snapshot: snap, nowMs: nowMs)
-        if clearRefreshing { model.setRefreshing(false) }
 
         let previousActivity = activity
         activity = result.activity

@@ -5,13 +5,13 @@
 > `scripts/scenario_map.py`（`gates.sh` 的一环）核对存在；写着「人工 / QA 脚本」的场景没有
 > 自动测试，靠 `scripts/qa_*.sh` 与真机检查 —— 这是覆盖缺口，不是免检。
 
-41 / 61 个场景有具名测试。22.0 删除了指挥台（Workbench）、受管会话、Mission、工作副本检查、盘上成效、舰队广播与远端收件箱，对应的 19 个场景（AO、AW、AX、BA–BK、BO、BP、BZ、CA、CB）随之移除，并新增 CI–CM（时间线、灯的解释、通知去向、活动记录、24 小时较早隐藏）。23.0 又删除了离开期间的回看（AF）、会话摘要与打转信号（AP、AQ）、自适应深度（BV），以及随 `RowNarrator` 一起删除的行叙事、行清晰、证据分层、行内展开、价值引擎与行解剖学（AD、AE、AS、BM、BN、BS），并新增 CN（稳定身份）与 CO（托盘的键与秩序）。下文里的「Details」「展开卡」在 22.0 指托盘的**详情页**：托盘行只有一行（灯形、Agent、项目、任务、时间），BL–BX 所写的收起行解剖学、自适应深度与行内展开卡的内容在 22.0 移进详情页，其取值规则不变。
+42 / 61 个场景有具名测试。22.0 删除了指挥台（Workbench）、受管会话、Mission、工作副本检查、盘上成效、舰队广播与远端收件箱，对应的 19 个场景（AO、AW、AX、BA–BK、BO、BP、BZ、CA、CB）随之移除，并新增 CI–CM（时间线、灯的解释、通知去向、活动记录、24 小时较早隐藏）。23.0 又删除了离开期间的回看（AF）、会话摘要与打转信号（AP、AQ）、自适应深度（BV），以及随 `RowNarrator` 一起删除的行叙事、行清晰、证据分层、行内展开、价值引擎与行解剖学（AD、AE、AS、BM、BN、BS），并新增 CN（稳定身份）与 CO（托盘的键与秩序）。下文里的「Details」「展开卡」在 22.0 指托盘的**详情页**：托盘行只有一行（灯形、Agent、项目、任务、时间），BL–BX 所写的收起行解剖学、自适应深度与行内展开卡的内容在 22.0 移进详情页，其取值规则不变。
 
 | # | 场景 | 期望 | 证明 |
 | --- | --- | --- | --- |
 | A | 无 Agent | Glance 安静（空心灰灯、无标题）；Tray 空态一句说明，要做的设置由那一条提示给出 | `AgentCatalogTests` |
-| B | Claude 运行中 | Glance 绿灯 + 名字；Tray 主行是会话标题；无空的 ↳ 行 | 人工 / QA 脚本 |
-| C | Claude 等授权 | Glance 红灯 + 短标题（新等待闪一次即止，无常驻呼吸）；Tray 等待置顶 + 原因 + 来源标签；通知带项目与原因，且**原因是被请求的那件事**（`Bash: npm run build`），不是「权限」两个字；后到的哑事件不覆盖它 | 人工 / QA 脚本 |
+| B | Claude 运行中 | Glance 绿色环形灯、无标题（23.0：没有卡住时只有图标）；Tray 主行是会话标题；无空的 ↳ 行 | `SnapshotBuilderTests`（testNothingBlockedMeansNoTitle） |
+| C | Claude 等授权 | Glance 红色实心灯 + 标题「数量 · 最久等待」（新等待闪一次即止，无常驻呼吸）；Tray 等待置顶，第二行是问题本身，依据在详情页；通知带项目与原因，且**原因是被请求的那件事**（`Bash: npm run build`），不是「权限」两个字；后到的哑事件不覆盖它 | 人工 / QA 脚本 |
 | D | 2 跑 + 1 等 | Glance 偏等待；Tray 等待行在最上 | 人工 / QA 脚本 |
 | E | 同一 Agent 520 个会话 | 采集/模型保留 500 行并报告未显示余量；面板全局 12 行后可展开 | `SnapshotBuilderTests` · `AgentCatalogTests` |
 | F | 打开再关闭 Prefs | Tray 仍在；无 Dock 常驻感 | 人工 / QA 脚本 |
@@ -22,7 +22,7 @@
 | K | Supervisor 故意延后一 Agent | 不出现 incomplete 横幅；其它 Agent 照常可见 | `SnapshotBuilderTests` |
 | L | ad-hoc / 未公证包 | About 标 preview 或 signed；不得自称 stable；GitHub 可为 Latest；无就地安装按钮 | `PulseVersionTests` |
 | M | 多份用户安装副本 | About 最多列 5 条路径，超出显示「另有 N 个」；回收只动用户安装 | `SingleInstanceGuardTests` |
-| N | 无 Waiting 路径的 Agent 在跑 | 托盘 / Support 指向 Waiting signals · Attention 桥；不伪造 Waiting | `SupportHealthTests` |
+| N | 无 Waiting 路径的 Agent 在跑 | 行菜单 / 诊断指向设置的 Hooks 一节 · Attention 桥；不伪造 Waiting | `SupportHealthTests` |
 | O | 旗舰事实连续（Claude / Codex / Cursor） | 有会话时主行是真实 goal 或人话工具；cwd / 最新 tool / subagents 可见；无动态事实时次行省略；不发明「进度信号」占位；薄 cache 标 Limited，不升格假 session | 人工 / QA 脚本 |
 | P | 更新后用 Finder / Spotlight 打开 | 不弹空白 Settings 窗；真设置只经菜单进入 `SettingsWindowController`；无 SwiftUI `Settings` 场景 | 人工 / QA 脚本 |
 | Q | 舰队事实连续（非旗舰 session + 高流量 cache） | Amp/Pi/Grok 等有 goal/cwd/tool 时主行诚实；`bestEffortCache` 证据恒为 cache；薄索引 Limited；`depending` 等不得假 Waiting；Waiting-none 七 Agent（含 ZCode）可从 Settings 写 Attention 样本 | 人工 / QA 脚本 |
@@ -37,7 +37,7 @@
 | Z | Tray Legibility（托盘可读） | 默认行同时可见次行（路径·最近动作含执行命令·最近活动·始于）+ 运动信号 + **观测行**（model·tokens·最强进度；**2.1 起条数不再封顶在 4，改为按信息量取**，见 §4 与场景 AS）；无事实整行消失；核心运动事实不藏 Details；不发明进度占位 | 人工 / QA 脚本 |
 | AA | Tray Substance（托盘实质） | Claude 会话记录带 `message.model`/`usage` 时观测行有 model+tokens；Codex `last_token_usage` 可见；Cursor `unifiedMode` 可见且非假 local；tool-hero+分组去路径时次行仍有最近动作或路径；LS/Task 等工具可作最近动作 | 人工 / QA 脚本 |
 | AB | Tray Fleet Substance（舰队托盘实质） | Gemini `functionCall`+`usageMetadata` / Goose `depending`→Working（非 Waiting）/ Cursor `modelDetails` / Pi `agent_usage` 的 model 进详情页；cache 行仍是 cache，不升格 session | 人工 / QA 脚本 |
-| AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → Support/托盘/空态深链到设置里的连接；不伪造原生 Waiting、不扩 hooks 安装器 | 人工 / QA 脚本 |
+| AC | Waiting Reach（等待可达） | Waiting-none Agent 在跑 → 诊断 / 行菜单深链到设置里的 Hooks 一节；不伪造原生 Waiting、不扩 hooks 安装器 | 人工 / QA 脚本 |
 | AG | Waiting Proof（等待可证） | Cline/Roo/Cascade/Cursor 显式 ask/block → 红灯；soft-dismiss 后自然清除可再亮；`depending`/Waiting-none 永不从 harvest 抬；Attention raise 精确点亮并可 clear；Waiting-none 在跑时可直达 Waiting signals；不扩 hooks、不伪造 Waiting | `WaitingProofTests` |
 | AH | Extinguish Honesty（熄灭诚实） | 已答 ask / 终态不亮；Cascade/Windsurf 共享根不双红；Pi/Grok 正文不抬；soft-dismiss 重启仍压、可靠缺席后可再亮；纯 harvest dismiss 不抹掉同 Agent Attention；歧义 session 前缀不 smear；`Waiting`+Stop 有 grace（23.0 删除了「清除等待」） | `ExtinguishHonestyTests` · `BehaviourTests` |
 | AI | Return Truth（回看诚实） | Glance 超 8 格降为 `1 · 4m` / `1`；Attention 压缩保留未决（23.0 删除了离开期间的回看与进程收养重键——键不再改变，见 CN） | `ReturnTruthTests` |
@@ -52,7 +52,7 @@
 | BL | Lead（主行） | 行的主行是 `Explain.headline`，一张纯函数的优先级表：等待行 task→项目→「需要你」（用户必须认出的那件事，新鲜原话不抢位）；仅进程行是诚实的状态短语（终端 / 应用）；会话行 task→新鲜原话（30 分钟窗口，与详情页同门）→项目→会话短语；逐格由测试钉死 | `ExplainTests` |
 | BQ | Parity（采集平权） | **展示契约逼出采集缺口**:8.1 的「测到即渲染」成立后,Pi 行还空着 → 病在采集。Pi:>8KB 行有界正则打捞(model/usage/最后 toolCall;JSON 转义保证不匹配进正文)、usage `{input,output}` 键补齐、自述扫描(原话/`isError` 驼峰/独立 toolResult 记录)在专用解析器末尾运行;Codex:model 从 payload 拾取、旧 rollout 的 assistant 消息入 lastWord;Claude 家族:`Skill` 调用的 `input.skill` 成为工作流事实;通用提取器认 `toolCall` 驼峰。未测到照旧缺席——没 usage 的行没有 token,一个字段不发明 | 人工 / QA 脚本 |
 | BR | Craft(全员二轮+工艺) | **采集二轮**:8.3 → 栏四缺口守卫式关闭——Cursor bubbles(`cursorDiskKV` 最新 assistant bubble,type 2)、OpenCode 原话(role 经 message 表联查——text part 单独不定作者,采了会把用户话冒充 agent 原话)、Gemini 原话(整文档遍历,最后 `model` 回合;逐行扫描对整文件 JSON 天然失明)、Aider 原话(markdown:最新 `#### ` 用户回合后的散文段);全部表/列/版式不符即空,永不猜;fixture 逐家钉死。**工艺**:TrayChrome 字阶与卡片纪律(§4),视觉从数字巧合变成具名系统 | 人工 / QA 脚本 |
-| BT | Column(右柱) | 右缘是一根柱子:相对时间等宽、弱化、右对齐在身份条尾,芯片其后——扫视沿两根轴走(左轴读事,右轴读量);VoiceOver 同步读合成解剖学 | 人工 / QA 脚本 |
+| BT | Column(右柱) | 右缘是一根柱子:相对时间等宽、弱化、右对齐在行尾(23.0 起没有芯片;等待行的时长为红色)——扫视沿两根轴走(左轴读事,右轴读量);VoiceOver 同步读合成解剖学 | 人工 / QA 脚本 |
 | BU | Disclosure(披露纪律) | 三层各归其位:收起=扫视(两行),展开=理解与行动(8.x 全部深度原样),阻塞照旧免点击 | 人工 / QA 脚本 |
 | BW | Theme(产品一体) | `PulseTheme` 统一产品自有卡片的共享 chrome:窗口卡片半径族(卡 10/内 6)、padding 节奏、发丝描边、**唯一动效曲线**(easeOut 0.16)——托盘 `TrayChrome` 保留紧凑网格、同一节奏派生;设置保留 macOS 原生 grouped Form chrome,共享同一动效 token | 人工 / QA 脚本 |
 | BX | Grace(收笔) | 折叠/展开/重排共用同一条动效曲线;两条曲线在一个产品里读起来是两个产品 | 人工 / QA 脚本 |

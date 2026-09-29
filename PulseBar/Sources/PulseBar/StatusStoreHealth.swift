@@ -1,13 +1,13 @@
 import Foundation
 import AppKit
 
-/// Health (21.0: one window for the self-check, per-agent support and
-/// diagnostics) — the model's side: per-agent health built from the rows
-/// and the engine's collector bookkeeping, the copy each Health row shows,
-/// the reports, and the self-check.
+/// Diagnostics (23.0; it was Health) — the model's side: per-agent health
+/// built from the rows and the engine's collector bookkeeping, the copy each
+/// agent line shows, the one report, the self-check, and the window's value
+/// (`diagnosticsModel`).
 @MainActor
 extension StatusStore {
-    /// Current cadence, for Health and diagnostics ("probing every 5s").
+    /// Current cadence, for Diagnostics and the report ("probing every 5s").
     var probeIntervalDescription: String {
         engine.probeIntervalDescription(lang: lang)
     }
@@ -345,21 +345,6 @@ extension StatusStore {
         case .process: return tr(.supportProcess)
         case .none: return tr(.supportDetected)
         }
-    }
-
-    func supportHealthDetail(_ health: AgentSupportHealth) -> String {
-        [
-            supportAdapterDetail(health),
-            // The outcome sentence rides along so VoiceOver hears the reason a
-            // row is empty, not only that it is.
-            supportCollectorOutcomeDetail(health),
-            supportCoverageDetail(health),
-            supportTimelineDetail(health),
-            supportMissingDetail(health),
-        ]
-        .compactMap { $0 }
-        .filter { !$0.isEmpty }
-        .joined(separator: " · ")
     }
 
     func supportAdapterDetail(_ health: AgentSupportHealth) -> String {
