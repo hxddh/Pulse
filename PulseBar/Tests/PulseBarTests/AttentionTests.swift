@@ -1286,13 +1286,9 @@ struct TurnTruthTests {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-turn-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        AttentionIO.pathOverride = home.appendingPathComponent("attention.tsv")
-        ActivitySpool.directoryOverride = home.appendingPathComponent("activity.d", isDirectory: true)
-        defer {
-            AttentionIO.pathOverride = nil
-            ActivitySpool.directoryOverride = nil
-            try? FileManager.default.removeItem(at: home)
-        }
+        // An explicit file, not the global override: suites run in parallel.
+        let attention = home.appendingPathComponent("attention.tsv")
+        defer { try? FileManager.default.removeItem(at: home) }
         let stop = PulseHookReceiver.interpret(agent: .claude, event: "Stop", payload: [:])
         let failure = PulseHookReceiver.interpret(agent: .claude, event: "StopFailure", payload: [:])
         let subagent = PulseHookReceiver.interpret(agent: .claude, event: "SubagentStop", payload: [:])
@@ -1302,13 +1298,16 @@ struct TurnTruthTests {
 
         // The installed Claude hooks pass the vendor's event name.
         let here: (AgentID, [String: String]) -> (pid: Int32, landing: String) = { _, _ in (0, "") }
+        let t0: Int64 = 1_780_000_000_000
         PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "Stop"],
                               stdin: #"{"session_id":"s1","cwd":"/p","last_assistant_message":"All tests pass."}"#,
+                              attentionURL: attention, nowMs: t0,
                               locate: here)
         PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "UserPromptSubmit"],
                               stdin: #"{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/p","prompt":"next"}"#,
+                              attentionURL: attention, nowMs: t0 + 1_000,
                               locate: here)
-        let lines = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+        let lines = try String(contentsOf: attention, encoding: .utf8)
             .split(separator: "\n").filter { !$0.hasPrefix("#") }
             .map { $0.split(separator: "\t", omittingEmptySubsequences: false) }
         #expect(lines.map { String($0[1]) } == ["turn", "working"])
