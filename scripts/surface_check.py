@@ -4,7 +4,8 @@
 17.0 added the tray row's face and the Observation rules below. 22.0
 removed the Workbench's Mission board and working-copy card with the
 orchestrator. 23.0 replaced the cards under a row and the Why card with one
-detail page (`DetailModel`) and one explanation (`Explain`).
+detail page (`DetailModel`) and one explanation (`Explain`), and gave the
+tray header, the notice, Settings and Diagnostics a value each.
 
 A view that reaches into StatusStore can only be seen by running the whole
 app against real sessions, which is how 13.0 and 14.0 shipped surfaces
@@ -22,20 +23,32 @@ APP = ROOT / "PulseBar/Sources/PulseBar"
 
 # (file, struct) pairs that must never see the store.
 VIEWS = [
-    # 17.0: the tray row's face.
+    # 17.0: the tray row's face. 23.0: the header, the notice, the filter.
     ("TrayPanelViews.swift", "TrayRowFace"),
-    # 23.0: one session in full, and its plan.
+    ("TrayPanelViews.swift", "TrayHeaderFace"),
+    ("TrayPanelViews.swift", "TrayNoticeFace"),
+    ("TrayPanelViews.swift", "TrayFilterField"),
+    # 23.0: one session in full, its plan and facts.
     ("SessionDetailView.swift", "SessionDetailFace"),
     ("SessionDetailView.swift", "PlanFace"),
+    ("SessionDetailView.swift", "FactGrid"),
     # 22.0: the session's last hour.
     ("SessionDetailView.swift", "TimelineStripView"),
     ("SessionDetailView.swift", "LampShapeView"),
+    # 23.0: Settings and Diagnostics render values too.
+    ("SettingsViews.swift", "SettingsFace"),
+    ("DiagnosticsViews.swift", "DiagnosticsFace"),
+    ("DiagnosticsViews.swift", "DiagnosticsAgentRow"),
+    ("DiagnosticsViews.swift", "ActivityLogView"),
     # 19.0: the self-check.
     ("DoctorViews.swift", "DoctorReportView"),
 ]
 PURE_FILES = [
     "SurfaceFixtures.swift", "TrayRowModel.swift", "DetailModel.swift", "Explain.swift",
     "LampExplanation.swift", "DoctorModel.swift",
+    # 23.0
+    "LampFace.swift", "TrayModels.swift", "TrayKeys.swift", "SettingsModel.swift",
+    "DiagnosticsModel.swift",
 ]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 # 19.0: the store is @Observable. A Combine-era wrapper coming back would

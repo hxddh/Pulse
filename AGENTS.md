@@ -246,11 +246,13 @@ save. Every change goes through `StatusStore.updateLog`, which bumps the
 observed `logRevision` and writes only when content changed — a quiet scan
 writes nothing. `logRevision` and `settingsFocus` are observed store
 properties listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
-lamp, up to three driving sessions (each with `Explain.why`) and what was
-left out (older hidden); `SnapshotBuilder` stores it as `snapshot.lampLines`, which the status
-item appends to its tooltip. `NotificationAuditModel` renders a wait's
+lamp as one sentence — the status item's whole tooltip (23.0) — and
+`LampFace` the lamp's shape and tone, shared by the tray row and the menu
+bar (filled = needs you, ring = running, hollow = your turn / recent,
+dotted = process only; orange only for a stall or an error).
+`NotificationAuditModel` renders a wait's
 banner fate in the detail view; `ActivityLogModel` merges spans and banner
-fates across sessions into the Health window's Activity section,
+fates across sessions into the Diagnostics window's Activity tab,
 filterable by agent; times go through `LogClock` (the day is said when it
 is not today).
 `staleHidden` counts only sessions that stopped within the last 24 h
@@ -301,8 +303,14 @@ click). The snapshot
 counts sessions dropped for age (`staleHidden`). 21.0 split Settings into
 five panes (one page since 22.0); the global shortcut is one `HotkeyChoice` with `.off`
 (`hotkeyEnabled` is derived; older files migrate). The self-check, per-agent
-reading and reports are one Health window (`SupportCoverageView`); the
-Details window was folded into the Workbench (itself removed in 22.0). On macOS
+reading and reports are one window (23.0: Diagnostics, `DiagnosticsView` →
+`DiagnosticsFace`); the Details window was folded into the Workbench
+(itself removed in 22.0). 23.0 made every tray key go through one pure
+reducer (`TrayKeys.reduce`, called from the panel's key monitor through
+`TrayUI`), froze the row order while the panel is open (`TrayOrder`), and
+gave the header (`TrayHeaderModel`), the one notice (`TrayNoticeModel`),
+Settings (`SettingsModel`) and Diagnostics (`DiagnosticsModel`) a value
+each. On macOS
 26 the tray surface is `NSGlassEffectView`. `version_check.py --fix` never
 touches CHANGELOG any more (it had renamed 18.0's heading into 19.0 and 20.0).
 

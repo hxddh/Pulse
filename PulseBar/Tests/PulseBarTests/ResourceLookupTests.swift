@@ -78,38 +78,6 @@ final class DurationFormatTests: XCTestCase {
     }
 }
 
-/// Ten minutes is where a wait stops being ordinary. It is the only place in
-/// the row where "longer" becomes "louder".
-final class WaitUrgencyTests: XCTestCase {
-    private let now: Int64 = 1_700_000_000_000
-
-    private func waitingRow(ageSeconds: Double) -> AgentRow {
-        var row = AgentRow(rowKey: "k", agent: .claude)
-        let since = ageSeconds > 0 ? now - Int64(ageSeconds * 1000) : 0
-        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks))
-        return row
-    }
-
-    func testShortWaitIsNotUrgent() {
-        XCTAssertFalse(waitingRow(ageSeconds: 60).isUrgentWait(at: now))
-    }
-
-    func testLongWaitIsUrgent() {
-        XCTAssertTrue(waitingRow(ageSeconds: 1200).isUrgentWait(at: now))
-    }
-
-    func testNonWaitingRowIsNeverUrgent() {
-        var row = waitingRow(ageSeconds: 9999)
-        row.state = .running
-        XCTAssertFalse(row.isUrgentWait(at: now))
-    }
-
-    func testUnknownStartIsNotUrgent() {
-        XCTAssertFalse(waitingRow(ageSeconds: 0).isUrgentWait(at: now), "no timestamp must not read as an old wait")
-    }
-}
-
-
 /// Screenshots of 0.24.0 showed one fact stated three and four times over.
 final class RowRedundancyTests: XCTestCase {
     private func row(agent: AgentID, task: String = "", project: String = "") -> AgentRow {
@@ -270,13 +238,15 @@ final class ScreenshotRegressionTests: XCTestCase {
         )
     }
 
-    /// A stalled row is one the user should react to, so it keeps its badge.
-    func testStalledRowsAreBadged() {
+    /// A stalled row is one the user should react to: an orange ring, and
+    /// its why on a second line (23.0 — no badge).
+    func testStalledRowsSayWhy() {
         var r = row(harvestMs: now - 25 * 60 * 1000, live: true)
         r.isStalled = true
         let face = TrayRowModel.make(TrayRowModel.Input(row: r, lang: .en, nowMs: now))
-        XCTAssertEqual(face.chip?.label, L10n.t(.stalled, .en))
-        XCTAssertEqual(face.lamp, .error)
+        XCTAssertEqual(face.lamp, LampFace(shape: .ring, tone: .attention))
+        XCTAssertEqual(face.secondLine?.kind, .warning)
+        XCTAssertEqual(face.secondLine?.text, face.why)
     }
 }
 

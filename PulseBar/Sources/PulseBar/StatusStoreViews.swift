@@ -7,9 +7,6 @@ import AppKit
 extension StatusStore {
     // MARK: - Row models
 
-    /// The stall rule in minutes, for `Explain`'s why.
-    var stallMinutes: Int { Int(AgentRow.stalledSeconds / 60) }
-
     /// 17.0: the tray row's face, as a value — the store contributes only
     /// what only it knows.
     func trayRowModel(_ row: AgentRow) -> TrayRowModel {
@@ -17,7 +14,6 @@ extension StatusStore {
             row: row,
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-            stallMinutes: stallMinutes,
             notice: rowActionNotice(row),
             needsReach: isWaitingNoneNeedsReach(row),
             muted: settings.mutedAgents.contains(row.agent)
@@ -30,13 +26,26 @@ extension StatusStore {
     func detailModel(_ row: AgentRow) -> DetailModel {
         DetailModel.make(
             row: row,
-            face: trayRowModel(row),
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-            stallMinutes: stallMinutes,
+            muted: settings.mutedAgents.contains(row.agent),
             audit: notificationAudit(for: row),
             timeline: timelineStrip(for: row)
         )
+    }
+
+    /// 23.0: the tray header — the why in counts and the freshness, against
+    /// the caller's clock (the header's own timeline ticks it).
+    func trayHeaderModel(now: Date) -> TrayHeaderModel {
+        let lastRead = Self.lastReadDate(lastScanAt: engine.lastScanAt, snapshotUpdatedAt: snapshot.updatedAt)
+        return TrayHeaderModel.make(TrayHeaderModel.Input(
+            rows: cachedAll,
+            lang: lang,
+            nowMs: Int64(now.timeIntervalSince1970 * 1000),
+            lastScanMs: lastRead.map { Int64($0.timeIntervalSince1970 * 1000) },
+            intervalSeconds: engine.currentInterval,
+            asleep: engine.powerParked
+        ))
     }
 
     /// Full session inventory for the tray search surface. The normal glance
@@ -56,21 +65,9 @@ extension StatusStore {
         }
     }
 
-    /// Live agent with no Waiting path (not hooks-dependent) — one-line honesty, not a HUD.
-    var needsWaitingSignalNudge: Bool {
-        if needsHooksNudge { return false }
-        return firstLiveWaitingNoneAgent != nil
-    }
-
-    /// First live Waiting-none agent still without an active wait — Reach funnel focus target.
-    var firstLiveWaitingNoneAgent: AgentID? {
-        cachedAll.first {
-            $0.liveProcess && $0.agent.waitingSource == .none && !$0.isBlocked
-        }?.agent
-    }
-
     /// Packaged bundle version disagrees with the compiled semver — usually a
-    /// stale `Pulse.app` next to a fresh build. Worth saying out loud.
+    /// stale `Pulse.app` next to a fresh build. Diagnostics and Settings say
+    /// so.
     var isVersionMismatch: Bool {
         // Deterministic tray fixtures run from a host bundle whose version is
         // unrelated to Pulse; real packaged launches keep stale-bundle
@@ -80,57 +77,24 @@ extension StatusStore {
         return false
     }
 
-    /// A live Waiting row with the user's Waiting-notification preference on,
-    /// but no usable macOS authorization. This is intentionally level-based:
-    /// the in-tray prompt remains until the user fixes the route or turns the
-    /// preference off, so an approval cannot be missed between scans.
-    var waitingNotificationNeedsSetup: Bool {
-        settings.notifyOnWaiting && notifyAuthorized != true && cachedAll.contains(where: \.isBlocked)
+    /// 23.0: at most one notice, with one action (`TrayNoticeModel.pick`).
+    var trayNotice: TrayNoticeModel? {
+        TrayNoticeModel.pick(TrayNoticeModel.Input(
+            lang: lang,
+            notifyOnWaiting: settings.notifyOnWaiting,
+            notifyAuthorized: notifyAuthorized,
+            bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
+            hooksMissing: needsHooksNudge,
+            scanIncomplete: collectorScanIncomplete
+        ))
     }
 
-    var maintenanceNoticeText: String? {
-        if isVersionMismatch { return tr(.versionStale) }
-        // Never request permission implicitly from a background scan; say
-        // it is missing and give the notice a direct action.
-        if waitingNotificationNeedsSetup {
-            return notifyAuthorized == false
-                ? tr(.waitingNotifyDenied)
-                : tr(.waitingNotifyNotConfigured)
-        }
-        if waitingBannerFailed, cachedAll.contains(where: \.isBlocked) { return tr(.waitingBannerFailed) }
-        // 21.0: Claude or Codex is running without hooks. Waiting still
-        // works without them, so this is an offer, not an alarm.
-        if needsHooksNudge { return tr(.hooksNudge) }
-        if needsWaitingSignalNudge { return tr(.waitingSignalNudge) }
-        if case .available = updateStatus { return updateStatusText }
-        return nil
-    }
-
-    func performMaintenanceNoticeAction() {
-        if waitingNotificationNeedsSetup {
-            if notifyAuthorized == false {
-                openSystemNotificationSettings()
-            } else {
-                openSettings()
-            }
-            return
-        }
-        if waitingBannerFailed, cachedAll.contains(where: \.isBlocked) {
-            openSystemNotificationSettings()
-            return
-        }
-        if needsHooksNudge {
-            installHooks()
-            return
-        }
-        if needsWaitingSignalNudge {
-            openSettings(focus: .waitingSignals)
-            return
-        }
-        if let url = updateAvailableURL {
-            NSWorkspace.shared.open(url)
-        } else {
-            openSettings()
+    func performTrayNotice(_ action: TrayNoticeModel.Action) {
+        switch action {
+        case .openNotificationSettings: openSystemNotificationSettings()
+        case .enableNotifications: requestNotificationAuthorization()
+        case .installHooks: installHooks()
+        case .openDiagnostics: openDiagnostics()
         }
     }
 

@@ -328,12 +328,13 @@ struct ClarityFixTests {
         return row
     }
 
-    @Test func theJumpGoesToTheOldestWait() {
+    /// 23.0: the jump takes the first wait in the builder's order, which
+    /// lists the oldest first.
+    @Test func theJumpGoesToTheFirstListedWait() {
         let oldest = waitingRow("a", .claude, since: now - 10 * Self.minute)
         let newer = waitingRow("b", .codex, since: now - Self.minute)
-        #expect(StatusStore.oldestWaitRow(in: [newer, oldest])?.rowKey == "a")
-        #expect(StatusStore.firstWaitingRow(in: [newer, oldest])?.rowKey == "b")
-        #expect(StatusStore.oldestWaitRow(in: []) == nil)
+        #expect(StatusStore.firstWaitingRow(in: [oldest, newer])?.rowKey == "a")
+        #expect(StatusStore.firstWaitingRow(in: []) == nil)
     }
 
     @Test func aBannerClickStaysInsideItsAgentAndNeedsAUniquePrefix() {

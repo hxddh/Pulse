@@ -3,33 +3,47 @@ import SwiftUI
 /// 22.0 · Lamp — one session, in full, inside the tray.
 ///
 /// The row is one line; everything a person reads *after* deciding to look
-/// lives here, one keystroke (→) away and one keystroke (←, Esc) back.
-/// 23.0: the store builds a `DetailModel` and this view hands it to
+/// lives here, one keystroke (→ or Space) away and one keystroke (← or Esc)
+/// back. The store builds a `DetailModel` and this view hands it to
 /// `SessionDetailFace`, which renders the value and sends intents — so a
 /// fixture can draw it (`SurfaceCapture`).
 @MainActor
 struct SessionDetailView: View {
     var store: StatusStore
+    var ui: TrayUI
     let row: AgentRow
-    var onBack: () -> Void
 
     var body: some View {
-        SessionDetailFace(model: store.detailModel(row)) { action in
-            switch action {
-            case .back: onBack()
-            case .focus: store.focusTerminal(row)
-            case .dismiss: store.dismissWaiting(row)
-            }
+        SessionDetailFace(model: store.detailModel(row), maxHeight: CGFloat(ui.maxListHeight)) { action in
+            ui.send(action, row: row)
         }
     }
 }
 
-/// Renders a `DetailModel` and nothing else.
+/// 23.0 · renders a `DetailModel` and nothing else: the header (back, lamp,
+/// agent · project, state and age), then the ask with Go and Dismiss, the
+/// why, the last hour, the last message, the plan, the error, the banner's
+/// story and the facts — each block only when it has something to say —
+/// with how Pulse reads the session folded at the bottom.
 struct SessionDetailFace: View {
     let model: DetailModel
     /// Off for a fixture capture, which measures the whole page.
     var scrolls = true
+    var maxHeight: CGFloat = TrayChrome.maxListHeight
     var send: (DetailModel.Action) -> Void = { _ in }
+    @State private var diagnosticsOpen = false
+
+    init(
+        model: DetailModel,
+        scrolls: Bool = true,
+        maxHeight: CGFloat = TrayChrome.maxListHeight,
+        send: @escaping (DetailModel.Action) -> Void = { _ in }
+    ) {
+        self.model = model
+        self.scrolls = scrolls
+        self.maxHeight = maxHeight
+        self.send = send
+    }
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
@@ -39,7 +53,7 @@ struct SessionDetailFace: View {
             Divider().opacity(0.5)
             if scrolls {
                 ScrollView { content }
-                    .frame(maxHeight: TrayChrome.maxListHeight)
+                    .frame(maxHeight: maxHeight)
             } else {
                 content
             }
@@ -47,69 +61,10 @@ struct SessionDetailFace: View {
         .frame(width: TrayChrome.width)
     }
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: PulseTheme.Space.m) {
-            if let task = model.task {
-                Text(task)
-                    .font(PulseTheme.Font.hero)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Label(model.why, systemImage: "info.circle")
-                .font(PulseTheme.Font.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let ask = model.ask {
-                Text(ask)
-                    .font(PulseTheme.Font.bodyEmphasis)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let strip = model.timeline {
-                TimelineStripView(model: strip, lang: model.lang)
-            }
-            if model.canDismiss {
-                actions
-            }
-            if let words = model.lastWord {
-                section(t(.detailLastWords)) {
-                    Text(words)
-                        .font(PulseTheme.Font.body)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            if let error = model.error {
-                Text(error)
-                    .font(PulseTheme.Font.code)
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
-            }
-            if let plan = model.plan {
-                section(t(.detailPlanHeading)) { PlanFace(model: plan) }
-            }
-            if !model.audit.isEmpty {
-                section(t(.detailNotificationHeading)) {
-                    VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-                        ForEach(Array(model.audit.enumerated()), id: \.offset) { _, line in
-                            Text(line)
-                                .font(PulseTheme.Font.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            facts
-        }
-        .padding(.horizontal, TrayChrome.padX)
-        .padding(.vertical, PulseTheme.Space.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
+    // MARK: Header
 
     private var header: some View {
-        let face = model.face
-        return HStack(spacing: PulseTheme.Space.s) {
+        HStack(spacing: PulseTheme.Space.s) {
             Button { send(.back) } label: {
                 Image(systemName: "chevron.left")
                     .font(PulseTheme.Font.hero.weight(.regular))
@@ -118,59 +73,125 @@ struct SessionDetailFace: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .keyboardShortcut(.leftArrow, modifiers: [])
             .accessibilityLabel(t(.detailBack))
-            LampShapeView(shape: face.shape, tone: face.tone, size: 9)
-            AgentIconView(id: face.agent)
-            Text(face.agentName)
+            LampShapeView(lamp: model.lamp, size: TrayChrome.lampSize + 1)
+            AgentIconView(id: model.agent)
+            Text(model.project.isEmpty ? model.agentName : "\(model.agentName) · \(model.project)")
                 .font(PulseTheme.Font.label)
-            if !face.project.isEmpty {
-                Text(face.project)
-                    .font(PulseTheme.Font.body)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if model.muted {
+                Image(systemName: "bell.slash")
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityLabel(t(.mutedWord))
             }
             Spacer(minLength: PulseTheme.Space.s)
-            if let chip = face.chip, face.lamp == .waiting {
-                PulseChip(label: chip.label, tone: .waiting)
-            }
-            Text(face.accessoryTime)
+            Text(model.age.isEmpty ? model.state : "\(model.state) · \(model.age)")
                 .font(PulseTheme.Font.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(model.lamp.tone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(model.lamp.tone.color))
                 .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, PulseTheme.Space.s)
         .padding(.vertical, PulseTheme.Space.s)
     }
 
+    // MARK: Content, in the order it is worth reading
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: PulseTheme.Space.m) {
+            Text(model.headline)
+                .font(model.headlineQuiet ? PulseTheme.Font.heroQuiet : PulseTheme.Font.hero)
+                .foregroundStyle(model.headlineQuiet ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let ask = model.ask {
+                Text(ask)
+                    .font(PulseTheme.Font.bodyEmphasis)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .pulseInner()
+            }
+            if model.canFocus || model.canDismiss {
+                actions
+            }
+            Text(model.why)
+                .font(PulseTheme.Font.body)
+                .foregroundStyle(model.lamp.tone == .attention ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
+                .fixedSize(horizontal: false, vertical: true)
+            if let strip = model.timeline {
+                TimelineStripView(model: strip, lang: model.lang)
+            }
+            if let message = model.lastMessage {
+                section(t(.detailLastMessage)) {
+                    Text(message)
+                        .font(PulseTheme.Font.body)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let plan = model.plan {
+                section(t(.detailPlanHeading)) { PlanFace(model: plan) }
+            }
+            if let error = model.error {
+                section(t(.detailErrorHeading)) {
+                    Text(error)
+                        .font(PulseTheme.Font.code)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                        .lineLimit(4)
+                        .textSelection(.enabled)
+                }
+            }
+            if !model.notification.isEmpty {
+                section(t(.detailNotificationHeading)) {
+                    VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
+                        ForEach(Array(model.notification.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(PulseTheme.Font.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            FactGrid(facts: model.facts)
+            if !model.diagnostics.isEmpty {
+                DisclosureGroup(isExpanded: $diagnosticsOpen) {
+                    FactGrid(facts: model.diagnostics)
+                        .padding(.top, PulseTheme.Space.xs)
+                } label: {
+                    Text(t(.detailDiagnostics))
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, TrayChrome.padX)
+        .padding(.vertical, PulseTheme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var actions: some View {
         HStack(spacing: PulseTheme.Space.s) {
             if model.canFocus {
-                Button(model.focusTitle) { send(.focus) }
-                    .keyboardShortcut(.return, modifiers: [])
+                Button {
+                    send(.focus)
+                } label: {
+                    Text(model.focusTitle) + Text("  ↩").foregroundStyle(.secondary)
+                }
             }
-            Button(t(.dismissWait)) { send(.dismiss) }
+            if model.canDismiss {
+                Button {
+                    send(.dismiss)
+                } label: {
+                    Text(t(.dismissWait)) + Text("  D").foregroundStyle(.secondary)
+                }
+            }
             Spacer(minLength: 0)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-    }
-
-    /// Model, source, folder, start — one quiet line each.
-    private var facts: some View {
-        VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-            ForEach(Array(model.facts.enumerated()), id: \.offset) { _, fact in
-                HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
-                    Text(fact.label)
-                        .foregroundStyle(.secondary)
-                    Text(fact.value)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-        }
-        .font(PulseTheme.Font.caption)
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -180,6 +201,28 @@ struct SessionDetailFace: View {
                 .foregroundStyle(.secondary)
             content()
         }
+    }
+}
+
+/// Plain facts, label beside value.
+struct FactGrid: View {
+    let facts: [DetailModel.Fact]
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: PulseTheme.Space.m, verticalSpacing: PulseTheme.Space.xxs) {
+            ForEach(Array(facts.enumerated()), id: \.offset) { _, fact in
+                GridRow {
+                    Text(fact.label)
+                        .foregroundStyle(.secondary)
+                        .gridColumnAlignment(.trailing)
+                    Text(fact.value)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .font(PulseTheme.Font.caption)
     }
 }
 
@@ -215,8 +258,9 @@ struct PlanFace: View {
     }
 }
 
-/// The last hour of one session as a thin strip, in lamp tones, with the
-/// minutes per state underneath. Renders a value.
+/// The last hour of one session as a thin strip in lamp tones, with "60m"
+/// and "now" under its ends and the minutes per state beneath. Renders a
+/// value.
 struct TimelineStripView: View {
     let model: TimelineStripModel
     let lang: ResolvedLanguage
@@ -225,7 +269,7 @@ struct TimelineStripView: View {
     private func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+        VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
             GeometryReader { geo in
                 HStack(spacing: 1) {
                     ForEach(Array(model.segments.enumerated()), id: \.offset) { _, segment in
@@ -238,66 +282,73 @@ struct TimelineStripView: View {
             }
             .frame(height: height)
             .accessibilityHidden(true)
-            HStack(spacing: PulseTheme.Space.s) {
-                Text(t(.detailLastHour))
-                ForEach(Array(model.minutesByState.enumerated()), id: \.offset) { _, item in
-                    HStack(spacing: PulseTheme.Space.xxs) {
-                        Circle().fill(item.0.tone.color).frame(width: 6, height: 6)
-                        Text(String(format: t(.detailMinutesIn), item.1, stateName(item.0)))
-                    }
-                }
+            HStack {
+                Text(String(format: t(.durMin), Int(model.windowMs / 60_000)))
+                Spacer(minLength: 0)
+                Text(t(.durNow))
             }
             .font(PulseTheme.Font.caption)
-            .foregroundStyle(.secondary)
-            .accessibilityElement(children: .combine)
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
+            if !model.minutesByState.isEmpty {
+                HStack(spacing: PulseTheme.Space.m) {
+                    ForEach(Array(model.minutesByState.enumerated()), id: \.offset) { _, item in
+                        HStack(spacing: PulseTheme.Space.xs) {
+                            Circle()
+                                .fill(item.0.tone == .idle ? Color.secondary : item.0.tone.color)
+                                .frame(width: 6, height: 6)
+                            Text(String(format: t(.detailMinutesIn), stateName(item.0), item.1))
+                        }
+                    }
+                }
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+            }
         }
     }
 
     private func fill(_ state: TimelineState?) -> Color {
         guard let state else { return Color.primary.opacity(PulseTheme.Fill.subtle) }
-        return state.tone.color.opacity(state == .recent || state == .turn ? 0.35 : 0.85)
+        if state.tone == .idle { return Color.secondary.opacity(0.35) }
+        return state.tone.color.opacity(0.85)
     }
 
     private func stateName(_ state: TimelineState) -> String {
-        switch state {
-        case .blocked: return t(.needsYou)
-        case .running: return t(.running)
-        case .thin: return t(.limitedData)
-        case .stalled: return t(.stalled)
-        case .turn: return t(.yourTurn)
-        case .recent: return t(.recent)
-        }
+        ActivityLogModel.stateText(state, lang: lang)
     }
 
     private func label(_ segment: TimelineStripModel.Segment) -> String {
         guard let state = segment.state else { return "" }
         let minutes = max(1, Int((segment.endMs - segment.startMs) / 60_000))
-        var text = String(format: t(.detailMinutesIn), minutes, stateName(state))
+        var text = String(format: t(.detailMinutesIn), stateName(state), minutes)
         if !segment.kind.isEmpty { text += " · \(L10n.waitKind(segment.kind, lang))" }
         return text
     }
 }
 
-/// 22.0: the lamp's shape, in its tone — filled, half, hollow or dotted.
+/// 23.0: the lamp's shape in its tone — filled, ring, hollow or dotted
+/// (`LampFace`). The same vocabulary as the menu-bar glyph.
 struct LampShapeView: View {
-    let shape: TrayRowModel.Shape
-    let tone: PulseTheme.Tone
-    var size: CGFloat = 8
+    let lamp: LampFace
+    var size: CGFloat = 9
+
+    private var color: Color { lamp.tone == .idle ? Color.secondary : lamp.tone.color }
 
     var body: some View {
         Group {
-            switch shape {
+            switch lamp.shape {
             case .filled:
-                Circle().fill(tone.color)
-            case .half:
+                Circle().fill(color)
+            case .ring:
                 ZStack {
-                    Circle().strokeBorder(tone.color, lineWidth: 1.4)
-                    Circle().trim(from: 0.25, to: 0.75).fill(tone.color).rotationEffect(.degrees(180))
+                    Circle().strokeBorder(color, lineWidth: 1.4)
+                    Circle().fill(color).frame(width: size * 0.36, height: size * 0.36)
                 }
             case .hollow:
-                Circle().strokeBorder(tone.color, lineWidth: 1.4)
+                Circle().strokeBorder(color, lineWidth: 1.4)
             case .dotted:
-                Circle().strokeBorder(tone.color, style: StrokeStyle(lineWidth: 1.4, dash: [1.6, 1.6]))
+                Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.4, dash: [1.4, 1.6]))
             }
         }
         .frame(width: size, height: size)

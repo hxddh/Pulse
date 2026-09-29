@@ -20,65 +20,21 @@ extension StatusStore {
         }
     }
 
-    /// Everything a bug report needs, in one paste.
-    func diagnosticsText() -> String {
-        let os = ProcessInfo.processInfo.operatingSystemVersion
-        var lines: [String] = [
-            PulseVersion.fingerprint,
-            "channel: \(isVersionMismatch ? "mismatch" : PulseVersion.distributionChannel)",
-            "macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-            "lang: \(language.rawValue)",
-            "appDataScan: \(settings.readProtectedAppData ? "all" : "disabled")",
-            "harvest: native (no external runtime)",
-            "hooks: \(hooksStatus.label(lang: lang))",
-            "glance: \(snapshot.glance) · rows: \(snapshot.rows.count)/\(snapshot.totalCount)",
-            "cadence: \(probeIntervalDescription) · \(engine.probeStats.summary(now: Date()))",
-        ]
-        let collector = supportHealth
-        let collectorCounts = Dictionary(grouping: collector, by: \.collectorState).mapValues(\.count)
-        lines.append("collectorScan: \(collectorScanIncomplete ? "partial" : "complete")")
-        lines.append(
-            "collectors: observed=\(collectorCounts[.observed] ?? 0) "
-                + "sourceAbsent=\(collectorCounts[.sourceAbsent] ?? 0) "
-                + "noSessions=\((collectorCounts[.noSessions] ?? 0) + (collectorCounts[.noRecentData] ?? 0)) "
-                + "permission=\(collectorCounts[.permissionDenied] ?? 0) "
-                + "schema=\(collectorCounts[.schemaMismatch] ?? 0) "
-                + "failed=\(collectorCounts[.failed] ?? 0) "
-                + "unscanned=\(collectorCounts[.unscanned] ?? 0)"
-            )
-        let notificationAuthorization = notifyAuthorized.map { String($0) } ?? "unknown"
-        lines.append(
-            "notifications: authorization=\(notificationAuthorization) "
-                + "notifyWaiting=\(settings.notifyOnWaiting) queued=\(sessionLog.queuedKeys.count) "
-                + "inFlight=\(notifier.inFlight.count)"
-        )
-        lines.append("harvestSupervisor: \(engine.harvestSupervisor.summary(nowMs: Int64(Date().timeIntervalSince1970 * 1000)))")
-        lines.append(sessionLogDiagnostics)
-        let failedCollectors = collector.filter { $0.collectorState.isIssue }
-        if !failedCollectors.isEmpty {
-            lines.append(
-                "collectorErrors: " + failedCollectors.map {
-                    "\($0.agent.rawValue)=\($0.collectorErrorKind.isEmpty ? "unknown" : $0.collectorErrorKind)"
-                }.joined(separator: ",")
-            )
-        }
-        if let err = snapshot.probeError { lines.append("probeError: \(err)") }
-        lines.append("runningBundle: \(Bundle.main.bundleURL.path)")
-        for row in cachedAll.prefix(8) {
-            lines.append(
-                "  \(row.agent.rawValue) waiting=\(row.isBlocked) live=\(row.liveProcess) "
-                    + "signal=\(row.wait?.signal.rawValue ?? "-") source=\(row.source.rawValue)"
-            )
-        }
-        return lines.joined(separator: "\n")
+    /// 23.0 · the one report: the path-free support report, then the
+    /// self-check when it has run. Only on the user's click, only to their
+    /// own clipboard.
+    func reportText() -> String {
+        var parts = [safeSupportReport()]
+        if let report = diagnostics.doctorReport { parts.append(DoctorModel.text(report)) }
+        return parts.joined(separator: "\n\n")
     }
 
-    func copyDiagnostics() {
+    func copyReport() {
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(diagnosticsText(), forType: .string)
+        pb.setString(reportText(), forType: .string)
         flashCopiedDiagnostics()
-        DebugLog.write("diagnostics copied")
+        DebugLog.write("report copied")
     }
 
     /// A previewable, deliberately path-free support report. It contains
@@ -164,13 +120,6 @@ extension StatusStore {
         return ContentSanitizer.redact(lines.joined(separator: "\n"))
     }
 
-    func copySafeSupportReport() {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(safeSupportReport(), forType: .string)
-        flashCopiedDiagnostics()
-    }
-
     /// The vendor-shape report, on the clipboard, from a button.
     ///
     /// `--harvest-shape` has been the one diagnostic that only a terminal could
@@ -198,26 +147,6 @@ extension StatusStore {
                 DebugLog.write("harvest shape report copied bytes=\(safe.utf8.count)")
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 self.diagnostics.didCopyShapeReport = false
-            }
-        }
-    }
-
-    @MainActor
-    func exportSafeSupportReport() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "Pulse-support-\(Int(Date().timeIntervalSince1970)).txt"
-        panel.canCreateDirectories = false
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url, let self else { return }
-            do {
-                let data = ContentSanitizer.redact(self.safeSupportReport()).data(using: .utf8) ?? Data()
-                try data.write(to: url, options: .atomic)
-                DebugLog.write("safe support report exported")
-            } catch {
-                DebugLog.write("safe support report export failed \(error.localizedDescription)")
-                // 21.0: a click leaves a visible trace — the Save panel used
-                // to close and nothing happened.
-                NSAlert(error: error).runModal()
             }
         }
     }
@@ -356,11 +285,6 @@ extension StatusStore {
             return tr(.supportScanIncompleteTimeout)
         }
         return tr(.supportScanIncomplete)
-    }
-
-    /// Short tray notice sharing the Support incomplete vocabulary.
-    var trayScanIncompleteNotice: String? {
-        scanIncompleteBannerText
     }
 
     /// One line on the session log for the diagnostics copy — counts only.
@@ -787,19 +711,6 @@ extension StatusStore {
         }
     }
 
-    /// Only on the user's click, only to their own clipboard.
-    func copyDoctorReport() {
-        guard let report = diagnostics.doctorReport else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(DoctorModel.text(report), forType: .string)
-        diagnostics.didCopyDoctorReport = true
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_600_000_000)
-            self?.diagnostics.didCopyDoctorReport = false
-        }
-    }
-
     /// 21.0: the self-check's next step, taken from the self-check.
     func performDoctorFix(_ fix: DoctorModel.Fix) {
         switch fix {
@@ -814,7 +725,7 @@ extension StatusStore {
 
     /// 21.0: when Pulse last read, how often it reads, and what that has
     /// cost over the last hour — the facts that were only in the clipboard
-    /// dump. Read by the Health window.
+    /// dump — and what the tray leaves out. Read by Diagnostics.
     var scanHealthLine: String {
         let now = Date()
         var parts: [String] = []
@@ -828,6 +739,14 @@ extension StatusStore {
                 : String(format: tr(.lastReadAgo), DurationFormat.label(seconds: ago, lang: lang)))
         }
         parts.append(probeIntervalDescription)
+        // 23.0: what the tray leaves out is counted here, not in the tray.
+        if snapshot.staleHidden > 0 {
+            let names = L10n.joinNames(snapshot.staleHiddenAgents.prefix(3).map(\.displayName), lang)
+            parts.append(String(format: tr(.staleHidden), snapshot.staleHidden, names))
+        }
+        if snapshot.cappedSessions > 0 {
+            parts.append(String(format: tr(.cappedSessions), snapshot.cappedSessions))
+        }
         let reads = engine.probeStats.harvestCount(now: now)
         if reads > 0 {
             if let avg = engine.probeStats.averageHarvestMs(now: now) {
@@ -848,6 +767,92 @@ extension StatusStore {
         case let (scan?, nil): return scan
         case let (nil, snap?): return snap
         case (nil, nil): return nil
+        }
+    }
+
+    // MARK: - Diagnostics (23.0)
+
+    /// The Diagnostics window as a value.
+    func diagnosticsModel(activityAgent: AgentID?) -> DiagnosticsModel {
+        var banners: [DiagnosticsModel.Problem] = []
+        if isVersionMismatch, let bundle = PulseVersion.bundleVersion {
+            banners.append(.init(
+                id: "version",
+                text: String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
+            ))
+        }
+        if needsHooksNudge {
+            banners.append(.init(
+                id: "hooks", text: tr(.hooksNudge),
+                fix: .installHooks, fixTitle: DiagnosticsModel.fixTitle(.installHooks, lang: lang)
+            ))
+        }
+        if let privacy = privacyBannerText {
+            banners.append(.init(
+                id: "privacy", text: privacy,
+                fix: .openDataAccess, fixTitle: DiagnosticsModel.fixTitle(.openDataAccess, lang: lang)
+            ))
+        }
+        if let incomplete = scanIncompleteBannerText {
+            banners.append(.init(
+                id: "scan", text: incomplete,
+                fix: .retryScan, fixTitle: DiagnosticsModel.fixTitle(.retryScan, lang: lang)
+            ))
+        }
+        let agents = supportHealth.map { item -> DiagnosticsModel.Agent in
+            let fix = DiagnosticsModel.fix(item.repair)
+            var warning: String?
+            if item.looksDrifted {
+                warning = supportYieldDetail(item)
+            } else if item.collectorErrorKind == "native_timeout" {
+                warning = tr(.qualityReasonScanTimeout)
+            }
+            var details = [
+                supportEvidenceLabel(item),
+                supportFocusDetail(item),
+                supportDepthDetail(item),
+                supportCoverageDetail(item),
+                supportObservedDetail(item),
+                supportTimelineDetail(item),
+                supportMissingDetail(item) ?? "",
+                supportAdapterDetail(item),
+                supportReadingDetail(item),
+                supportCollectorOutcomeDetail(item),
+                supportFailureTimelineDetail(item) ?? "",
+            ]
+            if !item.looksDrifted { details.append(supportYieldDetail(item)) }
+            return DiagnosticsModel.Agent(
+                agent: item.agent,
+                name: item.agent.displayName,
+                state: DiagnosticsModel.stateWord(item.disposition, lang: lang),
+                tone: DiagnosticsModel.tone(item.disposition),
+                severity: DiagnosticsModel.severity(item.disposition),
+                fix: fix,
+                fixTitle: fix.map { DiagnosticsModel.fixTitle($0, lang: lang) } ?? "",
+                warning: warning,
+                details: details.filter { !$0.isEmpty }
+            )
+        }
+        return DiagnosticsModel.make(DiagnosticsModel.Input(
+            lang: lang,
+            scanLine: scanHealthLine,
+            banners: banners,
+            doctor: diagnostics.doctorReport,
+            doctorRunning: diagnostics.isRunningDoctor,
+            agents: agents,
+            activity: activityLog(agent: activityAgent),
+            activityAgents: activityAgents,
+            copied: diagnostics.didCopyDiagnostics
+        ))
+    }
+
+    func performDiagnosticsFix(_ fix: DiagnosticsModel.Fix) {
+        switch fix {
+        case .installHooks: installHooks()
+        case .retryScan: refresh(reason: "diagnostics-retry")
+        case .openDataAccess: openSettings(focus: .appData)
+        case .openHooksSettings: openSettings(focus: .waitingSignals)
+        case .doctor(let doctorFix): performDoctorFix(doctorFix)
         }
     }
 }

@@ -64,21 +64,6 @@ final class StatusPanelChromeTests: XCTestCase {
 }
 
 final class StatusLampTests: XCTestCase {
-    func testTrayIdentityGridKeepsSectionLampAndRowLampOnOneColumn() {
-        XCTAssertEqual(
-            TrayChrome.sectionAccentPrefix + TrayChrome.padX,
-            TrayChrome.rowIdentityStart,
-            accuracy: 0.001
-        )
-        XCTAssertEqual(
-            TrayChrome.rowIdentityStart
-                + TrayChrome.identityLampSize
-                + TrayChrome.identityLampToNameGap,
-            TrayChrome.rowNameStart,
-            accuracy: 0.001
-        )
-    }
-
     func testStatusBarLampsKeepTheirStateColors() {
         let states: [GlanceKind] = [.waiting, .running, .idle, .stalled]
         for state in states {
@@ -274,12 +259,12 @@ final class FocusTierTests: XCTestCase {
 
     func testFocusHostAppActionCopyIsProductNameNotGenericTerminal() {
         let enApp = L10n.t(.focusHostApp, .en)
-        XCTAssertEqual(String(format: enApp, HostAppKind.cursor.displayName), "Focus Cursor (app)")
+        XCTAssertEqual(String(format: enApp, HostAppKind.cursor.displayName), "Go to Cursor (app)")
         let enWs = L10n.t(.focusHostWorkspace, .en)
-        XCTAssertEqual(String(format: enWs, HostAppKind.zed.displayName), "Open workspace in Zed")
-        XCTAssertEqual(L10n.t(.focusWarp, .en), "Focus Warp (app)")
+        XCTAssertEqual(String(format: enWs, HostAppKind.zed.displayName), "Go to the workspace in Zed")
+        XCTAssertEqual(L10n.t(.focusWarp, .en), "Go to Warp (app)")
         let zh = L10n.t(.focusHostApp, .zh)
-        XCTAssertEqual(String(format: zh, "Cursor"), "聚焦 Cursor（应用）")
+        XCTAssertEqual(String(format: zh, "Cursor"), "前往 Cursor（应用）")
     }
 }
 
@@ -596,50 +581,12 @@ final class TrayGlanceResetTests: XCTestCase {
     @MainActor
     func testTheTrayHostIsBuiltFromTheSameStore() {
         let store = StatusStore()
-        _ = TrayPanelHost(store: store)
-    }
-}
-
-/// Scene AH: "Clear waiting" leaves no late notification (U-7).
-final class ClearWaitingDeliveryTests: XCTestCase {
-    @MainActor
-    func testClearWaitingWithdrawsBannersAlreadyHandedToNotificationCenter() {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-clear-waiting-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        AttentionIO.pathOverride = dir.appendingPathComponent("attention.tsv")
-        defer {
-            AttentionIO.pathOverride = nil
-            try? FileManager.default.removeItem(at: dir)
-        }
-
-        // clearWaiting() ends in refresh(); a real scan here would fold and
-        // flush digests into the developer's own store.
-        ScanEngine.suppressBackgroundScansForTesting = true
-        defer { ScanEngine.suppressBackgroundScansForTesting = false }
-
-        let store = StatusStore()
-        var withdrawals = 0
-        store.notifier.withdrawBanners = { withdrawals += 1 }
-        store.clearWaiting()
-        XCTAssertEqual(
-            withdrawals, 1,
-            "emptying our own queue does not stop a request Notification Center already accepted"
-        )
+        _ = TrayPanelHost(store: store, ui: TrayUI(store: store))
     }
 }
 
 /// Every user-facing string goes through the table (U-9).
 final class LocalizedCopyTests: XCTestCase {
-    @MainActor
-    func testTheSupportSummaryLineIsATableEntry() {
-        let en = String(format: L10n.t(.supportSummaryLine, .en), 1, 2, 3, 4, 5, 6, 7)
-        let zh = String(format: L10n.t(.supportSummaryLine, .zh), 1, 2, 3, 4, 5, 6, 7)
-        XCTAssertTrue(en.contains("Available 1"), en)
-        XCTAssertTrue(zh.contains("可用 1"), zh)
-        XCTAssertFalse(zh.contains("Available"), "the zh support header was English copy")
-    }
-
     /// One table for the tooltip, the chip and the banner.
     func testWaitKindTranslationIsSharedWithTheBuilder() {
         XCTAssertEqual(L10n.waitKind("Permission", .zh), L10n.t(.kindPermission, .zh))

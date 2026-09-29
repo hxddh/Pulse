@@ -50,14 +50,24 @@ enum SurfaceCapture {
 
     static func view(for fixture: SurfaceFixtures.Fixture) -> AnyView {
         switch fixture.value {
-        // The disclosure control is on, as in the tray, so a capture shows
-        // the trailing controls where they really sit.
-        case .row(let model, _, let hovering):
+        case .row(let model, let hovering):
             return AnyView(TrayRowFace(model: model, hovering: hovering))
+        case .header(let model):
+            return AnyView(TrayHeaderFace(model: model))
+        case .notice(let model):
+            return AnyView(TrayNoticeFace(model: model))
+        case .filter(let query, let matches, let lang):
+            return AnyView(TrayFilterField(query: query, matches: matches, lang: lang))
         case .timeline(let model, let lang):
             return AnyView(TimelineStripView(model: model, lang: lang))
-        case .detail(let model): return AnyView(SessionDetailFace(model: model, scrolls: false))
-        case .doctor(let report): return AnyView(DoctorReportView(report: report))
+        case .detail(let model):
+            return AnyView(SessionDetailFace(model: model, scrolls: false))
+        case .settings(let model):
+            return AnyView(SettingsFace(model: model).frame(height: 900))
+        case .diagnostics(let model):
+            return AnyView(DiagnosticsFace(model: model, tab: .constant(.overview), activityAgent: .constant(nil)).frame(height: 900))
+        case .doctor(let report):
+            return AnyView(DoctorReportView(report: report))
         }
     }
 

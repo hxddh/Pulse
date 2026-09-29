@@ -13,17 +13,21 @@ final class TrayPreviewWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var hosting: NSHostingController<TrayPanel>?
     private weak var store: StatusStore?
+    private var ui: TrayUI?
 
     func show(store: StatusStore) {
         self.store = store
+        let ui = self.ui ?? TrayUI(store: store)
+        self.ui = ui
+        ui.open(selectMostUrgent: false)
         if let window, let hosting {
-            hosting.rootView = TrayPanel(store: store)
+            hosting.rootView = TrayPanel(store: store, ui: ui)
             present(window)
             store.trayDidAppear()
             return
         }
 
-        let host = NSHostingController(rootView: TrayPanel(store: store))
+        let host = NSHostingController(rootView: TrayPanel(store: store, ui: ui))
         host.sizingOptions = [.intrinsicContentSize]
         let win = NSWindow(contentViewController: host)
         win.title = "Pulse Tray Preview"

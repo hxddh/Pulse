@@ -71,30 +71,26 @@ enum L10n {
         case .noAgents: return "No coding agents"
         case .noAgentsDetected: return "No coding agents detected"
         case .needsYou: return "Needs you"
-        case .waitingN: return "waiting"
+        case .waitingN: return "need you"
         case .runningN: return "running"
         case .recent1: return "1 recent"
         case .recentN: return "recent"
         case .justNow: return "just now"
         case .notYet: return "not yet"
-        case .cantRefresh: return "Can't refresh"
         case .andMore: return "and %d more…"
         case .showLess: return "Show less"
-        case .refresh: return "Refresh"
-        case .clearWaiting: return "Clear waiting"
         case .settings: return "Settings…"
         case .quit: return "Quit Pulse"
-        case .focusTerminal: return "Focus terminal"
         case .general: return "General"
         case .agentDataAccess: return "Read app data for richer details"
         case .agentDataAccessHint:
             return "Off by default. Enables deeper Cursor/VS Code/Warp scans and may ask macOS for cross-app data access."
         case .agentDataAccessSkipHint: return "If skipped, Pulse still reads process and unprotected session evidence; no prompt is shown."
-        case .notifyWaiting: return "Notify on new Waiting"
-        case .focusTTY: return "Focus Terminal tab"
-        case .focusWarp: return "Focus Warp (app)"
-        case .focusHostWorkspace: return "Open workspace in %@"
-        case .focusHostApp: return "Focus %@ (app)"
+        case .notifyWaiting: return "Notify when an agent needs me"
+        case .focusTTY: return "Go to Terminal tab"
+        case .focusWarp: return "Go to Warp (app)"
+        case .focusHostWorkspace: return "Go to the workspace in %@"
+        case .focusHostApp: return "Go to %@ (app)"
         case .focusOpenTray: return "Open Pulse tray"
         case .allowTerminalAutomation: return "Allow Terminal / iTerm tab focus"
         case .allowTerminalAutomationHint:
@@ -109,7 +105,6 @@ enum L10n {
         case .signalPending: return "session record"
         case .launchAtLogin: return "Launch at login"
         case .language: return "Language"
-        case .waitingSignals: return "Waiting signals"
         case .hooksHint:
             return "Install Claude/Codex hooks so Pulse can show permission, input waits, and subagent lifecycle. Native — no Python required."
         case .installHooks: return "Install hooks"
@@ -119,16 +114,12 @@ enum L10n {
         case .hookTestPassed: return "Connection passed"
         case .hookTestFailed: return "Connection failed"
         case .shortcuts: return "Shortcuts"
-        case .globalShortcutHint: return "Off by default. Enabling it registers a system-wide key and may require macOS Automation access on unsigned builds."
-        case .agents: return "Agent"
         case .running: return "Running"
         case .settingsTitle: return "Pulse Settings"
         case .recent: return "Recent"
         case .dismissWait: return "Dismiss"
         case .focusFailed: return "Could not open it — that window may be gone. Rescanning."
         case .hooksNudge: return "Install hooks for Claude and Codex to see their exact requests and \"your turn\""
-        case .waitingSignalNudge:
-            return "An agent is running that cannot tell Pulse it needs you — see how to connect it"
         case .hooksUnknown: return "Not checked"
         case .hooksMissing: return "Not installed"
         case .hooksInstalledBoth: return "Installed · Claude + Codex"
@@ -138,42 +129,27 @@ enum L10n {
         case .kindPermission: return "Permission"
         case .kindInput: return "Input"
         case .kindWaiting: return "Waiting"
-        case .idleWord: return "idle"
-        case .processDetected: return "Process detected"
         case .processCount: return "%d processes"
-        case .limitedData: return "Process only"
         case .terminalSession: return "Terminal session running"
         case .appSession: return "Agent app running"
         case .processAge: return "Process started %@ ago"
         case .terminalDetectedNoDetails: return "Terminal session running · activity feed unavailable"
         case .appDetectedNoDetails: return "Agent app running · session feed unavailable"
         case .setupWaitingSignals: return "Connect “needs you”…"
-        case .about: return "About"
-        case .tagline: return "Status lamp for coding agents"
-        case .build: return "Build"
-        case .runningFrom: return "Running from"
-        case .devBuild: return "dev build"
-        case .copyDiagnostics: return "Copy diagnostics"
         case .copied: return "Copied"
-        case .versionStale: return "stale bundle"
         case .versionMismatchHint:
             return "Binary reports %@ but the bundle says %@ — repackage with PulseBar/Scripts/package.sh."
-        case .cancel: return "Cancel"
         case .durNow: return "now"
         case .durSec: return "%ds"
         case .durMin: return "%dm"
         case .durHour: return "%dh"
         case .notificationsSection: return "Notifications"
         case .notifyNotConfigured: return "Notifications are not enabled yet. Pulse will not ask until you choose Enable."
-        case .waitingNotifyNotConfigured: return "Waiting alert is off — enable notifications"
         case .enableNotifications: return "Enable notifications"
         case .notifyDenied: return "Notifications are turned off for Pulse — these switches cannot fire."
-        case .waitingNotifyDenied: return "Waiting alerts are blocked — open System Settings"
-        case .notifyDeniedPersistentHint:
-            return "Waiting alerts cannot fire until System Settings allows notifications for Pulse."
         case .openNotificationSettings: return "Open System Settings"
         case .uninstallHooks: return "Remove hooks"
-        case .revealShortcut: return "Reveal Pulse"
+        case .revealShortcut: return "Open or close Pulse"
         case .hotkeyTaken: return "Another app already owns this shortcut — pick a different one."
         case .cappedSessions: return "%d more session(s) not shown"
         case .emptyHint:
@@ -192,25 +168,21 @@ enum L10n {
         case .updateFailed: return "Check failed"
         case .probeEvery: return "every %ds"
         case .probeParked: return "paused (display off)"
-        case .a11yUnknown: return "unknown"
-        case .a11yPresent: return "present"
         case .a11yIdle: return "Idle"
         case .a11yRunning: return "Running"
         case .a11yStalled: return "Stalled"
-        case .a11yWaiting: return "Needs attention"
+        case .a11yWaiting: return "Needs you"
         case .a11yError: return "Cannot refresh"
         case .sectionNeedsYou: return "Needs you"
         case .sectionRunning: return "Running"
         case .sectionStalled: return "Stalled"
         case .sectionRecent: return "Recent"
-        case .jumpToOldest: return "Jump to longest wait"
         case .moreActions: return "More actions"
         case .acrossProjects: return "across %d projects"
         case .agoFormat: return "%@ ago"
         case .noActivityYet: return "no activity yet"
         case .stalled: return "Stalled"
         case .stalledFor: return "No activity for %@"
-        case .supportHealth: return "Health…"
         case .supportScanIncomplete:
             return "Scan incomplete · previous adapter results retained"
         case .supportScanIncompleteTimeout:
@@ -224,12 +196,7 @@ enum L10n {
         case .supportWorkspace: return "workspace"
         case .supportActivity: return "activity"
         case .supportProgress: return "execution signal"
-        case .supportAction: return "last action"
-        case .supportModel: return "model"
-        case .session: return "session"
-        case .supportResources: return "resources"
         case .supportObservedSignals: return "Observed: %@"
-        case .supportNoObservedSignals: return "No usable session signals yet"
         case .supportLastRead: return "read %@ ago"
         case .supportMissing: return "missing: %@"
         case .supportMissingFeed: return "activity feed"
@@ -265,9 +232,6 @@ enum L10n {
         case .supportCollectorFailedDetail: return "adapter error: %@"
         case .supportCollectorUnscanned: return "Not scanned"
         case .supportCollectorUnscannedDetail: return "adapter did not finish in the latest scan"
-        case .supportSearch: return "Search Agents"
-        case .supportFilterAll: return "All"
-        case .supportNoFilterResults: return "No Agents match this filter"
         case .supportNeedsAction: return "Needs action"
         case .supportLimited: return "Limited"
         case .supportAvailable: return "Available"
@@ -275,22 +239,8 @@ enum L10n {
         case .supportNoRecentSession: return "No recent session"
         case .supportPermissionDenied: return "Permission denied"
         case .supportUnscanned: return "Unscanned"
-        // Order: available, needs action, limited, not installed, no recent
-        // session, permission denied, unscanned.
-        case .supportSummaryLine:
-            return "Available %d · Needs action %d · Limited %d · Not installed %d · No recent session %d · Permission denied %d · Unscanned %d"
-        case .supportNeedsActionCount: return "Action · %d"
-        case .supportLimitedCount: return "Limited · %d"
-        case .supportAvailableCount: return "Available · %d"
-        case .supportNotInstalledCount: return "Not installed · %d"
-        case .supportNoRecentCount: return "No recent · %d"
-        case .supportPermissionDeniedCount: return "Permission · %d"
-        case .supportUnscannedCount: return "Unscanned · %d"
-        case .supportUsefulCoverage: return "%d/%d useful signals"
         case .supportRetry: return "Retry scan"
-        case .supportRunAgent: return "Run this agent once"
         case .supportEnableData: return "Turn on app data reading"
-        case .supportAdapterDiagnostics: return "Reading diagnostics"
         case .supportExplainFiles: return "read %d files"
         case .supportExplainFacts: return "%d facts"
         case .supportExplainTruncated: return "window truncated — counts are floors"
@@ -308,20 +258,15 @@ enum L10n {
         case .supportOriginToolTitle: return "a tool label"
         case .supportOriginUserPrompt: return "a user turn"
         case .supportOriginSessionName: return "a name you gave the session"
-        case .supportCopySafeReport: return "Copy safe report"
-        case .exportSafeReport: return "Export safe report…"
         case .supportCopyShapeReport: return "Copy vendor shape"
-        case .supportShapeReading: return "Reading sessions…"
-        case .supportShapeHint: return "Key names and value kinds only — never your text. Share it to get a parsing bug fixed."
-        case .notifFocus: return "Go look"
+        case .notifFocus: return "Go"
         case .waitingSummaryTitle: return "%d agents need your attention"
-        case .searchNoResults: return "No sessions match this search"
+        case .searchNoResults: return "No sessions match “%@”"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
         case .qualityReasonScanTimeout: return "Adapter timed out while reading local data"
-        case .qualityNextWaitCache: return "Keep using the agent so its local cache fills in"
         case .supportFailureTimelineEntry: return "Last failure · %@ · %@ ago"
-        case .trayScanIncomplete: return "The last read did not finish · open Health"
+        case .trayScanIncomplete: return "The last read did not finish"
         case .modelFact: return "Model %@"
         case .errorFactOne: return "1 failure"
         case .errorsFact: return "%d failures"
@@ -333,35 +278,16 @@ enum L10n {
         case .doctorRun: return "Run self-check"
         case .doctorHint: return "Reads the Claude and Codex hook files and logs on this Mac, runs claude agents --json once, and says which contracts are proven here. Writes nothing; the copied report has no paths, prompts or session ids."
         case .yourTurn: return "Your turn"
-        case .turnCount: return "%d your turn"
-        case .jumpToTurn: return "Go to the next finished session"
         case .shortcutOff: return "Off"
         case .settingsHooksTitle: return "Claude & Codex hooks"
         case .settingsHooksTest: return "Test the connection"
-        case .settingsPaneDataHeader: return "What Pulse may read"
-        case .settingsPaneControlHeader: return "What Pulse may do"
-        case .healthOpen: return "Open Health…"
-        case .healthTitle: return "Health"
-        case .healthSettingsHint: return "Self-check, what Pulse can read for each agent, and a report to copy."
-        case .healthAgentsHeading: return "What Pulse can read, per agent"
-        case .healthHideReport: return "Hide the report"
-        case .healthShowReport: return "Show the report here"
-        case .healthReport: return "Report"
+        case .healthAgentsHeading: return "Agents"
         case .healthRunCheck: return "Run"
         case .healthRunAgain: return "Run again"
-        case .doctorCopyReport: return "Copy self-check"
         case .lastReadJustNow: return "Read just now"
         case .lastReadAgo: return "Read %@ ago"
         case .readsLastHour: return "%d reads in the last hour"
         case .readsLastHourAvg: return "%d reads in the last hour, %d ms each"
-        case .processOnlyHint: return "Only a running process was seen. Health shows what Pulse can read for this agent."
-        case .cantRefreshHint: return "Pulse could not read processes or sessions on its last try. Retry, or open Health to see which reader failed."
-        case .setupNotifications: return "Notifications"
-        case .setupNotificationsDetail: return "So an agent that needs you can reach you while the tray is closed."
-        case .setupHooksDetail: return "Optional. Adds the exact permission text and \"your turn\" for Claude Code and Codex."
-        case .setupAppDataDetail: return "Optional. Cursor, VS Code and other editor agents keep their sessions in data macOS protects."
-        case .setupReview: return "Review…"
-        case .setupOtherAgents: return "Using another agent? See how it can tell Pulse it needs you…"
         case .updateFailedBadFeed: return "Update feed address is invalid"
         case .updateFailedNetwork: return "Could not reach GitHub"
         case .updateFailedHTTP: return "GitHub answered %d"
@@ -370,14 +296,12 @@ enum L10n {
         case .staleHidden: return "%d older session(s) not shown (%@)"
         case .waitingBannerFailed: return "macOS did not show the last “needs you” banner — check Notifications"
         case .lampRuleBlocked: return "Red: an agent is waiting on you."
-        case .lampRuleStalled: return "Orange: a running session has gone quiet past your stall threshold."
-        case .lampRuleThin: return "Orange: something is running that Pulse can only see as a process."
+        case .lampRuleStalled: return "Orange: a running session has gone quiet."
         case .lampRuleRunning: return "Green: agents are working and nothing needs you."
         case .lampRuleTurn: return "Grey: a turn ended — your move when you are ready."
         case .lampRuleRecent: return "Grey: nothing running; recent sessions are listed."
         case .lampRuleIdle: return "Grey: no coding agent is running."
         case .lampRuleCantRefresh: return "Orange: Pulse could not read processes or sessions on its last try."
-        case .lampLeftStale: return "%d older not shown"
         case .auditRaised: return "Raised %@"
         case .auditPosted: return "Banner shown %@"
         case .auditSummary: return "Shown in a summary banner %@"
@@ -394,19 +318,12 @@ enum L10n {
         case .auditSkipAtLaunch: return "No banner (%@): it was already waiting when Pulse started"
         case .auditSkipRejected: return "No banner (%@): macOS refused it — check Notifications and Focus"
         case .details: return "Details"
-        case .muteAgent: return "Mute %@"
-        case .unmuteAgent: return "Unmute %@"
-        case .detailLastWords: return "Last words"
         case .detailPlanHeading: return "Plan"
         case .detailNotificationHeading: return "Notification"
         case .detailBack: return "Back"
-        case .detailLastHour: return "Last hour:"
-        case .detailMinutesIn: return "%d min %@"
+        case .detailMinutesIn: return "%@ %d min"
         case .filterMatches: return "%d matches"
-        case .trayKeyHints: return "↑↓ select · ↩ focus · → details · ⌫ dismiss · type to filter"
-        case .setupTerminalFocus: return "Jump to the exact terminal tab"
-        case .setupTerminalFocusDetail: return "So ↩ lands in the tab that is waiting. macOS asks once for Automation access."
-        case .setupTurnOn: return "Turn on"
+        case .trayKeyHints: return "↑↓ select   ↩ go   → details   D dismiss   M mute   esc close"
         case .activityLeft: return "left the list"
         case .activityFromSession: return "session record"
         case .activityFromProcess: return "process only"
@@ -419,8 +336,7 @@ enum L10n {
         case .explainVendor: return "Claude itself reports %@, first seen %@"
         case .explainTurn: return "%@'s hook reported the turn ended %@ — focus it or reply to clear"
         case .explainProcessOnly: return "Seen only as a process — no session data"
-        case .explainStalled: return "No new output for %@ — past your %d-minute stall threshold"
-        case .explainStalledNoRule: return "No new output for %@"
+        case .explainStalled: return "No new output for %@"
         case .explainStalledUnknown: return "Running, but Pulse has no clock for its activity"
         case .explainErrors: return "The agent reported %d error(s) in this session"
         case .explainRunning: return "%@ changed %@"
@@ -457,7 +373,7 @@ enum L10n {
         case .doctorSettingsUnreadable: return "The settings file is not valid JSON; Pulse will not edit it"
         case .doctorFixSettings: return "Fix the JSON, then install hooks from Settings"
         case .doctorNoHooks: return "No Pulse hook found"
-        case .doctorInstallHooks: return "Settings → Waiting signals → Install hooks"
+        case .doctorInstallHooks: return "Settings → Hooks → Install hooks"
         case .doctorReinstallHooks: return "Reinstall hooks from Settings to pick up this version's events"
         case .doctorMissing: return "Missing: %@"
         case .doctorAllEvents: return "All %d events, questions included"
@@ -488,6 +404,42 @@ enum L10n {
         case .doctorAgoMinutes: return "%d min ago"
         case .doctorAgoHours: return "%d h ago"
         case .doctorAgoDays: return "%d days ago"
+        case .processOnly: return "Process only"
+        case .processOnlyN: return "process only"
+        case .waiting1: return "needs you"
+        case .stalledN: return "stalled"
+        case .yourTurnN: return "your turn"
+        case .lampRuleProcessOnly: return "Grey: an agent is running that Pulse can see only as a process."
+        case .mute: return "Mute"
+        case .unmute: return "Unmute"
+        case .mutedWord: return "muted"
+        case .diagnosticsOpen: return "Diagnostics…"
+        case .diagnosticsTitle: return "Diagnostics"
+        case .diagnosticsOverview: return "Overview"
+        case .diagnosticsProblems: return "Problems"
+        case .diagnosticsNoProblems: return "Nothing on this Mac needs fixing"
+        case .copyReport: return "Copy report"
+        case .headerUpdating: return "updating…"
+        case .headerUpdatedNow: return "updated just now"
+        case .headerUpdatedAgo: return "updated %@ ago"
+        case .headerNotUpdated: return "not updated for %@"
+        case .noticeNotificationsDenied: return "Notifications are off for Pulse — an agent that needs you cannot reach you"
+        case .noticeNotificationsOff: return "Turn on notifications so an agent that needs you can reach you"
+        case .filterLabel: return "Filter"
+        case .settingsHooksSection: return "Hooks"
+        case .settingsTerminalSection: return "Terminal control"
+        case .settingsDataSection: return "Data access"
+        case .settingsUpdatesSection: return "Updates"
+        case .detailLastMessage: return "Last message"
+        case .detailErrorHeading: return "Error"
+        case .detailSession: return "Session"
+        case .detailWaitSignal: return "Wait signal"
+        case .detailGo: return "Go"
+        case .detailGoNone: return "No way to reach it — observed only"
+        case .detailProcess: return "Process"
+        case .detailLastChange: return "Last change"
+        case .detailMoreSessions: return "Sessions not listed"
+        case .detailDiagnostics: return "How Pulse reads this session"
         }
     }
 
@@ -496,30 +448,26 @@ enum L10n {
         switch key {
         case .noAgents: return "当前没有编码 Agent"
         case .noAgentsDetected: return "未检测到编码 Agent"
-        case .needsYou: return "需要你处理"
-        case .waitingN: return "待处理"
-        case .runningN: return "运行"
+        case .needsYou: return "需要你"
+        case .waitingN: return "需要你"
+        case .runningN: return "运行中"
         case .recent1: return "1 个最近会话"
         case .recentN: return "最近"
         case .justNow: return "刚刚"
         case .notYet: return "尚未更新"
-        case .cantRefresh: return "无法刷新"
         case .andMore: return "另有 %d 个…"
         case .showLess: return "收起"
-        case .refresh: return "刷新"
-        case .clearWaiting: return "清除等待"
         case .settings: return "偏好设置…"
         case .quit: return "退出 Pulse"
-        case .focusTerminal: return "聚焦终端"
         case .general: return "通用"
         case .agentDataAccess: return "读取应用数据以展示更多详情"
         case .agentDataAccessHint: return "默认关闭。开启后会深入扫描 Cursor / VS Code / Warp，macOS 可能会请求访问其他应用的数据。"
         case .agentDataAccessSkipHint: return "跳过后仍会读取进程和未受保护的会话证据；不会弹出权限请求。"
-        case .notifyWaiting: return "新的「需要你」时通知"
-        case .focusTTY: return "聚焦终端标签"
-        case .focusWarp: return "聚焦 Warp（应用）"
-        case .focusHostWorkspace: return "在 %@ 打开工作区"
-        case .focusHostApp: return "聚焦 %@（应用）"
+        case .notifyWaiting: return "Agent 需要我时通知"
+        case .focusTTY: return "前往终端标签页"
+        case .focusWarp: return "前往 Warp（应用）"
+        case .focusHostWorkspace: return "前往 %@ 中的工作区"
+        case .focusHostApp: return "前往 %@（应用）"
         case .focusOpenTray: return "打开 Pulse 托盘"
         case .allowTerminalAutomation: return "允许聚焦 Terminal / iTerm 标签"
         case .allowTerminalAutomationHint:
@@ -534,25 +482,20 @@ enum L10n {
         case .signalPending: return "会话记录"
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
-        case .waitingSignals: return "等待信号"
         case .hooksHint: return "安装 Claude/Codex hooks 后，Pulse 才能显示权限、输入等待与 subagent 生命周期。原生通路，无需 Python。"
-        case .installHooks: return "安装连接"
+        case .installHooks: return "安装 hooks"
         case .testWaitingSignal: return "测试连接"
         case .hookTestIdle: return "尚未测试"
         case .hookTestRunning: return "测试中…"
         case .hookTestPassed: return "连接测试通过"
         case .hookTestFailed: return "连接测试失败"
         case .shortcuts: return "快捷键"
-        case .globalShortcutHint: return "默认关闭。启用后会注册系统级快捷键，未签名版本可能触发 macOS 自动化权限请求。"
-        case .agents: return "Agent"
         case .running: return "运行中"
         case .settingsTitle: return "Pulse 偏好设置"
         case .recent: return "最近"
-        case .dismissWait: return "忽略等待"
+        case .dismissWait: return "忽略"
         case .focusFailed: return "没能打开 —— 那个窗口可能已经不在了，正在重扫"
         case .hooksNudge: return "为 Claude 和 Codex 安装 hooks，就能看到确切的请求内容和「轮到你」"
-        case .waitingSignalNudge:
-            return "有个 Agent 在运行，但它没法告诉 Pulse「需要你」—— 看看怎么接上"
         case .hooksUnknown: return "未检查"
         case .hooksMissing: return "未安装"
         case .hooksInstalledBoth: return "已安装 · Claude + Codex"
@@ -562,41 +505,26 @@ enum L10n {
         case .kindPermission: return "需要授权"
         case .kindInput: return "等待输入"
         case .kindWaiting: return "等待中"
-        case .idleWord: return "空闲"
-        case .processDetected: return "检测到进程"
         case .processCount: return "%d 个进程"
-        case .limitedData: return "仅进程"
         case .terminalSession: return "终端会话正在运行"
         case .appSession: return "Agent 应用正在运行"
         case .processAge: return "进程始于%@前"
         case .terminalDetectedNoDetails: return "终端会话正在运行 · 暂无活动数据"
         case .appDetectedNoDetails: return "Agent 应用正在运行 · 暂无会话数据"
         case .setupWaitingSignals: return "接入「需要你」…"
-        case .about: return "关于"
-        case .tagline: return "编码 Agent 状态灯"
-        case .build: return "构建"
-        case .runningFrom: return "运行位置"
-        case .devBuild: return "开发构建"
-        case .copyDiagnostics: return "复制诊断信息"
         case .copied: return "已复制"
-        case .versionStale: return "版本不一致"
         case .versionMismatchHint: return "程序版本为 %@，但 app 包标记为 %@ — 请用 PulseBar/Scripts/package.sh 重新打包。"
-        case .cancel: return "取消"
         case .durNow: return "刚刚"
         case .durSec: return "%d 秒"
         case .durMin: return "%d 分"
         case .durHour: return "%d 小时"
         case .notificationsSection: return "通知"
         case .notifyNotConfigured: return "通知尚未启用。点击“启用通知”后 Pulse 才会请求权限。"
-        case .waitingNotifyNotConfigured: return "需要你处理 · 通知未启用"
         case .enableNotifications: return "启用通知"
         case .notifyDenied: return "系统已关闭 Pulse 的通知权限，下面的开关不会生效。"
-        case .waitingNotifyDenied: return "需要你处理 · 通知已被系统关闭"
-        case .notifyDeniedPersistentHint:
-            return "在系统设置允许 Pulse 通知之前，Waiting 提醒无法送达。"
         case .openNotificationSettings: return "打开系统设置"
-        case .uninstallHooks: return "移除连接"
-        case .revealShortcut: return "唤出 Pulse"
+        case .uninstallHooks: return "移除 hooks"
+        case .revealShortcut: return "打开或关闭 Pulse"
         case .hotkeyTaken: return "该快捷键已被其他应用占用，请换一个。"
         case .cappedSessions: return "另有 %d 个会话未显示"
         case .emptyHint: return "Pulse 显示正在运行的 Agent，以及 45 分钟内有过活动的会话，全部读自这台 Mac。"
@@ -613,25 +541,21 @@ enum L10n {
         case .updateFailed: return "检查失败"
         case .probeEvery: return "每 %d 秒"
         case .probeParked: return "已暂停（屏幕关闭）"
-        case .a11yUnknown: return "未知"
-        case .a11yPresent: return "有"
         case .a11yIdle: return "空闲"
         case .a11yRunning: return "运行中"
-        case .a11yStalled: return "已停滞"
-        case .a11yWaiting: return "需要你处理"
+        case .a11yStalled: return "停滞"
+        case .a11yWaiting: return "需要你"
         case .a11yError: return "无法刷新"
         case .sectionNeedsYou: return "需要你"
         case .sectionRunning: return "运行中"
         case .sectionStalled: return "停滞"
         case .sectionRecent: return "最近"
-        case .jumpToOldest: return "跳到等待最久的"
         case .moreActions: return "更多操作"
         case .acrossProjects: return "%d 个项目"
         case .agoFormat: return "%@前"
         case .noActivityYet: return "暂无动静"
         case .stalled: return "停滞"
         case .stalledFor: return "已 %@ 无活动"
-        case .supportHealth: return "健康检查…"
         case .supportScanIncomplete: return "扫描未完成 · 保留了上一次的读取结果"
         case .supportScanIncompleteTimeout: return "部分读取超时 · 保留了已读到的结果"
         case .supportNotDetected: return "未检测到"
@@ -643,12 +567,7 @@ enum L10n {
         case .supportWorkspace: return "工作区"
         case .supportActivity: return "活动"
         case .supportProgress: return "执行信号"
-        case .supportAction: return "最近动作"
-        case .supportModel: return "模型"
-        case .session: return "会话"
-        case .supportResources: return "资源"
         case .supportObservedSignals: return "已观测：%@"
-        case .supportNoObservedSignals: return "尚未观测到可用会话信号"
         case .supportLastRead: return "%@前读取"
         case .supportMissing: return "缺少：%@"
         case .supportMissingFeed: return "活动数据"
@@ -683,9 +602,6 @@ enum L10n {
         case .supportCollectorFailedDetail: return "读取失败：%@"
         case .supportCollectorUnscanned: return "未完成扫描"
         case .supportCollectorUnscannedDetail: return "最近一次扫描中，这一路读取没有完成"
-        case .supportSearch: return "搜索 Agent"
-        case .supportFilterAll: return "全部"
-        case .supportNoFilterResults: return "当前筛选条件下没有 Agent"
         case .supportNeedsAction: return "需要处理"
         case .supportLimited: return "信息受限"
         case .supportAvailable: return "可用"
@@ -693,20 +609,8 @@ enum L10n {
         case .supportNoRecentSession: return "无近期会话"
         case .supportPermissionDenied: return "权限不足"
         case .supportUnscanned: return "未扫描"
-        case .supportSummaryLine:
-            return "可用 %d · 需要处理 %d · 信息受限 %d · 未安装 %d · 无近期会话 %d · 权限不足 %d · 未扫描 %d"
-        case .supportNeedsActionCount: return "待处理 · %d"
-        case .supportLimitedCount: return "受限 · %d"
-        case .supportAvailableCount: return "可用 · %d"
-        case .supportNotInstalledCount: return "未安装 · %d"
-        case .supportNoRecentCount: return "无近期 · %d"
-        case .supportPermissionDeniedCount: return "权限 · %d"
-        case .supportUnscannedCount: return "未扫描 · %d"
-        case .supportUsefulCoverage: return "有效信号 %d/%d"
         case .supportRetry: return "重新扫描"
-        case .supportRunAgent: return "先运行一次这个 Agent"
         case .supportEnableData: return "开启应用数据读取"
-        case .supportAdapterDiagnostics: return "读取诊断"
         case .supportExplainFiles: return "读了 %d 个文件"
         case .supportExplainFacts: return "解析出 %d 条事实"
         case .supportExplainTruncated: return "窗口被截断 —— 上面的计数只是下限"
@@ -724,20 +628,15 @@ enum L10n {
         case .supportOriginToolTitle: return "工具标签"
         case .supportOriginUserPrompt: return "一次用户提问"
         case .supportOriginSessionName: return "你给这场会话起的名字"
-        case .supportCopySafeReport: return "复制安全报告"
-        case .exportSafeReport: return "导出安全报告…"
         case .supportCopyShapeReport: return "复制厂商格式"
-        case .supportShapeReading: return "正在读会话…"
-        case .supportShapeHint: return "只有键名与值的类型，不含你的任何文字。发它就能修解析。"
-        case .notifFocus: return "去看看"
-        case .waitingSummaryTitle: return "%d 个 Agent 需要你处理"
-        case .searchNoResults: return "没有匹配的会话"
+        case .notifFocus: return "前往"
+        case .waitingSummaryTitle: return "%d 个 Agent 需要你"
+        case .searchNoResults: return "没有匹配「%@」的会话"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
         case .updateSignedUnnotarized: return "已用 Developer ID 签名 · 未公证 · Gatekeeper 可能拦截"
         case .qualityReasonScanTimeout: return "读取本地数据超时"
-        case .qualityNextWaitCache: return "继续使用该 Agent，等待本地缓存补齐"
         case .supportFailureTimelineEntry: return "最近失败 · %@ · %@前"
-        case .trayScanIncomplete: return "上次读取没有完成 · 打开健康检查"
+        case .trayScanIncomplete: return "上次读取没有完成"
         case .modelFact: return "模型 %@"
         case .errorFactOne: return "1 项失败"
         case .errorsFact: return "%d 项失败"
@@ -749,35 +648,16 @@ enum L10n {
         case .doctorRun: return "运行自检"
         case .doctorHint: return "读取这台 Mac 上 Claude 与 Codex 的 hook 文件和记录，运行一次 claude agents --json，说明哪些约定在这里已被证实。不写任何东西；复制出的报告不含路径、提示词或会话 id。"
         case .yourTurn: return "轮到你"
-        case .turnCount: return "%d 轮到你"
-        case .jumpToTurn: return "跳到做完的会话"
         case .shortcutOff: return "关闭"
         case .settingsHooksTitle: return "Claude 与 Codex 的 hooks"
         case .settingsHooksTest: return "测试连接"
-        case .settingsPaneDataHeader: return "Pulse 可以读取的内容"
-        case .settingsPaneControlHeader: return "Pulse 可以做的事"
-        case .healthOpen: return "打开健康检查…"
-        case .healthTitle: return "健康检查"
-        case .healthSettingsHint: return "自检、每个 Agent 能读到什么，以及可复制的报告。"
-        case .healthAgentsHeading: return "每个 Agent：Pulse 能读到什么"
-        case .healthHideReport: return "收起报告"
-        case .healthShowReport: return "在此显示报告"
-        case .healthReport: return "报告"
+        case .healthAgentsHeading: return "Agent"
         case .healthRunCheck: return "运行"
         case .healthRunAgain: return "重新运行"
-        case .doctorCopyReport: return "复制自检结果"
         case .lastReadJustNow: return "刚刚读取"
         case .lastReadAgo: return "%@前读取"
         case .readsLastHour: return "过去一小时读取 %d 次"
         case .readsLastHourAvg: return "过去一小时读取 %d 次，每次 %d 毫秒"
-        case .processOnlyHint: return "只看到一个运行中的进程。「健康检查」里能看到 Pulse 对这个 Agent 能读到什么。"
-        case .cantRefreshHint: return "Pulse 上一次没能读取进程和会话。可以重试，或打开「健康检查」看是哪一路读取失败。"
-        case .setupNotifications: return "通知"
-        case .setupNotificationsDetail: return "面板关着的时候，需要你的 Agent 也能提醒到你。"
-        case .setupHooksDetail: return "可选。为 Claude Code 和 Codex 增加确切的权限请求内容和「轮到你」。"
-        case .setupAppDataDetail: return "可选。Cursor、VS Code 等编辑器里的 Agent 把会话存在 macOS 保护的数据里。"
-        case .setupReview: return "查看…"
-        case .setupOtherAgents: return "用的是其他 Agent？看看它如何告诉 Pulse「需要你」…"
         case .updateFailedBadFeed: return "更新源地址无效"
         case .updateFailedNetwork: return "无法连接 GitHub"
         case .updateFailedHTTP: return "GitHub 返回 %d"
@@ -786,14 +666,12 @@ enum L10n {
         case .staleHidden: return "%d 个较早的会话未显示（%@）"
         case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」的通知 —— 请检查通知设置"
         case .lampRuleBlocked: return "红：有 Agent 在等你。"
-        case .lampRuleStalled: return "橙：有会话运行中但超过停滞阈值没有动静。"
-        case .lampRuleThin: return "橙：有 Agent 在运行，但 Pulse 只看到进程。"
+        case .lampRuleStalled: return "橙：有运行中的会话停滞了。"
         case .lampRuleRunning: return "绿：Agent 在工作，没有需要你的事。"
         case .lampRuleTurn: return "灰：有回合结束了，轮到你（不急）。"
         case .lampRuleRecent: return "灰：没有在运行的；列出的是最近的会话。"
         case .lampRuleIdle: return "灰：没有在运行的编码 Agent。"
         case .lampRuleCantRefresh: return "橙：Pulse 上一次没能读取进程和会话。"
-        case .lampLeftStale: return "%d 个较早的未显示"
         case .auditRaised: return "%@ 开始等待"
         case .auditPosted: return "%@ 发出通知"
         case .auditSummary: return "%@ 合并进汇总通知"
@@ -810,19 +688,12 @@ enum L10n {
         case .auditSkipAtLaunch: return "没有通知（%@）：Pulse 启动时它已经在等"
         case .auditSkipRejected: return "没有通知（%@）：macOS 拒绝了 —— 请检查通知与专注模式"
         case .details: return "详情"
-        case .muteAgent: return "静音 %@"
-        case .unmuteAgent: return "取消静音 %@"
-        case .detailLastWords: return "最后说的话"
         case .detailPlanHeading: return "计划"
         case .detailNotificationHeading: return "通知"
         case .detailBack: return "返回"
-        case .detailLastHour: return "最近一小时："
-        case .detailMinutesIn: return "%d 分钟 %@"
+        case .detailMinutesIn: return "%@ %d 分钟"
         case .filterMatches: return "%d 个匹配"
-        case .trayKeyHints: return "↑↓ 选择 · ↩ 聚焦 · → 详情 · ⌫ 忽略 · 直接打字筛选"
-        case .setupTerminalFocus: return "跳到确切的终端标签页"
-        case .setupTerminalFocusDetail: return "这样按 ↩ 就会落到正在等你的那个标签页。macOS 会请求一次「自动化」权限。"
-        case .setupTurnOn: return "开启"
+        case .trayKeyHints: return "↑↓ 选择   ↩ 前往   → 详情   D 忽略   M 静音   esc 关闭"
         case .activityLeft: return "离开了列表"
         case .activityFromSession: return "会话记录"
         case .activityFromProcess: return "仅进程"
@@ -835,8 +706,7 @@ enum L10n {
         case .explainVendor: return "Claude 自己报告了%@ · 首次看到于%@"
         case .explainTurn: return "%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
         case .explainProcessOnly: return "只看到进程——没有会话数据"
-        case .explainStalled: return "已经 %@ 没有新输出——超过你设的 %d 分钟停滞阈值"
-        case .explainStalledNoRule: return "已经 %@ 没有新输出"
+        case .explainStalled: return "已经 %@ 没有新输出"
         case .explainStalledUnknown: return "在运行，但 Pulse 读不到它的活动时间"
         case .explainErrors: return "Agent 在这个会话里报告了 %d 个错误"
         case .explainRunning: return "%@更新于%@"
@@ -873,7 +743,7 @@ enum L10n {
         case .doctorSettingsUnreadable: return "设置文件不是合法 JSON；Pulse 不会改它"
         case .doctorFixSettings: return "修好 JSON 后在设置里安装 hooks"
         case .doctorNoHooks: return "没有找到 Pulse 的 hook"
-        case .doctorInstallHooks: return "设置 → 等待信号 → 安装 hooks"
+        case .doctorInstallHooks: return "设置 → Hooks → 安装 hooks"
         case .doctorReinstallHooks: return "在设置里重新安装 hooks，以获得这一版的事件"
         case .doctorMissing: return "缺少：%@"
         case .doctorAllEvents: return "全部 %d 个事件，含提问"
@@ -904,6 +774,42 @@ enum L10n {
         case .doctorAgoMinutes: return "%d 分钟前"
         case .doctorAgoHours: return "%d 小时前"
         case .doctorAgoDays: return "%d 天前"
+        case .processOnly: return "仅进程"
+        case .processOnlyN: return "仅进程"
+        case .waiting1: return "需要你"
+        case .stalledN: return "停滞"
+        case .yourTurnN: return "轮到你"
+        case .lampRuleProcessOnly: return "灰：有 Agent 在运行，但 Pulse 只看到进程。"
+        case .mute: return "静音"
+        case .unmute: return "取消静音"
+        case .mutedWord: return "已静音"
+        case .diagnosticsOpen: return "诊断…"
+        case .diagnosticsTitle: return "诊断"
+        case .diagnosticsOverview: return "概览"
+        case .diagnosticsProblems: return "问题"
+        case .diagnosticsNoProblems: return "这台 Mac 上没有需要修的问题"
+        case .copyReport: return "复制报告"
+        case .headerUpdating: return "正在读取…"
+        case .headerUpdatedNow: return "刚刚更新"
+        case .headerUpdatedAgo: return "%@前更新"
+        case .headerNotUpdated: return "已 %@ 未更新"
+        case .noticeNotificationsDenied: return "Pulse 的通知被关闭了 —— 需要你的 Agent 没法提醒你"
+        case .noticeNotificationsOff: return "开启通知，需要你的 Agent 才能提醒到你"
+        case .filterLabel: return "筛选"
+        case .settingsHooksSection: return "Hooks"
+        case .settingsTerminalSection: return "终端控制"
+        case .settingsDataSection: return "数据访问"
+        case .settingsUpdatesSection: return "更新"
+        case .detailLastMessage: return "最后的消息"
+        case .detailErrorHeading: return "错误"
+        case .detailSession: return "会话"
+        case .detailWaitSignal: return "等待信号"
+        case .detailGo: return "前往"
+        case .detailGoNone: return "无法前往 —— 仅观测"
+        case .detailProcess: return "进程"
+        case .detailLastChange: return "最后变化"
+        case .detailMoreSessions: return "未列出的会话"
+        case .detailDiagnostics: return "Pulse 如何读取这个会话"
         }
     }
 
@@ -911,33 +817,32 @@ enum L10n {
     /// and that format specifiers match (a mismatched %d crashes String(format:)).
     enum Key: CaseIterable {
         case noAgents, noAgentsDetected, needsYou, waitingN, runningN
-        case recent1, recentN, recent, idleWord
-        case justNow, notYet, cantRefresh, andMore, showLess
-        case refresh, clearWaiting, settings, quit
-        case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait
+        case recent1, recentN, recent
+        case justNow, notYet, andMore, showLess
+        case settings, quit
+        case focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait
         case focusFailed
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone
         case general, agentDataAccess, agentDataAccessHint, agentDataAccessSkipHint, notifyWaiting, launchAtLogin, language
-        case waitingSignals, hooksHint, installHooks, testWaitingSignal
+        case hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
-        case shortcuts, globalShortcutHint
-        case agents, running, settingsTitle
-        case hooksNudge, waitingSignalNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
+        case shortcuts
+        case running, settingsTitle
+        case hooksNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
         case kindPermission, kindInput, kindWaiting
         case signalHooks, signalPending
-        case processDetected, processCount
-        case limitedData, terminalSession, appSession, processAge
+        case processCount
+        case terminalSession, appSession, processAge
         case terminalDetectedNoDetails, appDetectedNoDetails
         case setupWaitingSignals
-        case about, tagline, build, runningFrom, devBuild, copyDiagnostics, copied
-        case versionStale, versionMismatchHint
-        case cancel
+        case copied
+        case versionMismatchHint
         case durNow, durSec, durMin, durHour
-        case notificationsSection, notifyNotConfigured, waitingNotifyNotConfigured
-        case enableNotifications, notifyDenied, notifyDeniedPersistentHint, waitingNotifyDenied, openNotificationSettings
+        case notificationsSection, notifyNotConfigured
+        case enableNotifications, notifyDenied, openNotificationSettings
         case uninstallHooks
         case revealShortcut, hotkeyTaken
         case cappedSessions, emptyHint
@@ -946,17 +851,15 @@ enum L10n {
         case updateAvailable, updateFailed
         case probeEvery, probeParked
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
-        case a11yUnknown, a11yPresent
         case sectionNeedsYou, sectionRunning, sectionStalled, sectionRecent
-        case jumpToOldest
         case moreActions
         case acrossProjects, agoFormat
         case noActivityYet
         case stalled, stalledFor
-        case supportHealth, supportScanIncomplete, supportScanIncompleteTimeout
+        case supportScanIncomplete, supportScanIncompleteTimeout
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
-        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, session
-        case supportResources, supportObservedSignals, supportNoObservedSignals, supportLastRead, supportMissing
+        case supportGoal, supportWorkspace, supportActivity, supportProgress
+        case supportObservedSignals, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingWaiting
         case supportWaitingHooks, supportWaitingHarvest, supportWaitingNoneDetail, supportSharedCursor
@@ -969,59 +872,37 @@ enum L10n {
         case supportCollectorSchema, supportCollectorSchemaDetail
         case supportCollectorFailed, supportCollectorFailedDetail
         case supportCollectorUnscanned, supportCollectorUnscannedDetail
-        case supportSearch
-        case supportFilterAll, supportNoFilterResults
         case supportNeedsAction, supportLimited, supportAvailable, supportNotInstalled, supportNoRecentSession, supportPermissionDenied, supportUnscanned
-        case supportSummaryLine
-        case supportNeedsActionCount, supportLimitedCount, supportAvailableCount, supportNotInstalledCount, supportNoRecentCount, supportPermissionDeniedCount, supportUnscannedCount, supportUsefulCoverage
-        case supportRetry, supportRunAgent, supportEnableData, supportAdapterDiagnostics, supportCopySafeReport, exportSafeReport
+        case supportRetry, supportEnableData
         case supportExplainFiles, supportExplainFacts, supportExplainTruncated
         case supportExplainHero, supportExplainEmpty
         case supportEmptyNoSource, supportEmptyDeadline, supportEmptyNoReadableFile
         case supportEmptyNoParsableRecord, supportEmptyNoDisplaySignal, supportEmptyNoUserGoal
         case supportOriginChrome, supportOriginFallbackText, supportOriginCacheTitle
         case supportOriginToolTitle, supportOriginUserPrompt, supportOriginSessionName
-        case supportCopyShapeReport, supportShapeReading, supportShapeHint
+        case supportCopyShapeReport
         case notifFocus
         case waitingSummaryTitle, searchNoResults
         case updatePreview, updateSignedUnnotarized
         case qualityReasonScanTimeout
-        case qualityNextWaitCache
         case supportFailureTimelineEntry
         case modelFact, errorFactOne, errorsFact
         case progressFact
         case supportYield, supportYieldDrifted
         case trayScanIncomplete
-        case yourTurn, turnCount, jumpToTurn
+        case yourTurn
         case signalVendor
         case doctorRun, doctorHint
         case shortcutOff
         case settingsHooksTitle
         case settingsHooksTest
-        case settingsPaneDataHeader
-        case settingsPaneControlHeader
-        case healthOpen
-        case healthTitle
-        case healthSettingsHint
         case healthAgentsHeading
-        case healthHideReport
-        case healthShowReport
-        case healthReport
         case healthRunCheck
         case healthRunAgain
-        case doctorCopyReport
         case lastReadJustNow
         case lastReadAgo
         case readsLastHour
         case readsLastHourAvg
-        case processOnlyHint
-        case cantRefreshHint
-        case setupNotifications
-        case setupNotificationsDetail
-        case setupHooksDetail
-        case setupAppDataDetail
-        case setupReview
-        case setupOtherAgents
         case updateFailedBadFeed
         case updateFailedNetwork
         case updateFailedHTTP
@@ -1031,13 +912,11 @@ enum L10n {
         case waitingBannerFailed
         case lampRuleBlocked
         case lampRuleStalled
-        case lampRuleThin
         case lampRuleRunning
         case lampRuleTurn
         case lampRuleRecent
         case lampRuleIdle
         case lampRuleCantRefresh
-        case lampLeftStale
         case auditRaised
         case auditPosted
         case auditSummary
@@ -1054,19 +933,12 @@ enum L10n {
         case auditSkipAtLaunch
         case auditSkipRejected
         case details
-        case muteAgent
-        case unmuteAgent
-        case detailLastWords
         case detailPlanHeading
         case detailNotificationHeading
         case detailBack
-        case detailLastHour
         case detailMinutesIn
         case filterMatches
         case trayKeyHints
-        case setupTerminalFocus
-        case setupTerminalFocusDetail
-        case setupTurnOn
         case activityLeft
         case activityFromSession
         case activityFromProcess
@@ -1080,7 +952,6 @@ enum L10n {
         case explainTurn
         case explainProcessOnly
         case explainStalled
-        case explainStalledNoRule
         case explainStalledUnknown
         case explainErrors
         case explainRunning
@@ -1148,6 +1019,43 @@ enum L10n {
         case doctorAgoMinutes
         case doctorAgoHours
         case doctorAgoDays
+        // 23.0
+        case processOnly
+        case processOnlyN
+        case waiting1
+        case stalledN
+        case yourTurnN
+        case lampRuleProcessOnly
+        case mute
+        case unmute
+        case mutedWord
+        case diagnosticsOpen
+        case diagnosticsTitle
+        case diagnosticsOverview
+        case diagnosticsProblems
+        case diagnosticsNoProblems
+        case copyReport
+        case headerUpdating
+        case headerUpdatedNow
+        case headerUpdatedAgo
+        case headerNotUpdated
+        case noticeNotificationsDenied
+        case noticeNotificationsOff
+        case filterLabel
+        case settingsHooksSection
+        case settingsTerminalSection
+        case settingsDataSection
+        case settingsUpdatesSection
+        case detailLastMessage
+        case detailErrorHeading
+        case detailSession
+        case detailWaitSignal
+        case detailGo
+        case detailGoNone
+        case detailProcess
+        case detailLastChange
+        case detailMoreSessions
+        case detailDiagnostics
     }
 }
 

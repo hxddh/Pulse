@@ -6,12 +6,9 @@ import SwiftUI
 /// a button beside the sentence, not an instruction to go and find one.
 struct DoctorReportView: View {
     let report: DoctorModel.Report
-    var copied = false
-    var onCopy: () -> Void = {}
     var onFix: (DoctorModel.Fix) -> Void = { _ in }
 
     private var copy: DoctorModel.Copy { DoctorModel.Copy(lang: report.lang) }
-    private func t(_ key: L10n.Key) -> String { L10n.t(key, report.lang) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: PulseTheme.Space.s) {
@@ -53,17 +50,11 @@ struct DoctorReportView: View {
                 }
                 .accessibilityElement(children: .combine)
             }
-            Button(copied ? t(.copied) : t(.doctorCopyReport), action: onCopy)
-                .controlSize(.small)
         }
     }
 
     private func fixTitle(_ fix: DoctorModel.Fix) -> String {
-        switch fix {
-        case .installHooks: return t(.installHooks)
-        case .copyShapeReport: return t(.supportCopyShapeReport)
-        case .openConnections: return t(.settings)
-        }
+        DiagnosticsModel.fixTitle(.doctor(fix), lang: report.lang)
     }
 
     private func symbol(_ verdict: DoctorModel.Verdict) -> String {

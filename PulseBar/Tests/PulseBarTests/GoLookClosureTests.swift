@@ -49,15 +49,6 @@ final class GoLookClosureTests: XCTestCase {
     }
 
     @MainActor
-    func testFocusOldestWaitUsesRevealPath() {
-        let store = makeStore()
-        store.clearPendingRevealRowKey()
-        store.focusOldestWait()
-        XCTAssertNotNil(store.pendingRevealRowKey)
-        XCTAssertEqual(store.pendingRevealRowKey, store.oldestWait?.rowKey)
-    }
-
-    @MainActor
     func testClearPendingReveal() {
         let store = makeStore()
         store.requestTrayReveal(rowKey: "demo-key")

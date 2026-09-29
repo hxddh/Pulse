@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ids are closed as defense-in-depth (should not appear without a Settings scene).
     private static let ownedWindowIDs: Set<String> = [
         "pulse-settings",
-        "pulse-support-coverage",
+        "pulse-diagnostics",
         "pulse-tray-preview",
     ]
 
@@ -187,7 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if ProcessInfo.processInfo.arguments.contains("--open-support-health") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                AppServices.store.openSupportHealth()
+                AppServices.store.openDiagnostics()
             }
         }
         // This opt-in QA surface hosts the exact TrayPanel view in a normal
@@ -218,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let capture = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--capture-support-health=") }) {
             let path = String(capture.dropFirst("--capture-support-health=".count))
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.captureDelay) {
-                SupportCoverageWindowController.shared.capture(
+                DiagnosticsWindowController.shared.capture(
                     store: AppServices.store,
                     to: URL(fileURLWithPath: path)
                 )

@@ -1,11 +1,15 @@
-// 3.0-α: the settings scene, moved verbatim out of PulseApp.swift.
+// 3.0-α: the settings scene, moved out of PulseApp.swift.
+//
+// 23.0 · one page of seven short groups and a footer. `SettingsView` builds
+// a `SettingsModel` from the store (settings and a few flags, never a scan)
+// and performs its actions; `SettingsFace` renders the value.
 
 import SwiftUI
 import AppKit
 
 @MainActor
 struct SettingsView: View {
-    /// The store itself (19.0). Under Observation this form is redrawn only
+    /// The store itself (19.0). Under Observation this page is redrawn only
     /// by the properties it reads, and it reads no per-scan fact
     /// (`surface_check.py` keeps it so).
     let store: StatusStore
@@ -14,307 +18,297 @@ struct SettingsView: View {
         self.store = store
     }
 
-    /// 22.0 Lamp: one page. Five panes held 28 controls; most of them were
-    /// consent switches for features that are gone, or preferences the
-    /// system already owns (quiet hours → Focus, sound → Notifications).
-    /// What is left fits on one screen.
-
-    /// A binding to one setting: reading it reads `store.settings`, and
-    /// writing it goes through `StatusStore.set`, which saves and applies.
-    private func setting<Value: Equatable>(_ keyPath: WritableKeyPath<PulseSettings, Value>) -> Binding<Value> {
-        let store = self.store
-        return Binding(get: { store.settings[keyPath: keyPath] }, set: { store.set(keyPath, $0) })
+    var body: some View {
+        SettingsFace(
+            model: store.settingsModel,
+            focusToken: store.settingsFocus.token
+        ) { action in
+            store.performSettings(action)
+        }
+        .onAppear {
+            store.landHooksStatus(HooksSupport.probeStatus())
+            PulseNotify.refreshAuthorization()
+        }
     }
+}
+
+@MainActor
+extension StatusStore {
+    /// The Settings page as a value.
+    var settingsModel: SettingsModel {
+        let notifications = SettingsModel.notifications(notifyAuthorized)
+        var warning: String?
+        if isVersionMismatch, let bundle = PulseVersion.bundleVersion {
+            warning = String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
+        } else if PulseVersion.distributionChannel == "preview" {
+            warning = tr(.updatePreview)
+        } else if PulseVersion.distributionChannel == "signed" {
+            warning = tr(.updateSignedUnnotarized)
+        }
+        let build = PulseVersion.buildLine
+        let hookTone: PulseTheme.Tone
+        switch hookSelfTestResult {
+        case .failed: hookTone = .waiting
+        case .passed: hookTone = .running
+        case .idle, .running: hookTone = .idle
+        }
+        return SettingsModel(
+            lang: lang,
+            launchAtLogin: settings.launchAtLogin,
+            language: settings.language,
+            hotkey: settings.hotkey,
+            hotkeyTaken: settings.hotkey != .off && !hotkeyRegistered,
+            notifications: notifications,
+            notifyOnWaiting: notifications == .allowed && settings.notifyOnWaiting,
+            mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
+            hooksStatus: hooksStatus.label(lang: lang),
+            hooksInstalled: hooksInstalled,
+            hookTest: hookSelfTestText,
+            hookTestTone: hookTone,
+            hookTestRunning: hookSelfTestResult == .running,
+            allowTerminalAutomation: settings.allowTerminalAutomation,
+            readProtectedAppData: settings.readProtectedAppData,
+            updateCheckEnabled: settings.updateCheckEnabled,
+            updateStatus: updateStatusText,
+            updateAvailable: updateAvailableURL != nil,
+            version: build.isEmpty ? PulseVersion.about : "\(PulseVersion.about) · \(build)",
+            buildWarning: warning,
+            focus: settingsFocus.target.map(SettingsModel.section(for:))
+        )
+    }
+
+    func performSettings(_ action: SettingsModel.Action) {
+        switch action {
+        case .setLaunchAtLogin(let on): set(\.launchAtLogin, on)
+        case .setLanguage(let language): set(\.language, language)
+        case .setHotkey(let choice): set(\.hotkey, choice)
+        case .enableNotifications: requestNotificationAuthorization()
+        case .openNotificationSettings: openSystemNotificationSettings()
+        case .setNotifyOnWaiting(let on):
+            guard notifyAuthorized == true else { return }
+            set(\.notifyOnWaiting, on)
+        case .unmute(let agent):
+            if settings.mutedAgents.contains(agent) { toggleMute(agent) }
+        case .installHooks: installHooks()
+        case .uninstallHooks: uninstallHooks()
+        case .testHooks: runHookSelfTest()
+        case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
+        case .setReadAppData(let on): setReadProtectedAppData(on)
+        case .setUpdateCheck(let on): set(\.updateCheckEnabled, on)
+        case .checkForUpdates: checkForUpdatesNow()
+        case .openRelease:
+            if let url = updateAvailableURL { NSWorkspace.shared.open(url) }
+        case .openDiagnostics: openDiagnostics()
+        }
+    }
+}
+
+/// Renders a `SettingsModel` and sends its actions. A deep link scrolls to
+/// the section it names (the token moves on every link, so a second link to
+/// the same place still lands).
+struct SettingsFace: View {
+    let model: SettingsModel
+    var focusToken = 0
+    /// Sendable: the page's bindings carry it.
+    var send: @MainActor @Sendable (SettingsModel.Action) -> Void = { _ in }
+
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
     var body: some View {
         ScrollViewReader { proxy in
             Form {
-                generalSection
-                shortcutSection
-                notificationsSection
-                hooksSection
-                    .id("settings-connections")
-                controlSection
-                dataAccessSection
-                    .id("settings-data")
-                updatesSection
-                aboutSection
-                installSection
+                ForEach(SettingsModel.sections, id: \.self) { section in
+                    Section {
+                        rows(section)
+                    } header: {
+                        Text(SettingsModel.title(section, lang: model.lang))
+                    } footer: {
+                        footer(section)
+                    }
+                    .id(section)
+                }
+                about
             }
             .formStyle(.grouped)
-            .onAppear {
-                store.landHooksStatus(HooksSupport.probeStatus())
-                PulseNotify.refreshAuthorization()
-                followFocus(proxy)
-            }
-            // A token, not the focus values: a second deep link with the same
-            // target must still land (the values would not change).
-            .onChange(of: store.settingsFocus.token) { _, _ in followFocus(proxy) }
+            .onAppear { follow(proxy) }
+            .onChange(of: focusToken) { _, _ in follow(proxy) }
         }
     }
 
-    /// A deep link from the tray scrolls to what it names.
-    private func followFocus(_ proxy: ScrollViewProxy) {
-        let target: String
-        switch store.settingsFocus.target {
-        case .waitingSignals: target = "settings-connections"
-        case .appData: target = "settings-data"
-        case nil: return
-        }
+    private func follow(_ proxy: ScrollViewProxy) {
+        guard let target = model.focus else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             withAnimation(PulseTheme.motion) { proxy.scrollTo(target, anchor: .top) }
         }
     }
 
-    /// A switch with its consequence underneath, the way System Settings
-    /// writes it — not a paragraph floating between two switches.
-    private func explainedToggle(_ title: String, hint: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title)
-            Text(hint)
-        }
+    private func binding(_ value: Bool, _ action: @escaping @Sendable (Bool) -> SettingsModel.Action) -> Binding<Bool> {
+        let send = self.send
+        return Binding(get: { value }, set: { send(action($0)) })
     }
 
-    // MARK: General
+    private var languageBinding: Binding<AppLanguage> {
+        let send = self.send
+        let value = model.language
+        return Binding(get: { value }, set: { send(.setLanguage($0)) })
+    }
 
-    private var generalSection: some View {
-        Section {
-            Toggle(store.tr(.launchAtLogin), isOn: setting(\.launchAtLogin))
-            Picker(store.tr(.language), selection: setting(\.language)) {
+    private var hotkeyBinding: Binding<HotkeyChoice> {
+        let send = self.send
+        let value = model.hotkey
+        return Binding(get: { value }, set: { send(.setHotkey($0)) })
+    }
+
+    // MARK: Rows
+
+    @ViewBuilder
+    private func rows(_ section: SettingsModel.Section) -> some View {
+        switch section {
+        case .general:
+            Toggle(t(.launchAtLogin), isOn: binding(model.launchAtLogin) { .setLaunchAtLogin($0) })
+            Picker(t(.language), selection: languageBinding) {
                 ForEach(AppLanguage.allCases) { lang in
                     Text(lang.menuLabel).tag(lang)
                 }
             }
-        }
-    }
-
-    /// One control for one bit: the shortcut, or Off.
-    private var shortcutSection: some View {
-        Section(store.tr(.shortcuts)) {
-            Picker(selection: setting(\.hotkey)) {
-                Text(store.tr(.shortcutOff)).tag(HotkeyChoice.off)
+        case .shortcut:
+            Picker(selection: hotkeyBinding) {
+                Text(t(.shortcutOff)).tag(HotkeyChoice.off)
                 Divider()
                 ForEach(HotkeyChoice.allCases.filter { $0 != .off }) { choice in
                     Text(choice.label).tag(choice)
                 }
             } label: {
-                Text(store.tr(.revealShortcut))
-                Text(store.tr(.globalShortcutHint))
+                Text(t(.revealShortcut))
             }
-            if store.settings.hotkey != .off, !store.hotkeyRegistered {
-                Label(store.tr(.hotkeyTaken), systemImage: "exclamationmark.triangle")
+            if model.hotkeyTaken {
+                Label(t(.hotkeyTaken), systemImage: "exclamationmark.triangle")
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.Tone.attention.color)
             }
-        }
-    }
-
-    // MARK: Alerts
-
-    private var notificationsSection: some View {
-        Section(store.tr(.notificationsSection)) {
-            if store.notifyAuthorized == nil {
+        case .notifications:
+            switch model.notifications {
+            case .notAsked:
                 LabeledContent {
-                    Button(store.tr(.enableNotifications)) {
-                        store.requestNotificationAuthorization()
-                    }
+                    Button(t(.enableNotifications)) { send(.enableNotifications) }
                 } label: {
-                    Label(store.tr(.notifyNotConfigured), systemImage: "bell.badge")
+                    Text(t(.notifyNotConfigured))
                 }
-            } else if store.notifyAuthorized == false {
-                // A denied prompt used to leave these toggles reading "on"
-                // while nothing could ever fire.
+            case .denied:
                 LabeledContent {
-                    Button(store.tr(.openNotificationSettings)) {
-                        store.openSystemNotificationSettings()
-                    }
+                    Button(t(.openNotificationSettings)) { send(.openNotificationSettings) }
                 } label: {
-                    Label(store.tr(.notifyDenied), systemImage: "bell.slash")
+                    Text(t(.notifyDenied))
                         .foregroundStyle(PulseTheme.Tone.attention.color)
-                    Text(store.tr(.notifyDeniedPersistentHint))
+                }
+            case .allowed:
+                EmptyView()
+            }
+            Toggle(t(.notifyWaiting), isOn: binding(model.notifyOnWaiting) { .setNotifyOnWaiting($0) })
+                .disabled(model.notifications != .allowed)
+            ForEach(model.mutedAgents, id: \.self) { agent in
+                LabeledContent {
+                    Button {
+                        send(.unmute(agent))
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(t(.unmute) + " " + agent.displayName)
+                } label: {
+                    Label {
+                        Text(agent.displayName)
+                    } icon: {
+                        AgentIconView(id: agent)
+                    }
                 }
             }
-            // The stored preference can remain enabled while macOS has
-            // denied or not configured notification access. Render the
-            // effective value instead; once permission is granted, the saved
-            // preference comes back.
-            Toggle(store.tr(.notifyWaiting), isOn: Binding(
-                get: { store.notifyAuthorized == true && store.settings.notifyOnWaiting },
-                set: { enabled in
-                    guard store.notifyAuthorized == true else { return }
-                    store.set(\.notifyOnWaiting, enabled)
-                }
-            ))
-            .disabled(store.notifyAuthorized != true)
-        }
-    }
-
-    // MARK: Connections
-
-    /// Claude and Codex: the two agents Pulse installs hooks for.
-    private var hooksSection: some View {
-        Section {
+        case .hooks:
             LabeledContent {
                 HStack(spacing: PulseTheme.Space.s) {
-                    if store.hooksInstalled {
-                        Button(store.tr(.uninstallHooks), role: .destructive) {
-                            store.uninstallHooks()
-                        }
+                    if model.hooksInstalled {
+                        Button(t(.uninstallHooks), role: .destructive) { send(.uninstallHooks) }
                     }
-                    Button(store.tr(.installHooks)) { store.installHooks() }
+                    Button(t(.installHooks)) { send(.installHooks) }
                 }
             } label: {
-                Text(store.tr(.settingsHooksTitle))
-                Text(store.hooksStatus.label(lang: store.lang))
-                    .foregroundStyle(store.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
+                Text(t(.settingsHooksTitle))
+                Text(model.hooksStatus)
+                    .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
             }
             LabeledContent {
-                Button(store.tr(.testWaitingSignal)) { store.runHookSelfTest() }
-                    .disabled(!store.hooksInstalled || store.hookSelfTestResult == .running)
+                Button(t(.testWaitingSignal)) { send(.testHooks) }
+                    .disabled(!model.hooksInstalled || model.hookTestRunning)
             } label: {
-                Text(store.tr(.settingsHooksTest))
-                Text(store.hookSelfTestText)
-                    .foregroundStyle(hookTestColor)
+                Text(t(.settingsHooksTest))
+                Text(model.hookTest)
+                    .foregroundStyle(model.hookTestTone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(model.hookTestTone.color))
             }
-        } header: {
-            Text(store.tr(.waitingSignals))
-        } footer: {
-            Text(store.tr(.hooksHint))
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var hookTestColor: Color {
-        switch store.hookSelfTestResult {
-        case .failed: return PulseTheme.Tone.waiting.color
-        case .passed: return PulseTheme.Tone.running.color
-        case .idle, .running: return .secondary
-        }
-    }
-
-    // MARK: Permissions
-
-    /// One switch for every agent whose sessions live in data macOS
-    /// protects (23.0: the per-agent scopes are gone).
-    private var dataAccessSection: some View {
-        Section {
-            explainedToggle(
-                store.tr(.agentDataAccess),
-                hint: store.tr(.agentDataAccessHint),
-                isOn: Binding(
-                    get: { store.settings.readProtectedAppData },
-                    set: { store.setReadProtectedAppData($0) }
-                )
-            )
+        case .terminal:
+            Toggle(isOn: binding(model.allowTerminalAutomation) { .setTerminalAutomation($0) }) {
+                Text(t(.allowTerminalAutomation))
+                Text(t(.allowTerminalAutomationHint))
+            }
+        case .dataAccess:
+            Toggle(isOn: binding(model.readProtectedAppData) { .setReadAppData($0) }) {
+                Text(t(.agentDataAccess))
+                Text(t(.agentDataAccessHint))
+            }
             .listRowBackground(
-                store.settingsFocus.target == .appData
+                model.focus == .dataAccess
                     ? Color.accentColor.opacity(PulseTheme.Fill.selected)
                     : Color.clear
             )
-        } header: {
-            Text(store.tr(.settingsPaneDataHeader))
-        } footer: {
-            Text(store.tr(.agentDataAccessSkipHint))
+        case .updates:
+            Toggle(t(.checkForUpdates), isOn: binding(model.updateCheckEnabled) { .setUpdateCheck($0) })
+            LabeledContent {
+                if model.updateAvailable {
+                    Button(t(.openRelease)) { send(.openRelease) }
+                } else {
+                    Button(t(.checkNow)) { send(.checkForUpdates) }
+                }
+            } label: {
+                Text(model.updateStatus)
+                    .foregroundStyle(model.updateAvailable ? AnyShapeStyle(PulseTheme.Tone.running.color) : AnyShapeStyle(.secondary))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func footer(_ section: SettingsModel.Section) -> some View {
+        switch section {
+        case .hooks:
+            Text(t(.hooksHint))
                 .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
+        case .dataAccess:
+            Text(t(.agentDataAccessSkipHint))
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
+        case .general, .shortcut, .notifications, .terminal, .updates:
+            EmptyView()
         }
     }
 
-    /// Everything that lets Pulse act on your behalf, each off until you say.
-    private var controlSection: some View {
+    /// The version, what kind of build it is, and the way into Diagnostics
+    /// — one small block, not two sections.
+    private var about: some View {
         Section {
-            explainedToggle(
-                store.tr(.allowTerminalAutomation),
-                hint: store.tr(.allowTerminalAutomationHint),
-                isOn: setting(\.allowTerminalAutomation)
-            )
-        } header: {
-            Text(store.tr(.settingsPaneControlHeader))
-        }
-    }
-
-    // MARK: About
-
-    private var aboutSection: some View {
-        Section {
-            HStack(spacing: PulseTheme.Space.m) {
-                PulseMarkView(size: 28, tone: .secondary)
-                VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-                    Text(PulseVersion.about)
-                        .font(PulseTheme.Font.hero)
-                    Text(store.tr(.tagline))
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                    if PulseVersion.distributionChannel == "preview" {
-                        Text(store.tr(.updatePreview))
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(PulseTheme.Tone.attention.color)
-                    } else if PulseVersion.distributionChannel == "signed" {
-                        Text(store.tr(.updateSignedUnnotarized))
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(PulseTheme.Tone.attention.color)
-                    }
-                }
-                Spacer(minLength: PulseTheme.Space.xs)
-            }
-            // 21.0: the self-check, per-agent support and diagnostics are one
-            // window now — Health — reachable from here and from the tray.
-            LabeledContent {
-                Button(store.tr(.healthOpen)) { store.openSupportHealth() }
-            } label: {
-                Text(store.tr(.healthTitle))
-                Text(store.tr(.healthSettingsHint))
-            }
-        }
-    }
-
-    private var updatesSection: some View {
-        Section(store.tr(.checkForUpdates)) {
-            Toggle(store.tr(.checkForUpdates), isOn: setting(\.updateCheckEnabled))
-            LabeledContent {
-                if let url = store.updateAvailableURL {
-                    Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
-                } else {
-                    Button(store.tr(.checkNow)) { store.checkForUpdatesNow() }
-                }
-            } label: {
-                Text(store.updateStatusText)
-                    .foregroundStyle(store.updateAvailableURL == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.running.color))
-            }
-        }
-    }
-
-    private var installSection: some View {
-        Section {
-            LabeledContent(store.tr(.build)) {
-                Text(buildText)
-                    .font(PulseTheme.Font.code)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            LabeledContent(store.tr(.runningFrom)) {
-                Text(Bundle.main.bundleURL.path)
-                    .font(PulseTheme.Font.code)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-            }
-            if store.isVersionMismatch, let bundle = PulseVersion.bundleVersion {
-                Text(String(format: store.tr(.versionMismatchHint), PulseVersion.semver, bundle))
+            VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
+                Text(model.version)
                     .font(PulseTheme.Font.caption)
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
-            }
-            Button(store.diagnostics.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
-                store.copyDiagnostics()
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                if let warning = model.buildWarning {
+                    Text(warning)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                }
+                Button(t(.diagnosticsOpen)) { send(.openDiagnostics) }
+                    .buttonStyle(.link)
+                    .font(PulseTheme.Font.caption)
             }
         }
-    }
-
-    /// `a1b2c3d · 2026-07-27`, or an honest `dev build` when unpackaged.
-    private var buildText: String {
-        let line = PulseVersion.buildLine
-        return line.isEmpty ? store.tr(.devBuild) : line
     }
 }

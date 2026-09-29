@@ -21,8 +21,8 @@
            │               ├─ settings.json      设置（Codable，0600，23.0）
            │               └─ session-log.json   每会话状态段 + 等待记录与通知去向（23.0）
            ▼
-   StatusItem（StatusPanelController，tooltip = snapshot.lampLines）
-   / TrayPanelViews（列表 + SessionDetailView）/ SettingsViews / SupportViews（健康检查 + 活动）
+   StatusItem（StatusPanelController：灯形 = snapshot.lamp，tooltip = 一句规则；按键 → TrayKeys）
+   / TrayPanelViews（列表 + SessionDetailView，状态在 TrayUI）/ SettingsViews / DiagnosticsViews（诊断 + 活动）
 ```
 
 ## 模块（12.0 起，12.3 收齐）
@@ -198,9 +198,9 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 8. 解析 focus 分级；进程探测补充可验证的工作目录（每轮一次，不在视图里）
 9. 排序：Waiting（最久的在前）→ 分区 → 有会话标题 → live → agent 优先级 → 键（全序，同一个世界
    总是同一个顺序）
-10. 编码 glance 状态、标题、tooltip、header；22.0 起还有**灯的解释**：`LampExplanation.make`
-   给出决定颜色的规则、至多三个驱动会话（各带 `Explain.why`）和没算进去的部分，存为
-   `snapshot.lampLines`，状态栏把它接在 tooltip 后面
+10. 编码 glance 状态、标题（只在有等待时：数量 · 最久时长）、tooltip、header；**灯的解释**
+   `LampExplanation` 23.0 起只是一句规则（就是整个 tooltip），`LampFace.glance` 给出菜单栏的
+   灯形（与行同一套：实心 / 环 / 空心 / 虚线；仅进程是灰色虚线，永不橙），存为 `snapshot.lamp`
 11. 算边沿：键不会变，所以新的 Waiting 就是等待键集合之差，不需要跟随改名
 12. 计数未显示的会话：`staleHidden` 只算最近 24 小时里停下的（`staleHiddenWindowMs`）
 
@@ -248,7 +248,7 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
 「这条通知」会跟着更新。点击按横幅携带的等待 `id` 记账，不按 row key 记到最新的那条。
 
 读它的视图只经 `logRevision` 订阅：详情页的 `TimelineStripView`、`NotificationAuditModel`
-（「这条通知发生了什么」），都经 `DetailModel` 交给 `SessionDetailFace`；健康检查的
+（「这条通知发生了什么」），都经 `DetailModel` 交给 `SessionDetailFace`；诊断窗口的
 `ActivityLogModel`（状态段与通知去向合成一条倒序记录，按 Agent 过滤）。时间一律经
 `LogClock`：今天 `HH:mm`，一周内 `周一 HH:mm` / `Mon HH:mm`，更早 `M/d HH:mm`。自检的「hook
 真的触发过」直接读 attention.tsv 每个 Agent 最新的一行（`AttentionIO.latestEvents`）。

@@ -35,6 +35,8 @@ final class ScanEngine {
     private(set) var trayOpen = false
     private(set) var activity: ProbeSchedule.Activity = .empty
     private(set) var currentInterval: TimeInterval?
+    /// The display is asleep or the screen is locked — nothing is being read.
+    var powerParked: Bool { powerMonitor.state.parked }
     /// When the timer parked, for the parked-duration counter.
     private var parkedSince: Date?
     /// Rolling scan counters, so the energy claim can be checked, not believed.

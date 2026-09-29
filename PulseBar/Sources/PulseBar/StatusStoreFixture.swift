@@ -79,11 +79,9 @@ extension StatusStore {
             switch name {
             case "status-running":
                 snap.glance = .running
-                snap.title = "1"
                 snap.sectionTotals[.running] = 1
             case "status-stalled":
                 snap.glance = .stalled
-                snap.title = "1"
                 snap.sectionTotals[.stalled] = 1
             case "status-waiting":
                 snap.glance = .waiting
@@ -98,7 +96,8 @@ extension StatusStore {
             }
             snap.headerTitle = name
             snap.header = name
-            snap.tooltip = name
+            snap.lamp = LampFace.glance(snap.glance)
+            snap.tooltip = LampExplanation.make(rows: [fixtureRow], glance: snap.glance).sentence(lang)
             snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
             snap.rows = [fixtureRow]
             snap.totalCount = 1
@@ -283,8 +282,10 @@ extension StatusStore {
 
         var snap = PulseSnapshot()
         snap.glance = .waiting
-        snap.title = "Claude · 8m"
-        snap.tooltip = "Needs you · Claude"
+        snap.lamp = LampFace.glance(.waiting)
+        let blockedCount = rows.filter { $0.isBlocked }.count
+        snap.title = "\(blockedCount) · 8m"
+        snap.tooltip = LampExplanation.make(rows: rows, glance: .waiting).sentence(lang)
         snap.accessibilityLabel = tr(.a11yWaiting)
         snap.rows = rows
         snap.totalCount = rows.count

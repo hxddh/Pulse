@@ -15,14 +15,17 @@ import Foundation
 
 /// The state a session is in, as the lamp would colour it.
 enum TimelineState: String, Codable, Equatable, Sendable {
+    /// `thin` is a session seen only as a process (the raw value stays for
+    /// logs written before 23.0).
     case running, thin, stalled, blocked, turn, recent
 
+    /// The row lamp's tone for the state: orange only for a stall.
     var tone: PulseTheme.Tone {
         switch self {
         case .blocked: return .waiting
         case .running: return .running
-        case .thin, .stalled: return .attention
-        case .turn, .recent: return .idle
+        case .stalled: return .attention
+        case .thin, .turn, .recent: return .idle
         }
     }
 }
@@ -71,7 +74,6 @@ enum SessionTimeline {
         case .recent: return (.recent, evidence, "")
         case .running:
             if row.isStalled { return (.stalled, evidence, "") }
-            if row.isThinRunning { return (.thin, evidence, "") }
             return (.running, evidence, "")
         }
     }

@@ -1,37 +1,34 @@
 import AppKit
 import SwiftUI
 
-/// Runtime adapter evidence is an operational surface, not a preference.
-/// Keep it in its own searchable window so Settings remains a short set of
-/// choices and the full 31-agent roster can be inspected without disclosure
-/// gymnastics.
+/// 23.0 · Diagnostics (it was "Health"): what stops Pulse from seeing, the
+/// self-check, every agent on one line, and the activity log — an
+/// operational surface, not a preference, so it has its own window and
+/// Settings stays a short set of choices.
 @MainActor
-final class SupportCoverageWindowController: NSObject, NSWindowDelegate {
-    static let shared = SupportCoverageWindowController()
+final class DiagnosticsWindowController: NSObject, NSWindowDelegate {
+    static let shared = DiagnosticsWindowController()
 
     private var window: NSWindow?
-    private var hosting: NSHostingController<SupportCoverageView>?
+    private var hosting: NSHostingController<DiagnosticsView>?
 
     func show(store: StatusStore) {
         SettingsPresenter.prepareToOpen()
         if let window, let hosting {
-            hosting.rootView = SupportCoverageView(store: store)
-            window.title = store.tr(.healthTitle)
+            hosting.rootView = DiagnosticsView(store: store)
+            window.title = store.tr(.diagnosticsTitle)
             present(window)
             return
         }
 
-        let host = NSHostingController(rootView: SupportCoverageView(store: store))
+        let host = NSHostingController(rootView: DiagnosticsView(store: store))
         let win = NSWindow(contentViewController: host)
-        win.title = store.tr(.healthTitle)
-        win.identifier = NSUserInterfaceItemIdentifier("pulse-support-coverage")
+        win.title = store.tr(.diagnosticsTitle)
+        win.identifier = NSUserInterfaceItemIdentifier("pulse-diagnostics")
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        // The support matrix is the place to inspect all covered agents, so a
-        // 400pt viewport clipped the first row as soon as its evidence summary
-        // gained a second line. Give the default view a calm, readable canvas;
-        // the list remains scrollable for the full 31-agent roster.
-        win.setContentSize(NSSize(width: 700, height: 560))
-        win.contentMinSize = NSSize(width: 600, height: 360)
+        // One line per agent: a calm canvas, the list scrolls.
+        win.setContentSize(NSSize(width: 620, height: 600))
+        win.contentMinSize = NSSize(width: 520, height: 360)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
@@ -51,9 +48,9 @@ final class SupportCoverageWindowController: NSObject, NSWindowDelegate {
             guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
             do {
                 try data.write(to: url, options: .atomic)
-                DebugLog.write("support capture wrote \(url.path)")
+                DebugLog.write("diagnostics capture wrote \(url.path)")
             } catch {
-                DebugLog.write("support capture failed \(error.localizedDescription)")
+                DebugLog.write("diagnostics capture failed \(error.localizedDescription)")
             }
         }
     }

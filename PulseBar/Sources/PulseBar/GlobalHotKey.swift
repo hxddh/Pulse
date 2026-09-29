@@ -55,19 +55,9 @@ enum GlobalHotKey {
             &hk
         )
         if err == noErr, hk.signature == GlobalHotKey.signature {
-            DispatchQueue.main.async {
-                // Prefer the Waiting Go-Look path when something needs you;
-                // otherwise just open the tray.
-                if AppServices.store.snapshot.rows.contains(where: \.isBlocked)
-                    || AppServices.store.allRowsForDisplay.contains(where: \.isBlocked) {
-                    AppServices.store.focusFirstWaiting()
-                } else if AppServices.store.oldestTurn != nil {
-                    // 16.0: nothing blocked — the next finished session.
-                    AppServices.store.focusNextTurn()
-                } else {
-                    TrayReveal.show()
-                }
-            }
+            // 23.0: the shortcut always toggles the tray; opening selects
+            // the most urgent row. It never jumps to a terminal on its own.
+            TrayReveal.toggle()
         }
         return noErr
     }

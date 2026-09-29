@@ -21,7 +21,7 @@ struct Explain: Equatable {
     var headline: String
     var why: String
     var source: String
-    /// The state in a word or two ("Permission", "Running", "Your turn").
+    /// The state in a word or two ("Needs you", "Running", "Your turn").
     var state: String
     /// A blocked row's question in the agent's words; nil when unknown.
     var ask: String?
@@ -30,11 +30,11 @@ struct Explain: Equatable {
     /// pathological title, not the thing that shapes the row.
     static let headlineLimit = 96
 
-    static func make(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64, stallMinutes: Int = 0) -> Explain {
+    static func make(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> Explain {
         let ask = row.wait.map { $0.ask.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
         return Explain(
             headline: Self.truncate(Self.headline(row, lang: lang, nowMs: nowMs), Self.headlineLimit),
-            why: Self.why(row, lang: lang, nowMs: nowMs, stallMinutes: stallMinutes),
+            why: Self.why(row, lang: lang, nowMs: nowMs),
             source: Self.sourceText(row.source, lang: lang),
             state: Self.stateText(row, lang: lang),
             ask: ask
@@ -68,7 +68,7 @@ struct Explain: Equatable {
     // MARK: - Why
 
     /// Which evidence put the row in its state, and since when.
-    static func why(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64, stallMinutes: Int) -> String {
+    static func why(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         let name = row.agent.displayName
         func since(_ ms: Int64) -> String { ms > 0 ? ago(ms, nowMs: nowMs, lang: lang) : "?" }
@@ -93,9 +93,7 @@ struct Explain: Equatable {
             if row.isStalled {
                 guard row.lastActivityMs > 0 else { return t(.explainStalledUnknown) }
                 let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
-                return stallMinutes > 0
-                    ? String(format: t(.explainStalled), quiet, stallMinutes)
-                    : String(format: t(.explainStalledNoRule), quiet)
+                return String(format: t(.explainStalled), quiet)
             }
             if row.errors > 0 { return String(format: t(.explainErrors), row.errors) }
             guard row.lastActivityMs > 0 else { return t(.explainRunningNoClock) }
@@ -131,8 +129,8 @@ struct Explain: Equatable {
     static func stateText(_ row: AgentRow, lang: ResolvedLanguage) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         switch row.state {
-        case .blocked(let wait): return wait.kind.isEmpty ? t(.needsYou) : L10n.waitKind(wait.kind, lang)
-        case .processOnly: return t(.sourceProcess)
+        case .blocked: return t(.needsYou)
+        case .processOnly: return t(.processOnly)
         case .yourTurn: return t(.yourTurn)
         case .recent: return t(.recent)
         case .running: return row.isStalled ? t(.stalled) : t(.running)

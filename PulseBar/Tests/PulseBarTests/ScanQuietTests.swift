@@ -37,7 +37,6 @@ struct ScanQuietTests {
             ("logRevision", \StatusStore.logRevision),
             ("loginItemApplied", \StatusStore.loginItemApplied),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
-            ("pendingRevealRowKey", \StatusStore.pendingRevealRowKey),
             ("rowActionNotices", \StatusStore.rowActionNotices),
             ("settings", \StatusStore.settings),
             ("settingsFocus", \StatusStore.settingsFocus),

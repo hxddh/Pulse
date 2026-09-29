@@ -4,9 +4,9 @@ import XCTest
 @testable import PulseHarvest
 
 /// 15.0 · Witness — the product's rules asserted on the surface values
-/// `SurfaceCapture` photographs, not on the store behind them. 22.0 removed
-/// the Workbench's Mission board and working-copy card; what remains are the
-/// tray row, the cards under it, the Why card and the self-check.
+/// `SurfaceCapture` photographs, not on the store behind them. 23.0: the
+/// tray row, header, notice and filter, the detail page, Settings,
+/// Diagnostics and the self-check.
 final class SurfaceModelTests: XCTestCase {
 
     // MARK: - The fixture list the capture script reads
@@ -19,7 +19,7 @@ final class SurfaceModelTests: XCTestCase {
     // MARK: - Both languages
 
     private func firstMenuTitle(_ lang: ResolvedLanguage) -> String? {
-        guard case .row(let model, _, _) = SurfaceFixtures.all(lang: lang).first?.value else { return nil }
+        guard case .row(let model, _) = SurfaceFixtures.all(lang: lang).first?.value else { return nil }
         return model.menu.first?.title
     }
 

@@ -97,7 +97,7 @@ struct ActivityLogModel: Equatable {
         switch state {
         case .blocked: return t(.needsYou)
         case .running: return t(.running)
-        case .thin: return t(.limitedData)
+        case .thin: return t(.processOnly)
         case .stalled: return t(.stalled)
         case .turn: return t(.yourTurn)
         case .recent: return t(.recent)

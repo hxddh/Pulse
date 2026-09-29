@@ -54,9 +54,6 @@ final class StatusStore {
     /// What happened the last time the user pressed a button on this row —
     /// a click that reached nothing says so, briefly.
     var rowActionNotices: [String: String] = [:]
-    /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump
-    /// seeds a `rowKey`, TrayPanel selects+scrolls it, then clears.
-    private(set) var pendingRevealRowKey: String?
     /// A new glance is about to start — discard the last one's navigation.
     ///
     /// EXPERIENCE §4: "展开状态不持久化". The panel is built once and only
@@ -76,10 +73,12 @@ final class StatusStore {
     @ObservationIgnored var sessionLog = SessionLog()
     /// The next scan is the first since the log was loaded.
     @ObservationIgnored var logAwaitsFirstScan = true
-    /// 22.0: the tray has an open detail view or a typed filter, so Escape
-    /// belongs to it before it closes the panel. Only the panel's key
-    /// monitor reads it.
-    @ObservationIgnored var trayEscapeConsumed = false
+    /// One-shot tray identity for Go-Look Closure: a banner or a jump seeds
+    /// a `rowKey` (and whether to open its detail); the panel takes it when
+    /// it opens — or at once, when it is already open. Not observed: the
+    /// panel reads it at those two moments, no view draws it.
+    @ObservationIgnored private(set) var pendingRevealRowKey: String?
+    @ObservationIgnored private(set) var pendingRevealDetail = false
     /// Prevent a preview panel opening from immediately replacing its fixture
     /// with a live scan before the screenshot is taken. Set by the CLI-only
     /// fixture before anything renders.
@@ -373,16 +372,25 @@ final class StatusStore {
         if snap != snapshot { snapshot = snap }
     }
 
-    /// Open the tray, optionally selecting a concrete row after it appears.
-    func requestTrayReveal(rowKey: String = "") {
-        if !rowKey.isEmpty {
-            pendingRevealRowKey = rowKey
-        }
+    /// Open the tray, optionally selecting a concrete row — and opening its
+    /// detail — once it is on screen.
+    func requestTrayReveal(rowKey: String = "", detail: Bool = false) {
+        pendingRevealRowKey = rowKey.isEmpty ? nil : rowKey
+        pendingRevealDetail = detail && !rowKey.isEmpty
         TrayReveal.show()
     }
 
     func clearPendingRevealRowKey() {
-        if pendingRevealRowKey != nil { pendingRevealRowKey = nil }
+        pendingRevealRowKey = nil
+        pendingRevealDetail = false
+    }
+
+    /// The pending reveal, once: the panel takes it and it is gone.
+    func takePendingReveal() -> (rowKey: String, detail: Bool)? {
+        guard let key = pendingRevealRowKey, !key.isEmpty else { return nil }
+        let detail = pendingRevealDetail
+        clearPendingRevealRowKey()
+        return (key, detail)
     }
 
     // MARK: - Row intents
@@ -450,24 +458,6 @@ final class StatusStore {
         refresh(reason: "dismissWaiting")
     }
 
-    func clearWaiting() {
-        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        // 0.95: a dismissed wait is no longer owed a banner
-        // (`SessionLog.queuedKeys`). 2.2: `center.add` is asynchronous — a
-        // request accepted a moment before the click still lands after the
-        // user cleared Waiting, so take back what was already submitted too
-        // (scene AH, U-7).
-        notifier.withdrawAll()
-        let waiting = cachedAll.filter(\.isBlocked)
-        updateLog(immediately: true) { log in
-            for row in waiting {
-                log.dismiss(row, soft: Self.dismissIsSoft(row), nowMs: nowMs)
-            }
-        }
-        AttentionIO.clearAll()
-        refresh(reason: "clearWaiting")
-    }
-
     /// Live Waiting-none session — needs Attention Reach, not a fake Waiting chip.
     func isWaitingNoneNeedsReach(_ row: AgentRow) -> Bool {
         !row.isBlocked
@@ -482,69 +472,35 @@ final class StatusStore {
 
     // MARK: - Focus
 
-    /// The row that has been blocked longest, if any.
-    var oldestWait: AgentRow? {
-        Self.oldestWaitRow(in: cachedAll)
-    }
-
-    nonisolated static func oldestWaitRow(in rows: [AgentRow]) -> AgentRow? {
-        let waiting = rows.filter(\.isBlocked)
-        return waiting
-            .filter { ($0.wait?.sinceMs ?? 0) > 0 }
-            .min { ($0.wait?.sinceMs ?? 0) < ($1.wait?.sinceMs ?? 0) }
-            ?? waiting.first
-    }
-
     nonisolated static func firstWaitingRow(in rows: [AgentRow]) -> AgentRow? {
         rows.first(where: \.isBlocked)
     }
 
-    /// Focus the longest-outstanding wait.
-    func focusOldestWait() {
-        guard let row = oldestWait else { return }
-        DebugLog.write("jump to oldest wait \(DebugLog.key(row.rowKey))")
-        focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
-    }
-
-    /// 16.0: the finished session that has waited longest for a look.
-    var oldestTurn: AgentRow? {
-        cachedAll.filter(\.isYourTurn).min { ($0.turnSinceMs ?? 0) < ($1.turnSinceMs ?? 0) }
-    }
-
-    /// Blocked first, then "your turn".
-    func focusNextTurn() {
-        guard let row = oldestTurn else { return }
-        DebugLog.write("jump to turn \(DebugLog.key(row.rowKey))")
-        focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
-    }
-
+    /// Open the tray on the first wait (the builder lists the oldest first).
     func focusFirstWaiting() {
         if let row = Self.firstWaitingRow(in: cachedAll) ?? Self.firstWaitingRow(in: snapshot.rows) {
-            focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
+            requestTrayReveal(rowKey: row.rowKey)
             return
         }
         requestTrayReveal()
     }
 
-    /// Resolve a notify / hotkey / jump target, attempt best Focus, and always
-    /// keep tray row identity for Waiting (Go-Look Closure). Focus success must
-    /// not abandon the row that raised the interruption.
+    /// 23.0 · a banner click (or its Go button): the terminal, and nothing
+    /// else, when it can be focused — the tray does not pop up over it. With
+    /// no handle (or one that failed) the tray opens on the row's detail; a
+    /// row that is gone opens the tray. `BannerRoute` decides.
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
         let row = Self.focusTarget(in: cachedAll, idRaw: idRaw, session: session, rowKey: rowKey)
-        if let row {
-            let didFocus = row.canFocusTerminal && TerminalFocus.focus(row: row)
-            if row.isYourTurn { markTurnSeen(row) }
-            if row.isBlocked || !didFocus {
-                requestTrayReveal(rowKey: row.rowKey)
-            }
+        let focused = row.map { $0.canFocusTerminal && TerminalFocus.focus(row: $0) } ?? false
+        if let row, row.isYourTurn { markTurnSeen(row) }
+        switch BannerRoute.decide(target: row?.rowKey, focused: focused) {
+        case .terminal:
             return
+        case .detail(let key):
+            requestTrayReveal(rowKey: key, detail: true)
+        case .tray:
+            focusFirstWaiting()
         }
-        if !rowKey.isEmpty {
-            // Stale notify identity: still open the tray so the user is not stranded.
-            requestTrayReveal(rowKey: rowKey)
-            return
-        }
-        focusFirstWaiting()
     }
 
     /// Prefer exact `rowKey`, then session, then first waiting/live row for
@@ -643,8 +599,8 @@ final class StatusStore {
         UpdateCheck.shared.check(store: self, force: true)
     }
 
-    func openSupportHealth() {
-        SupportCoverageWindowController.shared.show(store: self)
+    func openDiagnostics() {
+        DiagnosticsWindowController.shared.show(store: self)
     }
 }
 
@@ -653,7 +609,10 @@ final class StatusStore {
 struct SettingsFocus: Equatable {
     enum Target: Equatable {
         case appData
+        /// The hooks: how an agent gets a "needs you" signal.
         case waitingSignals
+        case notifications
+        case updates
     }
 
     var target: Target?
@@ -664,11 +623,10 @@ struct SettingsFocus: Equatable {
 struct DiagnosticsState: Equatable {
     var doctorReport: DoctorModel.Report?
     var isRunningDoctor = false
-    var didCopyDoctorReport = false
     /// The shape report walks the session stores, so the button says so.
     var isCopyingShapeReport = false
     var didCopyShapeReport = false
-    /// Transient "Copied" confirmation on the diagnostics button.
+    /// Transient "Copied" confirmation on "Copy report".
     var didCopyDiagnostics = false
 }
 

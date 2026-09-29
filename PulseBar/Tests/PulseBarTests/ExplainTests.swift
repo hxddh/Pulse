@@ -31,8 +31,8 @@ struct ExplainTests {
         return row
     }
 
-    private func why(_ row: AgentRow, _ lang: ResolvedLanguage = .en, stallMinutes: Int = 0) -> String {
-        Explain.make(row, lang: lang, nowMs: now, stallMinutes: stallMinutes).why
+    private func why(_ row: AgentRow, _ lang: ResolvedLanguage = .en) -> String {
+        Explain.make(row, lang: lang, nowMs: now).why
     }
 
     // MARK: - Why: which evidence, and since when
@@ -77,15 +77,15 @@ struct ExplainTests {
         #expect(Explain.make(row, lang: .en, nowMs: now).source == L10n.t(.sourceProcess, .en))
     }
 
-    @Test func aStalledRowNamesTheSilenceAndTheRuleItBroke() {
+    /// 23.0: the stall rule is not a setting, so the sentence names the
+    /// silence and nothing the person could not have set.
+    @Test func aStalledRowNamesTheSilence() {
         var row = session()
         row.harvestMs = now - 23 * minute
         row.isStalled = true
-        let withRule = why(row, stallMinutes: 20)
-        #expect(withRule.contains(DurationFormat.label(seconds: 23 * 60, lang: .en)))
-        #expect(withRule.contains("20"))
-        let noRule = why(row)
-        #expect(noRule == String(format: L10n.t(.explainStalledNoRule, .en), DurationFormat.label(seconds: 23 * 60, lang: .en)))
+        let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en)
+        let expected = String(format: L10n.t(.explainStalled, .en), quiet)
+        #expect(why(row) == expected)
     }
 
     @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
@@ -108,8 +108,8 @@ struct ExplainTests {
         row.errors = 3
         #expect(why(row) == String(format: L10n.t(.explainErrors, .en), 3))
         let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        #expect(face.lamp == .error)
-        #expect(face.whyInline)
+        #expect(face.lamp == LampFace(shape: .ring, tone: .attention))
+        #expect(face.secondLine?.kind == .warning)
     }
 
     @Test func aRecentRowSaysThereIsNoProcess() {
@@ -182,96 +182,139 @@ struct ExplainTests {
     @Test func aBlockedRowCarriesItsAsk() {
         let explain = Explain.make(blocked(.hooks), lang: .en, nowMs: now)
         #expect(explain.ask == "Bash: npm test")
-        #expect(explain.state == L10n.waitKind("Permission", .en))
+        #expect(explain.state == L10n.t(.needsYou, .en), "one word per concept")
     }
 
     // MARK: - The lamp explanation
 
-    @Test func aRedLampNamesWhoIsWaitingAndHow() {
+    @Test func aRedLampSaysOneLine() {
         let waiting = blocked(.hooks)
         var other = session(.codex)
         other.rowKey = "codex|b"
-        let explanation = LampExplanation.make(
-            rows: [waiting, other], glance: .waiting, staleHidden: 3, lang: .en, nowMs: now
-        )
+        let explanation = LampExplanation.make(rows: [waiting, other], glance: .waiting)
         #expect(explanation.rule == .blocked)
-        let keys = explanation.drivers.map { $0.rowKey }
-        #expect(keys == [waiting.rowKey])
-        let lines = explanation.lines(.en)
-        #expect(lines.first == L10n.t(.lampRuleBlocked, .en))
-        #expect(lines.count == 3)
-        #expect(lines[1] == "Claude · pulse — " + why(waiting))
-        #expect(lines.last?.contains("3") == true, "what was left out is said")
+        let sentence = explanation.sentence(.en)
+        #expect(sentence == L10n.t(.lampRuleBlocked, .en))
+        #expect(!sentence.contains("\n"))
     }
 
-    @Test func anOrangeLampWithoutAStallIsAProcessOnlySession() {
+    @Test func aProcessOnlySessionIsAGreyRuleNotAnOrangeOne() {
         var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 3), agent: .cursor)
         process.liveProcess = true
         process.state = .processOnly
-        let explanation = LampExplanation.make(rows: [process], glance: .stalled, staleHidden: 0, lang: .zh, nowMs: now)
-        #expect(explanation.rule == .thinRunning)
-        #expect(explanation.drivers.first?.agent == .cursor)
-        #expect(explanation.drivers.first?.reason == L10n.t(.explainProcessOnly, .zh))
+        let explanation = LampExplanation.make(rows: [process], glance: .idle)
+        #expect(explanation.rule == .processOnly)
+        #expect(explanation.sentence(.zh) == L10n.t(.lampRuleProcessOnly, .zh))
     }
 
-    @Test func aStalledLampSaysWhichSessionWentQuiet() {
+    @Test func aStalledLampNamesNoThreshold() {
         var stalled = session()
         stalled.harvestMs = now - 30 * minute
         stalled.isStalled = true
-        let explanation = LampExplanation.make(rows: [stalled], glance: .stalled, staleHidden: 0, lang: .en, nowMs: now, stallMinutes: 20)
+        let explanation = LampExplanation.make(rows: [stalled], glance: .stalled)
         #expect(explanation.rule == .stalled)
-        #expect(explanation.drivers.first?.reason.contains("20") == true)
+        let sentence = explanation.sentence(.en)
+        #expect(!sentence.contains("20"))
     }
 
     @Test func aGreyLampWithATurnSaysWhoseTurn() {
         var turn = session(.codex)
         turn.state = .yourTurn(sinceMs: now - minute)
-        let explanation = LampExplanation.make(rows: [turn], glance: .idle, staleHidden: 0, lang: .en, nowMs: now)
-        #expect(explanation.rule == .yourTurn)
-        #expect(explanation.drivers.count == 1)
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .amp, pid: 4), agent: .amp)
+        process.state = .processOnly
+        let explanation = LampExplanation.make(rows: [process, turn], glance: .idle)
+        #expect(explanation.rule == .yourTurn, "a finished turn outranks a bare process")
+    }
+
+    // MARK: - The lamp's shape and tone, per state
+
+    @Test func everyStateHasItsShapeAndTone() {
+        var blockedRow = session()
+        blockedRow.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        let running = session()
+        var stalled = session()
+        stalled.isStalled = true
+        var failing = session()
+        failing.errors = 2
+        var turn = session()
+        turn.state = .yourTurn(sinceMs: now)
+        var recent = session()
+        recent.state = .recent
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .amp, pid: 5), agent: .amp)
+        process.state = .processOnly
+
+        #expect(LampFace.row(blockedRow) == LampFace(shape: .filled, tone: .waiting))
+        #expect(LampFace.row(running) == LampFace(shape: .ring, tone: .running))
+        #expect(LampFace.row(stalled) == LampFace(shape: .ring, tone: .attention))
+        #expect(LampFace.row(failing) == LampFace(shape: .ring, tone: .attention))
+        #expect(LampFace.row(turn) == LampFace(shape: .hollow, tone: .idle))
+        #expect(LampFace.row(recent) == LampFace(shape: .hollow, tone: .idle))
+        #expect(LampFace.row(process) == LampFace(shape: .dotted, tone: .idle), "a process is never orange")
+    }
+
+    @Test func theMenuBarLampUsesTheSameShapes() {
+        #expect(LampFace.glance(.waiting) == LampFace(shape: .filled, tone: .waiting))
+        #expect(LampFace.glance(.running) == LampFace(shape: .ring, tone: .running))
+        #expect(LampFace.glance(.stalled) == LampFace(shape: .ring, tone: .attention))
+        #expect(LampFace.glance(.idle) == LampFace(shape: .hollow, tone: .idle))
+        #expect(LampFace.glance(.idle, processOnly: true) == LampFace(shape: .dotted, tone: .idle))
     }
 
     // MARK: - The row face
 
-    @Test func aPermissionRowShoutsAndOffersItsActions() {
+    @Test func aPermissionRowShowsItsAskOnce() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPermission(), lang: .en)
-        #expect(model.lamp == .waiting)
-        #expect(model.chip?.kind == .waiting)
-        #expect(model.accent != .none)
-        // 21.0: at most two visible verbs — answer it, or put it down.
-        let strip = model.strip.map { $0.action }
-        #expect(strip == [.focus, .dismiss])
-        #expect(model.stripAlwaysVisible)
+        #expect(model.lamp == LampFace(shape: .filled, tone: .waiting))
+        #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: "Bash: npm run build"))
         let menu = model.menu.map { $0.action }
-        #expect(menu == [.details, .focus, .dismiss, .mute], "every verb is in the menu once")
-        #expect(model.waitDetail == "Bash: npm run build")
+        #expect(menu == [.focus, .details, .dismiss, .mute], "every verb is in the menu once")
+        // The only time on a waiting row is how long it has waited.
+        let waited = Explain.waitDuration(SurfaceFixtures.rowPermission(), nowMs: SurfaceFixtures.nowMs, lang: .en)
+        #expect(model.age == waited)
     }
 
-    @Test func yourTurnIsQuiet() {
+    @Test func yourTurnIsQuietAndSaysSo() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowTurn(), lang: .zh)
-        #expect(model.lamp != .waiting)
-        #expect(model.chip == TrayRowModel.Chip(kind: .recent, label: "轮到你"))
-        #expect(model.accent == .none, "no gutter: the gutter is for blocked")
-        #expect(!model.stripAlwaysVisible)
+        #expect(model.lamp == LampFace(shape: .hollow, tone: .idle))
+        #expect(model.turnLabel == "轮到你")
+        #expect(model.secondLine == nil)
         #expect(model.accessibilityLabel.contains("轮到你"))
     }
 
-    @Test func aProcessOnlyRowPointsAtSupportHealth() {
+    @Test func aProcessOnlyRowPointsAtDiagnostics() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowProcessOnly(), lang: .en)
-        #expect(model.lamp == .process)
-        #expect(model.strip.isEmpty, "only a wait shows verbs without a click")
-        let hasHealth = model.menu.contains { $0.action == .supportHealth }
-        #expect(hasHealth)
-        #expect(model.whyInline, "an orange row explains itself")
-        #expect(model.accessibilityHint == L10n.t(.processOnlyHint, .en))
-        #expect(!model.canPrimary)
+        #expect(model.lamp == LampFace(shape: .dotted, tone: .idle))
+        #expect(model.secondLine == nil, "grey is not a warning")
+        let hasDiagnostics = model.menu.contains { $0.action == .diagnostics }
+        #expect(hasDiagnostics)
+        #expect(!model.canFocus)
+    }
+
+    @Test func aMutedRowSaysSoAndOffersUnmute() {
+        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowRunning(), lang: .en, muted: true)
+        #expect(model.muted)
+        let titles = model.menu.map { $0.title }
+        #expect(titles.contains(L10n.t(.unmute, .en)))
+    }
+
+    @Test func theProjectIsNotRepeatedWhenItIsTheHeadline() {
+        var row = SurfaceFixtures.rowPermission()
+        row.task = ""
+        let model = SurfaceFixtures.rowModel(row, lang: .en)
+        #expect(model.headline == "app")
+        #expect(model.project == "")
+    }
+
+    @Test func aWaitWithoutWordsNamesItsKind() {
+        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPending(), lang: .en)
+        #expect(model.secondLine == TrayRowModel.SecondLine(kind: .ask, text: L10n.waitKind("Permission", .en)))
     }
 
     @Test func everyFixtureSpeaksBothLanguages() {
         for lang in [ResolvedLanguage.en, .zh] {
             for fixture in SurfaceFixtures.all(lang: lang) {
-                if case .row(let model, _, _) = fixture.value {
-                    #expect(!model.hero.isEmpty, "\(fixture.name)")
+                if case .row(let model, _) = fixture.value {
+                    #expect(!model.headline.isEmpty, "\(fixture.name)")
                     #expect(!model.why.isEmpty, "\(fixture.name)")
                     #expect(model.lang == lang)
                 }
@@ -284,8 +327,9 @@ struct ExplainTests {
     @Test func theDetailPageSaysTheSameWhyAsTheRow() {
         let row = SurfaceFixtures.rowPermission()
         let face = SurfaceFixtures.rowModel(row, lang: .en)
-        let detail = DetailModel.make(row: row, face: face, lang: .en, nowMs: SurfaceFixtures.nowMs)
+        let detail = DetailModel.make(row: row, lang: .en, nowMs: SurfaceFixtures.nowMs)
         #expect(detail.why == face.why)
+        #expect(detail.lamp == face.lamp)
         #expect(detail.ask == "Bash: npm run build")
         #expect(detail.canDismiss)
         let labels = detail.facts.map { $0.label }
@@ -298,7 +342,7 @@ struct ExplainTests {
         let plan = fixture.plan
         #expect(plan?.steps.count == 3)
         #expect(plan?.progress == String(format: L10n.t(.progressFact, .en), 3, 3))
-        #expect(fixture.lastWord != nil)
+        #expect(fixture.lastMessage != nil)
         #expect(!fixture.canDismiss)
     }
 
@@ -307,10 +351,24 @@ struct ExplainTests {
         row.harvestMs = now - 45 * minute
         row.lastWord = "old"
         row.planSteps = [ActivityHarvest.PlanStep(text: "old step", state: .current)]
-        let detail = DetailModel.make(
-            row: row, face: TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now)), lang: .en, nowMs: now
-        )
-        #expect(detail.lastWord == nil)
+        let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
+        #expect(detail.lastMessage == nil)
         #expect(detail.plan == nil)
+    }
+
+    /// No placeholder rows: a fact Pulse does not have is not listed, and
+    /// raw values are words.
+    @Test func theDetailListsOnlyWhatItKnows() {
+        var row = session()
+        row.model = ""
+        row.cwd = ""
+        row.project = ""
+        row.startedMs = 0
+        let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
+        let labels = detail.facts.map { $0.label }
+        #expect(labels == [L10n.t(.detailSource, .en)])
+        let values = detail.facts.map { $0.value } + detail.diagnostics.map { $0.value }
+        #expect(!values.contains("—"))
+        #expect(!values.contains("session"), "an enum's raw value is not a word")
     }
 }

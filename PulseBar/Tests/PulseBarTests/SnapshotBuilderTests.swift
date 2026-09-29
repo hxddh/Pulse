@@ -167,10 +167,11 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testLiveProcessSuppressesErrorEvenWhenHarvestFailed() {
         // An empty harvest is not a dead machine — `ps` still saw the agent.
-        // Live Continuity: process-only is orange honesty, never the red error
-        // lamp, and never a healthy green "fully observed" claim.
+        // 23.0: a process with no session is a grey dotted lamp — never the
+        // error lamp, never orange, never a healthy green claim.
         let r = build(procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 10)])
-        XCTAssertEqual(r.snapshot.glance, .stalled, "probe-only liveness is not healthy green")
+        XCTAssertEqual(r.snapshot.glance, .idle, "probe-only liveness is not green and not orange")
+        XCTAssertEqual(r.snapshot.lamp, LampFace(shape: .dotted, tone: .idle))
         XCTAssertNotEqual(r.snapshot.glance, .error)
         XCTAssertNil(r.snapshot.probeError)
     }
@@ -576,9 +577,11 @@ final class SnapshotBuilderTests: XCTestCase {
 
     // MARK: Glance encoding
 
-    func testSingleWaitingNamesTheAgent() {
+    /// 23.0: the menu bar says how many are blocked and how long the oldest
+    /// has waited — never a name.
+    func testSingleWaitingIsACount() {
         let r = build(harvest: [harvest(.claude, task: "x", session: "s1", skill: "pending")])
-        XCTAssertEqual(r.snapshot.title, "Claude…")
+        XCTAssertEqual(r.snapshot.title, "1")
         XCTAssertEqual(r.snapshot.headerTitle, "1 \(L10n.t(.waitingN, .en))")
     }
 
@@ -592,7 +595,14 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testFreshWaitDoesNotSpendMenuBarSpaceOnNow() {
         let r = build(procs: [hit(.claude)], attention: [attention(.claude, ageMs: 1_000)])
-        XCTAssertEqual(r.snapshot.title, "Claude…")
+        XCTAssertEqual(r.snapshot.title, "1")
+    }
+
+    /// 23.0: the icon alone unless something is blocked.
+    func testNothingBlockedMeansNoTitle() {
+        let r = build(procs: [hit(.claude)], harvest: [harvest(.claude, task: "x", session: "s1")])
+        XCTAssertEqual(r.snapshot.glance, .running)
+        XCTAssertEqual(r.snapshot.title, "")
     }
 
     func testMultipleWaitingCollapsesToACount() {
@@ -601,8 +611,9 @@ final class SnapshotBuilderTests: XCTestCase {
             harvest(.codex, task: "y", session: "s2", skill: "pending"),
         ])
         XCTAssertEqual(r.snapshot.title, "2")
-        XCTAssertTrue(r.snapshot.tooltip.contains("Claude"))
-        XCTAssertTrue(r.snapshot.tooltip.contains("Codex"))
+        // 23.0: one line — the rule, not a list of who.
+        XCTAssertEqual(r.snapshot.tooltip, L10n.t(.lampRuleBlocked, .en))
+        XCTAssertFalse(r.snapshot.tooltip.contains("\n"))
     }
 
     func testIdleGlanceCarriesNoTitle() {
@@ -900,7 +911,7 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.snapshot.headerTitle.contains("1 recent"), r.snapshot.headerTitle)
         // Live Continuity: stall wins the lamp over a healthy runner.
         XCTAssertEqual(r.snapshot.glance, .stalled)
-        XCTAssertTrue(r.snapshot.tooltip.lowercased().contains("stalled"), r.snapshot.tooltip)
+        XCTAssertEqual(r.snapshot.tooltip, L10n.t(.lampRuleStalled, .en))
     }
 
     /// A hook activity event moves the live clock even when the transcript's
@@ -924,12 +935,14 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(moved.snapshot.glance, .running)
     }
 
-    /// Process-only liveness is orange in the tray — the menu bar must not claim healthy green.
-    func testProcessOnlyRunningIsNotHealthyGreenGlance() {
+    /// 23.0: process-only liveness is grey and dotted — the menu bar
+    /// claims neither healthy green nor an orange problem.
+    func testProcessOnlyRunningIsAGreyDottedGlance() {
         let r = build(procs: [hit(.amp)])
         XCTAssertTrue(r.rows.contains { $0.isProcessOnly && $0.section == .running })
-        XCTAssertEqual(r.snapshot.glance, .stalled)
-        XCTAssertNotEqual(r.snapshot.glance, .running)
+        XCTAssertEqual(r.snapshot.glance, .idle)
+        XCTAssertEqual(r.snapshot.lamp.shape, .dotted)
+        XCTAssertEqual(r.snapshot.tooltip, L10n.t(.lampRuleProcessOnly, .en))
     }
 
     /// Running with a live session is ordinary and gets no badge.
@@ -940,8 +953,8 @@ final class SnapshotBuilderTests: XCTestCase {
         )
         let row = try XCTUnwrap(r.rows.first)
         let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
-        XCTAssertNil(face.chip)
-        XCTAssertEqual(face.lamp, .running)
+        XCTAssertNil(face.secondLine)
+        XCTAssertEqual(face.lamp, LampFace(shape: .ring, tone: .running))
         XCTAssertEqual(r.snapshot.glance, .running)
     }
 
@@ -950,9 +963,9 @@ final class SnapshotBuilderTests: XCTestCase {
         for row in r.rows {
             let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
             if row.isBlocked {
-                XCTAssertEqual(face.chip?.kind, .waiting, "\(row.agent) should be badged")
+                XCTAssertEqual(face.lamp, LampFace(shape: .filled, tone: .waiting), "\(row.agent) should be filled red")
             } else {
-                XCTAssertEqual(face.lamp, .process, "\(row.agent) should read as a process")
+                XCTAssertEqual(face.lamp, LampFace(shape: .dotted, tone: .idle), "\(row.agent) should read as a process")
             }
         }
     }
@@ -1103,17 +1116,14 @@ final class SnapshotBuilderTests: XCTestCase {
     /// `Permission` is a protocol token. A Chinese tray showing a bare English
     /// word in the glance tooltip is the same defect as any other untranslated
     /// string — EXPERIENCE §4 admits no exceptions.
-    func testTheGlanceTooltipTranslatesTheWaitKind() {
+    func testTheGlanceTooltipIsInTheResolvedLanguage() {
         let entry = attention(.claude, kind: "Permission", message: "", session: "s1")
         let zh = build(attention: [entry], context: context(lang: .zh))
-        XCTAssertTrue(
-            zh.snapshot.tooltip.contains(L10n.t(.kindPermission, .zh)),
-            "tooltip was \(zh.snapshot.tooltip)"
-        )
+        XCTAssertEqual(zh.snapshot.tooltip, L10n.t(.lampRuleBlocked, .zh))
         XCTAssertFalse(zh.snapshot.tooltip.contains("Permission"))
 
         let en = build(attention: [entry], context: context(lang: .en))
-        XCTAssertTrue(en.snapshot.tooltip.contains(L10n.t(.kindPermission, .en)))
+        XCTAssertEqual(en.snapshot.tooltip, L10n.t(.lampRuleBlocked, .en))
     }
 
     /// 22.0: "N older hidden" counts sessions that went quiet today, not

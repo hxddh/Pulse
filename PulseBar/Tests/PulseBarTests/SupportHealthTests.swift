@@ -156,10 +156,10 @@ final class SupportHealthTests: XCTestCase {
         store.installPreviewFixture("waiting")
 
         XCTAssertTrue(store.needsHooksNudge)
-        // A visible Waiting row without notification authorization must
-        // explain how to receive the interruption while the tray is closed;
-        // that outranks the (optional) hooks offer.
-        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.waitingNotifyNotConfigured))
+        // Without notification authorization a "needs you" cannot reach a
+        // closed tray; that outranks the (optional) hooks offer.
+        XCTAssertEqual(store.trayNotice?.kind, .notificationsOff)
+        XCTAssertEqual(store.trayNotice?.action, .enableNotifications)
         XCTAssertFalse(store.tr(.emptyHint).localizedCaseInsensitiveContains("install hooks"))
     }
 
@@ -170,19 +170,22 @@ final class SupportHealthTests: XCTestCase {
         store.notifyAuthorized = true
 
         XCTAssertTrue(store.needsHooksNudge)
-        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.hooksNudge),
+        XCTAssertEqual(store.trayNotice?.text, store.tr(.hooksNudge),
                        "21.0: the tray offers the one-click Claude/Codex install")
+        XCTAssertEqual(store.trayNotice?.action, .installHooks)
     }
 
+    /// 23.0: an agent with no Waiting path is not a tray notice any more —
+    /// its row menu offers the connection instead.
     @MainActor
-    func testTrayNudgesOpaqueLiveAgentWhenHooksAreReady() {
+    func testAnOpaqueLiveAgentIsNotATrayNotice() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
         store.hooksStatus = .installedBoth
+        store.notifyAuthorized = true
 
         XCTAssertFalse(store.needsHooksNudge)
-        XCTAssertTrue(store.needsWaitingSignalNudge)
-        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.waitingNotifyNotConfigured))
+        XCTAssertNil(store.trayNotice)
     }
 
     func testAdapterFailureOffersRetry() {
@@ -397,23 +400,6 @@ final class SupportHealthTests: XCTestCase {
         let store = StatusStore()
         store.language = .en
         store.openSettings(focus: .waitingSignals)
-        XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
-    }
-
-    @MainActor
-    func testMaintenanceNoticeOpensWaitingReachWithOpaqueAgent() {
-        let store = StatusStore()
-        store.language = .en
-        store.hooksStatus = .installedBoth
-        // Prefer opaque Reach over notify setup: disable Waiting notifications.
-        store.settings.notifyOnWaiting = false
-        store.installPreviewFixture("waiting")
-        guard store.needsWaitingSignalNudge else {
-            store.openSettings(focus: .waitingSignals)
-            XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
-            return
-        }
-        store.performMaintenanceNoticeAction()
         XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
 

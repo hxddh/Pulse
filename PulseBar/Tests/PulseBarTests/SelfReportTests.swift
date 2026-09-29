@@ -249,10 +249,7 @@ final class SelfReportTests: XCTestCase {
     }
 
     private func detail(_ row: AgentRow) -> DetailModel {
-        DetailModel.make(
-            row: row, face: TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now)),
-            lang: .en, nowMs: now
-        )
+        DetailModel.make(row: row, lang: .en, nowMs: now)
     }
 
     func testTheDetailPageShowsTheCurrentStep() {

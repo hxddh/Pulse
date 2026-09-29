@@ -27,12 +27,6 @@ final class WaitNotifier {
     /// post a duplicate or mark a failed request as delivered.
     private(set) var inFlight: Set<String> = []
 
-    /// Withdraw banners that were already handed to Notification Center.
-    ///
-    /// Injected so the clear path can be tested without a bundled app: an
-    /// unbundled test process has no `UNUserNotificationCenter` at all.
-    var withdrawBanners: () -> Void = { PulseNotify.withdrawWaitingNotifications() }
-
     // MARK: - Lifecycle
 
     /// Register the banner's button and learn whether macOS lets Pulse
@@ -359,11 +353,5 @@ final class WaitNotifier {
         } else {
             model.focusFirstWaiting()
         }
-    }
-
-    /// The person cleared every wait: take back what Notification Center
-    /// already accepted (U-7).
-    func withdrawAll() {
-        withdrawBanners()
     }
 }

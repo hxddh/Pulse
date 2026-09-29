@@ -43,9 +43,8 @@ enum PulseTheme {
         static let subtle: Double = 0.04
         static let hover: Double = 0.06
         static let selected: Double = 0.10
-        /// A waiting row's own surface tint — the row's one red carrier.
+        /// A notice's tinted surface.
         static let waitTint: Double = 0.07
-        static let waitTintUrgent: Double = 0.11
         static let chip: Double = 0.14
     }
 
@@ -101,7 +100,7 @@ enum PulseTheme {
         case waiting
         /// Working (green).
         case running
-        /// Stalled, failed, or seen only as a process (orange).
+        /// Stalled or failing (orange) — never a process-only session.
         case attention
         /// Nothing to say (grey).
         case idle

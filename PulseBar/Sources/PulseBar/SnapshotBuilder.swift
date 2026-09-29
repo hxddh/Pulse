@@ -516,7 +516,7 @@ enum SnapshotBuilder {
         return result
     }
 
-    /// The glance, header, tooltip and lamp explanation for a row list.
+    /// The glance, header, tooltip and lamp for a row list.
     private static func snapshot(
         rows all: [AgentRow],
         showAll: Bool,
@@ -528,20 +528,8 @@ enum SnapshotBuilder {
         let waitingRows = all.filter(\.isBlocked)
         let waitingCount = waitingRows.count
         let liveRunning = all.filter { $0.section == .running }.count
-        let healthyRunning = all.filter(\.isHealthyRunning).count
-        let thinRunning = all.filter(\.isThinRunning).count
         let stalledCount = all.filter { $0.section == .stalled }.count
         let recentOnly = all.filter { $0.section == .recent }.count
-
-        /// Menu-bar lamp for non-Waiting fleets: any stalled → orange; else
-        /// healthy Running → green; else thin/process-only Running → orange;
-        /// else idle.
-        func liveFleetGlance() -> GlanceKind {
-            if stalledCount > 0 { return .stalled }
-            if healthyRunning > 0 { return .running }
-            if thinRunning > 0 || liveRunning > 0 { return .stalled }
-            return .idle
-        }
 
         var snap = PulseSnapshot()
         snap.totalCount = all.count
@@ -585,101 +573,63 @@ enum SnapshotBuilder {
             var bits: [String] = []
             if waitingCount > 0 { bits.append("\(waitingCount) \(t(.waitingN, lang))") }
             if liveRunning > 0 { bits.append("\(liveRunning) \(t(.runningN, lang))") }
-            if stalledCount > 0 { bits.append("\(stalledCount) \(t(.sectionStalled, lang).lowercased())") }
+            if stalledCount > 0 { bits.append("\(stalledCount) \(t(.stalledN, lang))") }
             if recentOnly > 0 { bits.append("\(recentOnly) \(t(.recentN, lang))") }
             return bits.joined(separator: " · ")
         }
 
+        // 23.0 · the lamp. Red when anything is blocked; orange only for a
+        // stalled session; green for a running session; grey otherwise — a
+        // process with no session is grey, never orange and never green.
+        let sessionRunning = all.contains { $0.section == .running && !$0.isProcessOnly }
         if waitingCount > 0 {
             snap.glance = .waiting
-            let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            // The menu bar carries the two facts that decide whether to look:
-            // how many are blocked, and how long the worst one has waited. A
-            // wait younger than five seconds says nothing the lamp has not.
-            let activeOldest = waitStamps.min().map { max(0, Double(nowMs - $0) / 1000.0) } ?? 0
-            let rawDuration = activeOldest > 0 ? DurationFormat.label(seconds: activeOldest, lang: lang) : ""
-            let dur = rawDuration == t(.durNow, lang) ? "" : rawDuration
-            if waitingRows.count == 1, let w = waitingRows.first, let wait = w.wait {
-                let named = dur.isEmpty ? "\(w.agent.displayName)…" : "\(w.agent.displayName) · \(dur)"
-                let counted = dur.isEmpty ? "1" : "1 · \(dur)"
-                snap.title = GlanceTitle.fit(named, counted, "1")
-                // `kind` is a protocol token, not user copy.
-                let reason = wait.kind.isEmpty
-                    ? (wait.ask.isEmpty ? t(.needsYou, lang) : wait.ask)
-                    : L10n.waitKind(wait.kind, lang)
-                snap.tooltip = dur.isEmpty
-                    ? "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason)"
-                    : "\(t(.needsYou, lang)) · \(w.agent.displayName) · \(reason) · \(dur)"
-            } else {
-                let counted = dur.isEmpty ? "\(waitingRows.count)" : "\(waitingRows.count) · \(dur)"
-                snap.title = GlanceTitle.fit(counted, "\(waitingRows.count)")
-                snap.tooltip = dur.isEmpty
-                    ? "\(t(.needsYou, lang)): \(nameJoin)"
-                    : "\(t(.needsYou, lang)): \(nameJoin) · \(dur)"
-            }
-            snap.headerTitle = stateSummary()
-            snap.headerDetail = aggregate()
-        } else if liveRunning > 0 || stalledCount > 0 {
-            snap.glance = liveFleetGlance()
-            let liveRows = all.filter { $0.section == .running }
-            let stalledRows = all.filter { $0.section == .stalled }
-            let liveNames = (liveRows + stalledRows).prefix(3).map(\.agent.displayName).joined(separator: " · ")
-            let oldestStall = stalledRows.map { $0.lastActivitySeconds(at: nowMs) }.filter { $0 > 0 }.max() ?? 0
-            let stalledDur = oldestStall > 0 ? DurationFormat.label(seconds: oldestStall, lang: lang) : ""
-            if healthyRunning == 1, stalledCount == 0, thinRunning == 0 {
-                let name = liveRows.first(where: \.isHealthyRunning)?.agent.displayName
-                    ?? liveRows[0].agent.displayName
-                snap.title = GlanceTitle.fit(name, "1")
-                snap.tooltip = "\(name) \(t(.running, lang))"
-            } else if snap.glance == .stalled, stalledCount > 0 {
-                // Stall wins the lamp: count + oldest silence, like Waiting's
-                // "how long".
-                snap.title = "\(stalledCount)"
-                let label = "\(stalledCount) \(t(.sectionStalled, lang).lowercased()): \(liveNames)"
-                snap.tooltip = stalledDur.isEmpty ? label : "\(label) · \(stalledDur)"
-            } else if snap.glance == .stalled {
-                // Thin / process-only Running — orange lamp, not "healthy".
-                snap.title = "\(liveRunning)"
-                snap.tooltip = "\(stateSummary()): \(liveNames)"
-            } else {
-                snap.title = "\(liveRunning + stalledCount)"
-                snap.tooltip = "\(stateSummary()): \(liveNames)"
-            }
+        } else if stalledCount > 0 {
+            snap.glance = .stalled
+        } else if sessionRunning {
+            snap.glance = .running
+        } else {
+            snap.glance = .idle
+        }
+
+        // The menu bar carries a title only when something is blocked: how
+        // many, and how long the oldest has waited. A wait younger than five
+        // seconds says nothing the lamp has not.
+        if waitingCount > 0 {
+            let oldest = waitStamps.min().map { max(0, Double(nowMs - $0) / 1000.0) } ?? 0
+            let raw = oldest > 0 ? DurationFormat.label(seconds: oldest, lang: lang) : ""
+            let dur = raw == t(.durNow, lang) ? "" : raw
+            snap.title = dur.isEmpty
+                ? "\(waitingCount)"
+                : GlanceTitle.fit("\(waitingCount) · \(dur)", "\(waitingCount)")
+        } else {
+            snap.title = ""
+        }
+
+        if waitingCount > 0 || liveRunning > 0 || stalledCount > 0 {
             snap.headerTitle = stateSummary()
             snap.headerDetail = aggregate()
         } else if recentOnly > 0 {
-            snap.glance = .idle
-            snap.title = ""
-            snap.tooltip = "Pulse · \(recentOnly) \(t(.recentN, lang))"
             snap.headerTitle = recentOnly == 1 ? t(.recent1, lang) : "\(recentOnly) \(t(.recentN, lang))"
             snap.headerDetail = aggregate()
         } else {
-            snap.glance = .idle
-            snap.title = ""
-            snap.tooltip = "Pulse · \(t(.idleWord, lang))"
             snap.headerTitle = t(.noAgents, lang)
             snap.headerDetail = ""
         }
         snap.header = snap.headerDetail.isEmpty ? snap.headerTitle : "\(snap.headerTitle) · \(snap.headerDetail)"
-        snap.accessibilityLabel = t(snap.glance.accessibilityKey, lang)
-        if snap.glance == .waiting || snap.glance == .stalled || snap.glance == .error, !snap.tooltip.isEmpty {
-            // Keep VoiceOver aligned with the explainable menu-bar tooltip.
-            snap.accessibilityLabel = snap.tooltip
-        }
+
+        // One sentence for the tooltip and VoiceOver: the rule that set the
+        // lamp. The tray names the sessions.
+        let explanation = LampExplanation.make(rows: all, glance: snap.glance)
+        snap.tooltip = explanation.sentence(lang)
+        snap.lamp = LampFace.glance(snap.glance, processOnly: explanation.rule == .processOnly)
+        snap.accessibilityLabel = snap.glance == .idle
+            ? t(snap.glance.accessibilityKey, lang)
+            : snap.tooltip
         snap.staleHidden = staleHiddenByAgent.values.reduce(0, +)
         snap.staleHiddenAgents = staleHiddenByAgent.keys.sorted {
             (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
         }
-        // 22.0: why the lamp is this colour — the rule, up to three sessions
-        // that drove it (each with `Explain`'s why), and what was left out.
-        snap.lampLines = LampExplanation.make(
-            rows: all,
-            glance: snap.glance,
-            staleHidden: snap.staleHidden,
-            lang: lang,
-            nowMs: nowMs,
-            stallMinutes: Int(context.stalledSeconds / 60)
-        ).lines(lang)
         return snap
     }
 

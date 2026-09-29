@@ -18,10 +18,6 @@ package struct ScanMemory {
     package var cwd: [Int: (path: String, observedAt: TimeInterval)] = [:]
     /// No `lsof` before this instant after a denied or empty lookup.
     package var cwdLookupBackoffUntil: TimeInterval = 0
-    /// Last accumulated-CPU reading per pid.
-    package var cpuSamples: [Int: (cpuSeconds: Double, atMs: Int64)] = [:]
-    /// Latched once if `ps` rejects `cputime`/`rss`.
-    package var psRejectsCPUFields = false
 }
 
 package enum HarvestMemory {

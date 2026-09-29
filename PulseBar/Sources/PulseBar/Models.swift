@@ -243,8 +243,8 @@ struct AgentRow: Identifiable, Hashable {
     // MARK: State
 
     var state: RowState = .recent
-    /// Resolved once per scan against the scan's clock and the user's
-    /// threshold (`SnapshotBuilder`), never against `Date()` in a view.
+    /// Resolved once per scan against the scan's clock and the stall rule
+    /// (`SnapshotBuilder`), never against `Date()` in a view.
     var isStalled: Bool = false
     /// The session file's last change, in ms; 0 = unknown.
     var harvestMs: Int64 = 0
@@ -290,16 +290,6 @@ struct AgentRow: Identifiable, Hashable {
         }
     }
 
-    /// Session-backed Running that may light a healthy green glance.
-    var isHealthyRunning: Bool {
-        section == .running && !isProcessOnly && harvestMs > 0
-    }
-
-    /// Live Running without a trusted activity clock or a session.
-    var isThinRunning: Bool {
-        section == .running && (isProcessOnly || harvestMs == 0)
-    }
-
     var canFocusTerminal: Bool { focusTier != nil }
 
     /// The newest clock this row has, in ms; 0 = unknown.
@@ -329,25 +319,19 @@ struct AgentRow: Identifiable, Hashable {
 
     // MARK: - Stall
 
-    /// Default only; the real threshold comes from settings through
-    /// `SnapshotBuilder.Context`.
+    /// The stall rule: twenty minutes of silence from a live session. Not a
+    /// setting (23.0); `SnapshotBuilder.Context` carries it so a test can
+    /// move it.
     static let stalledSeconds: Double = 20 * 60
 
     /// Whether a live row would be stalled at the given instant.
-    /// `threshold <= 0` means the user turned staleness off; a zero clock is
-    /// unknown, not silence.
+    /// `threshold <= 0` turns staleness off; a zero clock is unknown, not
+    /// silence.
     static func stalled(lastActivityMs: Int64, nowMs: Int64, threshold: Double = stalledSeconds) -> Bool {
         guard threshold > 0, lastActivityMs > 0 else { return false }
         return Double(nowMs - lastActivityMs) / 1000.0 >= threshold
     }
 
-    /// A wait old enough to deserve more than the ordinary Waiting treatment.
-    static let urgentWaitSeconds: Double = 600
-
-    func isUrgentWait(at nowMs: Int64) -> Bool {
-        guard let wait, wait.sinceMs > 0 else { return false }
-        return Double(nowMs - wait.sinceMs) / 1000.0 >= Self.urgentWaitSeconds
-    }
 
     // MARK: - Titles
 
@@ -681,6 +665,7 @@ enum SupportCapability: String, Equatable {
 struct PulseSnapshot: Equatable {
     var glance: GlanceKind = .idle
     var title: String = ""
+    /// One line: the rule that set the lamp (`LampExplanation.sentence`).
     var tooltip: String = "Pulse"
     /// Glance state spoken by VoiceOver, in the resolved language.
     var accessibilityLabel: String = ""
@@ -709,8 +694,8 @@ struct PulseSnapshot: Equatable {
     /// and which agents they belong to. A row that went quiet for 46
     /// minutes used to vanish with no trace outside debug.log.
     var staleHidden: Int = 0
-    /// 22.0: `LampExplanation.lines` — why the lamp is this colour.
-    var lampLines: [String] = []
+    /// 23.0: the menu-bar lamp's shape and tone (`LampFace.glance`).
+    var lamp: LampFace = .idle
     var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0
     var probeError: String?
