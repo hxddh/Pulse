@@ -468,7 +468,6 @@ extension NativeActivityHarvest {
             guard !sid.isEmpty else { continue }
             let modified = normalizeTimestamp(sqliteString(statement, column: 1))
             let summary = jsonObject(sqliteString(statement, column: 2)) ?? [:]
-            let conversation = jsonObject(sqliteString(statement, column: 3)) ?? [:]
             let query = queries[sid]
             let title = firstString(summary, keys: ["title", "initial_query"])
             let cwd = normalizedPath(firstString(summary, keys: ["initial_working_directory"]))
