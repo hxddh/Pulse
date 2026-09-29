@@ -273,28 +273,8 @@ extension StatusStore {
         SupportCoverageWindowController.shared.show(store: self)
     }
 
-    /// 3.0-β · the workbench's read surface: every session the store knows,
-    /// not the tray's glance window. Deliberately the window's only special
-    /// access so far — the first real seam, cut where use demanded it
-    /// (plan-3.0's rule: seams follow use).
-    var allRows: [AgentRow] { cachedAll }
-
-    func openWorkbench() {
-        WorkbenchWindowController.shared.show(store: self)
-    }
-
-    /// 21.0: a row's details open in the Workbench with that row selected —
-    /// one inspector, not three (the Details window is gone).
-    func openAgentDetail(_ row: AgentRow) {
-        workbenchSelectKey = row.rowKey
-        WorkbenchWindowController.shared.show(store: self)
-    }
-
     func quit() {
         markCleanShutdown()
-        // 5.0-β: no orphaned managed agents burning tokens after the tray
-        // icon is gone.
-        managedSessions.terminateAllForShutdown()
         attentionWatcher.stop()
         GlobalHotKey.uninstall()
         NSApp.terminate(nil)

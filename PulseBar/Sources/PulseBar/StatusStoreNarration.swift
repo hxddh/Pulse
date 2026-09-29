@@ -4,20 +4,14 @@ import Foundation
 ///
 /// The narration itself is a pure value now; the store only supplies what it
 /// used to read implicitly — resolved language, the current instant, whether
-/// the tray is crowded, and the managed fleet's outcome facts.
+/// the tray is crowded, and the stall threshold.
 @MainActor
 extension StatusStore {
     var narrator: RowNarrator {
-        var managed: [String: ManagedSession.Model] = [:]
-        for runner in managedSessions.runners where managed[runner.model.id] == nil {
-            managed[runner.model.id] = runner.model
-        }
-        return RowNarrator(
+        RowNarrator(
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             crowded: snapshot.rows.count >= TrayFold.crowdedFrom,
-            managedModels: managed,
-            proofSummaries: proofSummaries,
             stallMinutes: stallMinutes
         )
     }
@@ -33,7 +27,6 @@ extension StatusStore {
     func storyOwnsNow(_ row: AgentRow) -> Bool { narrator.storyOwnsNow(row) }
     func storyOwnsChange(_ row: AgentRow) -> Bool { narrator.storyOwnsChange(row) }
     func rowSourceLabel(_ row: AgentRow) -> String? { narrator.rowSourceLabel(row) }
-    func remoteStatusLine(_ row: AgentRow, nowMs overrideMs: Int64? = nil) -> String? { narrator.remoteStatusLine(row, nowMs: overrideMs) }
     func rowMetrics(_ row: AgentRow) -> String { narrator.rowMetrics(row) }
     func rowSignalLine(_ row: AgentRow) -> String { narrator.rowSignalLine(row) }
     func faultFact(_ row: AgentRow) -> String { narrator.faultFact(row) }
@@ -72,6 +65,5 @@ extension StatusStore {
     func observationGapReason(_ gap: ObservationGap) -> String { narrator.observationGapReason(gap) }
     func observationGapNextStep(_ gap: ObservationGap) -> String { narrator.observationGapNextStep(gap) }
     func localizedWaitKind(_ kind: String) -> String { narrator.localizedWaitKind(kind) }
-    func proofFact(_ row: AgentRow) -> String { narrator.proofFact(row) }
     func whyLine(_ row: AgentRow) -> String? { narrator.whyLine(row) }
 }

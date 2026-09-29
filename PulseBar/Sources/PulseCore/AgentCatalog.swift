@@ -220,7 +220,7 @@ public struct AgentSpec: Sendable {
     public let requiresAppDataOptIn: Bool
     public let transcripts: TranscriptPolicy
     public let respondReach: RespondReach
-    /// Other spellings a hook or remote host may use for this agent, beyond
+    /// Other spellings a hook or bridge may use for this agent, beyond
     /// its raw value.
     public let aliases: [String]
     public let process: AgentProcessRule
@@ -949,7 +949,7 @@ public enum AgentCatalog {
         return spec
     }
 
-    /// Raw value or any alias, as a hook or a remote host may spell it.
+    /// Raw value or any alias, as a hook or a bridge may spell it.
     public static func agent(named raw: String) -> AgentID? {
         if let id = AgentID(rawValue: raw) { return id }
         return all.first { $0.aliases.contains(raw) }?.id

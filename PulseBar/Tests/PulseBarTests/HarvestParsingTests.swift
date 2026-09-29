@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 final class HarvestParsingTests: XCTestCase {
@@ -548,62 +547,37 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertEqual(merged.map(\.sessionID), ["shared-2"])
     }
 
-    // MARK: - 2.2 · the stop grace uses the clock the reader trusts
+    // MARK: - 2.2 · the stop grace
 
-    /// Regression (B-13): `clockVerdict` refuses a remote stamp that
-    /// disagrees with arrival and measures the wait from arrival instead —
-    /// but the Stop grace window alone still measured against the raw stamp.
-    /// On a box whose clock runs half an hour behind, the `Stop` that Claude
-    /// emits right after a permission prompt therefore wiped that permission
-    /// instantly: the lamp went out while the agent was still waiting.
-    func testAStopRespectsTheSameClockTheReaderStandsBehind() throws {
+    /// Claude emits `Stop` right after a permission prompt; a Stop inside
+    /// the grace window must not put the lamp out while the agent waits.
+    func testAStopInsideTheGraceKeepsThePermission() throws {
         let now: Int64 = 1_700_000_000_000
-        let skewed = now - 40 * 60 * 1000
+        let raised = now - 60_000
         let text = [
-            "claude\tpermission\t\(skewed)\tBash: npm run build\tsession-9\t/Users/me/Pulse\tbox",
-            "claude\tstop\t\(skewed + 1)\t\tsession-9\t\tbox",
+            "claude\tpermission\t\(raised)\tBash: npm run build\tsession-9\t/Users/me/Pulse",
+            "claude\tstop\t\(raised + 1)\t\tsession-9\t",
         ].joined(separator: "\n") + "\n"
-
-        let entries = AttentionReader.parse(
-            text, nowMs: now, defaultHost: "box", receivedAtMs: now
-        )
+        let entries = AttentionReader.parse(text, nowMs: now)
         let entry = try XCTUnwrap(entries.first, "the permission survived its own Stop")
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entry.kind, "Permission")
-        XCTAssertTrue(entry.clockSuspect, "the stamp was refused, arrival carries the event")
-        // 12.1: the whole file is shifted by the host's skew, so the
-        // permission keeps its 1 ms lead over the Stop that followed it.
-        XCTAssertEqual(entry.effectiveMs, now - 1)
     }
 
-    /// review-1.2 F-2: a fresh line must not re-date an old one. The file's
-    /// mtime is the arrival of its newest line only.
-    func testAFreshLineDoesNotResurrectAnOldRemoteWait() {
+    /// 22.0: `attention.tsv` is this Mac's file. A `host` column (a hook
+    /// with `PULSE_HOST` set) no longer makes a separate, "remote" wait —
+    /// the same session with or without it is one wait, and one `done`
+    /// clears it.
+    func testTheHostColumnIsIgnored() {
         let now: Int64 = 1_700_000_000_000
-        let hour: Int64 = 60 * 60 * 1000
+        let raised = now - 60_000
         let text = [
-            "claude\tpermission\t\(now - 3 * hour)\tBash: rm -rf build\tsession-old\t/Users/me/Pulse\tbox",
-            "codex\tpermission\t\(now - 60_000)\tBash: make\tsession-new\t/Users/me/Pulse\tbox",
+            "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox",
+            "claude\tdone\t\(raised + 1_000)\t\tsession-1\t/x\t",
         ].joined(separator: "\n") + "\n"
-        let entries = AttentionReader.parse(text, nowMs: now, defaultHost: "box", receivedAtMs: now)
-        XCTAssertEqual(entries.map(\.session), ["session-new"], "three hours old is not 'just arrived'")
-        XCTAssertFalse(entries.first?.clockSuspect ?? true)
-    }
-
-    func testASkewedHostShiftsEveryLineByTheSameOffset() throws {
-        let now: Int64 = 1_700_000_000_000
-        let minute: Int64 = 60_000
-        let skew: Int64 = 50 * minute  // the host runs 50 minutes behind
-        let text = [
-            "claude\tpermission\t\(now - skew - 10 * minute)\tA\ts-a\t/x\tbox",
-            "codex\tpermission\t\(now - skew)\tB\ts-b\t/x\tbox",
-        ].joined(separator: "\n") + "\n"
-        let entries = AttentionReader.parse(text, nowMs: now, defaultHost: "box", receivedAtMs: now)
-        let a = try XCTUnwrap(entries.first { $0.session == "s-a" })
-        let b = try XCTUnwrap(entries.first { $0.session == "s-b" })
-        XCTAssertTrue(a.clockSuspect && b.clockSuspect)
-        XCTAssertEqual(b.effectiveMs, now)
-        XCTAssertEqual(a.effectiveMs, now - 10 * minute, "ten minutes older, still ten minutes older")
+        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+        let raisedOnly = "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox\n"
+        XCTAssertEqual(AttentionReader.parse(raisedOnly, nowMs: now).map(\.mapKey), ["claude|session-1"])
     }
 
     /// And the grace still expires on the clock it is measured against: a

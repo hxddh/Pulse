@@ -152,7 +152,6 @@ extension StatusStore {
             "probeCadence: \(probeIntervalDescription)",
             "launchAtLogin: \(launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
             "harvest: native (no external runtime)",
-            "remoteFleet: \(remoteFleetSummary)",
             "sessionDigests: \(HarvestDigests.summary)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
@@ -197,17 +196,6 @@ extension StatusStore {
             )
         }
         return ContentSanitizer.redact(lines.joined(separator: "\n"))
-    }
-
-    /// Remote sources, named. A fleet you cannot see is the problem 1.0 set
-    /// out to fix; a fleet Pulse silently failed to read would be the same
-    /// problem wearing a different coat.
-    var remoteFleetSummary: String {
-        let rows = cachedAll.filter(\.isRemote)
-        let hosts = Set(rows.map(\.host)).sorted().joined(separator: ",")
-        let lost = rows.filter(\.lostContact).count
-        let files = AttentionIO.readInbox().count
-        return "inbox=\(files) hosts=\(hosts.isEmpty ? "-" : hosts) rows=\(rows.count) lost=\(lost)"
     }
 
     func copySafeSupportReport() {
@@ -552,7 +540,6 @@ extension StatusStore {
         case .session: return tr(.supportStructured)
         case .cache: return tr(.supportCache)
         case .process: return tr(.supportProcess)
-        case .remote: return tr(.remoteEvidence)
         case .none: return tr(.supportDetected)
         }
     }

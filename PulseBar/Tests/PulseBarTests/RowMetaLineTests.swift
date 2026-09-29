@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 10.0 (scene BS) — the collapsed row's ONE composed meta line: three
@@ -71,9 +70,6 @@ final class RowMetaLineTests: XCTestCase {
         row.tool = "Edit"
         row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.sessionErrors = 1
-        row.changedPaths = 3
-        row.insertions = 5
-        row.deletions = 1
         row.tokensIn = 12_000
         row.tokensOut = 3_000
         row.model = "claude-opus"

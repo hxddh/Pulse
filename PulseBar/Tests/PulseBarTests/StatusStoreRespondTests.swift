@@ -2,110 +2,19 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
-/// Respond (scene AR) — attachment rules for inbound full requests.
+/// Respond (scene AR) — attachment rules for the full requests this Mac's
+/// agents are holding for.
 ///
 /// The one thing every assertion protects: a verdict control must never appear
-/// on a row that the verdict could not actually answer. A local row's hook
-/// will not collect anything; another host's row is another machine.
+/// on a row that the verdict could not actually answer.
 final class StatusStoreRespondTests: XCTestCase {
 
     private let now: Int64 = 1_800_000_000_000
 
     @MainActor
-    private func remoteRow(
-        key: String = "claude|s1@devbox",
-        agent: AgentID = .claude,
-        host: String = "devbox",
-        session: String = "s1"
-    ) -> AgentRow {
-        var row = AgentRow(rowKey: key, agent: agent)
-        row.host = host
-        row.observationSource = .remote
-        row.sessionID = session
-        row.waiting = true
-        return row
-    }
-
-    @MainActor
-    private func inbound(
-        id: String = "toolu_1",
-        agent: AgentID = .claude,
-        host: String = "devbox",
-        session: String = "s1",
-        receivedAtMs: Int64 = 0
-    ) -> RespondSpool.InboundRequest {
-        RespondSpool.InboundRequest(
-            request: PermissionRequest(
-                id: id,
-                agent: agent,
-                host: host,
-                session: session,
-                fullRequest: #"{"tool_name":"Bash","tool_input":{"command":"ls"}}"#,
-                truncated: false,
-                receivedAtMs: receivedAtMs
-            ),
-            toolName: "Bash",
-            expiresAtMs: now + 60_000
-        )
-    }
-
-    @MainActor
-    func testRequestAttachesToItsRemoteRow() {
-        let matched = StatusStore.matchRespondInbound([inbound()], rows: [remoteRow()])
-        XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_1")
-    }
-
-    /// A request that arrived from another machine must not land on a row
-    /// this Mac is observing: the hook waiting for that verdict is over there.
-    @MainActor
-    func testARemoteRequestNeverAttachesToALocalRow() {
-        var local = remoteRow(key: "claude|s1", host: "", session: "s1")
-        local.observationSource = .session
-        local.host = ""
-        let matched = StatusStore.matchRespondInbound([inbound()], rows: [local])
-        XCTAssertTrue(matched.isEmpty, "the hook holding for this one is on another machine")
-    }
-
-    @MainActor
-    func testAnotherHostsRowDoesNotCollect() {
-        let other = remoteRow(key: "claude|s1@laptop", host: "laptop")
-        let matched = StatusStore.matchRespondInbound([inbound()], rows: [other])
-        XCTAssertTrue(matched.isEmpty, "host is part of the binding, not a display detail")
-    }
-
-    @MainActor
-    func testSessionMismatchDoesNotCollect() {
-        let matched = StatusStore.matchRespondInbound(
-            [inbound(session: "s2")],
-            rows: [remoteRow(session: "s1")]
-        )
-        XCTAssertTrue(matched.isEmpty)
-    }
-
-    @MainActor
-    func testNewestRequestWinsWhenTwoAttach() {
-        let older = inbound(id: "toolu_old", receivedAtMs: now - 60_000)
-        let newer = inbound(id: "toolu_new", receivedAtMs: now)
-        let matched = StatusStore.matchRespondInbound([older, newer], rows: [remoteRow()])
-        XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_new")
-    }
-
-    @MainActor
-    func testEmptySessionOnEitherSideStillMatchesByHostAndAgent() {
-        let matched = StatusStore.matchRespondInbound(
-            [inbound(session: "")],
-            rows: [remoteRow(session: "s1")]
-        )
-        XCTAssertEqual(matched.count, 1, "a v1 remote hook may not know its session id")
-    }
-
-    // MARK: 2.4 · this Mac's own requests
-
-    @MainActor
-    private func localRow(
+    private func row(
         key: String = "claude|s1",
         agent: AgentID = .claude,
         session: String = "s1"
@@ -118,44 +27,66 @@ final class StatusStoreRespondTests: XCTestCase {
     }
 
     @MainActor
-    private func localInbound(
-        id: String = "toolu_local",
+    private func inbound(
+        id: String = "toolu_1",
         agent: AgentID = .claude,
-        session: String = "s1"
+        session: String = "s1",
+        receivedAtMs: Int64 = 0
     ) -> RespondSpool.InboundRequest {
-        var request = inbound(id: id, agent: agent, host: "thismac", session: session)
-        request.isLocal = true
-        return request
+        RespondSpool.InboundRequest(
+            request: PermissionRequest(
+                id: id,
+                agent: agent,
+                host: "thismac",
+                session: session,
+                fullRequest: #"{"tool_name":"Bash","tool_input":{"command":"ls"}}"#,
+                truncated: false,
+                receivedAtMs: receivedAtMs
+            ),
+            toolName: "Bash",
+            expiresAtMs: now + 60_000
+        )
     }
 
     @MainActor
-    func testThisMacsOwnRequestAttachesToItsLocalRow() {
-        let matched = StatusStore.matchRespondInbound([localInbound()], rows: [localRow()])
+    func testThisMacsOwnRequestAttachesToItsRow() {
+        let matched = StatusStore.matchRespondInbound([inbound()], rows: [row()])
         XCTAssertEqual(
             matched["claude|s1"]?.request.id,
-            "toolu_local",
+            "toolu_1",
             "the whole point of 2.4: on one Mac, Respond used to attach to nothing"
         )
     }
 
     @MainActor
-    func testALocalRequestNeverAttachesToARemoteRow() {
-        let matched = StatusStore.matchRespondInbound([localInbound()], rows: [remoteRow()])
-        XCTAssertTrue(matched.isEmpty, "the hook holding for this one is here, not on devbox")
+    func testARequestStillHonoursAgentAndSession() {
+        XCTAssertTrue(
+            StatusStore.matchRespondInbound([inbound(agent: .codex)], rows: [row(agent: .claude)]).isEmpty
+        )
+        XCTAssertTrue(
+            StatusStore.matchRespondInbound([inbound(session: "s2")], rows: [row(session: "s1")]).isEmpty
+        )
     }
 
     @MainActor
-    func testALocalRequestStillHonoursAgentAndSession() {
-        XCTAssertTrue(
-            StatusStore.matchRespondInbound(
-                [localInbound(agent: .codex)], rows: [localRow(agent: .claude)]
-            ).isEmpty
-        )
-        XCTAssertTrue(
-            StatusStore.matchRespondInbound(
-                [localInbound(session: "s2")], rows: [localRow(session: "s1")]
-            ).isEmpty
-        )
+    func testARequestWithoutAHostAttachesToNothing() {
+        var request = inbound()
+        request.request.host = ""
+        XCTAssertTrue(StatusStore.matchRespondInbound([request], rows: [row()]).isEmpty)
+    }
+
+    @MainActor
+    func testNewestRequestWinsWhenTwoAttach() {
+        let older = inbound(id: "toolu_old", receivedAtMs: now - 60_000)
+        let newer = inbound(id: "toolu_new", receivedAtMs: now)
+        let matched = StatusStore.matchRespondInbound([older, newer], rows: [row()])
+        XCTAssertEqual(matched["claude|s1"]?.request.id, "toolu_new")
+    }
+
+    @MainActor
+    func testEmptySessionOnEitherSideStillMatchesByAgent() {
+        let matched = StatusStore.matchRespondInbound([inbound(session: "")], rows: [row(session: "s1")])
+        XCTAssertEqual(matched.count, 1, "a hook may not know its session id")
     }
 
     /// E-2: the matcher used to run over `snapshot.rows`, which the tray
@@ -165,20 +96,12 @@ final class StatusStoreRespondTests: XCTestCase {
     func testARowOutsideTheVisibleWindowStillGetsItsControls() {
         // The window is a display budget; the hook holding for this request
         // has no idea what the tray decided to draw.
-        let hidden = localRow(key: "claude|s9", session: "s9")
+        let hidden = row(key: "claude|s9", session: "s9")
         let matched = StatusStore.matchRespondInbound(
-            [localInbound(id: "toolu_hidden", session: "s9")],
+            [inbound(id: "toolu_hidden", session: "s9")],
             rows: [hidden]
         )
         XCTAssertEqual(matched["claude|s9"]?.request.id, "toolu_hidden")
-    }
-
-    @MainActor
-    func testLocalAndRemoteRequestsDoNotCrossOver() {
-        let rows = [localRow(), remoteRow()]
-        let matched = StatusStore.matchRespondInbound([localInbound(), inbound()], rows: rows)
-        XCTAssertEqual(matched["claude|s1"]?.request.id, "toolu_local")
-        XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_1")
     }
 
     // MARK: - H-1 · the verdict answers the request that was on screen
@@ -189,9 +112,9 @@ final class StatusStoreRespondTests: XCTestCase {
         // A newer request B arrived on the same row between draw and click.
         let matched = StatusStore.matchRespondInbound(
             [inbound(id: "toolu_A", receivedAtMs: 1), inbound(id: "toolu_B", receivedAtMs: 2)],
-            rows: [remoteRow()]
+            rows: [row()]
         )
-        let attached = matched["claude|s1@devbox"]
+        let attached = matched["claude|s1"]
         XCTAssertEqual(attached?.request.id, "toolu_B")
         XCTAssertNil(StatusStore.respondTarget(attached: attached, shown: shownA, allow: true))
         XCTAssertNil(StatusStore.respondTarget(attached: attached, shown: shownA, allow: false))

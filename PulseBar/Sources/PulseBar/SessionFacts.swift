@@ -8,20 +8,7 @@ import Foundation
 // `AgentRow` composes them and keeps forwarding accessors so every existing
 // reader, writer and test compiles unchanged (the compiler and the full
 // suite are the proof that nothing moved semantically). Producers and new
-// surfaces (the workbench first) can address a family as one value.
-
-/// Facts a row has only because another machine sent a snapshot (1.0/2.7).
-/// Everything here is past tense by construction.
-struct SessionRemote: Hashable {
-    /// The machine this row came from. Empty means this Mac.
-    var host: String = ""
-    /// Last time anything arrived from a remote host for this row.
-    var lastHeardMs: Int64 = 0
-    /// Nothing has refreshed a remote wait inside the TTL.
-    var lostContact: Bool = false
-    /// The sender's clock disagreed with arrival.
-    var clockSuspect: Bool = false
-}
+// surfaces can address a family as one value.
 
 /// 2.8 Progress · the agent's own plan and words — self-report tier:
 /// sanitized, aged out when stale, never a source of Waiting.
@@ -54,15 +41,4 @@ struct SessionDigestFacts: Hashable {
     var caughtUp: Bool = false
     var bytesPerMinute: Int = 0
     var startedMs: Int64 = 0
-}
-
-/// 2.6/2.7 · what has actually landed in the working copy. -1 is unknown,
-/// never 0 — "measured, unchanged" and "not measured" are different answers.
-struct SessionEffect: Hashable {
-    var root: String = ""
-    var changedPaths: Int = -1
-    var insertions: Int = -1
-    var deletions: Int = -1
-    var peers: Int = 0
-    var headMovedRecently: Bool = false
 }

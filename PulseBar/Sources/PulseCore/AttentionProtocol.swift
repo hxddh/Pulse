@@ -49,8 +49,8 @@ public enum AttentionProtocol {
 
     /// Comment header written at the top of `attention.tsv`.
     ///
-    /// v2 added `host` (an empty host means this Mac, which is what every v1
-    /// line means). v3 adds `front`: `1` when the prompt's own window was the
+    /// v2 added `host` (since 22.0 accepted and ignored: every line in
+    /// `attention.tsv` is this Mac's). v3 adds `front`: `1` when the prompt's own window was the
     /// frontmost application as the event was raised, `0` when it was not,
     /// empty when that could not be established. v1 and v2 lines stay valid;
     /// a missing column reads as unknown.
@@ -58,8 +58,8 @@ public enum AttentionProtocol {
         "# pulse-attention v3 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\thost\\tfront)\n"
 
     /// The v1 header, still written by older installed hooks. Readers must
-    /// accept it; an upgrade that darkened the local lamp would be a worse
-    /// bug than anything remote visibility adds.
+    /// accept it; an upgrade that darkened the lamp would be a worse bug
+    /// than anything a newer column adds.
     public static let headerV1 =
         "# pulse-attention v1 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd)\n"
 

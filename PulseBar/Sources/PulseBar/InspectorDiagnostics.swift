@@ -1,10 +1,8 @@
 import SwiftUI
 
-// 21.0 Clarity: what the Details window held that the Workbench inspector did
-// not — the Why card with its hook history, the waiting timeline, and how
-// Pulse reads the session. The Details window was a third inspector for one
-// row (tray card, Details, Workbench), with its own Respond card; it is gone
-// and these two cards live in the Workbench.
+// 21.0 Clarity: the Why card with its hook history, the waiting timeline,
+// and how Pulse reads the session. 22.0 removed the Workbench that hosted
+// them; they wait here for the row's detail pane.
 
 /// The store-bound owner of the Why card: builds the value, carries out the
 /// export, remembers what the export did.

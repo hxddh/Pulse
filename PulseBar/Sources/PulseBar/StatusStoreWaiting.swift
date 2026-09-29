@@ -563,7 +563,7 @@ extension StatusStore {
     /// session-scoped `done` in the attention file is the record — it
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
-        guard row.yourTurn, !row.isRemote, !row.doneSession.isEmpty else { return }
+        guard row.yourTurn, !row.doneSession.isEmpty else { return }
         AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
         refresh(reason: "turn-seen")
     }

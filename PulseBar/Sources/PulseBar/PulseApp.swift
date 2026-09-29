@@ -36,12 +36,6 @@ enum PulseBarMain {
         if ProcessInfo.processInfo.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
-        if ProcessInfo.processInfo.arguments.contains("--permission-server") {
-            // 6.0-β: the MCP stdio server behind --permission-prompt-tool.
-            // Spawned by the managed runner per turn; no AppKit, exits with
-            // the pipe.
-            exit(ManagedPermission.runServer(version: PulseVersion.semver))
-        }
         if ProcessInfo.processInfo.arguments.contains("--hook") {
             // Native Waiting path for Claude/Codex — no Python. Always exit 0
             // so vendor hooks never block the agent process.

@@ -1,16 +1,13 @@
 import Foundation
 
-/// 15.0 · Witness — named worlds for the Workbench's judgement surfaces.
+/// 15.0 · Witness — named worlds for the surfaces that are values.
 ///
-/// Every fixture goes through the real `MissionBoard.make` /
-/// `ProofCardModel.make` and the real `EvidenceStanding.of`: a fixture fakes
-/// the world (sessions, evidence, the code's current fingerprint), never the
-/// surface. `SurfaceCapture` renders each one; `SurfaceModelTests` asserts the
-/// product's rules over all of them.
+/// Every fixture goes through the real `make` of its model: a fixture fakes
+/// the world (sessions, history, a held request), never the surface.
+/// `SurfaceCapture` renders each one; `SurfaceModelTests` asserts the
+/// product's rules over them.
 enum SurfaceFixtures {
     enum Value {
-        case mission(MissionBoard)
-        case proof(ProofCardModel)
         /// 17.0: the tray row's face; `expanded` shows the why line.
         case row(TrayRowModel, expanded: Bool, hovering: Bool = false)
         case why(WhyCardModel)
@@ -30,32 +27,23 @@ enum SurfaceFixtures {
     }
 
     static let names = [
-        "mission-compare", "mission-no-checks", "mission-legacy-crowded",
-        "proof-empty", "proof-results", "proof-running",
         "row-permission", "row-question-front", "row-turn", "row-pending",
-        "row-stalled", "row-snoozed", "row-remote-lost", "row-process-only",
+        "row-stalled", "row-snoozed", "row-process-only",
         "row-running", "row-running-hover",
         "why-permission", "why-turn",
         "card-respond", "card-respond-truncated", "card-respond-decided",
-        "card-managed-ask", "card-managed-recovery", "card-expanded-managed",
+        "card-expanded",
         "doctor-report",
     ]
 
     static func all(lang: ResolvedLanguage) -> [Fixture] {
         [
-            Fixture(name: "mission-compare", width: 760, value: .mission(missionCompare(lang: lang))),
-            Fixture(name: "mission-no-checks", width: 760, value: .mission(missionNoChecks(lang: lang))),
-            Fixture(name: "mission-legacy-crowded", width: 760, value: .mission(missionLegacyCrowded(lang: lang))),
-            Fixture(name: "proof-empty", width: 620, value: .proof(proofEmpty(lang: lang))),
-            Fixture(name: "proof-results", width: 620, value: .proof(proofResults(lang: lang))),
-            Fixture(name: "proof-running", width: 620, value: .proof(proofRunning(lang: lang))),
             Fixture(name: "row-permission", width: 420, value: .row(rowModel(rowPermission(), lang: lang), expanded: true)),
             Fixture(name: "row-question-front", width: 420, value: .row(rowModel(rowQuestionFront(), lang: lang), expanded: true)),
             Fixture(name: "row-turn", width: 420, value: .row(rowModel(rowTurn(), lang: lang), expanded: true)),
             Fixture(name: "row-pending", width: 420, value: .row(rowModel(rowPending(), lang: lang), expanded: true)),
             Fixture(name: "row-stalled", width: 420, value: .row(rowModel(rowStalled(), lang: lang), expanded: false)),
             Fixture(name: "row-snoozed", width: 420, value: .row(rowModel(rowSnoozed(), lang: lang, snoozeLabel: "Later · 12m"), expanded: false)),
-            Fixture(name: "row-remote-lost", width: 420, value: .row(rowModel(rowRemoteLost(), lang: lang), expanded: false)),
             Fixture(name: "row-process-only", width: 420, value: .row(rowModel(rowProcessOnly(), lang: lang), expanded: false)),
             // 21.0: the common row, at rest and under the pointer — the
             // trailing controls must sit beside the time, never on it.
@@ -66,9 +54,7 @@ enum SurfaceFixtures {
             Fixture(name: "card-respond", width: 380, value: .asks(cardRespond(lang: lang))),
             Fixture(name: "card-respond-truncated", width: 380, value: .asks(cardRespond(lang: lang, truncated: true))),
             Fixture(name: "card-respond-decided", width: 380, value: .asks(cardRespond(lang: lang, decided: true))),
-            Fixture(name: "card-managed-ask", width: 380, value: .asks(cardManagedAsk(lang: lang))),
-            Fixture(name: "card-managed-recovery", width: 380, value: .asks(cardManagedRecovery(lang: lang))),
-            Fixture(name: "card-expanded-managed", width: 380, value: .expanded(cardExpandedManaged(lang: lang))),
+            Fixture(name: "card-expanded", width: 380, value: .expanded(cardExpanded(lang: lang))),
             Fixture(name: "doctor-report", width: 520, value: .doctor(doctorReport(lang: lang))),
         ]
     }
@@ -76,235 +62,6 @@ enum SurfaceFixtures {
     // MARK: - The world
 
     static let t0: Int64 = 1_800_000_000_000
-    static let fingerprint = CodeFingerprint(sha256: "code-as-checked")
-    static let changed = CodeFingerprint(sha256: "code-edited-since")
-
-    static func evidence(
-        _ outcome: AcceptanceEvidence.Outcome,
-        _ checkID: String?,
-        root: String,
-        exit: Int32? = 0,
-        at offset: Int64 = 0
-    ) -> AcceptanceEvidence {
-        var e = AcceptanceEvidence.make(
-            command: "fixture", cwd: root,
-            startedAtMs: t0 + offset, finishedAtMs: t0 + offset + 1_000,
-            stdout: Data(), stderr: Data(), exitCode: exit,
-            preFingerprint: fingerprint, postFingerprint: fingerprint,
-            checkID: checkID
-        )
-        e.outcome = outcome
-        return e
-    }
-
-    /// The real judgement against the code as it is "now" in each root.
-    static func judge(current: [String: CodeFingerprint]) -> (AcceptanceEvidence, String) -> EvidenceStanding {
-        { evidence, root in
-            EvidenceStanding.of(evidence, current: current[root], measured: current[root] != nil)
-        }
-    }
-
-    static func candidate(
-        _ id: String,
-        mission: Mission.Model,
-        revision: Int,
-        status: ManagedSession.Status,
-        modelName: String = "claude-fable-5",
-        answer: String = "",
-        effect: (Int, Int)? = nil,
-        errors: Int = 0,
-        unknown: Int = 0
-    ) -> ManagedSession.Model {
-        var m = ManagedSession.Model(
-            id: id, task: mission.contract.goal,
-            root: "/Users/me/.pulse-worktrees/app/\(id)", isWorktree: true, nowMs: t0
-        )
-        m.missionID = mission.id
-        m.contractRevision = revision
-        m.modelName = modelName
-        m.status = status
-        m.lastResultText = answer
-        m.lastTurnEffect = effect.map { (insertions: $0.0, deletions: $0.1) }
-        m.errorResults = errors
-        m.unknownEvents = unknown
-        return m
-    }
-
-    // MARK: - Missions
-
-    /// Two Candidates Pulse launched (one on an older contract) and one
-    /// working copy the user joined; every kind of cell.
-    static func missionCompare(lang: ResolvedLanguage) -> MissionBoard {
-        let test = Mission.Check(id: "c-test", command: "swift test")
-        let lint = Mission.Check(id: "c-lint", command: "make lint")
-        var mission = Mission.Model(
-            id: "m-login", repoRoot: "/Users/me/code/app",
-            goal: "Make the login flow survive a dropped network without losing the typed password",
-            constraints: "No schema changes. Keep the public API.",
-            checks: [test], createdMs: t0
-        )
-        mission.revise(goal: mission.contract.goal, constraints: mission.contract.constraints,
-                       checks: [test, lint], frozen: true)
-        let first = candidate(
-            "a1", mission: mission, revision: 1, status: .idle,
-            answer: "Retries the request with backoff and keeps the form state.",
-            effect: (42, 7)
-        )
-        let second = candidate(
-            "a2", mission: mission, revision: 2, status: .idle,
-            answer: "Moves the password into a keychain-backed draft.",
-            effect: (118, 36), errors: 1
-        )
-        mission.candidateIDs = ["a1", "a2"]
-        mission.addExternal(root: "/Users/me/code/app-codex", label: "Codex", id: "x-codex", nowMs: t0)
-        mission.chosenCandidateID = "a2"
-
-        var external = AgentRow(rowKey: "codex|s-9", agent: .codex)
-        external.workspaceRoot = "/Users/me/code/app-codex"
-        external.model = "gpt-5.2-codex"
-        external.liveProcess = true
-        external.lastWord = "Added an offline queue for the login request."
-        external.changedPaths = 3
-        external.insertions = 64
-        external.deletions = 12
-
-        let byRoot: [String: [AcceptanceEvidence]] = [
-            first.root: [evidence(.passed, "c-test", root: first.root)],
-            second.root: [
-                evidence(.passed, "c-test", root: second.root),
-                evidence(.failed, "c-lint", root: second.root, exit: 2, at: 2_000),
-            ],
-            external.workspaceRoot: [evidence(.interrupted, "c-lint", root: external.workspaceRoot, exit: nil)],
-        ]
-        return MissionBoard.make(MissionBoard.Input(
-            mission: mission,
-            candidates: [first, second],
-            currentCandidateID: "a2",
-            lifecycle: .ready,
-            lang: lang,
-            observed: { $0 == external.workspaceRoot ? external : nil },
-            evidence: { byRoot[$0] ?? [] },
-            // The second Candidate's code changed after its pass.
-            judge: judge(current: [first.root: fingerprint, second.root: changed, external.workspaceRoot: fingerprint])
-        ))
-    }
-
-    /// A Mission with no ruler: nothing may ever read as verified.
-    static func missionNoChecks(lang: ResolvedLanguage) -> MissionBoard {
-        var mission = Mission.Model(
-            id: "m-draft", repoRoot: "/Users/me/code/app",
-            goal: "Tidy the settings screen", createdMs: t0
-        )
-        let only = candidate("b1", mission: mission, revision: 1, status: .queued)
-        mission.candidateIDs = ["b1"]
-        return MissionBoard.make(MissionBoard.Input(
-            mission: mission, candidates: [only], currentCandidateID: "b1",
-            lifecycle: .running, lang: lang
-        ))
-    }
-
-    /// A migrated Mission with four Candidates, a long goal and a long
-    /// command: the widths and truncation of the real card.
-    static func missionLegacyCrowded(lang: ResolvedLanguage) -> MissionBoard {
-        let check = Mission.Check(
-            id: "c-long",
-            command: "xcodebuild -scheme App -destination 'platform=macOS' test-without-building -only-testing:AppTests/LoginFlowTests"
-        )
-        var mission = Mission.Model(
-            id: "legacy-g-1", repoRoot: "/Users/me/code/app",
-            goal: String(repeating: "Rewrite the synchronisation layer so conflicts surface to the user instead of silently winning. ", count: 3),
-            checks: [check], createdMs: t0
-        )
-        mission.legacy = true
-        let statuses: [ManagedSession.Status] = [.idle, .failed("error_max_turns"), .interrupted, .running]
-        let candidates = statuses.enumerated().map { index, status in
-            candidate("c\(index + 1)", mission: mission, revision: 1, status: status,
-                      answer: index == 0 ? String(repeating: "A long final answer. ", count: 12) : "")
-        }
-        mission.candidateIDs = candidates.map(\.id)
-        let first = candidates[0].root
-        let running = candidates[3].root
-        return MissionBoard.make(MissionBoard.Input(
-            mission: mission,
-            candidates: candidates,
-            runningCandidateIDs: [candidates[3].id],
-            currentCandidateID: "c1",
-            lifecycle: .running,
-            lang: lang,
-            evidence: { $0 == first ? [evidence(.timedOut, "c-long", root: first, exit: nil)] : [] },
-            judge: judge(current: [first: fingerprint, running: fingerprint])
-        ))
-    }
-
-    // MARK: - Working copies
-
-    static let workingCopy = "/Users/me/code/app"
-
-    static func joinableMissions() -> [Mission.Model] {
-        var older = Mission.Model(id: "m-old", repoRoot: workingCopy, goal: "Speed up cold launch", createdMs: t0)
-        older.candidateIDs = ["x"]
-        var newer = Mission.Model(id: "m-new", repoRoot: workingCopy, goal: "Fix the flaky login test", createdMs: t0 + 1)
-        newer.candidateIDs = ["y"]
-        var archived = Mission.Model(id: "m-archived", repoRoot: workingCopy, goal: "Old experiment", createdMs: t0 - 1)
-        archived.archived = true
-        return [archived, older, newer]
-    }
-
-    /// No ruler yet: the opt-in state.
-    static func proofEmpty(lang: ResolvedLanguage) -> ProofCardModel {
-        ProofCardModel.make(ProofCardModel.Input(
-            root: workingCopy, checks: [], missions: joinableMissions(), lang: lang
-        ))
-    }
-
-    /// Pass, fail, stale and not-yet-run, joined to a Mission.
-    static func proofResults(lang: ResolvedLanguage) -> ProofCardModel {
-        let checks = [
-            Mission.Check(id: "p1", command: "swift test"),
-            Mission.Check(id: "p2", command: "make lint"),
-            Mission.Check(id: "p3", command: "./scripts/e2e.sh --headless"),
-            Mission.Check(id: "p4", command: "npm run typecheck"),
-        ]
-        var joined = joinableMissions()
-        joined[2].addExternal(root: workingCopy, label: "Claude Code", id: "x-here", nowMs: t0)
-        var stale = evidence(.passed, "p3", root: workingCopy, at: 3_000)
-        stale.postFingerprint = changed
-        return ProofCardModel.make(ProofCardModel.Input(
-            root: workingCopy,
-            checks: checks,
-            evidence: [
-                evidence(.passed, "p1", root: workingCopy),
-                evidence(.failed, "p2", root: workingCopy, exit: 1, at: 1_000),
-                stale,
-            ],
-            missions: joined,
-            lang: lang,
-            judge: { EvidenceStanding.of($0, current: fingerprint, measured: true) }
-        ))
-    }
-
-    /// A check running, one whose pass has not been measured against the
-    /// code yet, and one that timed out.
-    static func proofRunning(lang: ResolvedLanguage) -> ProofCardModel {
-        let checks = [
-            Mission.Check(id: "r1", command: "swift test"),
-            Mission.Check(id: "r2", command: "make lint"),
-            Mission.Check(id: "r3", command: "make e2e"),
-        ]
-        return ProofCardModel.make(ProofCardModel.Input(
-            root: workingCopy,
-            checks: checks,
-            evidence: [
-                evidence(.passed, "r2", root: workingCopy),
-                evidence(.timedOut, "r3", root: workingCopy, exit: nil, at: 1_000),
-            ],
-            running: RunningCheck(command: "swift test", cwd: workingCopy, startedAtMs: t0 + 5_000, checkID: "r1"),
-            busy: true,
-            missions: [],
-            lang: lang,
-            judge: { EvidenceStanding.of($0, current: nil, measured: false) }
-        ))
-    }
 
     // MARK: - 17.0 · Tray rows
 
@@ -390,17 +147,6 @@ enum SurfaceFixtures {
         return row
     }
 
-    static func rowRemoteLost() -> AgentRow {
-        var row = AgentRow(rowKey: "claude|s-r@devbox", agent: .claude)
-        row.sessionID = "s-r"
-        row.task = "Nightly dependency bump"
-        row.host = "devbox"
-        row.observationSource = .remote
-        row.lastHeardMs = nowMs - 70 * minute
-        row.lostContact = true
-        return row
-    }
-
     static func rowRunning() -> AgentRow {
         var row = baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
         row.tokensIn = 48_200
@@ -465,7 +211,7 @@ enum SurfaceFixtures {
                 fullRequest: truncated ? String(full.prefix(48)) : full,
                 truncated: truncated, receivedAtMs: nowMs - 8 * minute
             ),
-            toolName: "Bash", expiresAtMs: nowMs + 10 * minute, isLocal: true
+            toolName: "Bash", expiresAtMs: nowMs + 10 * minute
         )
         let narrator = RowNarrator(lang: lang, nowMs: nowMs)
         return RowCardModel.make(RowCardModel.Input(
@@ -474,37 +220,8 @@ enum SurfaceFixtures {
         ))
     }
 
-    static func managedRow(key: String) -> AgentRow {
-        var row = baseRow(.claude, key: key, task: "Add an offline queue for login")
-        row.managedID = key
-        return row
-    }
-
-    static func cardManagedAsk(lang: ResolvedLanguage) -> RowCardModel {
-        var row = managedRow(key: "fx-managed-ask")
-        row.waiting = true
-        row.waitKind = "Permission"
-        let ask = ManagedPermission.Request(
-            id: "ask-1", managedID: row.managedID, toolName: "Bash",
-            inputJSON: #"{"command":"git push --force origin main"}"#,
-            truncated: true, createdMs: nowMs - 2 * minute
-        )
-        return RowCardModel.make(RowCardModel.Input(
-            row: row, narrator: RowNarrator(lang: lang, nowMs: nowMs),
-            permissions: [ask], managedStatus: .running
-        ))
-    }
-
-    static func cardManagedRecovery(lang: ResolvedLanguage) -> RowCardModel {
-        RowCardModel.make(RowCardModel.Input(
-            row: managedRow(key: "fx-managed-recovery"),
-            narrator: RowNarrator(lang: lang, nowMs: nowMs),
-            managedStatus: .interrupted
-        ))
-    }
-
-    static func cardExpandedManaged(lang: ResolvedLanguage) -> RowCardModel {
-        var row = managedRow(key: "fx-managed-expanded")
+    static func cardExpanded(lang: ResolvedLanguage) -> RowCardModel {
+        var row = baseRow(.claude, key: "fx-expanded", task: "Add an offline queue for login")
         row.lastWord = "The queue drains on reconnect; writing the retry test next."
         row.tool = "Edit"
         row.progressDone = 2
@@ -517,15 +234,7 @@ enum SurfaceFixtures {
             .init(text: "Update the changelog", state: .pending),
         ]
         return RowCardModel.make(RowCardModel.Input(
-            row: row, narrator: RowNarrator(lang: lang, nowMs: nowMs),
-            managedStatus: .running,
-            managedEntries: [
-                .init(kind: .user, text: "Add an offline queue for login"),
-                .init(kind: .agent, text: "Reading the login flow first."),
-                .init(kind: .tool, toolName: "Edit", text: "Sources/Login/Queue.swift"),
-                .init(kind: .tool, text: "error: missing return", isError: true),
-                .init(kind: .agent, text: "The queue drains on reconnect; writing the retry test next."),
-            ]
+            row: row, narrator: RowNarrator(lang: lang, nowMs: nowMs)
         ))
     }
 

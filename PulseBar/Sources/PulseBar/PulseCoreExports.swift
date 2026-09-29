@@ -3,5 +3,4 @@
 // import this one.
 @_exported import PulseCore
 @_exported import PulseHarvest
-@_exported import PulseManaged
 @_exported import PulseRespond

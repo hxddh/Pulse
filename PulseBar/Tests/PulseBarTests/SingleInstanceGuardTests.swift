@@ -3,7 +3,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 final class SingleInstanceGuardTests: XCTestCase {

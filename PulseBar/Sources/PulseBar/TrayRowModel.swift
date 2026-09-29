@@ -8,9 +8,7 @@ import Foundation
 /// identity, chip, hero, meta, the ask, the why, the action strip, the menu,
 /// VoiceOver) is now this value: a pure function of the row, the narrator,
 /// and a handful of facts only the store knows, passed in as plain values.
-/// The cards that open under a row (asks, Respond, the managed reply, the
-/// expanded inspector) still read the store; they are the Workbench's, not
-/// the glance's.
+/// The cards that open under a row are `RowCardModel`.
 struct TrayRowModel: Equatable {
     /// The small lamp beside the agent's name.
     enum Lamp: Equatable { case waiting, error, process, running, idle }
@@ -24,7 +22,7 @@ struct TrayRowModel: Equatable {
 
     /// Everything a row can ask the store to do.
     enum Action: String, Equatable, Hashable {
-        case primary, details, dismiss, snooze, unsnooze
+        case primary, dismiss, snooze, unsnooze
         case respondDeny, respondReview, focus, supportHealth, setupWaiting
     }
     struct Button: Equatable, Identifiable {
@@ -96,7 +94,7 @@ struct TrayRowModel: Equatable {
         // of them — the way to answer and the way to put it down. Before,
         // the same six verbs were printed in the strip, the menu, the
         // context menu and the expanded card.
-        var menu: [Button] = [Button(action: .details, title: t(.trayOpenInWorkbench))]
+        var menu: [Button] = []
         let focus = row.canFocusTerminal ? Button(action: .focus, title: n.focusActionTitle(row)) : nil
         let dismiss = Button(action: .dismiss, title: t(.dismissWait))
         // A countdown you cannot stop is a worse deal than no countdown, so
@@ -255,8 +253,6 @@ struct TrayRowModel: Equatable {
         parts.append(state)
         if !meta.isEmpty { parts.append(meta) }
         if !time.isEmpty { parts.append(time) }
-        if row.lostContact { parts.append(n.tr(.remoteLostContactWhy)) }
-        if row.isRemote { parts.append(n.tr(.remoteNoFocus)) }
         if row.waiting {
             let line = n.localizedWaitLine(row)
             if !line.isEmpty { parts.append(line) }

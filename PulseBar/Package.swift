@@ -52,19 +52,11 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
             ]
         ),
-        // 12.3 · Managed: sessions Pulse runs itself — the runtime protocol
-        // and the Claude runtime, the fleet, worktrees, the permission MCP
-        // server, acceptance checks and workspace effect. It owns processes
-        // and files, never the store or the UI.
-        .target(
-            name: "PulseManaged",
-            dependencies: ["PulseCore"],
-            path: "Sources/PulseManaged",
-            swiftSettings: productSettings
-        ),
+        // 22.0 removed the fourth library, PulseManaged (sessions Pulse ran
+        // itself). A status lamp watches orchestrators; it is not one.
         .executableTarget(
             name: "PulseBar",
-            dependencies: ["PulseCore", "PulseRespond", "PulseHarvest", "PulseManaged"],
+            dependencies: ["PulseCore", "PulseRespond", "PulseHarvest"],
             path: "Sources/PulseBar",
             resources: [
                 .copy("Resources/pulse_hook.py"),
@@ -83,7 +75,7 @@ let package = Package(
         // the product and had no coverage at all before 0.22.
         .testTarget(
             name: "PulseBarTests",
-            dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest", "PulseManaged"],
+            dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest"],
             path: "Tests/PulseBarTests",
             // 19.0: the tests are in the Swift 6 mode too. An XCTestCase
             // subclass cannot be `@MainActor` (its superclass is not), so

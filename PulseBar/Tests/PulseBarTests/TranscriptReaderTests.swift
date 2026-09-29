@@ -2,10 +2,9 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
-/// 4.0-α — the transcript the workbench renders is parsed by shape, bounded
+/// 4.0-α — a session transcript is parsed by shape, bounded
 /// at every edge, and sanitized per entry. These tests pin each rule with
 /// vendor-real line shapes; the file-window behaviour runs against a real
 /// temporary file at the bottom.

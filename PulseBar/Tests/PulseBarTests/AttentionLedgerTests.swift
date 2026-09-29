@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 final class AttentionLedgerTests: XCTestCase {
@@ -95,8 +94,9 @@ final class AttentionLedgerTests: XCTestCase {
     }
 }
 
-/// The inbox watch is how a remote raise wakes Pulse at once instead of on the
-/// next poll. Re-arming attention.tsv used to tear it down (U-4).
+/// Re-arming attention.tsv used to tear down every other watch with it
+/// (U-4). Since 22.0 removed the remote inbox the other watch is the
+/// activity spool, and the rule is the same: each watch re-arms alone.
 final class AttentionWatcherReArmTests: XCTestCase {
     private var home: URL!
 
@@ -112,30 +112,30 @@ final class AttentionWatcherReArmTests: XCTestCase {
         try? FileManager.default.removeItem(at: home)
     }
 
-    func testReArmingTheFileWatchLeavesTheInboxWatchAlone() {
+    func testReArmingTheFileWatchLeavesTheActivityWatchAlone() {
         let watcher = AttentionWatcher()
         defer { watcher.stop() }
-        watcher.start {}
+        watcher.start(onChange: {}, onActivity: {})
         XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(watcher.isWatchingInbox)
+        XCTAssertTrue(watcher.isWatchingActivity)
 
         // What the delete/rename handler does after an atomic replace — which
         // is what every hook write looks like from the outside.
         watcher.arm()
         XCTAssertTrue(watcher.isWatchingFile)
         XCTAssertTrue(
-            watcher.isWatchingInbox,
-            "attention.d/ must keep waking Pulse after attention.tsv is replaced"
+            watcher.isWatchingActivity,
+            "activity.d/ must keep waking Pulse after attention.tsv is replaced"
         )
     }
 
-    func testReArmingTheInboxLeavesTheFileWatchAlone() {
+    func testReArmingTheActivityWatchLeavesTheFileWatchAlone() {
         let watcher = AttentionWatcher()
         defer { watcher.stop() }
-        watcher.start {}
-        watcher.armInbox()
+        watcher.start(onChange: {}, onActivity: {})
+        watcher.armActivity()
         XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(watcher.isWatchingInbox)
+        XCTAssertTrue(watcher.isWatchingActivity)
     }
 
     /// A deleted file cannot be reopened, so the watch would have stayed dead
@@ -150,14 +150,13 @@ final class AttentionWatcherReArmTests: XCTestCase {
         watcher.arm()
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(watcher.isWatchingInbox)
     }
 
-    func testStopTearsDownBothWatches() {
+    func testStopTearsDownEveryWatch() {
         let watcher = AttentionWatcher()
-        watcher.start {}
+        watcher.start(onChange: {}, onActivity: {})
         watcher.stop()
         XCTAssertFalse(watcher.isWatchingFile)
-        XCTAssertFalse(watcher.isWatchingInbox)
+        XCTAssertFalse(watcher.isWatchingActivity)
     }
 }

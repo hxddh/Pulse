@@ -95,7 +95,7 @@ enum PulseTheme {
     // MARK: State colours — one per state, everywhere
 
     /// The four things Pulse can say about an agent, plus neutral. The lamp,
-    /// the chip, the header count and the Workbench sidebar all read this.
+    /// the chip and the header count all read this.
     enum Tone: Equatable {
         /// Blocked on the person (red).
         case waiting

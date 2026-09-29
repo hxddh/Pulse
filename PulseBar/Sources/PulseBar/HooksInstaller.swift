@@ -246,7 +246,7 @@ enum HooksInstaller {
     /// skip them).
     nonisolated(unsafe) static var claudeHookTimeoutSeconds = 5
     /// PermissionRequest is the one event where the hook may deliberately
-    /// wait (a remote Respond hold). The vendor default is 600s; 90 caps the
+    /// wait (a Respond hold). The vendor default is 600s; 90 caps the
     /// hold well below that while leaving room for a human answer. Every
     /// other event keeps the tight budget — the receiver exits immediately.
     nonisolated(unsafe) static var permissionRequestTimeoutSeconds = 90

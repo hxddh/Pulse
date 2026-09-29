@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// Settings are a one-way door: the 0.22 whole-hours → minutes migration runs

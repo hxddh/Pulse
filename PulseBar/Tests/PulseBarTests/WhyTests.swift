@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 17.0 · Why — the history that remembers what the hooks said, the one
@@ -12,13 +11,8 @@ final class WhyTests: XCTestCase {
     private let now: Int64 = 1_800_000_000_000
     private let minute: Int64 = 60_000
 
-    private func source(_ lines: [String], host: String = "") -> AttentionIO.Source {
-        AttentionIO.Source(
-            host: host,
-            text: AttentionProtocol.header + lines.joined(separator: "\n") + "\n",
-            receivedAtMs: 0,
-            isLocal: host.isEmpty
-        )
+    private func source(_ lines: [String]) -> AttentionIO.Source {
+        AttentionIO.Source(text: AttentionProtocol.header + lines.joined(separator: "\n") + "\n")
     }
 
     private func line(_ kind: String, ago: Int64, message: String = "", session: String = "s1", front: String = "") -> String {
@@ -74,14 +68,14 @@ final class WhyTests: XCTestCase {
         XCTAssertFalse(message.contains("sk-abcdefghijklmnopqrstu"))
     }
 
-    func testARemoteHostKeepsItsOwnHistory() {
+    /// 22.0: every line is this Mac's, so a `host` column does not split a
+    /// session's history in two.
+    func testAHostColumnDoesNotSplitASessionsHistory() {
         var history = AttentionHistory()
-        history.ingest([
-            source([line("permission", ago: minute)]),
-            source([line("turn", ago: minute)], host: "devbox"),
-        ], nowMs: now)
-        XCTAssertEqual(history.history(agent: "claude", session: "s1").map(\.kind), ["permission"])
-        XCTAssertEqual(history.history(agent: "claude", session: "s1", host: "devbox").map(\.kind), ["turn"])
+        var named = line("turn", ago: minute / 2).split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        named[6] = "devbox"
+        history.ingest([source([line("permission", ago: minute), named.joined(separator: "\t")])], nowMs: now)
+        XCTAssertEqual(history.history(agent: "claude", session: "s1").map(\.kind), ["permission", "turn"])
     }
 
     func testTheStoreWritesAPrivateFileNextToTheAttentionFile() throws {
@@ -208,10 +202,9 @@ final class WhyTests: XCTestCase {
         // 21.0: at most two visible verbs — answer it, or put it down.
         XCTAssertEqual(model.strip.map(\.action), [.focus, .dismiss])
         XCTAssertTrue(model.stripAlwaysVisible)
-        XCTAssertEqual(model.menu.map(\.action), [.details, .focus, .dismiss, .snooze],
+        XCTAssertEqual(model.menu.map(\.action), [.focus, .dismiss, .snooze],
                        "every verb is in the menu once")
         XCTAssertNotNil(model.why)
-        XCTAssertEqual(model.menu.first?.action, .details)
     }
 
     func testYourTurnIsQuiet() {
@@ -239,13 +232,6 @@ final class WhyTests: XCTestCase {
         XCTAssertTrue(model.whyInline || model.why == nil, "an orange row explains itself")
         XCTAssertEqual(model.accessibilityHint, L10n.t(.processOnlyHint, .en))
         XCTAssertFalse(model.canPrimary)
-    }
-
-    func testARemoteRowOffersNoFocus() {
-        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowRemoteLost(), lang: .en)
-        XCTAssertFalse(model.canPrimary)
-        XCTAssertFalse(model.menu.contains { $0.action == .focus })
-        XCTAssertTrue(model.accessibilityLabel.contains(L10n.t(.remoteNoFocus, .en)))
     }
 
     func testRespondOffersDenyAndReviewNeverAllow() {

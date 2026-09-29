@@ -50,8 +50,6 @@ enum SurfaceCapture {
 
     static func view(for fixture: SurfaceFixtures.Fixture) -> AnyView {
         switch fixture.value {
-        case .mission(let board): return AnyView(MissionBoardView(board: board))
-        case .proof(let model): return AnyView(ProofCardView(model: model))
         // The disclosure control is on, as in the tray, so a capture shows
         // the trailing controls where they really sit.
         case .row(let model, let expanded, let hovering):

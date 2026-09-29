@@ -3,17 +3,18 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// The respond spool is the first file surface whose contents can make an
 /// agent *act*, so these tests are less about parsing and more about the
 /// refusals: mismatched digests, missing keys, hostile ids, expired files.
+/// Local-only since 22.0: one flat `requests/`, one flat `verdicts/`, and
+/// `respond-local.key` beside the spool.
 final class RespondSpoolTests: XCTestCase {
 
     private let now: Int64 = 1_800_000_000_000
-    /// Stand-in for the Pulse support directory — the outbound secret lives
-    /// here, *beside* the spool root, exactly like production.
+    /// Stand-in for the Pulse support directory — the local key lives here,
+    /// *beside* the spool root, exactly like production.
     private var base: URL!
     private var root: URL!
 
@@ -41,7 +42,7 @@ final class RespondSpoolTests: XCTestCase {
         digest: String? = nil,
         expiresAtMs: Int64? = nil
     ) throws -> URL {
-        let directory = root.appendingPathComponent("requests.d/\(host)", isDirectory: true)
+        let directory = root.appendingPathComponent("requests", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let object: [String: Any] = [
             "v": 1,
@@ -63,10 +64,12 @@ final class RespondSpoolTests: XCTestCase {
         return url
     }
 
-    private func writeSecret(host: String = "devbox", key: String = "sekrit\n") throws {
-        let directory = root.appendingPathComponent("secrets", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try Data(key.utf8).write(to: directory.appendingPathComponent("\(host).key"))
+    private func writeSecret(key: String = "sekrit\n") throws {
+        try Data(key.utf8).write(to: base.appendingPathComponent("respond-local.key"))
+    }
+
+    private func read() -> [RespondSpool.InboundRequest] {
+        RespondSpool.readLocalRequests(nowMs: now, host: "devbox")
     }
 
     private func verdict(
@@ -92,7 +95,7 @@ final class RespondSpoolTests: XCTestCase {
     func testARequestFileBecomesAFullPermissionRequest() throws {
         let payload = "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls -la\"}}"
         try writeRequestFile(payload: payload)
-        let inbound = RespondSpool.readInboundRequests(nowMs: now)
+        let inbound = read()
         XCTAssertEqual(inbound.count, 1)
         let first = try XCTUnwrap(inbound.first)
         XCTAssertEqual(first.request.id, "toolu_x")
@@ -101,7 +104,7 @@ final class RespondSpoolTests: XCTestCase {
         XCTAssertEqual(first.request.session, "s1")
         XCTAssertEqual(first.request.fullRequest, payload, "the payload must survive byte for byte")
         XCTAssertFalse(first.request.truncated)
-        XCTAssertGreaterThan(first.request.receivedAtMs, 0, "receivedAtMs is the local landing time")
+        XCTAssertGreaterThan(first.request.receivedAtMs, 0, "receivedAtMs is the landing time")
         XCTAssertTrue(first.request.canOfferAllow, "a verified full request may offer Allow")
         XCTAssertEqual(first.toolName, "Bash")
         XCTAssertEqual(first.expiresAtMs, now + 60_000)
@@ -111,7 +114,7 @@ final class RespondSpoolTests: XCTestCase {
     /// shape — deniable, never approvable.
     func testADigestMismatchMarksTruncatedAndBlocksAllow() throws {
         try writeRequestFile(digest: RespondDigest.of("something else entirely"))
-        let inbound = RespondSpool.readInboundRequests(nowMs: now)
+        let inbound = read()
         let first = try XCTUnwrap(inbound.first)
         XCTAssertTrue(first.request.truncated)
         XCTAssertFalse(first.request.canOfferAllow)
@@ -129,7 +132,7 @@ final class RespondSpoolTests: XCTestCase {
     func testAnExpiredRequestIsNotReturned() throws {
         try writeRequestFile(id: "toolu_dead", expiresAtMs: now - 1)
         try writeRequestFile(id: "toolu_live", expiresAtMs: now + 60_000)
-        let inbound = RespondSpool.readInboundRequests(nowMs: now)
+        let inbound = read()
         XCTAssertEqual(inbound.map { $0.request.id }, ["toolu_live"])
     }
 
@@ -137,7 +140,7 @@ final class RespondSpoolTests: XCTestCase {
     /// must name who it answers, and a guess could name the wrong one.
     func testAnUnknownAgentStringIsSkippedNotGuessed() throws {
         try writeRequestFile(id: "toolu_alien", agent: "martian")
-        XCTAssertTrue(RespondSpool.readInboundRequests(nowMs: now).isEmpty)
+        XCTAssertTrue(read().isEmpty)
     }
 
     // MARK: - Writing verdicts
@@ -147,25 +150,25 @@ final class RespondSpoolTests: XCTestCase {
             RespondSpool.writeVerdict(verdict()),
             "no key means no opt-in; the verdict must never reach disk"
         )
-        XCTAssertFalse(RespondSpool.hostHasSecret("devbox"))
-        let verdictsDir = root.appendingPathComponent("verdicts.d/devbox")
+        XCTAssertFalse(RespondSpool.localHasSecret())
+        let verdictsDir = root.appendingPathComponent("verdicts")
         let names = (try? FileManager.default.contentsOfDirectory(atPath: verdictsDir.path)) ?? []
         XCTAssertTrue(names.isEmpty)
     }
 
     func testAnEmptyKeyFileIsNotAnOptIn() throws {
         try writeSecret(key: "\n")
-        XCTAssertFalse(RespondSpool.hostHasSecret("devbox"))
+        XCTAssertFalse(RespondSpool.localHasSecret())
         XCTAssertFalse(RespondSpool.writeVerdict(verdict()))
     }
 
     func testWriteVerdictWritesAllFieldsAndAVerifiableHmac() throws {
         try writeSecret(key: "sekrit\n")
-        XCTAssertTrue(RespondSpool.hostHasSecret("devbox"))
+        XCTAssertTrue(RespondSpool.localHasSecret())
         let subject = verdict(digest: RespondDigest.of("payload"), allow: true)
         XCTAssertTrue(RespondSpool.writeVerdict(subject))
 
-        let url = root.appendingPathComponent("verdicts.d/devbox/toolu_x.json")
+        let url = root.appendingPathComponent("verdicts/toolu_x.json")
         let data = try Data(contentsOf: url)
         let object = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -179,8 +182,8 @@ final class RespondSpoolTests: XCTestCase {
         XCTAssertEqual((object["decided_at_ms"] as? NSNumber)?.int64Value, subject.decidedAtMs)
         XCTAssertEqual((object["expires_at_ms"] as? NSNumber)?.int64Value, subject.expiresAtMs)
 
-        // Recompute the MAC the way the remote consumer would: canonical
-        // string, key with the trailing newline trimmed.
+        // Recompute the MAC the way the hook would: canonical string, key
+        // with the trailing newline trimmed.
         let message = "v1\n" + subject.requestID + "\n" + subject.digest + "\n"
             + subject.agent + "\n" + subject.host + "\n"
             + (subject.allow ? "allow" : "deny") + "\n"
@@ -195,17 +198,13 @@ final class RespondSpoolTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.int16Value, 0o600)
     }
 
-    /// Verdicts go into `verdicts.d` only. `requests.d` syncs the other way,
-    /// so anything written there would be pushed back out to remote machines.
-    func testAVerdictIsNeverWrittenIntoRequestsDotD() throws {
+    /// Verdicts go into `verdicts/` only — the directory the hook polls.
+    func testAVerdictIsNeverWrittenIntoRequests() throws {
         try writeSecret()
         XCTAssertTrue(RespondSpool.writeVerdict(verdict()))
-        let requestsDir = root.appendingPathComponent("requests.d")
-        var names: [String] = []
-        if let walker = FileManager.default.enumerator(atPath: requestsDir.path) {
-            while let entry = walker.nextObject() as? String { names.append(entry) }
-        }
-        XCTAssertTrue(names.isEmpty, "requests.d must stay inbound-only, got \(names)")
+        let requestsDir = root.appendingPathComponent("requests")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: requestsDir.path)) ?? []
+        XCTAssertTrue(names.isEmpty, "requests/ holds only what the hook raised, got \(names)")
     }
 
     // MARK: - Cleanup
@@ -214,22 +213,15 @@ final class RespondSpoolTests: XCTestCase {
         let hour: Int64 = 60 * 60 * 1000
         let deadRequest = try writeRequestFile(id: "toolu_dead", expiresAtMs: now - 2 * hour)
         let liveRequest = try writeRequestFile(id: "toolu_live", expiresAtMs: now + 60_000)
-        try writeSecret()
-        XCTAssertTrue(RespondSpool.writeVerdict(verdict(id: "verdict_dead", expiresAtMs: now - 2 * hour)))
-        XCTAssertTrue(RespondSpool.writeVerdict(verdict(id: "verdict_live", expiresAtMs: now + 60_000)))
 
         RespondSpool.cleanup(nowMs: now)
 
         let fm = FileManager.default
         XCTAssertFalse(fm.fileExists(atPath: deadRequest.path))
         XCTAssertTrue(fm.fileExists(atPath: liveRequest.path), "the grace window protects live files")
-        let verdictsDir = root.appendingPathComponent("verdicts.d/devbox")
-        XCTAssertFalse(fm.fileExists(atPath: verdictsDir.appendingPathComponent("verdict_dead.json").path))
-        XCTAssertTrue(fm.fileExists(atPath: verdictsDir.appendingPathComponent("verdict_live.json").path))
     }
 
-    /// Just-expired files survive: the grace hour exists so the sync tool can
-    /// still carry the file's fate back before the evidence disappears.
+    /// Just-expired files survive the grace hour.
     func testCleanupHonoursTheGraceWindow() throws {
         let inGrace = try writeRequestFile(id: "toolu_grace", expiresAtMs: now - 60_000)
         RespondSpool.cleanup(nowMs: now)
@@ -238,12 +230,12 @@ final class RespondSpoolTests: XCTestCase {
 
     // MARK: - Hostile names
 
-    /// A request id is remote-controlled text that becomes a local file name.
+    /// A request id is vendor-controlled text that becomes a file name.
     func testAHostileRequestIdCannotEscapeTheSpool() throws {
         try writeSecret()
         XCTAssertTrue(RespondSpool.writeVerdict(verdict(id: "../../../escape")))
-        let hostDir = root.appendingPathComponent("verdicts.d/devbox")
-        let names = try FileManager.default.contentsOfDirectory(atPath: hostDir.path)
+        let verdictsDir = root.appendingPathComponent("verdicts")
+        let names = try FileManager.default.contentsOfDirectory(atPath: verdictsDir.path)
         XCTAssertEqual(names, [".._.._.._escape.json"], "every unsafe character becomes _")
         XCTAssertFalse(
             FileManager.default.fileExists(
@@ -264,11 +256,7 @@ final class RespondSpoolTests: XCTestCase {
         )
     }
 
-    // MARK: - Answered end (this machine runs the agent)
-
-    private func writeOutboundSecret(_ key: String = "sekrit\n") throws {
-        try Data(key.utf8).write(to: base.appendingPathComponent("respond-secret.key"))
-    }
+    // MARK: - The hook's side (claiming a verdict)
 
     private func canonical(
         id: String, digest: String, agent: String = "claude", host: String = "devbox",
@@ -323,9 +311,9 @@ final class RespondSpoolTests: XCTestCase {
         )
     }
 
-    func testWriteOutboundRequestWritesTheSchemaVerbatimAt0600() throws {
+    func testWriteRequestWritesTheSchemaVerbatimAt0600() throws {
         let payload = Data("{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf x\"}}".utf8)
-        XCTAssertTrue(RespondSpool.writeOutboundRequest(
+        XCTAssertTrue(RespondSpool.writeRequest(
             requestID: "toolu_x", agent: "claude", host: "devbox", session: "s1",
             cwd: "/w", toolName: "Bash", payload: payload,
             nowMs: now, expiresAtMs: now + 60_000
@@ -351,7 +339,7 @@ final class RespondSpoolTests: XCTestCase {
     }
 
     func testClaimVerdictAcceptsAValidVerdictExactlyOnce() throws {
-        try writeOutboundSecret()
+        try writeSecret()
         let digest = RespondDigest.of(Data("payload".utf8))
         try writeInboundVerdictFile(digest: digest, allow: true)
         XCTAssertEqual(claim("toolu_x", digest: digest), true)
@@ -367,7 +355,7 @@ final class RespondSpoolTests: XCTestCase {
     }
 
     func testClaimVerdictRejectsATamperedHmacAndKeepsItConsumed() throws {
-        try writeOutboundSecret()
+        try writeSecret()
         let digest = RespondDigest.of(Data("payload".utf8))
         try writeInboundVerdictFile(digest: digest, hmacOverride: String(repeating: "0", count: 64))
         XCTAssertNil(claim("toolu_x", digest: digest))
@@ -383,7 +371,7 @@ final class RespondSpoolTests: XCTestCase {
     }
 
     func testClaimVerdictRejectsExpiredAndNotYetPlausibleTimestamps() throws {
-        try writeOutboundSecret()
+        try writeSecret()
         let digest = RespondDigest.of(Data("payload".utf8))
         // Expired past the 5-minute tolerance (boundary: now == expires + skew).
         try writeInboundVerdictFile(id: "toolu_old", digest: digest, expiresAtMs: now - 300_000)
@@ -401,7 +389,7 @@ final class RespondSpoolTests: XCTestCase {
     }
 
     func testClaimVerdictNeverReturnsAllowForATruncatedRequest() throws {
-        try writeOutboundSecret()
+        try writeSecret()
         let digest = RespondDigest.of(Data("payload".utf8))
         try writeInboundVerdictFile(id: "toolu_a", digest: digest, allow: true)
         XCTAssertNil(
@@ -415,7 +403,7 @@ final class RespondSpoolTests: XCTestCase {
         )
     }
 
-    func testWriteOutboundRequestCleansUpStaleSpoolFiles() throws {
+    func testWriteRequestCleansUpStaleSpoolFiles() throws {
         let fm = FileManager.default
         let requests = root.appendingPathComponent("requests", isDirectory: true)
         let verdicts = root.appendingPathComponent("verdicts", isDirectory: true)
@@ -432,7 +420,7 @@ final class RespondSpoolTests: XCTestCase {
             [.modificationDate: Date(timeIntervalSince1970: Double(now - 2 * hour) / 1000)],
             ofItemAtPath: used.path
         )
-        XCTAssertTrue(RespondSpool.writeOutboundRequest(
+        XCTAssertTrue(RespondSpool.writeRequest(
             requestID: "toolu_new", agent: "claude", host: "devbox", session: "",
             cwd: "", toolName: "Bash", payload: Data("x".utf8),
             nowMs: now, expiresAtMs: now + 60_000

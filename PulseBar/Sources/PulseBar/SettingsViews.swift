@@ -488,14 +488,6 @@ struct SettingsView: View {
                 store.saveSettings()
                 store.refresh(reason: "terminalAutomation")
             }
-            // 4.0-β: one notch above tab-select — the keystroke grant. The
-            // switch existing is the consent; off kills all actuation now.
-            explainedToggle(
-                store.tr(.allowWorkbenchActuation),
-                hint: store.tr(.allowWorkbenchActuationHint),
-                isOn: bind(\.allowWorkbenchActuation)
-            )
-            .onChange(of: store.allowWorkbenchActuation) { _, _ in store.saveSettings() }
             // Off by default, and the switch is a key file: turning it off
             // stops every hold immediately ("no key, no hold").
             explainedToggle(
@@ -504,27 +496,6 @@ struct SettingsView: View {
                 isOn: Binding(
                     get: { store.respondLocalEnabled },
                     set: { store.setRespondLocalEnabled($0) }
-                )
-            )
-            // On by default: an evidence axis nobody switches on is worth
-            // nothing. Off means not one git command runs.
-            explainedToggle(
-                store.tr(.measureWorkspaceEffect),
-                hint: store.tr(.measureWorkspaceEffectHint),
-                isOn: bind(\.measureWorkspaceEffect)
-            )
-            .onChange(of: store.measureWorkspaceEffect) { _, _ in
-                store.saveSettings()
-                store.refresh(reason: "workspaceEffect")
-            }
-            // Off by default: the one switch that sends content off this
-            // machine. Turning it off also deletes this Mac's snapshot.
-            explainedToggle(
-                store.tr(.fleetBroadcast),
-                hint: store.tr(.fleetBroadcastHint),
-                isOn: Binding(
-                    get: { store.broadcastFleet },
-                    set: { store.setBroadcastFleet($0) }
                 )
             )
         } header: {

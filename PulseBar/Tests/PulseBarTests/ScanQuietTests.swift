@@ -4,7 +4,6 @@ import Testing
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 12.4 Surface — a scan that found the same world wakes no surface.
@@ -31,11 +30,9 @@ struct ScanQuietTests {
         [
             ("allowAppData", \StatusStore.allowAppData),
             ("allowTerminalAutomation", \StatusStore.allowTerminalAutomation),
-            ("allowWorkbenchActuation", \StatusStore.allowWorkbenchActuation),
             ("appDataAgents", \StatusStore.appDataAgents),
             ("autoProbe", \StatusStore.autoProbe),
             ("pulseHookLauncherError", \StatusStore.pulseHookLauncherError),
-            ("broadcastFleet", \StatusStore.broadcastFleet),
             ("cachedAll", \StatusStore.cachedAll),
             ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
             ("didCopyAttentionRaise", \StatusStore.didCopyAttentionRaise),
@@ -59,8 +56,6 @@ struct ScanQuietTests {
             ("lookMovedRowKeys", \StatusStore.lookMovedRowKeys),
             ("lookMovedWhileAway", \StatusStore.lookMovedWhileAway),
             ("lookNewWaitsWhileAway", \StatusStore.lookNewWaitsWhileAway),
-            ("managedRevision", \StatusStore.managedRevision),
-            ("measureWorkspaceEffect", \StatusStore.measureWorkspaceEffect),
             ("missedWhileAway", \StatusStore.missedWhileAway),
             ("mutedAgents", \StatusStore.mutedAgents),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
@@ -97,7 +92,6 @@ struct ScanQuietTests {
             ("updateStatus", \StatusStore.updateStatus),
             ("waitHistory", \StatusStore.waitHistory),
             ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
-            ("workbenchSelectKey", \StatusStore.workbenchSelectKey),
         ]
     }
 

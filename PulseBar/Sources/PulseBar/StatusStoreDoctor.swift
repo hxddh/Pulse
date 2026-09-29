@@ -10,7 +10,7 @@ extension StatusStore {
     var doctorRespondTally: DoctorProbe.RespondTally {
         var tally = DoctorProbe.RespondTally()
         tally.enabled = respondLocalEnabled
-        for decided in respondDecided.values where decided.isLocal {
+        for decided in respondDecided.values {
             tally.written += 1
             switch decided.fate {
             case .taken: tally.taken += 1
@@ -22,10 +22,10 @@ extension StatusStore {
     }
 
     /// 20.0: what the parsers got from each agent's session files this run —
-    /// counts only. Remote rows are another machine's reading, not this one's.
+    /// counts only.
     var doctorReadCoverage: [String: DoctorModel.Coverage] {
         var coverage: [String: DoctorModel.Coverage] = [:]
-        for row in cachedAll where row.observationSource == .session && row.host.isEmpty {
+        for row in cachedAll where row.observationSource == .session {
             let key = row.agent.rawValue
             var item = coverage[key] ?? DoctorModel.Coverage(
                 name: row.agent.displayName,

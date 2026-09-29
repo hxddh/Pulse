@@ -93,8 +93,8 @@ jobs:
           path: zig-out/qa-observation-truth-en-dark/
           if-no-files-found: error
 
-      # 15.0 · Witness: every Workbench judgement surface (Mission board,
-      # working-copy card) rendered from fixtures in zh/en × light/dark.
+      # 15.0 · Witness: every surface fixture (tray rows, the cards under a
+      # row, the Why card, the self-check) rendered in zh/en × light/dark.
       # A missing PNG fails the build; the manifests (with each capture's
       # size) are printed to the log.
       - name: Surface captures

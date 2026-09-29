@@ -1,7 +1,5 @@
-// 3.0-α: the tray scene, moved verbatim out of PulseApp.swift.
-// Behavior-frozen split — the view layer gets one file per scene so the
-// workbench (3.0-β) grows beside its siblings instead of inside a
-// 3,000-line monolith.
+// 3.0-α: the tray scene, moved verbatim out of PulseApp.swift — the view
+// layer gets one file per scene instead of a 3,000-line monolith.
 
 import SwiftUI
 import AppKit
@@ -414,10 +412,6 @@ struct TrayPanel: View {
             }
             Button(store.tr(.searchSessions)) { searchActive = true }
                 .keyboardShortcut("f", modifiers: .command)
-            // 3.0-β: the workbench — the tray answers "who needs me", the
-            // window answers everything after that.
-            Button(store.tr(.openWorkbench)) { store.openWorkbench() }
-                .keyboardShortcut("w", modifiers: [.command, .shift])
             Divider()
             Button(store.tr(.supportHealth)) { store.openSupportHealth() }
             Button(store.tr(.settings)) { store.openSettings() }
@@ -1107,7 +1101,7 @@ private struct AgentRowButton: View {
     private var cards: RowCardModel { store.rowCardModel(row) }
 
     private func needsYou(_ cards: RowCardModel) -> Bool {
-        row.waiting || !cards.permissions.isEmpty || cards.needsRecovery
+        row.waiting || cards.hasAsks
     }
 
     /// The row's default depth before any click (scene BV).
@@ -1132,7 +1126,6 @@ private struct AgentRowButton: View {
     private func perform(_ action: TrayRowModel.Action) {
         switch action {
         case .primary: store.primaryAction(row)
-        case .details: store.openAgentDetail(row)
         case .dismiss: store.dismissWaiting(row)
         case .snooze: store.snooze(row)
         case .unsnooze: store.unsnooze(row)
@@ -1162,9 +1155,9 @@ private struct AgentRowButton: View {
             )
 
             // 8.0-β inbox (scene BN): a blocked agent's ask is the popup's
-            // highest-value content and must not cost a click — permission
-            // cards, the Respond card and the managed reply live in the list
-            // itself. The expanded card renders the same cards, never twice.
+            // highest-value content and must not cost a click — the Respond
+            // card lives in the list itself. The expanded card renders the
+            // same card, never twice.
             // 11.0-α (scene BV): the digest tier — a live row's information
             // arrives without a click; the act surfaces stay behind the
             // chevron. Never beside an ask: the question owns that space.
@@ -1176,9 +1169,7 @@ private struct AgentRowButton: View {
             }
 
             // 10.0-γ (scene BU): the in-list card is for "needs you NOW"
-            // only — a blocked ask or a turn that died. An idle managed
-            // row's reply box lives behind expansion; a standing reply box
-            // on every row was a wall, not an inbox.
+            // only — a blocked ask.
             if !expanded, cards.hasAsks {
                 RowAsksFace(model: cards, send: performCard)
                     .padding(.leading, TrayChrome.contentInset)
@@ -1186,9 +1177,8 @@ private struct AgentRowButton: View {
                     .padding(.bottom, PulseTheme.Space.s)
             }
 
-            // 7.0-β: the in-place mini-inspector (scene BM). Same cards as
-            // the workbench, compact face — understanding and acting no
-            // longer require leaving the popup.
+            // 7.0-β: the in-place mini-inspector (scene BM) — understanding
+            // and acting do not require leaving the popup.
             if expanded {
                 TrayExpandedFace(model: cards, send: performCard)
                     .padding(.leading, TrayChrome.contentInset)

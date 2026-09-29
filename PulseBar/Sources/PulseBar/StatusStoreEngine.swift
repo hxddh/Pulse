@@ -7,9 +7,9 @@ import AppKit
 extension StatusStore {
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
-        // 6.0-α: persisted managed sessions come back before the first scan —
-        // interrupted turns honestly labelled, queued ones re-pumped.
-        reattachManagedSessions()
+        // 22.0: once, sweep what the removed orchestrator, remote Respond
+        // and fleet broadcast left in Application Support.
+        LegacyCleanup.run()
         let recovery = LaunchRecovery.begin(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
         launchRecovery = recovery.state
         recoveryExitKind = recovery.kind
@@ -126,19 +126,6 @@ extension StatusStore {
         }()
         let scopedHarvest = agentFilter != nil
         let startCursor = harvestScanCursor
-        let measureEffects = measureWorkspaceEffect
-        // Only directories a scan already confirmed. `cwdBestEffort` paths are
-        // excluded for the same reason 2.2 stopped offering them to Focus: a
-        // path that decoded wrong but happens to exist would report somebody
-        // else's repository as this agent's work.
-        let knownWorkspaces = measureEffects
-            ? Array(Set(cachedAll.filter { !$0.isRemote && !$0.cwdBestEffort }.map(\.cwd)))
-            : []
-        // Captured by value: `WorkspaceEffectStore` is a struct, so the scan
-        // queue works on its own copy and hands the advanced one back on
-        // main. Mutating a captured `var` from a concurrently-executing
-        // closure would be a race the type system is right to refuse.
-        let priorEffectStore = workspaceEffects
         // 18.0: Claude's hooks already say who is waiting, sooner; the
         // agents probe only runs where they are not installed.
         let claudeHooked = hooksStatus == .installedClaude || hooksStatus == .installedBoth
@@ -191,42 +178,17 @@ extension StatusStore {
                     : .fresh(result.rows, result.health, complete, intentionalPartial || scopedHarvest)
             }
 
-            // What has landed on disk. Off the main thread with the other
-            // file work, bounded per root and capped per tick — a status lamp
-            // that blocks on somebody's monorepo is the energy-hog failure the
-            // cadence design exists to prevent.
-            var effectStore = priorEffectStore
-            let effects: [String: WorkspaceEffect.Measurement] = knownWorkspaces.isEmpty
-                ? [:]
-                : effectStore.refresh(
-                    directories: knownWorkspaces,
-                    nowMs: Int64(Date().timeIntervalSince1970 * 1000)
-                )
-            let advancedEffectStore = effectStore
             let attention = AttentionReader.load()
-            // Respond (scene AR): read the inbound full-request spool off the
-            // main thread, alongside the other file sources. Cleanup here too
-            // — both are bounded (≤16 hosts × 32 files).
+            // Respond (scene AR): read the full requests this Mac's agents
+            // are holding for, off the main thread, alongside the other file
+            // sources — bounded (≤32 files). The spool is swept here too, not
+            // only when the hook writes a request, so an install that turned
+            // local answering back off does not keep its leftovers for ever.
             let scanNowMs = Int64(Date().timeIntervalSince1970 * 1000)
             RespondSpool.cleanup(nowMs: scanNowMs)
-            // The flat trees used to be swept only when the hook wrote a
-            // request, so an install that turned local answering back off
-            // kept its leftovers for ever.
-            RespondSpool.cleanupOutbound(nowMs: scanNowMs)
-            // Both trees. `requests.d/<host>/` is what a partner Mac's sync
-            // tool delivered; `requests/` is what an agent on *this* Mac
-            // raised and is still holding for. Until 2.4 only the first was
-            // read, which is why Respond did nothing on a single-Mac install.
-            let respondInbound = RespondSpool.readInboundRequests(nowMs: scanNowMs)
-                + RespondSpool.readLocalRequests(
-                    nowMs: scanNowMs,
-                    host: PulseHookReceiver.respondHost()
-                )
-            // The rest of the fleet, not just its doorbell: every other
-            // machine's snapshot, bounded, and absent until the user's own
-            // sync tooling puts something in fleet.d/.
-            let fleetReports = FleetSnapshot.readReports(
-                selfHost: PulseHookReceiver.respondHost(), nowMs: scanNowMs
+            let respondInbound = RespondSpool.readLocalRequests(
+                nowMs: scanNowMs,
+                host: PulseHookReceiver.respondHost()
             )
             // 2.9: push-fresh activity events. Read here so a full rebuild
             // carries them; the watcher's light path keeps them second-fresh
@@ -254,14 +216,6 @@ extension StatusStore {
                 self.isApplyingScan = true
                 defer { self.isApplyingScan = false }
                 self.harvestScanCursor = completedCursor
-                self.workspaceEffects = advancedEffectStore
-                if measureEffects {
-                    self.workspaceEffectsByDirectory = effects
-                } else {
-                    // Switched off: forget what was measured rather than let
-                    // a row keep quoting a number nobody is refreshing.
-                    self.workspaceEffectsByDirectory = [:]
-                }
                 switch outcome {
                 case .fresh(_, let health, _, _), .failed(let health, _, _):
                     self.harvestSupervisor.record(
@@ -281,7 +235,6 @@ extension StatusStore {
                     clearRefreshing: showSpinner,
                     reason: reason,
                     respondInbound: respondInbound,
-                    fleet: fleetReports,
                     activityEvents: activityEvents,
                     vendorWaits: vendorWaits
                 )
@@ -409,7 +362,7 @@ extension StatusStore {
         guard !byKey.isEmpty else { return }
         func patch(_ rows: inout [AgentRow]) -> Bool {
             var changed = false
-            for index in rows.indices where !rows[index].isRemote && !rows[index].sessionID.isEmpty {
+            for index in rows.indices where !rows[index].sessionID.isEmpty {
                 let key = rows[index].agent.rawValue + "|" + rows[index].sessionID
                 guard let event = byKey[key] else { continue }
                 var row = rows[index]
@@ -421,9 +374,8 @@ extension StatusStore {
             }
             return changed
         }
-        // 5.0-α: the light path patches the observed source (events are
-        // keyed to local observed sessions; a managed session's stream is
-        // first-party and needs no spool echo), then re-merges.
+        // 5.0-α: the light path patches the observed source, then
+        // re-merges.
         if observedSessions.patchSessions(patch) {
             setCachedAll(sessionSources.merged())
         }
@@ -443,7 +395,6 @@ extension StatusStore {
         clearRefreshing: Bool = false,
         reason: String = "",
         respondInbound: [RespondSpool.InboundRequest] = [],
-        fleet: [FleetSnapshot.Report] = [],
         activityEvents: [ActivitySpool.Event] = [],
         vendorWaits: [ClaudeAgentsProbe.Wait] = []
     ) {
@@ -548,7 +499,6 @@ extension StatusStore {
                 harvest: acts,
                 harvestUnreliable: harvestUnreliable,
                 attention: attention,
-                fleet: fleet,
                 activity: activityEvents,
                 vendorWaits: vendorWaits
             ),
@@ -567,8 +517,7 @@ extension StatusStore {
                     AgentID.allCases.filter {
                         $0.requiresAppDataOptIn && !isAppDataAllowed(for: $0)
                     }
-                ),
-                workspaceEffects: workspaceEffectsByDirectory
+                )
             )
         )
 
@@ -687,22 +636,6 @@ extension StatusStore {
         }
 
         recordResolvedWaits(result.resolvedWaits, at: now)
-
-        // This Mac's own snapshot, for the machines that read what our sync
-        // tool carries. Opt-in, on its own cadence, and written off the main
-        // thread — the tray never waits on a disk.
-        if broadcastFleet {
-            let nowMs = Int64(now.timeIntervalSince1970 * 1000)
-            if nowMs - lastFleetWriteMs >= FleetSnapshot.writeIntervalMs {
-                lastFleetWriteMs = nowMs
-                let snapshot = FleetSnapshot.build(
-                    host: PulseHookReceiver.respondHost(),
-                    rows: result.rows,
-                    sentAtMs: nowMs
-                )
-                scanQueue.async { FleetSnapshot.write(snapshot) }
-            }
-        }
 
         // 12.4 Surface: a scan that found the same world leaves `snapshot`
         // alone, so no surface observing the store is woken for it — except

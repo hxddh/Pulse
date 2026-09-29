@@ -3,12 +3,6 @@ import Foundation
 /// Near-realtime refresh when attention.tsv changes.
 final class AttentionWatcher: @unchecked Sendable {
     private var source: DispatchSourceFileSystemObject?
-    /// 1.0: the inbox is a directory, and a host appears by a file appearing.
-    ///
-    /// A directory source fires on add / remove / rename — which is what every
-    /// file-moving tool does. An in-place append to an existing inbox file does
-    /// not fire it; that arrives on the next scan tick instead of instantly.
-    private var inboxSource: DispatchSourceFileSystemObject?
     /// 2.9: the activity spool gets its own source and its own callback —
     /// an event per vendor tool call must wake the cheap spool read, never
     /// the full refresh the attention sources are wired to.
@@ -20,17 +14,13 @@ final class AttentionWatcher: @unchecked Sendable {
     /// second apart was consumed silently and the row kept showing the
     /// previous tool until the next probe tick (Codex review on #78) — a
     /// leading-edge throttle alone drops exactly the freshest state a source
-    /// exists to deliver. The attention file and the inbox had only the
-    /// leading edge, and shared one clock: a `done` landing 0.2 s after a
-    /// raise — or an inbox write right after a file write — was swallowed
-    /// until the next tick.
+    /// exists to deliver. The attention file had only the leading edge: a
+    /// `done` landing 0.2 s after a raise was swallowed until the next tick.
     private var throttles: [Channel: CoalescingThrottle] = [
         .file: CoalescingThrottle(window: 0.35),
-        .inbox: CoalescingThrottle(window: 0.35),
         .activity: CoalescingThrottle(window: 1.0),
     ]
     private var path: String = ""
-    private var inboxPath: String = ""
     private var activityPath: String = ""
     private let lock = NSLock()
 
@@ -46,12 +36,8 @@ final class AttentionWatcher: @unchecked Sendable {
         if !FileManager.default.fileExists(atPath: file.path) {
             PrivateFile.write(Data(AttentionIO.header.utf8), to: file)
         }
-        let inbox = AttentionIO.inboxDirectory
-        try? FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
         path = file.path
-        inboxPath = inbox.path
         arm()
-        armInbox()
         if onActivity != nil {
             let activity = ActivitySpool.directory
             try? FileManager.default.createDirectory(at: activity, withIntermediateDirectories: true)
@@ -66,19 +52,12 @@ final class AttentionWatcher: @unchecked Sendable {
         teardownLocked()
     }
 
-    /// Whether each watch currently holds a live source. Two answers, not one:
-    /// the defect being fixed was precisely that one of them could go dark
-    /// while the other looked healthy.
+    /// Whether each watch currently holds a live source — one answer per
+    /// watch, so one going dark cannot hide behind another looking healthy.
     var isWatchingFile: Bool {
         lock.lock()
         defer { lock.unlock() }
         return source != nil
-    }
-
-    var isWatchingInbox: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return inboxSource != nil
     }
 
     /// The fd is owned by the source's cancel handler — closing it here would
@@ -87,9 +66,6 @@ final class AttentionWatcher: @unchecked Sendable {
         source?.setEventHandler {}
         source?.cancel()
         source = nil
-        inboxSource?.setEventHandler {}
-        inboxSource?.cancel()
-        inboxSource = nil
         activitySource?.setEventHandler {}
         activitySource?.cancel()
         activitySource = nil
@@ -147,61 +123,9 @@ final class AttentionWatcher: @unchecked Sendable {
         src.resume()
     }
 
-    /// Arms the inbox directory only. Symmetric with `arm()` — neither may
-    /// touch the other's source.
-    func armInbox() {
-        lock.lock()
-        inboxSource?.setEventHandler {}
-        inboxSource?.cancel()
-        inboxSource = nil
-        let watchPath = inboxPath
-        lock.unlock()
-
-        guard !watchPath.isEmpty else { return }
-        // A directory that was moved or deleted cannot be reopened, and the
-        // watch would stay dead for the life of the process. Recreating it is
-        // what `start()` does, and the inbox is Pulse's own directory.
-        var isDirectory: ObjCBool = false
-        if !FileManager.default.fileExists(atPath: watchPath, isDirectory: &isDirectory)
-            || !isDirectory.boolValue {
-            try? FileManager.default.createDirectory(
-                at: URL(fileURLWithPath: watchPath, isDirectory: true),
-                withIntermediateDirectories: true
-            )
-        }
-        let fd = open(watchPath, O_EVTONLY)
-        guard fd >= 0 else { return }
-
-        let src = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .extend, .rename, .delete],
-            queue: .main
-        )
-        src.setEventHandler { [weak self] in
-            guard let self else { return }
-            let flags = src.data
-            self.deliver(.inbox)
-            if flags.contains(.delete) || flags.contains(.rename) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                    self?.armInbox()
-                }
-            }
-        }
-        src.setCancelHandler { close(fd) }
-        lock.lock()
-        inboxSource = src
-        lock.unlock()
-        src.resume()
-    }
-
-    /// Arms the attention.tsv watch only.
-    ///
-    /// This used to call `teardownLocked()`, which cancels the inbox source as
-    /// well. Deleting or atomically replacing attention.tsv — what every hook
-    /// write does — therefore re-armed the file and silently killed the
-    /// `attention.d/` watch until the next relaunch, so a remote raise fell
-    /// back to the polling tick instead of waking the app (U-4). The inbox
-    /// source belongs to `armInbox()`; only `stop()` tears both down.
+    /// Arms the attention.tsv watch only — never `teardownLocked()`, which
+    /// would cancel the activity watch too each time a hook write replaced
+    /// the file (U-4). Only `stop()` tears every watch down.
     func arm() {
         lock.lock()
         source?.setEventHandler {}
@@ -249,7 +173,7 @@ final class AttentionWatcher: @unchecked Sendable {
         src.resume()
     }
 
-    fileprivate enum Channel { case file, inbox, activity }
+    fileprivate enum Channel { case file, activity }
 
     /// Leading edge now, one trailing edge for whatever the window absorbed.
     /// Runs on the main queue (every source's handler queue).

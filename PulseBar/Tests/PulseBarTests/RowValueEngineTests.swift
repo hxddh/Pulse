@@ -2,15 +2,12 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
-/// 8.0-α/β (scenes BN/BO) — the value engine and the inbox mapping.
+/// 8.0-α (scene BN) — the value engine.
 ///
 /// The engine's one promise: the observation budget decides which line a
-/// fact lives on, never whether it exists. The inbox mapping's one promise:
-/// a managed turn blocked on a permission ask is a waiting row, with the ask
-/// itself as the message.
+/// fact lives on, never whether it exists.
 final class RowValueEngineTests: XCTestCase {
 
     // MARK: - The pure line
@@ -46,9 +43,6 @@ final class RowValueEngineTests: XCTestCase {
         row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.observationSource = .session
         row.sessionErrors = 2
-        row.changedPaths = 3
-        row.insertions = 10
-        row.deletions = 2
         row.subTotal = 2
         row.progressDone = 2
         row.progressTotal = 5
@@ -148,68 +142,5 @@ final class RowValueEngineTests: XCTestCase {
         var row = AgentRow(rowKey: "claude|s3", agent: .claude)
         row.observationSource = .session
         XCTAssertTrue(s.workDetailFacts(row).isEmpty)
-    }
-
-    // MARK: - The inbox mapping (scene BO)
-
-    private func managedModel() -> ManagedSession.Model {
-        ManagedSession.Model(
-            id: "m1", task: "t", root: "/tmp/x", isWorktree: false, nowMs: 1_000
-        )
-    }
-
-    func testAPermissionAskMakesTheManagedRowWait() {
-        let ask = ManagedPermission.Request(
-            id: "r1", managedID: "m1", toolName: "Bash",
-            inputJSON: #"{"command":"npm run build"}"#,
-            truncated: false, createdMs: 999
-        )
-        let row = ManagedSessionSource.row(for: managedModel(), permissionAsk: ask)
-        XCTAssertTrue(row.waiting)
-        XCTAssertEqual(row.waitKind, "permission")
-        XCTAssertTrue(row.waitMessage.contains("Bash"), row.waitMessage)
-        XCTAssertTrue(row.waitMessage.contains("npm run build"), row.waitMessage)
-        XCTAssertEqual(row.waitSinceMs, 999)
-    }
-
-    func testNoAskMeansNoWaiting() {
-        XCTAssertFalse(ManagedSessionSource.row(for: managedModel()).waiting)
-    }
-
-    // MARK: - The ask summary
-
-    func testSummarySaysTheRequestedThingItself() {
-        let line = ManagedPermission.summary(
-            toolName: "Bash", inputJSON: #"{"command":"npm run build"}"#
-        )
-        XCTAssertTrue(line.contains("Bash"), line)
-        XCTAssertTrue(line.contains("npm run build"), line)
-    }
-
-    func testSummaryFieldOrderFollowsTheVendorTitles() {
-        let line = ManagedPermission.summary(
-            toolName: "Edit",
-            inputJSON: #"{"file_path":"/a/b.swift","command":"x"}"#
-        )
-        XCTAssertTrue(line.contains("x"), "command outranks file_path: \(line)")
-    }
-
-    func testSummaryFallsBackToTheFilePath() {
-        let line = ManagedPermission.summary(
-            toolName: "Edit", inputJSON: #"{"file_path":"/a/b.swift"}"#
-        )
-        XCTAssertTrue(line.contains("b.swift"), line)
-    }
-
-    func testSummaryOnUnparsableInputIsTheToolNameAlone() {
-        XCTAssertEqual(ManagedPermission.summary(toolName: "Bash", inputJSON: "not json"), "Bash")
-        XCTAssertEqual(ManagedPermission.summary(toolName: "", inputJSON: "{}"), "tool")
-    }
-
-    func testSummaryFlattensNewlines() {
-        let line = ManagedPermission.summary(
-            toolName: "Bash", inputJSON: #"{"command":"a\nb"}"#
-        )
-        XCTAssertFalse(line.contains("\n"), line)
     }
 }

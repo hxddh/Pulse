@@ -10,7 +10,7 @@ extension StatusStore {
     func attentionHistory(for row: AgentRow) -> [AttentionHistory.Event] {
         guard !row.sessionID.isEmpty else { return [] }
         return AttentionHistoryStore.current.history(
-            agent: row.agent.rawValue, session: row.sessionID, host: row.host
+            agent: row.agent.rawValue, session: row.sessionID
         )
     }
 

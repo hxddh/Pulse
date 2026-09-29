@@ -13,7 +13,8 @@ import PulseCore
 package struct PermissionRequest: Equatable {
     package var id: String
     package var agent: AgentID
-    /// Empty means this Mac.
+    /// This Mac's host label, as the hook stamped it (`PULSE_HOST` or the
+    /// normalized hostname). Part of the verdict binding.
     package var host: String = ""
     package var session: String = ""
     /// The complete request as the vendor stated it, or empty if it never
@@ -72,9 +73,8 @@ package struct RespondVerdict: Equatable {
     /// Which agent and which machine this verdict is for. Vendor request ids
     /// look globally unique, but nothing *guarantees* they are — and a
     /// security property must never rest on a vendor's id scheme. Without
-    /// these bindings, a verdict synced back to the wrong host (or picked up
-    /// by a different agent that happened to reuse the id) would answer a
-    /// request the user never saw.
+    /// these bindings, a verdict picked up by a different agent that happened
+    /// to reuse the id would answer a request the user never saw.
     package var agent: String
     package var host: String
     package var allow: Bool

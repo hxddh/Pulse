@@ -3,7 +3,6 @@ import Testing
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 19.0 · the cards under a row, as values. The product's rules for the
@@ -14,12 +13,11 @@ struct RowCardModelTests {
     let now: Int64 = 1_800_000_000_000
     var narrator: RowNarrator { RowNarrator(lang: .en, nowMs: now) }
 
-    func waitingRow(managed: Bool = false) -> AgentRow {
+    func waitingRow() -> AgentRow {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.sessionID = "s1"
         row.waiting = true
         row.waitKind = "Permission"
-        if managed { row.managedID = "m1" }
         return row
     }
 
@@ -60,50 +58,9 @@ struct RowCardModelTests {
         #expect(card.fateNote == "taken")
     }
 
-    // MARK: - Managed asks and the reply
-
-    @Test func aTruncatedManagedAskWithdrawsAllowAndSaysWhy() throws {
-        let ask = ManagedPermission.Request(id: "a1", managedID: "m1", toolName: "Bash", inputJSON: "{}", truncated: true, createdMs: now)
-        let card = RowCardModel.make(.init(row: waitingRow(managed: true), narrator: narrator, permissions: [ask], managedStatus: .running))
-        let permission = try #require(card.permissions.first)
-        #expect(!permission.canOfferAllow)
-        #expect(permission.truncatedNote != nil)
-        #expect(card.hasAsks)
-    }
-
-    @Test(arguments: [
-        (ManagedSession.Status.interrupted, true, true),
-        (.failed("boom"), true, true),
-        (.idle, false, true),
-        (.cancelled, false, true),
-        (.running, false, false),
-        (.queued, false, false),
-    ])
-    func aDeadTurnIsANeedsYouState(status: ManagedSession.Status, recovery: Bool, field: Bool) throws {
-        var row = waitingRow(managed: true)
-        row.waiting = false
-        let card = RowCardModel.make(.init(row: row, narrator: narrator, managedStatus: status))
-        #expect(card.needsRecovery == recovery)
-        #expect(try #require(card.reply).showsField == field)
-        #expect(card.hasAsks == recovery)
-    }
-
-    @Test func anObservedRowHasNoReplyBoxAndNoConversation() {
-        var row = waitingRow()
-        row.waiting = false
-        let card = RowCardModel.make(.init(
-            row: row, narrator: narrator, managedStatus: .idle,
-            managedEntries: [.init(kind: .agent, text: "hello")]
-        ))
-        #expect(card.reply == nil)
-        #expect(card.entries.isEmpty)
-        #expect(!card.hasAsks)
-    }
-
-    @Test func theAmbientConversationIsTheLastFiveMoves() {
-        let entries = (1...8).map { TranscriptReader.Entry(kind: .agent, text: "move \($0)") }
-        let card = RowCardModel.make(.init(row: waitingRow(managed: true), narrator: narrator, managedStatus: .idle, managedEntries: entries))
-        #expect(card.entries.map(\.text) == ["move 4", "move 5", "move 6", "move 7", "move 8"])
+    @Test func onlyAHeldRequestIsANeedsYouCard() {
+        #expect(!RowCardModel.make(.init(row: waitingRow(), narrator: narrator)).hasAsks)
+        #expect(RowCardModel.make(.init(row: waitingRow(), narrator: narrator, inbound: inbound())).hasAsks)
     }
 
     @Test func waitActionsExistOnlyForAWait() {
@@ -128,10 +85,7 @@ struct RowCardModelTests {
             if let respond = model.respond {
                 #expect(respond.canOfferAllow == !fixture.name.contains("truncated"), "\(fixture.name)")
             }
-            for permission in model.permissions {
-                #expect(permission.canOfferAllow == (permission.truncatedNote == nil), "\(fixture.name)")
-            }
         }
-        #expect(cards == 6)
+        #expect(cards == 4)
     }
 }

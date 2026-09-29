@@ -48,11 +48,6 @@ enum SnapshotBuilder {
         /// Agents whose protected App Data the user has not granted. Used only
         /// to label ObservationQuality gaps — never to invent facts.
         var privacyLimitedAgents: Set<AgentID>
-        /// What has landed on disk, keyed by the row's **working directory**.
-        /// The store resolves a directory to its repository root and measures
-        /// per root; the builder gets a straight lookup and stays a pure
-        /// function of what it is handed.
-        var workspaceEffects: [String: WorkspaceEffect.Measurement]
 
         init(
             nowMs: Int64,
@@ -64,8 +59,7 @@ enum SnapshotBuilder {
             showAllAgents: Bool = false,
             snoozedUntilMs: [String: Int64] = [:],
             stalledSeconds: Double = AgentRow.stalledSeconds,
-            privacyLimitedAgents: Set<AgentID> = [],
-            workspaceEffects: [String: WorkspaceEffect.Measurement] = [:]
+            privacyLimitedAgents: Set<AgentID> = []
         ) {
             self.nowMs = nowMs
             self.terminal = terminal
@@ -77,7 +71,6 @@ enum SnapshotBuilder {
             self.snoozedUntilMs = snoozedUntilMs
             self.stalledSeconds = stalledSeconds
             self.privacyLimitedAgents = privacyLimitedAgents
-            self.workspaceEffects = workspaceEffects
         }
     }
 
@@ -88,9 +81,6 @@ enum SnapshotBuilder {
         /// True when the harvest failed outright — only then can we claim Error.
         var harvestUnreliable: Bool = false
         var attention: [AttentionReader.Entry] = []
-        /// Every other machine's snapshot, read from `fleet.d/`. Injected like
-        /// everything else, so staleness rules stay pure-function testable.
-        var fleet: [FleetSnapshot.Report] = []
         /// 2.9: push-fresh activity events from the hook's spool. Local
         /// sessions only; never a wait, never a new row.
         var activity: [ActivitySpool.Event] = []
@@ -366,9 +356,7 @@ enum SnapshotBuilder {
             row.cwdBestEffort = act.cwdBestEffort
             if act.sessionStartedMs > 0 { row.sessionStartedMs = act.sessionStartedMs }
             // 4.0-α: carried, never derived — only the collector knows which
-            // file the facts came from. Local rows only by construction
-            // (remote rows are built from fleet snapshots, which never carry
-            // this field).
+            // file the facts came from.
             if !act.transcriptPath.isEmpty { row.transcriptPath = act.transcriptPath }
             row.observationSource = act.evidence
 
@@ -488,44 +476,6 @@ enum SnapshotBuilder {
 
         // Hooks attention — prefer session / cwd match, else best row for agent.
         for att in input.attention {
-            // A wait raised on another machine is its own row, always. Matching
-            // it onto a local session would attach a remote question to a local
-            // process — and then Focus, snooze and dismiss would all act on the
-            // wrong thing.
-            if att.isRemote {
-                let key = remoteRowKey(att)
-                var row = rowsByKey[key] ?? AgentRow(rowKey: key, agent: att.id.surfaceID)
-                row.sessionID = att.session
-                row.cwd = att.cwd
-                row.project = AgentRow.shortProject(att.cwd)
-                row.host = att.host
-                row.observationSource = .remote
-                row.lastHeardMs = att.receivedAtMs > 0 ? att.receivedAtMs : att.effectiveMs
-                row.clockSuspect = att.clockSuspect
-                row.lostContact = att.lostContact
-                // No process table, no session file, no focus handle. Every
-                // one of these would be a claim about this Mac.
-                row.liveProcess = false
-                row.processCount = 0
-                row.focusTier = nil
-                if att.lostContact || att.isTurn {
-                    row.waiting = false
-                    row.waitKind = ""
-                    row.waitMessage = ""
-                    row.waitSignal = nil
-                    row.waitSinceMs = 0
-                    row.yourTurn = att.isTurn && !att.lostContact
-                    row.turnSinceMs = row.yourTurn ? att.effectiveMs : 0
-                } else {
-                    row.waiting = true
-                    row.waitKind = att.kind
-                    row.waitSignal = .hooks
-                    row.waitMessage = att.message
-                    row.waitSinceMs = att.effectiveMs
-                }
-                rowsByKey[key] = row
-                continue
-            }
             switch matchAttentionRow(att, in: rowsByKey) {
             case .hit(let targetKey):
                 guard var best = rowsByKey[targetKey] else { continue }
@@ -606,7 +556,7 @@ enum SnapshotBuilder {
         // harvest pending.
         for wait in input.vendorWaits {
             guard let key = rowsByKey.first(where: { _, row in
-                row.agent == .claude && !row.isRemote
+                row.agent == .claude
                     && ((!wait.sessionID.isEmpty && row.sessionID == wait.sessionID)
                         || (wait.sessionID.isEmpty && wait.pid > 0 && row.pid == wait.pid))
             })?.key, var row = rowsByKey[key] else { continue }
@@ -633,78 +583,6 @@ enum SnapshotBuilder {
             rowsByKey[key] = row
         }
 
-        // Fleet snapshots — the rest of each remote machine, not just its
-        // doorbell. Every fact here is past tense: the snapshot's age decides
-        // whether it may be quoted at all, and Waiting NEVER comes from a
-        // snapshot — the attention protocol is its only source, so a fleet
-        // row that also has a raise gets its wait from the loop above and its
-        // substance from here.
-        for report in input.fleet {
-            let age = context.nowMs - report.receivedAtMs
-            guard report.receivedAtMs > 0, age <= FleetSnapshot.dropAfterMs else { continue }
-            let lost = age >= FleetSnapshot.staleAfterMs
-            let clockSuspect = report.sentAtMs > report.receivedAtMs + FleetSnapshot.clockSkewMs
-            for fleetRow in report.rows {
-                // Unknown agent → skip, never guess — the same rule the
-                // respond spool follows for the same reason.
-                guard let agent = AgentID(rawValue: fleetRow.agent)?.surfaceID else { continue }
-                let key = remoteRowKey(
-                    agentRaw: agent.rawValue, session: fleetRow.session, host: report.host
-                )
-                var row = rowsByKey[key] ?? AgentRow(rowKey: key, agent: agent)
-                row.host = report.host
-                row.observationSource = .remote
-                row.sessionID = fleetRow.session
-                if row.task.isEmpty { row.task = fleetRow.task }
-                if row.project.isEmpty { row.project = FleetSnapshot.leaf(of: fleetRow.project) }
-                row.lastHeardMs = max(row.lastHeardMs, report.receivedAtMs)
-                row.clockSuspect = row.clockSuspect || clockSuspect
-                // Substance is quoted only while the snapshot is fresh. A
-                // stale snapshot's counts are numbers nobody is refreshing,
-                // and quoting them would be exactly the staleness lie the
-                // fleet rules exist to prevent.
-                if !lost {
-                    if row.tool.isEmpty { row.tool = fleetRow.tool }
-                    if row.model.isEmpty { row.model = fleetRow.model }
-                    if row.phase.isEmpty { row.phase = fleetRow.phase }
-                    if fleetRow.cpuPercent >= 0 { row.cpuPercent = fleetRow.cpuPercent }
-                    // 2.8: the remote agent's own current step — substance,
-                    // so it lives inside the freshness gate with the rest.
-                    if let step = fleetRow.step, !step.isEmpty {
-                        row.planStep = String(ContentSanitizer.redact(step)
-                            .prefix(NativeActivityHarvest.maxPlanStepLength))
-                    }
-                    if let total = fleetRow.stepTotal, total > 0 {
-                        row.progressDone = max(0, min(fleetRow.stepDone ?? 0, total))
-                        row.progressTotal = total
-                    }
-                    if fleetRow.changedPaths >= 0 {
-                        row.changedPaths = fleetRow.changedPaths
-                        row.insertions = fleetRow.insertions
-                        row.deletions = fleetRow.deletions
-                    }
-                    if fleetRow.activityAtMs > 0 {
-                        // The sender's clock, bounded by our own receipt so a
-                        // fast remote clock cannot date activity in the future.
-                        row.harvestMs = max(row.harvestMs, clockSuspect
-                            ? report.receivedAtMs
-                            : min(fleetRow.activityAtMs, report.receivedAtMs))
-                    }
-                }
-                // A wait already on this row (attention) stays exactly as it
-                // is; a fleet-only row is a running-info row, never a lamp.
-                if !row.waiting { row.lostContact = lost }
-                // No process table, no focus handle, no workspace on this
-                // Mac. Every one of these would be a claim about hardware
-                // this machine cannot see — and an empty workspaceRoot keeps
-                // remote rows out of collision counting by construction.
-                row.liveProcess = false
-                row.focusTier = nil
-                row.workspaceRoot = ""
-                rowsByKey[key] = row
-            }
-        }
-
         // 2.9 activity events: push-fresh "now" from the hook, applied to
         // the matching local session row. Never a wait, and never a new row —
         // an event without a row means the harvest has not met this session
@@ -715,7 +593,7 @@ enum SnapshotBuilder {
         for event in input.activity {
             guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
             for (key, row) in rowsByKey
-            where !row.isRemote && row.agent == agent && row.sessionID == event.session {
+            where row.agent == agent && row.sessionID == event.session {
                 var updated = row
                 updated.applyActivity(event, nowMs: context.nowMs)
                 rowsByKey[key] = updated
@@ -759,11 +637,7 @@ enum SnapshotBuilder {
                 || row.progressTotal > 0
         }
         var all = Array(rowsByKey.values).filter {
-            // A remote row is kept on the strength of the event that created
-            // it. It has no process and no session store to point at, and a
-            // lost-contact row in particular carries no facts at all — which
-            // is the whole message.
-            $0.liveProcess || $0.waiting || $0.subRunning > 0 || $0.isRemote
+            $0.liveProcess || $0.waiting || $0.subRunning > 0
                 || hasHarvestEvidence($0)
         }
 
@@ -846,29 +720,6 @@ enum SnapshotBuilder {
             }
         }
 
-        // What has landed on disk, and who else is standing in it.
-        //
-        // Both come from the same injected table, so the builder stays pure:
-        // running git is the store's job. A row whose workspace was never
-        // confirmed is deliberately left unmeasured — a path that decoded
-        // wrong but happens to exist would otherwise report somebody else's
-        // repository as this agent's work (the same reasoning 2.2 used to
-        // stop offering such a path to Focus).
-        for i in all.indices where !all[i].isRemote && !all[i].cwdBestEffort {
-            guard let effect = context.workspaceEffects[all[i].cwd] else { continue }
-            all[i].workspaceRoot = effect.root
-            all[i].changedPaths = effect.changedPaths
-            all[i].insertions = effect.insertions
-            all[i].deletions = effect.deletions
-            all[i].workspaceHeadMovedRecently = effect.headMovedRecently
-        }
-        let peers = WorkspaceEffect.collisionCounts(all)
-        for i in all.indices where !all[i].workspaceRoot.isEmpty {
-            // Everyone *else* in this working copy — the row does not collide
-            // with itself.
-            all[i].workspacePeers = max(0, (peers[all[i].workspaceRoot] ?? 0) - 1)
-        }
-
         // Resolve focus once per scan. Doing this per row inside the SwiftUI body
         // meant enumerating running apps and stat-ing the disk on every redraw.
         var snoozeUntilByKey = context.snoozedUntilMs
@@ -893,20 +744,14 @@ enum SnapshotBuilder {
             if row.waiting, let until = snoozeUntilByKey[row.rowKey], until > context.nowMs {
                 all[i].snoozeRemainingSeconds = Double(until - context.nowMs) / 1000.0
             }
-            // A remote row has no handle on this machine. `cwd` from another
-            // host may even exist here by coincidence, which would open the
-            // wrong folder — advertising Focus for it is worse than offering
-            // nothing.
-            all[i].focusTier = row.isRemote
-                ? nil
-                : TerminalFocus.focusTier(
-                    tty: row.tty,
-                    viaWarp: row.viaWarp,
-                    hostApp: row.hostApp,
-                    workspace: row.cwd,
-                    workspaceVerified: !row.cwdBestEffort,
-                    env: context.terminal
-                )
+            all[i].focusTier = TerminalFocus.focusTier(
+                tty: row.tty,
+                viaWarp: row.viaWarp,
+                hostApp: row.hostApp,
+                workspace: row.cwd,
+                workspaceVerified: !row.cwdBestEffort,
+                env: context.terminal
+            )
             let privacy = row.agent.requiresAppDataOptIn
                 && context.privacyLimitedAgents.contains(row.agent)
             all[i].refreshObservationQuality(privacyLimited: privacy)
@@ -1189,19 +1034,10 @@ enum SnapshotBuilder {
         }
         let newcomers = result.waitingKeys.subtracting(previousWaiting)
         result.newlyWaiting = all.filter { newcomers.contains($0.rowKey) }
-        // "Lost contact ≠ finished." A remote row whose host stopped reporting
-        // drops its red lamp and keeps its place with a reason — and the row
-        // says exactly that. Recording it as a resolved wait wrote the opposite
-        // into the history the user reads later, so the two disagreed about the
-        // same event (U-8). An answered wait resolves; an unreachable one waits
-        // on, out of contact.
-        let currentByKey = Dictionary(all.map { ($0.rowKey, $0) }, uniquingKeysWith: { first, _ in first })
         result.resolvedWaits = previous.rows.filter { row in
             guard row.waiting else { return false }
             let liveKey = result.remappedRowKeys[row.rowKey] ?? row.rowKey
-            guard !result.waitingKeys.contains(liveKey) else { return false }
-            if currentByKey[liveKey]?.lostContact == true { return false }
-            return true
+            return !result.waitingKeys.contains(liveKey)
         }
 
         if waitingCount > 0 {
@@ -1280,23 +1116,6 @@ enum SnapshotBuilder {
         case hit(String)
         case unmatched
         case ambiguous
-    }
-
-    /// Row identity for a remote wait. The host is part of the key because
-    /// snooze, dismiss and notification de-duplication all follow `rowKey`:
-    /// two machines running the same agent must not be able to silence each
-    /// other.
-    static func remoteRowKey(_ att: AttentionReader.Entry) -> String {
-        remoteRowKey(agentRaw: att.id.surfaceID.rawValue, session: att.session, host: att.host)
-    }
-
-    /// One key format for every remote row, whichever protocol produced it.
-    /// A fleet snapshot and an attention raise describing the same session on
-    /// the same machine must land on the same row — two keys would put a
-    /// "running" row and its own "waiting" row side by side.
-    static func remoteRowKey(agentRaw: String, session: String, host: String) -> String {
-        let sessionPart = session.isEmpty ? "" : "|\(session)"
-        return "\(agentRaw)\(sessionPart)@\(host)"
     }
 
     static func matchAttentionRow(

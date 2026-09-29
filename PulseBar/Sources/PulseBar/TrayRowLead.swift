@@ -7,7 +7,7 @@ import Foundation
 /// row can carry, in order: what the agent is doing RIGHT NOW is already the
 /// story line's job, so the hero's job is **what the agent last said** —
 /// fresh words beat a title the user has read twenty times. The title is not
-/// lost: it lives in the expanded card and the workbench.
+/// lost: it lives in the expanded card.
 ///
 /// Pure and exhaustively pinned by tests; `AgentRowButton.heroTitle` only
 /// maps the chosen source to its string. Waiting and process-only rows keep
