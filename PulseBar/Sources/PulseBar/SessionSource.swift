@@ -5,8 +5,11 @@ import Foundation
 // Every top product in this category owns the sessions it shows; Pulse was
 // the market's one pure observer, and its pipeline was written that way: the
 // harvest/builder machinery WAS the store's row supply, end to end. 5.0 adds
-// a second producer (the managed runtime, 5.0-β), which forces the seam 3.0
-// kept deferring with "seams follow use" — the use has arrived.
+// a second producer (the managed runtime, 5.0-β), which forced the seam 3.0
+// kept deferring with "seams follow use". 22.0 removed the managed runtime —
+// a status lamp watches orchestrators rather than being one — and the
+// observed pipeline is again the only source; the seam stays because it
+// costs nothing and keeps the merge rule tested.
 //
 // `SessionSource` is the producer contract. The coordinator owns the merge:
 // per-source order preserved, sources ranked by registration, first
@@ -25,7 +28,7 @@ protocol SessionSource: AnyObject {
     var sessions: [AgentRow] { get }
 }
 
-/// The observed pipeline — harvest, builder, attention, fleet — behind the
+/// The observed pipeline — harvest, builder, attention — behind the
 /// boundary. The engine replaces this source's rows where it used to assign
 /// `cachedAll` directly, and patches them where the activity light path used
 /// to patch in place. One owner, no second truth.

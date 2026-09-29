@@ -52,6 +52,13 @@ struct AttentionLedger: Codable, Equatable {
         var queuedAtMs: Int64 = 0
         var snoozedUntilMs: Int64 = 0
         var resolvedAtMs: Int64 = 0
+        /// 22.0 · what happened to the banner: `posted`, `summary`, or a
+        /// `WaitingDelivery.SkipReason` raw value. Optional so files written
+        /// before 22.0 decode unchanged (schema stays 1).
+        var delivery: String? = nil
+        var deliveryAtMs: Int64? = nil
+        /// When the person clicked the banner (or one of its actions).
+        var clickedAtMs: Int64? = nil
 
         var isActive: Bool { resolvedAtMs == 0 }
     }
@@ -119,6 +126,33 @@ struct AttentionLedger: Codable, Equatable {
         events
             .filter { $0.resolvedAtMs > 0 }
             .sorted { $0.resolvedAtMs > $1.resolvedAtMs }
+    }
+
+    /// Records the banner outcome for the row's active event. Returns
+    /// whether it changed — the same outcome twice is not a write.
+    @discardableResult
+    mutating func markDelivery(rowKey: String, outcome: String, nowMs: Int64) -> Bool {
+        guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }),
+              events[index].delivery != outcome
+        else { return false }
+        events[index].delivery = outcome
+        events[index].deliveryAtMs = nowMs
+        return true
+    }
+
+    @discardableResult
+    mutating func markClicked(rowKey: String, nowMs: Int64) -> Bool {
+        guard let index = events.lastIndex(where: { $0.rowKey == rowKey }),
+              events[index].clickedAtMs == nil
+        else { return false }
+        events[index].clickedAtMs = nowMs
+        return true
+    }
+
+    /// The newest event for a row, active or resolved — its audit outlives
+    /// the wait.
+    func latestEvent(rowKey: String) -> Event? {
+        events.last { $0.rowKey == rowKey }
     }
 
     static func title(for row: AgentRow) -> String {
