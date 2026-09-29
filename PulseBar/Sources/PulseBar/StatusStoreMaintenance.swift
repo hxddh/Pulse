@@ -7,6 +7,7 @@ import AppKit
 extension StatusStore {
     func installHooks() {
         hooksStatus = .unknown
+        setHooksNudgeOff(false)
         // `Task` inherits this class's main-actor isolation, so the assignment
         // lands on main while the optional hook installer stays off it.
         Task { [weak self] in
@@ -29,12 +30,22 @@ extension StatusStore {
 
     func uninstallHooks() {
         hooksStatus = .unknown
+        // An uninstall is a decision: stop suggesting hooks until the user
+        // installs them again.
+        setHooksNudgeOff(true)
         Task { [weak self] in
             let status = await Task.detached(priority: .userInitiated) {
                 HooksSupport.uninstall()
             }.value
             self?.hooksStatus = status
         }
+    }
+
+    /// Persist the "don't suggest hooks" choice without a full rescan.
+    private func setHooksNudgeOff(_ value: Bool) {
+        guard hooksNudgeOff != value else { return }
+        hooksNudgeOff = value
+        persistSettingsOnly()
     }
 
     var hooksInstalled: Bool {
@@ -115,7 +126,27 @@ extension StatusStore {
                 ? tr(.updateVerified)
                 : tr(.updateVerifiedOpenOnly)
         case .installing: return tr(.updateInstalling)
-        case .failed(let message): return "\(tr(.updateVerifyFailed)) · \(message)"
+        case .failed(let failure): return updateDownloadFailureText(failure)
+        }
+    }
+
+    /// The download / verify / install failure in the person's language. Only
+    /// a real verification failure says "verification failed"; a network or
+    /// HTTP failure says the installer could not be fetched.
+    func updateDownloadFailureText(_ failure: UpdateCheck.DownloadFailure) -> String {
+        switch failure {
+        case .network(let message):
+            return message.isEmpty ? tr(.updateFailedNetwork) : "\(tr(.updateFailedNetwork)) (\(message))"
+        case .http(let code):
+            return String(format: tr(.updateFailedHTTP), code)
+        case .verification(let message):
+            return "\(tr(.updateVerifyFailed)) · \(message)"
+        case .requiresNotarized:
+            return tr(.updateInstallRequiresNotarized)
+        case .install(let message):
+            return "\(tr(.updateInstallFailed)) · \(message)"
+        case .noVerifiableAsset, .unsupportedSystem, .notReady:
+            return "\(tr(.updateInstallFailed)) · \(failure.detail)"
         }
     }
 

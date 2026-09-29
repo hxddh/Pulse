@@ -83,6 +83,9 @@ struct LampTests {
             previous = [r]
         }
         #expect((book.spans["claude|a"]?.count ?? 0) <= SessionTimelineBook.maxSpansPerSession)
+        // The session leaves, closing its span; a day later nothing is kept.
+        // (An open span is the session's present state and stays.)
+        book.apply(SessionTimeline.transitions(previous: previous, current: [], nowMs: now + 121 * minute))
         book.prune(nowMs: now + SessionTimelineBook.retentionMs * 3)
         #expect(book.spans.isEmpty, "a day later nothing is kept")
     }
@@ -170,4 +173,27 @@ struct LampTests {
             #expect(lines.last?.contains("in front of you") == true)
         }
     }
+
+    // MARK: - Activity
+
+    @Test func theActivityLogMergesStateAndBanners() {
+        var book = SessionTimelineBook()
+        var r = row("claude|a")
+        book.apply(SessionTimeline.transitions(previous: [], current: [r], nowMs: now - 10 * minute))
+        let before = r
+        r.waiting = true
+        r.waitSignal = .hooks
+        r.waitSinceMs = now - 5 * minute
+        book.apply(SessionTimeline.transitions(previous: [before], current: [r], nowMs: now))
+        var ledger = AttentionLedger()
+        ledger.observe(row: r, nowMs: now - 5 * minute)
+        let marked = ledger.markDelivery(rowKey: "claude|a", outcome: "posted", nowMs: now - 5 * minute + 1_000)
+        #expect(marked)
+        let log = ActivityLogModel.make(book: book, ledger: ledger, rows: [r], lang: .en)
+        let texts = log.entries.map { $0.text }
+        #expect(texts.count == 3)
+        #expect(texts.first == L10n.t(.auditPosted, .en).replacingOccurrences(of: " %@", with: ""))
+        #expect(texts.contains { $0.hasPrefix(L10n.t(.needsYou, .en)) })
+    }
 }
+

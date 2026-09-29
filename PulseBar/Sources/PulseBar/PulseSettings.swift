@@ -75,6 +75,9 @@ struct PulseSettings: Equatable {
     var stallMinutes = 20
     /// How long "Later" silences a wait, in minutes.
     var snoozeMinutes = 10
+    /// Set when the user uninstalls the hooks: the tray stops suggesting
+    /// them. Installing again clears it.
+    var hooksNudgeOff = false
 
     static let minutesPerDay = 24 * 60
 
@@ -128,6 +131,7 @@ struct PulseSettings: Equatable {
             case "waitSound": s.playSoundOnWaiting = on
             case "stallMin": if let v = Int(raw) { s.stallMinutes = max(0, min(240, v)) }
             case "snoozeMin": if let v = Int(raw) { s.snoozeMinutes = max(1, min(240, v)) }
+            case "hooksNudgeOff": s.hooksNudgeOff = on
             default: break
             }
         }
@@ -175,6 +179,7 @@ struct PulseSettings: Equatable {
             waitSound=\(playSoundOnWaiting ? 1 : 0)
             stallMin=\(stallMinutes)
             snoozeMin=\(snoozeMinutes)
+            hooksNudgeOff=\(hooksNudgeOff ? 1 : 0)
             mute=\(muted)
             """
     }
@@ -205,7 +210,8 @@ struct PulseSettings: Equatable {
             + "appData=\(allowAppData) "
             + "appDataAgents=\(appDataAgents.count) "
             + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
-            + "stall=\(stallMinutes) snooze=\(snoozeMinutes)"
+            + "stall=\(stallMinutes) snooze=\(snoozeMinutes) "
+            + "hooksNudgeOff=\(hooksNudgeOff)"
     }
 
     /// Shared on-disk path so the menu-bar store and `--harvest-test` CLI read

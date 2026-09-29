@@ -100,40 +100,81 @@ package enum RespondSpool {
     /// wrong thing. A file claiming a host that is not this one is skipped
     /// rather than adopted.
     package static func readLocalRequests(nowMs: Int64, host: String) -> [InboundRequest] {
+        readLocalRequests(nowMs: nowMs, host: host, in: requestsDirectory)
+    }
+
+    /// Hard ceiling on request files opened in one read, expired or not —
+    /// expired files do not spend `maxFiles`, but reading stays bounded.
+    package static let maxFilesScanned = 4 * maxFiles
+
+    /// The same read over an explicit directory (tests pass a temp one, so
+    /// they never share `rootOverride`).
+    ///
+    /// Newest first by modification date, so a live hold is read before the
+    /// leftovers `cleanup` has not reached yet. The `maxFiles` budget counts
+    /// files *touched*, not files parsed — otherwise a directory of garbage
+    /// would defeat the bound while every file "doesn't count" — except an
+    /// expired request: it is a well-formed file whose hold is over, and a
+    /// spool full of those must not hide a live one. `maxFilesScanned`
+    /// still caps every file opened.
+    package static func readLocalRequests(
+        nowMs: Int64, host: String, in directory: URL
+    ) -> [InboundRequest] {
         guard !host.isEmpty else { return [] }
         let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: requestsDirectory.path)
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path)
         else { return [] }
+        let candidates = names
+            .filter { $0.hasSuffix(".json") }
+            .map { name -> (url: URL, name: String, modifiedMs: Int64) in
+                let url = directory.appendingPathComponent(name)
+                return (url, name, modificationMs(of: url))
+            }
+            .sorted {
+                // Newest first; the name breaks ties so the order is stable.
+                $0.modifiedMs != $1.modifiedMs ? $0.modifiedMs > $1.modifiedMs : $0.name < $1.name
+            }
         var found: [InboundRequest] = []
-        // The bound counts files *touched*, not files parsed — otherwise a
-        // directory of garbage would defeat the bound while every file
-        // "doesn't count".
         var touched = 0
-        for name in names.sorted() where name.hasSuffix(".json") {
-            if touched >= maxFiles { break }
-            touched += 1
-            let url = requestsDirectory.appendingPathComponent(name)
-            guard let inbound = parseRequestFile(at: url, host: host, nowMs: nowMs)
-            else { continue }
-            found.append(inbound)
+        var scanned = 0
+        for candidate in candidates {
+            if touched >= maxFiles || scanned >= maxFilesScanned { break }
+            scanned += 1
+            switch parseRequestFile(at: candidate.url, host: host, nowMs: nowMs) {
+            case .request(let inbound):
+                touched += 1
+                found.append(inbound)
+            case .expired:
+                continue
+            case .skipped:
+                touched += 1
+            }
         }
         return found
     }
 
+    private enum ParsedRequest {
+        case request(InboundRequest)
+        /// Well-formed, for this host, but its hold is over.
+        case expired
+        /// Unreadable, another host's, an unknown agent, or a bad payload.
+        case skipped
+    }
+
     private static func parseRequestFile(
         at url: URL, host: String, nowMs: Int64
-    ) -> InboundRequest? {
+    ) -> ParsedRequest {
         guard let data = boundedRead(url, limit: maxBytesPerFile),
               let file = try? JSONDecoder().decode(RequestFile.self, from: data),
               file.v == 1
-        else { return nil }
+        else { return .skipped }
         // The verdict is bound to the host the request names; a request that
         // names another machine was not raised here.
-        guard file.host == host else { return nil }
+        guard file.host == host else { return .skipped }
         // Unknown agent → skip, never guess (see the method doc).
-        guard let agent = AgentID(rawValue: file.agent) else { return nil }
-        guard nowMs < file.expiresAtMs else { return nil }
-        guard let payload = Data(base64Encoded: file.payloadB64) else { return nil }
+        guard let agent = AgentID(rawValue: file.agent) else { return .skipped }
+        guard nowMs < file.expiresAtMs else { return .expired }
+        guard let payload = Data(base64Encoded: file.payloadB64) else { return .skipped }
         let fullRequest = String(decoding: payload, as: UTF8.self)
         // Recompute over the decoded *text*, not the raw bytes: the verdict's
         // digest binding (`PermissionRequest.digest`) is over the text, so
@@ -151,9 +192,9 @@ package enum RespondSpool {
             // field its writer chose.
             receivedAtMs: modificationMs(of: url)
         )
-        return InboundRequest(
+        return .request(InboundRequest(
             request: request, toolName: file.toolName, expiresAtMs: file.expiresAtMs
-        )
+        ))
     }
 
     // MARK: - The key

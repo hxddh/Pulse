@@ -609,12 +609,30 @@ extension StatusStore {
         }
 
         // Notification policy lives here; the builder only reports the edges.
-        let quiet = isInQuietHours()
-        if notifyAuthorized == true, notifyOnIdle, !quiet, result.wentIdle {
+        // 22.0: quiet hours are macOS Focus's job now; Focus already filters
+        // Pulse's banners, and a second clock inside Pulse disagreed with it.
+        if notifyAuthorized == true, notifyOnIdle, result.wentIdle {
             PulseNotify.postIdle(title: "Pulse", body: tr(.idleNotify))
         }
         // Waiting edges stay available even during quiet hours (when enabled).
         // Skip the first scan so launch doesn't flood for already-waiting rows.
+        let edgeNowMs = Int64(now.timeIntervalSince1970 * 1000)
+        // 22.0: an edge that will get no banner says why on its event.
+        if !result.newlyWaiting.isEmpty {
+            var reasons: [String: String] = [:]
+            for row in result.newlyWaiting {
+                if !waitingNotifySeeded {
+                    reasons[row.rowKey] = WaitingDelivery.SkipReason.atLaunch.rawValue
+                } else if !notifyOnWaiting {
+                    reasons[row.rowKey] = WaitingDelivery.SkipReason.notifyOff.rawValue
+                } else if mutedAgents.contains(row.agent) {
+                    reasons[row.rowKey] = WaitingDelivery.SkipReason.muted.rawValue
+                } else if notifyAuthorized != true {
+                    reasons[row.rowKey] = WaitingDelivery.SkipReason.notAuthorized.rawValue
+                }
+            }
+            recordDelivery(reasons, nowMs: edgeNowMs)
+        }
         if notifyOnWaiting, waitingNotifySeeded {
             let waitingEdges = result.newlyWaiting.filter { !mutedAgents.contains($0.agent) }
             let queuedRows = pendingWaitingNotifications.values.filter { row in
@@ -666,11 +684,15 @@ extension StatusStore {
             rescheduleTimer()
         }
 
-        DebugLog.write(
-            "apply #\(ticket) rows=\(snap.rows.count)/\(snap.totalCount) glance=\(snap.glance) " +
+        // 22.0: one line when the lamp, the cadence or the counts move —
+        // not five lines per tick. Scan-quiet applies to the log too.
+        let applySignature = "rows=\(snap.rows.count)/\(snap.totalCount) glance=\(snap.glance) " +
             "activity=\(activity) wait=\(result.waitingKeys.count) " +
             "every=\(currentInterval.map { String(Int($0)) } ?? "parked")"
-        )
+        if applySignature != lastApplyLogSignature {
+            lastApplyLogSignature = applySignature
+            DebugLog.write("apply #\(ticket) " + applySignature)
+        }
     }
 
     /// Deliver one actionable notification per Waiting session. A previous

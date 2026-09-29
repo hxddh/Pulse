@@ -1260,6 +1260,8 @@ struct PulseSnapshot: Equatable {
     /// and which agents they belong to. A row that went quiet for 46
     /// minutes used to vanish with no trace outside debug.log.
     var staleHidden: Int = 0
+    /// 22.0: `LampExplanation.lines` — why the lamp is this colour.
+    var lampLines: [String] = []
     var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0
     var probeError: String?

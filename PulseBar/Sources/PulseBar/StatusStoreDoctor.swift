@@ -93,8 +93,11 @@ extension StatusStore {
     var scanHealthLine: String {
         let now = Date()
         var parts: [String] = []
-        if snapshot.updatedAt != .distantPast {
-            let ago = now.timeIntervalSince(snapshot.updatedAt)
+        // `lastScanAt` moves on every applied scan; `snapshot.updatedAt`
+        // only when the snapshot publishes, so it can read a minute stale.
+        let lastRead = Self.lastReadDate(lastScanAt: lastScanAt, snapshotUpdatedAt: snapshot.updatedAt)
+        if let lastRead {
+            let ago = now.timeIntervalSince(lastRead)
             parts.append(ago < 5
                 ? tr(.lastReadJustNow)
                 : String(format: tr(.lastReadAgo), DurationFormat.label(seconds: ago, lang: lang)))
@@ -109,5 +112,17 @@ extension StatusStore {
             }
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Pure: when Pulse last read the world — the newer of the last applied
+    /// scan and the last published snapshot; nil before either.
+    nonisolated static func lastReadDate(lastScanAt: Date?, snapshotUpdatedAt: Date) -> Date? {
+        let published: Date? = snapshotUpdatedAt == .distantPast ? nil : snapshotUpdatedAt
+        switch (lastScanAt, published) {
+        case let (scan?, snap?): return max(scan, snap)
+        case let (scan?, nil): return scan
+        case let (nil, snap?): return snap
+        case (nil, nil): return nil
+        }
     }
 }

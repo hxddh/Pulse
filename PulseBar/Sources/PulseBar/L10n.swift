@@ -708,6 +708,13 @@ enum L10n {
         case .setupTerminalFocus: return "Jump to the exact terminal tab"
         case .setupTerminalFocusDetail: return "So ↩ lands in the tab that is waiting. macOS asks once for Automation access."
         case .setupTurnOn: return "Turn on"
+        case .settingsAdvanced: return "Advanced"
+        case .activityLeft: return "left the list"
+        case .activityFromSession: return "session record"
+        case .activityFromProcess: return "process only"
+        case .activityHeading: return "Activity"
+        case .activityEmpty: return "Nothing recorded yet. State changes and banners appear here as they happen."
+        case .activityAllAgents: return "All agents"
         }
     }
 
@@ -1336,6 +1343,13 @@ enum L10n {
         case .setupTerminalFocus: return "跳到确切的终端标签页"
         case .setupTerminalFocusDetail: return "这样按 ↩ 就会落到正在等你的那个标签页。macOS 会请求一次「自动化」权限。"
         case .setupTurnOn: return "开启"
+        case .settingsAdvanced: return "高级"
+        case .activityLeft: return "离开了列表"
+        case .activityFromSession: return "会话记录"
+        case .activityFromProcess: return "仅进程"
+        case .activityHeading: return "动态"
+        case .activityEmpty: return "还没有记录。状态变化和通知会在发生时出现在这里。"
+        case .activityAllAgents: return "全部 Agent"
         }
     }
 
@@ -1568,6 +1582,13 @@ enum L10n {
         case setupTerminalFocus
         case setupTerminalFocusDetail
         case setupTurnOn
+        case settingsAdvanced
+        case activityLeft
+        case activityFromSession
+        case activityFromProcess
+        case activityHeading
+        case activityEmpty
+        case activityAllAgents
     }
 }
 

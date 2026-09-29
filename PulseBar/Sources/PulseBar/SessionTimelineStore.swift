@@ -66,4 +66,19 @@ extension StatusStore {
         guard let event = attentionLedger.latestEvent(rowKey: row.rowKey) else { return nil }
         return NotificationAuditModel.make(event: event, lang: lang)
     }
+
+    /// 22.0: the Activity log for the Health window.
+    func activityLog(agent: AgentID?) -> ActivityLogModel {
+        _ = timelineRevision
+        return ActivityLogModel.make(
+            book: timelineBook, ledger: attentionLedger, rows: cachedAll, lang: lang, agentFilter: agent
+        )
+    }
+
+    /// Agents that appear in the log, for its filter.
+    var activityAgents: [AgentID] {
+        _ = timelineRevision
+        let keys = timelineBook.spans.keys.compactMap { AgentID(rawValue: String($0.split(separator: "|").first ?? "")) }
+        return Array(Set(keys)).sorted { $0.displayName < $1.displayName }
+    }
 }

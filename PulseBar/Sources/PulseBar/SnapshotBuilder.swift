@@ -30,6 +30,9 @@ enum SnapshotBuilder {
     /// file keeps the ask forever when the app was quit mid-question; past
     /// this bound it is a record of an old ask, not someone blocked now.
     static let pendingWithoutProcessMaxAgeMs: Int64 = 30 * 60 * 1000
+    /// Stale sessions counted in "N older hidden": only those that went
+    /// quiet within this window. A month of old transcripts is not news.
+    static let staleHiddenWindowMs: Int64 = 24 * 60 * 60 * 1000
 
     /// Outside-world facts, captured once per scan.
     struct Context {
@@ -253,7 +256,9 @@ enum SnapshotBuilder {
             let isStaleFallback = staleFallbackIndices.contains(harvestIndex)
             if !fresh, act.subRunning == 0, !isStaleFallback {
                 result.debugNotes.append("drop stale harvest \(agentID.rawValue) hm=\(act.harvestMs)")
-                staleHiddenByAgent[agentID, default: 0] += 1
+                if act.harvestMs > 0, context.nowMs - act.harvestMs <= staleHiddenWindowMs {
+                    staleHiddenByAgent[agentID, default: 0] += 1
+                }
                 continue
             }
 
@@ -1014,6 +1019,19 @@ enum SnapshotBuilder {
         snap.staleHiddenAgents = staleHiddenByAgent.keys.sorted {
             (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
         }
+        // 22.0: why the lamp is this colour — the rule, up to three sessions
+        // that drove it, and what was left out. Shown under the menu-bar
+        // tooltip; the tooltip's own first line is unchanged.
+        snap.lampLines = LampExplanation.make(
+            rows: all,
+            glance: snap.glance,
+            staleHidden: snap.staleHidden,
+            narrator: RowNarrator(
+                lang: lang,
+                nowMs: context.nowMs,
+                stallMinutes: Int(context.stalledSeconds / 60)
+            )
+        ).lines(lang)
         result.snapshot = snap
 
         // Edges — reported, not acted on. The store owns notification policy.

@@ -40,7 +40,8 @@ extension StatusStore {
             trayGrouping: trayGrouping,
             playSoundOnWaiting: playSoundOnWaiting,
             stallMinutes: stallMinutes,
-            snoozeMinutes: snoozeMinutes
+            snoozeMinutes: snoozeMinutes,
+            hooksNudgeOff: hooksNudgeOff
         )
     }
 
@@ -63,6 +64,7 @@ extension StatusStore {
         playSoundOnWaiting = s.playSoundOnWaiting
         stallMinutes = s.stallMinutes
         snoozeMinutes = s.snoozeMinutes
+        hooksNudgeOff = s.hooksNudgeOff
     }
 
     func loadSettings() {

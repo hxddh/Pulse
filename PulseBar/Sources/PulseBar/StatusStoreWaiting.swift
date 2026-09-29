@@ -22,6 +22,8 @@ extension StatusStore {
             msSinceLastNotification: nowMs - attentionLedger.lastNotificationAtMs,
             minimumIntervalMs: Self.waitingNotificationMinimumIntervalMs
         )
+        // 22.0: the rows this plan leaves out say why, on their own event.
+        recordDelivery(delivery.skipReasons(rows).mapValues(\.rawValue), nowMs: nowMs)
         let candidates: [AgentRow]
         let asSummary: Bool
         switch delivery.plan(rows) {
@@ -155,6 +157,10 @@ extension StatusStore {
         // 21.0: a banner Notification Center refused is said in the tray,
         // not only in debug.log; the next accepted one clears it.
         if waitingBannerFailed == success { waitingBannerFailed = !success }
+        let outcome = success
+            ? (rows.count > WaitingDelivery.summaryAbove ? "summary" : "posted")
+            : WaitingDelivery.SkipReason.rejected.rawValue
+        for row in rows { attentionLedger.markDelivery(rowKey: row.rowKey, outcome: outcome, nowMs: nowMs) }
         if success {
             for row in rows {
                 attentionLedger.markNotified(rowKey: row.rowKey, nowMs: nowMs)
@@ -164,10 +170,8 @@ extension StatusStore {
             // Opt-in, and deliberately quiet: Tink, not an alert tone. A
             // successful batch produces one cue even when several sessions
             // crossed into Waiting together.
-            if playSoundOnWaiting, !waitingDeliverySounded {
-                NSSound(named: NSSound.Name("Tink"))?.play()
-                waitingDeliverySounded = true
-            }
+            // 22.0: the banner carries the system sound the person chose in
+            // System Settings → Notifications; Pulse no longer plays its own.
         } else {
             for row in rows where row.waiting {
                 pendingWaitingNotifications[row.rowKey] = row
@@ -625,5 +629,27 @@ extension StatusStore {
         guard let id = agent else { return nil }
         let own = rows.filter { $0.agent == id }
         return firstWaitingRow(in: own) ?? own.first
+    }
+}
+
+// MARK: - 22.0 · the banner's audit
+
+extension StatusStore {
+    /// Records a banner outcome per row on its active ledger event; writes
+    /// the ledger only when an outcome actually changed.
+    func recordDelivery(_ outcomes: [String: String], nowMs: Int64) {
+        var changed = false
+        for (key, outcome) in outcomes where attentionLedger.markDelivery(rowKey: key, outcome: outcome, nowMs: nowMs) {
+            changed = true
+        }
+        if changed { attentionLedger.save() }
+    }
+
+    /// The person clicked the banner for this row.
+    func recordBannerClick(rowKey: String) {
+        guard !rowKey.isEmpty else { return }
+        if attentionLedger.markClicked(rowKey: rowKey, nowMs: Int64(Date().timeIntervalSince1970 * 1000)) {
+            attentionLedger.save()
+        }
     }
 }

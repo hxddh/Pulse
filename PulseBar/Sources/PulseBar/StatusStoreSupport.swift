@@ -7,6 +7,8 @@ import AppKit
 extension StatusStore {
     /// Claude/Codex live but hooks not wired — tray nudge only.
     var needsHooksNudge: Bool {
+        // The user took the hooks out on purpose; do not keep offering them.
+        if hooksNudgeOff { return false }
         guard hooksStatus == .missing || hooksStatus == .unknown else { return false }
         return cachedAll.contains {
             $0.liveProcess && ($0.agent == .claude || $0.agent == .codex)

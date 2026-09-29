@@ -23,6 +23,10 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let summaryRowKeys = info["rowKeys"] as? [String] ?? []
         let action = response.actionIdentifier
         DispatchQueue.main.async {
+            // 22.0: the click is part of the wait's audit.
+            for key in PulseNotify.snoozeTargets(rowKey: rowKey, rowKeys: summaryRowKeys) {
+                AppServices.store.recordBannerClick(rowKey: key)
+            }
             // "Later" from the banner is the same snooze as the row's button.
             // The banner is where you actually are when the interruption lands
             // — being able to defer without opening anything is the point.

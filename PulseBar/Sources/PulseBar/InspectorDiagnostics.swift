@@ -83,7 +83,7 @@ struct SessionDiagnosticsCard: View {
                     Text("\(store.tr(.detailPhase)): \(row.phase.isEmpty ? "—" : row.phase)")
                     Text("\(store.tr(.detailOutcome)): \(row.outcome.isEmpty ? "—" : row.outcome)")
                     Text("\(store.tr(.detailEvidence)): \(row.observationSource.rawValue)")
-                    if !row.sessionID.isEmpty { Text("session: \(row.sessionID)") }
+                    if !row.sessionID.isEmpty { Text("\(store.tr(.session)): \(row.sessionID)") }
                 }
                 .font(PulseTheme.Font.code)
                 .foregroundStyle(.secondary)
@@ -125,6 +125,19 @@ struct SessionDiagnosticsCard: View {
     }
 
     private func relative(_ ms: Int64) -> String {
-        Date(timeIntervalSince1970: Double(ms) / 1000.0).formatted(.relative(presentation: .named))
+        Self.relativeText(ms: ms, now: Date(), lang: store.lang)
+    }
+
+    /// Pure: a relative time in the app's language, not the system's — a
+    /// Chinese Pulse on an English Mac said "5 minutes ago".
+    static func relativeText(ms: Int64, now: Date, lang: ResolvedLanguage) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .named
+        formatter.unitsStyle = .full
+        formatter.locale = Locale(identifier: lang == .zh ? "zh-Hans" : "en")
+        return formatter.localizedString(
+            for: Date(timeIntervalSince1970: Double(ms) / 1000.0),
+            relativeTo: now
+        )
     }
 }

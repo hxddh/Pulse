@@ -18,6 +18,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             store.settingsExpandAppDataScopes = true
         }
         store.settingsFocusWaitingSignals = focusWaitingSignals
+        if agent != nil || focusWaitingSignals { store.settingsFocusToken &+= 1 }
 
         if let window, let hosting {
             hosting.rootView = SettingsView(store: store)
@@ -34,8 +35,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         win.styleMask = [.titled, .closable, .miniaturizable]
         // 21.0: five panes, each short enough to read without scrolling on
         // a laptop display (EXPERIENCE.md §6).
-        win.setContentSize(NSSize(width: 520, height: 560))
-        win.contentMinSize = NSSize(width: 480, height: 420)
+        win.setContentSize(NSSize(width: 500, height: 620))
+        win.contentMinSize = NSSize(width: 460, height: 420)
         win.isReleasedWhenClosed = false
         win.delegate = self
         win.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]

@@ -14,54 +14,50 @@ struct SettingsView: View {
         self.store = store
     }
 
-    /// 21.0 Clarity: five panes, each one question. Before, "Shortcuts" held
-    /// five unrelated consent switches, "Waiting signals" a dozen developer
-    /// buttons, and the self-check sat at the bottom of "About".
-    enum Pane: String, CaseIterable, Identifiable {
-        case general, alerts, connections, permissions, about
-        var id: String { rawValue }
-    }
+    /// 22.0 Lamp: one page. Five panes held 28 controls; most of them were
+    /// consent switches for features that are gone, or preferences the
+    /// system already owns (quiet hours → Focus, sound → Notifications).
+    /// What is left fits on one screen; the tools for wiring up an unlisted
+    /// agent stay folded under Advanced.
 
     /// A binding into the store, like `$store.x`.
     private func bind<Value>(_ keyPath: ReferenceWritableKeyPath<StatusStore, Value>) -> Binding<Value> {
         let store = self.store
         return Binding(get: { store[keyPath: keyPath] }, set: { store[keyPath: keyPath] = $0 })
     }
-    @State private var pane: Pane = .general
     @State private var confirmDuplicateRemoval = false
     @State private var bridgeExpanded = false
+    @State private var advancedExpanded = false
 
     var body: some View {
-        TabView(selection: $pane) {
-            form { generalSection; shortcutSection }
-                .tabItem { Label(store.tr(.general), systemImage: "gearshape") }
-                .tag(Pane.general)
-            form {
+        ScrollViewReader { proxy in
+            Form {
+                generalSection
+                shortcutSection
                 notificationsSection
-                timingSection
-                if !store.waitHistory.isEmpty { historySection }
+                hooksSection
+                    .id("settings-connections")
+                controlSection
+                dataAccessSection
+                    .id("settings-data")
+                updatesSection
+                aboutSection
+                installSection
+                advancedSection
+                if advancedExpanded { bridgeSection.id("settings-bridge") }
             }
-            .tabItem { Label(store.tr(.settingsPaneAlerts), systemImage: "bell") }
-            .tag(Pane.alerts)
-            form { hooksSection; bridgeSection }
-                .tabItem { Label(store.tr(.settingsPaneConnections), systemImage: "point.3.connected.trianglepath.dotted") }
-                .tag(Pane.connections)
-            form { dataAccessSection; controlSection }
-                .tabItem { Label(store.tr(.settingsPanePermissions), systemImage: "hand.raised") }
-                .tag(Pane.permissions)
-            form { aboutSection; updatesSection; installSection }
-                .tabItem { Label(store.tr(.about), systemImage: "info.circle") }
-                .tag(Pane.about)
+            .formStyle(.grouped)
+            .onAppear {
+                store.hooksStatus = HooksSupport.probeStatus()
+                store.refreshInstallTruth()
+                PulseNotify.refreshAuthorization()
+                store.refreshPulseHookLauncherStatus()
+                followFocus(proxy)
+            }
+            // A token, not the focus values: a second deep link with the same
+            // target must still land (the values would not change).
+            .onChange(of: store.settingsFocusToken) { _, _ in followFocus(proxy) }
         }
-        .onAppear {
-            store.hooksStatus = HooksSupport.probeStatus()
-            store.refreshInstallTruth()
-            PulseNotify.refreshAuthorization()
-            store.refreshPulseHookLauncherStatus()
-            followFocus()
-        }
-        .onChange(of: store.settingsFocusWaitingSignals) { _, _ in followFocus() }
-        .onChange(of: store.settingsFocusAppDataAgent) { _, _ in followFocus() }
         .alert(
             store.tr(.removeDuplicateApps),
             isPresented: $confirmDuplicateRemoval
@@ -78,19 +74,39 @@ struct SettingsView: View {
         }
     }
 
-    /// A deep link from the tray lands on the pane it names.
-    private func followFocus() {
+    /// A deep link from the tray scrolls to what it names.
+    private func followFocus(_ proxy: ScrollViewProxy) {
+        let target: String?
         if store.settingsFocusWaitingSignals {
-            pane = .connections
+            advancedExpanded = true
             bridgeExpanded = store.settingsFocusWaitingAgent != nil
+            target = store.settingsFocusWaitingAgent != nil ? "settings-bridge" : "settings-connections"
         } else if store.settingsFocusAppDataAgent != nil {
-            pane = .permissions
+            target = "settings-data"
+        } else {
+            target = nil
+        }
+        guard let target else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            withAnimation(PulseTheme.motion) { proxy.scrollTo(target, anchor: .top) }
         }
     }
 
-    private func form<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        Form { content() }
-            .formStyle(.grouped)
+    /// Live updates and the Attention-bridge tools: for someone wiring up
+    /// an agent, not for everyday use.
+    private var advancedSection: some View {
+        Section {
+            DisclosureGroup(isExpanded: $advancedExpanded) {
+                explainedToggle(
+                    store.tr(.liveUpdates),
+                    hint: store.tr(.liveUpdatesHint),
+                    isOn: bind(\.autoProbe)
+                )
+                .onChange(of: store.autoProbe) { _, _ in store.saveSettings() }
+            } label: {
+                Text(store.tr(.settingsAdvanced))
+            }
+        }
     }
 
     /// A switch with its consequence underneath, the way System Settings
@@ -114,18 +130,6 @@ struct SettingsView: View {
                 }
             }
             .onChange(of: store.language) { _, _ in store.saveSettings() }
-            Picker(store.tr(.groupingLabel), selection: bind(\.trayGrouping)) {
-                ForEach(TrayGrouping.allCases) { mode in
-                    Text(store.tr(mode.labelKey)).tag(mode)
-                }
-            }
-            .onChange(of: store.trayGrouping) { _, _ in store.saveSettings() }
-            explainedToggle(
-                store.tr(.liveUpdates),
-                hint: store.tr(.liveUpdatesHint),
-                isOn: bind(\.autoProbe)
-            )
-            .onChange(of: store.autoProbe) { _, _ in store.saveSettings() }
         }
     }
 
@@ -184,64 +188,6 @@ struct SettingsView: View {
                 store.tr(.notifications),
                 preference: \StatusStore.notifyOnIdle
             )
-            notificationToggle(
-                store.tr(.playSound),
-                preference: \StatusStore.playSoundOnWaiting
-            )
-            Toggle(isOn: bind(\.quietHoursEnabled)) {
-                Text(store.tr(.quietHours))
-                Text(store.tr(.quietHoursHint))
-            }
-            .onChange(of: store.quietHoursEnabled) { _, _ in store.saveSettings() }
-            if store.quietHoursEnabled {
-                MinutePicker(
-                    label: store.tr(.quietStart),
-                    minutes: bind(\.quietStartMinute)
-                ) { store.saveSettings() }
-                MinutePicker(
-                    label: store.tr(.quietEnd),
-                    minutes: bind(\.quietEndMinute)
-                ) { store.saveSettings() }
-            }
-            if !mutableAgents.isEmpty {
-                DisclosureGroup(store.tr(.muteAgents)) {
-                    Text(store.tr(.muteHint))
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                    ForEach(mutableAgents, id: \.self) { agent in
-                        Toggle(isOn: Binding(
-                            get: { store.mutedAgents.contains(agent) },
-                            set: { _ in store.toggleMute(agent) }
-                        )) {
-                            HStack(spacing: PulseTheme.Space.s) {
-                                AgentIconView(id: agent)
-                                Text(agent.displayName)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var timingSection: some View {
-        Section {
-            // Twenty minutes was compiled in and fits nobody in particular.
-            // "Never" has to be reachable too — on a machine that runs
-            // hour-long jobs the badge is pure noise.
-            Picker(store.tr(.stallAfter), selection: bind(\.stallMinutes)) {
-                Text(store.tr(.stallOff)).tag(0)
-                ForEach([5, 10, 20, 30, 60], id: \.self) { m in
-                    Text(String(format: store.tr(.minutesShort), m)).tag(m)
-                }
-            }
-            .onChange(of: store.stallMinutes) { _, _ in store.saveSettings() }
-            Picker(store.tr(.snooze), selection: bind(\.snoozeMinutes)) {
-                ForEach([5, 10, 30, 60], id: \.self) { m in
-                    Text(String(format: store.tr(.minutesShort), m)).tag(m)
-                }
-            }
-            .onChange(of: store.snoozeMinutes) { _, _ in store.saveSettings() }
         }
     }
 
@@ -261,50 +207,6 @@ struct SettingsView: View {
             }
         ))
         .disabled(store.notifyAuthorized != true)
-    }
-
-    /// Agents worth offering a mute for: whatever Pulse has actually seen,
-    /// plus anything already muted so the switch never disappears.
-    private var mutableAgents: [AgentID] {
-        var seen = store.snapshotAgents
-        seen.formUnion(store.mutedAgents)
-        return seen.sorted {
-            (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
-        }
-    }
-
-    private var historySection: some View {
-        Section(store.tr(.recentWaits)) {
-            // One line, not a dashboard: how often today's work was actually
-            // interrupted, and for how long on average.
-            if let summary = store.interruptionsTodayLine {
-                Text(summary)
-                    .font(PulseTheme.Font.body)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(store.waitHistory.prefix(8)) { entry in
-                HStack(alignment: .top, spacing: PulseTheme.Space.s) {
-                    AgentIconView(id: entry.agent)
-                    VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-                        Text(entry.title.isEmpty ? entry.agent.displayName : entry.title)
-                            .font(PulseTheme.Font.bodyEmphasis)
-                            .lineLimit(1)
-                        Text(store.historyDetail(entry))
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: PulseTheme.Space.xs)
-                }
-            }
-            LabeledContent {
-                Button(store.tr(.clearHistory)) { store.clearWaitHistory() }
-            } label: {
-                Text(store.waitHistoryRetentionLine)
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 
     // MARK: Connections

@@ -76,6 +76,13 @@ final class StatusStore {
     var stallMinutes = 20
     /// How long "Later" silences a wait.
     var snoozeMinutes = 10
+    /// Persisted: the user uninstalled the hooks, so the tray stops offering
+    /// them. Cleared by the next install.
+    var hooksNudgeOff = false
+    /// When the last scan was applied — advances on every scan, published or
+    /// not, unlike `snapshot.updatedAt` which moves only when the snapshot
+    /// changes. Read by the self-check; never drives a view.
+    @ObservationIgnored var lastScanAt: Date?
     /// False when the system refused the shortcut (another app owns it).
     var hotkeyRegistered = true
     var updateCheckEnabled = true
@@ -301,6 +308,7 @@ final class StatusStore {
     /// belongs to it before it closes the panel. Not observed: only the
     /// panel's key monitor reads it.
     @ObservationIgnored var trayEscapeConsumed = false
+    @ObservationIgnored var lastApplyLogSignature = ""
     /// Soft-dismissed Cursor harvest pending until skill clears.
     @ObservationIgnored var dismissedPendingKeys: Set<String> = []
     /// Row key → when its "remind me later" runs out.
@@ -513,6 +521,9 @@ final class StatusStore {
     /// When true, Settings scrolls/highlights the Waiting signals section
     /// (Attention bridge path for agents without a native Waiting contract).
     var settingsFocusWaitingSignals = false
+    /// 22.0: moves on every deep link, so a second link to the same place
+    /// still scrolls there.
+    var settingsFocusToken = 0
     /// Waiting-none Agent named when Support deep-links into Attention Reach.
     var settingsFocusWaitingAgent: AgentID? = nil
     /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump

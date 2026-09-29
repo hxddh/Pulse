@@ -1404,4 +1404,16 @@ final class SnapshotBuilderTests: XCTestCase {
         let en = build(attention: [entry], context: context(lang: .en))
         XCTAssertTrue(en.snapshot.tooltip.contains(L10n.t(.kindPermission, .en)))
     }
+
+    /// 22.0: "N older hidden" counts sessions that went quiet today, not
+    /// every transcript ever written.
+    func testStaleHiddenCountsOnlyTheLastDay() {
+        let r = build(
+            harvest: [
+                harvest(.claude, task: "earlier", session: "s1", ageMs: 3 * 60 * 60 * 1000),
+                harvest(.claude, task: "last month", session: "s2", ageMs: 30 * 24 * 60 * 60 * 1000),
+            ]
+        )
+        XCTAssertEqual(r.snapshot.staleHidden, 1)
+    }
 }
