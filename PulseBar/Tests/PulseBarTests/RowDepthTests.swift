@@ -58,10 +58,10 @@ final class RowDepthTests: XCTestCase {
         row.liveProcess = true
         row.observationSource = .session
 
-        XCTAssertFalse(SessionBriefCard.hasContent(store: store, row: row))
+        XCTAssertTrue(RowCardModel.brief(row, narrator: store.narrator).isEmpty)
 
-        row.lastWord = String(repeating: "x", count: SessionBriefCard.heroClipThreshold + 1)
-        XCTAssertTrue(SessionBriefCard.hasContent(store: store, row: row))
+        row.lastWord = String(repeating: "x", count: RowCardModel.heroClipThreshold + 1)
+        XCTAssertFalse(RowCardModel.brief(row, narrator: store.narrator).isEmpty)
     }
 
     @MainActor
@@ -73,10 +73,10 @@ final class RowDepthTests: XCTestCase {
         row.planStep = "Run the focused tests"
         row.lastWord = "Implementing the fix"
 
-        XCTAssertFalse(SessionBriefCard.hasContent(store: store, row: row))
+        XCTAssertTrue(RowCardModel.brief(row, narrator: store.narrator).isEmpty)
 
         row.liveTool = "Edit"
         row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
-        XCTAssertTrue(SessionBriefCard.hasContent(store: store, row: row))
+        XCTAssertFalse(RowCardModel.brief(row, narrator: store.narrator).isEmpty)
     }
 }

@@ -492,6 +492,21 @@ struct SettingsView: View {
             Button(store.tr(.supportHealth)) {
                 store.openSupportHealth()
             }
+            // 19.0: read-only, on the click — what this Mac can prove.
+            HStack(spacing: 8) {
+                Button(store.tr(.doctorRun)) { store.runDoctor() }
+                    .disabled(store.isRunningDoctor)
+                if store.isRunningDoctor { ProgressView().controlSize(.small) }
+            }
+            Text(store.tr(.doctorHint))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let report = store.doctorReport {
+                DoctorReportView(report: report, copied: store.didCopyDoctorReport) {
+                    store.copyDoctorReport()
+                }
+            }
             HStack(spacing: 10) {
                 PulseMarkView(size: 22, tone: .secondary)
                 VStack(alignment: .leading, spacing: 2) {

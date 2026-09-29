@@ -14,6 +14,12 @@ enum SurfaceFixtures {
         /// 17.0: the tray row's face; `expanded` shows the why line.
         case row(TrayRowModel, expanded: Bool)
         case why(WhyCardModel)
+        /// 19.0: the cards under a row — `asks` is the in-list "needs you
+        /// now" card, `expanded` the in-place inspector.
+        case asks(RowCardModel)
+        case expanded(RowCardModel)
+        /// 19.0: the self-check's report.
+        case doctor(DoctorModel.Report)
     }
 
     struct Fixture {
@@ -29,6 +35,9 @@ enum SurfaceFixtures {
         "row-permission", "row-question-front", "row-turn", "row-pending",
         "row-stalled", "row-snoozed", "row-remote-lost", "row-process-only",
         "why-permission", "why-turn",
+        "card-respond", "card-respond-truncated", "card-respond-decided",
+        "card-managed-ask", "card-managed-recovery", "card-expanded-managed",
+        "doctor-report",
     ]
 
     static func all(lang: ResolvedLanguage) -> [Fixture] {
@@ -49,6 +58,13 @@ enum SurfaceFixtures {
             Fixture(name: "row-process-only", width: 420, value: .row(rowModel(rowProcessOnly(), lang: lang), expanded: false)),
             Fixture(name: "why-permission", width: 520, value: .why(whyPermission(lang: lang))),
             Fixture(name: "why-turn", width: 520, value: .why(whyTurn(lang: lang))),
+            Fixture(name: "card-respond", width: 380, value: .asks(cardRespond(lang: lang))),
+            Fixture(name: "card-respond-truncated", width: 380, value: .asks(cardRespond(lang: lang, truncated: true))),
+            Fixture(name: "card-respond-decided", width: 380, value: .asks(cardRespond(lang: lang, decided: true))),
+            Fixture(name: "card-managed-ask", width: 380, value: .asks(cardManagedAsk(lang: lang))),
+            Fixture(name: "card-managed-recovery", width: 380, value: .asks(cardManagedRecovery(lang: lang))),
+            Fixture(name: "card-expanded-managed", width: 380, value: .expanded(cardExpandedManaged(lang: lang))),
+            Fixture(name: "doctor-report", width: 520, value: .doctor(doctorReport(lang: lang))),
         ]
     }
 
@@ -424,5 +440,103 @@ enum SurfaceFixtures {
             ]),
             narrator: RowNarrator(lang: lang, nowMs: nowMs)
         )
+    }
+
+    // MARK: - 19.0 · The cards under a row
+
+    static func cardRespond(lang: ResolvedLanguage, truncated: Bool = false, decided: Bool = false) -> RowCardModel {
+        let row = rowPermission()
+        let full = #"{"tool_name":"Bash","tool_input":{"command":"rm -rf build && npm run build","description":"Clean rebuild"}}"#
+        let inbound = RespondSpool.InboundRequest(
+            request: PermissionRequest(
+                id: "toolu_fx", agent: .claude, session: row.sessionID,
+                fullRequest: truncated ? String(full.prefix(48)) : full,
+                truncated: truncated, receivedAtMs: nowMs - 8 * minute
+            ),
+            toolName: "Bash", expiresAtMs: nowMs + 10 * minute, isLocal: true
+        )
+        let narrator = RowNarrator(lang: lang, nowMs: nowMs)
+        return RowCardModel.make(RowCardModel.Input(
+            row: row, narrator: narrator, inbound: inbound,
+            fateNote: decided ? narrator.tr(.respondTakenNote) : nil
+        ))
+    }
+
+    static func managedRow(key: String) -> AgentRow {
+        var row = baseRow(.claude, key: key, task: "Add an offline queue for login")
+        row.managedID = key
+        return row
+    }
+
+    static func cardManagedAsk(lang: ResolvedLanguage) -> RowCardModel {
+        var row = managedRow(key: "fx-managed-ask")
+        row.waiting = true
+        row.waitKind = "Permission"
+        let ask = ManagedPermission.Request(
+            id: "ask-1", managedID: row.managedID, toolName: "Bash",
+            inputJSON: #"{"command":"git push --force origin main"}"#,
+            truncated: true, createdMs: nowMs - 2 * minute
+        )
+        return RowCardModel.make(RowCardModel.Input(
+            row: row, narrator: RowNarrator(lang: lang, nowMs: nowMs),
+            permissions: [ask], managedStatus: .running
+        ))
+    }
+
+    static func cardManagedRecovery(lang: ResolvedLanguage) -> RowCardModel {
+        RowCardModel.make(RowCardModel.Input(
+            row: managedRow(key: "fx-managed-recovery"),
+            narrator: RowNarrator(lang: lang, nowMs: nowMs),
+            managedStatus: .interrupted
+        ))
+    }
+
+    static func cardExpandedManaged(lang: ResolvedLanguage) -> RowCardModel {
+        var row = managedRow(key: "fx-managed-expanded")
+        row.lastWord = "The queue drains on reconnect; writing the retry test next."
+        row.tool = "Edit"
+        row.progressDone = 2
+        row.progressTotal = 5
+        row.planSteps = [
+            .init(text: "Read the login flow", state: .done),
+            .init(text: "Add the offline queue", state: .done),
+            .init(text: "Retry on reconnect", state: .current),
+            .init(text: "Tests for the retry", state: .pending),
+            .init(text: "Update the changelog", state: .pending),
+        ]
+        return RowCardModel.make(RowCardModel.Input(
+            row: row, narrator: RowNarrator(lang: lang, nowMs: nowMs),
+            managedStatus: .running,
+            managedEntries: [
+                .init(kind: .user, text: "Add an offline queue for login"),
+                .init(kind: .agent, text: "Reading the login flow first."),
+                .init(kind: .tool, toolName: "Edit", text: "Sources/Login/Queue.swift"),
+                .init(kind: .tool, text: "error: missing return", isError: true),
+                .init(kind: .agent, text: "The queue drains on reconnect; writing the retry test next."),
+            ]
+        ))
+    }
+
+    // MARK: - 19.0 · The self-check
+
+    /// A Mac with a realistic mix: Claude proven, an old Claude without
+    /// `agents`, Codex installed but not yet trusted, Respond never tried.
+    static func doctorReport(lang: ResolvedLanguage) -> DoctorModel.Report {
+        var f = DoctorModel.Facts()
+        f.version = PulseVersion.semver
+        f.channel = "preview"
+        f.macOS = "26.0.0"
+        f.nowMs = t0
+        f.claudeInstalled = true
+        f.claudeHookEvents = Set(DoctorModel.claudeEvents)
+        f.claudeNotificationMatcher = "permission_prompt|idle_prompt|elicitation_dialog"
+        f.lastFire = ["claude": .init(kind: "turn", tsMs: t0 - 12 * 60_000)]
+        f.claudeAgents = .failed(exitStatus: 1, timedOut: false)
+        f.codexInstalled = true
+        f.codexHookEvents = Set(DoctorModel.codexEvents)
+        f.codexRollout = .paginated
+        f.codexCompressedRollouts = 3
+        f.respondEnabled = true
+        return DoctorModel.evaluate(f, lang: lang)
     }
 }

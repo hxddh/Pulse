@@ -159,10 +159,12 @@ struct ManagedSessionInspector: View {
     }
 
     /// 6.0-β (scene BJ): a live permission ask. 7.0-α: the card body is the
-    /// shared `SessionPermissionCard` — the popup renders the same truth
+    /// shared `PermissionCardFace` (19.0: a value) — the popup renders the same truth
     /// compact; only the workbench chrome (padding, tint) lives here.
     private func permissionCard(_ request: ManagedPermission.Request) -> some View {
-        SessionPermissionCard(store: store, request: request, compact: false)
+        PermissionCardFace(model: store.permissionCardModel(request)) { action in
+            store.performRowCard(action, row: row)
+        }
             .padding(PulseTheme.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
@@ -313,8 +315,9 @@ struct ManagedSessionInspector: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 10) {
+                            let narrator = store.narrator
                             ForEach(Array(model.entries.enumerated()), id: \.offset) { index, entry in
-                                ManagedEntryRow(store: store, agentName: row.agent.displayName, entry: entry)
+                                ManagedEntryFace(model: RowCardModel.entry(row.agent.displayName, entry, narrator: narrator))
                                     .id(index)
                             }
                         }
@@ -474,51 +477,5 @@ struct ManagedSessionInspector: View {
             RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
                 .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
         )
-    }
-}
-
-/// One conversation line. The same entry shape the transcript card renders —
-/// one parser, one look.
-@MainActor
-struct ManagedEntryRow: View {
-    var store: StatusStore
-    let agentName: String
-    let entry: TranscriptReader.Entry
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(labelColor)
-                .frame(width: 76, alignment: .trailing)
-            Text(entry.text.isEmpty ? "—" : entry.text)
-                .font(entry.kind == .tool ? .caption.monospaced() : .callout)
-                .foregroundStyle(entry.isError ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var label: String {
-        switch entry.kind {
-        case .user: return store.tr(.workbenchTranscriptUser)
-        case .agent: return agentName
-        case .tool:
-            if entry.isError { return "↳ " + store.tr(.detailLastError) }
-            // 6.0-γ: a result visibly hangs off its call.
-            return entry.toolName.isEmpty
-                ? "↳ " + store.tr(.workbenchTranscriptResult)
-                : entry.toolName
-        }
-    }
-
-    private var labelColor: Color {
-        switch entry.kind {
-        case .user: return .accentColor
-        case .agent: return .primary
-        case .tool: return entry.isError ? .orange : .secondary
-        }
     }
 }

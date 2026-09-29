@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """15.0 Witness: the Workbench's judgement surfaces render values, not the store.
 
+17.0 added the tray row's face, 19.0 the cards under a row (every struct in
+SessionCards.swift) and the Observation rules below.
+
 A view that reaches into StatusStore can only be seen by running the whole
 app against real sessions, which is how 13.0 and 14.0 shipped surfaces
 nobody had looked at. The rendering views listed here take a value
@@ -23,8 +26,20 @@ VIEWS = [
     # 17.0: the tray row's face and the Why card.
     ("TrayPanelViews.swift", "TrayRowFace"),
     ("WhyViews.swift", "WhyCardView"),
+    # 19.0: the cards under a row.
+    ("SessionCards.swift", "RespondCardFace"),
+    ("SessionCards.swift", "PermissionCardFace"),
+    ("SessionCards.swift", "ManagedReplyFace"),
+    ("SessionCards.swift", "PlanCompactFace"),
+    ("SessionCards.swift", "BriefCardFace"),
+    ("SessionCards.swift", "FactLinesFace"),
+    ("SessionCards.swift", "ManagedEntryFace"),
+    ("SessionCards.swift", "RowAsksFace"),
+    ("SessionCards.swift", "TrayExpandedFace"),
+    # 19.0: the self-check.
+    ("DoctorViews.swift", "DoctorReportView"),
 ]
-PURE_FILES = ["SurfaceModels.swift", "SurfaceFixtures.swift", "TrayRowModel.swift"]
+PURE_FILES = ["SurfaceModels.swift", "SurfaceFixtures.swift", "TrayRowModel.swift", "RowCardModel.swift", "DoctorModel.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 # 19.0: the store is @Observable. A Combine-era wrapper coming back would
 # silently restore whole-store invalidation for whatever view used it.

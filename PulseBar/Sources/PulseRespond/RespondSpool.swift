@@ -102,6 +102,13 @@ package enum RespondSpool {
         /// outbound tree rather than arriving through a sync tool. It attaches
         /// to a local row, and its verdict is signed with the local key.
         package var isLocal: Bool = false
+
+        package init(request: PermissionRequest, toolName: String, expiresAtMs: Int64, isLocal: Bool = false) {
+            self.request = request
+            self.toolName = toolName
+            self.expiresAtMs = expiresAtMs
+            self.isLocal = isLocal
+        }
     }
 
     // MARK: - Reading requests

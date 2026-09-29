@@ -277,11 +277,13 @@ struct SessionInspectorView: View {
     }
 
     /// The Respond card, workbench edition. 7.0-α: the body is the shared
-    /// `SessionRespondCard` — same rules as Details (scene AR): Allow only
+    /// `RespondCardFace` (19.0: a value) — same rules as Details (scene AR): Allow only
     /// next to the complete text it would approve, Deny always available,
     /// the fate note replacing the buttons once a verdict is written.
     private func respondSection(_ inbound: RespondSpool.InboundRequest) -> some View {
-        SessionRespondCard(store: store, row: row, inbound: inbound, compact: false)
+        RespondCardFace(model: store.respondCardModel(row, inbound: inbound)) { action in
+            store.performRowCard(action, row: row)
+        }
     }
 
     /// 4.0-β (scene BE): delivery. The reply is the user's words, the click

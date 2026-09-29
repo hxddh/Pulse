@@ -49,6 +49,10 @@ final class StatusStore {
     var isRefreshing = false
     /// Transient "Copied" confirmation on the diagnostics button.
     var didCopyDiagnostics = false
+    /// 19.0: the self-check's last result, and its button states.
+    var doctorReport: DoctorModel.Report?
+    var isRunningDoctor = false
+    var didCopyDoctorReport = false
     /// The shape report walks the session stores, so the button says so.
     var isCopyingShapeReport = false
     var didCopyShapeReport = false
@@ -229,7 +233,18 @@ final class StatusStore {
     let observedSessions = ObservedSessionSource()
     /// 5.0-β — registered on first dispatch (after observed, so the
     /// coordinator's ground-truth rule holds by construction).
-    let managedSessions = ManagedSessionSource()
+    @ObservationIgnored let managedSessionSource = ManagedSessionSource()
+    /// The managed fleet is a plain class Observation cannot see into. Every
+    /// fleet change — a runner's status, a new permission ask, a check
+    /// result — arrives through `managedSessionsChanged()`, which bumps this;
+    /// reading the fleet through `managedSessions` reads it too, so a card
+    /// that shows a permission ask is invalidated when the ask arrives even
+    /// if no merged row changed.
+    private(set) var managedRevision = 0
+    var managedSessions: ManagedSessionSource {
+        _ = managedRevision
+        return managedSessionSource
+    }
     @ObservationIgnored private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
     var cachedAll: [AgentRow] = []
     /// 6.0-γ: one-shot workbench selection request (attempt compare jumps).
