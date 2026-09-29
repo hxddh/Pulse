@@ -5,7 +5,7 @@
 > `scripts/scenario_map.py`（`gates.sh` 的一环）核对存在；写着「人工 / QA 脚本」的场景没有
 > 自动测试，靠 `scripts/qa_*.sh` 与真机检查 —— 这是覆盖缺口，不是免检。
 
-58 / 82 个场景有具名测试。
+59 / 83 个场景有具名测试。
 
 | # | 场景 | 期望 | 证明 |
 | --- | --- | --- | --- |
@@ -91,3 +91,4 @@
 | CB | Witness（见证） | 指挥台的判断面（Mission 对比卡、工作副本验收卡）由纯值渲染：列只按派出顺序、再按加入顺序，证据不改变列序；只有代码未变的当前通过才显示为通过（过期、测量中、无法确认、中断、超时、未运行都不是）；没有检查的 Mission 明写不会有已验证且不能运行检查；旧候选不被新契约评判；跑着的回合下不能开始检查；每个夹具在 CI 里以中英 × 明暗渲染成 PNG，缺一张即失败；渲染视图与模型不得引用 store | `SurfaceModelTests` |
 | CC | Turn（轮到你） | 做完的回合（Claude Stop / idle_prompt、Codex agent-turn-complete）不点红灯、不发通知，只在托盘计数「轮到你」；权限、提问仍是红灯；回合结束 20 秒内不清掉刚发生的阻塞；提示窗口在最前时做完的回合不算欠你、在最前时发生的阻塞只亮灯不发横幅，不知道在不在场就照常通知；提交 prompt、会话再次动起来都结束「轮到你」；「轮到你」从不单独造行；旧 hook 写的 `idle_prompt` 按轮到你读 | `TurnTruthTests` · `HarvestParsingTests` |
 | CD | Why（为什么） | 每个红灯 / 轮到你都给出证据句（hook 的 kind 与时间、在最前时补「所以没有通知」、pending 的步骤、受管回合的权限请求），说不出就不说；hook 事件另存有界历史（每会话 40 条、64 个会话、24 小时、0600、入库再脱敏、同一文件重复读不写盘、协议拒绝的不收、远端各自成史）；Details 时间线新的在上且有界；导出为 v3 八列 TSV、工作目录只留末段，重放得到同一结论；托盘行的脸是纯值：权限行有灯、标记、槽与动作，轮到你安静无槽，稍后可撤销，仅进程指向支持健康度，远端不给聚焦，Respond 只给拒绝与查看、从不给同意 | `WhyTests` |
+| CE | Current（跟上厂商） | `claude agents --json` 的 `status: waiting` 点红灯并标「Claude 自报」，只在有 Claude 进程且未装 hooks 时、至少隔 15 秒运行，失败退避且不当作「仍在等」，同会话 hook 优先，不造行，可软忽略；Claude 的 elicitation 与 URL elicitation 是提问、StopFailure 是轮到你、AskUserQuestion 不走扣留；Codex 分页格式（`item_completed`）读出任务与最后一句话，`.jsonl.zst` 不读；Codex hooks 只装 Stop / UserPromptSubmit，永不装 PermissionRequest | `ClaudeAgentsProbeTests` · `CodexPaginatedRolloutTests` · `TurnTruthTests` · `PulseHookReceiverTests` |

@@ -667,7 +667,8 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 ### 数据诚实
 
 - 进程在 ≠ 会话在干活。用「运行中 / 检测到」，不用「正在编码」。
-- Waiting 只来自可证信号：hooks、`skill=pending`，以及 **8.0 起** 受管回合阻塞在
+- Waiting 只来自可证信号：hooks、`skill=pending`、**18.0 起** Claude 自己的报告
+  （`claude agents --json` 里 `status: waiting`，场景 CE），以及 **8.0 起** 受管回合阻塞在
   权限请求上（场景 BO —— 信号是 Pulse 自己的 spool 请求文件，回合可证地悬停在
   判决上，比 hooks 更硬；照 3.0-β/5.0-γ 的先例重划，铁律「无信号不亮灯」不破反而
   更完整）。受管 `idle`（回合结束轮到你）**仍不是 Waiting**——你的回合可见
@@ -690,6 +691,16 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   脱敏，永不出机器），不受 `attention.tsv` 80 行压缩与「后写覆盖先写」的影响。
   「复制为测试夹具」只在点击时把这个会话的事件按 v3 TSV 放进剪贴板（工作目录只留最后一段）
   —— 读取器与 `TurnTruthTests` 原样可读，真机上的真实序列从此能变成回归测试。
+- **跟上厂商（18.0，场景 CE）。** 没装 hooks 的 Claude 用户也能看到「需要你」：Pulse 在
+  探测到 Claude 进程且未装 hooks 时，至多每 15 秒调用一次 `claude agents --json`（3 秒超时，
+  连续失败即退避半小时），把 Claude 自报的等待（权限 / 需要输入 / 沙箱请求……）点成红灯，
+  来源标「Claude 自报」，「为什么」一句照实说；同一会话 hook 已报时以 hook 为准；报告里对不上
+  任何一行的会话不造行；可「忽略」，与 pending 同样软忽略。Claude hooks 现在也接住提问
+  （elicitation）与因接口错误结束的回合（StopFailure → 轮到你，并说明原因）；经权限请求到来的
+  AskUserQuestion 是提问，永不走 Respond 的扣留。Codex 新的分页会话格式（`item_completed`）
+  照样读出任务与最后一句话，7 天以上压缩成 `.zst` 的旧记录不当文本读；Codex 的 hooks
+  只接 Stop 与 UserPromptSubmit —— 它的 PermissionRequest 在自动审查之前就触发，
+  接了就是伪造等待。
 - **在场不打扰（16.0）。** 阻塞等待发出时若提示窗口正是最前的应用（hook 沿父进程链判断，
   无新权限），红灯照亮，但不发横幅、不响声；判断不了就当不知道 —— 不知道从不等于
   「你在看」。
@@ -732,7 +743,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 
 ## 8. 验收场景
 
-82 个场景（A–CD）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
+83 个场景（A–CE）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
 新场景写在那里，并在「证明」一栏写明哪个测试让它成立；本文件只保留行为规格。
 
 ## 9. 代码落点
