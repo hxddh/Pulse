@@ -943,14 +943,16 @@ extension NativeActivityHarvest {
     /// per-record ordering (the 0.95 pending-follows-newest rule degraded to
     /// OR). Cached because this runs on the per-line hot path; both formatter
     /// types are immutable after creation and safe to share.
-    package static let isoParsers: [ISO8601DateFormatter] = {
+    // Immutable after creation and documented thread-safe for parsing; Swift
+    // 6 cannot see that through a non-Sendable class type.
+    nonisolated(unsafe) package static let isoParsers: [ISO8601DateFormatter] = {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let plain = ISO8601DateFormatter()
         return [fractional, plain]
     }()
 
-    package static let fallbackParsers: [DateFormatter] = [
+    nonisolated(unsafe) package static let fallbackParsers: [DateFormatter] = [
         "yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss",
         "yyyy-MM-dd HH:mm:ss.SSSSSS", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss",
     ].map { format in

@@ -93,6 +93,27 @@ extension NativeActivityHarvest {
                     // to newest, so the last assignment is the latest word.
                     let line = selfReportLine(firstString(payload, keys: ["message", "text", "content"]))
                     if !line.isEmpty { f.lastWord = line }
+                case "item_completed":
+                    // 18.0: Codex's "paginated" history mode no longer writes
+                    // `user_message` / `agent_message`; it persists completed
+                    // turn items instead (codex-rs protocol `ItemCompleted`,
+                    // `TurnItem` tagged by `type`). Same two facts, new shape.
+                    guard let item = payload["item"] as? [String: Any] else { break }
+                    let text = Self.codexItemText(item["content"])
+                    switch firstString(item, keys: ["type"]).lowercased() {
+                    case "usermessage", "user_message":
+                        let cleaned = cleanCodexUserRequest(text)
+                        if !cleaned.isEmpty, meaningfulPiPrompt(cleaned) || f.task.isEmpty {
+                            f.task = cleaned
+                            f.taskOrigin = .userPrompt
+                        }
+                        f.phase = f.phase.isEmpty ? "working" : f.phase
+                    case "agentmessage", "agent_message":
+                        let line = selfReportLine(text)
+                        if !line.isEmpty { f.lastWord = line }
+                    default:
+                        break
+                    }
                 case "error", "stream_error":
                     let line = selfReportLine(firstString(payload, keys: ["message", "text", "error"]))
                     if !line.isEmpty { f.lastErrorText = line }
@@ -217,6 +238,23 @@ extension NativeActivityHarvest {
             return firstString(dict, keys: ["text", "content", "message"])
         }
         return ""
+    }
+
+    /// Text of a paginated `TurnItem`'s `content`: `[{type: "text"|"Text",
+    /// text}]` for user and agent messages alike. Non-text parts (images,
+    /// mentions) contribute nothing.
+    package static func codexItemText(_ value: Any?) -> String {
+        guard let parts = value as? [Any] else {
+            return (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        let texts = parts.compactMap { part -> String? in
+            guard let dict = part as? [String: Any],
+                  firstString(dict, keys: ["type"]).lowercased() == "text"
+            else { return nil }
+            let text = firstString(dict, keys: ["text"])
+            return text.isEmpty ? nil : text
+        }
+        return texts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     package static func cleanCodexUserRequest(_ value: String) -> String {
