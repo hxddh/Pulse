@@ -4,8 +4,9 @@ import PulseCore
 /// Host IDE / editor that owns an agent process (the process table's parent
 /// walk, `AgentProcesses`).
 ///
-/// Activation uses `NSWorkspace.open` / bundle-id activate on an explicit user
-/// click — never a scan-time enumeration of every running application.
+/// Its bundle ids are what `LandingPlan` opens the session's folder in and
+/// activates, on an explicit user click — never a scan-time enumeration of
+/// every running application.
 package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
     case cursor
     case vsCode
@@ -42,27 +43,6 @@ package enum HostAppKind: String, Equatable, Hashable, CaseIterable, Sendable {
         case .antigravity: return ["Antigravity.app/"]
         case .zcode: return ["ZCode.app/"]
         }
-    }
-
-    package var appURLs: [URL] {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let names: [String]
-        switch self {
-        case .cursor: names = ["Cursor.app"]
-        case .vsCode: names = ["Visual Studio Code.app", "Code.app", "Code - Insiders.app"]
-        case .windsurf: names = ["Windsurf.app"]
-        case .zed: names = ["Zed.app"]
-        case .trae: names = ["Trae.app"]
-        case .antigravity: names = ["Antigravity.app"]
-        case .zcode: names = ["ZCode.app"]
-        }
-        var urls: [URL] = []
-        for name in names {
-            urls.append(URL(fileURLWithPath: "/Applications/\(name)"))
-            urls.append(home.appendingPathComponent("Applications/\(name)"))
-        }
-        return urls
     }
 
     package var bundleIDs: [String] {

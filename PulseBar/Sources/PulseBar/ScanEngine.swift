@@ -323,9 +323,7 @@ final class ScanEngine {
             transcripts: transcripts,
             context: SessionProjection.Context(
                 nowMs: nowMs,
-                terminal: TerminalFocus.Environment.current(
-                    allowTTYAutomation: model.settings.allowTerminalAutomation
-                )
+                allowAutomation: model.settings.allowTerminalAutomation
             )
         )
         let result = SnapshotBuilder.build(

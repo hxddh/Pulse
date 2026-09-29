@@ -161,7 +161,7 @@ struct ExplainTests {
         var row = session(task: "")
         row.project = ""
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == L10n.t(.appSession, .en))
-        row.focusTier = .tty
+        row.landingPlan = LandingPlan(steps: [.ttyTab(tty: "ttys003")])
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == L10n.t(.terminalSession, .en))
     }
 
@@ -180,7 +180,7 @@ struct ExplainTests {
         row.task = "never shown"
         row.state = .processOnly
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == L10n.t(.appDetectedNoDetails, .en))
-        row.focusTier = .tty
+        row.landingPlan = LandingPlan(steps: [.ttyTab(tty: "ttys003")])
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == L10n.t(.terminalDetectedNoDetails, .en))
     }
 

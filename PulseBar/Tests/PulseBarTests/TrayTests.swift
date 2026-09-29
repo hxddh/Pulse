@@ -12,28 +12,16 @@ import XCTest
 // memory facts they rendered) with `RowNarrator`; what a row says is pinned
 // in `ExplainTests`. The focus-honesty rule below stays.
 
-/// A workspace the disk could not confirm must not be offered as a landing.
+/// A folder that cannot be a workspace is never opened as one: the editor
+/// drops to app precision.
 final class BestEffortWorkspaceTests: XCTestCase {
-    @MainActor
-    func testAnUnverifiedWorkspaceDropsToAppPrecision() {
-        let env = TerminalFocus.Environment(
-            warpRunning: true,
-            ttyHostRunning: true,
-            allowTTYAutomation: true
-        )
-        let verified = TerminalFocus.focusTier(
-            tty: "", viaWarp: false, hostApp: .cursor,
-            workspace: "/Users/me/my-project", workspaceVerified: true, env: env
-        )
-        let guessed = TerminalFocus.focusTier(
-            tty: "", viaWarp: false, hostApp: .cursor,
-            workspace: "/Users/me/my/project", workspaceVerified: false, env: env
-        )
-        if case .hostWorkspace = verified {} else {
-            XCTFail("a confirmed path still lands on the workspace: \(String(describing: verified))")
-        }
-        if case .hostApp = guessed {} else {
-            XCTFail("an unconfirmed decode must not open a folder: \(String(describing: guessed))")
+    func testOnlyAnAbsoluteWorkspaceIsOpened() {
+        let handle = LandingHandle(term: "vscode")
+        let opened = LandingPlan.make(handle: handle, cwd: "/Users/me/my-project", allowAutomation: false)
+        XCTAssertEqual(opened.steps.first, LandingStep.openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/my-project"))
+        for cwd in ["", "relative/path", "/", "/tmp", "/private/tmp"] {
+            let plan = LandingPlan.make(handle: handle, cwd: cwd, allowAutomation: false)
+            XCTAssertEqual(plan.steps, [.activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs)], "\(cwd) is not a workspace")
         }
     }
 }
@@ -759,128 +747,105 @@ final class SurfaceModelTests: XCTestCase {
     }
 }
 
-/// Focus honesty: never claim a TTY we cannot select.
-final class FocusTierTests: XCTestCase {
-    private let fullEnv = TerminalFocus.Environment(
-        warpRunning: true, ttyHostRunning: true, allowTTYAutomation: true
-    )
-
-    func testWarpWins_WhenProcessRunsUnderWarp() {
-        let tier = TerminalFocus.focusTier(tty: "ttys003", viaWarp: true, env: fullEnv)
-        XCTAssertEqual(tier, .warp, "TTY tab select does not work inside Warp")
+/// 24.0 · landing: the handle decides, the plan says how precisely, and the
+/// label never promises more than the plan.
+@Suite("Landing plan")
+struct LandingPlanTests {
+    @Test func aTmuxPaneLandsExactlyWithoutAutomation() {
+        let handle = LandingHandle("tmux:%3;tmuxsock:/private/tmp/tmux-501/default;iterm:w0t1p0:ABCD;tty:/dev/ttys004;term:tmux;app:com.googlecode.iterm2")
+        #expect(handle.tmuxPane == "%3")
+        #expect(handle.tmuxSocket == "/private/tmp/tmux-501/default")
+        #expect(handle.tty == "ttys004")
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: false)
+        #expect(plan.steps == [
+            .tmuxPane(pane: "%3", socket: "/private/tmp/tmux-501/default", hostBundleIDs: ["com.googlecode.iterm2"]),
+            .activateApp(bundleIDs: ["com.googlecode.iterm2"]),
+        ], "inside tmux the pane is the handle; the tty and iTerm id are the server's")
+        #expect(plan.precision == .exact)
+        #expect(LandingPlan.tmuxArguments(pane: "%3", socket: "/s") == [
+            "-S", "/s",
+            "switch-client", "-t", "%3", ";",
+            "select-window", "-t", "%3", ";",
+            "select-pane", "-t", "%3", ";",
+            "display-message", "-p", "-t", "%3", "#{session_id}",
+        ])
+        #expect(LandingPlan.tmuxArguments(pane: "%3", socket: "").first == "switch-client")
     }
 
-    func testHostAppIsAdvertisedWithoutAutomation() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "", viaWarp: false, hostApp: .cursor, env: env
-            ),
-            .hostApp(.cursor)
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "ttys003", viaWarp: false, hostApp: .vsCode, env: env
-            ),
-            .hostApp(.vsCode)
-        )
+    @Test func anITermSessionIsSelectedByItsUniqueID() {
+        let handle = LandingHandle("iterm:w0t1p0:9F1C-UUID;tty:/dev/ttys007;term:iTerm.app")
+        #expect(handle.itermUniqueID == "9F1C-UUID")
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: true)
+        #expect(plan.steps == [
+            .iTermSession(uniqueID: "9F1C-UUID"),
+            .ttyTab(tty: "ttys007"),
+            .activateApp(bundleIDs: [LandingPlan.iTermBundleID]),
+        ])
+        #expect(plan.precision == .exact)
     }
 
-    func testAbsoluteWorkspacePromotesHostWorkspaceTier() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "",
-                viaWarp: false,
-                hostApp: .cursor,
-                workspace: "/Users/me/code/Pulse",
-                env: env
-            ),
-            .hostWorkspace(.cursor)
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "",
-                viaWarp: false,
-                hostApp: .zed,
-                workspace: "/",
-                env: env
-            ),
-            .hostApp(.zed),
-            "root is not a usable workspace advertisement"
-        )
-        XCTAssertFalse(TerminalFocus.isAbsoluteWorkspacePath(""))
-        XCTAssertFalse(TerminalFocus.isAbsoluteWorkspacePath("relative/path"))
-        XCTAssertTrue(TerminalFocus.isAbsoluteWorkspacePath("/Users/me/proj"))
+    @Test func aTerminalTabIsFoundByItsTTY() {
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;term:Apple_Terminal"), cwd: "", allowAutomation: true)
+        #expect(plan.steps == [.ttyTab(tty: "ttys001"), .activateApp(bundleIDs: [LandingPlan.terminalBundleID])])
+        #expect(plan.precision == .exact)
     }
 
-    func testWarpBeatsHostApp() {
-        let env = TerminalFocus.Environment(
-            warpRunning: true, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "", viaWarp: true, hostApp: .cursor, workspace: "/Users/me/p", env: env
-            ),
-            .warp
-        )
+    @Test func ghosttyIsTheAppOnly() {
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys002;term:ghostty"), cwd: "/Users/me/app", allowAutomation: true)
+        #expect(plan.steps == [.activateApp(bundleIDs: ["com.mitchellh.ghostty"])], "the tab search asks only Terminal and iTerm")
+        #expect(plan.precision == .app)
     }
 
-    func testTTYIsNotAdvertisedUntilAutomationOptIn() {
-        let off = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: false
+    @Test func anEditorTerminalOpensTheFolderInThatEditor() {
+        let vscode = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys005;term:vscode"), cwd: "/Users/me/app", allowAutomation: true, pid: 812)
+        #expect(vscode.steps == [
+            .openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/app"),
+            .activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs),
+            .activateOwner(pid: 812),
+        ])
+        #expect(vscode.precision == .app)
+        let cursor = LandingPlan.make(
+            handle: LandingHandle("term:vscode;app:com.todesktop.230313mzl4w4u92"), cwd: "/Users/me/app", allowAutomation: false
         )
-        XCTAssertNil(
-            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: off),
-            "default off — never advertise TTY before Shortcuts opt-in"
-        )
-        let on = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: true
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: on),
-            .tty
-        )
+        #expect(cursor.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.cursor.bundleIDs, path: "/Users/me/app"), "Cursor also says vscode")
     }
 
-    func testCwdDoesNotPretendToBeAFocusHandle() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertNil(TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: env))
+    @Test func anEmptyHandleFallsBackToTheProcessOwnerOrNothing() {
+        #expect(LandingPlan.make(handle: LandingHandle(""), cwd: "/Users/me/app", allowAutomation: true).isEmpty)
+        #expect(LandingPlan.make(handle: LandingHandle(), cwd: "", allowAutomation: true).precision == nil)
+        let process = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312)
+        #expect(process.steps == [.activateOwner(pid: 4312)])
+        #expect(process.precision == .app)
+        let ide = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312, hostApp: .zed)
+        #expect(ide.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.zed.bundleIDs, path: "/Users/me/app"))
     }
 
-    func testNoHandleMeansNoFocusButtonAtAll() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertNil(TerminalFocus.focusTier(tty: "", viaWarp: false, env: env))
-    }
-
-    func testPlaceholderTTYValuesAreNotRealHandles() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: true
-        )
-        for placeholder in ["", "?", "??", "-"] {
-            XCTAssertNil(
-                TerminalFocus.focusTier(tty: placeholder, viaWarp: false, env: env),
-                "\(placeholder) should not count as a TTY"
-            )
+    @Test func automationOffNeverScriptsATerminal() {
+        let iterm = LandingPlan.make(handle: LandingHandle("iterm:w0t1p0:ABCD;tty:/dev/ttys007;term:iTerm.app"), cwd: "", allowAutomation: false)
+        #expect(iterm.steps == [.activateApp(bundleIDs: [LandingPlan.iTermBundleID])])
+        #expect(iterm.precision == .app)
+        let terminal = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001"), cwd: "", allowAutomation: false)
+        #expect(terminal.isEmpty, "a bare tty with automation off is not a handle")
+        for placeholder in ["tty:?", "tty:??", "tty:-"] {
+            #expect(LandingPlan.make(handle: LandingHandle(placeholder), cwd: "", allowAutomation: true).isEmpty, "\(placeholder)")
         }
     }
 
-    func testFocusHostAppActionCopyIsProductNameNotGenericTerminal() {
-        let enApp = L10n.t(.focusHostApp, .en)
-        XCTAssertEqual(String(format: enApp, HostAppKind.cursor.displayName), "Go to Cursor (app)")
-        let enWs = L10n.t(.focusHostWorkspace, .en)
-        XCTAssertEqual(String(format: enWs, HostAppKind.zed.displayName), "Go to the workspace in Zed")
-        XCTAssertEqual(L10n.t(.focusWarp, .en), "Go to Warp (app)")
-        let zh = L10n.t(.focusHostApp, .zh)
-        XCTAssertEqual(String(format: zh, "Cursor"), "前往 Cursor（应用）")
+    @Test func theLabelFollowsThePrecision() {
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        #expect(!row.canFocusTerminal)
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("term:ghostty"), cwd: "", allowAutomation: true)
+        #expect(Explain.focusTitle(row, lang: .en) == "Open app")
+        #expect(Explain.focusTitle(row, lang: .zh) == "打开应用")
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("tmux:%1"), cwd: "", allowAutomation: false)
+        #expect(Explain.focusTitle(row, lang: .en) == "Go to terminal")
+        #expect(Explain.focusTitle(row, lang: .zh) == "前往终端")
+        #expect(row.landsExactly)
+        #expect(StatusStore.supportFocus(in: [row]) == .exact)
+        var app = row
+        app.landingPlan = LandingPlan(steps: [.activateOwner(pid: 9)])
+        #expect(StatusStore.supportFocus(in: [row, app]) == .app, "exact only when every row is")
+        #expect(StatusStore.supportFocus(in: []) == nil)
     }
 }
 
@@ -1016,6 +981,13 @@ struct TerminalTabScriptTests {
         let activate = try #require(script.range(of: "activate"))
         #expect(activate.lowerBound > match.upperBound, "activating before the search brought an unrelated window forward")
     }
+
+    @Test func theITermSessionSearchActivatesOnlyOnItsUniqueID() throws {
+        let script = TerminalFocus.iTermSessionScript(uniqueID: "9F1C-\"x")
+        let match = try #require(script.range(of: "if (unique id of s as text) is \"9F1C-\\\"x\""))
+        let activate = try #require(script.range(of: "activate"))
+        #expect(activate.lowerBound > match.upperBound)
+    }
 }
 
 /// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
@@ -1062,7 +1034,7 @@ final class RowActionNoticeTests: XCTestCase {
         // These only ever appear when something went wrong, which is exactly
         // when an untranslated or empty string would be found by a user
         // rather than by us.
-        for key in [L10n.Key.focusFailed] {
+        for key in [L10n.Key.focusFailed, .focusAppOnly] {
             XCTAssertFalse(L10n.t(key, .en).isEmpty, "\(key)")
             XCTAssertFalse(L10n.t(key, .zh).isEmpty, "\(key)")
             XCTAssertNotEqual(L10n.t(key, .en), L10n.t(key, .zh), "\(key)")

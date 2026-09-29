@@ -94,7 +94,8 @@ enum SurfaceFixtures {
         row.state = .running
         row.eventMs = nowMs - 1 * minute
         row.startedMs = nowMs - 40 * minute
-        row.focusTier = .tty
+        row.landing = LandingHandle(tmuxPane: "%3", term: "tmux")
+        row.landingPlan = LandingPlan(steps: [.tmuxPane(pane: "%3", socket: "", hostBundleIDs: [])])
         return row
     }
 
@@ -246,7 +247,7 @@ enum SurfaceFixtures {
                     String(format: t(.settingsHookLastEvent), DurationFormat.label(seconds: 12, lang: lang)),
                     String(format: t(.supportSessions), 2),
                     t(.supportWaitingHooks),
-                    t(.supportFocusTTY),
+                    t(.supportFocusExact),
                 ]
             ),
             .init(

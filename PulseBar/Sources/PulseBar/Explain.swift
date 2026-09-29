@@ -162,16 +162,14 @@ struct Explain: Equatable {
 
     // MARK: - Focus
 
-    /// The focus verb, as honest as the handle: never "Focus terminal" for a
-    /// row that can only activate an app.
+    /// The focus verb, as honest as the plan: "Go to terminal" only when a
+    /// click can land on the exact pane, session or tab; "Open app" when it
+    /// can only bring the app (or its folder) forward.
     static func focusTitle(_ row: AgentRow, lang: ResolvedLanguage) -> String {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        switch row.focusTier {
-        case .tty: return t(.focusTTY)
-        case .warp: return t(.focusWarp)
-        case .hostWorkspace(let kind): return String(format: t(.focusHostWorkspace), kind.displayName)
-        case .hostApp(let kind): return String(format: t(.focusHostApp), kind.displayName)
-        case .none: return t(.focusOpenTray)
+        switch row.landingPlan.precision {
+        case .exact: return L10n.t(.focusExact, lang)
+        case .app: return L10n.t(.focusApp, lang)
+        case nil: return L10n.t(.focusOpenTray, lang)
         }
     }
 

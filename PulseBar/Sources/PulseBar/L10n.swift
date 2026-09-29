@@ -83,19 +83,16 @@ enum L10n {
         case .quit: return "Quit Pulse"
         case .general: return "General"
         case .notifyWaiting: return "Notify when an agent needs me"
-        case .focusTTY: return "Go to Terminal tab"
-        case .focusWarp: return "Go to Warp (app)"
-        case .focusHostWorkspace: return "Go to the workspace in %@"
-        case .focusHostApp: return "Go to %@ (app)"
+        case .focusExact: return "Go to terminal"
+        case .focusApp: return "Open app"
         case .focusOpenTray: return "Open Pulse tray"
+        case .focusAppOnly: return "Opened the app — can't select the exact terminal"
         case .allowTerminalAutomation: return "Allow Terminal / iTerm tab focus"
         case .allowTerminalAutomationHint:
-            return "Off by default. When on, Focus may ask macOS for Automation access to select the matching tab. Warp and IDE hosts never need this."
+            return "Off by default. When on, Go may ask macOS for Automation access to select the exact iTerm session or Terminal tab. tmux, other terminals and editors never need this."
         case .supportFocusNone: return "Focus: observation only"
-        case .supportFocusWarp: return "Focus: Warp (app)"
-        case .supportFocusHostWorkspace: return "Focus: %@ workspace"
-        case .supportFocusHost: return "Focus: %@ (app)"
-        case .supportFocusTTY: return "Focus: Terminal tab"
+        case .supportFocusExact: return "Focus: the exact terminal"
+        case .supportFocusApp: return "Focus: the app only"
         case .signalHooks: return "hook report"
         case .launchAtLogin: return "Launch at login"
         case .language: return "Language"
@@ -342,19 +339,16 @@ enum L10n {
         case .quit: return "退出 Pulse"
         case .general: return "通用"
         case .notifyWaiting: return "Agent 需要我时通知"
-        case .focusTTY: return "前往终端标签页"
-        case .focusWarp: return "前往 Warp（应用）"
-        case .focusHostWorkspace: return "前往 %@ 中的工作区"
-        case .focusHostApp: return "前往 %@（应用）"
+        case .focusExact: return "前往终端"
+        case .focusApp: return "打开应用"
         case .focusOpenTray: return "打开 Pulse 托盘"
+        case .focusAppOnly: return "已打开应用 —— 无法选中具体终端"
         case .allowTerminalAutomation: return "允许聚焦 Terminal / iTerm 标签"
         case .allowTerminalAutomationHint:
-            return "默认关闭。开启后，聚焦时 macOS 可能请求自动化权限以选中对应标签。Warp 与 IDE 宿主不需要此项。"
+            return "默认关闭。开启后，「前往」时 macOS 可能请求自动化权限，以选中确切的 iTerm 会话或 Terminal 标签。tmux、其他终端与编辑器不需要此项。"
         case .supportFocusNone: return "聚焦：仅观测"
-        case .supportFocusWarp: return "聚焦：Warp（应用）"
-        case .supportFocusHostWorkspace: return "聚焦：%@ 工作区"
-        case .supportFocusHost: return "聚焦：%@（应用）"
-        case .supportFocusTTY: return "聚焦：终端标签"
+        case .supportFocusExact: return "聚焦：确切的终端"
+        case .supportFocusApp: return "聚焦：仅应用"
         case .signalHooks: return "Hook 报告"
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
@@ -586,10 +580,10 @@ enum L10n {
         case recent1, recentN, recent
         case justNow, notYet, andMore, showLess
         case settings, quit
-        case focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait
-        case focusFailed
+        case focusExact, focusApp, focusOpenTray, dismissWait
+        case focusFailed, focusAppOnly
         case allowTerminalAutomation, allowTerminalAutomationHint
-        case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY
+        case supportFocusNone, supportFocusExact, supportFocusApp
         case general, notifyWaiting, launchAtLogin, language
         case hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed

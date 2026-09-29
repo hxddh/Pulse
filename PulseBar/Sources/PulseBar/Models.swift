@@ -91,20 +91,6 @@ enum PulseVersion {
     }
 }
 
-
-
-/// Honesty tier for Focus — never claim session/tab precision when we only activate an app.
-enum FocusTier: Equatable, Hashable {
-    /// Terminal/iTerm tab select (Automation opt-in only).
-    case tty
-    /// Warp app activate — never tab-precise.
-    case warp
-    /// Host IDE with an absolute workspace path we can open via `open -a`.
-    case hostWorkspace(HostAppKind)
-    /// Host IDE app activate only.
-    case hostApp(HostAppKind)
-}
-
 enum GlanceKind: Equatable {
     case idle
     case running
@@ -203,12 +189,12 @@ struct AgentRow: Identifiable, Hashable {
     /// The row's process is known and alive (an exit ends the session).
     var liveProcess: Bool = false
     var pid: Int = 0
-    var tty: String = ""
-    var viaWarp: Bool = false
-    /// Host IDE found on the process's parent chain.
-    var hostApp: HostAppKind? = nil
-    /// How this row can be focused — resolved once per scan, never in a view body.
-    var focusTier: FocusTier? = nil
+    /// Where the session can be reached: the hook's landing handle, filled
+    /// in from the process table where the hook said nothing.
+    var landing = LandingHandle()
+    /// How a click lands (`LandingPlan.make`) — resolved once per projection,
+    /// never in a view body.
+    var landingPlan = LandingPlan()
 
     // MARK: What it is doing (24.0: from its transcript, read lazily)
 
@@ -272,7 +258,10 @@ struct AgentRow: Identifiable, Hashable {
         }
     }
 
-    var canFocusTerminal: Bool { focusTier != nil }
+    var canFocusTerminal: Bool { !landingPlan.isEmpty }
+
+    /// A click can land on the exact pane, session or tab.
+    var landsExactly: Bool { landingPlan.precision == .exact }
 
     /// The newest clock this row has, in ms; 0 = unknown.
     var lastActivityMs: Int64 { max(eventMs, activityMs) }
@@ -458,8 +447,9 @@ struct AgentSupportHealth: Identifiable, Equatable {
     /// Agent processes no session has claimed (started before Pulse, or
     /// with no hook).
     var processOnlyCount: Int
-    /// Best Focus handle among this agent's rows — nil means observation only.
-    var focusTier: FocusTier? = nil
+    /// How this agent's rows land: exact only when every reachable row does;
+    /// nil means observation only.
+    var focusPrecision: LandingPlan.Precision? = nil
 
     var id: AgentID { agent }
 

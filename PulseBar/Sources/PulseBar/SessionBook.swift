@@ -328,7 +328,8 @@ enum SessionProjection {
 
     struct Context {
         var nowMs: Int64
-        var terminal: TerminalFocus.Environment
+        /// Settings → terminal control: AppleScript landing steps allowed.
+        var allowAutomation = false
         /// Seconds of silence that make a working session stalled; 0 off.
         var stalledSeconds: Double = AgentRow.stalledSeconds
     }
@@ -384,21 +385,23 @@ enum SessionProjection {
             }
             if row.lastWord.isEmpty { row.lastWord = firstLine(session.message) }
 
-            // How to reach it: the process table's handles when it knows the
-            // pid, else what the hook's landing said.
-            if live, let hit = byPid[session.pid] {
-                row.tty = hit.tty
-                row.viaWarp = hit.viaWarp
-                row.hostApp = hit.hostApp
+            // How to reach it: the hook's landing handle first; the process
+            // table fills only what the hook did not say.
+            var landing = LandingHandle(session.landing)
+            let hit = live ? byPid[session.pid] : nil
+            if let hit {
+                if landing.tty.isEmpty { landing.tty = LandingHandle.normalizeTTY(hit.tty) }
+                if landing.term.isEmpty, hit.viaWarp { landing.term = "WarpTerminal" }
             }
-            let landing = Landing(session.landing)
-            if row.tty.isEmpty { row.tty = landing.tty }
-            row.viaWarp = row.viaWarp || landing.warp
+            row.landing = landing
+            row.landingPlan = LandingPlan.make(
+                handle: landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
+                pid: live ? session.pid : 0, hostApp: hit?.hostApp
+            )
 
             row.isStalled = row.state == .running
                 && session.activityMs > 0
                 && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: context.stalledSeconds)
-            row.focusTier = focusTier(row, context)
             out.rows.append(row)
         }
 
@@ -414,14 +417,18 @@ enum SessionProjection {
             row.project = AgentRow.shortProject(hit.cwd)
             row.pid = Int(hit.pid)
             row.liveProcess = true
-            row.tty = hit.tty
-            row.viaWarp = hit.viaWarp
-            row.hostApp = hit.hostApp
+            row.landing = LandingHandle(
+                tty: LandingHandle.normalizeTTY(hit.tty),
+                term: hit.viaWarp ? "WarpTerminal" : ""
+            )
+            row.landingPlan = LandingPlan.make(
+                handle: row.landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
+                pid: hit.pid, hostApp: hit.hostApp
+            )
             row.startedMs = hit.startedMs
             row.stateSinceMs = hit.startedMs
             row.source = .process
             row.state = .processOnly
-            row.focusTier = focusTier(row, context)
             out.rows.append(row)
         }
         return out
@@ -476,38 +483,7 @@ enum SessionProjection {
         }
     }
 
-    static func focusTier(_ row: AgentRow, _ context: Context) -> FocusTier? {
-        TerminalFocus.focusTier(
-            tty: row.tty,
-            viaWarp: row.viaWarp,
-            hostApp: row.hostApp,
-            workspace: row.cwd,
-            env: context.terminal
-        )
-    }
-
     static func firstLine(_ raw: String) -> String {
         TranscriptSummaryReader.firstLine(raw)
-    }
-
-    /// The v4 `landing` column, read for what Focus can use.
-    struct Landing: Equatable {
-        /// `ttys004`, without `/dev/`.
-        var tty = ""
-        /// `TERM_PROGRAM` said Warp.
-        var warp = false
-
-        init(_ raw: String) {
-            for part in raw.split(separator: ";") {
-                let item = part.trimmingCharacters(in: .whitespaces)
-                if item.hasPrefix("tty:") {
-                    var name = String(item.dropFirst(4))
-                    if name.hasPrefix("/dev/") { name = String(name.dropFirst(5)) }
-                    if tty.isEmpty { tty = name }
-                } else if item.hasPrefix("term:") {
-                    if item.dropFirst(5).lowercased().hasPrefix("warp") { warp = true }
-                }
-            }
-        }
     }
 }

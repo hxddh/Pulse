@@ -205,8 +205,21 @@ command hooks; OpenCode: a plugin; Pi: an extension — `HooksInstaller`,
 not read). `PulseHookReceiver` maps each vendor's event names and payloads per
 agent (`interpret(agent:event:payload:)`); `HookLanding` reads the agent pid
 (parent chain matched against the catalog process rule) and landing handles
-(TMUX_PANE, ITERM_SESSION_ID, tty, TERM_PROGRAM) with `sysctl` only. Settings
+(TMUX_PANE + the TMUX socket, ITERM_SESSION_ID, tty, TERM_PROGRAM,
+`__CFBundleIdentifier`) with `sysctl` only. Settings
 → Hooks and the self-check have one line per agent with "last event N ago".
+
+**24.0 landing (unreleased).** Focus uses the session's landing handle first:
+`LandingHandle` parses the column, `LandingPlan.make(handle:cwd:allowAutomation:pid:hostApp:)`
+(pure, once per projection, `AgentRow.landingPlan`) orders the steps — tmux
+pane (no Automation), iTerm session by `unique id` / Terminal tab by tty
+(Automation opt-in only; `catalog_check` enforces it), app activation for
+Ghostty / WezTerm / kitty / Warp, `open -b <editor> <cwd>` for VS Code /
+Cursor…, the pid's owner app for process-only rows — and `TerminalFocus.land`
+runs them, reporting `LandingOutcome` exact / app only / failed through the
+row notice. Labels: "Go to terminal" only for an exact plan, else "Open app".
+`FocusTier`, `TerminalFocus.Environment`, the row's tty / Warp / host-app
+fields and `HostAppKind.appURLs` are gone. See `docs/landing-hosts.md`.
 
 **24.0 phase P2 (event core; also unreleased).** The harvest scanning layer
 is gone: `NativeActivityHarvest`, `ActivityHarvest`, `HarvestSupervisor`,
@@ -391,8 +404,8 @@ unknown hook kind is rejected, never `waiting`. The remap
 machinery (`remappedRowKeys`, `SessionLog.remap`, timeline `remapped`,
 `WaitNotifier.followRemap`) is gone; `session-log.json` is schema 2 and a
 version-1 file is not read. `AgentRow` is slim: identity (key, agent,
-session, `attentionSession`, cwd, project), the process handle (pid, tty,
-Warp, host app, `focusTier`), what it is doing (task, model, `lastWord`,
+session, `attentionSession`, cwd, project), the process handle (pid, and
+since 24.0 `landing` / `landingPlan`), what it is doing (task, model, `lastWord`,
 `planSteps`, errors, `lastErrorText`), and one `RowState` — `.blocked(RowWait)`
 (kind, ask, since, signal, inFront), `.running`, `.yourTurn(sinceMs:)`,
 `.recent`, `.processOnly` — plus `isStalled`, `harvestMs` / `activityMs`,

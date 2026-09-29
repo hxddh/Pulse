@@ -358,15 +358,26 @@ final class StatusStore {
         engine.detailOpened(rowKey: row.rowKey)
     }
 
-    /// The focus handle was derived by the projection that produced this
-    /// row, and a window can close between then and the click. When nothing
-    /// was reached, say so and re-read: the next row either carries a handle
-    /// that works or stops offering one.
+    /// The landing plan was made by the projection that produced this row,
+    /// and a window can close between then and the click. Say how it landed,
+    /// never rounded up: exact says nothing, the app alone says so, and
+    /// nothing reached says so and re-reads — the next row either carries a
+    /// handle that works or stops offering one.
     func focusTerminal(_ row: AgentRow) {
         if row.isYourTurn { markTurnSeen(row) }
-        guard !TerminalFocus.focus(row: row) else { return }
-        noteRowAction(row.rowKey, tr(.focusFailed))
-        refresh(reason: "focus-failed")
+        reportLanding(TerminalFocus.land(row.landingPlan), row: row)
+    }
+
+    func reportLanding(_ outcome: LandingOutcome, row: AgentRow) {
+        switch outcome {
+        case .exact:
+            return
+        case .appOnly:
+            noteRowAction(row.rowKey, tr(.focusAppOnly))
+        case .failed:
+            noteRowAction(row.rowKey, tr(.focusFailed))
+            refresh(reason: "focus-failed")
+        }
     }
 
     /// Looking at a finished session is what "your turn" was asking for. A
@@ -433,7 +444,12 @@ final class StatusStore {
     /// row that is gone opens the tray. `BannerRoute` decides.
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
         let row = Self.focusTarget(in: cachedAll, idRaw: idRaw, session: session, rowKey: rowKey)
-        let focused = row.map { $0.canFocusTerminal && TerminalFocus.focus(row: $0) } ?? false
+        var focused = false
+        if let row, row.canFocusTerminal {
+            let outcome = TerminalFocus.land(row.landingPlan)
+            focused = outcome != .failed
+            if outcome == .appOnly { noteRowAction(row.rowKey, tr(.focusAppOnly)) }
+        }
         if let row, row.isYourTurn { markTurnSeen(row) }
         switch BannerRoute.decide(target: row?.rowKey, focused: focused) {
         case .terminal:

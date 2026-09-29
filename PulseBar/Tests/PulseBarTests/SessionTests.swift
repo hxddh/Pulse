@@ -375,8 +375,7 @@ struct SessionProjectionTests {
         SessionProjection.rows(
             book: book, processes: processes, transcripts: transcripts,
             context: SessionProjection.Context(
-                nowMs: nowMs ?? t0,
-                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false)
+                nowMs: nowMs ?? t0
             )
         )
     }
@@ -394,7 +393,7 @@ struct SessionProjectionTests {
         #expect(row.state == .processOnly)
         #expect(row.source == .process)
         #expect(row.project == "app")
-        #expect(row.tty == "ttys004")
+        #expect(row.landing.tty == "ttys004")
     }
 
     @Test func aSessionClaimsItsProcessFamily() {
@@ -482,9 +481,11 @@ struct SessionProjectionTests {
     @Test func theLandingNamesTheTerminal() throws {
         let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 0, landing: "tmux:%3;tty:/dev/ttys009;term:WarpTerminal")])
         let row = try #require(rows(b).rows.first)
-        #expect(row.tty == "ttys009")
-        #expect(row.viaWarp)
-        #expect(SessionProjection.Landing("term:Apple_Terminal").warp == false)
+        #expect(row.landing.tmuxPane == "%3")
+        #expect(row.landing.tty == "ttys009")
+        #expect(row.landing.term == "WarpTerminal")
+        #expect(row.landingPlan.steps.first == LandingStep.tmuxPane(pane: "%3", socket: "", hostBundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"]))
+        #expect(row.landsExactly)
     }
 
     @Test func aStallNeedsAnAgentThatReportsItsWork() throws {
@@ -624,7 +625,7 @@ final class SnapshotBuilderTests: XCTestCase {
         book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now - 30 * 60 * minute, session: "z"), nowMs: now)
         let output = SessionProjection.rows(
             book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(nowMs: now, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+            context: SessionProjection.Context(nowMs: now)
         )
         let r = build(output.rows, staleHidden: output.staleHidden)
         XCTAssertEqual(r.snapshot.staleHidden, 1, "the end line made no session; y went quiet today; z yesterday")
@@ -673,7 +674,7 @@ struct RowIdentityTests {
     @Test func whenTheSessionSpeaksTheProcessRowSimplyGoes() {
         let t0: Int64 = 1_800_000_000_000
         let hit = AgentProcesses.Hit(agent: .claude, pid: 4242, cwd: "/w/app")
-        let context = SessionProjection.Context(nowMs: t0, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+        let context = SessionProjection.Context(nowMs: t0)
         var book = SessionBook()
         #expect(SessionProjection.rows(book: book, processes: [hit], transcripts: [:], context: context).rows.map(\.rowKey) == ["claude|pid:4242"])
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "abc", pid: 4242), nowMs: t0)

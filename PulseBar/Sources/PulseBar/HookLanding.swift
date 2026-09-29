@@ -16,19 +16,32 @@ enum HookLanding {
     // MARK: - Pure
 
     /// Landing handles, most specific first, `;`-separated:
-    /// `tmux:%3`, `iterm:w0t1p0:<uuid>`, `tty:/dev/ttys004`, `term:<program>`.
+    /// `tmux:%3`, `tmuxsock:<socket>`, `iterm:w0t1p0:<uuid>`,
+    /// `tty:/dev/ttys004`, `term:<program>`, `app:<bundle id>`
+    /// (`LandingHandle` reads them back).
     static func handles(environment: [String: String], tty: String?) -> String {
         func value(_ key: String) -> String {
             clean(environment[key] ?? "")
         }
         var out: [String] = []
         let pane = value("TMUX_PANE")
-        if !pane.isEmpty { out.append("tmux:" + pane) }
+        if !pane.isEmpty {
+            out.append("tmux:" + pane)
+            // `TMUX` is `<socket>,<server pid>,<session>`: the socket lets
+            // Pulse reach a server started with `-L` / `-S`.
+            let socket = clean(String((environment["TMUX"] ?? "").split(separator: ",").first ?? ""))
+            if socket.hasPrefix("/") { out.append("tmuxsock:" + socket) }
+        }
         let iterm = value("ITERM_SESSION_ID")
         if !iterm.isEmpty { out.append("iterm:" + iterm) }
         if let tty, tty.hasPrefix("/dev/") { out.append("tty:" + clean(tty)) }
         let program = value("TERM_PROGRAM")
         if !program.isEmpty { out.append("term:" + program) }
+        // macOS sets this for a process launched from an app bundle: the
+        // terminal (or editor) the shell runs in, when `TERM_PROGRAM` is
+        // missing (kitty) or ambiguous (`vscode` is also Cursor, Windsurf…).
+        let app = value("__CFBundleIdentifier")
+        if !app.isEmpty { out.append("app:" + app) }
         return out.joined(separator: ";")
     }
 

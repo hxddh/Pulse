@@ -41,7 +41,7 @@ tabs are part of the record.
 | `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for open kinds |
 | `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule, else the hook's direct parent. Empty/0 unknown |
 | `transcript` | The vendor's transcript path when its hook names one |
-| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>` |
+| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`docs/landing-hosts.md`) |
 
 Readers skip blank lines, `#` comments, and unknown kinds. Writers rewrite the
 header when compacting the file (keep the last 80 data lines, and every open

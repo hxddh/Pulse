@@ -214,7 +214,7 @@ struct ScanQuietTests {
         func project(at nowMs: Int64) -> PulseSnapshot {
             let rows = SessionProjection.rows(
                 book: book, processes: [], transcripts: [:],
-                context: SessionProjection.Context(nowMs: nowMs, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+                context: SessionProjection.Context(nowMs: nowMs)
             ).rows
             var snap = SnapshotBuilder.build(
                 rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: nowMs, lang: .en)

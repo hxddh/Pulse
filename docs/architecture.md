@@ -139,8 +139,8 @@ OpenCode 没有会话文件，用它的事件自带的内容。读不到文件�
    （`RecentReason.quiet`，`Explain.why` 这样说）；轮到你超过 30 分钟也是 `.recent`。
 2. 会话认领它 pid 所在的进程家族；没有 pid 的未结束会话认领同目录的进程；没被认领的进程家族
    是仅进程行 `agent|pid:<pid>`（灰色虚线灯，永不橙、不装绿）。
-3. 标题与最后的消息来自会话摘要，否则来自 `turn` 事件带的原话；落地句柄来自进程（TTY / Warp /
-   宿主），否则来自事件的 landing 列。
+3. 标题与最后的消息来自会话摘要，否则来自 `turn` 事件带的原话；落地句柄先取事件的 landing 列，
+   进程（TTY / Warp / 宿主）只补它没说的；`LandingPlan.make` 据此排出落地步骤（见 `docs/landing-hosts.md`）。
 4. 停滞（橙）只给报告过自己在干活的会话（有活动时钟）：Codex / Gemini / Copilot 的 hook 没有逐工具
    事件，安静不算停滞。
 5. 最近停下的会话 45 分钟后离开列表，`staleHidden` 只计最近 24 小时里停下的。

@@ -179,9 +179,16 @@ def check_processes(text: str, problems: list[str]) -> None:
 
 def check_privacy(problems: list[str]) -> None:
     focus = swift_file("TerminalFocus.swift").read_text(encoding="utf-8")
+    plan = swift_file("LandingPlan.swift").read_text(encoding="utf-8")
+    # 24.0: LandingPlan decides (pure), TerminalFocus runs. Every AppleScript
+    # step is planned only behind the Automation opt-in.
+    make = plan[plan.find("static func make("):]
+    make = make[:make.find("\n    }\n")]
+    gated = make[make.find("if allowAutomation"):] if "if allowAutomation" in make else ""
+    for step in (".iTermSession(", ".ttyTab("):
+        if step in make and step not in gated:
+            problems.append(f"LandingPlan.make must plan {step[1:-1]} only behind allowAutomation")
     scripts = "/usr/bin/osascript" in focus or "tell application" in focus
-    if "allowTTYAutomation" not in focus:
-        problems.append("TerminalFocus must gate TTY focus on allowTTYAutomation")
     if scripts and "focusTTY" not in focus:
         problems.append("AppleScript is allowed only inside the opt-in Terminal/iTerm tab focus")
     for name in ("TerminalFocus.swift", "SingleInstanceGuard.swift"):

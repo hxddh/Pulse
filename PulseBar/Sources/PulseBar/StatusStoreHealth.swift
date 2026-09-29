@@ -89,33 +89,16 @@ extension StatusStore {
                 lastEventMs: events[agent] ?? 0,
                 sessionCount: rows.filter { !$0.isProcessOnly }.count,
                 processOnlyCount: rows.filter(\.isProcessOnly).count,
-                focusTier: bestSupportFocus(in: rows)
+                focusPrecision: Self.supportFocus(in: rows)
             )
         }
     }
 
-    /// Prefer Warp → host workspace → host app → TTY — honesty order.
-    private func bestSupportFocus(in rows: [AgentRow]) -> FocusTier? {
-        let tiers = rows.compactMap(\.focusTier)
-        if tiers.contains(where: { if case .warp = $0 { return true }; return false }) {
-            return .warp
-        }
-        if let host = tiers.compactMap({ tier -> HostAppKind? in
-            if case .hostWorkspace(let kind) = tier { return kind }
-            return nil
-        }).first {
-            return .hostWorkspace(host)
-        }
-        if let host = tiers.compactMap({ tier -> HostAppKind? in
-            if case .hostApp(let kind) = tier { return kind }
-            return nil
-        }).first {
-            return .hostApp(host)
-        }
-        if tiers.contains(where: { if case .tty = $0 { return true }; return false }) {
-            return .tty
-        }
-        return nil
+    /// Exact only when every reachable row lands exactly — the honest floor.
+    nonisolated static func supportFocus(in rows: [AgentRow]) -> LandingPlan.Precision? {
+        let precisions = rows.compactMap(\.landingPlan.precision)
+        guard !precisions.isEmpty else { return nil }
+        return precisions.allSatisfy { $0 == .exact } ? .exact : .app
     }
 
     /// One line on the session log for the diagnostics copy — counts only.
@@ -157,12 +140,10 @@ extension StatusStore {
 
     /// Diagnostics' Focus fact — observation-only when nothing is clickable.
     func supportFocusDetail(_ health: AgentSupportHealth) -> String {
-        guard let tier = health.focusTier else { return tr(.supportFocusNone) }
-        switch tier {
-        case .warp: return tr(.supportFocusWarp)
-        case .hostWorkspace(let kind): return String(format: tr(.supportFocusHostWorkspace), kind.displayName)
-        case .hostApp(let kind): return String(format: tr(.supportFocusHost), kind.displayName)
-        case .tty: return tr(.supportFocusTTY)
+        switch health.focusPrecision {
+        case .exact: return tr(.supportFocusExact)
+        case .app: return tr(.supportFocusApp)
+        case nil: return tr(.supportFocusNone)
         }
     }
 

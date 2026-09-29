@@ -541,10 +541,16 @@ final class HookLandingTests: XCTestCase {
         ]
         XCTAssertEqual(
             HookLanding.handles(environment: env, tty: "/dev/ttys004"),
-            "tmux:%3;iterm:w0t1p0:ABCD-1234;tty:/dev/ttys004;term:iTerm.app"
+            "tmux:%3;tmuxsock:/private/tmp/tmux-501/default;iterm:w0t1p0:ABCD-1234;tty:/dev/ttys004;term:iTerm.app"
         )
         XCTAssertEqual(HookLanding.handles(environment: ["TERM_PROGRAM": "Apple_Terminal"], tty: "/dev/ttys001"),
                        "tty:/dev/ttys001;term:Apple_Terminal")
+        XCTAssertEqual(
+            HookLanding.handles(environment: ["TERM_PROGRAM": "vscode", "__CFBundleIdentifier": "com.todesktop.230313mzl4w4u92"], tty: nil),
+            "term:vscode;app:com.todesktop.230313mzl4w4u92",
+            "the launching app tells Cursor from VS Code"
+        )
+        XCTAssertEqual(HookLanding.handles(environment: ["TMUX": "/tmp/tmux-501/default,1,0"], tty: nil), "", "no pane, no socket")
         XCTAssertEqual(HookLanding.handles(environment: [:], tty: nil), "")
         XCTAssertEqual(HookLanding.handles(environment: [:], tty: "??"), "", "only a device path is a tty")
     }
@@ -943,7 +949,7 @@ struct TurnTruthTests {
         let rows = SessionProjection.rows(
             book: book, processes: [], transcripts: [:],
             context: SessionProjection.Context(
-                nowMs: now, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false)
+                nowMs: now
             )
         ).rows
         return SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: now, lang: .en))
@@ -1085,7 +1091,7 @@ struct TurnTruthTests {
         book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: Self.now - 2 * Self.second, session: "s1", cwd: "/p", pid: 42), nowMs: Self.now)
         let rows = SessionProjection.rows(
             book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(nowMs: Self.now, terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false))
+            context: SessionProjection.Context(nowMs: Self.now)
         ).rows
         let r = SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: Self.now, lang: .en))
         let row = try #require(r.rows.first)
