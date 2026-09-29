@@ -229,7 +229,7 @@ private struct SectionHeader: View {
 /// next to a `folded` set nobody was clearing either.
 @MainActor
 struct TrayPanelHost: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
 
     var body: some View {
         TrayPanel(store: store)
@@ -239,7 +239,7 @@ struct TrayPanelHost: View {
 
 @MainActor
 struct TrayPanel: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     @State fileprivate var measuredHeight: CGFloat = 0
     /// Folding is opt-in and per-panel. A fresh glance shows every row; the
     /// header must never claim five sessions while the list silently shows one.
@@ -1087,7 +1087,7 @@ private struct AgentRowButton: View {
     /// `row` value and the same store *reference*, so SwiftUI saw identical
     /// inputs and skipped the child entirely. The result was a panel whose
     /// chrome was English and whose rows were still Chinese.
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     /// True when a project heading directly above already states this path, so
     /// the row must not repeat it. 0.25 wrote the rule "a fact appears once,
     /// row > heading > header" and then applied it only to the panel header —
@@ -1108,26 +1108,18 @@ private struct AgentRowButton: View {
     var onToggleExpand: (() -> Void)?
     @State private var hovering = false
 
-    /// 11.0-α: a dead turn is a needs-you state — the recovery box rides
-    /// the in-list cards like an ask does.
-    private var needsRecovery: Bool {
-        switch store.managedRunner(for: row)?.model.status {
-        case .interrupted, .failed: return true
-        default: return false
-        }
-    }
+    /// 19.0: the cards under the row are a value too.
+    private var cards: RowCardModel { store.rowCardModel(row) }
 
-    private var needsYou: Bool {
-        row.waiting
-            || !store.managedPermissionRequests(for: row).isEmpty
-            || needsRecovery
+    private func needsYou(_ cards: RowCardModel) -> Bool {
+        row.waiting || !cards.permissions.isEmpty || cards.needsRecovery
     }
 
     /// The row's default depth before any click (scene BV).
-    private var depthTier: RowDepth.Tier {
+    private func depthTier(_ cards: RowCardModel) -> RowDepth.Tier {
         RowDepth.tier(
             expanded: expanded,
-            needsYou: needsYou,
+            needsYou: needsYou(cards),
             live: row.liveProcess || row.isExplicitlyRunningPhase,
             crowded: compact
         )
@@ -1157,7 +1149,12 @@ private struct AgentRowButton: View {
         }
     }
 
+    private func performCard(_ action: RowCardModel.Action) {
+        store.performRowCard(action, row: row)
+    }
+
     var body: some View {
+        let cards = self.cards
         VStack(alignment: .leading, spacing: 0) {
             TrayRowFace(
                 model: model,
@@ -1176,51 +1173,29 @@ private struct AgentRowButton: View {
             // 11.0-α (scene BV): the digest tier — a live row's information
             // arrives without a click; the act surfaces stay behind the
             // chevron. Never beside an ask: the question owns that space.
-            if depthTier == .digest,
-               SessionBriefCard.hasContent(store: store, row: row) {
-                SessionBriefCard(store: store, row: row)
+            if depthTier(cards) == .digest, !cards.brief.isEmpty {
+                BriefCardFace(model: cards.brief)
                     .padding(.leading, 48)
                     .padding(.trailing, TrayChrome.padX)
                     .padding(.bottom, 8)
             }
 
-            if !expanded {
-                let asks = store.managedPermissionRequests(for: row)
-                let inbound = row.waiting ? store.respondRequest(for: row) : nil
-                // 10.0-γ (scene BU): the in-list card is for "needs you NOW"
-                // only — a blocked ask or a turn that died. An idle managed
-                // row's reply box lives behind expansion; a standing reply
-                // box on every row was a wall, not an inbox.
-                if !asks.isEmpty || inbound != nil || needsRecovery {
-                    VStack(alignment: .leading, spacing: TrayChrome.cardSpacing) {
-                        ForEach(asks, id: \.id) { request in
-                            SessionPermissionCard(store: store, request: request, compact: true)
-                        }
-                        if let inbound {
-                            SessionRespondCard(store: store, row: row, inbound: inbound, compact: true)
-                        }
-                        if needsRecovery {
-                            SessionManagedReply(store: store, row: row, compact: true)
-                        }
-                    }
-                    .padding(TrayChrome.cardPadding)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: TrayChrome.cardRadius))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: TrayChrome.cardRadius)
-                            .strokeBorder(.quaternary, lineWidth: 1)
-                    )
+            // 10.0-γ (scene BU): the in-list card is for "needs you NOW"
+            // only — a blocked ask or a turn that died. An idle managed
+            // row's reply box lives behind expansion; a standing reply box
+            // on every row was a wall, not an inbox.
+            if !expanded, cards.hasAsks {
+                RowAsksFace(model: cards, send: performCard)
                     .padding(.leading, 48)
                     .padding(.trailing, TrayChrome.padX)
                     .padding(.bottom, 8)
-                }
             }
 
             // 7.0-β: the in-place mini-inspector (scene BM). Same cards as
             // the workbench, compact face — understanding and acting no
             // longer require leaving the popup.
             if expanded {
-                TrayExpandedCard(store: store, row: row)
+                TrayExpandedFace(model: cards, send: performCard)
                     .padding(.leading, 48)
                     .padding(.trailing, TrayChrome.padX)
                     .padding(.bottom, 8)

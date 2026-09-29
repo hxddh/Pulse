@@ -37,6 +37,15 @@ package enum ManagedPermission {
         package var createdMs: Int64
 
         package var canOfferAllow: Bool { !truncated }
+
+        package init(id: String, managedID: String, toolName: String, inputJSON: String, truncated: Bool, createdMs: Int64) {
+            self.id = id
+            self.managedID = managedID
+            self.toolName = toolName
+            self.inputJSON = inputJSON
+            self.truncated = truncated
+            self.createdMs = createdMs
+        }
     }
 
     package struct Verdict: Codable, Equatable {

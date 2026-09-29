@@ -1,5 +1,6 @@
-import Combine
-import XCTest
+import Foundation
+import Observation
+import Testing
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
@@ -8,24 +9,95 @@ import XCTest
 
 /// 12.4 Surface — a scan that found the same world wakes no surface.
 ///
-/// The tray, the Workbench, the session cards and the detail window all
-/// observe the store; `@Published` announces every assignment, equal or not.
-/// This is the counter wall: apply a scan, apply the same scan again, and the
-/// second one must not announce anything. When it fails, it names the
-/// property that did.
+/// 19.0: the store is `@Observable`. A view is invalidated by the properties
+/// its body read, and Observation announces every assignment, equal or not.
+/// This is the counter wall: track every observed property of the store,
+/// apply the same scan twice, and nothing may fire. When it fails, it names
+/// the property that did.
+@Suite("Scan quiet", .serialized)
 @MainActor
-final class ScanQuietTests: XCTestCase {
-    private var bag: Set<AnyCancellable> = []
-    private var fired: [String] = []
-
-    override func tearDown() {
-        bag.removeAll()
-        fired.removeAll()
-        super.tearDown()
+struct ScanQuietTests {
+    /// Written only from the main actor: Observation calls `onChange`
+    /// synchronously on the writing thread, and every write here is a
+    /// main-actor store write.
+    final class Fired: @unchecked Sendable {
+        var names: [String] = []
     }
 
-    private func watch<P: Publisher>(_ publisher: P, _ name: String) where P.Failure == Never {
-        publisher.dropFirst().sink { [weak self] _ in self?.fired.append(name) }.store(in: &bag)
+    /// Every property of `StatusStore` a view can be invalidated by. A new
+    /// observed property belongs here; `everyObservedPropertyIsListed` fails
+    /// until it is.
+    static var observed: [(String, PartialKeyPath<StatusStore>)] {
+        [
+            ("allowAppData", \StatusStore.allowAppData),
+            ("allowTerminalAutomation", \StatusStore.allowTerminalAutomation),
+            ("allowWorkbenchActuation", \StatusStore.allowWorkbenchActuation),
+            ("appDataAgents", \StatusStore.appDataAgents),
+            ("autoProbe", \StatusStore.autoProbe),
+            ("broadcastFleet", \StatusStore.broadcastFleet),
+            ("cachedAll", \StatusStore.cachedAll),
+            ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
+            ("didCopyAttentionRaise", \StatusStore.didCopyAttentionRaise),
+            ("didCopyDiagnostics", \StatusStore.didCopyDiagnostics),
+            ("didCopyDoctorReport", \StatusStore.didCopyDoctorReport),
+            ("doctorReport", \StatusStore.doctorReport),
+            ("didCopyShapeReport", \StatusStore.didCopyShapeReport),
+            ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
+            ("hooksStatus", \StatusStore.hooksStatus),
+            ("hotkey", \StatusStore.hotkey),
+            ("hotkeyEnabled", \StatusStore.hotkeyEnabled),
+            ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
+            ("installReport", \StatusStore.installReport),
+            ("isCopyingShapeReport", \StatusStore.isCopyingShapeReport),
+            ("isRefreshing", \StatusStore.isRefreshing),
+            ("isRunningDoctor", \StatusStore.isRunningDoctor),
+            ("language", \StatusStore.language),
+            ("launchAtLogin", \StatusStore.launchAtLogin),
+            ("loginItemApplied", \StatusStore.loginItemApplied),
+            ("lookContinuityItems", \StatusStore.lookContinuityItems),
+            ("lookContinuityNotice", \StatusStore.lookContinuityNotice),
+            ("lookMovedRowKeys", \StatusStore.lookMovedRowKeys),
+            ("lookMovedWhileAway", \StatusStore.lookMovedWhileAway),
+            ("lookNewWaitsWhileAway", \StatusStore.lookNewWaitsWhileAway),
+            ("managedRevision", \StatusStore.managedRevision),
+            ("measureWorkspaceEffect", \StatusStore.measureWorkspaceEffect),
+            ("missedWhileAway", \StatusStore.missedWhileAway),
+            ("mutedAgents", \StatusStore.mutedAgents),
+            ("notifyAuthorized", \StatusStore.notifyAuthorized),
+            ("notifyOnIdle", \StatusStore.notifyOnIdle),
+            ("notifyOnWaiting", \StatusStore.notifyOnWaiting),
+            ("pendingRevealRowKey", \StatusStore.pendingRevealRowKey),
+            ("playSoundOnWaiting", \StatusStore.playSoundOnWaiting),
+            ("previewFixtureActive", \StatusStore.previewFixtureActive),
+            ("previewWaitingEventTimes", \StatusStore.previewWaitingEventTimes),
+            ("pulseHookLauncherReady", \StatusStore.pulseHookLauncherReady),
+            ("quietEndMinute", \StatusStore.quietEndMinute),
+            ("quietHoursEnabled", \StatusStore.quietHoursEnabled),
+            ("quietStartMinute", \StatusStore.quietStartMinute),
+            ("recoveredAfterCrash", \StatusStore.recoveredAfterCrash),
+            ("recoveryExitKind", \StatusStore.recoveryExitKind),
+            ("respondDecided", \StatusStore.respondDecided),
+            ("respondInboundByRowKey", \StatusStore.respondInboundByRowKey),
+            ("respondLocalEnabled", \StatusStore.respondLocalEnabled),
+            ("respondVerdictSentRowKeys", \StatusStore.respondVerdictSentRowKeys),
+            ("rowActionNotices", \StatusStore.rowActionNotices),
+            ("settingsExpandAppDataScopes", \StatusStore.settingsExpandAppDataScopes),
+            ("settingsFocusAppDataAgent", \StatusStore.settingsFocusAppDataAgent),
+            ("settingsFocusWaitingAgent", \StatusStore.settingsFocusWaitingAgent),
+            ("settingsFocusWaitingSignals", \StatusStore.settingsFocusWaitingSignals),
+            ("showAllAgents", \StatusStore.showAllAgents),
+            ("snapshot", \StatusStore.snapshot),
+            ("snapshotAgents", \StatusStore.snapshotAgents),
+            ("snoozeMinutes", \StatusStore.snoozeMinutes),
+            ("stallMinutes", \StatusStore.stallMinutes),
+            ("trayGrouping", \StatusStore.trayGrouping),
+            ("traySessionToken", \StatusStore.traySessionToken),
+            ("updateCheckEnabled", \StatusStore.updateCheckEnabled),
+            ("updateDownloadStatus", \StatusStore.updateDownloadStatus),
+            ("updateStatus", \StatusStore.updateStatus),
+            ("waitHistory", \StatusStore.waitHistory),
+            ("workbenchSelectKey", \StatusStore.workbenchSelectKey),
+        ]
     }
 
     private func quietStore() -> StatusStore {
@@ -39,97 +111,119 @@ final class ScanQuietTests: XCTestCase {
         store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: ticket)
     }
 
-    func testASecondIdenticalScanAnnouncesNothing() {
+    private func watch(_ store: StatusStore, _ properties: [(String, PartialKeyPath<StatusStore>)]) -> Fired {
+        let fired = Fired()
+        for (name, keyPath) in properties {
+            withObservationTracking {
+                _ = store[keyPath: keyPath]
+            } onChange: {
+                fired.names.append(name)
+            }
+        }
+        return fired
+    }
+
+    @Test func aSecondIdenticalScanAnnouncesNothing() {
         let store = quietStore()
         scan(store, ticket: 1)
-
-        var announcements = 0
-        store.objectWillChange.sink { _ in announcements += 1 }.store(in: &bag)
-        watch(store.$allowAppData, "allowAppData")
-        watch(store.$allowTerminalAutomation, "allowTerminalAutomation")
-        watch(store.$allowWorkbenchActuation, "allowWorkbenchActuation")
-        watch(store.$appDataAgents, "appDataAgents")
-        watch(store.$autoProbe, "autoProbe")
-        watch(store.$broadcastFleet, "broadcastFleet")
-        watch(store.$collectorScanIncomplete, "collectorScanIncomplete")
-        watch(store.$didCopyAttentionRaise, "didCopyAttentionRaise")
-        watch(store.$didCopyDiagnostics, "didCopyDiagnostics")
-        watch(store.$didCopyShapeReport, "didCopyShapeReport")
-        watch(store.$hookSelfTestResult, "hookSelfTestResult")
-        watch(store.$hooksStatus, "hooksStatus")
-        watch(store.$hotkey, "hotkey")
-        watch(store.$hotkeyEnabled, "hotkeyEnabled")
-        watch(store.$hotkeyRegistered, "hotkeyRegistered")
-        watch(store.$installReport, "installReport")
-        watch(store.$isCopyingShapeReport, "isCopyingShapeReport")
-        watch(store.$isRefreshing, "isRefreshing")
-        watch(store.$language, "language")
-        watch(store.$launchAtLogin, "launchAtLogin")
-        watch(store.$loginItemApplied, "loginItemApplied")
-        watch(store.$lookContinuityItems, "lookContinuityItems")
-        watch(store.$lookContinuityNotice, "lookContinuityNotice")
-        watch(store.$lookMovedRowKeys, "lookMovedRowKeys")
-        watch(store.$lookMovedWhileAway, "lookMovedWhileAway")
-        watch(store.$lookNewWaitsWhileAway, "lookNewWaitsWhileAway")
-        watch(store.$measureWorkspaceEffect, "measureWorkspaceEffect")
-        watch(store.$missedWhileAway, "missedWhileAway")
-        watch(store.$mutedAgents, "mutedAgents")
-        watch(store.$notifyAuthorized, "notifyAuthorized")
-        watch(store.$notifyOnIdle, "notifyOnIdle")
-        watch(store.$notifyOnWaiting, "notifyOnWaiting")
-        watch(store.$playSoundOnWaiting, "playSoundOnWaiting")
-        watch(store.$pulseHookLauncherReady, "pulseHookLauncherReady")
-        watch(store.$quietEndMinute, "quietEndMinute")
-        watch(store.$quietHoursEnabled, "quietHoursEnabled")
-        watch(store.$quietStartMinute, "quietStartMinute")
-        watch(store.$recoveredAfterCrash, "recoveredAfterCrash")
-        watch(store.$recoveryExitKind, "recoveryExitKind")
-        watch(store.$respondDecided, "respondDecided")
-        watch(store.$respondInboundByRowKey, "respondInboundByRowKey")
-        watch(store.$respondLocalEnabled, "respondLocalEnabled")
-        watch(store.$respondVerdictSentRowKeys, "respondVerdictSentRowKeys")
-        watch(store.$rowActionNotices, "rowActionNotices")
-        watch(store.$settingsExpandAppDataScopes, "settingsExpandAppDataScopes")
-        watch(store.$settingsFocusAppDataAgent, "settingsFocusAppDataAgent")
-        watch(store.$settingsFocusWaitingAgent, "settingsFocusWaitingAgent")
-        watch(store.$settingsFocusWaitingSignals, "settingsFocusWaitingSignals")
-        watch(store.$showAllAgents, "showAllAgents")
-        watch(store.$snapshot, "snapshot")
-        watch(store.$snoozeMinutes, "snoozeMinutes")
-        watch(store.$stallMinutes, "stallMinutes")
-        watch(store.$trayGrouping, "trayGrouping")
-        watch(store.$traySessionToken, "traySessionToken")
-        watch(store.$updateCheckEnabled, "updateCheckEnabled")
-        watch(store.$updateDownloadStatus, "updateDownloadStatus")
-        watch(store.$updateStatus, "updateStatus")
-        watch(store.$waitHistory, "waitHistory")
-        watch(store.$workbenchSelectKey, "workbenchSelectKey")
+        let fired = watch(store, Self.observed)
 
         scan(store, ticket: 2)
         scan(store, ticket: 3)
 
-        XCTAssertEqual(fired, [], "published by an unchanged scan: \(fired)")
-        XCTAssertEqual(announcements, 0, "surfaces observing the store were woken by an unchanged scan")
+        #expect(fired.names == [], "observed properties written by an unchanged scan: \(fired.names)")
     }
 
-    func testAChangedWorldStillPublishes() {
+    @Test func aChangedWorldIsStillAnnounced() {
+        let store = quietStore()
+        scan(store, ticket: 1)
+        let fired = watch(store, Self.observed)
+        var next = store.snapshot
+        next.header = "1 running"
+        store.snapshot = next
+        #expect(fired.names == ["snapshot"], "only what changed, and nothing else: \(fired.names)")
+    }
+
+    /// The generated source of `@Observable` lists the tracked properties;
+    /// this reads the class's own stored properties and fails on one that is
+    /// observed but missing from `observed`, so the wall above cannot go
+    /// quietly partial.
+    @Test func everyObservedPropertyIsListed() throws {
+        let listed = Set(Self.observed.map(\.0))
+        let stored = Mirror(reflecting: quietStore()).children.compactMap(\.label)
+        // `@Observable` stores a tracked property as `_name`; an ignored one
+        // keeps its own name.
+        let tracked = Set(stored.filter { $0.hasPrefix("_") && $0 != "_$observationRegistrar" }.map { String($0.dropFirst()) })
+        #expect(tracked.subtracting(listed).sorted() == [], "observed but not in the quiet wall")
+        #expect(listed.subtracting(tracked).sorted() == [], "listed but no longer observed")
+    }
+
+    // MARK: - Settings (formerly StoreObservation)
+
+    /// Settings reads `snapshotAgents`, not `snapshot`: a scan that only
+    /// moved a row does not redraw the form; a new agent does.
+    @Test func settingsIsNotWokenByAScanThatOnlyMovedARow() {
+        let store = quietStore()
+        var snap = PulseSnapshot()
+        snap.rows = [AgentRow(rowKey: "claude|s1", agent: .claude)]
+        store.snapshot = snap
+        let fired = watch(store, [("snapshotAgents", \StatusStore.snapshotAgents), ("stallMinutes", \StatusStore.stallMinutes)])
+
+        snap.rows[0].task = "moved"
+        store.snapshot = snap
+        #expect(fired.names == [])
+
+        snap.rows.append(AgentRow(rowKey: "codex|s2", agent: .codex))
+        store.snapshot = snap
+        #expect(fired.names == ["snapshotAgents"])
+    }
+
+    // MARK: - The status item
+
+    @Test func theStatusItemLoopFollowsTheSnapshotOnly() async {
+        let store = quietStore()
+        let loop = ObservationLoop(track: { _ = store.snapshot }, onChange: {})
+        defer { loop.cancel() }
+
+        store.stallMinutes += 1
+        store.showAllAgents.toggle()
+        for _ in 0..<10 { await Task.yield() }
+        #expect(loop.deliveries == 0, "a settings write does not touch the lamp")
+
+        var next = store.snapshot
+        next.header = "2 running"
+        store.snapshot = next
+        next.header = "3 running"
+        store.snapshot = next
+        for _ in 0..<10 where loop.deliveries == 0 { await Task.yield() }
+        #expect(loop.deliveries == 1, "a burst in one turn is one delivery")
+
+        next.header = "4 running"
+        store.snapshot = next
+        for _ in 0..<10 where loop.deliveries == 1 { await Task.yield() }
+        #expect(loop.deliveries == 2, "and the loop re-arms")
+    }
+
+    // MARK: - The publish decision (unchanged since 12.4)
+
+    @Test func aChangedWorldStillPublishes() {
         var current = PulseSnapshot()
         current.updatedAt = Date(timeIntervalSince1970: 1_800_000_000)
         var next = current
         next.updatedAt = current.updatedAt.addingTimeInterval(2)
-        XCTAssertFalse(PulseSnapshot.needsPublish(next: next, current: current), "same world, two seconds later")
+        #expect(!PulseSnapshot.needsPublish(next: next, current: current), "same world, two seconds later")
 
         next.header = "1 running"
-        XCTAssertTrue(PulseSnapshot.needsPublish(next: next, current: current), "content moved")
+        #expect(PulseSnapshot.needsPublish(next: next, current: current), "content moved")
     }
 
-    func testTheFirstScanAlwaysLands() {
+    @Test func theFirstScanAlwaysLands() {
         var next = PulseSnapshot()
         next.updatedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        XCTAssertTrue(PulseSnapshot.needsPublish(next: next, current: PulseSnapshot()))
+        #expect(PulseSnapshot.needsPublish(next: next, current: PulseSnapshot()))
     }
 
-    func testRelativeTimeLabelsStillMove() {
+    @Test func relativeTimeLabelsStillMove() {
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)
         var current = PulseSnapshot()
         current.updatedAt = t0
@@ -140,15 +234,12 @@ final class ScanQuietTests: XCTestCase {
 
         var next = current
         next.updatedAt = t0.addingTimeInterval(2)
-        XCTAssertTrue(
-            PulseSnapshot.needsPublish(next: next, current: current),
-            "a 20 s wait is drawn in seconds — it moves every scan"
-        )
+        #expect(PulseSnapshot.needsPublish(next: next, current: current), "a 20 s wait is drawn in seconds — it moves every scan")
 
         current.rows[0].waitSinceMs = Int64(t0.timeIntervalSince1970 * 1000) - 600_000
         next.rows = current.rows
-        XCTAssertFalse(PulseSnapshot.needsPublish(next: next, current: current), "a ten-minute wait holds for a minute")
+        #expect(!PulseSnapshot.needsPublish(next: next, current: current), "a ten-minute wait holds for a minute")
         next.updatedAt = t0.addingTimeInterval(61)
-        XCTAssertTrue(PulseSnapshot.needsPublish(next: next, current: current), "and moves once the minute turns")
+        #expect(PulseSnapshot.needsPublish(next: next, current: current), "and moves once the minute turns")
     }
 }

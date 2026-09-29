@@ -174,6 +174,12 @@ extension StatusStore {
             requestID = inbound.request.id
             digest = inbound.request.digest
         }
+
+        /// 19.0: as carried back by a card's click (`RowCardModel.Action`).
+        init(requestID: String, digest: String) {
+            self.requestID = requestID
+            self.digest = digest
+        }
     }
 
     /// Pure resolution of which request a click may answer. Nil means refuse.

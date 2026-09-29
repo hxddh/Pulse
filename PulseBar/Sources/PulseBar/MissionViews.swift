@@ -10,7 +10,7 @@ import SwiftUI
 /// the user's own mark and writes nothing to git.
 @MainActor
 struct MissionCard: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let mission: Mission.Model
     /// The Candidate whose inspector this card sits in.
     let currentCandidateID: String
@@ -216,7 +216,7 @@ struct CheckCellView: View {
 /// makes a new revision; the earlier Candidates keep theirs.
 @MainActor
 struct MissionEditSheet: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let mission: Mission.Model
     @Environment(\.dismiss) private var dismiss
 

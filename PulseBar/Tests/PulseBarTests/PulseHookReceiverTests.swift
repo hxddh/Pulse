@@ -400,6 +400,28 @@ final class HooksInstallerTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempHome)
     }
 
+    /// 19.0: the self-check reads what the real installer wrote and calls
+    /// it complete — so a new event added to one and not the other fails here.
+    func testTheSelfCheckRecognisesAFreshInstall() throws {
+        _ = try HooksInstaller.install()
+        let facts = DoctorProbe.gather(home: tempHome, respond: .init(), nowMs: 1_800_000_000_000)
+        XCTAssertEqual(facts.claudeHookEvents, Set(DoctorModel.claudeEvents))
+        XCTAssertTrue(DoctorModel.matcherTokens.allSatisfy { facts.claudeNotificationMatcher?.contains($0) == true })
+        XCTAssertEqual(facts.codexHookEvents, Set(DoctorModel.codexEvents))
+        XCTAssertFalse(facts.codexPermissionHook)
+        XCTAssertTrue(facts.codexNotifyInstalled)
+
+        let report = DoctorModel.evaluate(facts, lang: .en)
+        XCTAssertEqual(report.checks.first { $0.id == "claude-hooks" }?.verdict, .works)
+        XCTAssertEqual(report.checks.first { $0.id == "codex-hooks" }?.verdict, .unproven,
+                       "installed is not trusted: only a fired event proves Codex runs them")
+
+        _ = try HooksInstaller.uninstall()
+        let after = DoctorProbe.gather(home: tempHome, respond: .init(), nowMs: 1_800_000_000_000)
+        XCTAssertTrue(after.claudeHookEvents.isEmpty)
+        XCTAssertTrue(after.codexHookEvents.isEmpty)
+    }
+
     func testNativeInstallWritesClaudeAndCodexWithoutPython() throws {
         try HooksInstaller.ensureLauncher()
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: HooksInstaller.launcherURL.path))

@@ -676,6 +676,8 @@ enum L10n {
         case .whyExport: return "Copy as test fixture"
         case .whyExported: return "Copied %d events"
         case .whyNoHistory: return "No hook events kept for this session"
+        case .doctorRun: return "Run self-check"
+        case .doctorHint: return "Reads the Claude and Codex hook files and logs on this Mac, runs claude agents --json once, and says which contracts are proven here. Writes nothing; the copied report has no paths, prompts or session ids."
         case .whyResolved: return "Resolved"
         case .yourTurn: return "Your turn"
         case .turnCount: return "%d your turn"
@@ -1385,6 +1387,8 @@ enum L10n {
         case .whyExport: return "复制为测试夹具"
         case .whyExported: return "已复制 %d 条事件"
         case .whyNoHistory: return "这个会话没有保留的 hook 事件"
+        case .doctorRun: return "运行自检"
+        case .doctorHint: return "读取这台 Mac 上 Claude 与 Codex 的 hook 文件和记录，运行一次 claude agents --json，说明哪些约定在这里已被证实。不写任何东西；复制出的报告不含路径、提示词或会话 id。"
         case .whyResolved: return "已解决"
         case .yourTurn: return "轮到你"
         case .turnCount: return "%d 轮到你"
@@ -1679,6 +1683,7 @@ enum L10n {
         case yourTurn, turnCount, jumpToTurn
         case whyHook, whyHookFront, whyPending, whyManaged, whyTurn, whyVendor, signalVendor
         case whyTimeline, whyExport, whyExported, whyNoHistory, whyResolved
+        case doctorRun, doctorHint
         case proofFact, proofFailing, proofStale, proofCard
         case proofHint, proofSaveChecks, proofRunChecks, proofSideEffects
         case proofJoinMission, proofJoined, proofLeaveMission, missionExternal

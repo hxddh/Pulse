@@ -173,6 +173,11 @@ package enum ActivityHarvest {
 
         package var text: String
         package var state: State
+
+        package init(text: String, state: State) {
+            self.text = text
+            self.state = state
+        }
     }
 
     package struct Row {

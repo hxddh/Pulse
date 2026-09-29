@@ -35,6 +35,19 @@ package struct PermissionRequest: Equatable {
     package var canOfferAllow: Bool {
         !truncated && !fullRequest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    package init(
+        id: String, agent: AgentID, host: String = "", session: String = "",
+        fullRequest: String = "", truncated: Bool = false, receivedAtMs: Int64 = 0
+    ) {
+        self.id = id
+        self.agent = agent
+        self.host = host
+        self.session = session
+        self.fullRequest = fullRequest
+        self.truncated = truncated
+        self.receivedAtMs = receivedAtMs
+    }
 }
 
 package enum RespondDigest {

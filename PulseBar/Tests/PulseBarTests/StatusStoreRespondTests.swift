@@ -10,11 +10,11 @@ import XCTest
 /// The one thing every assertion protects: a verdict control must never appear
 /// on a row that the verdict could not actually answer. A local row's hook
 /// will not collect anything; another host's row is another machine.
-@MainActor
 final class StatusStoreRespondTests: XCTestCase {
 
     private let now: Int64 = 1_800_000_000_000
 
+    @MainActor
     private func remoteRow(
         key: String = "claude|s1@devbox",
         agent: AgentID = .claude,
@@ -29,6 +29,7 @@ final class StatusStoreRespondTests: XCTestCase {
         return row
     }
 
+    @MainActor
     private func inbound(
         id: String = "toolu_1",
         agent: AgentID = .claude,
@@ -51,6 +52,7 @@ final class StatusStoreRespondTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testRequestAttachesToItsRemoteRow() {
         let matched = StatusStore.matchRespondInbound([inbound()], rows: [remoteRow()])
         XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_1")
@@ -58,6 +60,7 @@ final class StatusStoreRespondTests: XCTestCase {
 
     /// A request that arrived from another machine must not land on a row
     /// this Mac is observing: the hook waiting for that verdict is over there.
+    @MainActor
     func testARemoteRequestNeverAttachesToALocalRow() {
         var local = remoteRow(key: "claude|s1", host: "", session: "s1")
         local.observationSource = .session
@@ -66,12 +69,14 @@ final class StatusStoreRespondTests: XCTestCase {
         XCTAssertTrue(matched.isEmpty, "the hook holding for this one is on another machine")
     }
 
+    @MainActor
     func testAnotherHostsRowDoesNotCollect() {
         let other = remoteRow(key: "claude|s1@laptop", host: "laptop")
         let matched = StatusStore.matchRespondInbound([inbound()], rows: [other])
         XCTAssertTrue(matched.isEmpty, "host is part of the binding, not a display detail")
     }
 
+    @MainActor
     func testSessionMismatchDoesNotCollect() {
         let matched = StatusStore.matchRespondInbound(
             [inbound(session: "s2")],
@@ -80,6 +85,7 @@ final class StatusStoreRespondTests: XCTestCase {
         XCTAssertTrue(matched.isEmpty)
     }
 
+    @MainActor
     func testNewestRequestWinsWhenTwoAttach() {
         let older = inbound(id: "toolu_old", receivedAtMs: now - 60_000)
         let newer = inbound(id: "toolu_new", receivedAtMs: now)
@@ -87,6 +93,7 @@ final class StatusStoreRespondTests: XCTestCase {
         XCTAssertEqual(matched["claude|s1@devbox"]?.request.id, "toolu_new")
     }
 
+    @MainActor
     func testEmptySessionOnEitherSideStillMatchesByHostAndAgent() {
         let matched = StatusStore.matchRespondInbound(
             [inbound(session: "")],
@@ -97,6 +104,7 @@ final class StatusStoreRespondTests: XCTestCase {
 
     // MARK: 2.4 · this Mac's own requests
 
+    @MainActor
     private func localRow(
         key: String = "claude|s1",
         agent: AgentID = .claude,
@@ -109,6 +117,7 @@ final class StatusStoreRespondTests: XCTestCase {
         return row
     }
 
+    @MainActor
     private func localInbound(
         id: String = "toolu_local",
         agent: AgentID = .claude,
@@ -119,6 +128,7 @@ final class StatusStoreRespondTests: XCTestCase {
         return request
     }
 
+    @MainActor
     func testThisMacsOwnRequestAttachesToItsLocalRow() {
         let matched = StatusStore.matchRespondInbound([localInbound()], rows: [localRow()])
         XCTAssertEqual(
@@ -128,11 +138,13 @@ final class StatusStoreRespondTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testALocalRequestNeverAttachesToARemoteRow() {
         let matched = StatusStore.matchRespondInbound([localInbound()], rows: [remoteRow()])
         XCTAssertTrue(matched.isEmpty, "the hook holding for this one is here, not on devbox")
     }
 
+    @MainActor
     func testALocalRequestStillHonoursAgentAndSession() {
         XCTAssertTrue(
             StatusStore.matchRespondInbound(
@@ -149,6 +161,7 @@ final class StatusStoreRespondTests: XCTestCase {
     /// E-2: the matcher used to run over `snapshot.rows`, which the tray
     /// window has already clipped. A permission request on an agent pushed
     /// out of the visible list lost every Respond control it had.
+    @MainActor
     func testARowOutsideTheVisibleWindowStillGetsItsControls() {
         // The window is a display budget; the hook holding for this request
         // has no idea what the tray decided to draw.
@@ -160,6 +173,7 @@ final class StatusStoreRespondTests: XCTestCase {
         XCTAssertEqual(matched["claude|s9"]?.request.id, "toolu_hidden")
     }
 
+    @MainActor
     func testLocalAndRemoteRequestsDoNotCrossOver() {
         let rows = [localRow(), remoteRow()]
         let matched = StatusStore.matchRespondInbound([localInbound(), inbound()], rows: rows)
@@ -169,6 +183,7 @@ final class StatusStoreRespondTests: XCTestCase {
 
     // MARK: - H-1 · the verdict answers the request that was on screen
 
+    @MainActor
     func testAllowRefusesARequestThatReplacedTheShownOne() {
         let shownA = StatusStore.RespondShown(inbound(id: "toolu_A", receivedAtMs: 1))
         // A newer request B arrived on the same row between draw and click.
@@ -182,16 +197,19 @@ final class StatusStoreRespondTests: XCTestCase {
         XCTAssertNil(StatusStore.respondTarget(attached: attached, shown: shownA, allow: false))
     }
 
+    @MainActor
     func testAllowAnswersTheShownRequest() {
         let a = inbound(id: "toolu_A")
         let target = StatusStore.respondTarget(attached: a, shown: .init(a), allow: true)
         XCTAssertEqual(target?.request.id, "toolu_A")
     }
 
+    @MainActor
     func testAllowNeverResolvesWithoutAShownRequest() {
         XCTAssertNil(StatusStore.respondTarget(attached: inbound(), shown: nil, allow: true))
     }
 
+    @MainActor
     func testDenyWithoutAShownRequestAnswersWhateverIsAttached() {
         XCTAssertEqual(
             StatusStore.respondTarget(attached: inbound(), shown: nil, allow: false)?.request.id,
@@ -199,6 +217,7 @@ final class StatusStoreRespondTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testSameIDWithDifferentContentIsNotTheShownRequest() {
         let a = inbound(id: "toolu_A")
         var edited = a

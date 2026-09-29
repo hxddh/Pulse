@@ -51,7 +51,7 @@ final class AgentDetailWindowController: NSObject, NSWindowDelegate {
 /// The store-bound owner of the Why card: builds the value, carries out the
 /// export, remembers what the export did.
 private struct WhyDetailSection: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
     @State private var notice = ""
 
@@ -70,7 +70,7 @@ private struct WhyDetailSection: View {
 }
 
 private struct AgentDetailView: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let rowKey: String
 
     private var row: AgentRow? {

@@ -402,15 +402,16 @@ final class WorkspaceEffectTests: XCTestCase {
 
 /// The row's side of the same axis: what it is allowed to say, and when it
 /// must stay quiet.
-@MainActor
 final class WorkspaceEffectRowTests: XCTestCase {
 
+    @MainActor
     private func store() -> StatusStore {
         let store = StatusStore()
         store.language = .en
         return store
     }
 
+    @MainActor
     private func liveRow() -> AgentRow {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.task = "Fix the auth module"
@@ -420,6 +421,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         return row
     }
 
+    @MainActor
     func testWhatLandedAppearsOnTheRow() {
         let s = store()
         var row = liveRow()
@@ -432,6 +434,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertTrue(line.contains("38"), line)
     }
 
+    @MainActor
     func testAnUnmeasuredWorkspaceSaysNothingAtAll() {
         let s = store()
         let row = liveRow()   // changedPaths defaults to -1
@@ -439,6 +442,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertFalse(s.rowObservationLine(row).contains("files"), s.rowObservationLine(row))
     }
 
+    @MainActor
     func testMeasuredAndCleanDoesNotOccupyASlot() {
         // Zero is a real answer, but "0 files touched" is not worth a slot on
         // a line that ranks facts by what they carry — the story line says it
@@ -449,6 +453,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertFalse(s.rowObservationLine(row).contains("0 files"), s.rowObservationLine(row))
     }
 
+    @MainActor
     func testBusyWithNothingLandedIsSaidOutLoud() {
         let s = store()
         var row = liveRow()
@@ -458,6 +463,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertEqual(s.rowStoryLine(row), s.tr(.movingNothingLanded))
     }
 
+    @MainActor
     func testAnUnmeasuredBusyRowIsNotAccusedOfProducingNothing() {
         let s = store()
         var row = liveRow()
@@ -465,6 +471,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertNotEqual(s.rowStoryLine(row), s.tr(.movingNothingLanded))
     }
 
+    @MainActor
     func testAnIdleCleanRowIsNotAccusedEither() {
         // Nothing is moving, so "moving, but nothing has landed" would be
         // false on its first word.
@@ -474,6 +481,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertNotEqual(s.rowStoryLine(row), s.tr(.movingNothingLanded))
     }
 
+    @MainActor
     func testACollisionIsNamedOnTheRow() {
         let s = store()
         var row = liveRow()
@@ -482,6 +490,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertTrue(s.rowSignalLine(row).contains("1"), s.rowSignalLine(row))
     }
 
+    @MainActor
     func testAloneInAWorkingCopyIsNotWorthSaying() {
         let s = store()
         var row = liveRow()
@@ -492,6 +501,7 @@ final class WorkspaceEffectRowTests: XCTestCase {
         XCTAssertFalse(s.rowSignalLine(row).contains(stem), s.rowSignalLine(row))
     }
 
+    @MainActor
     func testTheSettingRoundTrips() {
         var settings = PulseSettings()
         XCTAssertTrue(settings.measureWorkspaceEffect, "on by default")

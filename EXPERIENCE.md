@@ -168,7 +168,7 @@ meta 线由纯函数 `rowMetaLine` 合成,优先级测试逐格钉死:此刻槽
 展开卡**(理解面),收起行只负责扫视。
 
 > 以下「叙事行 / 次行 / 信号行 / 观测行 / 工作方式线」的规则,自 10.0 起
-> 描述**展开卡的全景区**(`SessionPanorama`);它们的选取与去重规则原样
+> 描述**展开卡的全景区**(`RowCardModel.panorama`);它们的选取与去重规则原样
 > 生效,只是渲染面换了——换窗口不换认识论。
 
 #### 自适应深度(11.0,场景 BV —— 信息默认在场,动作按需展开)
@@ -180,7 +180,7 @@ chevron 曾是「看到信息」的门——一行一次的点击税。11.0 起�
 | --- | --- | --- |
 | 显式展开(chevron / Go-Look reveal) | **full** | 完整展开卡:全景+工作细节+动作 |
 | 需要你(等待/权限/死亡回合) | minimal + **ask 卡** | 问题即深度,摘要噪音不得稀释它 |
-| 活跃 且 面板不拥挤 | **digest** | 摘要层(`SessionBriefCard`,纯信息):被 hero 截断时的完整原话、当前计划步、± 落盘——**无动作面** |
+| 活跃 且 面板不拥挤 | **digest** | 摘要层(`RowCardModel.Brief`,纯信息):被 hero 截断时的完整原话、当前计划步、± 落盘——**无动作面** |
 | 其余(静默行、拥挤面板) | minimal | 微身份条 + hero + meta |
 
 chevron 语义从此是「进入动作与全量」;拥挤(≥5 行)时活跃行自动降回
@@ -691,6 +691,14 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   脱敏，永不出机器），不受 `attention.tsv` 80 行压缩与「后写覆盖先写」的影响。
   「复制为测试夹具」只在点击时把这个会话的事件按 v3 TSV 放进剪贴板（工作目录只留最后一段）
   —— 读取器与 `TurnTruthTests` 原样可读，真机上的真实序列从此能变成回归测试。
+- **自检（19.0，场景 CF）。** 设置 → 关于 → 「运行自检」：只读、只在点击时运行，读这台 Mac 上
+  Claude 与 Codex 的 hook 文件和记录、运行一次 `claude agents --json`，逐条说明哪条约定在这里
+  **已验证**、**未证实**、**需处理**或**不适用**，并给出下一步。已安装不等于已证实：hook 最近一天
+  没有触发过就是「未证实」，一周前触发的也是；Codex 是否信任它的 hooks 只有触发一次才知道；
+  Respond 只有裁决被 hook 取走才算已验证，而 Claude 是否照办仍要看 Agent 本身。「复制报告」
+  只在点击时写到你自己的剪贴板，内容只有计数、事件名与时间，不含路径、提示词或会话 id。
+- **只重绘变了的（19.0）。** 一轮扫描只移动了一行时，只有读到这一行的视图重绘；设置窗口、
+  状态栏图标不再被无关的写入唤醒。
 - **跟上厂商（18.0，场景 CE）。** 没装 hooks 的 Claude 用户也能看到「需要你」：Pulse 在
   探测到 Claude 进程且未装 hooks 时，至多每 15 秒调用一次 `claude agents --json`（3 秒超时，
   连续失败即退避半小时），把 Claude 自报的等待（权限 / 需要输入 / 沙箱请求……）点成红灯，
@@ -743,7 +751,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 
 ## 8. 验收场景
 
-83 个场景（A–CE）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
+84 个场景（A–CF）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
 新场景写在那里，并在「证明」一栏写明哪个测试让它成立；本文件只保留行为规格。
 
 ## 9. 代码落点
@@ -755,7 +763,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | --- | --- |
 | Glance 标题 / 灯 | `PulseBar/StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
 | Tray 结构 | `PulseBar/TrayPanelViews.swift` → `TrayPanel` |
-| Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（经 `StoreObservation`，扫描不重绘） |
+| Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（19.0 Observation：只读 `snapshotAgents`，扫描不重绘） |
 | 状态合并 / 编码 | `PulseBar/SnapshotBuilder.swift` |
 | 行的每一句话 | `PulseBar/RowNarrator.swift`（纯值：语言、时刻、拥挤、受管事实都是输入；store 只转发） |
 | 扫描静默 | `PulseBar/StatusStoreEngine.swift` → `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |

@@ -1,30 +1,32 @@
 // 7.0-α — one presentation truth, two containers (scene BM).
 //
-// Until now the wait card, the Respond card, the permission card and the
+// Until 7.0 the wait card, the Respond card, the permission card and the
 // managed reply each existed twice: once in the workbench, once nowhere the
 // user actually lives. This file is the single set: every card takes a
 // `compact` flag — the popup renders the compact face, the workbench the
 // full one — so any information written once reaches both surfaces, and the
 // two can never drift apart again.
+//
+// 19.0: every card renders a value (`RowCardModel` and its parts) and sends
+// `RowCardModel.Action`; none of them sees the store. `surface_check.py`
+// keeps it so, and `SurfaceFixtures` renders each one on CI.
 
 import SwiftUI
 
 /// Respond (scene AR/AU/BB): the full request, Deny always, Allow only
 /// beside the complete text, the fate note once a verdict is written.
-@MainActor
-struct SessionRespondCard: View {
-    @ObservedObject var store: StatusStore
-    let row: AgentRow
-    let inbound: RespondSpool.InboundRequest
+struct RespondCardFace: View {
+    let model: RowCardModel.Respond
     var compact = false
+    var send: (RowCardModel.Action) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 6 : 8) {
-            Text("\(store.tr(.respondFullRequest)) · \(inbound.toolName.isEmpty ? row.agent.displayName : inbound.toolName)")
+            Text(model.heading)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             ScrollView {
-                Text(inbound.request.fullRequest)
+                Text(model.fullRequest)
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -32,15 +34,15 @@ struct SessionRespondCard: View {
             .frame(maxHeight: compact ? 120 : 200)
             .padding(compact ? 6 : 8)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
-            if let fate = store.respondFateNote(row) {
+            if let fate = model.fateNote {
                 Text(fate)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 10) {
-                    Button(store.tr(.respondDeny)) { store.respondDeny(row, shown: .init(inbound)) }
-                    if inbound.request.canOfferAllow {
-                        Button(store.tr(.respondAllow)) { store.respondAllow(row, shown: .init(inbound)) }
+                    Button(model.deny) { send(.respondDeny(requestID: model.requestID, digest: model.digest)) }
+                    if model.canOfferAllow {
+                        Button(model.allow) { send(.respondAllow(requestID: model.requestID, digest: model.digest)) }
                     }
                 }
                 .buttonStyle(.bordered)
@@ -50,24 +52,20 @@ struct SessionRespondCard: View {
     }
 }
 
-/// 6.0-β's permission ask (scene BJ), now shared: full input, truncation
+/// 6.0-β's permission ask (scene BJ), shared: full input, truncation
 /// withdraws Allow, the hint that silence denies.
-@MainActor
-struct SessionPermissionCard: View {
-    @ObservedObject var store: StatusStore
-    let request: ManagedPermission.Request
+struct PermissionCardFace: View {
+    let model: RowCardModel.Permission
     var compact = false
+    var send: (RowCardModel.Action) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 6 : 8) {
-            Label(
-                "\(store.tr(.managedPermissionHeading)) · \(request.toolName)",
-                systemImage: "hand.raised"
-            )
-            .font(compact ? .caption.weight(.semibold) : .headline)
-            .foregroundStyle(.orange)
+            Label(model.heading, systemImage: "hand.raised")
+                .font(compact ? .caption.weight(.semibold) : .headline)
+                .foregroundStyle(.orange)
             ScrollView {
-                Text(request.inputJSON)
+                Text(model.input)
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -75,25 +73,21 @@ struct SessionPermissionCard: View {
             .frame(maxHeight: compact ? 120 : 220)
             .padding(compact ? 6 : 8)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: TrayChrome.innerRadius))
-            if request.truncated {
-                Text(store.tr(.managedPermissionTruncated))
+            if let note = model.truncatedNote {
+                Text(note)
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
             HStack(spacing: 10) {
-                Button(store.tr(.respondDeny)) {
-                    store.managedPermissionDecide(id: request.id, allow: false)
-                }
-                if request.canOfferAllow {
-                    Button(store.tr(.respondAllow)) {
-                        store.managedPermissionDecide(id: request.id, allow: true)
-                    }
+                Button(model.deny) { send(.permission(id: model.id, allow: false)) }
+                if model.canOfferAllow {
+                    Button(model.allow) { send(.permission(id: model.id, allow: true)) }
                 }
             }
             .buttonStyle(.bordered)
             .controlSize(compact ? .small : .regular)
             if !compact {
-                Text(store.tr(.managedPermissionHint))
+                Text(model.hint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -105,59 +99,52 @@ struct SessionPermissionCard: View {
 /// The managed session's turn state and reply, shared: a running turn shows
 /// the tool and a stop button; idle shows the reply box (a real turn);
 /// queued and interrupted say so honestly.
-@MainActor
-struct SessionManagedReply: View {
-    @ObservedObject var store: StatusStore
-    let row: AgentRow
+struct ManagedReplyFace: View {
+    let model: RowCardModel.Reply
     var compact = false
+    var send: (RowCardModel.Action) -> Void = { _ in }
 
     @State private var reply = ""
 
-    private var runner: ManagedSessionRunner? { store.managedRunner(for: row) }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            switch runner?.model.status {
-            case .running:
+            switch model.turn {
+            case .running(let label):
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(row.tool.isEmpty
-                         ? store.tr(.managedRunning)
-                         : store.tr(.managedRunning) + " · " + row.tool)
+                    Text(label)
                         .font(compact ? .caption : .callout)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button(store.tr(.managedCancel)) { runner?.cancel() }
+                    Button(model.cancel) { send(.managedCancel) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
-            case .queued:
-                Text(store.tr(.managedQueuedNote))
+            case .queued(let note):
+                Text(note)
                     .font(compact ? .caption : .callout)
                     .foregroundStyle(.secondary)
-            case .interrupted:
-                Text(store.tr(.managedInterrupted))
+            case .interrupted(let note):
+                Text(note)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                 replyField
-            case .idle, .failed, .cancelled:
+            case .open:
                 replyField
-            case nil:
-                EmptyView()
             }
         }
     }
 
     private var replyField: some View {
         HStack(spacing: 8) {
-            TextField(store.tr(.managedReplyPlaceholder), text: $reply, axis: .vertical)
+            TextField(model.placeholder, text: $reply, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(compact ? 1...3 : 2...6)
-            Button(store.tr(.managedSend)) {
+            Button(model.send) {
                 let text = reply
                 reply = ""
-                runner?.send(prompt: text)
+                send(.managedSend(text))
             }
             .buttonStyle(.borderedProminent)
             .controlSize(compact ? .small : .regular)
@@ -167,32 +154,30 @@ struct SessionManagedReply: View {
 }
 
 /// The agent's own checklist, bounded for the compact face.
-@MainActor
-struct SessionPlanCompact: View {
-    @ObservedObject var store: StatusStore
-    let row: AgentRow
+struct PlanCompactFace: View {
+    let model: RowCardModel.Plan
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            if row.progressTotal > 0 {
-                Text(String(format: store.tr(.progressFact), row.progressDone, row.progressTotal))
+            if let progress = model.progress {
+                Text(progress)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            ForEach(Array(row.planSteps.prefix(4).enumerated()), id: \.offset) { _, step in
+            ForEach(Array(model.steps.enumerated()), id: \.offset) { _, step in
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(step.state == .done ? "✓" : step.state == .current ? "▸" : "·")
+                    Text(step.mark)
                         .font(.caption.monospaced())
-                        .foregroundStyle(step.state == .current ? .primary : .secondary)
+                        .foregroundStyle(step.current ? .primary : .secondary)
                     Text(step.text)
                         .font(.caption)
-                        .foregroundStyle(step.state == .current ? .primary : .secondary)
-                        .strikethrough(step.state == .done)
+                        .foregroundStyle(step.current ? .primary : .secondary)
+                        .strikethrough(step.done)
                         .lineLimit(1)
                 }
             }
-            if row.planSteps.count > 4 {
-                Text("… \(row.planSteps.count - 4)")
+            if model.overflow > 0 {
+                Text("… \(model.overflow)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -205,53 +190,31 @@ struct SessionPlanCompact: View {
 /// default — its unclipped latest words (only when the hero had to clip
 /// them), its current plan step, and what it has landed. Nothing here is
 /// interactive; the act surfaces stay on the full depth.
-@MainActor
-struct SessionBriefCard: View {
-    @ObservedObject var store: StatusStore
-    let row: AgentRow
-
-    /// Mirrors `AgentRowButton.heroLimit`: below it the hero already shows
-    /// the whole sentence and repeating it would be the same fact twice.
-    static let heroClipThreshold = 96
-
-    static func hasContent(store: StatusStore, row: AgentRow) -> Bool {
-        let hasFullWords = row.selfReportFresh
-            && row.lastWord.count > heroClipThreshold
-        let hasUnownedPlan = row.selfReportFresh
-            && !row.planStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !store.rowMetaOwnsPlanStep(row)
-        let hasEffect = row.hasWorkspaceEffect
-            && row.changedPaths > 0
-            && row.insertions >= 0
-            && row.deletions >= 0
-        return hasFullWords || hasUnownedPlan || hasEffect
-    }
+struct BriefCardFace: View {
+    let model: RowCardModel.Brief
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if row.selfReportFresh, row.lastWord.count > Self.heroClipThreshold {
-                Text(row.lastWord)
+            if let words = model.fullWords {
+                Text(words)
                     .font(.caption)
                     .foregroundStyle(.primary.opacity(0.85))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
-            if row.selfReportFresh,
-               !row.planStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               !store.rowMetaOwnsPlanStep(row) {
+            if let step = model.planStep {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text("▸")
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
-                    Text(row.planStep)
+                    Text(step)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
-            if row.hasWorkspaceEffect, row.changedPaths > 0,
-               row.insertions >= 0, row.deletions >= 0 {
-                Text("+\(row.insertions) −\(row.deletions)")
+            if let effect = model.effect {
+                Text(effect)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
             }
@@ -259,25 +222,16 @@ struct SessionBriefCard: View {
     }
 }
 
-/// 10.0 (scene BS) — the collapsed row's former five lines, intact where
-/// understanding lives: narrative, motion, observation, work, where/when.
-/// Nothing was deleted in the recomposition; it moved here.
-@MainActor
-struct SessionPanorama: View {
-    @ObservedObject var store: StatusStore
-    let row: AgentRow
+/// 8.0 / 10.0 (scenes BN, BS) — labelled facts, one per line: the work-style
+/// detail (timeline, skill, model, tokens) and the panorama (narrative,
+/// motion, observation, work, where/when). Absent facts are absent.
+struct FactLinesFace: View {
+    let lines: [String]
 
     var body: some View {
-        let lines = [
-            store.rowStoryLine(row),
-            store.rowSignalLine(row),
-            store.rowObservationLine(row),
-            store.rowWorkLine(row),
-            store.rowContextLine(row),
-        ].filter { !$0.isEmpty }
         if !lines.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(lines, id: \.self) { line in
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                     Text(line)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -289,43 +243,77 @@ struct SessionPanorama: View {
     }
 }
 
-/// 8.0 — the work-style detail (scene BN): how this session works, every
-/// collected fact labelled — tool timeline, workflow skill, model, session
-/// tokens, context. Absent facts are absent; nothing here is recomputed.
-@MainActor
-struct SessionWorkDetail: View {
-    @ObservedObject var store: StatusStore
-    let row: AgentRow
+/// One line of a managed conversation.
+struct ManagedEntryFace: View {
+    let model: RowCardModel.Entry
 
     var body: some View {
-        let facts = store.workDetailFacts(row)
-        if !facts.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(facts, id: \.self) { fact in
-                    Text(fact)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .lineLimit(2)
-                }
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(model.label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(labelColor)
+                .frame(width: 76, alignment: .trailing)
+            Text(model.text)
+                .font(model.monospaced ? .caption.monospaced() : .callout)
+                .foregroundStyle(model.tone == .error ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var labelColor: Color {
+        switch model.tone {
+        case .user: return .accentColor
+        case .agent: return .primary
+        case .tool: return .secondary
+        case .error: return .orange
+        }
+    }
+}
+
+/// 8.0-β inbox (scene BN): a blocked agent's ask must not cost a click —
+/// managed permission cards, the Respond card and a dead turn's recovery box
+/// live in the list itself.
+struct RowAsksFace: View {
+    let model: RowCardModel
+    var send: (RowCardModel.Action) -> Void = { _ in }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TrayChrome.cardSpacing) {
+            ForEach(model.permissions) { permission in
+                PermissionCardFace(model: permission, compact: true, send: send)
+            }
+            if let respond = model.respond {
+                RespondCardFace(model: respond, compact: true, send: send)
+            }
+            if model.needsRecovery, let reply = model.reply {
+                ManagedReplyFace(model: reply, compact: true, send: send)
             }
         }
+        .padding(TrayChrome.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: TrayChrome.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: TrayChrome.cardRadius)
+                .strokeBorder(.quaternary, lineWidth: 1)
+        )
     }
 }
 
 /// 7.0-β — the expanded row: the popup's in-place mini-inspector (scene BM).
 /// Everything the user needs to UNDERSTAND and ACT lives here; the workbench
 /// remains the place to read whole conversations and land work.
-@MainActor
-struct TrayExpandedCard: View {
-    @ObservedObject var store: StatusStore
-    let row: AgentRow
+struct TrayExpandedFace: View {
+    let model: RowCardModel
+    var send: (RowCardModel.Action) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // The task title, demoted from hero when fresh words replaced it
             // — still one glance away.
-            if let task = row.usefulTask {
+            if let task = model.task {
                 Text(task)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -333,37 +321,35 @@ struct TrayExpandedCard: View {
                     .textSelection(.enabled)
             }
             // The agent's latest words in full (the collapsed hero clips).
-            if row.selfReportFresh, !row.lastWord.isEmpty {
-                Text(row.lastWord)
+            if let words = model.lastWord {
+                Text(words)
                     .font(.callout)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !row.lastErrorText.isEmpty {
-                Text(row.lastErrorText)
+            if let error = model.errorText {
+                Text(error)
                     .font(.caption.monospaced())
                     .foregroundStyle(.orange)
                     .lineLimit(3)
                     .textSelection(.enabled)
             }
-            if row.selfReportFresh, !row.planSteps.isEmpty {
-                SessionPlanCompact(store: store, row: row)
+            if let plan = model.plan {
+                PlanCompactFace(model: plan)
             }
             // 8.0/10.0: how it works — timeline, skill, sub-agents — then
             // the five-line panorama the collapsed row no longer stacks.
-            SessionWorkDetail(store: store, row: row)
-            SessionPanorama(store: store, row: row)
+            FactLinesFace(lines: model.workFacts)
+            FactLinesFace(lines: model.panorama)
 
             // 8.0-γ: the managed conversation's last moves, ambient — the
             // stream is first-hand and already in memory. Observed rows keep
             // the workbench for their transcript (a disk read per repaint is
             // not an ambient cost).
-            if row.isManaged,
-               let entries = store.managedRunner(for: row)?.model.entries,
-               !entries.isEmpty {
+            if !model.entries.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(entries.suffix(5).enumerated()), id: \.offset) { _, entry in
-                        ManagedEntryRow(store: store, agentName: row.agent.displayName, entry: entry)
+                    ForEach(Array(model.entries.enumerated()), id: \.offset) { _, entry in
+                        ManagedEntryFace(model: entry)
                     }
                 }
                 .padding(TrayChrome.cardSpacing)
@@ -373,26 +359,20 @@ struct TrayExpandedCard: View {
 
             // Act where you read: managed asks first, then Respond, then the
             // managed reply, then the classic wait actions.
-            ForEach(store.managedPermissionRequests(for: row), id: \.id) { request in
-                SessionPermissionCard(store: store, request: request, compact: true)
+            ForEach(model.permissions) { permission in
+                PermissionCardFace(model: permission, compact: true, send: send)
             }
-            if row.waiting, let inbound = store.respondRequest(for: row) {
-                SessionRespondCard(store: store, row: row, inbound: inbound, compact: true)
+            if let respond = model.respond {
+                RespondCardFace(model: respond, compact: true, send: send)
             }
-            if row.isManaged {
-                SessionManagedReply(store: store, row: row, compact: true)
+            if let reply = model.reply {
+                ManagedReplyFace(model: reply, compact: true, send: send)
             }
             HStack(spacing: 10) {
-                if row.waiting {
-                    Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
-                    Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
-                        row.isSnoozed ? store.unsnooze(row) : store.snooze(row)
-                    }
+                ForEach(Array(model.waitActions.enumerated()), id: \.offset) { _, item in
+                    Button(item.title) { send(item.action) }
                 }
-                Button(store.tr(.trayOpenInWorkbench)) {
-                    store.workbenchSelectKey = row.rowKey
-                    store.openWorkbench()
-                }
+                Button(model.openWorkbench) { send(.openWorkbench) }
                 Spacer(minLength: 0)
             }
             .buttonStyle(.borderless)

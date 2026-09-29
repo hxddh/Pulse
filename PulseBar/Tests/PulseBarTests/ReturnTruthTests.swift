@@ -7,9 +7,9 @@ import XCTest
 
 /// 0.96 Return Truth — Look after the opening scan, wait generation, Glance
 /// width, Attention compact/rekey, and Details honesty.
-@MainActor
 final class ReturnTruthTests: XCTestCase {
 
+    @MainActor
     private func snap(
         key: String,
         agent: String = "claude",
@@ -45,6 +45,7 @@ final class ReturnTruthTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func fingerprint(
         _ rows: [StatusStore.TrayLookFingerprint.RowSnap],
         closedAt: Date = Date()
@@ -54,6 +55,7 @@ final class ReturnTruthTests: XCTestCase {
 
     // MARK: P0 Look Continuity
 
+    @MainActor
     func testLookContinuityAppliesAfterTrayOpenScan() {
         let store = StatusStore()
         store.installPreviewFixture("status-running")
@@ -65,6 +67,7 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertEqual(store.lookContinuityPrimaryRevealKey, "status-fixture")
     }
 
+    @MainActor
     func testSameRowNewWaitGenerationOutranksEnded() {
         let prior = fingerprint([
             snap(key: "claude|s1", waiting: true, waitSinceMs: 1_000, waitKind: "Permission"),
@@ -86,6 +89,7 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertTrue(keys.movedKeys.isEmpty, "new wait generation must not also count as moved")
     }
 
+    @MainActor
     func testEndedWaitIsNotAlsoMoved() {
         let store = StatusStore()
         store.installPreviewFixture("status-waiting")
@@ -108,6 +112,7 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertEqual(store.lookMovedWhileAway, 0, "ended key must not also count as moved")
     }
 
+    @MainActor
     func testGlanceTitleBudgetFitsEightCells() {
         XCTAssertEqual(GlanceTitle.cells("Claude…"), 7)
         XCTAssertEqual(GlanceTitle.cells("Claude · 4m"), 11)
@@ -119,6 +124,7 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertLessThanOrEqual(GlanceTitle.cells("Claude…"), GlanceTitle.maxCells)
     }
 
+    @MainActor
     func testIdleGlanceStaysEmpty() {
         let r = SnapshotBuilder.build(
             SnapshotBuilder.Input(procs: [], harvest: [], harvestUnreliable: false, attention: []),
@@ -133,6 +139,7 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertEqual(r.snapshot.title, "")
     }
 
+    @MainActor
     func testSampleRevealWaitsUntilTheRowExists() {
         let store = StatusStore()
         store.installPreviewFixture("status-running")
@@ -150,6 +157,7 @@ final class ReturnTruthTests: XCTestCase {
 
     // MARK: P1 identity / compact
 
+    @MainActor
     func testAttentionCompactKeepsUnresolvedRaise() {
         var lines: [String] = []
         for index in 0..<90 {
@@ -164,6 +172,7 @@ final class ReturnTruthTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testAttentionLedgerRemapFollowsNewRowKey() {
         var ledger = AttentionLedger()
         var row = AgentRow(rowKey: "codex", agent: .codex)
@@ -179,6 +188,7 @@ final class ReturnTruthTests: XCTestCase {
 
     // MARK: P2 Details / story honesty
 
+    @MainActor
     func testActionableObservationGapsSortFirst() {
         let store = StatusStore()
         let gaps = [
@@ -192,6 +202,7 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertEqual(ranked.last?.nextStep, "wait_for_vendor_cache")
     }
 
+    @MainActor
     func testQuietStoryDoesNotRepeatObservationModelTokens() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .claude)
@@ -213,6 +224,7 @@ final class ReturnTruthTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testOpaqueCacheStoryDoesNotRepeatIdentityLabel() throws {
         let store = StatusStore()
         var row = AgentRow(rowKey: "amp", agent: .amp)
@@ -232,6 +244,7 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertFalse(story.hasPrefix(label), story)
     }
 
+    @MainActor
     func testStoryOwnsChangeSoDetailsCanSkipDuplicate() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .claude)

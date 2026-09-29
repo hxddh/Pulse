@@ -10,7 +10,7 @@ import SwiftUI
 /// side by side with the ones Pulse launched.
 @MainActor
 struct WorkingCopyProofCard: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     var body: some View {

@@ -419,7 +419,7 @@ extension StatusStore {
         // keyed to local observed sessions; a managed session's stream is
         // first-party and needs no spool echo), then re-merges.
         if observedSessions.patchSessions(patch) {
-            cachedAll = sessionSources.merged()
+            setCachedAll(sessionSources.merged())
         }
         var next = snapshot
         if patch(&next.rows) {
@@ -585,7 +585,7 @@ extension StatusStore {
         // the store caches the coordinator's merge — with only the observed
         // source registered this is a verbatim passthrough.
         observedSessions.replaceSessions(result.rows)
-        cachedAll = sessionSources.merged()
+        setCachedAll(sessionSources.merged())
         // Before any notification decision, not after the scan that made it.
         // The banner's Deny is chosen from these matches, and a permission
         // request only ever gets one banner — deciding from the previous
@@ -729,10 +729,19 @@ extension StatusStore {
 
 // MARK: - 12.4 Surface: publish only what changed
 //
-// `@Published` announces every assignment, equal or not, and every view
-// observing the store re-evaluates on each announcement. The scan path
-// therefore writes a published property only when the value differs;
-// `ScanQuietTests` holds it to that.
+// Observation (19.0), like `@Published` before it, announces every
+// assignment, equal or not, and every view that read the property
+// re-evaluates on each announcement. The scan path therefore writes a
+// tracked property only when the value differs; `ScanQuietTests` holds it
+// to that.
+
+extension StatusStore {
+    /// The merged rows every surface reads. Re-merged on every scan, so the
+    /// write is guarded: an identical merge must not wake the tray.
+    func setCachedAll(_ rows: [AgentRow]) {
+        if rows != cachedAll { cachedAll = rows }
+    }
+}
 
 extension PulseSnapshot {
     /// Equal in everything a surface draws — `updatedAt` aside.

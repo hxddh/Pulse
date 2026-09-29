@@ -100,7 +100,8 @@ extension StatusStore {
     /// Managed changes flow through the same boundary as everything else:
     /// re-merge, re-window. No second pipeline.
     func managedSessionsChanged() {
-        cachedAll = sessionSources.merged()
+        managedRevision &+= 1
+        setCachedAll(sessionSources.merged())
         applyRowWindow()
     }
 

@@ -5,16 +5,16 @@ import AppKit
 
 @MainActor
 struct SettingsView: View {
-    /// Not the store itself: a scan must not redraw this form. See
-    /// `StoreObservation`.
-    @StateObject private var observation: StoreObservation
-    private var store: StatusStore { observation.store }
+    /// The store itself (19.0). Under Observation this form is redrawn only
+    /// by the properties it reads, and it reads no per-scan fact:
+    /// `snapshotAgents` rather than `snapshot`. `surface_check.py` keeps it so.
+    let store: StatusStore
 
     init(store: StatusStore) {
-        _observation = StateObject(wrappedValue: StoreObservation(store: store))
+        self.store = store
     }
 
-    /// A binding into the store, like `$store.x`, without observing it.
+    /// A binding into the store, like `$store.x`.
     private func bind<Value>(_ keyPath: ReferenceWritableKeyPath<StatusStore, Value>) -> Binding<Value> {
         let store = self.store
         return Binding(get: { store[keyPath: keyPath] }, set: { store[keyPath: keyPath] = $0 })
@@ -254,7 +254,7 @@ struct SettingsView: View {
     /// Agents worth offering a mute for: whatever Pulse has actually seen,
     /// plus anything already muted so the switch never disappears.
     private var mutableAgents: [AgentID] {
-        var seen = Set(store.snapshot.rows.map(\.agent))
+        var seen = store.snapshotAgents
         seen.formUnion(store.mutedAgents)
         return seen.sorted {
             (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
@@ -491,6 +491,21 @@ struct SettingsView: View {
         Section(store.tr(.about)) {
             Button(store.tr(.supportHealth)) {
                 store.openSupportHealth()
+            }
+            // 19.0: read-only, on the click — what this Mac can prove.
+            HStack(spacing: 8) {
+                Button(store.tr(.doctorRun)) { store.runDoctor() }
+                    .disabled(store.isRunningDoctor)
+                if store.isRunningDoctor { ProgressView().controlSize(.small) }
+            }
+            Text(store.tr(.doctorHint))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let report = store.doctorReport {
+                DoctorReportView(report: report, copied: store.didCopyDoctorReport) {
+                    store.copyDoctorReport()
+                }
             }
             HStack(spacing: 10) {
                 PulseMarkView(size: 22, tone: .secondary)

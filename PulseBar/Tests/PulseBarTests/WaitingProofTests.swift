@@ -7,14 +7,15 @@ import XCTest
 
 /// 0.94 Waiting Proof — harvest ask → tray Waiting → dismiss → clear → re-raise,
 /// Attention raise→clear for Waiting-none, and honesty guards (no fake Waiting).
-@MainActor
 final class WaitingProofTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
+    @MainActor
     private var bareTerminal: TerminalFocus.Environment {
         TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false)
     }
 
+    @MainActor
     private func context(dismissed: Set<String> = []) -> SnapshotBuilder.Context {
         SnapshotBuilder.Context(
             nowMs: now,
@@ -24,6 +25,7 @@ final class WaitingProofTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func harvest(
         _ id: AgentID,
         task: String = "Ask",
@@ -45,6 +47,7 @@ final class WaitingProofTests: XCTestCase {
         return row
     }
 
+    @MainActor
     private func attention(
         _ id: AgentID,
         kind: String = "Permission",
@@ -59,6 +62,7 @@ final class WaitingProofTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func build(
         harvest rows: [ActivityHarvest.Row] = [],
         attention entries: [AttentionReader.Entry] = [],
@@ -75,6 +79,7 @@ final class WaitingProofTests: XCTestCase {
 
     // MARK: P0-1 harvest → Waiting → dismiss → re-raise
 
+    @MainActor
     func testClinePendingRaisesWaitingAndSoftDismissSuppresses() {
         let pending = harvest(.cline, session: "cl-1", skill: "pending")
         let key = ActivityHarvest.sessionKey(
@@ -96,6 +101,7 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertTrue(again.rows[0].waiting, "new pending after natural clear can re-raise")
     }
 
+    @MainActor
     func testRooAskToolPendingRaisesWaiting() {
         let row = harvest(.roo, session: "roo-1", skill: "pending", tool: "ask_followup_question")
         let lit = build(harvest: [row])
@@ -104,6 +110,7 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertEqual(lit.rows[0].tool, "ask_followup_question")
     }
 
+    @MainActor
     func testCascadePendingRaisesWaiting() {
         let row = harvest(
             .windsurf, session: "ws-1", skill: "pending", tool: "ask_clarifying_question"
@@ -114,6 +121,7 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertEqual(lit.rows[0].observationSource, .cache)
     }
 
+    @MainActor
     func testCursorBlockingFlagPendingRaisesWaiting() {
         let row = harvest(.cursor, session: "composer-1", skill: "pending", evidence: .session)
         let lit = build(harvest: [row])
@@ -121,6 +129,7 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertEqual(lit.rows[0].waitSignal, .pending)
     }
 
+    @MainActor
     func testDependingNeverRaisesWaiting() {
         let row = harvest(.goose, session: "g-dep", skill: "", phase: "depending")
         let lit = build(harvest: [row])
@@ -130,6 +139,7 @@ final class WaitingProofTests: XCTestCase {
 
     // MARK: P0-2 harvest stamp honesty
 
+    @MainActor
     func testBlockedOnUserFlagStampsPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-blocked-\(UUID().uuidString)")
@@ -143,6 +153,7 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertEqual(row.skill, "pending")
     }
 
+    @MainActor
     func testAskUserQuestionToolStampsPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-asktool-\(UUID().uuidString)")
@@ -156,6 +167,7 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertEqual(row.skill, "pending")
     }
 
+    @MainActor
     func testWaitingNoneStillNeverStampsHarvestPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-none-\(UUID().uuidString)")
@@ -171,6 +183,7 @@ final class WaitingProofTests: XCTestCase {
 
     // MARK: P0-3 Attention raise → clear
 
+    @MainActor
     func testAttentionRaiseLightsExactSessionThenDoneClears() {
         let lit = build(
             harvest: [
@@ -196,6 +209,7 @@ final class WaitingProofTests: XCTestCase {
 
     // MARK: P0-4 Waiting-none Reach
 
+    @MainActor
     func testWaitingNoneNeedsReachAndOpenSettings() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "zcode|live", agent: .zcode)
@@ -207,6 +221,7 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertEqual(store.settingsFocusWaitingAgent, .zcode)
     }
 
+    @MainActor
     func testHarvestPendingDoesNotNeedWaitingNoneReach() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "cline|live", agent: .cline)

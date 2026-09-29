@@ -5,7 +5,7 @@
 > `scripts/scenario_map.py`（`gates.sh` 的一环）核对存在；写着「人工 / QA 脚本」的场景没有
 > 自动测试，靠 `scripts/qa_*.sh` 与真机检查 —— 这是覆盖缺口，不是免检。
 
-59 / 83 个场景有具名测试。
+60 / 84 个场景有具名测试。
 
 | # | 场景 | 期望 | 证明 |
 | --- | --- | --- | --- |
@@ -79,16 +79,17 @@
 | BP | Live Row（直播行） | **收起行答得了「它干成了什么」**：受管行的成本·回合与本回合落盘 ±行进观测行 advance 层（第一手，未测到缺席）；错误原文一行直进收起行；受管行在列表内即有回合控制（运行中=当前工具+终止，结束=回复框）；展开卡带受管对话尾巴（最近 5 步、`↳` 配对、内存流零磁盘读）——观察行的全文仍在指挥台（每拍磁盘读不是 ambient 成本，边界明说） | 人工 / QA 脚本 |
 | BQ | Parity（采集平权） | **展示契约逼出采集缺口**:8.1 的「测到即渲染」成立后,Pi 行还空着 → 病在采集。Pi:>8KB 行有界正则打捞(model/usage/最后 toolCall;JSON 转义保证不匹配进正文)、usage `{input,output}` 键补齐、自述扫描(原话/`isError` 驼峰/独立 toolResult 记录)在专用解析器末尾运行;Codex:model 从 payload 拾取、旧 rollout 的 assistant 消息入 lastWord;Claude 家族:`Skill` 调用的 `input.skill` 成为工作流事实;通用提取器认 `toolCall` 驼峰。未测到照旧缺席——没 usage 的行没有 token,一个字段不发明 | 人工 / QA 脚本 |
 | BR | Craft(全员二轮+工艺) | **采集二轮**:8.3 → 栏四缺口守卫式关闭——Cursor bubbles(`cursorDiskKV` 最新 assistant bubble,type 2)、OpenCode 原话(role 经 message 表联查——text part 单独不定作者,采了会把用户话冒充 agent 原话)、Gemini 原话(整文档遍历,最后 `model` 回合;逐行扫描对整文件 JSON 天然失明)、Aider 原话(markdown:最新 `#### ` 用户回合后的散文段);全部表/列/版式不符即空,永不猜;fixture 逐家钉死。**工艺**:TrayChrome 字阶与卡片纪律(§4),视觉从数字巧合变成具名系统 | 人工 / QA 脚本 |
-| BS | Anatomy（行解剖学） | **构图取代堆叠**:收起行 = 微身份条(灯·产品名·证据 + 右柱时间/芯片)+ hero(≤2 行)+ **一条合成 meta 线**(`rowMetaLine` 纯合成:此刻>产出>方式,≤3 槽,稀疏补项目;等待行让位问题、新鲜错误原文替位)——七线堆叠终结;五线全景(叙事/信号/观测/工作/次行)整体撤到展开卡 `SessionPanorama`,规则原样、渲染面换了;展开卡内一事实一处(chips 并入全景与工作细节,model/tokens/context 只在全景工作线) | `RowMetaLineTests` |
+| BS | Anatomy（行解剖学） | **构图取代堆叠**:收起行 = 微身份条(灯·产品名·证据 + 右柱时间/芯片)+ hero(≤2 行)+ **一条合成 meta 线**(`rowMetaLine` 纯合成:此刻>产出>方式,≤3 槽,稀疏补项目;等待行让位问题、新鲜错误原文替位)——七线堆叠终结;五线全景(叙事/信号/观测/工作/次行)整体撤到展开卡 `RowCardModel.panorama`,规则原样、渲染面换了;展开卡内一事实一处(chips 并入全景与工作细节,model/tokens/context 只在全景工作线) | `RowMetaLineTests` |
 | BT | Column(右柱) | 右缘是一根柱子:相对时间等宽、弱化、右对齐在身份条尾,芯片其后——扫视沿两根轴走(左轴读事,右轴读量);VoiceOver 同步读合成解剖学 | 人工 / QA 脚本 |
 | BU | Disclosure(披露纪律) | 三层各归其位:收起=扫视(两行),展开=理解与行动(8.x 全部深度原样),**列表内卡只给「此刻需要你」**——权限请求 / Respond / 回合死亡(interrupted/failed)恢复;受管 idle 的回复框撤回展开态(每行常驻回复框是墙不是收件箱);阻塞照旧免点击 | 人工 / QA 脚本 |
-| BV | Depth(自适应深度) | **信息默认在场,动作按需展开**:`RowDepth.tier` 纯表——显式展开→full;需要你→minimal+ask 卡(问题即深度);活跃且不拥挤→digest(`SessionBriefCard` 纯信息:hero 截断时的完整原话/当前计划步/±落盘,无动作面);其余 minimal;拥挤自动降级;chevron 语义收窄为「进入动作与全量」;Go-Look reveal 照旧直达 full | `RowDepthTests` |
+| BV | Depth(自适应深度) | **信息默认在场,动作按需展开**:`RowDepth.tier` 纯表——显式展开→full;需要你→minimal+ask 卡(问题即深度);活跃且不拥挤→digest(`RowCardModel.Brief` 纯信息:hero 截断时的完整原话/当前计划步/±落盘,无动作面);其余 minimal;拥挤自动降级;chevron 语义收窄为「进入动作与全量」;Go-Look reveal 照旧直达 full | `RowDepthTests` |
 | BW | Theme(产品一体) | `PulseTheme` 统一产品自有卡片的共享 chrome:窗口卡片半径族(卡 10/内 6)、padding 节奏、发丝描边(指挥台 card() 一处收编全窗)、**唯一动效曲线**(easeOut 0.16)——托盘 `TrayChrome` 保留紧凑网格、同一节奏派生;指挥台/受管检视器全部卡片收编,手写 `padding(14)`/`cornerRadius` 清零;设置保留 macOS 原生 grouped Form chrome,共享同一动效 token | 人工 / QA 脚本 |
 | BX | Grace(收笔) | 折叠/展开/重排共用同一条动效曲线;两条曲线在一个产品里读起来是两个产品 | 人工 / QA 脚本 |
-| BY | Surface（扫描静默） | 一轮扫描若发现的世界与上一轮相同，store 不发布任何变更：托盘、指挥台、会话卡、详情窗都不被唤醒；只有内容变化、或屏上有秒级相对时间（一分钟以内的等待 / 活动）、或分钟级时间到点时才重绘 | `ScanQuietTests` · `StoreObservationTests` |
+| BY | Surface（扫描静默） | 一轮扫描若发现的世界与上一轮相同，store 不发布任何变更：托盘、指挥台、会话卡、详情窗都不被唤醒；只有内容变化、或屏上有秒级相对时间（一分钟以内的等待 / 活动）、或分钟级时间到点时才重绘 | `ScanQuietTests`（19.0：Observation，逐属性跟踪；设置窗口只读 `snapshotAgents`） |
 | BZ | Mission（任务） | 派活建 Mission：目标必填，约束随目标交给 Agent，检查不交；首个候选开跑后改契约生成新版本，旧候选不被新尺子重判；检查按用户顺序串行、失败后继续；对比卡以候选为列、事实为行，只按派出顺序，无评分/推荐/最佳，「选定」不写 git；无检查时明写不会有已验证；13.0 前的同题组迁成一个 Mission，旧检查命令迁成未运行的检查，不继承旧证据 | `MissionTests` |
 | CA | Proof（证据） | 证据按工作目录存（路径规范化后同一把钥匙），不属于会话；任何本机观察到的工作副本可设检查（设即授权，清空即删页），只在用户点击时运行；托盘事实只给计数，没有检查或没有结果时不说话，未量过的通过不算通过，远程行不说；运行中退出的检查重启后记为中断；文件名与根目录摘要不符、schema 更新的页拒绝加载；schema 4 会话里的旧证据迁入一次、会话改写为 schema 5；观察到的工作副本可作为外部候选加入 Mission（同一目录只加入一次，Pulse 自己派出的候选不算外部），按加入时的契约版本评判，移出时清除选定 | `EvidenceBookTests` · `ManagedFleetTests` |
 | CB | Witness（见证） | 指挥台的判断面（Mission 对比卡、工作副本验收卡）由纯值渲染：列只按派出顺序、再按加入顺序，证据不改变列序；只有代码未变的当前通过才显示为通过（过期、测量中、无法确认、中断、超时、未运行都不是）；没有检查的 Mission 明写不会有已验证且不能运行检查；旧候选不被新契约评判；跑着的回合下不能开始检查；每个夹具在 CI 里以中英 × 明暗渲染成 PNG，缺一张即失败；渲染视图与模型不得引用 store | `SurfaceModelTests` |
 | CC | Turn（轮到你） | 做完的回合（Claude Stop / idle_prompt、Codex agent-turn-complete）不点红灯、不发通知，只在托盘计数「轮到你」；权限、提问仍是红灯；回合结束 20 秒内不清掉刚发生的阻塞；提示窗口在最前时做完的回合不算欠你、在最前时发生的阻塞只亮灯不发横幅，不知道在不在场就照常通知；提交 prompt、会话再次动起来都结束「轮到你」；「轮到你」从不单独造行；旧 hook 写的 `idle_prompt` 按轮到你读 | `TurnTruthTests` · `HarvestParsingTests` |
 | CD | Why（为什么） | 每个红灯 / 轮到你都给出证据句（hook 的 kind 与时间、在最前时补「所以没有通知」、pending 的步骤、受管回合的权限请求），说不出就不说；hook 事件另存有界历史（每会话 40 条、64 个会话、24 小时、0600、入库再脱敏、同一文件重复读不写盘、协议拒绝的不收、远端各自成史）；Details 时间线新的在上且有界；导出为 v3 八列 TSV、工作目录只留末段，重放得到同一结论；托盘行的脸是纯值：权限行有灯、标记、槽与动作，轮到你安静无槽，稍后可撤销，仅进程指向支持健康度，远端不给聚焦，Respond 只给拒绝与查看、从不给同意 | `WhyTests` |
 | CE | Current（跟上厂商） | `claude agents --json` 的 `status: waiting` 点红灯并标「Claude 自报」，只在有 Claude 进程且未装 hooks 时、至少隔 15 秒运行，失败退避且不当作「仍在等」，同会话 hook 优先，不造行，可软忽略；Claude 的 elicitation 与 URL elicitation 是提问、StopFailure 是轮到你、AskUserQuestion 不走扣留；Codex 分页格式（`item_completed`）读出任务与最后一句话，`.jsonl.zst` 不读；Codex hooks 只装 Stop / UserPromptSubmit，永不装 PermissionRequest | `ClaudeAgentsProbeTests` · `CodexPaginatedRolloutTests` · `TurnTruthTests` · `PulseHookReceiverTests` |
+| CF | Observe（逐项观察 · 自检） | store 是 `@Observable`：视图只因它读到的属性变化而重绘；同一世界的第二轮扫描不改任何被观察属性（逐个跟踪，新增属性不登记即失败）；设置窗口不被只移动了一行的扫描唤醒；状态栏只跟随 `snapshot`，一轮内多次写只投递一次。行下方的卡片（Respond、托管权限请求、托管回复、展开卡、摘要）只渲染值：Allow 只出现在完整请求旁、截断即撤、Respond 的点击带着当时屏上的请求 id 与摘要。自检只读、只在点击时运行：hooks 已装 ≠ 已证实，没触发过就是「未证实」，一周前触发的也是；`claude agents --json` 的四种结局各有说法；Respond 只有被 hook 取走才算已验证；复制的报告不含家目录路径 | `ScanQuietTests` · `RowCardModelTests` · `DoctorTests` · `PulseHookReceiverTests` |

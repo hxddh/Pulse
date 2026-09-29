@@ -79,7 +79,7 @@ extension StatusStore {
             }
             fixtureRow.refreshObservationQuality(privacyLimited: false)
             observedSessions.replaceSessions([fixtureRow])
-            cachedAll = sessionSources.merged()
+            setCachedAll(sessionSources.merged())
 
             var snap = PulseSnapshot()
             switch name {
@@ -148,7 +148,7 @@ extension StatusStore {
             )
             cursor.phase = "completed"
             observedSessions.replaceSessions([codex, amp, cursor])
-            cachedAll = sessionSources.merged()
+            setCachedAll(sessionSources.merged())
             hooksStatus = .installedBoth
             previewWaitingEventTimes = [
                 .claude: now - 48_000,
@@ -302,7 +302,7 @@ extension StatusStore {
         trayGrouping = name == "project" ? .project : .status
         rows.sort { $0.section.rawValue < $1.section.rawValue }
         observedSessions.replaceSessions(rows)
-        cachedAll = sessionSources.merged()
+        setCachedAll(sessionSources.merged())
 
         var snap = PulseSnapshot()
         snap.glance = .waiting

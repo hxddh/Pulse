@@ -256,8 +256,8 @@ final class PulseSettingsTests: XCTestCase {
 }
 
 /// The store must round-trip through the value type without losing anything.
-@MainActor
 final class StoreSettingsBridgeTests: XCTestCase {
+    @MainActor
     func testApplyThenReadBackIsIdentity() {
         let store = StatusStore()
         var s = PulseSettings()
@@ -273,6 +273,7 @@ final class StoreSettingsBridgeTests: XCTestCase {
         XCTAssertEqual(store.currentSettings, s)
     }
 
+    @MainActor
     func testStoreQuietHoursDelegateToTheValueType() {
         let store = StatusStore()
         store.quietHoursEnabled = true
@@ -287,6 +288,7 @@ final class StoreSettingsBridgeTests: XCTestCase {
 
     // MARK: 0.24 additions
 
+    @MainActor
     func testGroupingAndSoundRoundTrip() {
         var s = PulseSettings()
         s.trayGrouping = .project
@@ -298,6 +300,7 @@ final class StoreSettingsBridgeTests: XCTestCase {
 
     /// A settings file written before 0.24 must not change how the tray groups
     /// or start making noise.
+    @MainActor
     func testPre024FileKeepsQuietDefaults() {
         let old = """
             auto=1
@@ -310,6 +313,7 @@ final class StoreSettingsBridgeTests: XCTestCase {
         XCTAssertFalse(s.playSoundOnWaiting)
     }
 
+    @MainActor
     func testUnknownGroupingFallsBackToStatus() {
         let s = PulseSettings.parse("grouping=byVibes")
         XCTAssertEqual(s.trayGrouping, .status)

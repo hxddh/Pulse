@@ -2,7 +2,7 @@
 
 All notable changes to Pulse are documented here.
 
-## 18.0.0 — Current（跟上）
+## 19.0.0 — Current（跟上）
 
 Pulse 没有第三方 Swift 包；它真正依赖的是工具链、CI 和两家厂商的契约。这一版把三者都追到
 当前，并用上它们新给的能力。
