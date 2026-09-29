@@ -477,6 +477,7 @@ extension StatusStore {
         }()
 
         let now = Date()
+        lastScanAt = now
         probeStats.record(
             ProbeStats.Sample(at: now, harvested: harvestMs != nil, harvestMs: harvestMs)
         )

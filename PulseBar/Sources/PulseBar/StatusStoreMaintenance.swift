@@ -145,8 +145,12 @@ extension StatusStore {
             return tr(.updateInstallRequiresNotarized)
         case .install(let message):
             return "\(tr(.updateInstallFailed)) · \(message)"
-        case .noVerifiableAsset, .unsupportedSystem, .notReady:
-            return "\(tr(.updateInstallFailed)) · \(failure.detail)"
+        case .noVerifiableAsset:
+            return tr(.updateDownloadNoAsset)
+        case .unsupportedSystem:
+            return "\(tr(.updateDownloadUnsupported)) · \(failure.detail)"
+        case .notReady:
+            return tr(.updateDownloadNotReady)
         }
     }
 

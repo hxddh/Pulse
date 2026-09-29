@@ -715,6 +715,9 @@ enum L10n {
         case .activityHeading: return "Activity"
         case .activityEmpty: return "Nothing recorded yet. State changes and banners appear here as they happen."
         case .activityAllAgents: return "All agents"
+        case .updateDownloadNoAsset: return "This release has no verifiable installer"
+        case .updateDownloadUnsupported: return "This Mac cannot run this release"
+        case .updateDownloadNotReady: return "Download and verify the installer first"
         }
     }
 
@@ -1350,6 +1353,9 @@ enum L10n {
         case .activityHeading: return "动态"
         case .activityEmpty: return "还没有记录。状态变化和通知会在发生时出现在这里。"
         case .activityAllAgents: return "全部 Agent"
+        case .updateDownloadNoAsset: return "该版本没有可校验的安装包"
+        case .updateDownloadUnsupported: return "这台 Mac 无法运行该版本"
+        case .updateDownloadNotReady: return "请先下载并校验安装包"
         }
     }
 
@@ -1589,6 +1595,9 @@ enum L10n {
         case activityHeading
         case activityEmpty
         case activityAllAgents
+        case updateDownloadNoAsset
+        case updateDownloadUnsupported
+        case updateDownloadNotReady
     }
 }
 

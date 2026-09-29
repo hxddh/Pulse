@@ -170,25 +170,67 @@ to users.
 
 ## Current state
 
-22.0 (Lamp, in progress) is subtractive. A status lamp should watch
-orchestrators, not be one, so it removed: the `PulseManaged` target (managed
-sessions, the permission MCP server and `--permission-server`, worktrees,
-Missions, acceptance checks, `EvidenceBook`, workspace effect), the Workbench
-window and everything that existed for it (dispatch, terminal actuation,
-the resume channel, the Mission board and working-copy card), remote Respond
-(`requests.d/`, `verdicts.d/`, `secrets/`, `respond-secret.key` — Respond is
-local-only, see `docs/respond-protocol.md`; `pulse_hook.py` holds only when
-`ioreg` shows nobody at this Mac), and the fleet (`fleet.d/` snapshots, the
-`attention.d/` inbox, remote rows; the attention `host` column is ignored).
-The settings `workbenchActuation`, `workspaceEffect` and `fleetBroadcast` are
-gone (old files still parse). `LegacyCleanup.run()` deletes the removed
-features' directories once on launch, behind a marker, and never touches
-`respond-local.key`, `respond.d/requests|verdicts`, attention files,
-settings or `worktrees/`. The row's detail pane is not back yet: the tray
-row has no "Details" menu item, and `WhyDetailSection` /
-`SessionDiagnosticsCard` wait in `InspectorDiagnostics.swift`.
+22.0.0 is the current source version (Lamp). It is subtractive: a status
+lamp should watch orchestrators, not be one, so it removed the `PulseManaged`
+target (managed sessions, the permission MCP server and `--permission-server`,
+worktrees, Missions, acceptance checks, `EvidenceBook`, workspace effect), the
+Workbench window and everything that existed for it (dispatch, terminal
+actuation, the resume channel, the Mission board and working-copy card),
+remote Respond (`requests.d/`, `verdicts.d/`, `secrets/`,
+`respond-secret.key` — Respond is local-only, see `docs/respond-protocol.md`;
+`pulse_hook.py` holds only when `ioreg` shows nobody at this Mac), and the
+fleet (`fleet.d/` snapshots, the `attention.d/` inbox, remote rows; the
+attention `host` column is ignored). The settings `workbenchActuation`,
+`workspaceEffect` and `fleetBroadcast` are gone, as are grouping, sound,
+quiet hours, the per-agent mute list, the stall threshold, snooze length and
+history retention in Settings (old files still parse; muting moved to the row
+menu). `LegacyCleanup.run()` deletes the removed features' directories once
+on launch, behind a marker, and never touches `respond-local.key`,
+`respond.d/requests|verdicts`, attention files, settings or `worktrees/`.
 
-21.0.0 is the current source version (Clarity — bug fixes, one visual
+What remains was rebuilt around one line per session. The tray
+(`TrayPanel`) has no groups, folds or depth tiers: a row is one line (lamp,
+agent, project, task, time), plus the ask for a wait or the orange reason for
+a stalled/failed row. The lamp has a shape as well as a tone
+(`TrayRowModel.Shape`: waiting/running `filled`, error `half`, process-only
+`dotted`, idle `hollow`, drawn by `LampShapeView`); every other verb lives in
+the row `menu` (details, focus, dismiss, snooze, mute) and VoiceOver actions.
+`SessionDetailView` (→ or the menu's Details; ← / Esc back) shows the task,
+the why line, a `TimelineStripView` of the last hour, the full Respond request
+(Allow beside it), last words, plan, facts, the notification audit, then
+`WhyDetailSection` / `SessionDiagnosticsCard`. The tray is keyboard-first:
+typing filters (over every retained session), ↑↓ select, ↩ primary, → details,
+⌫ deny/dismiss a wait, Esc clears the filter, then closes the panel —
+`StatusStore.trayEscapeConsumed` (unobserved) tells the panel's key monitor
+that the view owns Escape. The header is one line of tone-coloured counts
+with a ⋯ menu (Health, Settings, Quit); at most one notice (maintenance /
+scan incomplete / paused); the footer carries "N more", the stale-hidden
+count and the key hints; the empty state is a checklist of what is true on
+this Mac. Settings is a single scrolling page of sections, with the Attention
+bridge tools under an Advanced disclosure; jumping in from elsewhere bumps
+`settingsFocusToken` and scrolls to the section.
+
+Observability: `SessionTimeline` turns each scan's rows into state
+transitions (running / thin / stalled / blocked / turn / recent, with
+evidence hook / pending / vendor / harvest / process);
+`StatusStore.recordTimeline` keeps them in `SessionTimelineBook`
+(`session-timeline.json`, 128 sessions × 48 spans, 24 h) and bumps
+`timelineRevision` only when a span changed — a quiet scan writes nothing.
+`timelineRevision` and `settingsFocusToken` are observed store properties
+listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
+lamp, up to three driving sessions and what was left out (snoozed, older
+hidden); `SnapshotBuilder` stores it as `snapshot.lampLines`, which the status
+item appends to its tooltip. Every Waiting ledger event records its delivery
+outcome (`AttentionLedger.Event.delivery` / `deliveryAtMs`, a
+`WaitingDelivery.SkipReason` raw value or posted / summary) and
+`clickedAtMs`; `NotificationAuditModel` renders it in the detail view.
+`ActivityLogModel` merges state transitions and notification fates across
+sessions into the Health window's Activity section, filterable by agent.
+`staleHidden` counts only sessions that stopped within the last 24 h
+(`SnapshotBuilder.staleHiddenWindowMs`), and the scan's `apply` debug-log
+line is written only when it changed.
+
+21.0.0 (Clarity — bug fixes, one visual
 system, rows that explain themselves, fewer surfaces). `PulseTheme` owns
 spacing, radii, fills, semantic type and one `Tone` per state (system dynamic
 colours); views use `.pulseCard()` / `.pulseInner()` / `PulseChip` /
@@ -196,8 +238,8 @@ colours); views use `.pulseCard()` / `.pulseInner()` / `PulseChip` /
 verbs and only for a wait (`TrayRowModel.strip`); every verb is in `menu`
 once and in VoiceOver actions. `RowNarrator.whyLine` covers stalled, failed
 and process-only rows (`whyInline` shows it without a click). The snapshot
-counts sessions dropped for age (`staleHidden`). Settings is five panes
-(`SettingsView.Pane`); the global shortcut is one `HotkeyChoice` with `.off`
+counts sessions dropped for age (`staleHidden`). 21.0 split Settings into
+five panes (one page since 22.0); the global shortcut is one `HotkeyChoice` with `.off`
 (`hotkeyEnabled` is derived; older files migrate). The self-check, per-agent
 reading and reports are one Health window (`SupportCoverageView`); the
 Details window was folded into the Workbench (itself removed in 22.0). On macOS
@@ -227,7 +269,8 @@ is added without being listed); AppKit follows the store with
 `ObservationLoop`; Settings reads `snapshotAgents`, never `snapshot`.
 `surface_check.py` rejects any Combine-era wrapper (`ObservableObject`,
 `@Published`, `@ObservedObject`, `@StateObject`, `objectWillChange`). The
-cards under a tray row — Respond, the expanded inspector, the digest —
+cards under a tray row — Respond, the expanded inspector, the digest (in
+22.0 the detail view) —
 render `RowCardModel` and send
 `RowCardModel.Action`; a Respond click carries the request id and digest
 that were on screen. The self-check (`DoctorModel` pure, `DoctorProbe`
