@@ -176,7 +176,7 @@ to users.
 
 ## Current state
 
-22.0.0 is the current source version (Lamp). It is subtractive: a status
+23.0.0 is the current source version (Essence; see below). 22.0 (Lamp) was subtractive: a status
 lamp should watch orchestrators, not be one, so it removed the `PulseManaged`
 target (managed sessions, the permission MCP server and `--permission-server`,
 worktrees, Missions, acceptance checks, `EvidenceBook`, workspace effect), the

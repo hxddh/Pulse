@@ -682,7 +682,7 @@ final class SupportHealthTests: XCTestCase {
         )
         store.settings.language = .en
         let en = store.supportCollectorOutcomeDetail(item)
-        store.language = .zh
+        store.settings.language = .zh
         let zh = store.supportCollectorOutcomeDetail(item)
         XCTAssertFalse(en.isEmpty)
         XCTAssertNotEqual(en, zh, "the diagnostics disclosure is user-facing copy, not a log line")
