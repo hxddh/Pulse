@@ -95,11 +95,12 @@ struct ClarityFixTests {
             sessionID: "s1", pid: 0, cwd: "/p", kind: .permission, reason: "permission prompt", sinceMs: now
         )
         let raised = build(harvest: [session(.claude, "s1")], vendorWaits: [wait])
-        let firstWaiting = raised.rows.first { $0.waiting }
+        let firstWaiting = raised.rows.first { $0.isBlocked }
         let key = try #require(firstWaiting).rowKey
 
         let dismissed = build(harvest: [session(.claude, "s1")], vendorWaits: [wait], dismissed: [key])
-        #expect(dismissed.rows.first { $0.rowKey == key }?.waiting == false)
+        let dismissedRow = dismissed.rows.first { $0.rowKey == key }
+        #expect(dismissedRow?.isBlocked == false)
         #expect(!dismissed.clearedPendingKeys.contains(key), "releasing it here relit the lamp on the next scan")
 
         let moved = build(harvest: [session(.claude, "s1")], dismissed: [key])
@@ -210,21 +211,23 @@ struct ClarityFixTests {
         #expect(fact.lastWord == "Queue added.")
     }
 
-    // MARK: - 5 · a turn adopted by a process-only row names its session
+    // MARK: - 5 · a turn marks a session, never a bare process
 
-    @Test func aProcessOnlyRowThatAdoptsATurnCarriesItsSession() throws {
+    /// 23.0: a process-only row is not a session a hook can speak for, and a
+    /// turn with no session row makes none — so the process stays a process.
+    @Test func aTurnNeverLandsOnAProcessOnlyRow() throws {
         let hit = ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 4242)
         let r = build(procs: [hit], attention: turn(session: "s-turn"))
         let row = try #require(r.rows.first)
-        #expect(row.yourTurn)
-        #expect(row.sessionID == "s-turn", "markTurnSeen / dismiss had no session to name")
-        #expect(row.doneSession == "s-turn")
+        #expect(r.rows.count == 1)
+        #expect(row.isProcessOnly)
+        #expect(!row.isYourTurn)
     }
 
     @Test func aPrefixMatchedTurnIsClearedUnderTheFilesSpelling() throws {
         let r = build(harvest: [session(.claude, "sess-full")], attention: turn(session: "sess-full-123"))
         let row = try #require(r.rows.first)
-        #expect(row.yourTurn)
+        #expect(row.isYourTurn)
         #expect(row.sessionID == "sess-full")
         #expect(row.doneSession == "sess-full-123", "a done under the row's id would clear nothing")
     }
@@ -321,8 +324,7 @@ struct ClarityFixTests {
     func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64) -> AgentRow {
         var row = AgentRow(rowKey: key, agent: agent)
         row.sessionID = session
-        row.waiting = true
-        row.waitSinceMs = since
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks))
         return row
     }
 
@@ -423,15 +425,15 @@ struct ClarityFixTests {
 
     @Test func aStaleFilePendingWithNoProcessIsNotRed() throws {
         let stale = build(harvest: [session(.cline, "cl-1", skill: "pending", ageMs: 31 * Self.minute)])
-        #expect(stale.rows.first?.waiting == false)
+        #expect(stale.rows.first?.isBlocked == false)
 
         let alive = build(
             procs: [ProcessProbe.Hit(id: .cline, count: 1, viaWarp: false, pid: 77)],
             harvest: [session(.cline, "cl-1", skill: "pending", ageMs: 31 * Self.minute)]
         )
-        #expect(alive.rows.first?.waiting == true, "a live process keeps the vendor's own ask red")
+        #expect(alive.rows.first?.isBlocked == true, "a live process keeps the vendor's own ask red")
 
         let recent = build(harvest: [session(.cline, "cl-1", skill: "pending", ageMs: 5 * Self.minute)])
-        #expect(recent.rows.first?.waiting == true)
+        #expect(recent.rows.first?.isBlocked == true)
     }
 }

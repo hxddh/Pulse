@@ -80,32 +80,30 @@ final class WaitingProofTests: XCTestCase {
     @MainActor
     func testClinePendingRaisesWaitingAndSoftDismissSuppresses() {
         let pending = harvest(.cline, session: "cl-1", skill: "pending")
-        let key = ActivityHarvest.sessionKey(
-            id: .cline, sessionID: "cl-1", project: "", cwd: "/Users/me/Pulse"
-        )
+        let key = RowIdentity.session(agent: .cline, sessionID: "cl-1")
         let lit = build(harvest: [pending])
-        XCTAssertTrue(lit.rows[0].waiting)
-        XCTAssertEqual(lit.rows[0].waitSignal, .pending)
+        XCTAssertTrue(lit.rows[0].isBlocked)
+        XCTAssertEqual(lit.rows[0].wait?.signal, .pending)
         XCTAssertEqual(lit.snapshot.glance, .waiting)
 
         let dismissed = build(harvest: [pending], dismissed: [key])
-        XCTAssertFalse(dismissed.rows[0].waiting, "soft-dismiss must suppress harvest pending")
+        XCTAssertFalse(dismissed.rows[0].isBlocked, "soft-dismiss must suppress harvest pending")
 
         let cleared = harvest(.cline, session: "cl-1", skill: "")
         let afterClear = build(harvest: [cleared], dismissed: [key])
         XCTAssertTrue(afterClear.clearedPendingKeys.contains(key))
 
         let again = build(harvest: [pending])
-        XCTAssertTrue(again.rows[0].waiting, "new pending after natural clear can re-raise")
+        XCTAssertTrue(again.rows[0].isBlocked, "new pending after natural clear can re-raise")
     }
 
     @MainActor
     func testRooAskToolPendingRaisesWaiting() {
         let row = harvest(.roo, session: "roo-1", skill: "pending", tool: "ask_followup_question")
         let lit = build(harvest: [row])
-        XCTAssertTrue(lit.rows[0].waiting)
-        XCTAssertEqual(lit.rows[0].waitSignal, .pending)
-        XCTAssertEqual(lit.rows[0].tool, "ask_followup_question")
+        XCTAssertTrue(lit.rows[0].isBlocked)
+        XCTAssertEqual(lit.rows[0].wait?.signal, .pending)
+        XCTAssertEqual(lit.rows[0].wait?.kind, "Input", "a follow-up question is an ask, not a permission")
     }
 
     @MainActor
@@ -115,8 +113,8 @@ final class WaitingProofTests: XCTestCase {
             .windsurf, session: "ws-1", skill: "pending", tool: "ask_clarifying_question"
         )
         let lit = build(harvest: [row])
-        XCTAssertFalse(lit.rows[0].waiting)
-        XCTAssertEqual(lit.rows[0].observationSource, .cache)
+        XCTAssertFalse(lit.rows[0].isBlocked)
+        XCTAssertEqual(lit.rows[0].source, .cache)
     }
 
     @MainActor
@@ -124,15 +122,14 @@ final class WaitingProofTests: XCTestCase {
         // 23.0: Cursor's format is unverified — `waiting: .none`.
         let row = harvest(.cursor, session: "composer-1", skill: "pending", evidence: .session)
         let lit = build(harvest: [row])
-        XCTAssertFalse(lit.rows[0].waiting)
+        XCTAssertFalse(lit.rows[0].isBlocked)
     }
 
     @MainActor
     func testDependingNeverRaisesWaiting() {
         let row = harvest(.goose, session: "g-dep", skill: "", phase: "depending")
         let lit = build(harvest: [row])
-        XCTAssertFalse(lit.rows[0].waiting)
-        XCTAssertNotEqual(lit.rows[0].skill, "pending")
+        XCTAssertFalse(lit.rows[0].isBlocked)
     }
 
     // MARK: P0-2 harvest stamp honesty
@@ -190,10 +187,10 @@ final class WaitingProofTests: XCTestCase {
             ],
             attention: [attention(.zcode, session: "z-b")]
         )
-        let waiting = lit.rows.filter(\.waiting)
+        let waiting = lit.rows.filter(\.isBlocked)
         XCTAssertEqual(waiting.count, 1)
         XCTAssertEqual(waiting[0].sessionID, "z-b")
-        XCTAssertEqual(waiting[0].waitSignal, .hooks)
+        XCTAssertEqual(waiting[0].wait?.signal, .hooks)
 
         let cleared = build(
             harvest: [
@@ -202,7 +199,7 @@ final class WaitingProofTests: XCTestCase {
             ],
             attention: []
         )
-        XCTAssertFalse(cleared.rows.contains(where: \.waiting))
+        XCTAssertFalse(cleared.rows.contains(where: \.isBlocked))
     }
 
     // MARK: P0-4 Waiting-none Reach
@@ -212,7 +209,7 @@ final class WaitingProofTests: XCTestCase {
         let store = StatusStore()
         var row = AgentRow(rowKey: "zcode|live", agent: .zcode)
         row.liveProcess = true
-        row.waiting = false
+        row.state = .running
         XCTAssertTrue(store.isWaitingNoneNeedsReach(row))
         store.openWaitingReach(for: row)
         XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
@@ -223,7 +220,7 @@ final class WaitingProofTests: XCTestCase {
         let store = StatusStore()
         var row = AgentRow(rowKey: "cline|live", agent: .cline)
         row.liveProcess = true
-        row.waiting = false
+        row.state = .running
         XCTAssertFalse(store.isWaitingNoneNeedsReach(row))
     }
 }

@@ -124,13 +124,14 @@ final class SelfReportTests: XCTestCase {
 
     func testSelfReportFreshnessIsOneRuleForEverySurface() {
         // Codex review on #74: Details showed "Current step" past the 30
-        // minutes where the story line had already withdrawn it. Both now
-        // read this one property.
+        // minutes where the story line had already withdrawn it. Every
+        // surface reads this one rule.
+        let clock: Int64 = 1_800_000_000_000
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 5 * 60 * 1000
-        XCTAssertTrue(row.selfReportFresh)
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 31 * 60 * 1000
-        XCTAssertFalse(row.selfReportFresh, "Details and the story line share this gate")
+        row.harvestMs = clock - 5 * 60 * 1000
+        XCTAssertTrue(row.selfReportFresh(at: clock))
+        row.harvestMs = clock - 31 * 60 * 1000
+        XCTAssertFalse(row.selfReportFresh(at: clock), "the headline and the detail page share this gate")
     }
 
     func testATranscriptWithoutTodosInventsNothing() throws {
@@ -235,47 +236,39 @@ final class SelfReportTests: XCTestCase {
         XCTAssertEqual(row.lastErrorText, "migration failed: duplicate column")
     }
 
-    // MARK: - The story line: informs, ages, never implies Waiting
+    // MARK: - The plan on the detail page: informs, ages, never implies Waiting
 
-    @MainActor
-    private func storyRow(step: String = "Running the gates") -> AgentRow {
+    private func planRow(step: String = "Running the gates") -> AgentRow {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.task = "Fix the auth module"
-        row.planStep = step
+        row.planSteps = [ActivityHarvest.PlanStep(text: step, state: .current)]
         row.liveProcess = true
+        row.state = .running
         row.harvestMs = now
         return row
     }
 
-    @MainActor
-    func testTheStoryLeadsWithTheCurrentStep() {
-        let store = StatusStore()
-        store.language = .en
-        let line = store.rowStoryLine(storyRow())
-        XCTAssertTrue(line.contains("Running the gates"), line)
-    }
-
-    @MainActor
-    func testAStaleStepIsNotQuotedAsNow() {
-        let store = StatusStore()
-        store.language = .en
-        var row = storyRow()
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 31 * 60 * 1000
-        XCTAssertFalse(
-            store.rowStoryLine(row).contains("Running the gates"),
-            "a 31-minute-old plan is stale wearing fresh clothes"
+    private func detail(_ row: AgentRow) -> DetailModel {
+        DetailModel.make(
+            row: row, face: TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now)),
+            lang: .en, nowMs: now
         )
     }
 
-    @MainActor
-    func testWaitingStillOwnsTheRowAndAStepNeverImpliesWaiting() {
-        let store = StatusStore()
-        store.language = .en
-        var row = storyRow()
-        row.waiting = true
-        row.waitKind = "Permission"
-        row.waitMessage = "Approve deploy?"
-        XCTAssertFalse(store.rowStoryLine(row).contains("Running the gates"))
-        XCTAssertFalse(row.waiting == false, "nothing here may write Waiting either way")
+    func testTheDetailPageShowsTheCurrentStep() {
+        XCTAssertEqual(detail(planRow()).plan?.steps.first?.text, "Running the gates")
+        XCTAssertEqual(detail(planRow()).plan?.steps.first?.current, true)
+    }
+
+    func testAStaleStepIsNotQuotedAsNow() {
+        var row = planRow()
+        row.harvestMs = now - 31 * 60 * 1000
+        XCTAssertNil(detail(row).plan, "a 31-minute-old plan is stale wearing fresh clothes")
+    }
+
+    func testAStepNeverImpliesWaiting() {
+        let row = planRow()
+        XCTAssertFalse(row.isBlocked, "nothing here may write Waiting")
+        XCTAssertFalse(detail(row).canDismiss)
     }
 }

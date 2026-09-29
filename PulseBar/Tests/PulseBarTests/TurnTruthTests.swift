@@ -182,12 +182,12 @@ struct TurnTruthTests {
     func sequence(_ c: Case) throws {
         let r = Self.world(c.lines, harvest: [Self.session(c.agent, ageMs: c.harvestAgeMs)])
         let row = try #require(r.rows.first)
-        #expect(row.waiting == c.expect.waiting)
-        #expect(row.yourTurn == c.expect.yourTurn)
+        #expect(row.isBlocked == c.expect.waiting)
+        #expect(row.isYourTurn == c.expect.yourTurn)
         #expect((r.snapshot.glance == .waiting) == c.expect.red)
         #expect(r.snapshot.turnCount == (c.expect.yourTurn ? 1 : 0))
-        #expect(row.waitRaisedInFront == c.expect.inFront)
-        if let kind = c.expect.waitKind { #expect(row.waitKind == kind) }
+        #expect((row.wait?.inFront ?? false) == c.expect.inFront)
+        if let kind = c.expect.waitKind { #expect(row.wait?.kind == kind) }
         let bannered: Bool
         if case .post(let rows, _) = Self.delivery(r.rows) {
             bannered = rows.contains { $0.rowKey == row.rowKey }
@@ -205,7 +205,8 @@ struct TurnTruthTests {
             prompt: "", cwd: "/p", tsMs: Self.now - 5 * Self.second
         )
         let r = Self.world([Self.line("claude", "stop", ago: 30 * Self.second)], harvest: [Self.session(.claude)], activity: [tool])
-        #expect(try #require(r.rows.first).yourTurn == false)
+        let row = try #require(r.rows.first)
+        #expect(!row.isYourTurn)
     }
 
     @Test func aFinishedTurnNeverInventsARow() {
