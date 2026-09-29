@@ -42,58 +42,52 @@ struct MissionBoardView: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             Text(board.goal)
-                .font(.callout)
+                .font(PulseTheme.Font.body)
                 .lineLimit(4)
                 .textSelection(.enabled)
             if !board.constraints.isEmpty {
                 Text(board.constraints)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(4)
                     .textSelection(.enabled)
             }
             if let note = board.legacyNote {
                 Text(note)
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let warning = board.noChecksWarning {
                 Text(warning)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
             comparison
             actions
             Text(t(.missionNoRanking))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(PulseTheme.cardPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: PulseTheme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: PulseTheme.cardRadius)
-                .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-        )
+        .pulseCard()
     }
 
     private var header: some View {
         HStack(spacing: 8) {
             Text(t(.missionHeading))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             Text(board.lifecycle)
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
             Text(board.revision)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
             Spacer()
             Button(t(.missionEdit), action: edit)
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
         }
     }
 
@@ -111,7 +105,7 @@ struct MissionBoardView: View {
                 ForEach(Array(board.checks.enumerated()), id: \.offset) { index, command in
                     GridRow {
                         Text(command)
-                            .font(.caption.monospaced())
+                            .font(PulseTheme.Font.code)
                             .lineLimit(1)
                             .frame(maxWidth: 220, alignment: .leading)
                             .help(command)
@@ -131,11 +125,11 @@ struct MissionBoardView: View {
     private func factRow(_ label: String, _ value: @escaping (MissionBoard.Column) -> String) -> some View {
         GridRow {
             Text(label)
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
             ForEach(board.columns) { column in
                 Text(value(column))
-                    .font(.caption)
+                    .font(PulseTheme.Font.caption)
                     .lineLimit(2)
                     .frame(maxWidth: 220, alignment: .leading)
                     .textSelection(.enabled)
@@ -147,38 +141,38 @@ struct MissionBoardView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text(column.title)
-                    .font(.callout.weight(column.isCurrent ? .bold : .regular))
+                    .font(column.isCurrent ? PulseTheme.Font.label : PulseTheme.Font.body)
                 if column.chosen {
                     Text(t(.missionChosen))
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             if !column.externalNote.isEmpty {
                 Text(column.externalNote)
-                    .font(.caption2)
+                    .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
             }
             if !column.revisionNote.isEmpty {
                 Text(column.revisionNote)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
                 if let key = column.selectionKey {
                     Button(t(.managedViewAttempt)) { send(.select(key: key)) }
                         .buttonStyle(.link)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                 }
                 Button(t(column.chosen ? .missionUnchoose : .missionChoose)) {
                     send(.choose(candidateID: column.id))
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 if let externalID = column.externalID {
                     Button(t(.proofLeaveMission)) { send(.leave(externalID: externalID)) }
                         .buttonStyle(.link)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                 }
             }
         }
@@ -206,8 +200,8 @@ struct CheckCellView: View {
 
     var body: some View {
         Text(cell.text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(cell.tone == .warn ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            .font(PulseTheme.Font.chip)
+            .foregroundStyle(cell.tone == .warn ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
             .frame(maxWidth: maxWidth, alignment: .leading)
     }
 }
@@ -227,9 +221,9 @@ struct MissionEditSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(store.tr(.missionEdit))
-                .font(.headline)
+                .font(PulseTheme.Font.heading)
             Text(store.tr(.missionGoal))
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
             TextField(store.tr(.missionGoal), text: $goal, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -242,7 +236,7 @@ struct MissionEditSheet: View {
                 .font(.callout.monospaced())
                 .lineLimit(2...8)
             Text(store.tr(.missionEditFrozenHint))
-                .font(.caption)
+                .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {

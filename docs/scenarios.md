@@ -5,7 +5,7 @@
 > `scripts/scenario_map.py`（`gates.sh` 的一环）核对存在；写着「人工 / QA 脚本」的场景没有
 > 自动测试，靠 `scripts/qa_*.sh` 与真机检查 —— 这是覆盖缺口，不是免检。
 
-61 / 85 个场景有具名测试。
+62 / 86 个场景有具名测试。21.0 起，下文里的「Details」指 Workbench 检查器 —— Details 窗口已并入其中。
 
 | # | 场景 | 期望 | 证明 |
 | --- | --- | --- | --- |
@@ -94,3 +94,4 @@
 | CE | Current（跟上厂商） | `claude agents --json` 的 `status: waiting` 点红灯并标「Claude 自报」，只在有 Claude 进程且未装 hooks 时、至少隔 15 秒运行，失败退避且不当作「仍在等」，同会话 hook 优先，不造行，可软忽略；Claude 的 elicitation 与 URL elicitation 是提问、StopFailure 是轮到你、AskUserQuestion 不走扣留；Codex 分页格式（`item_completed`）读出任务与最后一句话，`.jsonl.zst` 不读；Codex hooks 只装 Stop / UserPromptSubmit，永不装 PermissionRequest | `ClaudeAgentsProbeTests` · `CodexPaginatedRolloutTests` · `TurnTruthTests` · `PulseHookReceiverTests` |
 | CF | Observe（逐项观察 · 自检） | store 是 `@Observable`：视图只因它读到的属性变化而重绘；同一世界的第二轮扫描不改任何被观察属性（逐个跟踪，新增属性不登记即失败）；设置窗口不被只移动了一行的扫描唤醒；状态栏只跟随 `snapshot`，一轮内多次写只投递一次。行下方的卡片（Respond、托管权限请求、托管回复、展开卡、摘要）只渲染值：Allow 只出现在完整请求旁、截断即撤、Respond 的点击带着当时屏上的请求 id 与摘要。自检只读、只在点击时运行：hooks 已装 ≠ 已证实，没触发过就是「未证实」，一周前触发的也是；`claude agents --json` 的四种结局各有说法；Respond 只有被 hook 取走才算已验证；复制的报告不含家目录路径 | `ScanQuietTests` · `RowCardModelTests` · `DoctorTests` · `PulseHookReceiverTests` |
 | CG | Drift（厂商格式漂移） | 每个 Agent 的解析器写明它照的是厂商哪个仓库哪个提交（或哪份文档，或诚实的「未核实」），没有来源的方言过不了 gate；每周哨兵在被钉住的格式文件变动时变红；按厂商源码造的夹具断言标题、最后一句话、目录与等待的**值**：Gemini JSONL（检查点、回退、子代理、沙箱目录）、OpenCode 的 `pending` 不是等待而 `question` 工具在跑才是、Cline/Roo/Kilo 已完成任务不亮红而待批准命令亮红、Goose 读 `sessions.db` 且未答的 elicitation 是等待、Kimi Code 未答的 approval 是等待、Grok 的话来自 `updates.jsonl`、Copilot `session-state`、Continue、OpenHands `waiting_for_confirmation`、Pi 的缓存预热不算活动；Grok 借 Claude hooks 的调用记在 Grok 名下，非 Claude 不走 Respond 扣留，认不出的 hook 事件不写不亮 | `VendorDriftTests` · `NativeActivityHarvestTests` · `DoctorTests` |
+| CH | Clarity（清晰） | 等待行至多两个可见动作（有 Respond 时是「查看并回应 / 拒绝」，能聚焦时是「聚焦 / 忽略」），每个动作在菜单里只出现一次，只有等待行有动作条；橙色的行（停滞 / 失败 / 仅进程）不点开就说为什么，停滞说出阈值；超过新鲜窗口而未显示的会话被计数并按 Agent 说出；全局快捷键是一个选择（旧的「未开启」迁移为关闭，开启过的保留，未知组合键为关闭）；Claude/Codex 在跑而没装 hooks 时托盘提示一键安装，但通知未授权优先；忽略 `claude agents` 报告的等待不会在下一轮复亮、「清除等待」覆盖它；停止事件的宽限按两条事件各自的时间判定；Claude 子代理文件不并入主会话；Pi 只读当前分支；`claude agents` 失败保留原等待；合并以最新文件为准；无进程且超 30 分钟的文件记录等待熄灭 | `ClarityFixTests` · `WhyTests` · `PulseSettingsTests` · `SupportHealthTests` |

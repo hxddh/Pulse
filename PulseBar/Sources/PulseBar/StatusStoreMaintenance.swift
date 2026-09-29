@@ -82,7 +82,7 @@ extension StatusStore {
             }
             return tr(.updateCurrent)
         case .available(let release): return String(format: tr(.updateAvailable), release.version)
-        case .failed(let message): return "\(tr(.updateFailed)) · \(message)"
+        case .failed(let failure): return "\(tr(.updateFailed)) · \(updateFailureText(failure))"
         }
     }
 
@@ -119,6 +119,19 @@ extension StatusStore {
         }
     }
 
+    /// 21.0: the reason in the person's language; only the system's own
+    /// network message stays as the system wrote it.
+    func updateFailureText(_ failure: UpdateCheck.Failure) -> String {
+        switch failure {
+        case .badFeed: return tr(.updateFailedBadFeed)
+        case .network(let message):
+            return message.isEmpty ? tr(.updateFailedNetwork) : "\(tr(.updateFailedNetwork)) (\(message))"
+        case .http(let code): return String(format: tr(.updateFailedHTTP), code)
+        case .badResponse: return tr(.updateFailedBadResponse)
+        case .noTag: return tr(.updateFailedNoTag)
+        }
+    }
+
     var maintenanceNoticeText: String? {
         if recoveredAfterCrash { return recoveryNoticeText }
         if isVersionMismatch { return tr(.versionStale) }
@@ -132,9 +145,12 @@ extension StatusStore {
                 ? tr(.waitingNotifyDenied)
                 : tr(.waitingNotifyNotConfigured)
         }
-        // The tray is an observation surface, not a hook installer. Missing
-        // Claude/Codex hooks remain visible in Support Health and Settings
-        // (native install — no Python). Do not displace session facts.
+        // 21.0: Claude or Codex is running without hooks. Waiting still
+        // works without them (`claude agents --json`, harvest), so this is
+        // an offer, not an alarm — one line, installed in one click, using
+        // the same Claude/Codex installer Settings has.
+        if waitingBannerFailed, cachedAll.contains(where: \.waiting) { return tr(.waitingBannerFailed) }
+        if needsHooksNudge { return tr(.hooksNudge) }
         if needsWaitingSignalNudge { return tr(.waitingSignalNudge) }
         if case .available = updateStatus { return updateStatusText }
         return nil
@@ -171,8 +187,14 @@ extension StatusStore {
             }
             return
         }
-        // The tray notice is reserved for actionable non-hook maintenance or
-        // an already-configured Waiting route. Hook setup stays in Settings.
+        if waitingBannerFailed, cachedAll.contains(where: \.waiting) {
+            openSystemNotificationSettings()
+            return
+        }
+        if needsHooksNudge {
+            installHooks()
+            return
+        }
         if needsWaitingSignalNudge {
             openSettings(
                 focusWaitingSignals: true,
@@ -261,8 +283,11 @@ extension StatusStore {
         WorkbenchWindowController.shared.show(store: self)
     }
 
+    /// 21.0: a row's details open in the Workbench with that row selected —
+    /// one inspector, not three (the Details window is gone).
     func openAgentDetail(_ row: AgentRow) {
-        AgentDetailWindowController.shared.show(store: self, row: row)
+        workbenchSelectKey = row.rowKey
+        WorkbenchWindowController.shared.show(store: self)
     }
 
     func quit() {

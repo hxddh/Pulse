@@ -269,6 +269,9 @@ extension StatusStore {
                 DebugLog.write("safe support report exported")
             } catch {
                 DebugLog.write("safe support report export failed \(error.localizedDescription)")
+                // 21.0: a click leaves a visible trace — the Save panel used
+                // to close and nothing happened.
+                NSAlert(error: error).runModal()
             }
         }
     }

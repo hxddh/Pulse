@@ -197,8 +197,10 @@ extension StatusStore {
         return RespondShown(attached) == shown ? attached : nil
     }
 
+    /// The full request, and Allow beside it, live in the Workbench
+    /// inspector's Respond card (scene AR).
     func openRespond(_ row: AgentRow) {
-        AgentDetailWindowController.shared.show(store: self, row: row)
+        openAgentDetail(row)
     }
 
     /// Every exit from here is visible.

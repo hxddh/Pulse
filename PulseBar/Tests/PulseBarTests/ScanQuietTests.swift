@@ -34,6 +34,7 @@ struct ScanQuietTests {
             ("allowWorkbenchActuation", \StatusStore.allowWorkbenchActuation),
             ("appDataAgents", \StatusStore.appDataAgents),
             ("autoProbe", \StatusStore.autoProbe),
+            ("pulseHookLauncherError", \StatusStore.pulseHookLauncherError),
             ("broadcastFleet", \StatusStore.broadcastFleet),
             ("cachedAll", \StatusStore.cachedAll),
             ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
@@ -45,7 +46,6 @@ struct ScanQuietTests {
             ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
             ("hooksStatus", \StatusStore.hooksStatus),
             ("hotkey", \StatusStore.hotkey),
-            ("hotkeyEnabled", \StatusStore.hotkeyEnabled),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
             ("installReport", \StatusStore.installReport),
             ("isCopyingShapeReport", \StatusStore.isCopyingShapeReport),
@@ -96,6 +96,7 @@ struct ScanQuietTests {
             ("updateDownloadStatus", \StatusStore.updateDownloadStatus),
             ("updateStatus", \StatusStore.updateStatus),
             ("waitHistory", \StatusStore.waitHistory),
+            ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
             ("workbenchSelectKey", \StatusStore.workbenchSelectKey),
         ]
     }

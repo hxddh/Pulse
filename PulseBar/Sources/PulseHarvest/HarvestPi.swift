@@ -96,9 +96,15 @@ extension NativeActivityHarvest {
         f.structured = true
         f.sourcePath = path
 
-        for line in text.split(whereSeparator: \.isNewline) {
+        let lines = text.split(whereSeparator: \.isNewline)
+        // Pi keeps every branch in one file (`id` / `parentId`); what the
+        // session shows is the branch ending at the newest entry. Records on
+        // an abandoned branch must not supply the title or the last word.
+        let offBranch = piOffBranchLines(lines)
+        for (index, line) in lines.enumerated() {
             let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard raw.hasPrefix("{") else { continue }
+            let onBranch = !offBranch.contains(index)
             // Tool-result bodies can be megabytes. JSON-parsing them blew the
             // adapter deadline and left the /resume title unread. 8.2: the
             // skipped lines are exactly the assistant records that carry
@@ -106,7 +112,7 @@ extension NativeActivityHarvest {
             // regex instead of losing them (JSON string content escapes its
             // quotes, so `"model":"…"` cannot match inside prose).
             if raw.count > 8_192, !piLineMightCarryTitle(raw) {
-                piSalvageLargeLine(raw, into: &f)
+                if onBranch { piSalvageLargeLine(raw, into: &f) }
                 continue
             }
             guard let data = raw.data(using: .utf8),
@@ -149,7 +155,7 @@ extension NativeActivityHarvest {
                     sessionNames = title.isEmpty ? [""] : [cleanPiSessionTitle(title)]
                 }
             }
-            if recordType == "compaction" {
+            if recordType == "compaction", onBranch {
                 let summary = cleanPiSessionTitle(firstString(object, keys: ["summary"]))
                 if !summary.isEmpty { compactionSummaries.append(summary) }
                 if let tail = object["retainedTail"] as? [Any] {
@@ -164,6 +170,7 @@ extension NativeActivityHarvest {
                 }
             }
 
+            guard onBranch else { continue }
             let userTitle = cleanPiSessionTitle(piUserText(from: object))
             if !userTitle.isEmpty { userTitles.append(userTitle) }
 
@@ -233,8 +240,73 @@ extension NativeActivityHarvest {
         // never ran for it — the one adapter fixed alone again. Run it here
         // on the same window.
         var result = [f]
-        applyTranscriptSelfReport(&result, text: text)
+        let branchText = offBranch.isEmpty
+            ? text
+            : lines.enumerated()
+                .filter { !offBranch.contains($0.offset) }
+                .map { String($0.element) }
+                .joined(separator: "\n")
+        applyTranscriptSelfReport(&result, text: branchText)
         return result
+    }
+
+    /// Line indices of records known to sit on a branch other than the
+    /// active one. The active branch is the `parentId` chain from the last
+    /// record with an `id` in file order (Pi appends the current leaf last).
+    /// Records without an `id` — and the `type:session` header, whose `id` is
+    /// the session's — are never excluded. When the chain leaves the read
+    /// window (head + tail), records before its earliest known link cannot
+    /// be placed, so they are accepted rather than guessed off.
+    package static func piOffBranchLines(_ lines: [Substring]) -> Set<Int> {
+        var entries: [(index: Int, id: String, parent: String)] = []
+        for (index, line) in lines.enumerated() {
+            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard raw.hasPrefix("{") else { continue }
+            let head = String(raw.prefix(384))
+            if head.contains("\"type\":\"session\"") || head.contains("\"type\": \"session\"") { continue }
+            var id = ""
+            var parent = ""
+            if raw.count <= 8_192 {
+                guard let data = raw.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { continue }
+                if firstString(object, keys: ["type"]).lowercased() == "session" { continue }
+                id = (object["id"] as? String) ?? ""
+                parent = (object["parentId"] as? String) ?? ""
+            } else {
+                // Megabyte tool records: Pi writes `type`, `id`, `parentId`
+                // first, so the head is enough and stays O(1).
+                id = regexValue(head, patterns: [#""id"\s*:\s*"([^"]+)""#])
+                parent = regexValue(head, patterns: [#""parentId"\s*:\s*"([^"]+)""#])
+            }
+            guard !id.isEmpty else { continue }
+            entries.append((index, id, parent))
+        }
+        guard let leaf = entries.last else { return [] }
+        var lineOf: [String: Int] = [:]
+        var parentOf: [String: String] = [:]
+        for entry in entries {
+            lineOf[entry.id] = entry.index
+            parentOf[entry.id] = entry.parent
+        }
+        var chain: Set<String> = []
+        var cursor = leaf.id
+        var broken = false
+        while !cursor.isEmpty, !chain.contains(cursor) {
+            guard lineOf[cursor] != nil else {
+                broken = true
+                break
+            }
+            chain.insert(cursor)
+            cursor = parentOf[cursor] ?? ""
+        }
+        let earliest = chain.compactMap { lineOf[$0] }.min() ?? leaf.index
+        var off: Set<Int> = []
+        for entry in entries where !chain.contains(entry.id) {
+            if broken, entry.index < earliest { continue }
+            off.insert(entry.index)
+        }
+        return off
     }
 
     package static func firstMeaningfulPiTitle(_ titles: [String]) -> String? {

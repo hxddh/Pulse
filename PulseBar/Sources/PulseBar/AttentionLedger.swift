@@ -24,7 +24,7 @@ import Foundation
 /// Retention is `retentionDays` for resolved events and `maxEvents` total;
 /// active Waiting events are live state and are never evicted by the cap. The
 /// user can clear the whole history from Preferences.
-struct AttentionLedger: Codable {
+struct AttentionLedger: Codable, Equatable {
     static let schemaVersion = 1
     /// How long a resolved Waiting event stays on disk.
     static let retentionDays = 14
@@ -121,23 +121,29 @@ struct AttentionLedger: Codable {
             .sorted { $0.resolvedAtMs > $1.resolvedAtMs }
     }
 
+    static func title(for row: AgentRow) -> String {
+        let title = row.usefulTask ?? AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
+        return String(title.prefix(160))
+    }
+
     mutating func observe(row: AgentRow, nowMs: Int64) {
         let key = row.rowKey
         if let index = events.lastIndex(where: { $0.rowKey == key && $0.isActive }) {
             events[index].lastSeenAtMs = nowMs
-            let title = row.usefulTask ?? String(row.agent.displayName.prefix(160))
-            events[index].title = String(title.prefix(160))
+            // 21.0: the same title rule as a new event. The update used to
+            // fall back to the agent name while creation fell back to the
+            // project, so the second scan of every wait rewrote the file.
+            events[index].title = Self.title(for: row)
             events[index].kind = row.waitKind
             events[index].project = AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
             return
         }
-        let title = row.usefulTask ?? AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
         events.append(Event(
             id: "\(key)|\(nowMs)",
             rowKey: key,
             agent: row.agent.rawValue,
             session: row.sessionID,
-            title: String(title.prefix(160)),
+            title: Self.title(for: row),
             kind: row.waitKind,
             project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
             observedAtMs: nowMs,
@@ -226,6 +232,19 @@ struct AttentionLedger: Codable {
             let resolvedLimit = max(0, Self.maxEvents - active.count)
             events = active + Array(resolved.prefix(resolvedLimit))
         }
+    }
+
+    /// Whether saving `self` would write anything `other` did not already
+    /// hold. `lastSeenAtMs` is left out: every scan moves it for every open
+    /// wait and nothing reads it back, so counting it rewrote the file on
+    /// every scan for as long as anything was waiting.
+    func hasSameDurableState(as other: AttentionLedger) -> Bool {
+        func durable(_ ledger: AttentionLedger) -> AttentionLedger {
+            var copy = ledger
+            for index in copy.events.indices { copy.events[index].lastSeenAtMs = 0 }
+            return copy
+        }
+        return durable(self) == durable(other)
     }
 
     /// This file holds session titles — the user's own words, up to 160

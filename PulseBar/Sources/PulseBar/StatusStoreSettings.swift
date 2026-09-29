@@ -35,7 +35,6 @@ extension StatusStore {
             allowAppData: allowAppData,
             appDataAgents: appDataAgents,
             hotkey: hotkey,
-            hotkeyEnabled: hotkeyEnabled,
             allowTerminalAutomation: allowTerminalAutomation,
             allowWorkbenchActuation: allowWorkbenchActuation,
             measureWorkspaceEffect: measureWorkspaceEffect,
@@ -61,7 +60,6 @@ extension StatusStore {
         allowAppData = s.allowAppData
         appDataAgents = s.appDataAgents
         hotkey = s.hotkey
-        hotkeyEnabled = s.hotkeyEnabled
         allowTerminalAutomation = s.allowTerminalAutomation
         allowWorkbenchActuation = s.allowWorkbenchActuation
         measureWorkspaceEffect = s.measureWorkspaceEffect
@@ -163,7 +161,7 @@ extension StatusStore {
     /// Re-register the global shortcut and report honestly when the system
     /// refuses (another app already owns the combination).
     func applyHotkey() {
-        let choice = hotkeyEnabled ? hotkey : .off
+        let choice = hotkey
         hotkeyRegistered = GlobalHotKey.install(choice: choice)
         if choice != .off, !hotkeyRegistered {
             DebugLog.write("hotkey \(hotkey.rawValue) registration FAILED — likely taken")

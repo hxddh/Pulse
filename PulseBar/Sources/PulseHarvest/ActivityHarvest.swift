@@ -740,6 +740,27 @@ package enum AttentionReader {
                 }
                 continue
             }
+            // A clock-skewed or malformed hook event must not become a
+            // permanent Waiting row. Activity rows use the same small future
+            // tolerance; keep it consistent here.
+            let arrival = receivedAtMs > 0 ? receivedAtMs : tsMs
+            let clock = clockVerdict(
+                eventMs: tsMs, arrivalMs: arrival, isRemote: !host.isEmpty
+            )
+            // Computed before the turn rule so the stop grace can compare
+            // this line's own clock with the raise's; an unusable stamp is
+            // skipped only after that rule, exactly as before.
+            let effective: Int64
+            let suspect: Bool
+            if !host.isEmpty, tsMs > 0, receivedAtMs > 0, let fileSkewMs {
+                // Remote with a stamp: the file's verdict, not this line's.
+                suspect = fileSkewMs != 0
+                effective = min(receivedAtMs, tsMs + fileSkewMs)
+            } else {
+                suspect = clock == .trustArrival
+                effective = suspect ? arrival : tsMs
+            }
+
             // A turn ending clears a blocked wait — unless that wait was
             // raised moments ago (see `stopGraceMs`) — and then says "your
             // turn" below, like any other raise. A session-less turn only
@@ -747,7 +768,7 @@ package enum AttentionReader {
             if kind == .turn {
                 func shouldKeep(_ existing: Entry) -> Bool {
                     // `effectiveMs`, not the raw stamp: this is the same
-                    // choice `clockVerdict` already made a few lines below,
+                    // choice `clockVerdict` made just above,
                     // and the two must agree. A remote box whose clock runs
                     // half an hour behind produced a Permission the reader
                     // deliberately measured from arrival — and then the Stop
@@ -755,9 +776,15 @@ package enum AttentionReader {
                     // instantly, because the grace window alone was still
                     // measured against the stamp everything else had refused
                     // to trust.
+                    //
+                    // Measured from the raise to *this turn line*, never to
+                    // `nowMs`: the verdict is a function of the two lines, so
+                    // re-reading the same file a minute later cannot flip a
+                    // kept permission into a cleared one.
                     existing.isBlocking
                         && existing.effectiveMs > 0
-                        && nowMs - existing.effectiveMs < stopGraceMs
+                        && clock != .unusable
+                        && effective - existing.effectiveMs < stopGraceMs
                 }
                 if session.isEmpty {
                     for k in siblingKeys() {
@@ -772,29 +799,13 @@ package enum AttentionReader {
                 if AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "") == true { continue }
             }
 
-            // A clock-skewed or malformed hook event must not become a
-            // permanent Waiting row. Activity rows use the same small future
-            // tolerance; keep it consistent here.
-            let arrival = receivedAtMs > 0 ? receivedAtMs : tsMs
-            let clock = clockVerdict(
-                eventMs: tsMs, arrivalMs: arrival, isRemote: !host.isEmpty
-            )
             switch clock {
             case .unusable:
                 continue
             case .trustEvent, .trustArrival:
                 break
             }
-            let effective: Int64
-            let suspect: Bool
-            if !host.isEmpty, tsMs > 0, receivedAtMs > 0, let fileSkewMs {
-                // Remote with a stamp: the file's verdict, not this line's.
-                suspect = fileSkewMs != 0
-                effective = min(receivedAtMs, tsMs + fileSkewMs)
-            } else {
-                suspect = clock == .trustArrival
-                effective = suspect ? arrival : tsMs
-            }
+
             if effective > nowMs + 5 * 60 * 1000 { continue }
             let expired = nowMs - effective > ttlMs
             // A local wait that expires is covered by the process probe, so it

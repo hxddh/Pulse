@@ -44,6 +44,8 @@ final class StatusStore {
     var hooksStatus: HooksSupport.Status = .unknown
     /// Native `pulse-hook` launcher present — Attention bridge path, not Claude/Codex install.
     var pulseHookLauncherReady = false
+    /// 21.0: why the last "ensure pulse-hook" click failed, shown beside it.
+    var pulseHookLauncherError: String?
     var didCopyAttentionRaise = false
     var showAllAgents = false
     var isRefreshing = false
@@ -58,8 +60,9 @@ final class StatusStore {
     var didCopyShapeReport = false
     /// Agents the user muted — no notifications, still shown in the tray.
     var mutedAgents: Set<AgentID> = []
-    var hotkey: HotkeyChoice = .commandShiftP
-    var hotkeyEnabled = false
+    /// `.off` until the person picks one (see `PulseSettings.hotkey`).
+    var hotkey: HotkeyChoice = .off
+    var hotkeyEnabled: Bool { hotkey != .off }
     /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
     var allowTerminalAutomation = false
     var allowWorkbenchActuation = false
@@ -113,6 +116,8 @@ final class StatusStore {
     var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
     var notifyAuthorized: Bool?
+    /// 21.0: Notification Center refused the last "needs you" banner.
+    var waitingBannerFailed = false
     /// True when the latest harvest stopped before every adapter reported.
     /// Existing per-agent health is retained in that case; the banner exposes
     /// the scan gap without turning every unvisited adapter into an error.
@@ -507,6 +512,9 @@ final class StatusStore {
             Task { @MainActor in
                 guard store.autoProbe else { return }
                 store.refresh(reason: "timer")
+                // One date comparison unless a day has passed since the last
+                // answer — how a Mac that never sleeps still re-checks.
+                UpdateCheck.shared.startIfEnabled(store: store)
             }
         }
         // Let the system coalesce wakeups — meaningful battery win for a

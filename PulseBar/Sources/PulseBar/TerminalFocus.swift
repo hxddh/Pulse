@@ -143,12 +143,27 @@ enum TerminalFocus {
     /// Terminal / iTerm tab select — only called after Automation opt-in + click.
     /// Internal since 4.0-β: `WorkbenchActuation` selects the exact tab with
     /// this before it is allowed to type a single character.
+    ///
+    /// Only a terminal that is already running is asked: `tell application`
+    /// launches an app that is not, so a click meant for iTerm used to open
+    /// Terminal.app (and the other way round) just to search it for a tab it
+    /// could not have. Each script activates its app only on a match.
     static func focusTTY(_ raw: String) -> Bool {
         let tty = normalizeTTY(raw)
         guard !tty.isEmpty else { return false }
-        if focusTerminalAppTTY(tty) { return true }
-        if focusITermTTY(tty) { return true }
+        if isRunning(terminalBundleID), focusTerminalAppTTY(tty) { return true }
+        if isRunning(iTermBundleID), focusITermTTY(tty) { return true }
         return false
+    }
+
+    static let terminalBundleID = "com.apple.Terminal"
+    static let iTermBundleID = "com.googlecode.iterm2"
+    /// A tab search that has not answered in this long will not; the click
+    /// reports "not reached" instead of freezing the menu bar.
+    static let focusScriptTimeout: TimeInterval = 5
+
+    private static func isRunning(_ bundleID: String) -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
     }
 
     private static func normalizeTTY(_ raw: String) -> String {
@@ -159,11 +174,20 @@ enum TerminalFocus {
     }
 
     private static func focusTerminalAppTTY(_ tty: String) -> Bool {
+        osascriptBool(terminalTabScript(tty: tty), timeout: focusScriptTimeout)
+    }
+
+    private static func focusITermTTY(_ tty: String) -> Bool {
+        osascriptBool(iTermTabScript(tty: tty), timeout: focusScriptTimeout)
+    }
+
+    /// The Terminal.app tab search. Internal so a test can hold the rule
+    /// that `activate` runs only on a match.
+    static func terminalTabScript(tty: String) -> String {
         let escaped = tty.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = """
+        return """
         tell application "Terminal"
-          activate
           repeat with w in windows
             repeat with t in tabs of w
               try
@@ -171,6 +195,7 @@ enum TerminalFocus {
                 if ttyName contains "\(escaped)" then
                   set selected of t to true
                   set frontmost of w to true
+                  activate
                   return true
                 end if
               end try
@@ -179,22 +204,23 @@ enum TerminalFocus {
         end tell
         return false
         """
-        return osascriptBool(script)
     }
 
-    private static func focusITermTTY(_ tty: String) -> Bool {
+    /// The iTerm tab search; same rule.
+    static func iTermTabScript(tty: String) -> String {
         let escaped = tty.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = """
+        return """
         tell application "iTerm"
-          activate
           repeat with w in windows
             repeat with t in tabs of w
               repeat with s in sessions of t
                 try
                   set ttyName to (tty of s as text)
                   if ttyName contains "\(escaped)" then
+                    select w
                     select t
+                    activate
                     return true
                   end if
                 end try
@@ -204,31 +230,25 @@ enum TerminalFocus {
         end tell
         return false
         """
-        return osascriptBool(script)
     }
 
     /// Internal since 4.0-β for the same reason as `focusTTY`.
-    static func osascriptBool(_ source: String) -> Bool {
-        let t = Process()
-        t.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        t.arguments = ["-e", source]
-        let out = Pipe()
-        let err = Pipe()
-        t.standardOutput = out
-        t.standardError = err
-        do {
-            try t.run()
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            _ = err.fileHandleForReading.readDataToEndOfFile()
-            t.waitUntilExit()
-            guard t.terminationStatus == 0 else { return false }
-            let text = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased() ?? ""
-            return text.contains("true")
-        } catch {
-            return false
-        }
+    ///
+    /// Bounded: `ProcessIO.run` drains both pipes and kills the child at the
+    /// deadline, so a scripted app that never answers cannot hang the caller.
+    /// The default is generous for callers that type text; the tab search
+    /// passes `focusScriptTimeout`.
+    static func osascriptBool(_ source: String, timeout: TimeInterval = 30) -> Bool {
+        guard let result = ProcessIO.run(
+            executable: "/usr/bin/osascript",
+            arguments: ["-e", source],
+            timeout: timeout,
+            outputLimit: 64 * 1024
+        ), !result.timedOut, result.status == 0 else { return false }
+        let text = String(decoding: result.stdout, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return text.contains("true")
     }
 }
 

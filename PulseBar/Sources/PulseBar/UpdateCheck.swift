@@ -39,7 +39,34 @@ final class UpdateCheck {
         /// Running the newest published version.
         case current
         case available(ReleaseInfo)
-        case failed(String)
+        case failed(Failure)
+    }
+
+    /// Why a check did not produce an answer — typed so the surface can say
+    /// it in the user's language. `detail` is the untranslated technical
+    /// fact (a status code, the system's own error text) for the debug log
+    /// and as the suffix after the localized reason.
+    enum Failure: Equatable {
+        /// The feed URL (Info.plist `PulseUpdateFeed`) does not parse.
+        case badFeed
+        /// The request never got an HTTP answer (offline, DNS, TLS, timeout).
+        case network(String)
+        /// GitHub answered with a non-2xx status.
+        case http(Int)
+        /// The body is not a release (or a list of releases).
+        case badResponse
+        /// The release has no usable tag.
+        case noTag
+
+        var detail: String {
+            switch self {
+            case .badFeed: return "bad feed url"
+            case .network(let message): return message
+            case .http(let code): return "HTTP \(code)"
+            case .badResponse: return "bad response"
+            case .noTag: return "no tag"
+            }
+        }
     }
 
     enum DownloadStatus: Equatable {
@@ -56,10 +83,28 @@ final class UpdateCheck {
     /// Default feed; override with `PulseUpdateFeed` in Info.plist.
     private static let defaultLatestFeed = "https://api.github.com/repos/hxddh/Pulse/releases/latest"
     private static let defaultReleasesFeed = "https://api.github.com/repos/hxddh/Pulse/releases?per_page=15"
-    private static let minInterval: TimeInterval = 24 * 60 * 60
+    /// Nested, so not main-actor isolated: `isDue` is a pure function.
+    enum Cadence {
+        static let minInterval: TimeInterval = 24 * 60 * 60
+        /// After a failed check: soon enough that a laptop back on the
+        /// network learns about a release the same day, rare enough to be no
+        /// load.
+        static let retryInterval: TimeInterval = 60 * 60
+    }
 
+    /// The last check that got an answer. A failure never counts as a
+    /// check — before, one offline launch silenced the next 24 hours.
     private var lastCheck: Date?
+    /// The last attempt of any outcome, for the failure back-off.
+    private var lastAttempt: Date?
     private var inFlight = false
+
+    /// Pure: should a periodic caller start a check now?
+    nonisolated static func isDue(now: Date, lastSuccess: Date?, lastAttempt: Date?) -> Bool {
+        if let lastSuccess, now.timeIntervalSince(lastSuccess) < Cadence.minInterval { return false }
+        if let lastAttempt, now.timeIntervalSince(lastAttempt) < Cadence.retryInterval { return false }
+        return true
+    }
 
     private var feedURL: URL? {
         if let raw = (Bundle.main.infoDictionary?["PulseUpdateFeed"] as? String)?
@@ -76,13 +121,16 @@ final class UpdateCheck {
         return URL(string: raw)
     }
 
-    /// Called at launch and whenever settings change.
+    /// Called at launch, whenever settings change, and from the probe timer
+    /// and wake path — so a Mac that stays up for weeks still hears about a
+    /// release. Cheap when not due: one date comparison, no store write.
     func startIfEnabled(store: StatusStore) {
         guard store.updateCheckEnabled else {
-            store.updateStatus = .idle
+            // Scan-quiet: Observation announces every assignment, equal or not.
+            if store.updateStatus != .idle { store.updateStatus = .idle }
             return
         }
-        if let last = lastCheck, Date().timeIntervalSince(last) < Self.minInterval { return }
+        guard Self.isDue(now: Date(), lastSuccess: lastCheck, lastAttempt: lastAttempt) else { return }
         check(store: store, force: false)
     }
 
@@ -90,11 +138,11 @@ final class UpdateCheck {
         guard !inFlight else { return }
         guard force || store.updateCheckEnabled else { return }
         guard let url = feedURL else {
-            store.updateStatus = .failed("bad feed url")
+            store.updateStatus = .failed(.badFeed)
             return
         }
         inFlight = true
-        lastCheck = Date()
+        lastAttempt = Date()
         store.updateStatus = .checking
 
         var request = URLRequest(url: url)
@@ -112,6 +160,7 @@ final class UpdateCheck {
             )
             Task { @MainActor in
                 self.inFlight = false
+                if case .failed = result {} else { self.lastCheck = Date() }
                 store.updateStatus = result
                 DebugLog.write("updateCheck \(result)")
             }
@@ -124,11 +173,11 @@ final class UpdateCheck {
         error: Error?,
         preferPrerelease: Bool = false
     ) -> Status {
-        if let error { return .failed(error.localizedDescription) }
+        if let error { return .failed(.network(error.localizedDescription)) }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            return .failed("HTTP \(http.statusCode)")
+            return .failed(.http(http.statusCode))
         }
-        guard let data else { return .failed("bad response") }
+        guard let data else { return .failed(.badResponse) }
 
         let object: [String: Any]?
         if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -141,9 +190,9 @@ final class UpdateCheck {
                 return !pre
             } ?? list.first
         } else {
-            return .failed("bad response")
+            return .failed(.badResponse)
         }
-        guard let object else { return .failed("bad response") }
+        guard let object else { return .failed(.badResponse) }
 
         let tag = (object["tag_name"] as? String) ?? ""
         let page = (object["html_url"] as? String) ?? ""
@@ -154,7 +203,7 @@ final class UpdateCheck {
             return .current
         }
         let latest = normalize(tag)
-        guard !latest.isEmpty else { return .failed("no tag") }
+        guard !latest.isEmpty else { return .failed(.noTag) }
         guard isNewer(latest, than: PulseVersion.semver) else { return .current }
 
         let assets = (object["assets"] as? [[String: Any]]) ?? []

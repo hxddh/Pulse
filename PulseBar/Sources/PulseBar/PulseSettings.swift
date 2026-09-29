@@ -45,11 +45,13 @@ struct PulseSettings: Equatable {
     /// Per-agent scope for the deep scan. An empty set means no protected
     /// source is enabled; `allowAppData` is the explicit "all" switch.
     var appDataAgents: Set<AgentID> = []
-    var hotkey: HotkeyChoice = .commandShiftP
     /// Carbon global-hotkey registration can trigger an Apple Events privacy
-    /// request on unsigned builds. Keep it opt-in; choosing a shortcut in the
-    /// settings UI enables it explicitly.
-    var hotkeyEnabled = false
+    /// request on unsigned builds, so it stays opt-in: `.off` until chosen.
+    /// 21.0: one control. The shortcut was a picker disabled until a toggle
+    /// below it was switched on — two controls for one bit, in the wrong
+    /// order. `.off` is the picker's own first choice now.
+    var hotkey: HotkeyChoice = .off
+    var hotkeyEnabled: Bool { hotkey != .off }
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
     var allowTerminalAutomation = false
@@ -98,6 +100,7 @@ struct PulseSettings: Equatable {
         var legacyEndHour: Int?
         var sawMinuteKeys = false
         var sawCurrentAppDataPolicy = false
+        var sawHotkeyEnabled = false
 
         for line in text.split(whereSeparator: \.isNewline) {
             let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
@@ -124,8 +127,8 @@ struct PulseSettings: Equatable {
                 s.appDataAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
             case "appDataPolicyVersion":
                 sawCurrentAppDataPolicy = Int(raw) == Self.appDataPolicyVersion
-            case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .commandShiftP
-            case "hotkeyEnabled": s.hotkeyEnabled = on
+            case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .off
+            case "hotkeyEnabled": sawHotkeyEnabled = on
             case "terminalAutomation": s.allowTerminalAutomation = on
             case "workbenchActuation": s.allowWorkbenchActuation = on
             case "workspaceEffect": s.measureWorkspaceEffect = on
@@ -153,6 +156,9 @@ struct PulseSettings: Equatable {
             s.allowAppData = false
             s.appDataAgents.removeAll()
         }
+        // Before 21.0 a chosen shortcut only counted with `hotkeyEnabled=1`;
+        // 21.0 still writes that line, so older and newer builds agree.
+        if !sawHotkeyEnabled { s.hotkey = .off }
         s.quietStartMinute = clampMinute(s.quietStartMinute)
         s.quietEndMinute = clampMinute(s.quietEndMinute)
         return s

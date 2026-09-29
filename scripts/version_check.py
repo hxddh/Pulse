@@ -105,7 +105,11 @@ def main(argv: list[str]) -> int:
         ok, found = check(path, pattern, want)
         if ok:
             continue
-        if do_fix and found != "<not found>":
+        # 21.0: never rename the newest CHANGELOG heading. `--fix` used to
+        # rewrite "## 18.0.0" into "## 19.0.0", so 19.0.0 and 20.0.0 shipped
+        # with 18.0's notes as their release body. A release's section is
+        # written by a person; the gate only checks that it exists.
+        if do_fix and found != "<not found>" and path != CHANGELOG:
             fix(path, pattern, want)
             print(f"fixed   {label}: {found} → {want}")
             continue
@@ -125,7 +129,8 @@ def main(argv: list[str]) -> int:
         print(f"version truth: {want}")
         for f in failures:
             print("MISMATCH", f)
-        print("run: python3 scripts/version_check.py --fix", file=sys.stderr)
+        print("run: python3 scripts/version_check.py --fix "
+              "(the CHANGELOG section itself is never generated — write it)", file=sys.stderr)
         return 1
 
     print(f"version OK — {want} everywhere")

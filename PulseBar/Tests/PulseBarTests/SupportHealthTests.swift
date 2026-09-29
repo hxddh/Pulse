@@ -153,16 +153,27 @@ final class SupportHealthTests: XCTestCase {
     }
 
     @MainActor
-    func testTrayDoesNotPromptForMissingHooks() {
+    func testNotificationSetupOutranksTheHooksOffer() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
 
         XCTAssertTrue(store.needsHooksNudge)
-        // Hooks remain optional, but a visible Waiting row without notification
-        // authorization must explain how to receive the interruption while the
-        // tray is closed.
+        // A visible Waiting row without notification authorization must
+        // explain how to receive the interruption while the tray is closed;
+        // that outranks the (optional) hooks offer.
         XCTAssertEqual(store.maintenanceNoticeText, store.tr(.waitingNotifyNotConfigured))
         XCTAssertFalse(store.tr(.emptyHint).localizedCaseInsensitiveContains("install hooks"))
+    }
+
+    @MainActor
+    func testLiveClaudeWithoutHooksIsOfferedTheInstall() {
+        let store = StatusStore()
+        store.installPreviewFixture("waiting")
+        store.notifyAuthorized = true
+
+        XCTAssertTrue(store.needsHooksNudge)
+        XCTAssertEqual(store.maintenanceNoticeText, store.tr(.hooksNudge),
+                       "21.0: the tray offers the one-click Claude/Codex install")
     }
 
     @MainActor
@@ -391,7 +402,7 @@ final class SupportHealthTests: XCTestCase {
     }
 
     func testOpaqueLiveAgentOffersAttentionBridgeRepair() {
-        var item = health(
+        let item = health(
             agent: .replit,
             evidence: .process,
             processDetected: true,

@@ -174,6 +174,10 @@ public struct HarvestWalk: Sendable {
     public var transcripts: TranscriptSelection = .all
     /// Directory names the walk normally skips but this agent keeps.
     public var keptDirectoryNames: Set<String> = []
+    /// Directory names (lowercased) this agent's walk never descends into:
+    /// files there are read another way, and walking them would spend the
+    /// per-agent visit budget or merge them into the wrong row.
+    public var skippedDirectoryNames: Set<String> = []
     /// A path fragment (lowercased) that marks a file as a structured session
     /// even where the generic session-path rule would not.
     public var structuredPathFragment: String? = nil
@@ -244,7 +248,9 @@ public enum AgentCatalog {
             process: AgentProcessRule(basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude"], denyNeedles: ["Claude.app", "chrome-native-host"]),
             harvestRoots: [".claude/projects", ".claude/tasks"],
             harvestCommands: ["claude"],
-            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".claude/projects/fixture.jsonl")
+            // `<session>/subagents/agent-*.jsonl` are sidechains: counted by
+            // `claudeSubagentCounts`, never their parent's hero or last word.
+            walk: HarvestWalk(skippedDirectoryNames: ["subagents"], dropsContinuationPrompts: true, fixturePath: ".claude/projects/fixture.jsonl")
         ),
         AgentSpec(
             id: .codex,
@@ -473,7 +479,9 @@ public enum AgentCatalog {
             process: AgentProcessRule(basenames: ["openhands", "opendevin"], pathNeedles: ["openhands", "OpenHands", "OpenDevin"], denyNeedles: []),
             harvestRoots: [".openhands", ".openhands-state"],
             harvestCommands: ["openhands"],
-            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".openhands/session.json")
+            // `events/` holds one file per event; `base_state.json` reads the
+            // newest of them itself, so walking them only spends the budget.
+            walk: HarvestWalk(skippedDirectoryNames: ["events"], dropsContinuationPrompts: true, fixturePath: ".openhands/session.json")
         ),
         AgentSpec(
             id: .cline,

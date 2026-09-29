@@ -27,7 +27,9 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
             // The banner is where you actually are when the interruption lands
             // — being able to defer without opening anything is the point.
             if action == PulseNotify.snoozeActionID {
-                AppServices.store.snooze(rowKey: rowKey)
+                // A summary banner stands for every row it counted; "Later"
+                // on it defers all of them, not only the first.
+                AppServices.store.snooze(rowKeys: PulseNotify.snoozeTargets(rowKey: rowKey, rowKeys: summaryRowKeys))
                 return
             }
             // Refusing from the banner. This is the whole point of Answer
@@ -69,6 +71,13 @@ enum PulseNotify {
 
     static let focusActionID = "pulse.focus"
     static let snoozeActionID = "pulse.snooze"
+
+    /// The rows a banner's "Later" defers: every key a summary carried, else
+    /// the single banner's own key. Order kept, duplicates and blanks dropped.
+    static func snoozeTargets(rowKey: String, rowKeys: [String]) -> [String] {
+        var seen = Set<String>()
+        return (rowKeys.isEmpty ? [rowKey] : rowKeys).filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
     static let respondDenyActionID = "pulse.respond.deny"
     static let waitingCategoryID = "pulse.waiting"
     /// The same banner plus Deny, used only when a full request really is

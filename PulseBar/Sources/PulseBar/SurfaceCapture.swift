@@ -52,7 +52,10 @@ enum SurfaceCapture {
         switch fixture.value {
         case .mission(let board): return AnyView(MissionBoardView(board: board))
         case .proof(let model): return AnyView(ProofCardView(model: model))
-        case .row(let model, let expanded): return AnyView(TrayRowFace(model: model, expanded: expanded))
+        // The disclosure control is on, as in the tray, so a capture shows
+        // the trailing controls where they really sit.
+        case .row(let model, let expanded, let hovering):
+            return AnyView(TrayRowFace(model: model, hovering: hovering, expanded: expanded, onToggleExpand: {}))
         case .why(let model): return AnyView(WhyCardView(model: model))
         case .asks(let model): return AnyView(RowAsksFace(model: model))
         case .expanded(let model): return AnyView(TrayExpandedFace(model: model))

@@ -13,22 +13,22 @@ struct WhyCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let why = model.why {
                 Text(why)
-                    .font(.callout)
+                    .font(PulseTheme.Font.body)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
             Text(t(.whyTimeline))
-                .font(.caption.weight(.semibold))
+                .font(PulseTheme.Font.chip)
                 .foregroundStyle(.secondary)
             if model.lines.isEmpty {
                 Text(t(.whyNoHistory))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(Array(model.lines.enumerated()), id: \.offset) { _, line in
                         Text(line)
-                            .font(.caption.monospaced())
+                            .font(PulseTheme.Font.code)
                             .lineLimit(2)
                             .textSelection(.enabled)
                     }
@@ -36,20 +36,15 @@ struct WhyCardView: View {
                 HStack(spacing: 10) {
                     Button(t(.whyExport)) { send(.export) }
                         .buttonStyle(.link)
-                        .font(.caption)
+                        .font(PulseTheme.Font.caption)
                     if !notice.isEmpty {
                         Text(notice)
-                            .font(.caption)
+                            .font(PulseTheme.Font.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-        )
+        .pulseCard()
     }
 }

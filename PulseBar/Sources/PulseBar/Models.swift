@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "20.0.0"
+    static let semver = "21.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -355,6 +355,13 @@ struct AgentRow: Identifiable, Hashable {
     /// never inferred. Never the red lamp; a quiet count in the tray.
     var yourTurn: Bool = false
     var turnSinceMs: Int64 = 0
+    /// The session id the attention file used for this row's raise or turn,
+    /// when a hook event was matched onto it. It can be a prefix of
+    /// `sessionID` (or the other way round); a `done` must name the file's
+    /// spelling or it clears nothing.
+    var attentionSession: String = ""
+    /// The session a `done` line for this row must carry.
+    var doneSession: String { attentionSession.isEmpty ? sessionID : attentionSession }
     var viaWarp: Bool = false
     /// Host IDE detected by walking the process parent chain (`ps` only).
     var hostApp: HostAppKind? = nil
@@ -1307,6 +1314,11 @@ struct PulseSnapshot: Equatable {
     var turnCount: Int = 0
     /// Sessions suppressed by the per-agent cap (never silently dropped).
     var cappedSessions: Int = 0
+    /// 21.0: sessions older than the fresh window, left out of the list —
+    /// and which agents they belong to. A row that went quiet for 46
+    /// minutes used to vanish with no trace outside debug.log.
+    var staleHidden: Int = 0
+    var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0
     var probeError: String?
     var updatedAt: Date = .distantPast

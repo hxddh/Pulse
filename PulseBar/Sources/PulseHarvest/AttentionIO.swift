@@ -190,6 +190,21 @@ package enum AttentionIO {
         return data
     }
 
+    /// `write(2)` may also be short; loop until every byte is down.
+    private static func writeAll(_ fd: Int32, _ text: String) {
+        let bytes = Array(text.utf8)
+        var offset = 0
+        while offset < bytes.count {
+            let wrote = bytes.withUnsafeBytes { raw -> Int in
+                guard let base = raw.baseAddress else { return -1 }
+                return write(fd, base + offset, bytes.count - offset)
+            }
+            if wrote < 0, errno == EINTR { continue }
+            if wrote <= 0 { break }
+            offset += wrote
+        }
+    }
+
     package static func clearAll() {
         withExclusiveLock { fd in
             ftruncate(fd, 0)
@@ -230,26 +245,36 @@ package enum AttentionIO {
     /// Shared by Settings samples and the native hook receiver.
     package static func appendRawLine(_ line: String) {
         withExclusiveLock { fd in
-            let size = lseek(fd, 0, SEEK_END)
+            let size = max(0, Int(lseek(fd, 0, SEEK_END)))
             lseek(fd, 0, SEEK_SET)
-            var data = Data(count: max(0, Int(size)))
-            if size > 0 {
-                _ = data.withUnsafeMutableBytes { buf in
-                    read(fd, buf.baseAddress, Int(size))
-                }
+            let newLine = line.trimmingCharacters(in: .newlines)
+            // `read(2)` may return fewer bytes than asked; one call used to
+            // be taken as the whole file, and the rewrite below then dropped
+            // everything it had not read.
+            let data = size > 0 ? readAll(fd, size: size) : Data()
+            guard data.count == size else {
+                // Could not read what is there: never rewrite from a partial
+                // copy. Append instead — an empty line is skipped by readers.
+                lseek(fd, 0, SEEK_END)
+                writeAll(fd, "\n" + newLine + "\n")
+                fsync(fd)
+                return
             }
-            let text = String(data: data, encoding: .utf8) ?? ""
+            // Lossy, never empty: one invalid byte (a hook that wrote a
+            // truncated multibyte character) used to decode the whole file
+            // as "" — and the rewrite then erased every open wait.
+            let text = String(decoding: data, as: UTF8.self)
             var lines = text.split(whereSeparator: \.isNewline)
                 .map(String.init)
                 .filter { !$0.isEmpty && !$0.hasPrefix("#") }
-            lines.append(line.trimmingCharacters(in: .newlines))
+            lines.append(newLine)
             if lines.count > maxRetainedLines {
                 lines = compactLines(lines, cap: maxRetainedLines)
             }
             let body = header + lines.joined(separator: "\n") + "\n"
             ftruncate(fd, 0)
             lseek(fd, 0, SEEK_SET)
-            _ = body.withCString { ptr in write(fd, ptr, strlen(ptr)) }
+            writeAll(fd, body)
             fsync(fd)
         }
     }

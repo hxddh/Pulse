@@ -161,6 +161,7 @@ final class WhyTests: XCTestCase {
     func testARunningRowNeedsNoExplaining() {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.liveProcess = true
+        row.task = "Refactor the settings panes"
         XCTAssertNil(narrator().whyLine(row))
         row.waiting = true // a wait with no known signal is not explained by guessing
         XCTAssertNil(narrator().whyLine(row))
@@ -177,6 +178,26 @@ final class WhyTests: XCTestCase {
         XCTAssertTrue(card.lines[0].hasPrefix(String(format: L10n.t(.agoFormat, .en), DurationFormat.label(seconds: 60, lang: .en))))
     }
 
+    /// 21.0: the orange states explain themselves.
+    func testOrangeRowsSayWhy() throws {
+        var process = AgentRow(rowKey: "cursor|p", agent: .cursor)
+        process.liveProcess = true
+        XCTAssertTrue(try XCTUnwrap(narrator().whyLine(process)).contains("Cursor"))
+
+        var stalled = AgentRow(rowKey: "claude|s2", agent: .claude)
+        stalled.task = "Long build"
+        stalled.isStalled = true
+        stalled.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 25 * 60_000
+        let rule = RowNarrator(lang: .en, stallMinutes: 20)
+        let why = try XCTUnwrap(rule.whyLine(stalled))
+        XCTAssertTrue(why.contains("20"), "names the threshold it crossed: \(why)")
+
+        var failed = AgentRow(rowKey: "codex|s3", agent: .codex)
+        failed.task = "Migrate"
+        failed.outcome = "failed"
+        XCTAssertTrue(try XCTUnwrap(narrator().whyLine(failed)).contains("failed"))
+    }
+
     // MARK: - The tray row's face
 
     func testAPermissionRowShoutsAndOffersItsActions() {
@@ -184,8 +205,11 @@ final class WhyTests: XCTestCase {
         XCTAssertEqual(model.lamp, .waiting)
         XCTAssertEqual(model.chip?.kind, .waiting)
         XCTAssertNotEqual(model.accent, .none)
-        XCTAssertEqual(model.strip.map(\.action), [.dismiss, .snooze, .focus])
+        // 21.0: at most two visible verbs — answer it, or put it down.
+        XCTAssertEqual(model.strip.map(\.action), [.focus, .dismiss])
         XCTAssertTrue(model.stripAlwaysVisible)
+        XCTAssertEqual(model.menu.map(\.action), [.details, .focus, .dismiss, .snooze],
+                       "every verb is in the menu once")
         XCTAssertNotNil(model.why)
         XCTAssertEqual(model.menu.first?.action, .details)
     }
@@ -209,8 +233,11 @@ final class WhyTests: XCTestCase {
     func testAProcessOnlyRowPointsAtSupportHealth() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowProcessOnly(), lang: .en)
         XCTAssertEqual(model.lamp, .process)
-        XCTAssertEqual(model.strip.map(\.action), [.supportHealth])
-        XCTAssertEqual(model.accessibilityHint, L10n.t(.supportHealth, .en))
+        XCTAssertTrue(model.strip.isEmpty, "only a wait shows verbs without a click")
+        XCTAssertFalse(model.stripAlwaysVisible)
+        XCTAssertTrue(model.menu.contains { $0.action == .supportHealth })
+        XCTAssertTrue(model.whyInline || model.why == nil, "an orange row explains itself")
+        XCTAssertEqual(model.accessibilityHint, L10n.t(.processOnlyHint, .en))
         XCTAssertFalse(model.canPrimary)
     }
 
@@ -228,8 +255,7 @@ final class WhyTests: XCTestCase {
             respondOffered: true,
             fateNote: "should not show while an answer is still possible"
         ))
-        XCTAssertTrue(model.strip.contains { $0.action == .respondDeny })
-        XCTAssertTrue(model.strip.contains { $0.action == .respondReview })
+        XCTAssertEqual(model.strip.map(\.action), [.respondReview, .respondDeny])
         XCTAssertNil(model.fateNote)
         XCTAssertFalse(model.strip.contains { $0.title.lowercased().contains("allow") },
                        "Allow lives only beside the full request")
@@ -238,7 +264,7 @@ final class WhyTests: XCTestCase {
     func testEveryRowFixtureSpeaksBothLanguages() {
         for lang in [ResolvedLanguage.en, .zh] {
             for fixture in SurfaceFixtures.all(lang: lang) {
-                if case .row(let model, _) = fixture.value {
+                if case .row(let model, _, _) = fixture.value {
                     XCTAssertFalse(model.hero.isEmpty, fixture.name)
                     XCTAssertFalse(model.accessibilityLabel.isEmpty, fixture.name)
                     XCTAssertEqual(model.lang, lang)

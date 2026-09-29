@@ -15,15 +15,20 @@ final class AttentionWatcher: @unchecked Sendable {
     private var activitySource: DispatchSourceFileSystemObject?
     private var onChange: (() -> Void)?
     private var onActivity: (() -> Void)?
-    private var lastFire: TimeInterval = 0
-    private var lastActivityFire: TimeInterval = 0
-    /// A trailing fire is armed when an event lands inside the throttle
-    /// window. Without it, the second of two tool events one second apart
-    /// was consumed silently and the row kept showing the previous tool
-    /// until the next probe tick (Codex review on #78) — a leading-edge
-    /// throttle alone drops exactly the freshest state this source exists
-    /// to deliver.
-    private var activityTrailingArmed = false
+    /// One throttle per source. A trailing fire is armed when an event lands
+    /// inside the window. Without it, the second of two tool events one
+    /// second apart was consumed silently and the row kept showing the
+    /// previous tool until the next probe tick (Codex review on #78) — a
+    /// leading-edge throttle alone drops exactly the freshest state a source
+    /// exists to deliver. The attention file and the inbox had only the
+    /// leading edge, and shared one clock: a `done` landing 0.2 s after a
+    /// raise — or an inbox write right after a file write — was swallowed
+    /// until the next tick.
+    private var throttles: [Channel: CoalescingThrottle] = [
+        .file: CoalescingThrottle(window: 0.35),
+        .inbox: CoalescingThrottle(window: 0.35),
+        .activity: CoalescingThrottle(window: 1.0),
+    ]
     private var path: String = ""
     private var inboxPath: String = ""
     private var activityPath: String = ""
@@ -127,30 +132,8 @@ final class AttentionWatcher: @unchecked Sendable {
         )
         src.setEventHandler { [weak self] in
             guard let self else { return }
-            let now = Date().timeIntervalSince1970
-            self.lock.lock()
-            let due = now - self.lastActivityFire > 1.0
-            if due { self.lastActivityFire = now }
-            let armTrailing = !due && !self.activityTrailingArmed
-            if armTrailing { self.activityTrailingArmed = true }
-            let cb = self.onActivity
             let flags = src.data
-            self.lock.unlock()
-            if due { cb?() }
-            if armTrailing {
-                // Trailing edge: whatever landed inside the window is read
-                // once the window closes, so the latest state file is never
-                // left waiting for the next probe tick.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.05) { [weak self] in
-                    guard let self else { return }
-                    self.lock.lock()
-                    self.activityTrailingArmed = false
-                    self.lastActivityFire = Date().timeIntervalSince1970
-                    let trailing = self.onActivity
-                    self.lock.unlock()
-                    trailing?()
-                }
-            }
+            self.deliver(.activity)
             if flags.contains(.delete) || flags.contains(.rename) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                     self?.armActivity()
@@ -196,14 +179,8 @@ final class AttentionWatcher: @unchecked Sendable {
         )
         src.setEventHandler { [weak self] in
             guard let self else { return }
-            let now = Date().timeIntervalSince1970
-            self.lock.lock()
-            let due = now - self.lastFire > 0.35
-            if due { self.lastFire = now }
-            let cb = self.onChange
             let flags = src.data
-            self.lock.unlock()
-            if due { cb?() }
+            self.deliver(.inbox)
             if flags.contains(.delete) || flags.contains(.rename) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                     self?.armInbox()
@@ -255,14 +232,8 @@ final class AttentionWatcher: @unchecked Sendable {
         )
         src.setEventHandler { [weak self] in
             guard let self else { return }
-            let now = Date().timeIntervalSince1970
-            self.lock.lock()
-            let due = now - self.lastFire > 0.35
-            if due { self.lastFire = now }
-            let cb = self.onChange
             let flags = src.data
-            self.lock.unlock()
-            if due { cb?() }
+            self.deliver(.file)
             if flags.contains(.delete) || flags.contains(.rename) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                     self?.arm()
@@ -276,5 +247,73 @@ final class AttentionWatcher: @unchecked Sendable {
         source = src
         lock.unlock()
         src.resume()
+    }
+
+    fileprivate enum Channel { case file, inbox, activity }
+
+    /// Leading edge now, one trailing edge for whatever the window absorbed.
+    /// Runs on the main queue (every source's handler queue).
+    private func deliver(_ channel: Channel) {
+        let now = Date().timeIntervalSince1970
+        lock.lock()
+        var throttle = throttles[channel] ?? CoalescingThrottle(window: 0.35)
+        let decision = throttle.event(at: now)
+        let delay = throttle.trailingDelay(at: now)
+        throttles[channel] = throttle
+        let callback = channel == .activity ? onActivity : onChange
+        lock.unlock()
+        switch decision {
+        case .fire:
+            callback?()
+        case .absorbed:
+            break
+        case .armTrailing:
+            // Trailing edge: whatever landed inside the window is read once
+            // the window closes, so the latest state is never left waiting
+            // for the next probe tick.
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                self.throttles[channel]?.trailingFired(at: Date().timeIntervalSince1970)
+                let trailing = channel == .activity ? self.onActivity : self.onChange
+                self.lock.unlock()
+                trailing?()
+            }
+        }
+    }
+}
+
+/// A leading-edge throttle that never drops the last event: the first event
+/// fires at once, the next one inside the window arms a single trailing fire
+/// at the window's end, and any more before then ride on that one.
+struct CoalescingThrottle: Equatable, Sendable {
+    enum Decision: Equatable, Sendable { case fire, armTrailing, absorbed }
+
+    let window: TimeInterval
+    private(set) var lastFire: TimeInterval = 0
+    private(set) var trailingArmed = false
+
+    init(window: TimeInterval) {
+        self.window = window
+    }
+
+    mutating func event(at now: TimeInterval) -> Decision {
+        if !trailingArmed, now - lastFire > window {
+            lastFire = now
+            return .fire
+        }
+        if trailingArmed { return .absorbed }
+        trailingArmed = true
+        return .armTrailing
+    }
+
+    mutating func trailingFired(at now: TimeInterval) {
+        trailingArmed = false
+        lastFire = now
+    }
+
+    /// When the armed trailing fire should run: just past the window's end.
+    func trailingDelay(at now: TimeInterval) -> TimeInterval {
+        max(0, lastFire + window - now) + 0.05
     }
 }

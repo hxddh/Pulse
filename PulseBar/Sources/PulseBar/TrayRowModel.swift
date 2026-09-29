@@ -50,10 +50,15 @@ struct TrayRowModel: Equatable {
     var waitDetail: String?
     /// 17.0: which evidence put this row in its state.
     var why: String?
+    /// 21.0: the why is shown without a click for an orange row (stalled,
+    /// failed, process-only) and for a wait whose question is unknown — the
+    /// states that least explain themselves.
+    var whyInline: Bool
     var accent: Accent
     /// The whole row is a button (focus) only when there is a real handle.
     var canPrimary: Bool
-    /// The strip is always shown for a wait, on hover otherwise.
+    /// 21.0: the strip exists only for a wait and is always shown — a row
+    /// never grows under the pointer.
     var stripAlwaysVisible: Bool
     var strip: [Button]
     /// Respond's receipt, where a decided row would otherwise go quiet.
@@ -86,48 +91,50 @@ struct TrayRowModel: Equatable {
         let meta = n.rowMetaLine(row)
         let time = n.lastActivityLabel(row)
 
+        // 21.0: one fact, said once. Every verb lives in the ⋯ menu (and
+        // VoiceOver's actions); a waiting row additionally shows at most two
+        // of them — the way to answer and the way to put it down. Before,
+        // the same six verbs were printed in the strip, the menu, the
+        // context menu and the expanded card.
+        var menu: [Button] = [Button(action: .details, title: t(.trayOpenInWorkbench))]
+        let focus = row.canFocusTerminal ? Button(action: .focus, title: n.focusActionTitle(row)) : nil
+        let dismiss = Button(action: .dismiss, title: t(.dismissWait))
+        // A countdown you cannot stop is a worse deal than no countdown, so
+        // the same button undoes it.
+        let snooze = row.isSnoozed
+            ? Button(action: .unsnooze, title: t(.snoozed))
+            : Button(action: .snooze, title: t(.snooze))
+        // Respond (scene AR): Deny is safe from the row; Allow lives only
+        // beside the complete request text.
+        let review = Button(action: .respondReview, title: t(.respondReview))
+        let deny = Button(action: .respondDeny, title: t(.respondDeny))
+
+        let lampState = lamp(row)
+        let why = n.whyLine(row)
+        let waitDetail = n.localizedWaitDetail(row).map { truncate($0, 78) }
+
         var strip: [Button] = []
-        var menu: [Button] = [Button(action: .details, title: t(.details))]
         if row.waiting {
-            let dismiss = Button(action: .dismiss, title: t(.dismissWait))
-            // A countdown you cannot stop is a worse deal than no countdown,
-            // so the same button undoes it.
-            let snooze = row.isSnoozed
-                ? Button(action: .unsnooze, title: t(.snoozed))
-                : Button(action: .snooze, title: t(.snooze))
-            strip += [dismiss, snooze]
-            menu += [dismiss, snooze]
+            if input.respondOffered {
+                strip = [review, deny]
+            } else if let focus {
+                strip = [focus, row.isSnoozed ? snooze : dismiss]
+            } else {
+                strip = [dismiss, snooze]
+            }
         }
-        // Respond (scene AR): Deny is safe from the row; Allow lives only in
-        // Details beside the complete request text.
-        if input.respondOffered {
-            strip += [
-                Button(action: .respondDeny, title: t(.respondDeny)),
-                Button(action: .respondReview, title: t(.respondReview)),
-            ]
-        }
-        if row.canFocusTerminal {
-            let focus = Button(action: .focus, title: n.focusActionTitle(row))
-            strip.append(focus)
-            menu.append(focus)
-        }
-        if row.isProcessOnly {
-            let health = Button(action: .supportHealth, title: t(.supportHealth))
-            strip.append(health)
-            menu.append(health)
-        }
-        if input.needsReach {
-            let reach = Button(action: .setupWaiting, title: t(.setupWaitingSignals))
-            strip.append(reach)
-            menu.append(reach)
-        }
+        if input.respondOffered { menu += [review, deny] }
+        if let focus { menu.append(focus) }
+        if row.waiting { menu += [dismiss, snooze] }
+        if row.isProcessOnly { menu.append(Button(action: .supportHealth, title: t(.supportHealth))) }
+        if input.needsReach { menu.append(Button(action: .setupWaiting, title: t(.setupWaitingSignals))) }
 
         return TrayRowModel(
             lang: n.lang,
             rowKey: row.rowKey,
             agent: row.agent,
             agentName: row.agent.displayName,
-            lamp: lamp(row),
+            lamp: lampState,
             sourceLabel: n.rowSourceLabel(row),
             accessoryTime: time,
             chip: chip(row, input: input),
@@ -136,18 +143,20 @@ struct TrayRowModel: Equatable {
             errorLine: row.selfReportFresh && !row.lastErrorText.isEmpty
                 ? truncate(row.lastErrorText, 78) : nil,
             metaLine: meta,
-            waitDetail: n.localizedWaitDetail(row).map { truncate($0, 78) },
-            why: n.whyLine(row),
+            waitDetail: waitDetail,
+            why: why,
+            whyInline: why != nil && (lampState == .error || lampState == .process
+                || (lampState == .waiting && waitDetail == nil)),
             accent: accent(row),
             canPrimary: row.canFocusTerminal,
-            stripAlwaysVisible: row.waiting,
+            stripAlwaysVisible: !strip.isEmpty,
             strip: strip,
             fateNote: input.respondOffered ? nil : input.fateNote,
             menu: menu,
             notice: input.notice,
             accessibilityLabel: accessibilityText(row, hero: hero, meta: meta, time: time, narrator: n),
             accessibilityHint: row.isProcessOnly
-                ? t(.supportHealth)
+                ? t(.processOnlyHint)
                 : (row.canFocusTerminal ? n.primaryActionTitle(row) : "")
         )
     }

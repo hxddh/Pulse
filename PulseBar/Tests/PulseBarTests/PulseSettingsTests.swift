@@ -123,15 +123,22 @@ final class PulseSettingsTests: XCTestCase {
 
     func testGlobalShortcutIsOptInForLegacyAndNewFiles() {
         let legacy = PulseSettings.parse("hotkey=cmd_shift_p")
-        XCTAssertEqual(legacy.hotkey, .commandShiftP)
-        XCTAssertFalse(legacy.hotkeyEnabled, "old defaults must not register a system shortcut")
+        XCTAssertEqual(legacy.hotkey, .off, "old defaults must not register a system shortcut")
+        XCTAssertFalse(legacy.hotkeyEnabled)
+        XCTAssertEqual(PulseSettings().hotkey, .off)
+
+        // 21.0: a pre-21 file that had the toggle on keeps its shortcut.
+        let chosen = PulseSettings.parse("hotkey=cmd_opt_p\nhotkeyEnabled=1")
+        XCTAssertEqual(chosen.hotkey, .commandOptionP)
+        let switchedOff = PulseSettings.parse("hotkey=cmd_opt_p\nhotkeyEnabled=0")
+        XCTAssertEqual(switchedOff.hotkey, .off)
 
         var enabled = PulseSettings()
         enabled.hotkey = .commandShiftU
-        enabled.hotkeyEnabled = true
         let reparsed = PulseSettings.parse(enabled.serialized())
         XCTAssertEqual(reparsed.hotkey, .commandShiftU)
         XCTAssertTrue(reparsed.hotkeyEnabled)
+        XCTAssertTrue(enabled.serialized().contains("hotkeyEnabled=1"), "an older build reads the same choice")
     }
 
     func testMuteListSurvivesAndIgnoresUnknownAgents() {
@@ -166,9 +173,9 @@ final class PulseSettingsTests: XCTestCase {
     }
 
     func testUnparseableEnumsFallBackToDefaults() {
-        let s = PulseSettings.parse("lang=klingon\nhotkey=cmd_shift_zzz")
+        let s = PulseSettings.parse("lang=klingon\nhotkey=cmd_shift_zzz\nhotkeyEnabled=1")
         XCTAssertEqual(s.language, .auto)
-        XCTAssertEqual(s.hotkey, .commandShiftP)
+        XCTAssertEqual(s.hotkey, .off, "an unknown shortcut registers nothing")
     }
 
     func testNonNumericMinutesKeepDefaultsRatherThanZeroing() {

@@ -166,7 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let ownedWindowIDs: Set<String> = [
         "pulse-settings",
         "pulse-support-coverage",
-        "pulse-agent-detail",
         "pulse-tray-preview",
     ]
 
@@ -329,54 +328,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - Glance
-
-// SwiftUI views only ever run on the main actor, but only `body` is
-// implicitly isolated — helper computed properties are not, so calling
-// StatusStore's @MainActor methods from them is an error. Annotate the
-// whole view rather than sprinkling MainActor.assumeIsolated.
-@MainActor
-struct MenuBarLabel: View {
-    let snapshot: PulseSnapshot
-    /// Dips once when a *new* wait arrives, then holds steady.
-    ///
-    /// This used to breathe forever while anything was waiting. A permanent
-    /// animation in the menu bar is noise: it draws the eye every time it
-    /// crosses zero, says nothing new after the first second, and — because it
-    /// looks identical at 30 seconds and 40 minutes — competes with the one
-    /// signal that does carry urgency, the elapsed time beside it.
-    @State private var flash = false
-    @State private var flashTask: Task<Void, Never>?
-
-    private var waitingCount: Int { snapshot.sectionTotals[.needsYou] ?? 0 }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(nsImage: PulseBrand.menuIcon(for: snapshot.glance))
-                .resizable()
-                .renderingMode(.template)
-                .frame(width: 14, height: 14)
-                .foregroundStyle(snapshot.glance.lampColor)
-                .opacity(flash ? 0.4 : 1.0)
-                .accessibilityLabel(snapshot.accessibilityLabel)
-            if snapshot.glance != .idle, !snapshot.title.isEmpty {
-                Text(snapshot.title)
-                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(snapshot.glance.lampColor)
-                    .monospacedDigit()
-                    .lineLimit(1)
-            }
-        }
-        .help(snapshot.tooltip)
-        .onChange(of: waitingCount) { old, new in
-            guard new > old else { return }
-            flashTask?.cancel()
-            flashTask = Task { @MainActor in
-                withAnimation(.easeOut(duration: 0.10)) { flash = true }
-                try? await Task.sleep(nanoseconds: 110_000_000)
-                guard !Task.isCancelled else { return }
-                withAnimation(.easeIn(duration: 0.45)) { flash = false }
-            }
-        }
-    }
-}
