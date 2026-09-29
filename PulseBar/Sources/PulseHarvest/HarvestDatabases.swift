@@ -952,7 +952,7 @@ extension NativeActivityHarvest {
         return [fractional, plain]
     }()
 
-    nonisolated(unsafe) package static let fallbackParsers: [DateFormatter] = [
+    package static let fallbackParsers: [DateFormatter] = [
         "yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss",
         "yyyy-MM-dd HH:mm:ss.SSSSSS", "yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss",
     ].map { format in

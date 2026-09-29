@@ -109,14 +109,7 @@ package struct ClaudeManagedRuntime: ManagedRuntime {
     package nonisolated static func executable(
         fileExists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) -> String? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude",
-            home + "/.local/bin/claude",
-            home + "/.claude/local/claude",
-        ]
-        return candidates.first(where: fileExists)
+        ClaudeCLI.executable(fileExists: fileExists)
     }
 
     package nonisolated static func arguments(
