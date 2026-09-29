@@ -1006,9 +1006,6 @@ final class DetailPlanTests: XCTestCase {
 /// Clarity fixes — each test pins one defect found by reading the code: the
 /// value the user would have seen, before and after.
 @MainActor
-@Suite("Terminal tab script", .serialized)/// Clarity fixes — each test pins one defect found by reading the code: the
-/// value the user would have seen, before and after.
-@MainActor
 @Suite("Terminal tab script", .serialized)
 struct TerminalTabScriptTests {
     // MARK: - 9 · the tab search activates only on a match

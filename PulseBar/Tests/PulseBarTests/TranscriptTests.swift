@@ -237,7 +237,7 @@ final class TranscriptSummaryTests: XCTestCase {
         XCTAssertEqual(s.lastError, "stream disconnected before completion")
 
         let legacy = summary([
-            #"{"type":"event_msg","payload":{"type":"user_message","message":"## My request for Codex: Ship the Codex event_msg hero"}}"#,
+            ##"{"type":"event_msg","payload":{"type":"user_message","message":"## My request for Codex: Ship the Codex event_msg hero"}}"##,
             #"{"type":"event_msg","payload":{"type":"user_message","message":"continue"}}"#,
             #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Shipped."}]}}"#,
         ], .codex)

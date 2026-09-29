@@ -230,7 +230,8 @@ struct SessionBookTests {
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "a", pid: 77), nowMs: t0)
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "b", pid: 88), nowMs: t0)
         #expect(book.livePids == [77, 88])
-        #expect(book.processExited(pid: 77, atMs: t0 + minute))
+        let changed1 = book.processExited(pid: 77, atMs: t0 + minute)
+        #expect(changed1)
         #expect(HookFeed.word(book.sessions["claude|a"]?.state) == "ended")
         #expect(HookFeed.word(book.sessions["claude|b"]?.state) == "working")
         #expect(book.livePids == [88])
@@ -313,24 +314,31 @@ struct SessionBookTests {
 
     @Test func anEventWithNothingToSayMakesNoSession() {
         var book = SessionBook()
-        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "done", ms: t0, session: "x"), nowMs: t0))
-        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "end", ms: t0, session: "x"), nowMs: t0))
-        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0, session: ""), nowMs: t0))
+        let changed2 = book.apply(AttentionRecord(agent: "claude", kind: "done", ms: t0, session: "x"), nowMs: t0)
+        #expect(!changed2)
+        let changed3 = book.apply(AttentionRecord(agent: "claude", kind: "end", ms: t0, session: "x"), nowMs: t0)
+        #expect(!changed3)
+        let changed4 = book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0, session: ""), nowMs: t0)
+        #expect(!changed4)
         #expect(book.sessions.isEmpty)
     }
 
     @Test func theSpoolReadAgainIsNotNews() {
         var book = SessionBook()
         let event = ActivitySpool.Event(agent: "pi", session: "p", event: "tool", tool: "", target: "", prompt: "", cwd: "/w", tsMs: t0)
-        #expect(book.apply(activity: event, nowMs: t0))
-        #expect(!book.apply(activity: event, nowMs: t0 + 1_000))
+        let changed5 = book.apply(activity: event, nowMs: t0)
+        #expect(changed5)
+        let changed6 = book.apply(activity: event, nowMs: t0 + 1_000)
+        #expect(!changed6)
         let stale = ActivitySpool.Event(agent: "pi", session: "q", event: "tool", tool: "", target: "", prompt: "", cwd: "/w", tsMs: t0 - 2 * 60 * minute)
-        #expect(!book.apply(activity: stale, nowMs: t0), "a day-old spool file introduces nothing")
+        let changed7 = book.apply(activity: stale, nowMs: t0)
+        #expect(!changed7, "a day-old spool file introduces nothing")
     }
 
     @Test func aStampFromTheFutureIsRefused() {
         var book = SessionBook()
-        #expect(!book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 + 60 * minute, session: "s1"), nowMs: t0))
+        let changed8 = book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 + 60 * minute, session: "s1"), nowMs: t0)
+        #expect(!changed8)
     }
 
     @Test func aStartMidWorkKeepsItWorking() {
@@ -343,8 +351,10 @@ struct SessionBookTests {
     @Test func aDayOfSilenceIsForgotten() {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: t0, session: "s1"), nowMs: t0)
-        #expect(!book.prune(nowMs: t0 + 60 * minute))
-        #expect(book.prune(nowMs: t0 + SessionBook.retentionMs + 1))
+        let changed9 = book.prune(nowMs: t0 + 60 * minute)
+        #expect(!changed9)
+        let changed10 = book.prune(nowMs: t0 + SessionBook.retentionMs + 1)
+        #expect(changed10)
         #expect(book.sessions.isEmpty)
     }
 }
