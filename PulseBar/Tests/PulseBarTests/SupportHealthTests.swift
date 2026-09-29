@@ -402,7 +402,7 @@ final class SupportHealthTests: XCTestCase {
     }
 
     func testOpaqueLiveAgentOffersAttentionBridgeRepair() {
-        var item = health(
+        let item = health(
             agent: .replit,
             evidence: .process,
             processDetected: true,
