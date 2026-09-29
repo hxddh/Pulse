@@ -65,7 +65,7 @@ extension StatusStore {
     /// First live Waiting-none agent still without an active wait — Reach funnel focus target.
     var firstLiveWaitingNoneAgent: AgentID? {
         cachedAll.first {
-            $0.liveProcess && $0.agent.waitingSource == .none && !$0.waiting
+            $0.liveProcess && $0.agent.waitingSource == .none && !$0.isBlocked
         }?.agent
     }
 

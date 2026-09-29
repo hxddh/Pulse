@@ -127,7 +127,7 @@ extension StatusStore {
             amp.state = .processOnly
             amp.startedMs = now - 60 * 60 * 1000
 
-            var cursor = row(
+            let cursor = row(
                 "coverage-cursor",
                 .cursor,
                 task: "Refine adapter coverage",
@@ -238,7 +238,7 @@ extension StatusStore {
         )
         stalled.isStalled = true
 
-        var recent = row(
+        let recent = row(
             "cursor-preview",
             .cursor,
             task: "Refine crowded tray alignment",
@@ -249,7 +249,7 @@ extension StatusStore {
 
         var rows = [waiting, active, stalled, recent]
         if name != "compact" {
-            var cache = row(
+            let cache = row(
                 "kiro-preview",
                 .kiro,
                 task: "Audit settings copy",
