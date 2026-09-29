@@ -93,7 +93,7 @@ def install_claude() -> str:
         # HooksInstaller.ensureClaudeEvent): rewrite Pulse-owned entries so a
         # re-install migrates command and timeout; never touch user entries.
         entries = [e for e in hooks.get(event, []) if not _is_pulse_entry(json.dumps(e))]
-        # PermissionRequest may deliberately hold for a remote Respond answer;
+        # PermissionRequest may deliberately hold for a Respond answer;
         # every other event exits immediately and keeps the tight budget.
         timeout = 90 if event == "PermissionRequest" else 5
         entry: dict = {

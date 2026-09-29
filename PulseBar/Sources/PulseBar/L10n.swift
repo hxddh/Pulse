@@ -182,7 +182,7 @@ enum L10n {
         case .respondLocalHint:
             return "When a permission request arrives and its window is not in front of you — you are away, or looking at something else — Pulse holds the agent briefly so you can refuse it from the banner or answer it here. The agent's own prompt still appears if you do not. Off by default."
         case .respondWriteFailed:
-            return "The verdict could not be written — the remote agent falls back to its own prompt"
+            return "The verdict could not be written — the agent falls back to its own prompt"
         case .respondRefused:
             return "Not enough of this request is here to approve it"
         case .respondRequestGone:
@@ -667,6 +667,33 @@ enum L10n {
         case .updateFailedNoTag: return "The latest release has no version tag"
         case .staleHidden: return "%d older session(s) not shown (%@)"
         case .waitingBannerFailed: return "macOS did not show the last “needs you” banner — check Notifications"
+        case .lampRuleBlocked: return "Red: an agent is waiting on you."
+        case .lampRuleAllSnoozed: return "Red, quiet: every wait is snoozed."
+        case .lampRuleStalled: return "Orange: a running session has gone quiet past your stall threshold."
+        case .lampRuleThin: return "Orange: something is running that Pulse can only see as a process."
+        case .lampRuleRunning: return "Green: agents are working and nothing needs you."
+        case .lampRuleTurn: return "Grey: a turn ended — your move when you are ready."
+        case .lampRuleRecent: return "Grey: nothing running; recent sessions are listed."
+        case .lampRuleIdle: return "Grey: no coding agent is running."
+        case .lampRuleCantRefresh: return "Orange: Pulse could not read processes or sessions on its last try."
+        case .lampLeftSnoozed: return "%d snoozed"
+        case .lampLeftStale: return "%d older not shown"
+        case .auditRaised: return "Raised %@"
+        case .auditPosted: return "Banner shown %@"
+        case .auditSummary: return "Shown in a summary banner %@"
+        case .auditQueued: return "Banner queued %@"
+        case .auditClicked: return "You clicked it %@"
+        case .auditAcknowledged: return "You dismissed it %@"
+        case .auditSnoozed: return "Snoozed until %@"
+        case .auditResolved: return "Resolved %@"
+        case .auditSkipInFront: return "No banner (%@): the prompt was already in front of you"
+        case .auditSkipMuted: return "No banner (%@): this agent is muted"
+        case .auditSkipAcknowledged: return "No banner (%@): you had already dismissed it"
+        case .auditSkipHeld: return "Held (%@): another banner was shown moments ago"
+        case .auditSkipNotifyOff: return "No banner (%@): “needs you” notifications are off"
+        case .auditSkipNotAuthorized: return "No banner (%@): macOS has not allowed Pulse to notify"
+        case .auditSkipAtLaunch: return "No banner (%@): it was already waiting when Pulse started"
+        case .auditSkipRejected: return "No banner (%@): macOS refused it — check Notifications and Focus"
         }
     }
 
@@ -782,7 +809,7 @@ enum L10n {
         case .respondLocal: return "本机 Agent 也在 Pulse 里回答"
         case .respondLocalHint:
             return "权限请求到来时，如果它的窗口不在你眼前 —— 你不在，或者正看着别处 —— Pulse 会短暂拦住 agent，让你在横幅上直接拒绝，或在这里回答。你不答，agent 自己的提示照常出现。默认关闭。"
-        case .respondWriteFailed: return "你的决定没能写出 —— 远端会回到它自己的提示"
+        case .respondWriteFailed: return "你的决定没能写出 —— Agent 会回到它自己的提示"
         case .respondRefused: return "请求没到齐，不能在这里同意"
         case .respondRequestGone: return "这个请求已经不在了 —— 过期，或者已经答过"
         case .respondRequestChanged: return "显示的请求已被更新的请求替换 —— 什么都没发送，请重看"
@@ -1254,6 +1281,33 @@ enum L10n {
         case .updateFailedNoTag: return "最新发布没有版本标签"
         case .staleHidden: return "%d 个较早的会话未显示（%@）"
         case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」的通知 —— 请检查通知设置"
+        case .lampRuleBlocked: return "红：有 Agent 在等你。"
+        case .lampRuleAllSnoozed: return "红（已静音）：所有等待都被推迟了。"
+        case .lampRuleStalled: return "橙：有会话运行中但超过停滞阈值没有动静。"
+        case .lampRuleThin: return "橙：有 Agent 在运行，但 Pulse 只看到进程。"
+        case .lampRuleRunning: return "绿：Agent 在工作，没有需要你的事。"
+        case .lampRuleTurn: return "灰：有回合结束了，轮到你（不急）。"
+        case .lampRuleRecent: return "灰：没有在运行的；列出的是最近的会话。"
+        case .lampRuleIdle: return "灰：没有在运行的编码 Agent。"
+        case .lampRuleCantRefresh: return "橙：Pulse 上一次没能读取进程和会话。"
+        case .lampLeftSnoozed: return "%d 个已推迟"
+        case .lampLeftStale: return "%d 个较早的未显示"
+        case .auditRaised: return "%@ 开始等待"
+        case .auditPosted: return "%@ 发出通知"
+        case .auditSummary: return "%@ 合并进汇总通知"
+        case .auditQueued: return "%@ 通知排队中"
+        case .auditClicked: return "%@ 你点了通知"
+        case .auditAcknowledged: return "%@ 你忽略了它"
+        case .auditSnoozed: return "推迟到 %@"
+        case .auditResolved: return "%@ 已解决"
+        case .auditSkipInFront: return "没有通知（%@）：提示已经在你眼前"
+        case .auditSkipMuted: return "没有通知（%@）：这个 Agent 已静音"
+        case .auditSkipAcknowledged: return "没有通知（%@）：你已经忽略过它"
+        case .auditSkipHeld: return "延后（%@）：刚刚发过另一条通知"
+        case .auditSkipNotifyOff: return "没有通知（%@）：「需要你」通知已关闭"
+        case .auditSkipNotAuthorized: return "没有通知（%@）：macOS 尚未允许 Pulse 发通知"
+        case .auditSkipAtLaunch: return "没有通知（%@）：Pulse 启动时它已经在等"
+        case .auditSkipRejected: return "没有通知（%@）：macOS 拒绝了 —— 请检查通知与专注模式"
         }
     }
 
@@ -1393,12 +1447,10 @@ enum L10n {
         case supportYield, supportYieldDrifted
         case trayExpandRow, trayCollapseRow
         case trayScanIncomplete
-        // 14.0 · Proof
         case yourTurn, turnCount, jumpToTurn
         case whyHook, whyHookFront, whyPending, whyTurn, whyVendor, signalVendor
         case whyTimeline, whyExport, whyExported, whyNoHistory, whyResolved
         case doctorRun, doctorHint
-        // 13.0 · Mission
         case settingsPaneAlerts
         case settingsPaneConnections
         case settingsPanePermissions
@@ -1447,6 +1499,33 @@ enum L10n {
         case updateFailedNoTag
         case staleHidden
         case waitingBannerFailed
+        case lampRuleBlocked
+        case lampRuleAllSnoozed
+        case lampRuleStalled
+        case lampRuleThin
+        case lampRuleRunning
+        case lampRuleTurn
+        case lampRuleRecent
+        case lampRuleIdle
+        case lampRuleCantRefresh
+        case lampLeftSnoozed
+        case lampLeftStale
+        case auditRaised
+        case auditPosted
+        case auditSummary
+        case auditQueued
+        case auditClicked
+        case auditAcknowledged
+        case auditSnoozed
+        case auditResolved
+        case auditSkipInFront
+        case auditSkipMuted
+        case auditSkipAcknowledged
+        case auditSkipHeld
+        case auditSkipNotifyOff
+        case auditSkipNotAuthorized
+        case auditSkipAtLaunch
+        case auditSkipRejected
     }
 }
 

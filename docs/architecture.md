@@ -24,28 +24,30 @@
 ```
 PulseBar/Sources/
   PulseCore/     内核库。只 import Foundation（+ CryptoKit / CoreGraphics），严格并发 + warnings-as-errors。
-                 AgentCatalog（每 Agent 的全部非解析事实）· AcceptanceEvidence · PrivateFile / SafeRead
+                 AgentCatalog（每 Agent 的全部非解析事实）· PrivateFile / SafeRead
                  · ProcessIO · ContentSanitizer · TranscriptReader · SessionDigest · AttentionProtocol
                  · ProbeSchedule · ProbeStats · DebugLog · Guarded
   PulseHarvest/  采集库，依赖 Core。NativeActivityHarvest（扫描与遍历）· 厂商方言
                  （TranscriptDialect + HarvestCodex / Pi / Claude / SmallDialects）· HarvestDatabases
                  · ActivityHarvest · ProcessProbe · HarvestSupervisor · ScanEngine（ScanMemory）
                  · AttentionIO · ActivitySpool · TitleHeuristics · HarvestVocabulary
-  PulseRespond/  Respond 库，依赖 Core。RespondContract · RespondSpool
-  PulseManaged/  受管会话库，依赖 Core。ManagedRuntime · ManagedSession / Runner / Fleet
-                 · ManagedWorktree · ManagedPermission · AcceptanceRunner · WorkspaceEffect
-                 · EvidenceBook（14.0：检查、证据与运行中检查按工作目录存，受管候选与
-                 观察到的会话读同一页）· Mission
+  PulseRespond/  Respond 库，依赖 Core。RespondContract · RespondSpool（22.0 起仅本机）
   PulseBar/      可执行。builder、StatusStore、RowNarrator、WaitingDelivery、视图、hook 入口。
-                 15.0：指挥台的判断面是纯值（SurfaceModels：MissionBoard / ProofCardModel），
-                 视图只渲染值、发 intent，由 StatusStore 执行；SurfaceFixtures 的每个夹具在
-                 CI 里经 SurfaceCapture 渲染成 PNG（scripts/qa_surfaces.sh）。17.0：托盘行的脸
-                 同样是纯值（TrayRowModel → TrayRowFace）；AttentionHistory（PulseHarvest）
-                 把每次扫描读到的 hook 事件留成有界历史，供「为什么」与导出夹具。
-                 PulseCoreExports.swift 以 @_exported 引入四个库。
+                 15.0 起表面是纯值：视图只渲染值、发 intent，由 StatusStore 执行；
+                 SurfaceFixtures 的每个夹具在 CI 里经 SurfaceCapture 渲染成 PNG
+                 （scripts/qa_surfaces.sh）。17.0：托盘行的脸同样是纯值（TrayRowModel →
+                 TrayRowFace）；AttentionHistory（PulseHarvest）把每次扫描读到的 hook 事件
+                 留成有界历史，供「为什么」与导出夹具。
+                 PulseCoreExports.swift 以 @_exported 引入三个库。
 ```
 
-五个 target 全部在完整并发检查下零警告并开启 warnings-as-errors（12.4）。
+> **22.0 删除了 `PulseManaged`**（受管会话：ManagedRuntime、Session / Runner / Fleet、
+> Worktree、权限 MCP 服务、AcceptanceRunner、WorkspaceEffect、EvidenceBook、Mission）、
+> Core 里的 `AcceptanceEvidence` 与 `ProcessIO.runCheck`，以及 App 里的指挥台、Mission /
+> 工作副本验收卡、跨机器 Respond、舰队快照（`fleet.d/`）与远端收件箱（`attention.d/`）。
+> 一个状态灯应该看着编排器，而不是成为编排器。旧目录由 `LegacyCleanup` 在首次启动时删除一次。
+
+四个 target 全部在完整并发检查下零警告并开启 warnings-as-errors（12.4）。
 依赖只能向下：没有一个库引用得到 `StatusStore`、AppKit 或任何视图，这由编译器保证，
 不靠 review。库成员是 `package` 可见（Core 是 `public`）。每个 Agent 的全部非解析事实
 （进程规则、采集根目录、别名、Waiting / 采集等级、单字母标记、Respond 可达性）只在

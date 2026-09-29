@@ -5,7 +5,6 @@ shell — without expanding the Claude/Codex hook installer.
 
 **Audience:** bridge authors and Waiting-none agent owners.  
 **Runtime path:** `~/Library/Application Support/Pulse/attention.tsv`  
-**Remote inbox:** `~/Library/Application Support/Pulse/attention.d/<host>.tsv`  
 **Preferred writer:** `pulse-hook` → `PulseBar --hook` (native, no Python).  
 **Swift source of truth:** `AttentionProtocol` in PulseBar.
 
@@ -24,9 +23,8 @@ UTF-8 TSV, one event per line. Header must be the first line:
 <agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<host>\t<front>
 ```
 
-**v1 and v2 lines stay valid.** Six columns means `host` is empty, which means
-this Mac — exactly what every v1 line already meant; seven means `front` is
-unknown. Readers accept every header version, so an installed older hook keeps
+**v1 and v2 lines stay valid.** Six columns means `host` is empty; seven means
+`front` is unknown. Readers accept every header version, so an installed older hook keeps
 lighting the lamp after an upgrade (but see the v3 kind changes below).
 
 | Column | Rules |
@@ -37,7 +35,7 @@ lighting the lamp after an upgrade (but see the v3 kind changes below).
 | `message` | Human-readable; tab/newline stripped; ≤200 chars |
 | `session` | Opaque session key; empty allowed |
 | `cwd` | Absolute project path hint; empty allowed |
-| `host` | Machine label; **empty means this Mac**. `|`, `/`, tabs and newlines are replaced with `-`; a trailing `.local` is dropped; capped at 32 chars |
+| `host` | Machine label (`PULSE_HOST`). `|`, `/`, tabs and newlines are replaced with `-`; a trailing `.local` is dropped; capped at 32 chars. **Since 22.0 the reader ignores it**: every line in `attention.tsv` is this Mac's |
 | `front` | v3. `1` when the prompt's own window was the frontmost application as the event was raised, `0` when it was not, **empty when unknown**. Only the local native receiver fills it (parent-chain walk, no new permission). Unknown is never read as "the user is looking" |
 
 Readers skip blank lines, `#` comments, and unknown kinds. Writers rewrite the
@@ -163,42 +161,11 @@ that infers Waiting from silence. Waiting-none agents never raise harvest
 - Divergent headers historically confused readers — keep this byte-identical
   across Swift and optional Python writers.
 
-## Another machine (v2)
+## Another machine (removed in 22.0)
 
-Pulse writes no network code and runs no server. A remote agent becomes visible
-by its events reaching this Mac's inbox — by whatever means you already use.
-
-```bash
-# On the remote box: raise as usual, but sign the events.
-export PULSE_HOST="devbox"
-"$HOME/Library/Application Support/Pulse/pulse-hook" claude permission
-
-# On this Mac (or from the remote box's own cron / your own script):
-rsync devbox:'~/Library/Application Support/Pulse/attention.tsv' \
-  ~/Library/'Application Support'/Pulse/attention.d/devbox.tsv
-```
-
-- One file per host. Remote writers never contend for the local lock.
-- The **file name is the fallback identity**, so a remote box still running a v1
-  hook is shown as itself rather than as this Mac.
-- Bounds: at most 16 inbox files, 256 KB read per file.
-
-### What a remote row can and cannot claim
-
-Pulse cannot probe another machine, so a remote row **never** reports a live
-process and **never** offers Focus. Its line says *last heard*, not *last
-activity*. Once nothing refreshes it inside the TTL it becomes **lost contact**:
-the lamp comes down, the row stays, and the reason is stated — because "I
-stopped hearing from it" is not "it finished".
-
-Event stamps come from the sender's clock. When one disagrees with arrival past
-the point of belief, Pulse measures from arrival and says so on the row, rather
-than dropping the event the way it used to.
-
-### Trust
-
-**Anything that can write the inbox can light your lamp.** That is already true
-of the local `attention.tsv`; a synced folder widens it to anything with write
-access to that folder. The kind allowlist still applies — free text never
-becomes a red lamp — but the sender is not authenticated. Point the inbox at a
-directory you control.
+v2 added a remote inbox, `attention.d/<host>.tsv`, filled by the user's own
+sync tool, and rows for waits raised on other machines ("last heard", "lost
+contact"). 22.0 removed it: Pulse is a lamp for this Mac. The `host` column
+stays in the format so older writers keep working, and is ignored. Files a
+sync tool still drops into `attention.d/` are not read (Pulse leaves the
+directory alone).

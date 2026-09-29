@@ -29,8 +29,7 @@ import PulseCore
 /// - **A verdict is signed, not trusted.** The HMAC over the canonical string
 ///   binds request id + content digest + agent + host; only the local key
 ///   can mint it, and it never leaves this Mac.
-/// - **Reads are bounded** in files and bytes per file, like
-///   `AttentionIO.readInbox`.
+/// - **Reads are bounded** in files and bytes per file.
 /// - **`request_id` is untrusted text that becomes a file name.** It is
 ///   sanitized to `[A-Za-z0-9._-]`, capped, and never allowed to be a
 ///   pure-dot component, so a hostile id cannot climb out of the spool.
@@ -224,7 +223,7 @@ package enum RespondSpool {
         return try? encoder.encode(body)
     }
 
-    // MARK: - Cleanup
+    // MARK: - Expiry
 
     private static func expiryMs(of url: URL) -> Int64? {
         guard let data = boundedRead(url, limit: maxBytesPerFile),

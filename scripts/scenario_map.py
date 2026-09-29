@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Scenario → test map for docs/scenarios.md (12.4).
 
-The acceptance scenarios used to live as a 76-row table inside EXPERIENCE.md,
+The acceptance scenarios used to live as a 76-row table inside EXPERIENCE.md
+(67 rows since 22.0),
 and only seven tests named the scenario they pin. This keeps the map honest:
 every test file named in the "证明" column must exist, every scenario ID is
 unique, and EXPERIENCE.md no longer carries the table.
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ROOT / "docs" / "scenarios.md"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 EXPERIENCE = ROOT / "EXPERIENCE.md"
+MIN_SCENARIOS = 67
 
 
 def main() -> int:
@@ -27,8 +29,12 @@ def main() -> int:
     ids = [row[0] for row in rows]
     if len(ids) != len(set(ids)):
         problems.append("duplicate scenario ids in docs/scenarios.md")
-    if len(ids) < 76:
-        problems.append(f"docs/scenarios.md lists {len(ids)} scenarios; the spec has 76")
+    # A floor, so a row cannot vanish unnoticed. 76 until 22.0, which removed
+    # 19 scenarios with the features they specified (the Workbench, managed
+    # sessions, Missions, working-copy checks, workspace effect, fleet
+    # broadcast and the remote inbox) — the floor follows the spec down.
+    if len(ids) < MIN_SCENARIOS:
+        problems.append(f"docs/scenarios.md lists {len(ids)} scenarios; the spec has {MIN_SCENARIOS}")
     existing = {p.stem for p in TESTS.glob("*.swift")}
     for sid, rest in rows:
         for name in re.findall(r"`(\w+Tests)`", rest):

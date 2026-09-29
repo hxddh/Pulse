@@ -15,17 +15,17 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/archive/`](docs/archive/README.md) | Historical plans (0.23 – 6.0) and superseded reviews (0.21, 1.2, 2.2) |
 | [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
 | [`docs/plan-12.0.md`](docs/plan-12.0.md) | The 12.x plan (Kernel → Surface) — modules, catalog, dialects, narration, scan-quiet surfaces, and what each 12.x release completed |
-| [`docs/plan-outcome.md`](docs/plan-outcome.md) | The Outcome plan — β/γ shipped as 13.0 Mission; the second runtime (Codex) is blocked on real-machine P0 evidence |
-| [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
+| [`docs/plan-outcome.md`](docs/plan-outcome.md) | Historical: the Outcome plan (13.0 Mission). Removed in 22.0 with the orchestrator |
+| [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels from Pulse to the hook holding for it |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch any vendor parser — each agent's format has a pinned source, a fixture and a weekly drift sentinel |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/`; `src/` retains only the optional hook
-scripts. Since 12.3 there are five targets, dependencies pointing down only:
-`PulseCore` (the kernel — the agent catalog, evidence, code identity, bounded
-IO, process supervision, transcript parsing, probe cadence, the debug log),
+scripts. There are four targets, dependencies pointing down only:
+`PulseCore` (the kernel — the agent catalog, bounded IO, process
+supervision, transcript parsing, probe cadence, the debug log),
 `PulseHarvest` (the collector), `PulseRespond` (the permission contract and
-spool), `PulseManaged` (sessions Pulse runs) and the `PulseBar` app. No
+spool) and the `PulseBar` app (22.0 removed `PulseManaged`). No
 library may import AppKit, SwiftUI or reach `StatusStore`; library members are
 `package`, Core's are `public`. **Adding an agent** means one
 `case` and one `AgentSpec` in `PulseCore/AgentCatalog.swift`, plus its icon, README
@@ -49,9 +49,11 @@ compiles and ships.
   its own.
 - **No quota, cost, or reset HUD.** That is a different product.
 - **No judgment transfer, and no blind approve.** Respond (scenes AR, AU)
-  delivers the user's own decision to a permission request: key-file opt-in,
-  single-use HMAC verdicts bound to request id + content digest + agent +
-  host, and **Allow exists only where the full request is shown**
+  delivers the user's own decision to a permission request raised by an
+  agent **on this Mac** — nothing crosses machines (22.0): key-file opt-in
+  (`respond-local.key`), single-use HMAC verdicts bound to request id +
+  content digest + agent + host, and **Allow exists only where the full
+  request is shown**
   (`canOfferAllow`) — which is why the banner offers Deny and never Allow.
   Everything else stays forbidden: rules engines, always-allow, auto-approve,
   approving from a truncated summary, and **any hold that would freeze an
@@ -60,19 +62,10 @@ compiles and ships.
   question as "the prompt is in front of them", and where the answer cannot be
   established the request goes straight through. Every failure falls open to
   the vendor's own prompt.
-- **Pulse lays Candidates side by side; it never judges them.** A Mission
-  (13.0) shows facts per Candidate in dispatch order. No score, badge,
-  recommended colour, "best", auto-choose, or ordering by a quality function;
-  "your choice" writes nothing to git; commit / push / PR each need the user's
-  click; no merge. Checks run only on the user's click, are never shown to the
-  agent, and an agent cannot change the contract — only the user's edit makes
-  a new revision, and an old Candidate is never re-judged by a newer one. No
-  checks, stale, running or unreadable evidence never reads as passed. Since
-  14.0 the same holds for any local working copy (`EvidenceBook`, keyed by
-  directory): setting checks for a directory is the opt-in, they run in the
-  user's live copy only on a click, and the tray fact is counts only. An
-  observed working copy may join a Mission as an external Candidate — it is
-  compared, never dispatched, and that is not the Outcome second runtime.
+- **Pulse watches orchestrators; it is not one.** No dispatching sessions,
+  no managed runtimes, no worktrees, no running the user's checks, no typing
+  into terminals. 22.0 removed all of it (see Current state); bringing any of
+  it back is a product decision, not a feature.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
   isolation. One broken collector cannot blind the other 32.
@@ -98,7 +91,7 @@ Gates, from the repo root — CI, `release.yml`, `scripts/release.sh` and
 bash scripts/gates.sh                        # every source gate
 python3 scripts/resource_budget_check.py     # native fixture wall + RSS (needs a build)
 python3 scripts/package_check.py             # reads the built .app
-./scripts/qa_surfaces.sh                     # Workbench surface PNGs (needs the .app)
+./scripts/qa_surfaces.sh                     # surface fixture PNGs (needs the .app)
 ```
 
 `NativeActivityHarvest.swift` is the collector. There is no second one: 0.99
@@ -177,6 +170,24 @@ to users.
 
 ## Current state
 
+22.0 (Lamp, in progress) is subtractive. A status lamp should watch
+orchestrators, not be one, so it removed: the `PulseManaged` target (managed
+sessions, the permission MCP server and `--permission-server`, worktrees,
+Missions, acceptance checks, `EvidenceBook`, workspace effect), the Workbench
+window and everything that existed for it (dispatch, terminal actuation,
+the resume channel, the Mission board and working-copy card), remote Respond
+(`requests.d/`, `verdicts.d/`, `secrets/`, `respond-secret.key` — Respond is
+local-only, see `docs/respond-protocol.md`; `pulse_hook.py` holds only when
+`ioreg` shows nobody at this Mac), and the fleet (`fleet.d/` snapshots, the
+`attention.d/` inbox, remote rows; the attention `host` column is ignored).
+The settings `workbenchActuation`, `workspaceEffect` and `fleetBroadcast` are
+gone (old files still parse). `LegacyCleanup.run()` deletes the removed
+features' directories once on launch, behind a marker, and never touches
+`respond-local.key`, `respond.d/requests|verdicts`, attention files,
+settings or `worktrees/`. The row's detail pane is not back yet: the tray
+row has no "Details" menu item, and `WhyDetailSection` /
+`SessionDiagnosticsCard` wait in `InspectorDiagnostics.swift`.
+
 21.0.0 is the current source version (Clarity — bug fixes, one visual
 system, rows that explain themselves, fewer surfaces). `PulseTheme` owns
 spacing, radii, fills, semantic type and one `Tone` per state (system dynamic
@@ -189,8 +200,7 @@ counts sessions dropped for age (`staleHidden`). Settings is five panes
 (`SettingsView.Pane`); the global shortcut is one `HotkeyChoice` with `.off`
 (`hotkeyEnabled` is derived; older files migrate). The self-check, per-agent
 reading and reports are one Health window (`SupportCoverageView`); the
-Details window is gone — `openAgentDetail` selects the row in the Workbench,
-whose inspector carries the Why card and `SessionDiagnosticsCard`. On macOS
+Details window was folded into the Workbench (itself removed in 22.0). On macOS
 26 the tray surface is `NSGlassEffectView`. `version_check.py --fix` never
 touches CHANGELOG any more (it had renamed 18.0's heading into 19.0 and 20.0).
 
@@ -212,15 +222,13 @@ Waiting. Fact merge now carries `lastWord` across a session's files.
 19.0.0 (Observe) made the store observed field by field, every card under a row is a value, and the Mac can check
 itself. `StatusStore` is `@Observable` (Observation, macOS 14): a view is
 invalidated only by the properties its body read. Engine bookkeeping is
-`@ObservationIgnored`; the managed fleet (a plain class) is read through
-`managedSessions`, which tracks `managedRevision`, bumped on every fleet
-change. `ScanQuietTests` tracks every observed property (and fails when one
+`@ObservationIgnored`. `ScanQuietTests` tracks every observed property (and fails when one
 is added without being listed); AppKit follows the store with
 `ObservationLoop`; Settings reads `snapshotAgents`, never `snapshot`.
 `surface_check.py` rejects any Combine-era wrapper (`ObservableObject`,
 `@Published`, `@ObservedObject`, `@StateObject`, `objectWillChange`). The
-cards under a tray row — Respond, managed permission ask, managed reply,
-the expanded inspector, the digest — render `RowCardModel` and send
+cards under a tray row — Respond, the expanded inspector, the digest —
+render `RowCardModel` and send
 `RowCardModel.Action`; a Respond click carries the request id and digest
 that were on screen. The self-check (`DoctorModel` pure, `DoctorProbe`
 read-only IO, Settings → About) turns the real-machine confirmations into
@@ -250,17 +258,12 @@ session's events export on click as a v3 TSV that `AttentionReader` and
 (`TrayRowModel` → `TrayRowFace`, gated by `surface_check.py`). Since 16.0 red means blocked: Attention
 Protocol v3 (`AttentionKind`) separates blocked, your turn (a quiet count) and
 resolved, and column 8 `front` keeps banners away from a prompt already in
-front. Since 15.0 the Workbench's judgement surfaces are values (`MissionBoard`,
-`ProofCardModel`); `scripts/qa_surfaces.sh` renders them on CI and
-`scripts/surface_check.py` keeps views off the store — **a new judgement
-surface comes with a model, a fixture and a capture.** Since 14.0 evidence belongs to the working copy
-(`EvidenceBook`, `Pulse/evidence/<digest>.json`; managed session state schema
-5). 13.0 made the product decision in review-11.0 §4.3: Pulse accepts the
-orchestrator identity, and the Workbench stays in the tray's process until one
-of the split triggers listed there occurs. What remains of Outcome
-([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
-App Server), blocked on real-machine P0 evidence; the self-check is how that
-evidence is collected. It ships as a 21.x.
+front. Since 15.0 surfaces are values: `scripts/qa_surfaces.sh` renders
+their fixtures on CI and `scripts/surface_check.py` keeps views off the
+store — **a new surface comes with a model, a fixture and a capture.** 13.0
+accepted the orchestrator identity (review-11.0 §4.3) and 14.0 moved
+evidence to the working copy; 22.0 reversed that decision and removed both,
+so Outcome ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is history.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with
