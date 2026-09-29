@@ -57,6 +57,56 @@ struct RowNarrator {
 
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
 
+    /// 17.0 · Why — the one sentence that says which evidence put this row
+    /// in its state. Nil when the state needs no explaining (running, idle).
+    /// Built only from what the row already carries; it never guesses.
+    func whyLine(_ row: AgentRow) -> String? {
+        if row.waiting {
+            switch row.waitSignal {
+            case .hooks:
+                let ago = row.waitSinceMs > 0 ? agoPhrase(sinceMs: row.waitSinceMs) : "?"
+                var text = String(
+                    format: tr(.whyHook), row.agent.displayName, localizedWaitKind(row.waitKind), ago
+                )
+                if row.waitRaisedInFront { text += tr(.whyHookFront) }
+                return text
+            case .pending:
+                let step = row.tool.isEmpty ? localizedWaitKind(row.waitKind) : readableAction(row.tool)
+                return String(format: tr(.whyPending), row.agent.displayName, step)
+            case .none:
+                return row.isManaged ? tr(.whyManaged) : nil
+            }
+        }
+        if row.yourTurn, row.turnSinceMs > 0 {
+            return String(format: tr(.whyTurn), row.agent.displayName, agoPhrase(sinceMs: row.turnSinceMs))
+        }
+        return nil
+    }
+
+    /// "3m ago" / "3 分钟前", or "just now" alone — never "just now ago".
+    func agoPhrase(sinceMs: Int64) -> String {
+        let seconds = max(0, Double(nowMs - sinceMs) / 1000)
+        if seconds < 5 { return tr(.durNow) }
+        return String(format: tr(.agoFormat), DurationFormat.label(seconds: seconds, lang: lang))
+    }
+
+    /// One line of the Details timeline: when, what, and the words sent.
+    func historyLine(_ event: AttentionHistory.Event) -> String {
+        let kind: String
+        switch AttentionKind(rawValue: event.kind) {
+        case .permission: kind = tr(.kindPermission)
+        case .question: kind = tr(.kindInput)
+        case .waiting: kind = tr(.kindWaiting)
+        case .turn: kind = tr(.yourTurn)
+        case .done: kind = tr(.whyResolved)
+        case .subagentStart, .subagentStop, .none: kind = event.kind
+        }
+        var parts = [agoPhrase(sinceMs: event.tsMs), kind]
+        if event.front == true { parts.append("⌂") }
+        if !event.message.isEmpty { parts.append(event.message) }
+        return parts.joined(separator: " · ")
+    }
+
     /// User-facing last action for the detail inspector. The raw identifier is
     /// still available under Diagnostics; the primary fact uses the same
     /// phase vocabulary as the tray so `exec`, `apply_patch`, and vendor

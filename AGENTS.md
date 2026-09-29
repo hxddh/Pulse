@@ -172,14 +172,17 @@ to users.
 
 ## Current state
 
-16.0.0 is the current source version (Turn — red means blocked). Attention
-Protocol v3 (`AttentionKind` in PulseCore) separates blocked, your turn and
-resolved, and adds column 8 `front`: whether the prompt's window was frontmost
-when an event was raised — a blocked prompt already in front lights the lamp
-but raises no banner. `AgentRow.yourTurn` feeds the tray count and the global
-hotkey (blocked first, then your turn); focusing a turn row writes a
-session-scoped `done`. `TurnTruthTests` pins vendor event sequences end to end.
-Since 15.0 the Workbench's judgement surfaces are values (`MissionBoard`,
+17.0.0 is the current source version (Why — every lamp names its evidence).
+`RowNarrator.whyLine` says which evidence put a row in its state and never
+guesses; `AttentionHistory` (PulseHarvest) keeps what the hooks said, bounded
+and sanitized, in `attention-history.json` next to `attention.tsv`, and a
+session's events export on click as a v3 TSV that `AttentionReader` and
+`TurnTruthTests` replay as-is. The tray row's face is a value
+(`TrayRowModel` → `TrayRowFace`, gated by `surface_check.py`); the cards
+under a row still read the store. Since 16.0 red means blocked: Attention
+Protocol v3 (`AttentionKind`) separates blocked, your turn (a quiet count) and
+resolved, and column 8 `front` keeps banners away from a prompt already in
+front. Since 15.0 the Workbench's judgement surfaces are values (`MissionBoard`,
 `ProofCardModel`); `scripts/qa_surfaces.sh` renders them on CI and
 `scripts/surface_check.py` keeps views off the store — **a new judgement
 surface comes with a model, a fixture and a capture.** Since 14.0 evidence belongs to the working copy
@@ -188,7 +191,7 @@ surface comes with a model, a fixture and a capture.** Since 14.0 evidence belon
 orchestrator identity, and the Workbench stays in the tray's process until one
 of the split triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
-App Server), blocked on real-machine P0 evidence; it ships as a 16.x.
+App Server), blocked on real-machine P0 evidence; it ships as a 17.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with

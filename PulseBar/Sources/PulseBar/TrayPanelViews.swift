@@ -79,7 +79,7 @@ enum TrayChrome {
     static let cardSpacing: CGFloat = 8
 }
 
-private struct StatusChip: View {
+struct StatusChip: View {
     enum Kind { case waiting, running, recent, process, snoozed }
 
     let kind: Kind
@@ -1050,7 +1050,7 @@ struct TrayPanel: View {
 /// Give the whole row button semantics only when it can complete a real
 /// navigation task. Observational rows remain readable content; they no longer
 /// advertise a click that either did nothing or merely opened Finder.
-private struct ConditionalRowButton<Content: View>: View {
+struct ConditionalRowButton<Content: View>: View {
     let actionable: Bool
     let action: () -> Void
     let content: Content
@@ -1138,230 +1138,36 @@ private struct AgentRowButton: View {
         return hovering ? Color.primary.opacity(0.055) : .clear
     }
 
+    /// 17.0: the face is a value; this wrapper builds it and carries out
+    /// what it asks for.
+    private var model: TrayRowModel { store.trayRowModel(row) }
+
+    private func perform(_ action: TrayRowModel.Action) {
+        switch action {
+        case .primary: store.primaryAction(row)
+        case .details: store.openAgentDetail(row)
+        case .dismiss: store.dismissWaiting(row)
+        case .snooze: store.snooze(row)
+        case .unsnooze: store.unsnooze(row)
+        case .respondDeny: store.respondDeny(row)
+        case .respondReview: store.openRespond(row)
+        case .focus: store.focusTerminal(row)
+        case .supportHealth: store.openSupportHealth()
+        case .setupWaiting: store.openWaitingReach(for: row)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Keep the row action and its overflow menu as sibling controls.
-            // Nesting Menu inside Button made a click on “…” bubble into the
-            // primary focus action on macOS, especially when the menu was
-            // revealed by keyboard focus rather than hover.
-            ZStack(alignment: .topTrailing) {
-                ConditionalRowButton(
-                    actionable: row.canFocusTerminal,
-                    action: { store.primaryAction(row) }
-                ) {
-                    HStack(
-                        alignment: .top,
-                        spacing: TrayChrome.iconToIdentityGap
-                    ) {
-                        // The icon and identity line share the same top edge.
-                        // A former 3pt optical nudge made the icon visibly sink
-                        // below the lamp/name line, especially in CJK mode.
-                        AgentIconView(id: row.agent)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            // Agent identity is text, not an icon-recognition
-                            // quiz. With the full 33-agent roster (ten of them
-                            // Pulse-made), an
-                            // icon alone cannot answer "which agent?".
-                            HStack(
-                                alignment: .center,
-                                spacing: TrayChrome.identityLampToNameGap
-                            ) {
-                                Circle()
-                                    .fill(statusIndicatorColor)
-                                    .frame(
-                                        width: TrayChrome.identityLampSize,
-                                        height: TrayChrome.identityLampSize
-                                    )
-                                    // Reserve a stable identity-line slot so
-                                    // the lamp stays optically centred while
-                                    // the Agent/source labels vary in font.
-                                    .frame(width: TrayChrome.identityLampSize, height: 18)
-                                    .accessibilityHidden(true)
-                                Text(row.agent.displayName)
-                                    .font(TrayChrome.identityNameFont)
-                                    .foregroundStyle(.secondary)
-                                if let sourceLabel {
-                                    Text(sourceLabel)
-                                        .font(TrayChrome.sourceLabelFont)
-                                        // Evidence labels are important state,
-                                        // not decorative metadata. Tertiary
-                                        // contrast made Privacy-limited and
-                                        // Local cache disappear in light mode.
-                                        .foregroundStyle(.secondary.opacity(0.78))
-                                }
-                                Spacer(minLength: 6)
-                                // 10.0-β (scene BT): the right edge is a
-                                // column — relative time sits tabular and
-                                // muted where every list keeps its metadata,
-                                // instead of buried in a left-stacked line.
-                                if !accessoryTime.isEmpty {
-                                    Text(accessoryTime)
-                                        .font(TrayChrome.detailFont)
-                                        .foregroundStyle(.tertiary)
-                                        .monospacedDigit()
-                                }
-                                statusChip
-                            }
-
-                            // Encoding 3 of 3: a real session is semibold, a
-                            // bare process is not. The title no longer competes
-                            // horizontally with age, state and the menu.
-                            Text(heroTitle)
-                                .font(TrayChrome.heroFont(processOnly: row.isProcessOnly))
-                                .foregroundStyle(.primary)
-                                // Keep two lines for real session titles even when
-                                // the list is crowded — the title tail is the
-                                // identifying half. Process-only stays one line.
-                                .lineLimit(row.isProcessOnly ? 1 : 2)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            // 10.0-α (scene BS): ONE composed meta line —
-                            // now > outcome > way, three slots by value.
-                            // Seven stacked grey lines were each right and
-                            // jointly unreadable; the full five-line panorama
-                            // moved to the expanded card, where understanding
-                            // lives. A fresh error keeps its own words here —
-                            // a fault changes what you do next.
-                            if row.selfReportFresh, !row.lastErrorText.isEmpty, !expanded {
-                                Text(Self.truncate(row.lastErrorText, 78))
-                                    .font(.system(size: TrayChrome.captionSize).monospaced())
-                                    .foregroundStyle(.orange)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            } else if !metaLine.isEmpty {
-                                Text(metaLine)
-                                    .font(TrayChrome.detailFont)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
-
-                            // Waiting rows get the question itself, because
-                            // the question is the entire point of the product.
-                            if let detail = store.localizedWaitDetail(row) {
-                                Text(Self.truncate(detail, 78))
-                                    .font(.system(size: TrayChrome.bodySize))
-                                    .foregroundStyle(TrayChrome.waitAccent)
-                                    .lineLimit(2)
-                            }
-
-                        }
-                    }
-                    .padding(.trailing, hasSecondaryActions ? TrayChrome.headerControlSize + 4 : 0)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, TrayChrome.rowLeadingInset)
-                    .padding(.trailing, TrayChrome.padX)
-                    .padding(.vertical, compact ? 5 : (row.isProcessOnly ? 6 : 7))
-                    // The wait gutter overlays its own inset and never
-                    // participates in layout. Waiting and non-waiting identity
-                    // columns therefore remain exactly aligned.
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(accentFill)
-                            .frame(width: accentWidth)
-                            .padding(.leading, 6)
-                            .padding(.vertical, 4)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(accessibilityText)
-                .accessibilityHint(
-                    row.isProcessOnly
-                        ? store.tr(.supportHealth)
-                        : (row.canFocusTerminal ? store.primaryActionTitle(row) : "")
-                )
-
-                // Chevron and overflow are siblings of the row button, never
-                // nested inside it — the Menu-in-Button click-bubbling lesson.
-                HStack(spacing: 4) {
-                    if onToggleExpand != nil {
-                        expandChevron
-                    }
-                    if hasSecondaryActions {
-                        secondaryActionsMenu
-                            .opacity(hovering || selected ? 1 : 0)
-                            .allowsHitTesting(hovering || selected)
-                            .accessibilityHidden(false)
-                    }
-                }
-                .padding(.top, 6)
-                .padding(.trailing, TrayChrome.padX)
-            }
-
-            // Actions stay visible where they are urgent, and appear on hover
-            // everywhere else. Showing them on every row cost ~28pt each and
-            // was the main reason only three agents fit in the panel.
-            if showActions {
-                HStack(spacing: 16) {
-                    if row.waiting {
-                        Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
-                            .buttonStyle(.borderless)
-                            .font(TrayChrome.actionFont)
-                        // A countdown you cannot stop is a worse deal than no
-                        // countdown, so the same button undoes it.
-                        Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
-                            if row.isSnoozed { store.unsnooze(row) } else { store.snooze(row) }
-                        }
-                        .buttonStyle(.borderless)
-                        .font(TrayChrome.actionFont)
-                    }
-                    // Respond (scene AR): only on a remote row with a matched
-                    // full request. Deny is safe from here; Allow lives only
-                    // in Details next to the complete request text.
-                    if store.respondRequest(for: row) != nil, !store.respondVerdictSent(row) {
-                        Button(store.tr(.respondDeny)) { store.respondDeny(row) }
-                            .buttonStyle(.borderless)
-                            .font(TrayChrome.actionFont)
-                        Button(store.tr(.respondReview)) { store.openRespond(row) }
-                            .buttonStyle(.borderless)
-                            .font(TrayChrome.actionFont)
-                    } else if let fate = store.respondFateNote(row) {
-                        // The receipt, on the row that asked. Without it a
-                        // decided row simply goes quiet, which is the same
-                        // silence 2.3 spent a version removing.
-                        Text(fate)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    if row.canFocusTerminal {
-                        Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
-                            .buttonStyle(.borderless)
-                            .font(TrayChrome.actionFont)
-                    }
-                    if row.isProcessOnly {
-                        Button(store.tr(.supportHealth)) { store.openSupportHealth() }
-                            .buttonStyle(.borderless)
-                            .font(TrayChrome.actionFont)
-                    }
-                    if store.isWaitingNoneNeedsReach(row) {
-                        Button(store.tr(.setupWaitingSignals)) {
-                            store.openWaitingReach(for: row)
-                        }
-                        .buttonStyle(.borderless)
-                        .font(TrayChrome.actionFont)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.leading, 48)
-                .padding(.trailing, TrayChrome.padX)
-                .padding(.bottom, 8)
-            }
-
-            // What the last click actually did, when it did not do the thing.
-            // A button that reached nothing and a button that is broken look
-            // identical unless the row says which one happened.
-            if let notice = store.rowActionNotice(row) {
-                Text(notice)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 48)
-                    .padding(.trailing, TrayChrome.padX)
-                    .padding(.bottom, 8)
-            }
+            TrayRowFace(
+                model: model,
+                hovering: hovering,
+                selected: selected,
+                expanded: expanded,
+                compact: compact,
+                onToggleExpand: onToggleExpand,
+                send: perform
+            )
 
             // 8.0-β inbox (scene BN): a blocked agent's ask is the popup's
             // highest-value content and must not cost a click — permission
@@ -1433,65 +1239,204 @@ private struct AgentRowButton: View {
                 .padding(.horizontal, 6)
         )
         .onHover { hovering = $0 }
-        .contextMenu {
-            secondaryActionItems
+    }
+
+}
+
+/// 17.0 · the row's face: renders a `TrayRowModel` and nothing else, so a
+/// fixture can render every state of it (`SurfaceCapture`). Hover, selection
+/// and expansion are inputs; every click is an action sent to the owner.
+struct TrayRowFace: View {
+    let model: TrayRowModel
+    var hovering = false
+    var selected = false
+    var expanded = false
+    var compact = false
+    var onToggleExpand: (() -> Void)? = nil
+    var send: (TrayRowModel.Action) -> Void = { _ in }
+
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Keep the row action and its overflow menu as sibling controls.
+            // Nesting Menu inside Button made a click on “…” bubble into the
+            // primary focus action on macOS.
+            ZStack(alignment: .topTrailing) {
+                ConditionalRowButton(actionable: model.canPrimary, action: { send(.primary) }) {
+                    HStack(alignment: .top, spacing: TrayChrome.iconToIdentityGap) {
+                        AgentIconView(id: model.agent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            identityLine
+                            // A real session is semibold, a bare process is not.
+                            Text(model.hero)
+                                .font(TrayChrome.heroFont(processOnly: model.heroProcessOnly))
+                                .foregroundStyle(.primary)
+                                .lineLimit(model.heroProcessOnly ? 1 : 2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            // ONE composed meta line; a fresh error keeps its
+                            // own words — a fault changes what you do next.
+                            if let error = model.errorLine, !expanded {
+                                Text(error)
+                                    .font(.system(size: TrayChrome.captionSize).monospaced())
+                                    .foregroundStyle(.orange)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            } else if !model.metaLine.isEmpty {
+                                Text(model.metaLine)
+                                    .font(TrayChrome.detailFont)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            // The question itself is the point of the product.
+                            if let detail = model.waitDetail {
+                                Text(detail)
+                                    .font(.system(size: TrayChrome.bodySize))
+                                    .foregroundStyle(TrayChrome.waitAccent)
+                                    .lineLimit(2)
+                            }
+                            // 17.0: open, the row says why it is in this state.
+                            if expanded, let why = model.why {
+                                Text(why)
+                                    .font(TrayChrome.detailFont)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(.trailing, model.hasSecondaryActions ? TrayChrome.headerControlSize + 4 : 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, TrayChrome.rowLeadingInset)
+                    .padding(.trailing, TrayChrome.padX)
+                    .padding(.vertical, compact ? 5 : (model.heroProcessOnly ? 6 : 7))
+                    // The wait gutter overlays its own inset and never takes
+                    // part in layout, so identity columns stay aligned.
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(accentFill)
+                            .frame(width: accentWidth)
+                            .padding(.leading, 6)
+                            .padding(.vertical, 4)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(model.accessibilityLabel)
+                .accessibilityHint(model.accessibilityHint)
+                .help(model.why ?? "")
+
+                HStack(spacing: 4) {
+                    if onToggleExpand != nil { expandChevron }
+                    if model.hasSecondaryActions {
+                        menu
+                            .opacity(hovering || selected ? 1 : 0)
+                            .allowsHitTesting(hovering || selected)
+                            .accessibilityHidden(false)
+                    }
+                }
+                .padding(.top, 6)
+                .padding(.trailing, TrayChrome.padX)
+            }
+
+            // Urgent actions stay visible; the rest appear on hover.
+            if model.stripAlwaysVisible || hovering {
+                HStack(spacing: 16) {
+                    ForEach(model.strip) { button in
+                        Button(button.title) { send(button.action) }
+                            .buttonStyle(.borderless)
+                            .font(TrayChrome.actionFont)
+                    }
+                    if let fate = model.fateNote {
+                        Text(fate)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 48)
+                .padding(.trailing, TrayChrome.padX)
+                .padding(.bottom, 8)
+            }
+
+            if let notice = model.notice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 48)
+                    .padding(.trailing, TrayChrome.padX)
+                    .padding(.bottom, 8)
+            }
+        }
+        .contextMenu { menuItems }
+    }
+
+    private var identityLine: some View {
+        HStack(alignment: .center, spacing: TrayChrome.identityLampToNameGap) {
+            Circle()
+                .fill(lampColor)
+                .frame(width: TrayChrome.identityLampSize, height: TrayChrome.identityLampSize)
+                .frame(width: TrayChrome.identityLampSize, height: 18)
+                .accessibilityHidden(true)
+            Text(model.agentName)
+                .font(TrayChrome.identityNameFont)
+                .foregroundStyle(.secondary)
+            if let source = model.sourceLabel {
+                Text(source)
+                    .font(TrayChrome.sourceLabelFont)
+                    .foregroundStyle(.secondary.opacity(0.78))
+            }
+            Spacer(minLength: 6)
+            if !model.accessoryTime.isEmpty {
+                Text(model.accessoryTime)
+                    .font(TrayChrome.detailFont)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            if let chip = model.chip {
+                StatusChip(kind: chipKind(chip.kind), label: chip.label)
+            }
         }
     }
 
-    /// The gutter is the loudest thing in the row, so a snoozed wait must not
-    /// keep it. Everything else about the row stays put — the point is that it
-    /// is still there, just not shouting.
+    private var lampColor: Color {
+        switch model.lamp {
+        case .waiting: return GlanceKind.waiting.lampColor
+        case .error: return GlanceKind.error.lampColor
+        case .process: return .orange
+        case .running: return GlanceKind.running.lampColor
+        case .idle: return GlanceKind.idle.lampColor
+        }
+    }
+
+    private func chipKind(_ kind: TrayRowModel.ChipKind) -> StatusChip.Kind {
+        switch kind {
+        case .waiting: return .waiting
+        case .running: return .running
+        case .recent: return .recent
+        case .process: return .process
+        case .snoozed: return .snoozed
+        }
+    }
+
     private var accentFill: Color {
-        guard row.waiting else { return .clear }
-        return row.isSnoozed ? TrayChrome.waitAccent.opacity(0.28) : TrayChrome.waitAccent
+        switch model.accent {
+        case .none: return .clear
+        case .snoozed: return TrayChrome.waitAccent.opacity(0.28)
+        case .normal, .urgent: return TrayChrome.waitAccent
+        }
     }
 
     private var accentWidth: CGFloat {
-        guard row.waiting else { return 0 }
-        if row.isSnoozed { return 3 }
-        return row.isUrgentWait ? 6 : 3
-    }
-
-    private var metaLine: String { store.rowMetaLine(row) }
-    private var accessoryTime: String { store.lastActivityLabel(row) }
-
-    private var sourceLabel: String? { store.rowSourceLabel(row) }
-
-    private var showActions: Bool {
-        // Waiting-none Reach stays in the secondary menu; do not permanently
-        // expand every non-Waiting live row (EXPERIENCE: action strip for Waiting).
-        row.waiting || hovering
-    }
-
-    private var hasSecondaryActions: Bool {
-        row.waiting || row.canFocusTerminal || row.isProcessOnly
-            || store.isWaitingNoneNeedsReach(row)
-    }
-
-    /// A compact per-session lamp makes the state of every visible Agent
-    /// scannable without opening Support Health. It is deliberately derived
-    /// only from facts already present on the row: red = waiting/error, orange
-    /// = limited or stalled, green = live with session evidence, gray = recent
-    /// or unknown.
-    private var statusIndicatorColor: Color {
-        if row.waiting { return GlanceKind.waiting.lampColor }
-        let outcome = row.outcome.lowercased()
-        if row.isStalled || row.errors > 0
-            || outcome.contains("fail") || outcome.contains("cancel") {
-            return GlanceKind.error.lampColor
+        switch model.accent {
+        case .none: return 0
+        case .snoozed, .normal: return 3
+        case .urgent: return 6
         }
-        // A process is liveness evidence, not a session feed. Keep its lamp
-        // orange so the tray agrees with Support Health's Limited disposition
-        // instead of visually claiming that the row is fully observed.
-        if row.isProcessOnly { return .orange }
-        if row.liveProcess || row.isExplicitlyRunningPhase || row.subRunning > 0 {
-            return GlanceKind.running.lampColor
-        }
-        return GlanceKind.idle.lampColor
     }
 
-    /// 7.0-β: the in-place disclosure. Always visible (an affordance nobody
-    /// hovers to discover is not an affordance), quiet until hovered.
     private var expandChevron: some View {
         Button {
             onToggleExpand?()
@@ -1507,16 +1452,12 @@ private struct AgentRowButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(store.tr(expanded ? .trayCollapseRow : .trayExpandRow))
+        .accessibilityLabel(t(expanded ? .trayCollapseRow : .trayExpandRow))
     }
 
-    /// Always-present action access for keyboard and VoiceOver users.
-    ///
-    /// Hover actions remain a fast pointer path, but are no longer the only
-    /// route to focus or waiting controls.
-    private var secondaryActionsMenu: some View {
+    private var menu: some View {
         Menu {
-            secondaryActionItems
+            menuItems
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 12, weight: .semibold))
@@ -1531,168 +1472,14 @@ private struct AgentRowButton: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel(store.tr(.moreActions))
+        .accessibilityLabel(t(.moreActions))
     }
 
     @ViewBuilder
-    private var secondaryActionItems: some View {
-        Button(store.tr(.details)) { store.openAgentDetail(row) }
-        if row.waiting {
-            Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
-            Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
-                if row.isSnoozed { store.unsnooze(row) } else { store.snooze(row) }
-            }
+    private var menuItems: some View {
+        ForEach(model.menu) { button in
+            Button(button.title) { send(button.action) }
         }
-        if row.canFocusTerminal {
-            Button(store.focusActionTitle(row)) { store.focusTerminal(row) }
-        }
-        if row.isProcessOnly {
-            Button(store.tr(.supportHealth)) { store.openSupportHealth() }
-        }
-        if store.isWaitingNoneNeedsReach(row) {
-            Button(store.tr(.setupWaitingSignals)) {
-                store.openWaitingReach(for: row)
-            }
-        }
-    }
-
-    /// The row hero, chosen by `TrayRowLead` (scene BL): waiting and
-    /// process-only rows keep their 2.x rules; live rows lead with the
-    /// agent's fresh words over a title the user has already read. This
-    /// property only maps the chosen source to its string.
-    private var heroTitle: String {
-        let short = AgentRow.shortProject(row.project)
-        switch TrayRowLead.source(
-            waiting: row.waiting,
-            isProcessOnly: row.isProcessOnly,
-            canFocusTerminal: row.canFocusTerminal,
-            hasTask: row.usefulTask != nil,
-            hasProject: !short.isEmpty,
-            freshWords: row.selfReportFresh && !row.lastWord.isEmpty,
-            hasToolTitle: store.heroToolTitle(row) != nil
-        ) {
-        case .waitTask, .task:
-            return Self.truncate(row.usefulTask ?? "", Self.heroLimit)
-        case .waitProject, .project:
-            return short
-        case .needsYou:
-            return store.tr(.needsYou)
-        case .processTerminal:
-            return store.tr(.terminalDetectedNoDetails)
-        case .processApp:
-            return store.tr(.appDetectedNoDetails)
-        case .freshWords:
-            return Self.truncate(row.lastWord, Self.heroLimit)
-        case .toolTitle:
-            // Humanize the live tool — never show update_plan / Bash raw.
-            return Self.truncate(store.heroToolTitle(row) ?? "", Self.heroLimit)
-        case .terminalSession:
-            return store.tr(.terminalSession)
-        case .appSession:
-            // Agent product name is already on the identity line — do not
-            // reuse it as the hero (EXPERIENCE: no agent-as-hero).
-            return store.tr(.appSession)
-        }
-    }
-
-    /// Second line: where this session is, and how long since it moved.
-    ///
-    /// It used to be `Agent · project`, which restated the icon and — when the
-    /// folder happened to match the agent — printed "Cursor · Cursor". The two
-    /// facts a row could never state were *where* and *how long*; both were
-    /// collected all along.
-    /// Only abnormal states get a badge.
-    ///
-    /// Running was announced three times over — panel header, section header,
-    /// and a green pill on every row. Running with a live session is the
-    /// ordinary case, and the ordinary case does not need saying: **no badge
-    /// means running**.
-    @ViewBuilder
-    private var statusChip: some View {
-        if row.isSnoozed {
-            // The row keeps its place and says why it is quiet. Hiding it would
-            // make "Later" a button people are afraid to press.
-            StatusChip(kind: .snoozed, label: store.snoozeLabel(row))
-        } else if row.waiting {
-            let kind = row.waitKind.isEmpty
-                ? store.tr(.needsYou)
-                : store.localizedWaitKind(row.waitKind)
-            let dur = store.waitDurationLabel(row)
-            StatusChip(
-                kind: .waiting,
-                label: dur.isEmpty ? kind : "\(kind) · \(dur)"
-            )
-        } else if row.isStalled {
-            // Live for twenty minutes with nothing happening. Never surfaced
-            // before, and it looked exactly like a healthy session.
-            StatusChip(kind: .process, label: store.tr(.stalled))
-        } else if row.yourTurn {
-            // 16.0: finished, unseen. Quiet on purpose — red is for blocked.
-            StatusChip(kind: .recent, label: store.tr(.yourTurn))
-        } else if store.lookMarkedWhileAway(row) {
-            // Look Closure (0.93): session moved while the tray was closed.
-            // Waiting / stalled chips win; this is only for quiet motion.
-            StatusChip(kind: .recent, label: store.tr(.lookMovedMark))
-        } else if row.subRunning > 0 {
-            StatusChip(kind: .running, label: String(format: store.tr(.subChipActive), row.subRunning))
-        } else if row.subTotal > 0 {
-            StatusChip(kind: .running, label: String(format: store.tr(.subChipObserved), row.subTotal))
-        } else if row.isRecentOnly {
-            StatusChip(kind: .recent, label: store.tr(.recent))
-        }
-        // Live with a session and nothing unusual: no badge.
-    }
-
-    private var accessibilityText: String {
-        var parts = [heroTitle, row.agent.displayName]
-        let state: String
-        if row.waiting {
-            state = row.waitKind.isEmpty ? store.tr(.needsYou) : store.localizedWaitKind(row.waitKind)
-        } else if row.isProcessOnly {
-            state = store.tr(.limitedData)
-        } else if row.isStalled {
-            state = store.tr(.stalled)
-        } else if row.isRecentOnly {
-            state = store.tr(.recent)
-        } else {
-            state = store.tr(.running)
-        }
-        parts.append(state)
-        // 10.0: VoiceOver mirrors the composed anatomy — the meta line plus
-        // the relative time the sighted eye reads off the right column.
-        if !metaLine.isEmpty { parts.append(metaLine) }
-        if !accessoryTime.isEmpty { parts.append(accessoryTime) }
-        // The tray line has room for "lost contact"; VoiceOver has room for
-        // what it means, and a two-word state that cannot be unpacked is the
-        // kind of thing this project keeps having to go back and fix.
-        if row.lostContact { parts.append(store.tr(.remoteLostContactWhy)) }
-        // There is no Focus button on a remote row. Silence would read as a
-        // missing control rather than an absent capability.
-        if row.isRemote { parts.append(store.tr(.remoteNoFocus)) }
-        if row.waiting {
-            let line = store.localizedWaitLine(row)
-            if !line.isEmpty { parts.append(line) }
-        }
-        return parts.joined(separator: ", ")
-    }
-
-    /// Hard ceiling on the row hero, in characters.
-    ///
-    /// It is a guard against a pathological title, not the thing that shapes
-    /// the row — two lines at 400pt hold roughly eighty, so at 96 SwiftUI's
-    /// own wrapping decides where the line ends and this only stops a title
-    /// that would take the whole panel. It used to be 72, which is under what
-    /// the panel can show: the string was cut before it was ever laid out.
-    static let heroLimit = 96
-
-    private static func truncate(_ s: String, _ n: Int) -> String {
-        guard s.count > n else { return s }
-        let cut = String(s.prefix(n - 1))
-        // Cutting mid-word ("Review repository for bugs a…") reads as damage.
-        if let space = cut.lastIndex(of: " "), cut.distance(from: cut.startIndex, to: space) > n / 2 {
-            return String(cut[..<space]) + "…"
-        }
-        return cut + "…"
     }
 }
 

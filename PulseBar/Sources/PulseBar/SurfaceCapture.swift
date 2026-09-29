@@ -52,6 +52,8 @@ enum SurfaceCapture {
         switch fixture.value {
         case .mission(let board): return AnyView(MissionBoardView(board: board))
         case .proof(let model): return AnyView(ProofCardView(model: model))
+        case .row(let model, let expanded): return AnyView(TrayRowFace(model: model, expanded: expanded))
+        case .why(let model): return AnyView(WhyCardView(model: model))
         }
     }
 

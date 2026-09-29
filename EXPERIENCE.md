@@ -681,6 +681,15 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   有人看过就消失：提交下一句 prompt、从 Pulse 聚焦这一行、会话又动起来（回合结束后的工具
   调用，或转录在结束 15 秒后仍在增长），或 30 分钟过期。回合结束时提示窗口就在最前（你看着
   它做完）则一开始就不算欠你。全局快捷键先轮阻塞，没有阻塞再轮「轮到你」。
+- **为什么（17.0，场景 CD）。** 每个红灯、每个「轮到你」都说得出是哪条证据：托盘行展开后
+  多一句「红灯：Claude 的 hook 报告了「权限」· 8 分钟前」（悬停也能看到），在最前时发生的
+  阻塞会补一句「当时提示窗口就在最前，所以没有通知」；采集来的 pending 说它停在哪一步；
+  Pulse 运行的回合说它停在权限请求上。说不出证据就不说，不猜。Details 顶部是同一句话，
+  下面是「hook 说过什么」—— 这个会话最近的事件，新的在上。Pulse 把读到的每一条 hook 事件
+  另存一份有界历史（每会话 40 条、最多 64 个会话、静默 24 小时即忘，0600，入库前再过一遍
+  脱敏，永不出机器），不受 `attention.tsv` 80 行压缩与「后写覆盖先写」的影响。
+  「复制为测试夹具」只在点击时把这个会话的事件按 v3 TSV 放进剪贴板（工作目录只留最后一段）
+  —— 读取器与 `TurnTruthTests` 原样可读，真机上的真实序列从此能变成回归测试。
 - **在场不打扰（16.0）。** 阻塞等待发出时若提示窗口正是最前的应用（hook 沿父进程链判断，
   无新权限），红灯照亮，但不发横幅、不响声；判断不了就当不知道 —— 不知道从不等于
   「你在看」。
@@ -723,7 +732,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 
 ## 8. 验收场景
 
-81 个场景（A–CC）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
+82 个场景（A–CD）的期望与钉住它们的测试见 [`docs/scenarios.md`](docs/scenarios.md)。
 新场景写在那里，并在「证明」一栏写明哪个测试让它成立；本文件只保留行为规格。
 
 ## 9. 代码落点
@@ -748,6 +757,8 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
 | 价值引擎 / 自适应深度 / 主题 | `RowValueEngine.swift` · `RowDepth.swift` · `PulseTheme.swift` |
 | 指挥台 | `WorkbenchViews.swift` · `WorkbenchWindowController.swift` · `WorkbenchAnswer.swift` · `WorkbenchActuation.swift` |
+| 托盘行的脸（17.0） | `TrayRowModel.swift`（纯值：灯、身份、标记、主行、元信息、提问、为什么、动作条、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace` 只渲染值、只发动作；行下方的卡片仍读 store |
+| 为什么 / hook 事件史（17.0） | `PulseHarvest/AttentionHistory.swift` · `RowNarrator.whyLine` · `WhyViews.swift` · `StatusStoreWhy.swift` |
 | 判断面（Mission 对比卡、工作副本验收卡） | `SurfaceModels.swift`（纯值：`MissionBoard` / `ProofCardModel`）→ `MissionViews.swift` · `ProofViews.swift` 只渲染值、只发 intent；夹具 `SurfaceFixtures.swift`，CI 截图 `SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
 | 受管会话 | `PulseManaged/`（runtime、Fleet、worktree、权限服务、验收）· App 侧 `ManagedSessionSource.swift` / `ManagedSessionViews.swift` / `ManagedAcceptance.swift` |
 | Respond | `PulseRespond/RespondContract.swift` · `RespondSpool.swift` · App 侧 `StatusStoreRespond.swift` |

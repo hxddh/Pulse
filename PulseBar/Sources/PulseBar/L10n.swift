@@ -665,6 +665,16 @@ enum L10n {
         case .workbenchDispatch: return "New session"
         case .workbenchDispatchRepo: return "Repository"
         case .workbenchDispatchTask: return "What should it do?"
+        case .whyHook: return "Red: %@'s hook reported %@, %@"
+        case .whyHookFront: return " — its window was in front, so no banner"
+        case .whyPending: return "Red: %@'s session log shows it stopped at %@"
+        case .whyManaged: return "Red: this Pulse-run turn is blocked on a permission request"
+        case .whyTurn: return "Your turn: %@'s hook reported the turn ended, %@ — focus it or reply to clear"
+        case .whyTimeline: return "What the hooks said"
+        case .whyExport: return "Copy as test fixture"
+        case .whyExported: return "Copied %d events"
+        case .whyNoHistory: return "No hook events kept for this session"
+        case .whyResolved: return "Resolved"
         case .yourTurn: return "Your turn"
         case .turnCount: return "%d your turn"
         case .jumpToTurn: return "Go to the next finished session"
@@ -1362,6 +1372,16 @@ enum L10n {
         case .workbenchDispatch: return "派活"
         case .workbenchDispatchRepo: return "仓库"
         case .workbenchDispatchTask: return "要它做什么？"
+        case .whyHook: return "红灯：%@ 的 hook 报告了「%@」· %@"
+        case .whyHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
+        case .whyPending: return "红灯：%@ 的会话记录显示它停在「%@」上"
+        case .whyManaged: return "红灯：Pulse 运行的这个回合正停在权限请求上"
+        case .whyTurn: return "轮到你：%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
+        case .whyTimeline: return "hook 说过什么"
+        case .whyExport: return "复制为测试夹具"
+        case .whyExported: return "已复制 %d 条事件"
+        case .whyNoHistory: return "这个会话没有保留的 hook 事件"
+        case .whyResolved: return "已解决"
         case .yourTurn: return "轮到你"
         case .turnCount: return "%d 轮到你"
         case .jumpToTurn: return "跳到做完的会话"
@@ -1653,6 +1673,8 @@ enum L10n {
         case trayScanIncomplete
         // 14.0 · Proof
         case yourTurn, turnCount, jumpToTurn
+        case whyHook, whyHookFront, whyPending, whyManaged, whyTurn
+        case whyTimeline, whyExport, whyExported, whyNoHistory, whyResolved
         case proofFact, proofFailing, proofStale, proofCard
         case proofHint, proofSaveChecks, proofRunChecks, proofSideEffects
         case proofJoinMission, proofJoined, proofLeaveMission, missionExternal

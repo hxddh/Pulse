@@ -20,8 +20,11 @@ VIEWS = [
     ("MissionViews.swift", "MissionBoardView"),
     ("MissionViews.swift", "CheckCellView"),
     ("ProofViews.swift", "ProofCardView"),
+    # 17.0: the tray row's face and the Why card.
+    ("TrayPanelViews.swift", "TrayRowFace"),
+    ("WhyViews.swift", "WhyCardView"),
 ]
-PURE_FILES = ["SurfaceModels.swift", "SurfaceFixtures.swift"]
+PURE_FILES = ["SurfaceModels.swift", "SurfaceFixtures.swift", "TrayRowModel.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 
 
