@@ -37,6 +37,9 @@ PulseBar/Sources/
                  · EvidenceBook（14.0：检查、证据与运行中检查按工作目录存，受管候选与
                  观察到的会话读同一页）· Mission
   PulseBar/      可执行。builder、StatusStore、RowNarrator、WaitingDelivery、视图、hook 入口。
+                 15.0：指挥台的判断面是纯值（SurfaceModels：MissionBoard / ProofCardModel），
+                 视图只渲染值、发 intent，由 StatusStore 执行；SurfaceFixtures 的每个夹具在
+                 CI 里经 SurfaceCapture 渲染成 PNG（scripts/qa_surfaces.sh）。
                  PulseCoreExports.swift 以 @_exported 引入四个库。
 ```
 

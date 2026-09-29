@@ -90,6 +90,7 @@ Gates, from the repo root — CI, `release.yml`, `scripts/release.sh` and
 bash scripts/gates.sh                        # every source gate
 python3 scripts/resource_budget_check.py     # native fixture wall + RSS (needs a build)
 python3 scripts/package_check.py             # reads the built .app
+./scripts/qa_surfaces.sh                     # Workbench surface PNGs (needs the .app)
 ```
 
 `NativeActivityHarvest.swift` is the collector. There is no second one: 0.99
@@ -166,15 +167,21 @@ to users.
 
 ## Current state
 
-14.0.0 is the current source version (Proof — acceptance evidence belongs to
-the working copy, not the session). `EvidenceBook` (PulseManaged) holds each
-directory's checks, evidence and running check in `Pulse/evidence/<digest>.json`;
-managed session state is schema 5 and no longer carries evidence. 13.0 made
-the product decision in review-11.0 §4.3: Pulse accepts the orchestrator
-identity, and the Workbench stays in the tray's process until one of the split
-triggers listed there occurs. What remains of Outcome
+15.0.0 is the current source version (Witness — the Workbench's judgement
+surfaces are values). `MissionBoard` and `ProofCardModel`
+(`SurfaceModels.swift`) are pure functions of plain inputs; `MissionBoardView`
+and `ProofCardView` render them and send intents, which `StatusStore` maps to
+verbs. `SurfaceFixtures` holds named worlds built through the real `make`
+functions, `scripts/qa_surfaces.sh` renders each in zh/en × light/dark on CI
+(`qa-surfaces` artifact), and `scripts/surface_check.py` fails if a rendering
+view reaches the store again. **A new judgement surface comes with a model, a
+fixture and a capture.** Since 14.0 evidence belongs to the working copy
+(`EvidenceBook`, `Pulse/evidence/<digest>.json`; managed session state schema
+5). 13.0 made the product decision in review-11.0 §4.3: Pulse accepts the
+orchestrator identity, and the Workbench stays in the tray's process until one
+of the split triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
-App Server), blocked on real-machine P0 evidence; it ships as a 14.x.
+App Server), blocked on real-machine P0 evidence; it ships as a 15.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with

@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""15.0 Witness: the Workbench's judgement surfaces render values, not the store.
+
+A view that reaches into StatusStore can only be seen by running the whole
+app against real sessions, which is how 13.0 and 14.0 shipped surfaces
+nobody had looked at. The rendering views listed here take a value
+(`MissionBoard`, `ProofCardModel`, `CheckCell`) and send intents; the
+models they render are pure. This gate fails if either grows a store
+reference back, and if a surface fixture is missing from the capture list.
+"""
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+APP = ROOT / "PulseBar/Sources/PulseBar"
+
+# (file, struct) pairs that must never see the store.
+VIEWS = [
+    ("MissionViews.swift", "MissionBoardView"),
+    ("MissionViews.swift", "CheckCellView"),
+    ("ProofViews.swift", "ProofCardView"),
+]
+PURE_FILES = ["SurfaceModels.swift", "SurfaceFixtures.swift"]
+STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
+
+
+def struct_body(source: str, name: str) -> str | None:
+    match = re.search(r"\bstruct\s+" + re.escape(name) + r"\b[^{]*\{", source)
+    if not match:
+        return None
+    depth, start = 1, match.end()
+    for index in range(start, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index]
+    return None
+
+
+def code_only(text: str) -> str:
+    """Drop comments so prose may mention the store."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+
+
+def main() -> int:
+    errors = []
+    for file, name in VIEWS:
+        body = struct_body((APP / file).read_text(), name)
+        if body is None:
+            errors.append(f"{file}: struct {name} not found")
+        elif STORE.search(code_only(body)):
+            errors.append(f"{file}: {name} references the store — render a value and send intents")
+    for file in PURE_FILES:
+        source = code_only((APP / file).read_text())
+        if STORE.search(source):
+            errors.append(f"{file}: surface models must not reach the store")
+        if re.search(r"^\s*import\s+(SwiftUI|AppKit)\b", source, re.M):
+            errors.append(f"{file}: surface models must not import a UI framework")
+    fixtures = (APP / "SurfaceFixtures.swift").read_text()
+    names = re.search(r"static let names = \[(.*?)\]", fixtures, re.S)
+    listed = re.findall(r'"([a-z0-9-]+)"', names.group(1)) if names else []
+    built = re.findall(r'Fixture\(name: "([a-z0-9-]+)"', fixtures)
+    if not listed or listed != built:
+        errors.append(f"SurfaceFixtures: names {listed} differ from the fixtures built {built}")
+    for error in errors:
+        print(f"::error::{error}")
+    if errors:
+        return 1
+    print(f"surface check OK — {len(VIEWS)} views render values, {len(listed)} fixtures captured")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

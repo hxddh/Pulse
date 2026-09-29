@@ -102,10 +102,12 @@ struct ManagedSessionInspector: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
-                Text(evidenceLabel(evidence))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(evidenceFailed(evidence)
-                                     ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                CheckCellView(
+                    cell: SurfaceLabels.evidence(
+                        evidence, standing: runner?.acceptance.standing(of: evidence) ?? .unverified, lang: store.lang
+                    ),
+                    maxWidth: .infinity
+                )
             }
             if let evidence = runner?.acceptanceEvidence.last,
                !evidenceOutput(evidence).isEmpty {
@@ -145,31 +147,6 @@ struct ManagedSessionInspector: View {
     /// for a fresh measurement.
     private func refreshFingerprint() {
         runner?.acceptance.refresh()
-    }
-
-    private func evidenceLabel(_ evidence: AcceptanceEvidence) -> String {
-        switch runner?.acceptance.standing(of: evidence) ?? .unverified {
-        case .measuring: return store.tr(.managedRunCheckMeasuring)
-        case .unverified: return store.tr(.managedRunCheckUnverified)
-        case .stale: return store.tr(.managedRunCheckStale)
-        case .passing, .notPassing: break
-        }
-        switch evidence.outcome {
-        case .passed, .failed:
-            return String(format: store.tr(.managedRunCheckExit), evidence.exitCode ?? -1)
-        case .timedOut:
-            return store.tr(.managedRunCheckTimeout)
-        case .couldNotRun:
-            return store.tr(.managedRunCheckUnverified)
-        case .invalidatedDuringRun:
-            return store.tr(.managedRunCheckChanged)
-        case .interrupted:
-            return store.tr(.managedRunCheckInterrupted)
-        }
-    }
-
-    private func evidenceFailed(_ evidence: AcceptanceEvidence) -> Bool {
-        runner?.acceptance.standing(of: evidence) != .passing
     }
 
     private func evidenceOutput(_ evidence: AcceptanceEvidence) -> String {
