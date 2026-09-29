@@ -3,8 +3,8 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
-/// 0.96 Return Truth — Glance width, Attention compact/rekey, and Details
-/// honesty.
+/// 0.96 Return Truth — Glance width and Attention compact. (23.0: the rekey
+/// and story-honesty tests went with the remap and `RowNarrator`.)
 final class ReturnTruthTests: XCTestCase {
 
     @MainActor
@@ -49,88 +49,5 @@ final class ReturnTruthTests: XCTestCase {
             compacted.contains(where: { $0.contains("keep-me") }),
             "unresolved permission must survive the 80-line cap"
         )
-    }
-
-    @MainActor
-    func testSessionLogRemapFollowsNewRowKey() {
-        var log = SessionLog()
-        var row = AgentRow(rowKey: "codex", agent: .codex)
-        row.waiting = true
-        row.waitKind = "Permission"
-        log.reconcileWaits(rows: [row], released: [], nowMs: 1_000)
-        log.remap(from: "codex", to: "codex|sess")
-        XCTAssertEqual(log.waitingKeys, ["codex|sess"])
-        XCTAssertNil(log.openWait("codex"))
-    }
-
-    // MARK: P2 Details / story honesty
-
-    @MainActor
-    func testActionableObservationGapsSortFirst() {
-        let store = StatusStore()
-        let gaps = [
-            ObservationGap(key: .task, reason: "not_emitted", nextStep: "open_agent_for_session"),
-            ObservationGap(key: .waitingReason, reason: "waiting_unsupported", nextStep: "use_attention_bridge"),
-            ObservationGap(key: .workspace, reason: "privacy_limited", nextStep: "enable_app_data"),
-            ObservationGap(key: .model, reason: "cache_thin", nextStep: "wait_for_vendor_cache"),
-        ]
-        let ranked = store.prioritizedObservationGaps(gaps)
-        XCTAssertEqual(ranked.map(\.nextStep).prefix(2).sorted(), ["enable_app_data", "use_attention_bridge"])
-        XCTAssertEqual(ranked.last?.nextStep, "wait_for_vendor_cache")
-    }
-
-    @MainActor
-    func testQuietStoryDoesNotRepeatObservationModelTokens() {
-        let store = StatusStore()
-        var row = AgentRow(rowKey: "k", agent: .claude)
-        row.task = "Quiet live session"
-        row.model = "gpt-5"
-        row.tokensIn = 900
-        row.tokensOut = 40
-        row.phase = ""
-        row.tool = ""
-        row.liveProcess = true
-        row.observationSource = .session
-        row.refreshObservationQuality()
-        let story = store.rowStoryLine(row)
-        let work = store.rowWorkLine(row)
-        XCTAssertEqual(story, "", "the work line owns model/tokens: \(story)")
-        XCTAssertTrue(
-            work.contains("gpt 5") || work.contains("Model") || work.contains("模型"),
-            work
-        )
-    }
-
-    @MainActor
-    func testOpaqueCacheStoryDoesNotRepeatIdentityLabel() throws {
-        let store = StatusStore()
-        var row = AgentRow(rowKey: "amp", agent: .amp)
-        row.task = ""
-        row.tool = ""
-        row.liveProcess = false
-        row.observationSource = .cache
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
-        row.refreshObservationQuality()
-        let story = store.rowStoryLine(row)
-        let label = try XCTUnwrap(store.rowSourceLabel(row))
-        XCTAssertEqual(label, store.tr(.cacheEvidence))
-        let bits = story.split(separator: "·").map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        XCTAssertFalse(bits.contains(label), "identity tag must not repeat on story: \(story)")
-        XCTAssertFalse(story.hasPrefix(label), story)
-    }
-
-    @MainActor
-    func testStoryOwnsChangeSoDetailsCanSkipDuplicate() {
-        let store = StatusStore()
-        var row = AgentRow(rowKey: "k", agent: .claude)
-        row.task = "Ship"
-        row.phase = "working"
-        row.tool = "Edit"
-        row.liveProcess = true
-        row.activityChange = .toolChanged
-        XCTAssertTrue(store.storyOwnsChange(row))
-        XCTAssertFalse(store.rowStoryLine(row).isEmpty)
     }
 }

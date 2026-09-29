@@ -18,11 +18,11 @@ final class QuietDataTests: XCTestCase {
         let hour: Int64 = 60 * 60 * 1000
         var log = SessionLog()
         var row = AgentRow(rowKey: "claude|a", agent: .claude)
-        row.waiting = true
+        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         log.reconcileWaits(rows: [row], released: [], nowMs: now - 30 * hour)
         log.reconcileWaits(rows: [], released: [], nowMs: now - 26 * hour)
         var fresh = AgentRow(rowKey: "claude|b", agent: .claude)
-        fresh.waiting = true
+        fresh.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         log.reconcileWaits(rows: [fresh], released: [], nowMs: now - 2 * hour)
         log.reconcileWaits(rows: [], released: [], nowMs: now - hour)
 
@@ -37,14 +37,14 @@ final class QuietDataTests: XCTestCase {
         var log = SessionLog()
         let resolved = (0..<(SessionLog.maxSessions + 40)).map { index -> AgentRow in
             var row = AgentRow(rowKey: "claude|r\(index)", agent: .claude)
-            row.waiting = true
+            row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
             return row
         }
         log.reconcileWaits(rows: resolved, released: [], nowMs: now - 2_000)
         log.reconcileWaits(rows: [], released: [], nowMs: now - 1_000)
         var live = AgentRow(rowKey: "codex|live", agent: .codex)
         live.task = "still waiting"
-        live.waiting = true
+        live.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         log.reconcileWaits(rows: [live], released: [], nowMs: now)
 
         log.prune(nowMs: now)
@@ -58,7 +58,7 @@ final class QuietDataTests: XCTestCase {
         var log = SessionLog()
         var row = AgentRow(rowKey: "claude|long", agent: .claude)
         row.task = String(repeating: "goal ", count: 200)
-        row.waiting = true
+        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
         let title = try XCTUnwrap(log.openWait("claude|long")?.title)
         XCTAssertFalse(title.isEmpty)
@@ -103,8 +103,8 @@ final class QuietDataTests: XCTestCase {
 
     // MARK: - The debug log keeps the project name off disk
 
-    /// `ActivityHarvest.sessionKey` falls back to the workspace leaf, so a row
-    /// key is often a directory name from the user's disk.
+    /// A row key used to fall back to the workspace leaf, so it could be a
+    /// directory name from the user's disk (23.0 hashes it — `RowIdentity`).
     func testDebugLogKeyDropsTheProjectNameButStaysCorrelatable() {
         let key = DebugLog.key("claude|SecretProject")
         XCTAssertFalse(key.contains("SecretProject"))

@@ -8,8 +8,7 @@ final class OperationalClosureTests: XCTestCase {
         var row = AgentRow(rowKey: key, agent: .codex)
         row.sessionID = "session-1"
         row.task = "Approve test command"
-        row.waiting = true
-        row.waitKind = "permission"
+        row.state = .blocked(RowWait(kind: "permission", signal: .hooks))
         row.project = "Pulse"
         return row
     }

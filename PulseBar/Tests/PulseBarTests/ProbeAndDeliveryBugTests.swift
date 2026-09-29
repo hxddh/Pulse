@@ -67,12 +67,11 @@ final class ProbeAndDeliveryBugTests: XCTestCase {
     @MainActor
     func testAQueuedRowAndAFreshEdgeForTheSameSessionDoNotCrash() {
         var queued = AgentRow(rowKey: "codex|abc", agent: .codex)
-        queued.waiting = true
-        queued.waitSinceMs = 1_000
+        queued.state = .blocked(RowWait(kind: "Permission", sinceMs: 1_000, signal: .hooks))
         queued.task = "the queued copy"
 
         var fresh = queued
-        fresh.waitSinceMs = 9_000
+        fresh.state = .blocked(RowWait(kind: "Permission", sinceMs: 9_000, signal: .hooks))
         fresh.task = "the newer wait"
 
         let rows = WaitNotifier.waitingDeliveryRows(edges: [fresh], queued: [queued])
@@ -83,11 +82,11 @@ final class ProbeAndDeliveryBugTests: XCTestCase {
     @MainActor
     func testDistinctSessionsAreAllDelivered() {
         var a = AgentRow(rowKey: "codex|a", agent: .codex)
-        a.waiting = true
+        a.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         var b = AgentRow(rowKey: "claude|b", agent: .claude)
-        b.waiting = true
+        b.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         var c = AgentRow(rowKey: "cursor|c", agent: .cursor)
-        c.waiting = true
+        c.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
 
         let rows = WaitNotifier.waitingDeliveryRows(edges: [a, b], queued: [c])
         XCTAssertEqual(Set(rows.map(\.rowKey)), ["codex|a", "claude|b", "cursor|c"])

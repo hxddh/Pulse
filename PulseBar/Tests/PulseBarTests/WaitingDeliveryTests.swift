@@ -8,7 +8,7 @@ import XCTest
 final class WaitingDeliveryTests: XCTestCase {
     private func waiting(_ key: String, agent: AgentID = .claude) -> AgentRow {
         var row = AgentRow(rowKey: key, agent: agent)
-        row.waiting = true
+        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         return row
     }
 
@@ -31,7 +31,7 @@ final class WaitingDeliveryTests: XCTestCase {
 
     func testOnlyUnmutedUnacknowledgedWaitingRowsNotInFlightQualify() {
         var idle = AgentRow(rowKey: "idle", agent: .claude)
-        idle.waiting = false
+        idle.state = .running
         let rows = [
             waiting("a"), waiting("muted", agent: .codex), waiting("ack"), waiting("flying"), idle,
         ]

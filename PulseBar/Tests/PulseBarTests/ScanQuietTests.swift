@@ -201,15 +201,14 @@ struct ScanQuietTests {
         var current = PulseSnapshot()
         current.updatedAt = t0
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.waiting = true
-        row.waitSinceMs = Int64(t0.timeIntervalSince1970 * 1000) - 20_000
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: Int64(t0.timeIntervalSince1970 * 1000) - 20_000, signal: .hooks))
         current.rows = [row]
 
         var next = current
         next.updatedAt = t0.addingTimeInterval(2)
         #expect(PulseSnapshot.needsPublish(next: next, current: current), "a 20 s wait is drawn in seconds — it moves every scan")
 
-        current.rows[0].waitSinceMs = Int64(t0.timeIntervalSince1970 * 1000) - 600_000
+        current.rows[0].state = .blocked(RowWait(kind: "Permission", sinceMs: Int64(t0.timeIntervalSince1970 * 1000) - 600_000, signal: .hooks))
         next.rows = current.rows
         #expect(!PulseSnapshot.needsPublish(next: next, current: current), "a ten-minute wait holds for a minute")
         next.updatedAt = t0.addingTimeInterval(61)

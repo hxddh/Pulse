@@ -21,115 +21,26 @@ final class DefectSweepTests: XCTestCase {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.task = "Fix the auth module"
         row.liveProcess = true
+        row.state = .running
         row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.observationSource = .session
+        row.source = .session
         return row
     }
 
-    // MARK: D-1 · a token pair never invents the half nobody reported
+    // MARK: D-2 · a fault is not crowded out
 
-    @MainActor
-    func testOnlyTheMeasuredSideOfTheTokenPairIsPrinted() {
-        let s = store()
-        // The failure this replaces: `compactToken` returns "" for 0 and every
-        // call site turned that back into a literal 0, so an agent publishing
-        // output tokens and not input claimed the turn consumed no input.
-        XCTAssertEqual(s.tokenPair(input: 0, output: 4_200), "↓4.2k")
-        XCTAssertEqual(s.tokenPair(input: 1_200, output: 0), "↑1.2k")
-        XCTAssertEqual(s.tokenPair(input: 1_200, output: 4_200), "↑1.2k ↓4.2k")
-    }
-
-    @MainActor
-    func testNeitherSideReportedIsNoFactAtAll() {
-        XCTAssertEqual(store().tokenPair(input: 0, output: 0), "")
-    }
-
-    @MainActor
-    func testEachScopeKeepsSayingWhichNumberItIs() {
-        // Two token numbers that disagree are a bug report waiting to happen
-        // unless each says its span — losing the scope on the one-sided
-        // phrasing would have reintroduced exactly that.
-        let s = store()
-        let latest = s.tokenPair(input: 0, output: 900, scope: .latestCall)
-        let reported = s.tokenPair(input: 0, output: 900, scope: .reported)
-        XCTAssertTrue(latest.contains("Latest model call"), latest)
-        XCTAssertTrue(reported.contains("Agent reported"), reported)
-        XCTAssertNotEqual(latest, reported)
-    }
-
-    @MainActor
-    func testTheRowNeverShowsAZeroItDidNotMeasure() {
-        let s = store()
-        var row = liveRow()
-        row.tokensOut = 4_200
-        XCTAssertFalse(s.rowWorkLine(row).contains("↑0"), s.rowWorkLine(row))
-        XCTAssertTrue(s.rowWorkLine(row).contains("↓4.2k"))
-    }
-
-    // MARK: D-2 · a fault is not crowded out by motion
-
-    @MainActor
-    func testTheErrorCountSurvivesAnActiveChange() {
-        let s = store()
+    /// 23.0: D-1 (token pairs) went with the facts; D-2 is one rule now —
+    /// a row that reported errors explains its orange lamp with them.
+    func testARowThatReportedErrorsSaysSo() {
         var row = liveRow()
         row.errors = 7
-        row.activityChange = .toolChanged
-        row.activityChangedMs = row.harvestMs
-        // The hole this closes: the observation line stood aside for any
-        // change, the signal line's companion sat inside a block
-        // `storyOwnsChange` empties for every titled row, and the story line
-        // never mentions errors. Seven errors therefore appeared on no line.
-        XCTAssertTrue(s.rowObservationLine(row).contains("7"), s.rowObservationLine(row))
+        let why = Explain.make(row, lang: .en, nowMs: row.harvestMs).why
+        XCTAssertTrue(why.contains("7"), why)
     }
 
-    @MainActor
-    func testAnErrorChangeIsNotAlsoStatedAsATotal() {
-        let s = store()
-        var row = liveRow()
-        row.errors = 7
-        row.activityChange = .errors(2)
-        row.activityChangedMs = row.harvestMs
-        // The delta is the news; repeating the total is the same fact twice.
-        XCTAssertFalse(s.rowObservationLine(row).contains("7"), s.rowObservationLine(row))
-    }
-
-    @MainActor
-    func testAQuietRowStillStatesItsErrors() {
-        let s = store()
-        var row = liveRow()
-        row.errors = 7
-        XCTAssertTrue(s.rowObservationLine(row).contains("7"))
-    }
-
-    @MainActor
-    func testOnlyOneLineOwnsTheFault() {
-        let s = store()
-        var row = liveRow()
-        row.errors = 7
-        row.activityChange = .toolChanged
-        row.activityChangedMs = row.harvestMs
-        XCTAssertFalse(
-            s.rowSignalLine(row).contains("7"),
-            "the observation line owns it; two owners is what lost it"
-        )
-    }
-
-    @MainActor
-    func testAProcessOnlyRowKeepsItsFaultOnTheSignalLine() {
-        let s = store()
-        var row = AgentRow(rowKey: "codex|p1", agent: .codex)
-        row.liveProcess = true
-        row.observationSource = .process
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.errors = 3
-        XCTAssertTrue(row.isProcessOnly, "no title and no live tool")
-        XCTAssertEqual(s.rowObservationLine(row), "", "this row has no observation line")
-        XCTAssertTrue(s.rowSignalLine(row).contains("3"), s.rowSignalLine(row))
-    }
-
-    @MainActor
     func testNoErrorsIsNoFault() {
-        XCTAssertEqual(store().narrator.faultFact(liveRow()), "")
+        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().harvestMs).why
+        XCTAssertFalse(why.contains("error"), why)
     }
 
     // MARK: D-3 · a coalesced refresh keeps its scope
@@ -220,7 +131,7 @@ final class DefectSweepTests: XCTestCase {
         var log = SessionLog()
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.task = "Something the user actually typed"
-        row.waiting = true
+        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
         log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
         XCTAssertTrue(SessionLogFile.save(log, to: url, nowMs: 1_800_000_000_100))
 
