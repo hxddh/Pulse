@@ -37,8 +37,9 @@ SDK shell in 0.22 — recover either from git history if you ever need it.
 These are product decisions, not preferences. Breaking one is a bug even if it
 compiles and ships.
 
-- **No fake Waiting.** Waiting comes from hooks or harvest `skill=pending`,
-  never from inference. An agent with no Waiting path shows Running and says so.
+- **No fake Waiting.** Waiting comes from hooks, harvest `skill=pending`, or
+  (18.0) the vendor's own report of a blocked session — `claude agents --json`
+  `status: waiting` — never from inference. An agent with no Waiting path shows Running and says so.
   Since 16.0 (Attention Protocol v3) **red means blocked** — `permission`,
   `question`, `waiting`. A finished turn (`turn`: Claude Stop / `idle_prompt`,
   Codex `agent-turn-complete`) is "your turn": a quiet tray count, never the
@@ -84,7 +85,7 @@ compiles and ships.
 ## Working on it
 
 ```bash
-cd PulseBar && swift build      # macOS 14+, Swift 5.10 compiler
+cd PulseBar && swift build      # targets macOS 14+; needs Xcode 26 / Swift 6.2+ (CI: macos-26)
 cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
@@ -172,7 +173,20 @@ to users.
 
 ## Current state
 
-17.0.0 is the current source version (Why — every lamp names its evidence).
+18.0.0 is the current source version (Current — the dependencies are current
+and used). CI and release build on `macos-26` with Xcode 26 (Swift 6.3 at
+the time of writing; tools 6.2), GitHub actions on their node24 majors.
+Every product target is in the Swift 6 language mode with
+`.treatAllWarnings(as: .error)`; the test target stays Swift 5 mode because
+its XCTest suites predate it, and new suites are Swift Testing. Claude:
+`ClaudeAgentsProbe` reads `claude agents --json` (rationed: Claude live,
+hooks absent, ≥15 s apart, 3 s timeout, back-off) as a vendor-reported
+Waiting source (`WaitSignalKind.vendor`); the hook installer matches
+elicitation, adds `StopFailure`, and treats a PermissionRequest for
+`AskUserQuestion` as a question with no hold. Codex: paginated rollouts
+(`item_completed`) are parsed, `.jsonl.zst` is left alone, and
+`~/.codex/hooks.json` gets `Stop` + `UserPromptSubmit` only — never
+`PermissionRequest`, which fires before Codex's own auto-review. Since 17.0
 `RowNarrator.whyLine` says which evidence put a row in its state and never
 guesses; `AttentionHistory` (PulseHarvest) keeps what the hooks said, bounded
 and sanitized, in `attention-history.json` next to `attention.tsv`, and a
@@ -191,7 +205,7 @@ surface comes with a model, a fixture and a capture.** Since 14.0 evidence belon
 orchestrator identity, and the Workbench stays in the tray's process until one
 of the split triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
-App Server), blocked on real-machine P0 evidence; it ships as a 17.x.
+App Server), blocked on real-machine P0 evidence; it ships as an 18.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with

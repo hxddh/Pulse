@@ -103,6 +103,8 @@ def parse_kind_from_json(payload: dict) -> str:
     event = payload.get("hook_event_name") or payload.get("hookEventName") or ""
     if event == "Stop":
         return "turn"
+    if event == "StopFailure":
+        return "stop_failure"
     if event == "SubagentStop":
         return "subagent_stop"
     if event == "Notification":
@@ -134,6 +136,7 @@ def normalize_kind(kind: str) -> str:
         "agent_completed": "turn",
         "turn_complete": "turn",
         "task_complete": "turn",
+        "stop_failure": "turn",
         # Blocked on a permission.
         "permission": "permission",
         "permission_prompt": "permission",
@@ -146,10 +149,13 @@ def normalize_kind(kind: str) -> str:
         "request_user_input": "question",
         "user_input_request": "question",
         "elicitation_dialog": "question",
+        "elicitation_url_dialog": "question",
         "agent_needs_input": "question",
         "needs_input": "question",
         "waiting": "waiting",
         "done": "done",
+        "elicitation_complete": "done",
+        "elicitation_response": "done",
         "subagent_start": "subagent_start",
         "subagent": "subagent_start",
         "subagent_stop": "subagent_stop",
@@ -368,6 +374,9 @@ def max_hold_seconds() -> int:
 
 
 def is_permission_request(payload: dict, kind: str) -> bool:
+    # A question has no allow/deny that answers it (18.0).
+    if str(payload.get("tool_name") or "") == "AskUserQuestion":
+        return False
     event = payload.get("hook_event_name") or payload.get("hookEventName") or ""
     if event == "PermissionRequest":
         return True
@@ -844,6 +853,9 @@ def main(argv: list[str]) -> int:
         return 0
 
     kind = normalize_kind(kind_arg or parse_kind_from_json(payload) or "waiting")
+    # AskUserQuestion reaches PermissionRequest; it is a question, never a hold.
+    if kind == "permission" and str(payload.get("tool_name") or "") == "AskUserQuestion":
+        kind = "question"
     if not accepts_write(kind):
         return 0
     msg = message_from_json(payload)

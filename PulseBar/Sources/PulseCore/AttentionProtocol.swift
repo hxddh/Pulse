@@ -103,6 +103,9 @@ public enum AttentionProtocol {
             "agent_completed": .turn,
             "turn_complete": .turn,
             "task_complete": .turn,
+            // 18.0: Claude's StopFailure — the turn ended on an API error
+            // (rate limit, auth, overload). Over to the user; never red.
+            "stop_failure": .turn,
             // Blocked on a permission.
             "permission": .permission,
             "permission_prompt": .permission,
@@ -115,12 +118,16 @@ public enum AttentionProtocol {
             "request_user_input": .question,
             "user_input_request": .question,
             "elicitation_dialog": .question,
+            "elicitation_url_dialog": .question,
             "agent_needs_input": .question,
             "needs_input": .question,
             // Blocked, reason unknown.
             "waiting": .waiting,
             // Resolved.
             "done": .done,
+            // 18.0: the elicitation was answered or closed.
+            "elicitation_complete": .done,
+            "elicitation_response": .done,
             // Lifecycle, stored for diagnostics only.
             "subagent_start": .subagentStart,
             "subagent": .subagentStart,

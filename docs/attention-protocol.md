@@ -87,7 +87,10 @@ Vendor aliases are normalized before the allowlist check
 | --- | --- |
 | `permission_prompt`, `exec_approval_request`, `apply_patch_approval_request`, `approval_request`, `pending_approval`, any `…approval…` that is not a response or decision | `permission` |
 | `request_user_input`, `user_input_request`, `elicitation_dialog`, `agent_needs_input`, `needs_input`, any `…user_input…` that is not a response | `question` |
-| `stop`, `idle_prompt`, `idle`, `agent_turn_complete`, `agent_completed`, `turn_complete`, `task_complete` | `turn` |
+| `stop`, `idle_prompt`, `idle`, `agent_turn_complete`, `agent_completed`, `turn_complete`, `task_complete`, `stop_failure` (18.0: Claude's StopFailure) | `turn` |
+| `elicitation_complete`, `elicitation_response` (18.0) | `done` |
+
+18.0 additions: `elicitation_url_dialog` is a `question`; a PermissionRequest whose `tool_name` is `AskUserQuestion` is written as `question` and never held for a Respond verdict — no allow/deny answers a question.
 
 ### What v3 changed, and why
 

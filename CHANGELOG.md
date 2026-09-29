@@ -2,6 +2,67 @@
 
 All notable changes to Pulse are documented here.
 
+## 18.0.0 — Current（跟上）
+
+Pulse 没有第三方 Swift 包；它真正依赖的是工具链、CI 和两家厂商的契约。这一版把三者都追到
+当前，并用上它们新给的能力。
+
+### 工具链与 CI（有截止日期）
+
+- **构建迁到 `macos-26` + Xcode 26。** 原来的 `macos-14` runner 已进入弃用期：10 月有多轮
+  10 小时的计划停机，**2026-11-02 起完全停止支持**，Xcode 15.x 不在任何其它镜像上。CI 与发布
+  现在跑在 macOS 26 上（目前 Swift 6.3.3）；截图墙也因此在 macOS 26 上渲染。
+- **Actions 全部换到 node24 主版本。** GitHub 已于 9-23 移除 Node 20，而 checkout / cache /
+  upload-artifact@v4、setup-python@v5、action-gh-release@v2 都还是 node20：现在是 checkout@v7、
+  cache@v6、upload-artifact@v7、setup-python@v7、action-gh-release@v3。
+- **Swift 6 语言模式。** `swift-tools-version: 6.2`；五个产品 target 都进入 Swift 6 模式，
+  「警告即错误」改用官方的 `.treatAllWarnings(as: .error)`，不再靠 `unsafeFlags`。迁移只暴露了
+  5 处原先编译器看不见的问题（两处日期格式化器缓存、图标缓存、通知中心、回收回调跨队列），逐一给出理由修掉。
+- **Swift Testing。** 新的测试用 `import Testing`：16.0 的「轮到你」真值表改写成参数化测试，
+  15 条厂商事件序列各是报告里一条有名字的用例；Codex 分页格式、Claude 自报探针也各有一组。
+  XCTest 的 1205 个用例照旧；测试 target 暂留 Swift 5 模式（二十个 `@MainActor` 的 XCTestCase
+  在 Swift 6 模式下是错误），随改随迁。
+- 用 macOS 26 SDK 构建后，系统菜单与控件自动采用 Liquid Glass；部署目标仍是 macOS 14。
+
+### 厂商契约
+
+- **没装 hooks 的 Claude 也会亮「需要你」。** Claude Code 新的 `claude agents --json` 会报告
+  每个会话是否在等、等什么（权限 / 需要输入 / 沙箱请求……）。这是厂商自己的报告，和 hook 一样
+  可证，不是推断。Pulse 只在探测到 Claude 进程且未装 hooks 时调用它，至多每 15 秒一次、3 秒超时，
+  连续失败就退避半小时；读不懂的输出一律当作「没有答案」，从不当作「仍在等」。红灯的来源标
+  「Claude 自报」，「为什么」一句照实说；同一会话 hook 已报时以 hook 为准；对不上任何一行的报告
+  不造行；可以像 pending 一样软忽略。
+- **Claude 的提问终于到得了 Pulse。** 安装器的 Notification matcher 一直漏了 `elicitation_dialog`
+  —— 所以 Claude 的澄清提问从没点亮过红灯。现在补上（含 URL 形式与完成事件）；新增
+  `StopFailure`（回合因限流、认证等接口错误结束）→ 轮到你，并带上原因；经权限请求到来的
+  `AskUserQuestion` 记为提问，且永不走 Respond 的扣留 —— 没有哪个「同意 / 拒绝」能回答一个问题。
+  需要重新安装一次 hooks 才生效。
+- **Codex 新的会话格式读得出来了。** Codex 新的「分页」历史模式不再写 `user_message` /
+  `agent_message`，改写 `item_completed`；按 Codex 源码的结构补上解析，新版 Codex 会话的标题和
+  最后一句话不再丢失。7 天以上的记录会被压缩成 `.jsonl.zst`，Pulse 不把它当文本读。
+- **Codex 也装 hooks —— 只装不会说谎的两个。** Codex 现在有 hooks 系统（`~/.codex/hooks.json`）；
+  安装器加上 `Stop`（轮到你）与 `UserPromptSubmit`（已清除）。**不装 `PermissionRequest`**：
+  Codex 在自己的自动审查之前就触发它，自动批准掉的请求也会触发（openai/codex#28833），接了就是
+  伪造等待。Codex 只运行用户信任过的 hook，装完需要在 Codex 里用 `/hooks` 信任一次，安装结果里
+  写明了这一点。`notify` 保留给没有 hooks 的旧版 Codex。
+
+### 为什么是大版本
+
+构建契约变了：贡献者必须用 Xcode 26 / Swift 6.2 以上，代码处在 Swift 6 语言模式；hook 安装器
+改写 Codex 的 `hooks.json`。持久状态与 Attention 协议不变（只新增别名）。
+
+### 这一版不说的话
+
+- `claude agents --json` 的真实输出、Codex 新格式、Tahoe 下的外观，都是按官方文档与 Codex
+  源码实现、在 CI 的 macOS 26 上用夹具测试的；我没有 Mac，仍需真机确认。遇到不对的，用 17.0 的
+  「复制为测试夹具」贴回来就是回归测试。
+- 托盘面板没有换成自定义的 Liquid Glass 表面：面板的圆角与阴影围绕现有材质构建，看不到效果时
+  贸然替换，视觉回归的风险大于收益；状态灯仍是彩色非模板图（颜色就是信号）。
+- 没有采用 `Mutex`（要求 macOS 15）、`InlineArray` / `Span`（macOS 26）、`defaultIsolation`
+  （会改变所有纯值模型的隔离）；`@Observable` 替换 StatusStore 留给 18.x。Xcode 27 / Swift 6.4 只在
+  预览镜像上，未纳入 CI。
+- 下载量仍是每版 0–1 次；手机上回答仍不做（需要 Apple 开发者账号）。
+
 ## 17.0.0 — Why（为什么）
 
 同类工具最常被抱怨的，是「需要你」不准 —— 误报、残留卡片、靠猜。16.0 修掉了 Pulse 自己的

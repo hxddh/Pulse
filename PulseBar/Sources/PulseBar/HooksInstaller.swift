@@ -167,12 +167,21 @@ enum HooksInstaller {
             &hooks,
             event: "Notification",
             command: hookCommand(agent: "claude"),
-            matcher: "permission_prompt|idle_prompt|agent_needs_input"
+            // 18.0: questions (elicitation) were never matched, so Claude's
+            // clarifying questions never reached Pulse.
+            matcher: "permission_prompt|idle_prompt|agent_needs_input|elicitation_dialog|elicitation_url_dialog|elicitation_complete|elicitation_response"
         )
         ensureClaudeEvent(
             &hooks,
             event: "Stop",
             command: hookCommand(agent: "claude", kind: "stop"),
+            matcher: nil
+        )
+        // 18.0: a turn that ended on an API error is over to the user too.
+        ensureClaudeEvent(
+            &hooks,
+            event: "StopFailure",
+            command: hookCommand(agent: "claude", kind: "stop_failure"),
             matcher: nil
         )
         ensureClaudeEvent(
@@ -315,7 +324,74 @@ enum HooksInstaller {
 
     // MARK: - Codex
 
+    /// 18.0: Codex now has a hooks system (`~/.codex/hooks.json`, the same
+    /// shape as Claude's). Pulse adds only the two events that cannot lie:
+    /// `Stop` (your turn) and `UserPromptSubmit` (cleared). Not
+    /// `PermissionRequest` — Codex fires it before its own auto-review, so
+    /// an approval nobody is asked for would light a red lamp
+    /// (openai/codex#28833). Codex runs a new or changed hook only after the
+    /// user trusts it (`/hooks`); the report says so. `notify` stays, for
+    /// Codex builds without hooks.
     private static func installCodex() throws -> String {
+        let notify = try installCodexNotify()
+        let hooks = try installCodexHooks()
+        return notify + "; " + hooks
+    }
+
+    private static func uninstallCodex() throws -> String {
+        let notify = try uninstallCodexNotify()
+        let hooks = try uninstallCodexHooks()
+        return notify + "; " + hooks
+    }
+
+    static var codexHooksURL: URL { homeURL.appendingPathComponent(".codex/hooks.json") }
+
+    private static func installCodexHooks() throws -> String {
+        let file = codexHooksURL
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var root: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: file.path) {
+            let raw = try String(contentsOf: file, encoding: .utf8)
+            if !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                guard let parsed = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
+                    throw InstallError.invalidClaudeJSON(file.path, "not a JSON object")
+                }
+                root = parsed
+                let backup = file.deletingPathExtension().appendingPathExtension("json.pulse-backup")
+                if !FileManager.default.fileExists(atPath: backup.path) {
+                    try raw.write(to: backup, atomically: true, encoding: .utf8)
+                }
+            }
+        }
+        var hooks = root["hooks"] as? [String: Any] ?? [:]
+        ensureClaudeEvent(&hooks, event: "Stop", command: hookCommand(agent: "codex", kind: "stop"), matcher: nil)
+        ensureClaudeEvent(&hooks, event: "UserPromptSubmit", command: hookCommand(agent: "codex", kind: "prompt"), matcher: nil)
+        root["hooks"] = hooks
+        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        var text = String(data: out, encoding: .utf8) ?? "{}"
+        if !text.hasSuffix("\n") { text += "\n" }
+        try writeConfig(text, to: file)
+        return file.path + " (Stop, UserPromptSubmit — trust them once in Codex: /hooks)"
+    }
+
+    private static func uninstallCodexHooks() throws -> String {
+        let file = codexHooksURL
+        guard FileManager.default.fileExists(atPath: file.path) else { return "\(file.path) (absent)" }
+        let raw = try String(contentsOf: file, encoding: .utf8)
+        guard containsPulseMarker(raw),
+              var root = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              var hooks = root["hooks"] as? [String: Any]
+        else { return "\(file.path) (nothing to remove)" }
+        stripPulseHooks(&hooks)
+        root["hooks"] = hooks
+        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        var text = String(data: out, encoding: .utf8) ?? "{}"
+        if !text.hasSuffix("\n") { text += "\n" }
+        try writeConfig(text, to: file)
+        return file.path
+    }
+
+    private static func installCodexNotify() throws -> String {
         let home = homeURL
         let cfg = home.appendingPathComponent(".codex/config.toml")
         try FileManager.default.createDirectory(
@@ -378,7 +454,7 @@ enum HooksInstaller {
         return cfg.path
     }
 
-    private static func uninstallCodex() throws -> String {
+    private static func uninstallCodexNotify() throws -> String {
         let home = homeURL
         let cfg = home.appendingPathComponent(".codex/config.toml")
         guard FileManager.default.fileExists(atPath: cfg.path) else {

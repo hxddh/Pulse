@@ -208,14 +208,17 @@ enum InstallTruth {
             completion([])
             return
         }
+        // Only ever called back on the main actor, below.
+        let deliver = Unchecked(completion)
         NSWorkspace.shared.recycle(targets) { _, error in
+            let failure = error?.localizedDescription
             Task { @MainActor in
-                if let error {
-                    DebugLog.write("duplicate recycle failed \(error.localizedDescription)")
-                    completion([])
+                if let failure {
+                    DebugLog.write("duplicate recycle failed \(failure)")
+                    deliver.value([])
                 } else {
                     DebugLog.write("duplicate recycle count=\(targets.count)")
-                    completion(targets)
+                    deliver.value(targets)
                 }
             }
         }

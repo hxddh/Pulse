@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "17.0.0"
+    static let semver = "18.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -295,6 +295,8 @@ struct ObservationQuality: Equatable, Hashable {
 enum WaitSignalKind: String, Equatable {
     case hooks
     case pending
+    /// 18.0: the vendor's own report of a blocked session (`claude agents`).
+    case vendor
 }
 
 /// Honesty tier for Focus — never claim session/tab precision when we only activate an app.

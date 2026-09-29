@@ -260,7 +260,10 @@ public enum TranscriptReader {
         return 0
     }
 
-    private static let isoParsers: [ISO8601DateFormatter] = {
+    // Never mutated after this initializer; Foundation's formatters are
+    // documented thread-safe for concurrent parsing. Swift 6 cannot see
+    // either fact through a non-Sendable class type.
+    nonisolated(unsafe) private static let isoParsers: [ISO8601DateFormatter] = {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let plain = ISO8601DateFormatter()

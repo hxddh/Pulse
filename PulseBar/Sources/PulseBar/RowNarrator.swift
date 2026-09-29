@@ -73,6 +73,9 @@ struct RowNarrator {
             case .pending:
                 let step = row.tool.isEmpty ? localizedWaitKind(row.waitKind) : readableAction(row.tool)
                 return String(format: tr(.whyPending), row.agent.displayName, step)
+            case .vendor:
+                let reason = row.waitMessage.isEmpty ? localizedWaitKind(row.waitKind) : row.waitMessage
+                return String(format: tr(.whyVendor), reason)
             case .none:
                 return row.isManaged ? tr(.whyManaged) : nil
             }
@@ -81,6 +84,15 @@ struct RowNarrator {
             return String(format: tr(.whyTurn), row.agent.displayName, agoPhrase(sinceMs: row.turnSinceMs))
         }
         return nil
+    }
+
+    /// Where a wait came from, in one word.
+    func signalLabel(_ signal: WaitSignalKind) -> String {
+        switch signal {
+        case .hooks: return tr(.signalHooks)
+        case .pending: return tr(.signalPending)
+        case .vendor: return tr(.signalVendor)
+        }
     }
 
     /// "3m ago" / "3 分钟前", or "just now" alone — never "just now ago".
@@ -279,7 +291,7 @@ struct RowNarrator {
             let msg = row.waitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
             if !msg.isEmpty { return "" }
             if let signal = row.waitSignal {
-                return signal == .hooks ? tr(.signalHooks) : tr(.signalPending)
+                return signalLabel(signal)
             }
             return ""
         }
@@ -1274,7 +1286,7 @@ struct RowNarrator {
         let msg = row.waitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         if !msg.isEmpty {
             if let sig = row.waitSignal {
-                let src = sig == .hooks ? tr(.signalHooks) : tr(.signalPending)
+                let src = signalLabel(sig)
                 return "↳ \(msg) · \(src)"
             }
             return "↳ \(msg)"

@@ -45,7 +45,14 @@ enum PulseHookReceiver {
             }
             return 0
         }
-        let kind = AttentionProtocol.normalizeKind(kindSource.isEmpty ? "waiting" : kindSource)
+        var kind = AttentionProtocol.normalizeKind(kindSource.isEmpty ? "waiting" : kindSource)
+        // 18.0: Claude routes AskUserQuestion through PermissionRequest. It
+        // is a question, not a permission — and never a Respond hold: there
+        // is no allow/deny that answers it.
+        if kind == AttentionKind.permission.rawValue,
+           string(payload, keys: ["tool_name", "toolName"]) == "AskUserQuestion" {
+            kind = AttentionKind.question.rawValue
+        }
         guard AttentionProtocol.acceptsWrite(kind: kind) else {
             DebugLog.write("attention reject unknown kind=\(kind) agent=\(agentRaw)")
             return 0
@@ -348,6 +355,7 @@ enum PulseHookReceiver {
         // 16.0: a turn ending is "your turn"; a subagent ending is only
         // lifecycle — it used to share `stop` with the parent.
         case "Stop": return "turn"
+        case "StopFailure": return "stop_failure"
         case "SubagentStop": return "subagent_stop"
         case "Notification":
             let nested = string(payload, keys: ["notification_type", "notificationType"])

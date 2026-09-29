@@ -422,6 +422,16 @@ final class HooksInstallerTests: XCTestCase {
         )
         XCTAssertTrue(codex.contains("pulse-hook"))
         XCTAssertTrue(codex.contains("notify = "))
+        // 18.0: Codex hooks — Stop and UserPromptSubmit, never PermissionRequest.
+        let codexHooks = try String(contentsOf: HooksInstaller.codexHooksURL, encoding: .utf8)
+        XCTAssertTrue(codexHooks.contains("\"Stop\""))
+        XCTAssertTrue(codexHooks.contains("\"UserPromptSubmit\""))
+        XCTAssertFalse(codexHooks.contains("PermissionRequest"),
+                       "Codex fires it before auto-review: it is not proof anyone is asked")
+        XCTAssertTrue(codexHooks.contains("pulse-hook"))
+        // 18.0: Claude questions and failed turns reach Pulse.
+        XCTAssertTrue(claude.contains("elicitation_dialog"))
+        XCTAssertTrue(claude.contains("StopFailure"))
 
         XCTAssertEqual(HooksSupport.probeStatus(), .installedBoth)
 
@@ -431,6 +441,9 @@ final class HooksInstallerTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertFalse(HooksInstaller.containsPulseMarker(claudeAfter))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker(
+            try String(contentsOf: HooksInstaller.codexHooksURL, encoding: .utf8)
+        ))
         XCTAssertEqual(HooksSupport.probeStatus(), .missing)
     }
 
