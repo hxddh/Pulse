@@ -288,12 +288,12 @@ package enum ActivityHarvest {
         /// is the more reliable answer to "how long has this been going".
         package var sessionStartedMs: Int64 = 0
         /// 4.0-α · the transcript file this row's facts were read from —
-        /// the workbench's local read handle for showing the session itself.
+        /// a local read handle for showing the session itself.
         ///
         /// Set only for structured JSONL session sources. Deliberately NOT
         /// sanitized (it is a filesystem path used to open the file, never
-        /// rendered), and it never travels: not into fleet snapshots, not
-        /// onto the tray, not out of the machine in any channel.
+        /// rendered), and it never travels: not onto the tray, not out of
+        /// the machine in any channel.
         package var transcriptPath: String = ""
 
         /// Whether the vendor said this run reached a terminal state.
@@ -515,13 +515,20 @@ package enum ActivityHarvest {
 
 /// Attention TSV reader — last event wins per (agent, session); `done` clears;
 /// `turn` ends a blocked wait (after a short grace) and leaves "your turn".
+///
+/// `attention.tsv` is this Mac's own file: every line in it was raised here.
+/// 22.0 removed the remote inbox (`attention.d/<host>.tsv`) and with it the
+/// per-host keys, arrival clocks and "lost contact" rows. The protocol's
+/// `host` column is still accepted and ignored — a hook that sets
+/// `PULSE_HOST` is still a hook on this Mac.
 package enum AttentionReader {
     package static let ttlMs: Int64 = 30 * 60 * 1000
-    /// How long a remote row stays visible after it went quiet.
-    package static let lostContactRetentionMs: Int64 = 2 * 30 * 60 * 1000
     /// A turn ending right after a blocked raise must not wipe it: the order
     /// of Claude's Notification, PermissionRequest and Stop is not ours.
     package static let stopGraceMs: Int64 = 20_000
+    /// How far an event stamp may run ahead of now before it is refused —
+    /// a skewed or malformed stamp must not become a permanent Waiting row.
+    package static let clockFutureToleranceMs: Int64 = 5 * 60 * 1000
 
     package struct Entry {
         package var id: AgentID
@@ -530,46 +537,20 @@ package enum AttentionReader {
         package var tsMs: Int64
         package var session: String = ""
         package var cwd: String = ""
-        /// Empty means this Mac. A named host is a machine Pulse cannot probe,
-        /// cannot focus, and cannot ask whether the agent is still alive.
-        package var host: String = ""
-        /// When the bytes reached this disk. Equal to `tsMs` for local events.
-        package var receivedAtMs: Int64 = 0
-        /// The event's own clock disagreed with arrival badly enough that
-        /// `tsMs` is not being used for age or ordering.
-        package var clockSuspect: Bool = false
-        /// A remote wait nothing has refreshed inside the TTL. The lamp comes
-        /// down — Pulse has no evidence it is still open — but the row stays,
-        /// because "I stopped hearing from it" is not "it finished".
-        package var lostContact: Bool = false
         /// v3 column 8: the prompt's window was frontmost when this was
         /// raised (`true`), was not (`false`), or nobody could tell (`nil`).
         package var front: Bool? = nil
 
-        package var isRemote: Bool { !host.isEmpty }
         /// 16.0: "your turn" — the agent finished and is idle at its prompt.
         /// Never the red lamp.
         package var isTurn: Bool { kind == Kind.turn.label }
         /// Blocked on the user: permission, question, or unknown reason.
         package var isBlocking: Bool { !kind.isEmpty && !isTurn }
 
-        /// A suspect stamp corrected by the host's file-level skew (12.1);
-        /// 0 when the stamp was usable or there was nothing to correct by.
-        package var correctedMs: Int64 = 0
-
-        /// The clock Pulse is willing to stand behind.
-        package var effectiveMs: Int64 {
-            guard clockSuspect else { return tsMs }
-            return correctedMs > 0 ? correctedMs : receivedAtMs
-        }
-
-        /// Stable key for last-event-wins map. Two machines running the same
-        /// agent are two different waits; merging them would let one host's
-        /// `done` clear the other host's open permission.
+        /// Stable key for last-event-wins map.
         package var mapKey: String {
             let surfaceID = id.surfaceID
-            let base = session.isEmpty ? surfaceID.rawValue : "\(surfaceID.rawValue)|\(session)"
-            return host.isEmpty ? base : "\(base)@\(host)"
+            return session.isEmpty ? surfaceID.rawValue : "\(surfaceID.rawValue)|\(session)"
         }
     }
 
@@ -600,108 +581,18 @@ package enum AttentionReader {
         }
     }
 
-    /// Which clock an event's age may be measured against.
-    package enum ClockVerdict: Equatable {
-        /// The event stamp is usable.
-        case trustEvent
-        /// The event stamp disagrees with arrival past the point of belief;
-        /// measure from arrival instead and say so.
-        case trustArrival
-        /// Neither clock says anything — there is nothing to measure.
-        case unusable
-    }
-
-    /// How far a remote stamp may run ahead of its own arrival before the
-    /// machine's clock, rather than the event, is the thing in question.
-    package static let clockFutureToleranceMs: Int64 = 5 * 60 * 1000
-
-    /// A remote machine's clock is not ours.
-    ///
-    /// Before 1.0 an event outside the tolerance was dropped, which was right
-    /// for a local hook and wrong for a remote host: a box running 20 minutes
-    /// off had *every* wait silently disappear, with nothing anywhere saying
-    /// why. Arrival time is local and durable, so it can carry the event that
-    /// the sender's clock cannot.
-    package static func clockVerdict(eventMs: Int64, arrivalMs: Int64, isRemote: Bool) -> ClockVerdict {
-        if eventMs > 0, !isRemote {
-            // Local: the old rule, unchanged. The caller still applies the
-            // future tolerance and TTL.
-            return .trustEvent
-        }
-        guard isRemote else { return .unusable }
-        guard arrivalMs > 0 else {
-            // No arrival stamp to fall back on.
-            return eventMs > 0 ? .trustEvent : .unusable
-        }
-        guard eventMs > 0 else { return .trustArrival }
-        if eventMs - arrivalMs > clockFutureToleranceMs { return .trustArrival }
-        if arrivalMs - eventMs > ttlMs { return .trustArrival }
-        return .trustEvent
-    }
-
-    /// How far a remote file's clock is off, from its newest stamped line and
-    /// its arrival time: 0 when the stamps are believable as they are, the
-    /// correction to add to every stamp when they are not, nil when there is
-    /// nothing to judge (a local file, or no stamped line).
-    package static func fileSkewMs(_ text: String, receivedAtMs: Int64) -> Int64? {
-        guard receivedAtMs > 0 else { return nil }
-        var newest: Int64 = 0
-        for line in text.split(whereSeparator: \.isNewline) {
-            let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if raw.isEmpty || raw.hasPrefix("#") { continue }
-            let cols = raw.split(separator: "\t", omittingEmptySubsequences: false)
-            guard cols.count >= 3, let ts = Int64(cols[2]), ts > 0 else { continue }
-            newest = max(newest, ts)
-        }
-        guard newest > 0 else { return nil }
-        switch clockVerdict(eventMs: newest, arrivalMs: receivedAtMs, isRemote: true) {
-        case .trustEvent: return 0
-        case .trustArrival: return receivedAtMs - newest
-        case .unusable: return nil
-        }
-    }
-
     package static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
         let sources = AttentionIO.readSources()
         // 17.0: everything read is also kept, bounded, so a lamp can later
         // say which event lit it (`AttentionHistory`).
         AttentionHistoryStore.ingest(sources, nowMs: nowMs)
-        // Each source is parsed on its own: one host's `done` must never clear
-        // another host's open permission, and per-file parsing is what keeps
-        // that true without a single rule anywhere saying so.
-        return sources.flatMap { source in
-            parse(
-                source.text,
-                nowMs: nowMs,
-                defaultHost: source.host,
-                receivedAtMs: source.isLocal ? 0 : source.receivedAtMs
-            )
-        }
+        return sources.flatMap { parse($0.text, nowMs: nowMs) }
     }
 
     /// Pure TSV → entries. Split out from `load` so the last-event-wins,
     /// stop-grace and TTL rules are testable without touching the filesystem.
-    ///
-    /// `defaultHost` names the machine when a line does not (a remote box still
-    /// running a v1 hook); `receivedAtMs` is when the bytes reached this disk,
-    /// and is zero for events raised here.
-    package static func parse(
-        _ text: String,
-        nowMs: Int64,
-        defaultHost: String = "",
-        receivedAtMs: Int64 = 0
-    ) -> [Entry] {
+    package static func parse(_ text: String, nowMs: Int64) -> [Entry] {
         guard !text.isEmpty else { return [] }
-
-        // A remote file carries one arrival time — its mtime — for every line
-        // in it. 11.0 judged each line's stamp against that one time, so an
-        // hours-old Permission sitting above a fresh line looked like clock
-        // skew and was re-dated to "just arrived" (review-1.2 F-2). The
-        // question "is this host's clock wrong" belongs to the file: the
-        // newest line is the one that arrived at the mtime, so the offset
-        // between them is the host's skew, and every line is shifted by that
-        // same offset — an old event stays exactly as old as it was.
-        let fileSkewMs = Self.fileSkewMs(text, receivedAtMs: receivedAtMs)
 
         var byKey: [String: Entry] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
@@ -716,20 +607,12 @@ package enum AttentionReader {
             let message = cols.count > 3 ? ContentSanitizer.redact(cols[3]) : ""
             let session = cols.count > 4 ? cols[4] : ""
             let cwd = cols.count > 5 ? ContentSanitizer.redact(cols[5]) : ""
-            let named = cols.count > 6 ? AttentionProtocol.normalizeHost(cols[6]) : ""
-            let host = named.isEmpty ? defaultHost : named
-            let base = session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
-            let mapKey = host.isEmpty ? base : "\(base)@\(host)"
+            let mapKey = session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
 
             if kind == .ignore { continue }
 
-            // Agent-level clears are scoped to the machine that sent them.
-            // Matching by key prefix would let one host's `done` wipe another
-            // host's open permission the moment both appear in one file.
             func siblingKeys() -> [String] {
-                byKey.compactMap { key, entry in
-                    entry.id.surfaceID == id && entry.host == host ? key : nil
-                }
+                byKey.compactMap { key, entry in entry.id.surfaceID == id ? key : nil }
             }
 
             if kind == .done {
@@ -740,26 +623,6 @@ package enum AttentionReader {
                 }
                 continue
             }
-            // A clock-skewed or malformed hook event must not become a
-            // permanent Waiting row. Activity rows use the same small future
-            // tolerance; keep it consistent here.
-            let arrival = receivedAtMs > 0 ? receivedAtMs : tsMs
-            let clock = clockVerdict(
-                eventMs: tsMs, arrivalMs: arrival, isRemote: !host.isEmpty
-            )
-            // Computed before the turn rule so the stop grace can compare
-            // this line's own clock with the raise's; an unusable stamp is
-            // skipped only after that rule, exactly as before.
-            let effective: Int64
-            let suspect: Bool
-            if !host.isEmpty, tsMs > 0, receivedAtMs > 0, let fileSkewMs {
-                // Remote with a stamp: the file's verdict, not this line's.
-                suspect = fileSkewMs != 0
-                effective = min(receivedAtMs, tsMs + fileSkewMs)
-            } else {
-                suspect = clock == .trustArrival
-                effective = suspect ? arrival : tsMs
-            }
 
             // A turn ending clears a blocked wait — unless that wait was
             // raised moments ago (see `stopGraceMs`) — and then says "your
@@ -767,24 +630,14 @@ package enum AttentionReader {
             // clears: with no session there is no row it could belong to.
             if kind == .turn {
                 func shouldKeep(_ existing: Entry) -> Bool {
-                    // `effectiveMs`, not the raw stamp: this is the same
-                    // choice `clockVerdict` made just above,
-                    // and the two must agree. A remote box whose clock runs
-                    // half an hour behind produced a Permission the reader
-                    // deliberately measured from arrival — and then the Stop
-                    // that Claude emits right after it wiped that Permission
-                    // instantly, because the grace window alone was still
-                    // measured against the stamp everything else had refused
-                    // to trust.
-                    //
                     // Measured from the raise to *this turn line*, never to
                     // `nowMs`: the verdict is a function of the two lines, so
                     // re-reading the same file a minute later cannot flip a
                     // kept permission into a cleared one.
                     existing.isBlocking
-                        && existing.effectiveMs > 0
-                        && clock != .unusable
-                        && effective - existing.effectiveMs < stopGraceMs
+                        && existing.tsMs > 0
+                        && tsMs > 0
+                        && tsMs - existing.tsMs < stopGraceMs
                 }
                 if session.isEmpty {
                     for k in siblingKeys() {
@@ -799,24 +652,12 @@ package enum AttentionReader {
                 if AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "") == true { continue }
             }
 
-            switch clock {
-            case .unusable:
-                continue
-            case .trustEvent, .trustArrival:
-                break
-            }
-
-            if effective > nowMs + 5 * 60 * 1000 { continue }
-            let expired = nowMs - effective > ttlMs
-            // A local wait that expires is covered by the process probe, so it
-            // can simply go. A remote one has no such witness: dropping it
-            // silently would show "finished" when the only true statement is
-            // "nothing has been heard since". Keep it and mark it lost.
-            if expired && host.isEmpty { continue }
-            // Lost contact is a statement worth showing, not a permanent one.
-            // Past this window "nothing heard in over an hour" stops being news
-            // and the row goes; the ledger keeps the history.
-            if nowMs - effective > lostContactRetentionMs { continue }
+            // No stamp, a stamp from the future, or one past the TTL: a local
+            // wait that expires is covered by the process probe, so it can
+            // simply go.
+            guard tsMs > 0 else { continue }
+            if tsMs > nowMs + clockFutureToleranceMs { continue }
+            if nowMs - tsMs > ttlMs { continue }
             var entry = Entry(
                 id: id,
                 kind: kind.label,
@@ -825,11 +666,6 @@ package enum AttentionReader {
                 session: session,
                 cwd: cwd
             )
-            entry.host = host
-            entry.receivedAtMs = arrival
-            entry.clockSuspect = suspect
-            if suspect { entry.correctedMs = effective }
-            entry.lostContact = expired
             entry.front = AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "")
             // A later event with nothing to say must not erase what an earlier
             // one said. One approval makes Claude raise both `Notification`

@@ -3,7 +3,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 2.4 Answer Here — the one verb change this product has shipped, made
@@ -12,9 +11,8 @@ import XCTest
 /// Two things had to change. The gate stopped asking "is anyone touching this
 /// Mac" (which is true in a meeting, while six terminals sit behind a
 /// full-screen app) and started asking whether the prompt is actually in
-/// front of the user. And the spool, which read only what a partner Mac's
-/// sync tool delivered, now also reads what an agent on this Mac raised and
-/// is still holding for.
+/// front of the user. And the spool reads what an agent on this Mac raised
+/// and is still holding for — since 22.0 the only kind of request there is.
 final class AnswerHereTests: XCTestCase {
 
     private let now: Int64 = 1_800_000_000_000
@@ -167,7 +165,7 @@ final class AnswerHereTests: XCTestCase {
 
     func testTheGeneratedKeySurvivesTheNewlineTrim() throws {
         // `keyBytes` trims trailing newline bytes so a hand-made key matches
-        // its copy on the other Mac. Raw random bytes ending in 0x0A would be
+        // what the hook reads. Raw random bytes ending in 0x0A would be
         // silently trimmed into a different key than the one written, so the
         // generated key is hex text.
         XCTAssertTrue(RespondSpool.setLocalAnsweringEnabled(true))
@@ -179,10 +177,14 @@ final class AnswerHereTests: XCTestCase {
         )
     }
 
-    func testEitherKeyIsAnOptIn() throws {
-        XCTAssertFalse(RespondSpool.hasAnyKey())
+    func testTheRetiredSharedKeyIsNoOptIn() throws {
+        // 22.0: `respond-secret.key` was the remote opt-in. It no longer
+        // arms anything.
+        let shared = root.deletingLastPathComponent().appendingPathComponent("respond-secret.key")
+        try Data("old-partner-key".utf8).write(to: shared)
+        XCTAssertFalse(RespondSpool.localHasSecret())
         RespondSpool.setLocalAnsweringEnabled(true)
-        XCTAssertTrue(RespondSpool.hasAnyKey(), "a single-Mac install opted in with no partner")
+        XCTAssertTrue(RespondSpool.localHasSecret())
     }
 
     // MARK: - This Mac's own requests, read back
@@ -217,11 +219,10 @@ final class AnswerHereTests: XCTestCase {
         return url
     }
 
-    func testTheFlatTreeIsReadAndMarkedLocal() throws {
+    func testTheFlatTreeIsRead() throws {
         try writeLocalRequestFile()
         let found = RespondSpool.readLocalRequests(nowMs: now, host: "thismac")
         XCTAssertEqual(found.count, 1)
-        XCTAssertTrue(found[0].isLocal)
         XCTAssertEqual(found[0].request.id, "toolu_local")
         XCTAssertTrue(found[0].request.canOfferAllow, "the whole request is here")
     }
@@ -257,7 +258,7 @@ final class AnswerHereTests: XCTestCase {
         let request = try localRequest()
         var store = RespondDecisionStore()
         let verdict = try XCTUnwrap(store.decide(request, allow: false, nowMs: now))
-        XCTAssertTrue(RespondSpool.writeVerdict(verdict, local: true))
+        XCTAssertTrue(RespondSpool.writeVerdict(verdict))
 
         let allow = RespondSpool.claimVerdict(
             requestID: request.id, digest: request.digest,
@@ -271,7 +272,7 @@ final class AnswerHereTests: XCTestCase {
         let request = try localRequest()
         var store = RespondDecisionStore()
         let verdict = try XCTUnwrap(store.decide(request, allow: false, nowMs: now))
-        RespondSpool.writeVerdict(verdict, local: true)
+        RespondSpool.writeVerdict(verdict)
         _ = RespondSpool.claimVerdict(
             requestID: request.id, digest: request.digest,
             agent: request.agent.rawValue, host: request.host, nowMs: now
@@ -290,15 +291,14 @@ final class AnswerHereTests: XCTestCase {
         var store = RespondDecisionStore()
         let verdict = try XCTUnwrap(store.decide(request, allow: false, nowMs: now))
         XCTAssertFalse(
-            RespondSpool.writeVerdict(verdict, local: true),
+            RespondSpool.writeVerdict(verdict),
             "no key, no verdict on disk — fail closed"
         )
     }
 
-    /// The property the local key exists to preserve: `verdicts/` is exactly
-    /// the directory a partner Mac's answers sync *into*, so a file arriving
-    /// over a compromised share must still be unusable.
-    func testAVerdictSignedWithNeitherHeldKeyIsRefused() throws {
+    /// A verdict is signed, not trusted: a well-formed file signed with any
+    /// key but the local one must be unusable.
+    func testAVerdictSignedWithAnotherKeyIsRefused() throws {
         RespondSpool.setLocalAnsweringEnabled(true)
         let request = try localRequest()
         let directory = root.appendingPathComponent("verdicts", isDirectory: true)
@@ -328,7 +328,7 @@ final class AnswerHereTests: XCTestCase {
                 requestID: request.id, digest: request.digest,
                 agent: request.agent.rawValue, host: request.host, nowMs: now
             ),
-            "adding the local path must not weaken the remote one"
+            "only the local key can mint a verdict the hook acts on"
         )
     }
 

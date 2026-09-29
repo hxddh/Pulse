@@ -65,32 +65,24 @@ final class StatusStore {
     var hotkeyEnabled: Bool { hotkey != .off }
     /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
     var allowTerminalAutomation = false
-    var allowWorkbenchActuation = false
     /// Answer this Mac's own agents from Pulse, when the prompt is not in
     /// front of you. **The key file is the source of truth**, not this flag —
     /// a persisted setting could drift from the file the hook actually reads,
     /// and the hook is the half that decides whether an agent waits.
     var respondLocalEnabled = false
-    /// Measure what has landed in each agent's working copy. On by default —
-    /// an evidence axis nobody switches on is worth nothing — and bounded,
-    /// read-only and content-free by construction. Off means not one git
-    /// command runs.
-    var measureWorkspaceEffect = true
-    /// Write this Mac's own fleet snapshot for other machines to read. Off by
-    /// default — content leaving the machine is the user's call, every time.
-    /// Reading other hosts' snapshots is always on: it is passive, local and
-    /// bounded, and the directory simply does not exist until a sync tool
-    /// puts something there.
-    var broadcastFleet = false
-    /// Last time the local snapshot was written, so the file is refreshed on
-    /// the snapshot's own cadence rather than every 2-second tick.
-    @ObservationIgnored var lastFleetWriteMs: Int64 = 0
     var trayGrouping: TrayGrouping = .status
     var playSoundOnWaiting = false
     /// Minutes of silence before a live row reads as stalled; 0 turns it off.
     var stallMinutes = 20
     /// How long "Later" silences a wait.
     var snoozeMinutes = 10
+    /// Persisted: the user uninstalled the hooks, so the tray stops offering
+    /// them. Cleared by the next install.
+    var hooksNudgeOff = false
+    /// When the last scan was applied — advances on every scan, published or
+    /// not, unlike `snapshot.updatedAt` which moves only when the snapshot
+    /// changes. Read by the self-check; never drives a view.
+    @ObservationIgnored var lastScanAt: Date?
     /// False when the system refused the shortcut (another app owns it).
     var hotkeyRegistered = true
     var updateCheckEnabled = true
@@ -233,27 +225,9 @@ final class StatusStore {
     @ObservationIgnored var timer: Timer?
     /// 5.0-α — the engine boundary. Sources produce rows; the coordinator
     /// merges; `cachedAll` is the merged cache the display layer reads.
-    /// The observed pipeline registers first and stays ground truth for any
-    /// rowKey it also produces; the managed runtime (5.0-β) registers after.
     let observedSessions = ObservedSessionSource()
-    /// 5.0-β — registered on first dispatch (after observed, so the
-    /// coordinator's ground-truth rule holds by construction).
-    @ObservationIgnored let managedSessionSource = ManagedSessionSource()
-    /// The managed fleet is a plain class Observation cannot see into. Every
-    /// fleet change — a runner's status, a new permission ask, a check
-    /// result — arrives through `managedSessionsChanged()`, which bumps this;
-    /// reading the fleet through `managedSessions` reads it too, so a card
-    /// that shows a permission ask is invalidated when the ask arrives even
-    /// if no merged row changed.
-    var managedRevision = 0
-    var managedSessions: ManagedSessionSource {
-        _ = managedRevision
-        return managedSessionSource
-    }
     @ObservationIgnored private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
     var cachedAll: [AgentRow] = []
-    /// 6.0-γ: one-shot workbench selection request (attempt compare jumps).
-    var workbenchSelectKey: String? = nil
     @ObservationIgnored var lastGoodHarvest: [ActivityHarvest.Row] = []
     /// Result of the latest attempted adapter scan, including adapters that
     /// ran successfully but had no recent local session. This is deliberately
@@ -266,11 +240,6 @@ final class StatusStore {
     /// Per-Agent retry/backoff/circuit policy. A bad store must not consume the
     /// next scan budget for every other adapter.
     @ObservationIgnored var harvestSupervisor = HarvestSupervisor()
-    /// Per-repository-root measurements, their cadence, and the slow-repo
-    /// circuit. Lives here because measuring forks git; the builder only ever
-    /// sees the resulting table.
-    @ObservationIgnored var workspaceEffects = WorkspaceEffectStore()
-    @ObservationIgnored var workspaceEffectsByDirectory: [String: WorkspaceEffect.Measurement] = [:]
     /// Where the next native harvest should start.
     ///
     /// The collector walks its adapters in a fixed order, so before 0.98 a
@@ -331,6 +300,15 @@ final class StatusStore {
     /// the agent-owned attention.tsv bridge so a restart cannot lose the only
     /// human-confirmation edge or emit it twice.
     @ObservationIgnored var attentionLedger = AttentionLedger.load()
+    /// 22.0: every session's state spans. Read by the detail view through
+    /// `timelineRevision`, which moves only when a span did.
+    @ObservationIgnored var timelineBook = SessionTimelineStore.load()
+    var timelineRevision = 0
+    /// 22.0: the tray has an open detail view or a typed filter, so Escape
+    /// belongs to it before it closes the panel. Not observed: only the
+    /// panel's key monitor reads it.
+    @ObservationIgnored var trayEscapeConsumed = false
+    @ObservationIgnored var lastApplyLogSignature = ""
     /// Soft-dismissed Cursor harvest pending until skill clears.
     @ObservationIgnored var dismissedPendingKeys: Set<String> = []
     /// Row key → when its "remind me later" runs out.
@@ -543,6 +521,9 @@ final class StatusStore {
     /// When true, Settings scrolls/highlights the Waiting signals section
     /// (Attention bridge path for agents without a native Waiting contract).
     var settingsFocusWaitingSignals = false
+    /// 22.0: moves on every deep link, so a second link to the same place
+    /// still scrolls there.
+    var settingsFocusToken = 0
     /// Waiting-none Agent named when Support deep-links into Attention Reach.
     var settingsFocusWaitingAgent: AgentID? = nil
     /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump

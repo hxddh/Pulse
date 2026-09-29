@@ -141,8 +141,6 @@ enum TerminalFocus {
     }
 
     /// Terminal / iTerm tab select — only called after Automation opt-in + click.
-    /// Internal since 4.0-β: `WorkbenchActuation` selects the exact tab with
-    /// this before it is allowed to type a single character.
     ///
     /// Only a terminal that is already running is asked: `tell application`
     /// launches an app that is not, so a click meant for iTerm used to open

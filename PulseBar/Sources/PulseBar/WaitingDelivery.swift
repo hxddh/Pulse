@@ -34,6 +34,45 @@ struct WaitingDelivery: Equatable {
     var msSinceLastNotification: Int64
     var minimumIntervalMs: Int64
 
+    /// 22.0 · why a waiting row got no banner from this plan — the answer
+    /// to "why didn't I get a notification?", recorded on the ledger event
+    /// instead of being thrown away with the filter.
+    enum SkipReason: String, Codable, Equatable, Sendable {
+        /// The prompt was already in front of the person when it was raised.
+        case inFront
+        case muted
+        /// The person already dismissed or answered this wait.
+        case acknowledged
+        /// Rate limit: queued for the next window.
+        case held
+        /// Waiting notifications are switched off in Settings.
+        case notifyOff
+        /// macOS has not allowed Pulse to notify.
+        case notAuthorized
+        /// It was already waiting when Pulse started; only new waits notify.
+        case atLaunch
+        /// Notification Center refused the request.
+        case rejected
+    }
+
+    /// Per-row reasons for the rows this plan leaves out. In-flight rows are
+    /// not "skipped" — their banner is on its way.
+    func skipReasons(_ rows: [AgentRow]) -> [String: SkipReason] {
+        var out: [String: SkipReason] = [:]
+        for row in rows where row.waiting {
+            if row.waitRaisedInFront {
+                out[row.rowKey] = .inFront
+            } else if muted.contains(row.agent) {
+                out[row.rowKey] = .muted
+            } else if acknowledged.contains(row.rowKey) {
+                out[row.rowKey] = .acknowledged
+            } else if !inFlight.contains(row.rowKey), !canDeliverNow {
+                out[row.rowKey] = .held
+            }
+        }
+        return out
+    }
+
     func plan(_ rows: [AgentRow]) -> Plan {
         let eligible = rows.filter { row in
             row.waiting

@@ -4,7 +4,6 @@ import Testing
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 12.4 Surface — a scan that found the same world wakes no surface.
@@ -31,11 +30,10 @@ struct ScanQuietTests {
         [
             ("allowAppData", \StatusStore.allowAppData),
             ("allowTerminalAutomation", \StatusStore.allowTerminalAutomation),
-            ("allowWorkbenchActuation", \StatusStore.allowWorkbenchActuation),
             ("appDataAgents", \StatusStore.appDataAgents),
             ("autoProbe", \StatusStore.autoProbe),
+            ("timelineRevision", \StatusStore.timelineRevision),
             ("pulseHookLauncherError", \StatusStore.pulseHookLauncherError),
-            ("broadcastFleet", \StatusStore.broadcastFleet),
             ("cachedAll", \StatusStore.cachedAll),
             ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
             ("didCopyAttentionRaise", \StatusStore.didCopyAttentionRaise),
@@ -44,6 +42,7 @@ struct ScanQuietTests {
             ("doctorReport", \StatusStore.doctorReport),
             ("didCopyShapeReport", \StatusStore.didCopyShapeReport),
             ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
+            ("hooksNudgeOff", \StatusStore.hooksNudgeOff),
             ("hooksStatus", \StatusStore.hooksStatus),
             ("hotkey", \StatusStore.hotkey),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
@@ -59,8 +58,6 @@ struct ScanQuietTests {
             ("lookMovedRowKeys", \StatusStore.lookMovedRowKeys),
             ("lookMovedWhileAway", \StatusStore.lookMovedWhileAway),
             ("lookNewWaitsWhileAway", \StatusStore.lookNewWaitsWhileAway),
-            ("managedRevision", \StatusStore.managedRevision),
-            ("measureWorkspaceEffect", \StatusStore.measureWorkspaceEffect),
             ("missedWhileAway", \StatusStore.missedWhileAway),
             ("mutedAgents", \StatusStore.mutedAgents),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
@@ -85,6 +82,7 @@ struct ScanQuietTests {
             ("settingsFocusAppDataAgent", \StatusStore.settingsFocusAppDataAgent),
             ("settingsFocusWaitingAgent", \StatusStore.settingsFocusWaitingAgent),
             ("settingsFocusWaitingSignals", \StatusStore.settingsFocusWaitingSignals),
+            ("settingsFocusToken", \StatusStore.settingsFocusToken),
             ("showAllAgents", \StatusStore.showAllAgents),
             ("snapshot", \StatusStore.snapshot),
             ("snapshotAgents", \StatusStore.snapshotAgents),
@@ -97,7 +95,6 @@ struct ScanQuietTests {
             ("updateStatus", \StatusStore.updateStatus),
             ("waitHistory", \StatusStore.waitHistory),
             ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
-            ("workbenchSelectKey", \StatusStore.workbenchSelectKey),
         ]
     }
 

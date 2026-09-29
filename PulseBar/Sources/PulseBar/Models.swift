@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "21.0.0"
+    static let semver = "22.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -190,11 +190,6 @@ struct ObservationQuality: Equatable, Hashable {
         let baseReason: String
         let baseNext: String
         switch evidence {
-        case .remote:
-            // Another machine's event is all there is. The gap is not something
-            // the user can close here, so the next step must not pretend it is.
-            baseReason = "remote_event_only"
-            baseNext = "wait_for_remote_host"
         case .process:
             baseReason = privacyLimited ? "privacy_limited" : "process_only"
             baseNext = privacyLimited ? "enable_app_data" : "open_agent_for_session"
@@ -274,9 +269,6 @@ struct ObservationQuality: Equatable, Hashable {
                 // Keep confidence honest for thin cache adapters.
             }
         case .process:
-            confidence = .low
-        case .remote:
-            // One event from a machine Pulse cannot probe. Never more than low.
             confidence = .low
         }
 
@@ -395,26 +387,6 @@ struct AgentRow: Identifiable, Hashable {
     var subTotal: Int = 0
     /// True when a live process was matched (not harvest-only).
     var liveProcess: Bool = false
-    /// The machine this row came from. Empty means this Mac.
-    ///
-    /// 1.0: a named host is a row Pulse cannot probe, cannot focus, and cannot
-    /// ask whether the agent is still alive. Everything a local row gets from
-    /// the process table, a remote row simply does not have — so it must never
-    /// borrow the local template and imply otherwise.
-    /// 4.0-γ: the family lives as one value; the forwarders below keep every
-    /// existing reader and writer compiling unchanged.
-    var remote = SessionRemote()
-    var host: String { get { remote.host } set { remote.host = newValue } }
-    /// Last time anything arrived from a remote host for this row.
-    var lastHeardMs: Int64 { get { remote.lastHeardMs } set { remote.lastHeardMs = newValue } }
-    /// Nothing has refreshed a remote wait inside the TTL. The lamp comes down;
-    /// the row stays. "I stopped hearing from it" is not "it finished".
-    var lostContact: Bool { get { remote.lostContact } set { remote.lostContact = newValue } }
-    /// The sender's clock disagreed with arrival, so ages are measured from
-    /// when the bytes landed here. Shown in Details rather than chosen quietly.
-    var clockSuspect: Bool { get { remote.clockSuspect } set { remote.clockSuspect = newValue } }
-
-    var isRemote: Bool { !host.isEmpty }
     /// How this row can be focused — resolved once per scan, never in a view body.
     var focusTier: FocusTier? = nil
     /// Sessions of this agent that exist but did not fit the per-agent cap.
@@ -533,40 +505,10 @@ struct AgentRow: Identifiable, Hashable {
     var cwdBestEffort: Bool = false
     /// 4.0-α · path of the structured transcript this row was read from.
     ///
-    /// The workbench's local read handle: opened on an explicit click to
-    /// render the session itself. Never rendered as text, never on the tray,
-    /// never in fleet snapshots or any channel that leaves the machine.
-    /// Empty for remote rows, cache-tier rows, and process-only rows.
+    /// A local read handle, opened only on an explicit click. Never rendered
+    /// as text, never on the tray, never in any channel that leaves the
+    /// machine. Empty for cache-tier and process-only rows.
     var transcriptPath: String = ""
-    /// 5.0-β · non-empty when this row is a Pulse-run managed session
-    /// (scene BG). The workbench swaps the inspector for the live
-    /// conversation; every other surface treats the row as ordinary.
-    var managedID: String = ""
-    var isManaged: Bool { !managedID.isEmpty }
-    /// Canonical repository root for this row's working directory. Empty when
-    /// the path is not a working copy, was never confirmed, or the axis is
-    /// off. Never displayed — it exists so two agents in the same checkout
-    /// can be told apart from two agents in different ones.
-    var effect = SessionEffect()
-    var workspaceRoot: String { get { effect.root } set { effect.root = newValue } }
-    /// What has actually landed on disk. **-1 is not 0**: "measured, and
-    /// nothing has changed" is the fact this axis exists to state, and "not
-    /// measured" must never wear its clothes.
-    var changedPaths: Int { get { effect.changedPaths } set { effect.changedPaths = newValue } }
-    var insertions: Int { get { effect.insertions } set { effect.insertions = newValue } }
-    var deletions: Int { get { effect.deletions } set { effect.deletions = newValue } }
-    /// How many other live local rows share this working copy. 0 = nobody.
-    /// The one fact no single agent can see: each knows only itself.
-    var workspacePeers: Int { get { effect.peers } set { effect.peers = newValue } }
-
-    /// HEAD moved within the recent-commit window. A clean tree after a
-    /// commit is the opposite of "nothing has landed" — the agent landed its
-    /// work so thoroughly that the tree is clean.
-    var workspaceHeadMovedRecently: Bool { get { effect.headMovedRecently } set { effect.headMovedRecently = newValue } }
-
-    var hasWorkspaceEffect: Bool { changedPaths >= 0 }
-    /// Measured, and the working copy is exactly as it was.
-    var workspaceUntouched: Bool { changedPaths == 0 }
     /// The session's real start, in ms. More reliable than `startedMs`, which
     /// some adapters can only fill from a file stamp. 0 = unknown.
     var sessionStartedMs: Int64 { get { digest.startedMs } set { digest.startedMs = newValue } }
@@ -822,7 +764,7 @@ struct AgentRow: Identifiable, Hashable {
     }
 
     /// Explicit lifecycle evidence from a session store can establish Running
-    /// even when the work is remote and has no matching local process.
+    /// even when there is no matching local process.
     var isExplicitlyRunningPhase: Bool {
         let value = phase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return value == "running"
@@ -1318,6 +1260,8 @@ struct PulseSnapshot: Equatable {
     /// and which agents they belong to. A row that went quiet for 46
     /// minutes used to vanish with no trace outside debug.log.
     var staleHidden: Int = 0
+    /// 22.0: `LampExplanation.lines` — why the lamp is this colour.
+    var lampLines: [String] = []
     var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0
     var probeError: String?

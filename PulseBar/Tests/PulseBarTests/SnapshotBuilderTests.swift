@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// The merge core. Until 0.23 this logic lived inside `StatusStore.applyScan`
@@ -1372,49 +1371,16 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(held.clearedPendingKeys, [key])
     }
 
-    // MARK: Lost contact is not a resolved wait (U-8)
+    // MARK: A cleared wait is a resolved wait
 
-    func testARemoteWaitThatWentQuietIsNotRecordedAsResolved() throws {
+    func testAWaitThatClearedIsRecordedAsResolved() {
         let raised = AttentionReader.Entry(
             id: .claude,
             kind: "Permission",
             message: "Approve deploy",
             tsMs: now - 60_000,
-            session: "remote-1",
-            cwd: "/srv/app",
-            host: "builder",
-            receivedAtMs: now - 60_000
-        )
-        var quiet = raised
-        quiet.lostContact = true
-
-        let lit = build(attention: [raised])
-        XCTAssertTrue(lit.rows.contains { $0.waiting && $0.isRemote })
-
-        let gone = build(
-            attention: [quiet],
-            previous: .init(rows: lit.rows, waitingKeys: lit.waitingKeys)
-        )
-        let row = try XCTUnwrap(gone.rows.first { $0.isRemote })
-        XCTAssertTrue(row.lostContact)
-        XCTAssertFalse(row.waiting, "the lamp comes down — Pulse has no evidence it is still open")
-        XCTAssertTrue(
-            gone.resolvedWaits.isEmpty,
-            "lost contact is not an answered wait; the history must say what the row says"
-        )
-    }
-
-    /// The same transition, but the host answered: that one is resolved.
-    func testARemoteWaitThatClearedIsStillRecordedAsResolved() {
-        let raised = AttentionReader.Entry(
-            id: .claude,
-            kind: "Permission",
-            message: "Approve deploy",
-            tsMs: now - 60_000,
-            session: "remote-2",
-            cwd: "/srv/app",
-            host: "builder",
-            receivedAtMs: now - 60_000
+            session: "s-2",
+            cwd: "/srv/app"
         )
         let lit = build(attention: [raised])
         let cleared = build(previous: .init(rows: lit.rows, waitingKeys: lit.waitingKeys))
@@ -1437,5 +1403,17 @@ final class SnapshotBuilderTests: XCTestCase {
 
         let en = build(attention: [entry], context: context(lang: .en))
         XCTAssertTrue(en.snapshot.tooltip.contains(L10n.t(.kindPermission, .en)))
+    }
+
+    /// 22.0: "N older hidden" counts sessions that went quiet today, not
+    /// every transcript ever written.
+    func testStaleHiddenCountsOnlyTheLastDay() {
+        let r = build(
+            harvest: [
+                harvest(.claude, task: "earlier", session: "s1", ageMs: 3 * 60 * 60 * 1000),
+                harvest(.claude, task: "last month", session: "s2", ageMs: 30 * 24 * 60 * 60 * 1000),
+            ]
+        )
+        XCTAssertEqual(r.snapshot.staleHidden, 1)
     }
 }

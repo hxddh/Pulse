@@ -55,18 +55,9 @@ struct PulseSettings: Equatable {
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
     var allowTerminalAutomation = false
-    /// 4.0-β · the workbench may type a reply into a session's terminal tab
-    /// and start new sessions in a terminal. Off by default: this is the
-    /// keystroke grant, one notch above tab-select, and the switch existing
-    /// is the consent. Turning it off stops all actuation instantly.
-    var allowWorkbenchActuation = false
-    /// Read what has landed in each agent's working copy. On by default: it
-    /// runs read-only git plumbing, reads no file contents and writes
-    /// nothing, and an evidence axis nobody switches on is worth nothing.
-    var measureWorkspaceEffect = true
-    /// Write this Mac's fleet snapshot for other machines. Off by default:
-    /// content leaving the machine is the user's explicit call.
-    var broadcastFleet = false
+    // 22.0 removed `workbenchActuation`, `workspaceEffect` and
+    // `fleetBroadcast` with the features they switched. Older files still
+    // carry the keys; `parse` ignores keys it does not know.
     /// Muted agents still appear in the tray; they just stop notifying.
     var mutedAgents: Set<AgentID> = []
     /// How the tray groups rows. Status is the default because "who needs me"
@@ -84,6 +75,9 @@ struct PulseSettings: Equatable {
     var stallMinutes = 20
     /// How long "Later" silences a wait, in minutes.
     var snoozeMinutes = 10
+    /// Set when the user uninstalls the hooks: the tray stops suggesting
+    /// them. Installing again clears it.
+    var hooksNudgeOff = false
 
     static let minutesPerDay = 24 * 60
 
@@ -130,9 +124,6 @@ struct PulseSettings: Equatable {
             case "hotkey": s.hotkey = HotkeyChoice(rawValue: raw) ?? .off
             case "hotkeyEnabled": sawHotkeyEnabled = on
             case "terminalAutomation": s.allowTerminalAutomation = on
-            case "workbenchActuation": s.allowWorkbenchActuation = on
-            case "workspaceEffect": s.measureWorkspaceEffect = on
-            case "fleetBroadcast": s.broadcastFleet = on
             case "mute":
                 s.mutedAgents = Set(raw.split(separator: ",").compactMap { AgentID(rawValue: String($0)) })
             case "lang": s.language = AppLanguage(rawValue: raw) ?? .auto
@@ -140,6 +131,7 @@ struct PulseSettings: Equatable {
             case "waitSound": s.playSoundOnWaiting = on
             case "stallMin": if let v = Int(raw) { s.stallMinutes = max(0, min(240, v)) }
             case "snoozeMin": if let v = Int(raw) { s.snoozeMinutes = max(1, min(240, v)) }
+            case "hooksNudgeOff": s.hooksNudgeOff = on
             default: break
             }
         }
@@ -183,13 +175,11 @@ struct PulseSettings: Equatable {
             hotkey=\(hotkey.rawValue)
             hotkeyEnabled=\(hotkeyEnabled ? 1 : 0)
             terminalAutomation=\(allowTerminalAutomation ? 1 : 0)
-            workbenchActuation=\(allowWorkbenchActuation ? 1 : 0)
-            workspaceEffect=\(measureWorkspaceEffect ? 1 : 0)
-            fleetBroadcast=\(broadcastFleet ? 1 : 0)
             grouping=\(trayGrouping.rawValue)
             waitSound=\(playSoundOnWaiting ? 1 : 0)
             stallMin=\(stallMinutes)
             snoozeMin=\(snoozeMinutes)
+            hooksNudgeOff=\(hooksNudgeOff ? 1 : 0)
             mute=\(muted)
             """
     }
@@ -215,14 +205,13 @@ struct PulseSettings: Equatable {
             + "quiet=\(quietHoursEnabled) \(quietStartMinute)-\(quietEndMinute) "
             + "lang=\(language.rawValue) login=\(launchAtLogin) "
             + "hotkey=\(hotkey.rawValue) hotkeyEnabled=\(hotkeyEnabled) "
-            + "terminalAutomation=\(allowTerminalAutomation) workspaceEffect=\(measureWorkspaceEffect) "
-            + "workbenchActuation=\(allowWorkbenchActuation) "
-            + "fleetBroadcast=\(broadcastFleet) "
+            + "terminalAutomation=\(allowTerminalAutomation) "
             + "muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
             + "appData=\(allowAppData) "
             + "appDataAgents=\(appDataAgents.count) "
             + "grouping=\(trayGrouping.rawValue) waitSound=\(playSoundOnWaiting) "
-            + "stall=\(stallMinutes) snooze=\(snoozeMinutes)"
+            + "stall=\(stallMinutes) snooze=\(snoozeMinutes) "
+            + "hooksNudgeOff=\(hooksNudgeOff)"
     }
 
     /// Shared on-disk path so the menu-bar store and `--harvest-test` CLI read

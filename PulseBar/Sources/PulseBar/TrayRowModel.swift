@@ -8,12 +8,15 @@ import Foundation
 /// identity, chip, hero, meta, the ask, the why, the action strip, the menu,
 /// VoiceOver) is now this value: a pure function of the row, the narrator,
 /// and a handful of facts only the store knows, passed in as plain values.
-/// The cards that open under a row (asks, Respond, the managed reply, the
-/// expanded inspector) still read the store; they are the Workbench's, not
-/// the glance's.
+/// The cards that open under a row are `RowCardModel`.
 struct TrayRowModel: Equatable {
     /// The small lamp beside the agent's name.
     enum Lamp: Equatable { case waiting, error, process, running, idle }
+    /// 22.0: the lamp's shape carries what the chips and source labels used
+    /// to spell out — filled is live, half is stalled or failed, hollow is
+    /// done (your turn, recent), dotted is seen only as a process. Shape
+    /// plus tone, so the state reads without colour too.
+    enum Shape: Equatable { case filled, half, hollow, dotted }
     enum ChipKind: Equatable { case waiting, running, recent, process, snoozed }
     struct Chip: Equatable {
         var kind: ChipKind
@@ -25,7 +28,7 @@ struct TrayRowModel: Equatable {
     /// Everything a row can ask the store to do.
     enum Action: String, Equatable, Hashable {
         case primary, details, dismiss, snooze, unsnooze
-        case respondDeny, respondReview, focus, supportHealth, setupWaiting
+        case respondDeny, respondReview, focus, supportHealth, setupWaiting, mute
     }
     struct Button: Equatable, Identifiable {
         var action: Action
@@ -38,6 +41,11 @@ struct TrayRowModel: Equatable {
     var agent: AgentID
     var agentName: String
     var lamp: Lamp
+    var shape: Shape
+    /// The short project name, shown between the agent and the task.
+    var project: String
+    /// 22.0: changed since the tray was last open — a dot, not a notice.
+    var isNew: Bool
     var sourceLabel: String?
     var accessoryTime: String
     var chip: Chip?
@@ -80,6 +88,7 @@ struct TrayRowModel: Equatable {
         var fateNote: String? = nil
         var notice: String? = nil
         var needsReach: Bool = false
+        var muted: Bool = false
     }
 
     static func make(_ input: Input) -> TrayRowModel {
@@ -96,7 +105,7 @@ struct TrayRowModel: Equatable {
         // of them — the way to answer and the way to put it down. Before,
         // the same six verbs were printed in the strip, the menu, the
         // context menu and the expanded card.
-        var menu: [Button] = [Button(action: .details, title: t(.trayOpenInWorkbench))]
+        var menu: [Button] = [Button(action: .details, title: t(.details))]
         let focus = row.canFocusTerminal ? Button(action: .focus, title: n.focusActionTitle(row)) : nil
         let dismiss = Button(action: .dismiss, title: t(.dismissWait))
         // A countdown you cannot stop is a worse deal than no countdown, so
@@ -128,6 +137,11 @@ struct TrayRowModel: Equatable {
         if row.waiting { menu += [dismiss, snooze] }
         if row.isProcessOnly { menu.append(Button(action: .supportHealth, title: t(.supportHealth))) }
         if input.needsReach { menu.append(Button(action: .setupWaiting, title: t(.setupWaitingSignals))) }
+        // 22.0: muting lives on the row it silences, not in a 32-switch list.
+        menu.append(Button(
+            action: .mute,
+            title: String(format: t(input.muted ? .unmuteAgent : .muteAgent), row.agent.displayName)
+        ))
 
         return TrayRowModel(
             lang: n.lang,
@@ -135,6 +149,9 @@ struct TrayRowModel: Equatable {
             agent: row.agent,
             agentName: row.agent.displayName,
             lamp: lampState,
+            shape: shape(row, lamp: lampState),
+            project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
+            isNew: input.lookMarkedWhileAway,
             sourceLabel: n.rowSourceLabel(row),
             accessoryTime: time,
             chip: chip(row, input: input),
@@ -163,6 +180,24 @@ struct TrayRowModel: Equatable {
 
     /// Menu entries exist beyond Details.
     var hasSecondaryActions: Bool { menu.count > 1 }
+
+    static func shape(_ row: AgentRow, lamp: Lamp) -> Shape {
+        switch lamp {
+        case .waiting, .running: return .filled
+        case .error: return .half
+        case .process: return .dotted
+        case .idle: return .hollow
+        }
+    }
+
+    var tone: PulseTheme.Tone {
+        switch lamp {
+        case .waiting: return .waiting
+        case .running: return .running
+        case .error, .process: return .attention
+        case .idle: return .idle
+        }
+    }
 
     // MARK: - The rules, moved verbatim from the view
 
@@ -255,8 +290,6 @@ struct TrayRowModel: Equatable {
         parts.append(state)
         if !meta.isEmpty { parts.append(meta) }
         if !time.isEmpty { parts.append(time) }
-        if row.lostContact { parts.append(n.tr(.remoteLostContactWhy)) }
-        if row.isRemote { parts.append(n.tr(.remoteNoFocus)) }
         if row.waiting {
             let line = n.localizedWaitLine(row)
             if !line.isEmpty { parts.append(line) }

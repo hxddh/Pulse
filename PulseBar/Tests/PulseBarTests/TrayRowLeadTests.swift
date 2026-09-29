@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 7.0 (scene BL): the collapsed row's lead, pinned as a pure precedence
@@ -31,13 +30,14 @@ final class TrayRowLeadTests: XCTestCase {
         )
     }
 
-    // MARK: - The 7.0 change: value first on live rows
+    // MARK: - 22.0: the task leads; fresh words only when there is no task
 
-    func testFreshWordsBeatTaskOnLiveRows() {
+    func testTaskLeadsEvenWhenWordsAreFresh() {
         XCTAssertEqual(
             lead(hasTask: true, hasProject: true, freshWords: true, hasToolTitle: true),
-            .freshWords
+            .task
         )
+        XCTAssertEqual(lead(hasProject: true, freshWords: true, hasToolTitle: true), .freshWords)
     }
 
     func testStaleWordsFallBackToTask() {

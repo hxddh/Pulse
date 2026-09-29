@@ -7,7 +7,7 @@ import Foundation
 /// row can carry, in order: what the agent is doing RIGHT NOW is already the
 /// story line's job, so the hero's job is **what the agent last said** —
 /// fresh words beat a title the user has read twenty times. The title is not
-/// lost: it lives in the expanded card and the workbench.
+/// lost: it lives in the expanded card.
 ///
 /// Pure and exhaustively pinned by tests; `AgentRowButton.heroTitle` only
 /// maps the chosen source to its string. Waiting and process-only rows keep
@@ -50,9 +50,11 @@ enum TrayRowLead {
         if isProcessOnly {
             return canFocusTerminal ? .processTerminal : .processApp
         }
-        // 7.0: value first. Fresh words outrank the static title.
-        if freshWords { return .freshWords }
+        // 22.0: the task leads. 7.0 put the agent's latest words first, so the
+        // line a person scans for changed every few seconds and the row they
+        // were looking for kept moving; the words live in the detail view.
         if hasTask { return .task }
+        if freshWords { return .freshWords }
         if hasToolTitle { return .toolTitle }
         if hasProject { return .project }
         return canFocusTerminal ? .terminalSession : .appSession

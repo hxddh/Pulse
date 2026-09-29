@@ -218,7 +218,7 @@ enum HooksInstaller {
             matcher: nil
         )
         data["hooks"] = hooks
-        let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
+        let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         var text = String(data: out, encoding: .utf8) ?? "{}"
         if !text.hasSuffix("\n") { text += "\n" }
         try writeConfig(text, to: settings)
@@ -246,7 +246,7 @@ enum HooksInstaller {
     /// skip them).
     nonisolated(unsafe) static var claudeHookTimeoutSeconds = 5
     /// PermissionRequest is the one event where the hook may deliberately
-    /// wait (a remote Respond hold). The vendor default is 600s; 90 caps the
+    /// wait (a Respond hold). The vendor default is 600s; 90 caps the
     /// hold well below that while leaving room for a human answer. Every
     /// other event keeps the tight budget — the receiver exits immediately.
     nonisolated(unsafe) static var permissionRequestTimeoutSeconds = 90
@@ -314,7 +314,7 @@ enum HooksInstaller {
             } else {
                 data["hooks"] = hooks
             }
-            let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
+            let out = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
             var text = String(data: out, encoding: .utf8) ?? "{}"
             if !text.hasSuffix("\n") { text += "\n" }
             try writeConfig(text, to: target)
@@ -367,7 +367,7 @@ enum HooksInstaller {
         ensureClaudeEvent(&hooks, event: "Stop", command: hookCommand(agent: "codex", kind: "stop"), matcher: nil)
         ensureClaudeEvent(&hooks, event: "UserPromptSubmit", command: hookCommand(agent: "codex", kind: "prompt"), matcher: nil)
         root["hooks"] = hooks
-        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         var text = String(data: out, encoding: .utf8) ?? "{}"
         if !text.hasSuffix("\n") { text += "\n" }
         try writeConfig(text, to: file)
@@ -384,7 +384,7 @@ enum HooksInstaller {
         else { return "\(file.path) (nothing to remove)" }
         stripPulseHooks(&hooks)
         root["hooks"] = hooks
-        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         var text = String(data: out, encoding: .utf8) ?? "{}"
         if !text.hasSuffix("\n") { text += "\n" }
         try writeConfig(text, to: file)

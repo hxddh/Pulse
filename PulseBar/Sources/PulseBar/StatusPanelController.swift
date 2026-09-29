@@ -264,9 +264,17 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             if let cached = iconCache[key] {
                 image = cached
             } else {
-                image = PulseBrand.statusBarIcon(for: snapshot.glance)
-                image.size = NSSize(width: 15, height: 15)
-                iconCache[key] = image
+                // Draw against the menu bar's own appearance, not the app's:
+                // the cache key names that appearance, so the pixels must
+                // match it (the system colours resolve at draw time).
+                let glance = snapshot.glance
+                var rendered = NSImage()
+                button.effectiveAppearance.performAsCurrentDrawingAppearance {
+                    rendered = PulseBrand.statusBarIcon(for: glance)
+                }
+                rendered.size = NSSize(width: 15, height: 15)
+                iconCache[key] = rendered
+                image = rendered
             }
             button.image = image
             lastIconKey = key
@@ -278,7 +286,9 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         // appearance instead of tinting both icon and text together.
         button.contentTintColor = nil
         button.title = snapshot.glance == .idle ? "" : snapshot.title
-        button.toolTip = snapshot.tooltip
+        button.toolTip = ([snapshot.tooltip] + snapshot.lampLines)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
         button.setAccessibilityLabel(snapshot.accessibilityLabel)
 
         let waitingCount = snapshot.sectionTotals[.needsYou] ?? 0
@@ -373,14 +383,25 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         frame.origin.y = oldTop - target.height
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if animated, !reduceMotion {
-            NSAnimationContext.runAnimationGroup { context in
+            NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.16
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 panel.animator().setFrame(frame, display: true)
-            }
+            }, completionHandler: { [weak self] in
+                // The chrome below ran against the pre-animation bounds; the
+                // shadow path must follow the frame the animation ended on.
+                guard let self else { return }
+                Task { @MainActor in self.reapplyChrome() }
+            })
         } else {
             panel.setFrame(frame, display: true)
         }
+        reapplyChrome()
+    }
+
+    /// Lay the root out at the panel's current frame and redraw the chrome
+    /// (shadow path, border) against those bounds.
+    private func reapplyChrome() {
         rootView.layoutSubtreeIfNeeded()
         StatusPanelChrome.apply(
             to: panel,
@@ -417,8 +438,18 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
                 // Escape in the search field clears the search first
                 // (`onExitCommand`); only a second Escape closes the panel.
                 if self.panel.firstResponder is NSTextView { return event }
+                // 22.0: the tray has something Escape should undo first — an
+                // open detail view or a typed filter.
+                if self.store.trayEscapeConsumed { return event }
                 self.close()
                 return nil
+            }
+            // A click on the status item itself is the button's to handle:
+            // closing here on mouse-down let its mouse-up action reopen the
+            // panel it was meant to close.
+            if let buttonWindow = self.statusItem.button?.window,
+               event.window === buttonWindow {
+                return event
             }
             if event.window !== self.panel,
                event.type == .leftMouseDown || event.type == .rightMouseDown {

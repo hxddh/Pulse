@@ -36,14 +36,12 @@ extension StatusStore {
             appDataAgents: appDataAgents,
             hotkey: hotkey,
             allowTerminalAutomation: allowTerminalAutomation,
-            allowWorkbenchActuation: allowWorkbenchActuation,
-            measureWorkspaceEffect: measureWorkspaceEffect,
-            broadcastFleet: broadcastFleet,
             mutedAgents: mutedAgents,
             trayGrouping: trayGrouping,
             playSoundOnWaiting: playSoundOnWaiting,
             stallMinutes: stallMinutes,
-            snoozeMinutes: snoozeMinutes
+            snoozeMinutes: snoozeMinutes,
+            hooksNudgeOff: hooksNudgeOff
         )
     }
 
@@ -61,14 +59,12 @@ extension StatusStore {
         appDataAgents = s.appDataAgents
         hotkey = s.hotkey
         allowTerminalAutomation = s.allowTerminalAutomation
-        allowWorkbenchActuation = s.allowWorkbenchActuation
-        measureWorkspaceEffect = s.measureWorkspaceEffect
-        broadcastFleet = s.broadcastFleet
         mutedAgents = s.mutedAgents
         trayGrouping = s.trayGrouping
         playSoundOnWaiting = s.playSoundOnWaiting
         stallMinutes = s.stallMinutes
         snoozeMinutes = s.snoozeMinutes
+        hooksNudgeOff = s.hooksNudgeOff
     }
 
     func loadSettings() {
@@ -176,20 +172,6 @@ extension StatusStore {
         let actual = RespondSpool.localHasSecret()
         if respondLocalEnabled != actual { respondLocalEnabled = actual }
         DebugLog.write("respond local answering requested=\(enabled) actual=\(actual)")
-    }
-
-    /// Turning the broadcast off also removes this Mac's file: a snapshot
-    /// nobody is refreshing must age out on the readers, not keep riding the
-    /// sync tool looking authoritative.
-    func setBroadcastFleet(_ enabled: Bool) {
-        broadcastFleet = enabled
-        saveSettings()
-        if !enabled {
-            let own = FleetSnapshot.directory
-                .appendingPathComponent(FleetSnapshot.sanitize(PulseHookReceiver.respondHost()) + ".json")
-            scanQueue.async { try? FileManager.default.removeItem(at: own) }
-            lastFleetWriteMs = 0
-        }
     }
 
     func toggleMute(_ agent: AgentID) {

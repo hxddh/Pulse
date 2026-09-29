@@ -77,7 +77,67 @@ final class UpdateCheck {
         /// install helper re-checks that digest right before it mounts.
         case ready(URL, sha256: String)
         case installing
-        case failed(String)
+        case failed(DownloadFailure)
+    }
+
+    /// Why a download, verification or install did not finish — typed like
+    /// `Failure` so the surface says it in the user's language and never
+    /// calls a network error a verification failure. `detail` is the
+    /// untranslated technical fact for the debug log and the suffix.
+    enum DownloadFailure: Equatable {
+        /// The release names no DMG with a size and a SHA-256 to check.
+        case noVerifiableAsset
+        /// This Mac cannot run the release (macOS version or architecture).
+        case unsupportedSystem(String)
+        /// The download never got an HTTP answer.
+        case network(String)
+        /// The asset host answered with a non-2xx status.
+        case http(Int)
+        /// The bytes arrived but are not the published installer
+        /// (content type, size, digest, or the mounted app's preflight).
+        case verification(String)
+        /// In-place install is reserved for notarized stable builds.
+        case requiresNotarized
+        /// Install asked for before a verified DMG was ready.
+        case notReady
+        /// Moving the DMG or launching the install helper failed.
+        case install(String)
+
+        var detail: String {
+            switch self {
+            case .noVerifiableAsset: return "release has no verifiable DMG"
+            case .unsupportedSystem(let message): return message
+            case .network(let message): return message
+            case .http(let code): return "HTTP \(code)"
+            case .verification(let message): return message
+            case .requiresNotarized: return "in-place install requires a notarized stable build"
+            case .notReady: return "download a verified DMG first"
+            case .install(let message): return message
+            }
+        }
+
+        /// Pure: the right failure for a finished download task, or nil when
+        /// the response may go on to verification.
+        static func classify(
+            hasFile: Bool,
+            response: URLResponse?,
+            error: Error?
+        ) -> DownloadFailure? {
+            guard hasFile else {
+                return .network(error?.localizedDescription ?? "download failed")
+            }
+            guard let http = response as? HTTPURLResponse else {
+                return .verification("missing installer response headers")
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                return .http(http.statusCode)
+            }
+            let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+            guard contentType.contains("octet-stream") || contentType.contains("diskimage") else {
+                return .verification("missing or unexpected installer content type")
+            }
+            return nil
+        }
     }
 
     /// Default feed; override with `PulseUpdateFeed` in Info.plist.
@@ -134,16 +194,35 @@ final class UpdateCheck {
         check(store: store, force: false)
     }
 
+    /// Pure: what the store shows after a check answers. A manual check
+    /// (`force`) always shows its own result. A background check never
+    /// replaces a known answer (`.available` / `.current`) with a failure —
+    /// a laptop that was briefly offline must not lose the "update
+    /// available" line it already had.
+    nonisolated static func resolve(previous: Status, result: Status, manual: Bool) -> Status {
+        guard !manual, case .failed = result else { return result }
+        switch previous {
+        case .available, .current: return previous
+        case .idle, .checking, .failed: return result
+        }
+    }
+
+    /// `force` is the manual check (`checkForUpdatesNow`): only it shows
+    /// `.checking`; a background check changes the status only when the
+    /// answer is worth showing (`resolve`).
     func check(store: StatusStore, force: Bool) {
         guard !inFlight else { return }
         guard force || store.updateCheckEnabled else { return }
         guard let url = feedURL else {
-            store.updateStatus = .failed(.badFeed)
+            let next = Self.resolve(previous: store.updateStatus, result: .failed(.badFeed), manual: force)
+            if store.updateStatus != next { store.updateStatus = next }
             return
         }
         inFlight = true
         lastAttempt = Date()
-        store.updateStatus = .checking
+        // Only a manual check shows `.checking`; a background one leaves the
+        // known answer on screen and resolves against it.
+        if force { store.updateStatus = .checking }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
@@ -161,7 +240,11 @@ final class UpdateCheck {
             Task { @MainActor in
                 self.inFlight = false
                 if case .failed = result {} else { self.lastCheck = Date() }
-                store.updateStatus = result
+                // A manual check that started from `.checking` resolves
+                // straight to its result; `resolve` is pure either way.
+                let next = Self.resolve(previous: store.updateStatus, result: result, manual: force)
+                // Scan-quiet: Observation announces every assignment, equal or not.
+                if store.updateStatus != next { store.updateStatus = next }
                 DebugLog.write("updateCheck \(result)")
             }
         }.resume()
@@ -230,11 +313,11 @@ final class UpdateCheck {
               release.canVerifyDownload,
               let url = URL(string: release.assetURL)
         else {
-            store.updateDownloadStatus = .failed("release has no verifiable DMG")
+            store.updateDownloadStatus = .failed(.noVerifiableAsset)
             return
         }
         guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 14 else {
-            store.updateDownloadStatus = .failed("requires macOS 14 or newer")
+            store.updateDownloadStatus = .failed(.unsupportedSystem("requires macOS 14 or newer"))
             return
         }
         #if arch(arm64)
@@ -242,7 +325,7 @@ final class UpdateCheck {
         // Refuse an ambiguous install path instead of downloading an artifact
         // that cannot launch on the current machine.
         #else
-        store.updateDownloadStatus = .failed("this release targets Apple silicon")
+        store.updateDownloadStatus = .failed(.unsupportedSystem("this release targets Apple silicon"))
         return
         #endif
         store.updateDownloadStatus = .downloading
@@ -250,36 +333,18 @@ final class UpdateCheck {
         request.timeoutInterval = 120
         request.setValue("Pulse/\(PulseVersion.semver)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.downloadTask(with: request) { tempURL, response, error in
-            guard let tempURL else {
+            if let failure = DownloadFailure.classify(
+                hasFile: tempURL != nil,
+                response: response,
+                error: error
+            ) {
+                if let tempURL { try? FileManager.default.removeItem(at: tempURL) }
                 Task { @MainActor in
-                    store.updateDownloadStatus = .failed(error?.localizedDescription ?? "download failed")
+                    store.updateDownloadStatus = .failed(failure)
                 }
                 return
             }
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                try? FileManager.default.removeItem(at: tempURL)
-                Task { @MainActor in
-                    store.updateDownloadStatus = .failed("HTTP \(http.statusCode)")
-                }
-                return
-            }
-            if let http = response as? HTTPURLResponse {
-                guard let contentType = http.value(forHTTPHeaderField: "Content-Type"),
-                      contentType.lowercased().contains("octet-stream")
-                        || contentType.lowercased().contains("diskimage") else {
-                    try? FileManager.default.removeItem(at: tempURL)
-                    Task { @MainActor in
-                        store.updateDownloadStatus = .failed("missing or unexpected installer content type")
-                    }
-                    return
-                }
-            } else {
-                try? FileManager.default.removeItem(at: tempURL)
-                Task { @MainActor in
-                    store.updateDownloadStatus = .failed("missing installer response headers")
-                }
-                return
-            }
+            guard let tempURL else { return }
             Task { @MainActor in store.updateDownloadStatus = .verifying }
             do {
                 let data = try Data(contentsOf: tempURL)
@@ -311,10 +376,17 @@ final class UpdateCheck {
                     store.updateDownloadStatus = .ready(destination, sha256: digest.lowercased())
                     NSWorkspace.shared.open(destination)
                 }
+            } catch let failure as DownloadError {
+                try? FileManager.default.removeItem(at: tempURL)
+                let mapped = failure.failure
+                Task { @MainActor in
+                    store.updateDownloadStatus = .failed(mapped)
+                }
             } catch {
                 try? FileManager.default.removeItem(at: tempURL)
+                let message = error.localizedDescription
                 Task { @MainActor in
-                    store.updateDownloadStatus = .failed(error.localizedDescription)
+                    store.updateDownloadStatus = .failed(.verification(message))
                 }
             }
         }.resume()
@@ -329,15 +401,13 @@ final class UpdateCheck {
     /// in-place install is Gatekeeper-safe would lie about the channel.
     func installVerifiedUpdate(store: StatusStore) {
         guard PulseVersion.isGatekeeperReady else {
-            store.updateDownloadStatus = .failed(
-                store.tr(.updateInstallRequiresNotarized)
-            )
+            store.updateDownloadStatus = .failed(.requiresNotarized)
             return
         }
         guard case .ready(let dmg, let digest) = store.updateDownloadStatus,
               Bundle.main.bundleURL.pathExtension == "app",
               let executable = Bundle.main.executableURL else {
-            store.updateDownloadStatus = .failed("download a verified DMG first")
+            store.updateDownloadStatus = .failed(.notReady)
             return
         }
         let target = Bundle.main.bundleURL
@@ -359,7 +429,7 @@ final class UpdateCheck {
                 NSApp.terminate(nil)
             }
         } catch {
-            store.updateDownloadStatus = .failed(error.localizedDescription)
+            store.updateDownloadStatus = .failed(.install(error.localizedDescription))
         }
     }
 
@@ -439,6 +509,10 @@ final class UpdateCheck {
     private enum DownloadError: LocalizedError {
         case size(expected: Int, actual: Int)
         case digest
+
+        var failure: DownloadFailure {
+            .verification(errorDescription ?? "verification failed")
+        }
 
         var errorDescription: String? {
             switch self {

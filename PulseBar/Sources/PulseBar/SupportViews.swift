@@ -15,6 +15,7 @@ struct SupportCoverageView: View {
     // disappearing behind an Observed-only filter.
     @State private var filter: SupportFilter = .all
     @State private var showSafeReport = false
+    @State private var activityAgent: AgentID?
 
     enum SupportFilter: String, CaseIterable, Identifiable {
         case needsAction
@@ -121,6 +122,15 @@ struct SupportCoverageView: View {
                 VStack(alignment: .leading, spacing: PulseTheme.Space.m) {
                     header
                     selfCheck
+                    // 22.0: what happened, across sessions — state changes
+                    // and what became of each banner.
+                    ActivityLogView(
+                        model: store.activityLog(agent: activityAgent),
+                        lang: store.lang,
+                        agents: store.activityAgents,
+                        filter: $activityAgent
+                    )
+                    .pulseCard()
                     banners
                     HStack(spacing: PulseTheme.Space.s) {
                         Text(store.tr(.healthAgentsHeading))
@@ -602,3 +612,71 @@ private struct SupportFactPill: View {
         .accessibilityValue(present ? store.tr(.a11yPresent) : store.tr(.a11yUnknown))
     }
 }
+
+/// 22.0: the Activity log — renders a value; the filter is the only state.
+struct ActivityLogView: View {
+    let model: ActivityLogModel
+    let lang: ResolvedLanguage
+    var agents: [AgentID] = []
+    @Binding var filter: AgentID?
+
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PulseTheme.Space.s) {
+            HStack {
+                Text(t(.activityHeading))
+                    .font(PulseTheme.Font.heading)
+                Spacer(minLength: PulseTheme.Space.s)
+                if !agents.isEmpty {
+                    Picker("", selection: $filter) {
+                        Text(t(.activityAllAgents)).tag(AgentID?.none)
+                        ForEach(agents, id: \.self) { agent in
+                            Text(agent.displayName).tag(AgentID?.some(agent))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+            if model.entries.isEmpty {
+                Text(t(.activityEmpty))
+                    .font(PulseTheme.Font.body)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.entries) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
+                        Text(clock(entry.atMs))
+                            .font(PulseTheme.Font.code)
+                            .foregroundStyle(.secondary)
+                        Circle()
+                            .fill(entry.tone == .idle ? Color.secondary : entry.tone.color)
+                            .frame(width: 6, height: 6)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(entry.text)
+                                .font(PulseTheme.Font.body)
+                            let who = [entry.agent?.displayName ?? "", entry.place].filter { !$0.isEmpty }.joined(separator: " · ")
+                            if !who.isEmpty {
+                                Text(who)
+                                    .font(PulseTheme.Font.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+    }
+
+    private func clock(_ ms: Int64) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: lang == .zh ? "zh-Hans" : "en")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+    }
+}
+

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""15.0 Witness: the Workbench's judgement surfaces render values, not the store.
+"""15.0 Witness: surfaces render values, not the store.
 
 17.0 added the tray row's face, 19.0 the cards under a row (every struct in
-SessionCards.swift) and the Observation rules below.
+SessionCards.swift) and the Observation rules below. 22.0 removed the
+Workbench's Mission board and working-copy card with the orchestrator.
 
 A view that reaches into StatusStore can only be seen by running the whole
 app against real sessions, which is how 13.0 and 14.0 shipped surfaces
 nobody had looked at. The rendering views listed here take a value
-(`MissionBoard`, `ProofCardModel`, `CheckCell`) and send intents; the
+(`TrayRowModel`, `RowCardModel`, `WhyCardModel`) and send intents; the
 models they render are pure. This gate fails if either grows a store
 reference back, and if a surface fixture is missing from the capture list.
 """
@@ -20,20 +21,17 @@ APP = ROOT / "PulseBar/Sources/PulseBar"
 
 # (file, struct) pairs that must never see the store.
 VIEWS = [
-    ("MissionViews.swift", "MissionBoardView"),
-    ("MissionViews.swift", "CheckCellView"),
-    ("ProofViews.swift", "ProofCardView"),
     # 17.0: the tray row's face and the Why card.
     ("TrayPanelViews.swift", "TrayRowFace"),
     ("WhyViews.swift", "WhyCardView"),
+    # 22.0: the session's last hour.
+    ("SessionDetailView.swift", "TimelineStripView"),
+    ("SessionDetailView.swift", "LampShapeView"),
     # 19.0: the cards under a row.
     ("SessionCards.swift", "RespondCardFace"),
-    ("SessionCards.swift", "PermissionCardFace"),
-    ("SessionCards.swift", "ManagedReplyFace"),
     ("SessionCards.swift", "PlanCompactFace"),
     ("SessionCards.swift", "BriefCardFace"),
     ("SessionCards.swift", "FactLinesFace"),
-    ("SessionCards.swift", "ManagedEntryFace"),
     ("SessionCards.swift", "RowAsksFace"),
     ("SessionCards.swift", "TrayExpandedFace"),
     # 19.0: the self-check.

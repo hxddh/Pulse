@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 5.0-α — the merge contract at the engine boundary. The observed pipeline
@@ -39,9 +38,9 @@ final class SessionSourceTests: XCTestCase {
     @MainActor
     func testRegistrationOrderRanksSourcesAndOrderWithinEachSurvives() {
         let observed = StubSource("observed", [row("o1"), row("o2")])
-        let managed = StubSource("managed", [row("m1"), row("m2")])
+        let second = StubSource("second", [row("m1"), row("m2")])
         let coordinator = SessionSourceCoordinator(sources: [observed])
-        coordinator.register(managed)
+        coordinator.register(second)
         XCTAssertEqual(coordinator.merged().map(\.rowKey), ["o1", "o2", "m1", "m2"])
     }
 
@@ -49,11 +48,11 @@ final class SessionSourceTests: XCTestCase {
     func testARowKeyCollisionGoesToTheFirstRegisteredSource() {
         var observedRow = row("claude|same")
         observedRow.task = "the observed truth"
-        var managedRow = row("claude|same")
-        managedRow.task = "a later claim"
+        var secondRow = row("claude|same")
+        secondRow.task = "a later claim"
         let coordinator = SessionSourceCoordinator(sources: [
             StubSource("observed", [observedRow]),
-            StubSource("managed", [managedRow]),
+            StubSource("second", [secondRow]),
         ])
         let merged = coordinator.merged()
         XCTAssertEqual(merged.count, 1)
@@ -63,7 +62,7 @@ final class SessionSourceTests: XCTestCase {
 
     @MainActor
     func testRegisteringTheSameSourceTwiceIsIdempotent() {
-        let source = StubSource("managed", [row("m1")])
+        let source = StubSource("second", [row("m1")])
         let coordinator = SessionSourceCoordinator()
         coordinator.register(source)
         coordinator.register(source)

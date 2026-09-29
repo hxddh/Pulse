@@ -7,6 +7,7 @@ import AppKit
 extension StatusStore {
     func installHooks() {
         hooksStatus = .unknown
+        setHooksNudgeOff(false)
         // `Task` inherits this class's main-actor isolation, so the assignment
         // lands on main while the optional hook installer stays off it.
         Task { [weak self] in
@@ -29,12 +30,22 @@ extension StatusStore {
 
     func uninstallHooks() {
         hooksStatus = .unknown
+        // An uninstall is a decision: stop suggesting hooks until the user
+        // installs them again.
+        setHooksNudgeOff(true)
         Task { [weak self] in
             let status = await Task.detached(priority: .userInitiated) {
                 HooksSupport.uninstall()
             }.value
             self?.hooksStatus = status
         }
+    }
+
+    /// Persist the "don't suggest hooks" choice without a full rescan.
+    private func setHooksNudgeOff(_ value: Bool) {
+        guard hooksNudgeOff != value else { return }
+        hooksNudgeOff = value
+        persistSettingsOnly()
     }
 
     var hooksInstalled: Bool {
@@ -115,7 +126,31 @@ extension StatusStore {
                 ? tr(.updateVerified)
                 : tr(.updateVerifiedOpenOnly)
         case .installing: return tr(.updateInstalling)
-        case .failed(let message): return "\(tr(.updateVerifyFailed)) · \(message)"
+        case .failed(let failure): return updateDownloadFailureText(failure)
+        }
+    }
+
+    /// The download / verify / install failure in the person's language. Only
+    /// a real verification failure says "verification failed"; a network or
+    /// HTTP failure says the installer could not be fetched.
+    func updateDownloadFailureText(_ failure: UpdateCheck.DownloadFailure) -> String {
+        switch failure {
+        case .network(let message):
+            return message.isEmpty ? tr(.updateFailedNetwork) : "\(tr(.updateFailedNetwork)) (\(message))"
+        case .http(let code):
+            return String(format: tr(.updateFailedHTTP), code)
+        case .verification(let message):
+            return "\(tr(.updateVerifyFailed)) · \(message)"
+        case .requiresNotarized:
+            return tr(.updateInstallRequiresNotarized)
+        case .install(let message):
+            return "\(tr(.updateInstallFailed)) · \(message)"
+        case .noVerifiableAsset:
+            return tr(.updateDownloadNoAsset)
+        case .unsupportedSystem:
+            return "\(tr(.updateDownloadUnsupported)) · \(failure.detail)"
+        case .notReady:
+            return tr(.updateDownloadNotReady)
         }
     }
 
@@ -273,28 +308,8 @@ extension StatusStore {
         SupportCoverageWindowController.shared.show(store: self)
     }
 
-    /// 3.0-β · the workbench's read surface: every session the store knows,
-    /// not the tray's glance window. Deliberately the window's only special
-    /// access so far — the first real seam, cut where use demanded it
-    /// (plan-3.0's rule: seams follow use).
-    var allRows: [AgentRow] { cachedAll }
-
-    func openWorkbench() {
-        WorkbenchWindowController.shared.show(store: self)
-    }
-
-    /// 21.0: a row's details open in the Workbench with that row selected —
-    /// one inspector, not three (the Details window is gone).
-    func openAgentDetail(_ row: AgentRow) {
-        workbenchSelectKey = row.rowKey
-        WorkbenchWindowController.shared.show(store: self)
-    }
-
     func quit() {
         markCleanShutdown()
-        // 5.0-β: no orphaned managed agents burning tokens after the tray
-        // icon is gone.
-        managedSessions.terminateAllForShutdown()
         attentionWatcher.stop()
         GlobalHotKey.uninstall()
         NSApp.terminate(nil)

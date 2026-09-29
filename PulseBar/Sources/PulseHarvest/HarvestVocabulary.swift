@@ -14,13 +14,6 @@ package enum ObservationSource: String, Equatable, Hashable {
     case session
     case cache
     case process
-    /// 1.0: raised by another machine through the Attention inbox.
-    ///
-    /// Deliberately its own tier rather than a thin `process` row. A remote row
-    /// has no process table, no session file and no activity clock behind it —
-    /// only the event that arrived. Calling it `process` would claim evidence
-    /// this Mac does not have.
-    case remote
 }
 
 /// Privacy-safe reason a process rule matched.

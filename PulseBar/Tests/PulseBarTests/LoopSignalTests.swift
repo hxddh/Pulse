@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 1.2 Substance — the facts 1.1 could compute but nobody could see.
@@ -70,20 +69,6 @@ final class LoopSignalTests: XCTestCase {
             store.rowStoryLine(waiting).contains("in a row"),
             "the question is the point, not how it got there"
         )
-    }
-
-    /// A remote row has no transcript here at all, so it cannot have a loop —
-    /// and its own line (last heard / lost contact) must keep priority.
-    @MainActor
-    func testARemoteRowKeepsItsOwnStory() {
-        let store = StatusStore()
-        store.language = .en
-        var remote = row()
-        remote.host = "devbox"
-        remote.observationSource = .remote
-        remote.lastHeardMs = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
-        let line = store.rowStoryLine(remote)
-        XCTAssertFalse(line.contains("in a row"))
     }
 
     @MainActor

@@ -1,5 +1,7 @@
 # 12.0 Codex runtime 取证（2026-08-30）
 
+> **历史记录。** 受管 runtime 与 Outcome 计划已在 22.0 删除，本取证不再指向任何待做的工作。
+
 ## 结论
 
 Codex 可以成为 12.0 的第二个受管 runtime，但安全边界必须是官方 **App Server v2 over

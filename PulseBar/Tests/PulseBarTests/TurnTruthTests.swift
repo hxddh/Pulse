@@ -3,7 +3,6 @@ import Testing
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 16.0 · Turn — vendor event sequences, from the attention file to the lamp.

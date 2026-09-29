@@ -1,13 +1,13 @@
 import Foundation
 
-/// 4.0-α — the workbench shows the session itself (scene BD).
+/// 4.0-α — showing the session itself (scene BD).
 ///
 /// Every version up to 3.0 extracted facts *about* the transcript and showed
 /// those; the conversation — who said what, which tools ran, where it went
 /// wrong — stayed invisible. That was a rule once ("counts and short names
-/// only"), but 3.0-β re-scoped that rule to the tray and cross-machine
-/// channels. Inside the workbench the user is reading their own file on their
-/// own machine, and this reader renders it:
+/// only"), but 3.0-β re-scoped that rule to the tray. On an explicit click
+/// the user is reading their own file on their own machine, and this reader
+/// renders it:
 ///
 /// - **On demand only.** A click opens the file; nothing here runs on a scan
 ///   or a timer (energy is a hard constraint).
@@ -21,15 +21,15 @@ import Foundation
 /// - **Sanitized per entry.** Transcripts are untrusted input; every string
 ///   that will be rendered passes `ContentSanitizer` and a length bound.
 /// - **Local only.** The path never renders, the content never leaves the
-///   machine, remote rows never had a path to begin with.
+///   machine.
 public enum TranscriptReader {
 
     public static let tailWindowBytes = 512 * 1024
     public static let maxEntries = 300
     public static let maxEntryChars = 2_000
 
-    /// Codable since 6.0-α: managed sessions persist their conversation
-    /// across app restarts, and these entries are the conversation.
+    /// Codable since 6.0-α (the managed sessions 22.0 removed persisted
+    /// their conversation as these entries).
     public struct Entry: Equatable, Codable, Sendable {
         public enum Kind: String, Equatable, Codable, Sendable {
             /// The person driving the session.

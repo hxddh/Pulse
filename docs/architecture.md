@@ -14,9 +14,11 @@
            │
            ▼
       StatusStore          定时器、通知策略、设置、I/O
-           │
+           │               ├─ attention-ledger.json   等待边沿 + 通知去向（22.0）
+           │               └─ session-timeline.json   每会话状态段（22.0）
            ▼
-   StatusItem（StatusPanelController）/ TrayPanelViews / SettingsViews
+   StatusItem（StatusPanelController，tooltip = snapshot.lampLines）
+   / TrayPanelViews（列表 + SessionDetailView）/ SettingsViews / SupportViews（健康检查 + 活动）
 ```
 
 ## 模块（12.0 起，12.3 收齐）
@@ -24,28 +26,30 @@
 ```
 PulseBar/Sources/
   PulseCore/     内核库。只 import Foundation（+ CryptoKit / CoreGraphics），严格并发 + warnings-as-errors。
-                 AgentCatalog（每 Agent 的全部非解析事实）· AcceptanceEvidence · PrivateFile / SafeRead
+                 AgentCatalog（每 Agent 的全部非解析事实）· PrivateFile / SafeRead
                  · ProcessIO · ContentSanitizer · TranscriptReader · SessionDigest · AttentionProtocol
                  · ProbeSchedule · ProbeStats · DebugLog · Guarded
   PulseHarvest/  采集库，依赖 Core。NativeActivityHarvest（扫描与遍历）· 厂商方言
                  （TranscriptDialect + HarvestCodex / Pi / Claude / SmallDialects）· HarvestDatabases
                  · ActivityHarvest · ProcessProbe · HarvestSupervisor · ScanEngine（ScanMemory）
                  · AttentionIO · ActivitySpool · TitleHeuristics · HarvestVocabulary
-  PulseRespond/  Respond 库，依赖 Core。RespondContract · RespondSpool
-  PulseManaged/  受管会话库，依赖 Core。ManagedRuntime · ManagedSession / Runner / Fleet
-                 · ManagedWorktree · ManagedPermission · AcceptanceRunner · WorkspaceEffect
-                 · EvidenceBook（14.0：检查、证据与运行中检查按工作目录存，受管候选与
-                 观察到的会话读同一页）· Mission
+  PulseRespond/  Respond 库，依赖 Core。RespondContract · RespondSpool（22.0 起仅本机）
   PulseBar/      可执行。builder、StatusStore、RowNarrator、WaitingDelivery、视图、hook 入口。
-                 15.0：指挥台的判断面是纯值（SurfaceModels：MissionBoard / ProofCardModel），
-                 视图只渲染值、发 intent，由 StatusStore 执行；SurfaceFixtures 的每个夹具在
-                 CI 里经 SurfaceCapture 渲染成 PNG（scripts/qa_surfaces.sh）。17.0：托盘行的脸
-                 同样是纯值（TrayRowModel → TrayRowFace）；AttentionHistory（PulseHarvest）
-                 把每次扫描读到的 hook 事件留成有界历史，供「为什么」与导出夹具。
-                 PulseCoreExports.swift 以 @_exported 引入四个库。
+                 15.0 起表面是纯值：视图只渲染值、发 intent，由 StatusStore 执行；
+                 SurfaceFixtures 的每个夹具在 CI 里经 SurfaceCapture 渲染成 PNG
+                 （scripts/qa_surfaces.sh）。17.0：托盘行的脸同样是纯值（TrayRowModel →
+                 TrayRowFace）；AttentionHistory（PulseHarvest）把每次扫描读到的 hook 事件
+                 留成有界历史，供「为什么」与导出夹具。
+                 PulseCoreExports.swift 以 @_exported 引入三个库。
 ```
 
-五个 target 全部在完整并发检查下零警告并开启 warnings-as-errors（12.4）。
+> **22.0 删除了 `PulseManaged`**（受管会话：ManagedRuntime、Session / Runner / Fleet、
+> Worktree、权限 MCP 服务、AcceptanceRunner、WorkspaceEffect、EvidenceBook、Mission）、
+> Core 里的 `AcceptanceEvidence` 与 `ProcessIO.runCheck`，以及 App 里的指挥台、Mission /
+> 工作副本验收卡、跨机器 Respond、舰队快照（`fleet.d/`）与远端收件箱（`attention.d/`）。
+> 一个状态灯应该看着编排器，而不是成为编排器。旧目录由 `LegacyCleanup` 在首次启动时删除一次。
+
+四个 target 全部在完整并发检查下零警告并开启 warnings-as-errors（12.4）。
 依赖只能向下：没有一个库引用得到 `StatusStore`、AppKit 或任何视图，这由编译器保证，
 不靠 review。库成员是 `package` 可见（Core 是 `public`）。每个 Agent 的全部非解析事实
 （进程规则、采集根目录、别名、Waiting / 采集等级、单字母标记、Respond 可达性）只在
@@ -171,8 +175,11 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 6. attention 三级匹配：session id → cwd → 该 agent 最合适的行；都不中就新建一行
 7. 解析 focus 分级；进程探测补充可验证的工作目录（每轮一次，不在视图里）
 8. 排序：Waiting → 有会话标题 → live → recent → agent 优先级
-9. 编码 glance 状态、标题、tooltip、header
+9. 编码 glance 状态、标题、tooltip、header；22.0 起还有**灯的解释**：`LampExplanation.make`
+   给出决定颜色的规则、至多三个驱动会话和没算进去的部分，存为 `snapshot.lampLines`，
+   状态栏把它接在 tooltip 后面
 10. 算边沿：哪些是**新**的 Waiting、哪些等待结束了、灯是否刚变灰
+11. 计数未显示的会话：`staleHidden` 只算最近 24 小时里停下的（`staleHiddenWindowMs`）
 
 **它不做任何有副作用的事。** 时钟、终端环境、路径存在性判断都从 `Context` 注入；
 想让外界做的事——发通知、写日志、清除某个 key——全部作为数据返回。
@@ -186,20 +193,47 @@ Library/Application Support/Pulse。账本只保留 row key、Agent、会话短�
 时间戳，不保存提示内容或 tool 参数；首次可信扫描播种 baseline，崩溃/重启不会重复通知，
 清空历史只删除已解决事件。
 
+22.0 起每个等待事件还记下**通知去向**：`delivery`（`posted` / `summary`，或
+`WaitingDelivery.SkipReason` 的原始值 —— `inFront`、`muted`、`acknowledged`、`held`、
+`notifyOff`、`notAuthorized`、`atLaunch`、`rejected`）、`deliveryAtMs` 与 `clickedAtMs`。
+`WaitingDelivery` 规划时给每个没发的行一个 `SkipReason`，store 执行后经
+`AttentionLedger.markDelivery` / 点击回调写回；同一结局再写一次不算变化，所以第二轮扫描不重写账本。
+详情页用 `NotificationAuditModel` 把它渲染成「这条通知发生了什么」。
+
+## 会话时间线（22.0）
+
+每轮扫描应用完快照后，`StatusStore.recordTimeline(previous:current:remapped:nowMs:)` 把上一轮与
+这一轮的行交给纯函数 `SessionTimeline.transitions`：每行归类为 running / thin / stalled /
+blocked / turn / recent，依据为 hook / pending / vendor / harvest / process；等待段用 hook 自己的
+时间戳，没有证据时钟就用扫描时刻并标 `exact = false`。变化写进 `SessionTimelineBook`
+（`~/Library/Application Support/Pulse/session-timeline.json`，`0600`，至多 128 个会话、每个 48 段、
+关上的段 24 小时后清掉），键是 row key，不存标题、正文或路径。进程行换成更好的键时，历史随
+`remapped` 迁过去。
+
+**扫描静默**：只有某段真的变了才写文件并让 `timelineRevision`（被观察的属性，登记在
+`ScanQuietTests`）前进；读时间线的视图（详情页的 `TimelineStripView`、健康检查的
+`ActivityLogView`）只经这个版本号订阅。`ActivityLogModel` 把时间线与账本的通知去向合成一条
+倒序记录，按 Agent 过滤。
+
 拥有 builder 刻意不碰的东西：
 
 - **定时器与节奏**。`ProbeSchedule` 给出间隔，`PowerMonitor` 提供息屏 / 锁屏 /
   低电量状态。息屏即停表——attention 文件变化仍会唤醒。
-- **通知策略**。builder 报告边沿，store 决定要不要发：安静时段、按 agent 静音、
-  开关、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）。
+- **通知策略**。builder 报告边沿，store 决定要不要发：按 agent 静音（行菜单）、在最前、
+  开关、授权、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）；每个决定都作为去向写进账本。
+  安静时段与声音 22.0 起交给 macOS 的专注模式与通知设置。
 - **设置**。`PulseSettings` 负责解析和序列化，store 只做桥接和落盘。
 - **权限边界**。0.48 的 `appDataPolicyVersion` 不继承旧版全局授权；旧文件先回到关闭，用户在逐 Agent 选择后才重新启用，避免升级后的 ad-hoc 身份触发后台 TCC 弹窗。
-- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息、打开 Agent 详情审视器。
+- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息、忽略 / 稍后 / 静音、Respond 拒绝与同意。
 
 ## 视图
 
 `StatusPanelController` 拥有原生状态项和单表面 `NSPanel`；其中承载
-`TrayPanel`（连续会话列表 + Header 动作），`SettingsView` 管偏好。SwiftUI 视图都标了
+`TrayPanel`（22.0：一行一个会话的列表 + 彩色计数 Header + 至多一条提示 + 底部按键提示；
+→ 进入 `SessionDetailView`，← / Esc 返回），`SettingsView` 是一页偏好（Attention 桥工具在「高级」折叠区；
+深链经 `settingsFocusToken` 滚到对应一节）。托盘键盘优先：打字即过滤、↑↓ / ↩ / → / ⌫；
+详情页打开或有过滤词时 `trayEscapeConsumed` 让面板的按键监视器把 Esc 留给视图（先返回 / 清过滤，
+再关面板）。行的灯形来自 `TrayRowModel.Shape`（`LampShapeView` 绘制）。SwiftUI 视图都标了
 `@MainActor`——SwiftUI 只有 `body` 隐式主 actor 隔离，
 辅助计算属性不是，调 store 的 `@MainActor` 方法会编译失败。
 

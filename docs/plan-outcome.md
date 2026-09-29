@@ -1,5 +1,10 @@
 # Outcome / 结果契约（从管理会话到交付可验证候选）
 
+> **已删除（22.0「Lamp」）。** 本计划落地的一切 —— Mission、持久验收、证据对比、
+> `EvidenceBook`、外部候选，以及它所依赖的受管会话与 `PulseManaged` target —— 已在 22.0
+> 整体删除，第二 runtime（Codex App Server）不再推进。理由：一个状态灯应该看着编排器，
+> 而不是成为编排器。下文保留为历史记录，不再描述现行行为。
+
 > **进度（2026-09-26）。** 产品决定已作出：接受编排器身份（review-11.0 §4.3 的决定）。
 > **β（Mission 与持久验收）与 γ（证据对比）已在 13.0.0「Mission」发布**，runtime 只有 Claude。
 > α 的会话形 runtime 接缝在 12.2 已完成；**剩下的只有第二 runtime**（Codex App Server），

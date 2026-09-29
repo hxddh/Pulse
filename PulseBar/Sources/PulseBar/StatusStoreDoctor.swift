@@ -10,7 +10,7 @@ extension StatusStore {
     var doctorRespondTally: DoctorProbe.RespondTally {
         var tally = DoctorProbe.RespondTally()
         tally.enabled = respondLocalEnabled
-        for decided in respondDecided.values where decided.isLocal {
+        for decided in respondDecided.values {
             tally.written += 1
             switch decided.fate {
             case .taken: tally.taken += 1
@@ -22,10 +22,10 @@ extension StatusStore {
     }
 
     /// 20.0: what the parsers got from each agent's session files this run —
-    /// counts only. Remote rows are another machine's reading, not this one's.
+    /// counts only.
     var doctorReadCoverage: [String: DoctorModel.Coverage] {
         var coverage: [String: DoctorModel.Coverage] = [:]
-        for row in cachedAll where row.observationSource == .session && row.host.isEmpty {
+        for row in cachedAll where row.observationSource == .session {
             let key = row.agent.rawValue
             var item = coverage[key] ?? DoctorModel.Coverage(
                 name: row.agent.displayName,
@@ -93,8 +93,11 @@ extension StatusStore {
     var scanHealthLine: String {
         let now = Date()
         var parts: [String] = []
-        if snapshot.updatedAt != .distantPast {
-            let ago = now.timeIntervalSince(snapshot.updatedAt)
+        // `lastScanAt` moves on every applied scan; `snapshot.updatedAt`
+        // only when the snapshot publishes, so it can read a minute stale.
+        let lastRead = Self.lastReadDate(lastScanAt: lastScanAt, snapshotUpdatedAt: snapshot.updatedAt)
+        if let lastRead {
+            let ago = now.timeIntervalSince(lastRead)
             parts.append(ago < 5
                 ? tr(.lastReadJustNow)
                 : String(format: tr(.lastReadAgo), DurationFormat.label(seconds: ago, lang: lang)))
@@ -109,5 +112,17 @@ extension StatusStore {
             }
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Pure: when Pulse last read the world — the newer of the last applied
+    /// scan and the last published snapshot; nil before either.
+    nonisolated static func lastReadDate(lastScanAt: Date?, snapshotUpdatedAt: Date) -> Date? {
+        let published: Date? = snapshotUpdatedAt == .distantPast ? nil : snapshotUpdatedAt
+        switch (lastScanAt, published) {
+        case let (scan?, snap?): return max(scan, snap)
+        case let (scan?, nil): return scan
+        case let (nil, snap?): return snap
+        case (nil, nil): return nil
+        }
     }
 }

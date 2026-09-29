@@ -33,81 +33,18 @@ package enum AttentionIO {
 
     package static let maxRetainedLines = 80
 
-    /// Inbox for machines that are not this one.
-    ///
-    /// Pulse writes no network code and runs no server: whatever the user
-    /// already uses to move files — rsync, syncthing, a mounted volume, a
-    /// `scp` in their own script — drops one TSV per host in here. One file
-    /// per host means remote writers never contend for the local flock.
-    package static var inboxDirectory: URL {
-        path.deletingLastPathComponent().appendingPathComponent("attention.d", isDirectory: true)
-    }
-
-    /// A remote file is someone else's disk quota, not ours. Bound both the
-    /// number of hosts and the bytes read from each.
-    package static let maxInboxFiles = 16
-    package static let maxInboxBytesPerFile = 256 * 1024
-
-    /// One place events came from, with the local time they arrived.
-    ///
-    /// `receivedAtMs` is the file's own modification time. Pulse cannot trust
-    /// a remote machine's clock, and it keeps no cross-launch record of when
-    /// each line showed up — but the moment the bytes landed on *this* disk is
-    /// both local and durable, which is exactly what a skewed event stamp
-    /// needs to be checked against.
+    /// What a scan reads. One source since 22.0 removed the remote inbox
+    /// (`attention.d/<host>.tsv`): `attention.tsv` is this Mac's own file.
     package struct Source {
-        package var host: String
         package var text: String
-        package var receivedAtMs: Int64
-        package var isLocal: Bool
-    }
 
-    /// The local file plus every inbox file, newest host first.
-    package static func readSources() -> [Source] {
-        var sources = [
-            Source(host: "", text: readText(), receivedAtMs: 0, isLocal: true)
-        ]
-        sources.append(contentsOf: readInbox())
-        return sources
-    }
-
-    package static func readInbox() -> [Source] {
-        let fm = FileManager.default
-        let directory = inboxDirectory
-        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
-        var found: [Source] = []
-        for name in names.sorted() where name.hasSuffix(".tsv") {
-            if found.count >= maxInboxFiles { break }
-            let url = directory.appendingPathComponent(name)
-            // Read the TAIL of an oversized file, not the head: the TSV is
-            // append-only, so the newest events are the last bytes. Reading
-            // the first 256KB meant a busy remote host's fresh raises were
-            // exactly the part that got dropped, while stale lines stayed
-            // visible. After starting mid-file, drop the first (partial) line.
-            // `SafeRead`: a synced symlink or FIFO is skipped, never followed
-            // or blocked on.
-            guard let tail = SafeRead.regularFileTail(atPath: url.path, limit: maxInboxBytesPerFile)
-            else { continue }
-            var data = tail.data
-            if tail.truncated, let newline = data.firstIndex(of: 0x0A) {
-                data = data.subdata(in: (newline + 1)..<data.count)
-            }
-            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { continue }
-            let attributes = try? fm.attributesOfItem(atPath: url.path)
-            let modified = attributes?[.modificationDate] as? Date
-            // The file name is the fallback identity, so a remote box running
-            // an older v1 hook still shows up as itself rather than as "here".
-            let fallbackHost = AttentionProtocol.normalizeHost(String(name.dropLast(4)))
-            found.append(
-                Source(
-                    host: fallbackHost,
-                    text: text,
-                    receivedAtMs: Int64((modified?.timeIntervalSince1970 ?? 0) * 1000),
-                    isLocal: false
-                )
-            )
+        package init(text: String) {
+            self.text = text
         }
-        return found
+    }
+
+    package static func readSources() -> [Source] {
+        [Source(text: readText())]
     }
 
     /// Keep unresolved raises when compacting the TSV. A suffix-only cap can

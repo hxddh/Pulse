@@ -85,7 +85,6 @@ enum L10n {
         case .refreshing: return "Refreshing…"
         case .clearWaiting: return "Clear waiting"
         case .settings: return "Settings…"
-        case .details: return "Details"
         case .quit: return "Quit Pulse"
         case .focusTerminal: return "Focus terminal"
         case .general: return "General"
@@ -175,18 +174,7 @@ enum L10n {
         case .respondReview: return "Review & respond"
         case .respondAllow: return "Allow"
         case .respondFullRequest: return "Full request"
-        case .respondSentNote: return "Your decision is written — your sync tool delivers it"
         case .respondWaitingNote: return "Verdict written — waiting for the agent to take it"
-        case .effectFiles: return "%d files touched"
-        case .effectLines: return "+%1$d −%2$d"
-        case .movingNothingLanded: return "Moving, but nothing has landed yet"
-        case .workspaceShared: return "Sharing this checkout with %d other"
-        case .measureWorkspaceEffect: return "Measure what lands in the working copy"
-        case .fleetBroadcast: return "Share this Mac's fleet snapshot"
-        case .fleetBroadcastHint:
-            return "Writes a small file under fleet.d for your own sync tool to carry to your other Macs: which agents run here, their task titles and counts. No paths, no branches, no prompt text. Off means nothing is written; other machines' rows fade to lost contact and disappear."
-        case .measureWorkspaceEffectHint:
-            return "Read-only counts from git — files touched, lines added and removed — so a row can say what an agent actually got done, not only what it says it is doing. Never reads file contents, branch names or paths, and never writes. A repository too slow to answer is reported as unknown."
         case .respondTakenNote: return "The agent took your answer"
         case .respondExpiredUnclaimedNote:
             return "Nobody took it in time — the agent fell back to its own prompt"
@@ -194,7 +182,7 @@ enum L10n {
         case .respondLocalHint:
             return "When a permission request arrives and its window is not in front of you — you are away, or looking at something else — Pulse holds the agent briefly so you can refuse it from the banner or answer it here. The agent's own prompt still appears if you do not. Off by default."
         case .respondWriteFailed:
-            return "The verdict could not be written — the remote agent falls back to its own prompt"
+            return "The verdict could not be written — the agent falls back to its own prompt"
         case .respondRefused:
             return "Not enough of this request is here to approve it"
         case .respondRequestGone:
@@ -505,7 +493,6 @@ enum L10n {
         case .supportCopySafeReport: return "Copy safe report"
         case .exportSafeReport: return "Export safe report…"
         case .supportCopyShapeReport: return "Copy vendor shape"
-        case .remoteEvidence: return "Remote host"
         case .loopingTool: return "%1$@ · %2$d in a row"
         case .loopingHint: return "Busy, but not getting closer — the same tool back to back"
         case .sessionErrors: return "%d errors this session"
@@ -535,11 +522,6 @@ enum L10n {
         case .evidenceCPUUnknown: return "Not sampled yet — two ticks are needed before this is an answer."
         case .evidenceCPUHint: return "Busy with a quiet transcript is thinking, not stuck."
         case .evidenceMemory: return "Resident memory"
-        case .remoteLastHeard: return "Last heard %@ ago"
-        case .remoteLostContact: return "Lost contact"
-        case .remoteLostContactWhy: return "Nothing has arrived from this host since. Pulse cannot tell whether the wait is still open."
-        case .remoteClockSuspect: return "Ages measured from arrival — the sending clock disagrees"
-        case .remoteNoFocus: return "On another machine — Pulse can show it, not reach it"
         case .supportShapeReading: return "Reading sessions…"
         case .supportShapeHint: return "Key names and value kinds only — never your text. Share it to get a parsing bug fixed."
         case .snooze: return "Later"
@@ -616,61 +598,14 @@ enum L10n {
         case .turnsFact: return "%d turns"
         case .currentStepFact: return "Step · %@"
         case .detailStep: return "Current step"
-        case .detailPlan: return "Plan (agent's own)"
-        case .detailLastWord: return "Last word"
-        case .detailLastError: return "Last error"
-        case .detailLiveAction: return "Right now"
         case .supportYield: return "Measured facts: %@"
         case .supportYieldDrifted:
             return "Structured adapter yielded rows but no core facts — the vendor format may have drifted"
-        case .workbenchTitle: return "Pulse Workbench"
-        case .openWorkbench: return "Open Workbench"
-        case .workbenchSelectHint: return "Select a session"
-        case .workbenchNoSessions: return "No sessions yet — the fleet appears here as agents run"
-        case .workbenchWait: return "Waiting on you"
-        case .workbenchDiff: return "Changes on disk"
-        case .workbenchDiffLoad: return "Show diff"
-        case .workbenchDiffClean: return "Working tree clean"
-        case .workbenchDiffTruncated: return "Diff cut at 96 KB — the counts above are complete"
-        case .workbenchDiffUnavailable: return "Diff unavailable"
-        case .workbenchAnswerHeading: return "Answer & continue"
-        case .workbenchAnswerPlaceholder: return "Write your reply…"
-        case .workbenchAnswerCopy: return "Copy resume command"
-        case .workbenchAnswerHint:
-            return "Copies claude --resume with your reply and brings the terminal forward. Pulse never runs it — pasting and pressing Enter stays in your hands."
-        case .workbenchAnswerCopied: return "Command copied — paste in the terminal and press Enter"
-        case .workbenchAnswerRefused: return "This session id can't safely ride a command line"
-        case .workbenchReview: return "Wrap-up"
-        case .workbenchReviewHint:
-            return "This session has ended — below is what it left behind. Pulse never touches the repository; disposition happens in your own tools."
-        case .workbenchTranscript: return "Transcript"
-        case .workbenchTranscriptLoad: return "Show transcript"
-        case .workbenchTranscriptEmpty: return "Nothing conversational in the read window"
-        case .workbenchTranscriptUnavailable: return "Transcript unavailable"
-        case .workbenchTranscriptWindow: return "Read the last %@ of %@"
-        case .workbenchTranscriptCapped: return "Showing the last %d entries"
-        case .workbenchTranscriptUnparsed: return "%d lines unrecognized"
-        case .workbenchTranscriptUser: return "You"
-        case .workbenchTranscriptResult: return "Result"
-        case .allowWorkbenchActuation: return "Workbench can type into the terminal"
-        case .allowWorkbenchActuationHint:
-            return "Send replies into a session's own tab and start new sessions from the Workbench. Your words, your click — Pulse only does the typing. Off stops everything instantly."
-        case .workbenchSend: return "Send to terminal"
-        case .workbenchSendHint:
-            return "Types your reply into this session's terminal tab and presses Return. Only offered when the exact tab is addressable — never typed anywhere else."
-        case .workbenchSent: return "Delivered — typed into the session and submitted"
-        case .workbenchSendNoTab: return "Couldn't find this session's terminal tab — nothing was typed"
-        case .workbenchSendFailed: return "Tab found, but typing failed — check Automation permission for Pulse"
-        case .workbenchSendRefused: return "Nothing to send"
-        case .workbenchDispatch: return "New task"
-        case .workbenchDispatchRepo: return "Repository"
-        case .workbenchDispatchTask: return "What should it do?"
         case .signalVendor: return "Claude reports"
         case .whyVendor: return "Red: Claude itself reports this session is waiting for %@"
         case .whyHook: return "Red: %@'s hook reported %@, %@"
         case .whyHookFront: return " — its window was in front, so no banner"
         case .whyPending: return "Red: %@'s session log shows it stopped at %@"
-        case .whyManaged: return "Red: this Pulse-run turn is blocked on a permission request"
         case .whyTurn: return "Your turn: %@'s hook reported the turn ended, %@ — focus it or reply to clear"
         case .whyTimeline: return "What the hooks said"
         case .whyExport: return "Copy events (for a bug report)"
@@ -682,113 +617,6 @@ enum L10n {
         case .yourTurn: return "Your turn"
         case .turnCount: return "%d your turn"
         case .jumpToTurn: return "Go to the next finished session"
-        case .proofFact: return "checks %d/%d passing"
-        case .proofFailing: return " · %d failing"
-        case .proofStale: return " · %d stale"
-        case .proofCard: return "Checks for this working copy"
-        case .proofHint: return "Your checks for this directory, one command per line. Pulse runs them here on your click — the agent working here never sees them, and a result only counts while the code is unchanged."
-        case .proofSaveChecks: return "Save checks"
-        case .proofRunChecks: return "Run checks"
-        case .proofSideEffects: return "Checks run in this working copy itself, not in an isolated worktree: build output and caches land here."
-        case .proofJoinMission: return "Add to a comparison"
-        case .proofJoined: return "In comparison: %@"
-        case .proofLeaveMission: return "Remove from comparison"
-        case .missionExternal: return "%@ · outside Pulse"
-        case .missionExternalGone: return "not seen now"
-        case .missionContractMore: return "Constraints and checks"
-        case .missionConstraints: return "Constraints (optional)"
-        case .missionChecks: return "Checks — one command per line (optional)"
-        case .missionChecksHint: return "Checks are your ruler: Pulse runs them in each candidate's worktree, in this order, and never shows them to the agent. No checks means nothing will read as verified."
-        case .missionHeading: return "Compare runs"
-        case .missionLifecycleDraft: return "draft"
-        case .missionLifecycleRunning: return "running"
-        case .missionLifecycleReady: return "no candidate running"
-        case .missionLifecycleArchived: return "archived"
-        case .missionRevision: return "contract rev %d"
-        case .missionEdit: return "Edit contract"
-        case .missionNoChecks: return "No checks defined — nothing here reads as verified."
-        case .missionLegacyNote: return "Carried over from an earlier Pulse: the goal is the session title, and an old remembered check has not run against it yet."
-        case .missionCandidate: return "Run %d"
-        case .missionChosen: return "your choice"
-        case .missionChoose: return "Choose"
-        case .missionUnchoose: return "Clear choice"
-        case .missionRowSession: return "Session"
-        case .missionRowChanges: return "Changes"
-        case .missionRowAnswer: return "Final answer"
-        case .missionRowProblems: return "Errors · unknown events"
-        case .missionCheckNotRun: return "not run"
-        case .missionCheckRunning: return "running…"
-        case .missionCheckNotInContract: return "not in its contract"
-        case .missionCheckPassed: return "passed"
-        case .missionCheckFailed: return "failed · exit %d"
-        case .missionRunChecks: return "Run checks on every run"
-        case .missionStopChecks: return "Stop checks"
-        case .missionOlderRevision: return "ran on rev %d"
-        case .missionNoRanking: return "Pulse lines the candidates up side by side. Which one is right is your call."
-        case .missionGoal: return "Goal"
-        case .missionSave: return "Save"
-        case .missionEditFrozenHint: return "A candidate has already started: saving makes a new contract revision. Earlier candidates keep the one they ran against."
-        case .workbenchDispatchStart: return "Start"
-        case .workbenchDispatchHint:
-            return "Opens a Terminal window in this repository and starts claude with your task. The new session appears here once Pulse observes it."
-        case .workbenchDispatchFailed: return "Terminal did not accept the command — check Automation permission"
-        case .workbenchDispatchNoRoots: return "No observed repositories yet — dispatch needs a root the fleet has actually worked in"
-        case .managedBadge: return "Pulse-run"
-        case .managedConversation: return "Conversation"
-        case .managedReplyPlaceholder: return "Reply — sends the next turn…"
-        case .managedSend: return "Send"
-        case .managedCancel: return "Stop turn"
-        case .managedRunning: return "Turn running"
-        case .managedIdle: return "Turn finished — the next word is yours"
-        case .managedCancelled: return "Turn stopped"
-        case .managedFailed: return "Turn failed: %@"
-        case .managedCost: return "$%.2f · %d turns"
-        case .managedUnknownEvents: return "%d stream lines unrecognized"
-        case .managedWorktreeNote: return "Running in an isolated worktree Pulse created — your own checkout never moves"
-        case .managedNoClaude: return "claude CLI not found on this machine"
-        case .managedNotARepo: return "Not a git repository — a worktree needs one"
-        case .managedWorktreeFailed: return "Worktree creation failed: %@"
-        case .managedRunInPulse: return "Started by Pulse"
-        case .managedUseWorktree: return "Isolated worktree"
-        case .managedDispatchHint: return "Pulse runs claude itself and owns the stream: the full conversation lives here, replies are real turns, and stopping is one click. Your words start it; every turn after is also yours."
-        case .managedAcceptance: return "Accept & land"
-        case .managedAcceptanceHint:
-            return "These verbs run only inside the worktree Pulse created, only on your click — your own checkout stays untouchable. Review the diff above first; the commit message is your judgment."
-        case .managedCommitPlaceholder: return "Commit message…"
-        case .managedCommit: return "Commit"
-        case .managedCommitted: return "Committed in the worktree"
-        case .managedPush: return "Push branch"
-        case .managedPushed: return "Pushed %@ — open the PR when you're ready"
-        case .managedOpenPR: return "Open PR on GitHub"
-        case .managedOutsideNamespace: return "Refused: not a Pulse worktree"
-        case .managedQueuedNote: return "Queued — starts when a slot frees (max 3 running at once)"
-        case .managedInterrupted: return "Turn interrupted — Pulse quit while it ran. The conversation survived; reply to resume."
-        case .managedRemove: return "Remove session"
-        case .managedRemoveNote: return "Removes the record; the worktree stays for you"
-        case .managedPermissionHeading: return "Permission ask"
-        case .managedPermissionHint:
-            return "No answer within 2 minutes denies automatically — a headless run has no safe prompt to fall back to."
-        case .managedPermissionTruncated: return "Input over budget — Allow withdrawn, Deny stands"
-        case .managedAttempts: return "Parallel tries"
-        case .managedAttemptsCount: return "Parallel tries: %d"
-        case .managedAttemptsNeedWorktree: return "Parallel tries need isolated worktrees"
-        case .managedAttemptOrdinal: return "Try %d"
-        case .managedViewAttempt: return "View"
-        case .managedCurrentAttempt: return "this one"
-        case .managedRunCheck: return "Run check"
-        case .managedRunCheckPlaceholder: return "e.g. swift test"
-        case .managedRunCheckExit: return "exit %d"
-        case .managedRunCheckTimeout: return "Check timed out"
-        case .managedRunCheckMeasuring: return "Verifying current code…"
-        case .managedRunCheckUnverified: return "Current code could not be verified"
-        case .managedRunCheckStale: return "Evidence stale — code changed"
-        case .managedRunCheckChanged: return "Code changed while the check ran"
-        case .managedRunCheckInterrupted: return "Check interrupted"
-        case .managedRunCheckStop: return "Stop check"
-        case .managedEvidencePassing: return "Check passes on current code"
-        case .managedEvidenceNotPassing: return "Last check did not pass"
-        case .managedTurnEffect: return "This turn on disk: +%d −%d"
-        case .trayOpenInWorkbench: return "Open in Workbench"
         case .trayExpandRow: return "Expand row"
         case .trayCollapseRow: return "Collapse row"
         case .settingsPaneAlerts: return "Alerts"
@@ -839,6 +667,57 @@ enum L10n {
         case .updateFailedNoTag: return "The latest release has no version tag"
         case .staleHidden: return "%d older session(s) not shown (%@)"
         case .waitingBannerFailed: return "macOS did not show the last “needs you” banner — check Notifications"
+        case .lampRuleBlocked: return "Red: an agent is waiting on you."
+        case .lampRuleAllSnoozed: return "Red, quiet: every wait is snoozed."
+        case .lampRuleStalled: return "Orange: a running session has gone quiet past your stall threshold."
+        case .lampRuleThin: return "Orange: something is running that Pulse can only see as a process."
+        case .lampRuleRunning: return "Green: agents are working and nothing needs you."
+        case .lampRuleTurn: return "Grey: a turn ended — your move when you are ready."
+        case .lampRuleRecent: return "Grey: nothing running; recent sessions are listed."
+        case .lampRuleIdle: return "Grey: no coding agent is running."
+        case .lampRuleCantRefresh: return "Orange: Pulse could not read processes or sessions on its last try."
+        case .lampLeftSnoozed: return "%d snoozed"
+        case .lampLeftStale: return "%d older not shown"
+        case .auditRaised: return "Raised %@"
+        case .auditPosted: return "Banner shown %@"
+        case .auditSummary: return "Shown in a summary banner %@"
+        case .auditQueued: return "Banner queued %@"
+        case .auditClicked: return "You clicked it %@"
+        case .auditAcknowledged: return "You dismissed it %@"
+        case .auditSnoozed: return "Snoozed until %@"
+        case .auditResolved: return "Resolved %@"
+        case .auditSkipInFront: return "No banner (%@): the prompt was already in front of you"
+        case .auditSkipMuted: return "No banner (%@): this agent is muted"
+        case .auditSkipAcknowledged: return "No banner (%@): you had already dismissed it"
+        case .auditSkipHeld: return "Held (%@): another banner was shown moments ago"
+        case .auditSkipNotifyOff: return "No banner (%@): “needs you” notifications are off"
+        case .auditSkipNotAuthorized: return "No banner (%@): macOS has not allowed Pulse to notify"
+        case .auditSkipAtLaunch: return "No banner (%@): it was already waiting when Pulse started"
+        case .auditSkipRejected: return "No banner (%@): macOS refused it — check Notifications and Focus"
+        case .details: return "Details"
+        case .muteAgent: return "Mute %@"
+        case .unmuteAgent: return "Unmute %@"
+        case .detailLastWords: return "Last words"
+        case .detailPlanHeading: return "Plan"
+        case .detailNotificationHeading: return "Notification"
+        case .detailBack: return "Back"
+        case .detailLastHour: return "Last hour:"
+        case .detailMinutesIn: return "%d min %@"
+        case .filterMatches: return "%d matches"
+        case .trayKeyHints: return "↑↓ select · ↩ focus · → details · ⌫ dismiss · type to filter"
+        case .setupTerminalFocus: return "Jump to the exact terminal tab"
+        case .setupTerminalFocusDetail: return "So ↩ lands in the tab that is waiting. macOS asks once for Automation access."
+        case .setupTurnOn: return "Turn on"
+        case .settingsAdvanced: return "Advanced"
+        case .activityLeft: return "left the list"
+        case .activityFromSession: return "session record"
+        case .activityFromProcess: return "process only"
+        case .activityHeading: return "Activity"
+        case .activityEmpty: return "Nothing recorded yet. State changes and banners appear here as they happen."
+        case .activityAllAgents: return "All agents"
+        case .updateDownloadNoAsset: return "This release has no verifiable installer"
+        case .updateDownloadUnsupported: return "This Mac cannot run this release"
+        case .updateDownloadNotReady: return "Download and verify the installer first"
         }
     }
 
@@ -862,7 +741,6 @@ enum L10n {
         case .refreshing: return "刷新中…"
         case .clearWaiting: return "清除等待"
         case .settings: return "偏好设置…"
-        case .details: return "详情"
         case .quit: return "退出 Pulse"
         case .focusTerminal: return "聚焦终端"
         case .general: return "通用"
@@ -949,24 +827,13 @@ enum L10n {
         case .respondReview: return "查看并回应"
         case .respondAllow: return "同意"
         case .respondFullRequest: return "完整请求"
-        case .respondSentNote: return "你的决定已写出，等同步工具送达"
         case .respondWaitingNote: return "你的决定已写出，等 Agent 来取"
-        case .effectFiles: return "动了 %d 个文件"
-        case .effectLines: return "+%1$d −%2$d"
-        case .movingNothingLanded: return "在动，盘上还没有东西落地"
-        case .workspaceShared: return "这个工作副本上还有 %d 个"
-        case .measureWorkspaceEffect: return "测量工作副本里落地了什么"
-        case .fleetBroadcast: return "共享这台 Mac 的舰队快照"
-        case .fleetBroadcastHint:
-            return "往 fleet.d 写一个小文件，由你自己的同步工具带到你的其它 Mac：这台机器上哪些 agent 在跑、它们的标题和计数。不带路径、不带分支、不带提示词正文。关掉就什么都不写；其它机器上的行会先失联、再消失。"
-        case .measureWorkspaceEffectHint:
-            return "从 git 只读取计数 —— 动了几个文件、加了删了多少行 —— 好让行能说出 agent 到底干成了什么，而不只是它说自己在干什么。不读文件内容、分支名和路径，也从不写入。仓库慢到答不上来就报「不知道」。"
         case .respondTakenNote: return "agent 已经取走你的回答"
         case .respondExpiredUnclaimedNote: return "到点也没人来取 —— agent 已回到它自己的提示"
         case .respondLocal: return "本机 Agent 也在 Pulse 里回答"
         case .respondLocalHint:
             return "权限请求到来时，如果它的窗口不在你眼前 —— 你不在，或者正看着别处 —— Pulse 会短暂拦住 agent，让你在横幅上直接拒绝，或在这里回答。你不答，agent 自己的提示照常出现。默认关闭。"
-        case .respondWriteFailed: return "你的决定没能写出 —— 远端会回到它自己的提示"
+        case .respondWriteFailed: return "你的决定没能写出 —— Agent 会回到它自己的提示"
         case .respondRefused: return "请求没到齐，不能在这里同意"
         case .respondRequestGone: return "这个请求已经不在了 —— 过期，或者已经答过"
         case .respondRequestChanged: return "显示的请求已被更新的请求替换 —— 什么都没发送，请重看"
@@ -1264,7 +1131,6 @@ enum L10n {
         case .supportCopySafeReport: return "复制安全报告"
         case .exportSafeReport: return "导出安全报告…"
         case .supportCopyShapeReport: return "复制厂商格式"
-        case .remoteEvidence: return "远端机器"
         case .loopingTool: return "%1$@ · 连续 %2$d 次"
         case .loopingHint: return "在动，但没在推进 —— 同一个工具连着调"
         case .sessionErrors: return "本场会话 %d 次错误"
@@ -1294,11 +1160,6 @@ enum L10n {
         case .evidenceCPUUnknown: return "还没采到 —— 要两拍才能得出答案，不是 0。"
         case .evidenceCPUHint: return "在算但记录不动 = 在想，不是卡住。"
         case .evidenceMemory: return "常驻内存"
-        case .remoteLastHeard: return "最后听到 %@ 前"
-        case .remoteLostContact: return "失联"
-        case .remoteLostContactWhy: return "此后再没收到这台机器的消息。Pulse 无法判断这个等待是否还开着。"
-        case .remoteClockSuspect: return "按到达时间计龄 —— 发送方时钟对不上"
-        case .remoteNoFocus: return "在另一台机器上 —— Pulse 能看见，够不着"
         case .supportShapeReading: return "正在读会话…"
         case .supportShapeHint: return "只有键名与值的类型，不含你的任何文字。发它就能修解析。"
         case .snooze: return "稍后"
@@ -1375,61 +1236,14 @@ enum L10n {
         case .turnsFact: return "%d 轮"
         case .currentStepFact: return "当前步骤 · %@"
         case .detailStep: return "当前步骤"
-        case .detailPlan: return "计划（agent 自述）"
-        case .detailLastWord: return "刚说的话"
-        case .detailLastError: return "最近错误"
-        case .detailLiveAction: return "此刻"
         case .supportYield: return "实测事实：%@"
         case .supportYieldDrifted:
             return "声明结构化、本拍有行却零核心事实 —— 厂商格式可能已漂移"
-        case .workbenchTitle: return "Pulse 指挥台"
-        case .openWorkbench: return "打开指挥台"
-        case .workbenchSelectHint: return "选择一个会话"
-        case .workbenchNoSessions: return "还没有会话 —— agent 跑起来后这里就是舰队"
-        case .workbenchWait: return "等你处理"
-        case .workbenchDiff: return "盘上改动"
-        case .workbenchDiffLoad: return "查看 diff"
-        case .workbenchDiffClean: return "工作树干净"
-        case .workbenchDiffTruncated: return "diff 在 96 KB 处截断 —— 上方计数完整"
-        case .workbenchDiffUnavailable: return "diff 不可用"
-        case .workbenchAnswerHeading: return "回答并续接"
-        case .workbenchAnswerPlaceholder: return "写下你的回复…"
-        case .workbenchAnswerCopy: return "复制续接命令"
-        case .workbenchAnswerHint:
-            return "复制带上你回复的 claude --resume 命令并唤起终端。Pulse 永不代跑 —— 粘贴与回车都在你手里。"
-        case .workbenchAnswerCopied: return "命令已复制 —— 在终端粘贴并回车"
-        case .workbenchAnswerRefused: return "会话 ID 无法安全进入命令行"
-        case .workbenchReview: return "复盘"
-        case .workbenchReviewHint:
-            return "会话已结束 —— 下面是它留下的东西。Pulse 永不代动仓库，处置在你自己的工具里。"
-        case .workbenchTranscript: return "会话全文"
-        case .workbenchTranscriptLoad: return "查看全文"
-        case .workbenchTranscriptEmpty: return "读取窗口内没有对话内容"
-        case .workbenchTranscriptUnavailable: return "全文不可用"
-        case .workbenchTranscriptWindow: return "已读尾部 %@（全文 %@）"
-        case .workbenchTranscriptCapped: return "仅显示最近 %d 条"
-        case .workbenchTranscriptUnparsed: return "%d 行未识别"
-        case .workbenchTranscriptUser: return "你"
-        case .workbenchTranscriptResult: return "结果"
-        case .allowWorkbenchActuation: return "允许指挥台敲入终端"
-        case .allowWorkbenchActuationHint:
-            return "在指挥台把回复发进会话自己的标签页、启动新会话。话是你写的、发送是你点的 —— Pulse 只出手指活。关掉立即全部停止。"
-        case .workbenchSend: return "发送到终端"
-        case .workbenchSendHint:
-            return "把你的回复敲进该会话的终端标签页并回车。只在能精确定位那个标签页时提供 —— 绝不敲进别处。"
-        case .workbenchSent: return "已送达 —— 已敲入会话并回车"
-        case .workbenchSendNoTab: return "没找到该会话的终端标签页 —— 什么都没敲"
-        case .workbenchSendFailed: return "找到了标签页但敲入失败 —— 检查 Pulse 的自动化权限"
-        case .workbenchSendRefused: return "没有可发送的内容"
-        case .workbenchDispatch: return "新任务"
-        case .workbenchDispatchRepo: return "仓库"
-        case .workbenchDispatchTask: return "要它做什么？"
         case .signalVendor: return "Claude 自报"
         case .whyVendor: return "红灯：Claude 自己报告这个会话在等「%@」"
         case .whyHook: return "红灯：%@ 的 hook 报告了「%@」· %@"
         case .whyHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
         case .whyPending: return "红灯：%@ 的会话记录显示它停在「%@」上"
-        case .whyManaged: return "红灯：Pulse 运行的这个回合正停在权限请求上"
         case .whyTurn: return "轮到你：%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
         case .whyTimeline: return "hook 说过什么"
         case .whyExport: return "复制事件（用于报告问题）"
@@ -1441,113 +1255,6 @@ enum L10n {
         case .yourTurn: return "轮到你"
         case .turnCount: return "%d 轮到你"
         case .jumpToTurn: return "跳到做完的会话"
-        case .proofFact: return "检查 %d/%d 通过"
-        case .proofFailing: return " · %d 失败"
-        case .proofStale: return " · %d 已过期"
-        case .proofCard: return "这个工作副本的检查"
-        case .proofHint: return "你给这个目录定的检查，每行一条命令。只在你点击时由 Pulse 在这里运行 —— 在这里工作的 Agent 看不到它们；结果只在代码没变时才算数。"
-        case .proofSaveChecks: return "保存检查"
-        case .proofRunChecks: return "运行检查"
-        case .proofSideEffects: return "检查直接在这个工作副本里运行，不是隔离的 worktree：构建产物和缓存会留在这里。"
-        case .proofJoinMission: return "加入任务对比"
-        case .proofJoined: return "已在任务对比中：%@"
-        case .proofLeaveMission: return "移出任务对比"
-        case .missionExternal: return "%@ · Pulse 之外"
-        case .missionExternalGone: return "当前未观测到"
-        case .missionContractMore: return "约束与检查"
-        case .missionConstraints: return "约束（可选）"
-        case .missionChecks: return "检查 —— 每行一条命令（可选）"
-        case .missionChecksHint: return "检查是你的尺子：Pulse 在每个方案的 worktree 里按此顺序运行它们，不会交给 Agent 看。没有检查，就不会有任何东西显示为已验证。"
-        case .missionHeading: return "任务对比"
-        case .missionLifecycleDraft: return "草稿"
-        case .missionLifecycleRunning: return "进行中"
-        case .missionLifecycleReady: return "所有方案都已停下"
-        case .missionLifecycleArchived: return "已归档"
-        case .missionRevision: return "契约第 %d 版"
-        case .missionEdit: return "修改契约"
-        case .missionNoChecks: return "没有定义检查 —— 这里不会有任何东西显示为已验证。"
-        case .missionLegacyNote: return "从旧版 Pulse 迁移而来：目标是会话标题；旧的检查命令迁成了一条尚未运行的检查。"
-        case .missionCandidate: return "方案 %d"
-        case .missionChosen: return "你的选择"
-        case .missionChoose: return "选定"
-        case .missionUnchoose: return "取消选定"
-        case .missionRowSession: return "会话"
-        case .missionRowChanges: return "改动"
-        case .missionRowAnswer: return "最终回答"
-        case .missionRowProblems: return "错误 · 未知事件"
-        case .missionCheckNotRun: return "未运行"
-        case .missionCheckRunning: return "运行中…"
-        case .missionCheckNotInContract: return "不在它的契约里"
-        case .missionCheckPassed: return "通过"
-        case .missionCheckFailed: return "失败 · 退出 %d"
-        case .missionRunChecks: return "在所有方案上运行检查"
-        case .missionStopChecks: return "停止检查"
-        case .missionOlderRevision: return "按第 %d 版运行"
-        case .missionNoRanking: return "Pulse 只把方案并排摆好。哪个对，由你判断。"
-        case .missionGoal: return "目标"
-        case .missionSave: return "保存"
-        case .missionEditFrozenHint: return "已有方案开始运行：保存会生成新的约束版本，之前的方案保留它们运行时的那一版。"
-        case .workbenchDispatchStart: return "启动"
-        case .workbenchDispatchHint:
-            return "在该仓库打开终端窗口并带任务启动 claude。新会话被 Pulse 观测到后会出现在这里。"
-        case .workbenchDispatchFailed: return "终端没有接受命令 —— 检查自动化权限"
-        case .workbenchDispatchNoRoots: return "还没有观测到的仓库 —— 新任务需要 Agent 实际工作过的目录"
-        case .managedBadge: return "Pulse 派出"
-        case .managedConversation: return "对话"
-        case .managedReplyPlaceholder: return "回复 —— 发送即下一回合…"
-        case .managedSend: return "发送"
-        case .managedCancel: return "终止本回合"
-        case .managedRunning: return "回合进行中"
-        case .managedIdle: return "回合已结束 —— 下一句是你的"
-        case .managedCancelled: return "回合已终止"
-        case .managedFailed: return "回合失败：%@"
-        case .managedCost: return "$%.2f · %d 回合"
-        case .managedUnknownEvents: return "%d 行流事件未识别"
-        case .managedWorktreeNote: return "运行在 Pulse 自建的独立 worktree 里 —— 你自己的工作副本一寸不动"
-        case .managedNoClaude: return "本机未找到 claude CLI"
-        case .managedNotARepo: return "不是 git 仓库 —— worktree 需要一个"
-        case .managedWorktreeFailed: return "worktree 创建失败：%@"
-        case .managedRunInPulse: return "由 Pulse 启动"
-        case .managedUseWorktree: return "独立 worktree"
-        case .managedDispatchHint: return "Pulse 自己运行 claude 并独占输出流：完整对话就在这里，回复是真实回合，终止一键可达。开局的话是你写的，之后每一回合也都是。"
-        case .managedAcceptance: return "检查并落地"
-        case .managedAcceptanceHint:
-            return "这些动词只在 Pulse 自建的 worktree 里、只因你的点击而运行 —— 你自己的工作副本碰不到。先看上方 diff；提交信息就是你的判断。"
-        case .managedCommitPlaceholder: return "提交信息…"
-        case .managedCommit: return "提交"
-        case .managedCommitted: return "已在 worktree 中提交"
-        case .managedPush: return "推送分支"
-        case .managedPushed: return "已推送 %@ —— 就绪后去开 PR"
-        case .managedOpenPR: return "在 GitHub 开 PR"
-        case .managedOutsideNamespace: return "已拒绝：不是 Pulse 的 worktree"
-        case .managedQueuedNote: return "排队中 —— 有空位即开跑（同时最多 3 个）"
-        case .managedInterrupted: return "回合被中断 —— 运行中退出了 Pulse。对话还在，回复即续。"
-        case .managedRemove: return "移除会话"
-        case .managedRemoveNote: return "只移除记录；worktree 留给你"
-        case .managedPermissionHeading: return "权限请求"
-        case .managedPermissionHint:
-            return "两分钟无应答自动拒绝 —— headless 没有可回落的安全提示。"
-        case .managedPermissionTruncated: return "入参超界 —— 收回同意，仅可拒绝"
-        case .managedAttempts: return "并行尝试"
-        case .managedAttemptsCount: return "并行尝试：%d 路"
-        case .managedAttemptsNeedWorktree: return "并行尝试需要独立 worktree"
-        case .managedAttemptOrdinal: return "第 %d 试"
-        case .managedViewAttempt: return "查看"
-        case .managedCurrentAttempt: return "当前"
-        case .managedRunCheck: return "运行检查"
-        case .managedRunCheckPlaceholder: return "如：swift test"
-        case .managedRunCheckExit: return "退出码 %d"
-        case .managedRunCheckTimeout: return "检查超时"
-        case .managedRunCheckMeasuring: return "正在核对当前代码…"
-        case .managedRunCheckUnverified: return "无法核对当前代码"
-        case .managedRunCheckStale: return "检查结果已过期 —— 代码已变化"
-        case .managedRunCheckChanged: return "检查运行期间代码发生变化"
-        case .managedRunCheckInterrupted: return "检查被中断"
-        case .managedRunCheckStop: return "停止检查"
-        case .managedEvidencePassing: return "检查在当前代码上通过"
-        case .managedEvidenceNotPassing: return "上次检查未通过"
-        case .managedTurnEffect: return "本回合落盘：+%d −%d"
-        case .trayOpenInWorkbench: return "在指挥台打开"
         case .trayExpandRow: return "展开此行"
         case .trayCollapseRow: return "收起此行"
         case .settingsPaneAlerts: return "提醒"
@@ -1598,6 +1305,57 @@ enum L10n {
         case .updateFailedNoTag: return "最新发布没有版本标签"
         case .staleHidden: return "%d 个较早的会话未显示（%@）"
         case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」的通知 —— 请检查通知设置"
+        case .lampRuleBlocked: return "红：有 Agent 在等你。"
+        case .lampRuleAllSnoozed: return "红（已静音）：所有等待都被推迟了。"
+        case .lampRuleStalled: return "橙：有会话运行中但超过停滞阈值没有动静。"
+        case .lampRuleThin: return "橙：有 Agent 在运行，但 Pulse 只看到进程。"
+        case .lampRuleRunning: return "绿：Agent 在工作，没有需要你的事。"
+        case .lampRuleTurn: return "灰：有回合结束了，轮到你（不急）。"
+        case .lampRuleRecent: return "灰：没有在运行的；列出的是最近的会话。"
+        case .lampRuleIdle: return "灰：没有在运行的编码 Agent。"
+        case .lampRuleCantRefresh: return "橙：Pulse 上一次没能读取进程和会话。"
+        case .lampLeftSnoozed: return "%d 个已推迟"
+        case .lampLeftStale: return "%d 个较早的未显示"
+        case .auditRaised: return "%@ 开始等待"
+        case .auditPosted: return "%@ 发出通知"
+        case .auditSummary: return "%@ 合并进汇总通知"
+        case .auditQueued: return "%@ 通知排队中"
+        case .auditClicked: return "%@ 你点了通知"
+        case .auditAcknowledged: return "%@ 你忽略了它"
+        case .auditSnoozed: return "推迟到 %@"
+        case .auditResolved: return "%@ 已解决"
+        case .auditSkipInFront: return "没有通知（%@）：提示已经在你眼前"
+        case .auditSkipMuted: return "没有通知（%@）：这个 Agent 已静音"
+        case .auditSkipAcknowledged: return "没有通知（%@）：你已经忽略过它"
+        case .auditSkipHeld: return "延后（%@）：刚刚发过另一条通知"
+        case .auditSkipNotifyOff: return "没有通知（%@）：「需要你」通知已关闭"
+        case .auditSkipNotAuthorized: return "没有通知（%@）：macOS 尚未允许 Pulse 发通知"
+        case .auditSkipAtLaunch: return "没有通知（%@）：Pulse 启动时它已经在等"
+        case .auditSkipRejected: return "没有通知（%@）：macOS 拒绝了 —— 请检查通知与专注模式"
+        case .details: return "详情"
+        case .muteAgent: return "静音 %@"
+        case .unmuteAgent: return "取消静音 %@"
+        case .detailLastWords: return "最后说的话"
+        case .detailPlanHeading: return "计划"
+        case .detailNotificationHeading: return "通知"
+        case .detailBack: return "返回"
+        case .detailLastHour: return "最近一小时："
+        case .detailMinutesIn: return "%d 分钟 %@"
+        case .filterMatches: return "%d 个匹配"
+        case .trayKeyHints: return "↑↓ 选择 · ↩ 聚焦 · → 详情 · ⌫ 忽略 · 直接打字筛选"
+        case .setupTerminalFocus: return "跳到确切的终端标签页"
+        case .setupTerminalFocusDetail: return "这样按 ↩ 就会落到正在等你的那个标签页。macOS 会请求一次「自动化」权限。"
+        case .setupTurnOn: return "开启"
+        case .settingsAdvanced: return "高级"
+        case .activityLeft: return "离开了列表"
+        case .activityFromSession: return "会话记录"
+        case .activityFromProcess: return "仅进程"
+        case .activityHeading: return "动态"
+        case .activityEmpty: return "还没有记录。状态变化和通知会在发生时出现在这里。"
+        case .activityAllAgents: return "全部 Agent"
+        case .updateDownloadNoAsset: return "该版本没有可校验的安装包"
+        case .updateDownloadUnsupported: return "这台 Mac 无法运行该版本"
+        case .updateDownloadNotReady: return "请先下载并校验安装包"
         }
     }
 
@@ -1608,14 +1366,11 @@ enum L10n {
         case recent1, recentN, recent, idleWord
         case justNow, notYet, cantRefresh, andMore, showLess
         case refresh, refreshing, clearWaiting, settings, quit
-        case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait, details
-        case respondDeny, respondReview, respondAllow, respondFullRequest, respondSentNote, respondHeading, respondExpired
+        case focusTerminal, focusTTY, focusWarp, focusHostWorkspace, focusHostApp, focusOpenTray, dismissWait
+        case respondDeny, respondReview, respondAllow, respondFullRequest, respondHeading, respondExpired
         case respondWriteFailed, respondRefused, respondRequestGone, respondRequestChanged, focusFailed
         case respondLocal, respondLocalHint
         case respondWaitingNote, respondTakenNote, respondExpiredUnclaimedNote
-        case effectFiles, effectLines, movingNothingLanded, workspaceShared
-        case measureWorkspaceEffect, measureWorkspaceEffectHint
-        case fleetBroadcast, fleetBroadcastHint
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCache, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone
@@ -1707,7 +1462,6 @@ enum L10n {
         case supportOriginChrome, supportOriginFallbackText, supportOriginCacheTitle
         case supportOriginToolTitle, supportOriginUserPrompt, supportOriginSessionName
         case supportCopyShapeReport, supportShapeReading, supportShapeHint
-        case remoteEvidence, remoteLastHeard, remoteLostContact, remoteLostContactWhy
         case loopingTool, loopingHint, sessionErrors, toolsUsed, sessionErrorsLabel
         case evidenceHeading, evidenceTimeline, evidenceTimelineHint
         case evidenceSessionTokens, evidenceSessionTokensHint
@@ -1718,7 +1472,6 @@ enum L10n {
         case evidenceSessionLength
         case evidenceRead, evidenceReadCaughtUp, evidenceReadCatchingUp, evidenceReadPartialHint
         case evidenceReadCompact
-        case remoteClockSuspect, remoteNoFocus
         case snooze, snoozed, snoozedFor, stallAfter, stallOff, minutesShort, notifFocus
         case recordsSuffix, sessionAge, waitingSummaryTitle, waitingSummaryBody, searchSessions, searchNoResults, clearSearch
         case installUpdate, updateInstalling, updateInstallFailed, updateInstallRequiresNotarized
@@ -1738,62 +1491,14 @@ enum L10n {
         case nowActivity, outcomeActivity
         case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
         case filesFact, contextFact, progressFact, turnsFact
-        case currentStepFact, detailStep, detailPlan, detailLastWord, detailLastError
-        case detailLiveAction, supportYield, supportYieldDrifted
-        case workbenchTitle, openWorkbench, workbenchSelectHint, workbenchNoSessions
-        case workbenchWait, workbenchDiff, workbenchDiffLoad, workbenchDiffClean
-        case workbenchDiffTruncated, workbenchDiffUnavailable
-        case workbenchAnswerHeading, workbenchAnswerPlaceholder, workbenchAnswerCopy
-        case workbenchAnswerHint, workbenchAnswerCopied, workbenchAnswerRefused
-        case workbenchReview, workbenchReviewHint
-        case workbenchTranscript, workbenchTranscriptLoad, workbenchTranscriptEmpty
-        case workbenchTranscriptUnavailable, workbenchTranscriptWindow
-        case workbenchTranscriptCapped, workbenchTranscriptUnparsed
-        case workbenchTranscriptUser, workbenchTranscriptResult
-        case allowWorkbenchActuation, allowWorkbenchActuationHint
-        case workbenchSend, workbenchSendHint, workbenchSent
-        case workbenchSendNoTab, workbenchSendFailed, workbenchSendRefused
-        case workbenchDispatch, workbenchDispatchRepo, workbenchDispatchTask
-        case workbenchDispatchStart, workbenchDispatchHint
-        case workbenchDispatchFailed, workbenchDispatchNoRoots
-        case managedBadge, managedConversation, managedReplyPlaceholder
-        case managedSend, managedCancel, managedRunning, managedIdle
-        case managedCancelled, managedFailed, managedCost, managedUnknownEvents
-        case managedWorktreeNote, managedNoClaude, managedNotARepo
-        case managedWorktreeFailed, managedRunInPulse, managedUseWorktree
-        case managedDispatchHint
-        case managedAcceptance, managedAcceptanceHint, managedCommitPlaceholder
-        case managedCommit, managedCommitted, managedPush, managedPushed
-        case managedOpenPR, managedOutsideNamespace
-        case managedQueuedNote, managedInterrupted, managedRemove, managedRemoveNote
-        case managedPermissionHeading, managedPermissionHint, managedPermissionTruncated
-        case managedAttempts, managedAttemptsCount, managedAttemptsNeedWorktree
-        case managedAttemptOrdinal, managedViewAttempt, managedCurrentAttempt
-        case managedRunCheck, managedRunCheckPlaceholder, managedRunCheckExit
-        case managedRunCheckTimeout, managedRunCheckMeasuring, managedRunCheckUnverified
-        case managedRunCheckStale, managedRunCheckChanged, managedRunCheckInterrupted, managedRunCheckStop, managedEvidencePassing, managedEvidenceNotPassing
-        case managedTurnEffect
-        case trayOpenInWorkbench, trayExpandRow, trayCollapseRow
+        case currentStepFact, detailStep
+        case supportYield, supportYieldDrifted
+        case trayExpandRow, trayCollapseRow
         case trayScanIncomplete
-        // 14.0 · Proof
         case yourTurn, turnCount, jumpToTurn
-        case whyHook, whyHookFront, whyPending, whyManaged, whyTurn, whyVendor, signalVendor
+        case whyHook, whyHookFront, whyPending, whyTurn, whyVendor, signalVendor
         case whyTimeline, whyExport, whyExported, whyNoHistory, whyResolved
         case doctorRun, doctorHint
-        case proofFact, proofFailing, proofStale, proofCard
-        case proofHint, proofSaveChecks, proofRunChecks, proofSideEffects
-        case proofJoinMission, proofJoined, proofLeaveMission, missionExternal
-        case missionExternalGone
-        // 13.0 · Mission
-        case missionContractMore, missionConstraints, missionChecks, missionChecksHint
-        case missionHeading, missionLifecycleDraft, missionLifecycleRunning, missionLifecycleReady
-        case missionLifecycleArchived, missionRevision, missionEdit, missionNoChecks
-        case missionLegacyNote, missionCandidate, missionChosen, missionChoose
-        case missionUnchoose, missionRowSession, missionRowChanges, missionRowAnswer
-        case missionRowProblems, missionCheckNotRun, missionCheckRunning, missionCheckNotInContract
-        case missionCheckPassed, missionCheckFailed, missionRunChecks, missionStopChecks
-        case missionOlderRevision, missionNoRanking, missionGoal, missionSave
-        case missionEditFrozenHint
         case settingsPaneAlerts
         case settingsPaneConnections
         case settingsPanePermissions
@@ -1842,6 +1547,57 @@ enum L10n {
         case updateFailedNoTag
         case staleHidden
         case waitingBannerFailed
+        case lampRuleBlocked
+        case lampRuleAllSnoozed
+        case lampRuleStalled
+        case lampRuleThin
+        case lampRuleRunning
+        case lampRuleTurn
+        case lampRuleRecent
+        case lampRuleIdle
+        case lampRuleCantRefresh
+        case lampLeftSnoozed
+        case lampLeftStale
+        case auditRaised
+        case auditPosted
+        case auditSummary
+        case auditQueued
+        case auditClicked
+        case auditAcknowledged
+        case auditSnoozed
+        case auditResolved
+        case auditSkipInFront
+        case auditSkipMuted
+        case auditSkipAcknowledged
+        case auditSkipHeld
+        case auditSkipNotifyOff
+        case auditSkipNotAuthorized
+        case auditSkipAtLaunch
+        case auditSkipRejected
+        case details
+        case muteAgent
+        case unmuteAgent
+        case detailLastWords
+        case detailPlanHeading
+        case detailNotificationHeading
+        case detailBack
+        case detailLastHour
+        case detailMinutesIn
+        case filterMatches
+        case trayKeyHints
+        case setupTerminalFocus
+        case setupTerminalFocusDetail
+        case setupTurnOn
+        case settingsAdvanced
+        case activityLeft
+        case activityFromSession
+        case activityFromProcess
+        case activityHeading
+        case activityEmpty
+        case activityAllAgents
+        case updateDownloadNoAsset
+        case updateDownloadUnsupported
+        case updateDownloadNotReady
     }
 }
 

@@ -3,7 +3,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 final class PulseHookReceiverTests: XCTestCase {
@@ -183,10 +182,10 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertFalse(text.contains("abcdefgh12345678"), "naming the ask must not leak the secret in it")
     }
 
-    // MARK: - Respond hold (Mac-to-Mac parity with pulse_hook.py)
+    // MARK: - Respond hold (parity with pulse_hook.py)
 
     private func writeRespondSecret(_ key: String = "sekrit\n") throws {
-        try Data(key.utf8).write(to: tempHome.appendingPathComponent("respond-secret.key"))
+        try Data(key.utf8).write(to: tempHome.appendingPathComponent("respond-local.key"))
     }
 
     private func writeVerdictFile(
@@ -276,7 +275,7 @@ final class PulseHookReceiverTests: XCTestCase {
             FileManager.default.fileExists(
                 atPath: tempHome.appendingPathComponent("respond.d/requests/toolu_x.json").path
             ),
-            "the request must be spooled for the sync tool before the hold"
+            "the request must be spooled for Pulse before the hold"
         )
     }
 
@@ -346,6 +345,19 @@ final class PulseHookReceiverTests: XCTestCase {
             idleSeconds: 0, promptIsFrontmost: nil, environment: [:],
             clockMs: { self.now },
             sleepMs: { _ in XCTFail("an unproven hold must never cost a sleep") }
+        ))
+    }
+
+    /// 22.0: the retired shared key is not an opt-in any more.
+    func testTheRetiredSharedKeyArmsNoHold() throws {
+        try Data("sekrit\n".utf8).write(to: tempHome.appendingPathComponent("respond-secret.key"))
+        let payload = permissionPayload()
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        XCTAssertNil(PulseHookReceiver.respondDecisionJSON(
+            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
+            idleSeconds: 10_000, environment: [:],
+            clockMs: { self.now },
+            sleepMs: { _ in XCTFail("the shared key must not arm a hold") }
         ))
     }
 

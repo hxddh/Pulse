@@ -53,7 +53,7 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
         /// Same key as `AttentionReader.Entry.mapKey`, so a row can find its
         /// own history.
         package var key: String {
-            AttentionHistory.key(agent: agent, session: session, host: host)
+            AttentionHistory.key(agent: agent, session: session)
         }
 
         var identity: String { "\(tsMs)|\(kind)|\(session)|\(host)|\(message)" }
@@ -64,14 +64,13 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
 
     package init() {}
 
-    package static func key(agent: String, session: String, host: String) -> String {
+    package static func key(agent: String, session: String) -> String {
         let surface = ActivityHarvest.mapAgent(agent)?.surfaceID.rawValue ?? agent
-        let base = session.isEmpty ? surface : "\(surface)|\(session)"
-        return host.isEmpty ? base : "\(base)@\(host)"
+        return session.isEmpty ? surface : "\(surface)|\(session)"
     }
 
-    package func history(agent: String, session: String, host: String = "") -> [Event] {
-        events[Self.key(agent: agent, session: session, host: host)] ?? []
+    package func history(agent: String, session: String) -> [Event] {
+        events[Self.key(agent: agent, session: session)] ?? []
     }
 
     // MARK: - Ingest
@@ -85,7 +84,7 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
             for line in source.text.split(whereSeparator: \.isNewline) {
                 let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 if raw.isEmpty || raw.hasPrefix("#") { continue }
-                guard let event = Self.parse(raw, defaultHost: source.host) else { continue }
+                guard let event = Self.parse(raw) else { continue }
                 changed = append(event) || changed
             }
         }
@@ -94,7 +93,9 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
     }
 
     /// One TSV line → event; nil for anything the protocol does not accept.
-    package static func parse(_ raw: String, defaultHost: String = "") -> Event? {
+    /// The `host` column is kept as written so an export replays verbatim,
+    /// but it no longer keys anything: every line is this Mac's (22.0).
+    package static func parse(_ raw: String) -> Event? {
         let cols = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
         guard cols.count >= 3,
               ActivityHarvest.mapAgent(cols[0]) != nil,
@@ -109,7 +110,7 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
             message: bound(ContentSanitizer.redact(cols.count > 3 ? cols[3] : ""), 200),
             session: bound(cols.count > 4 ? cols[4] : "", 80),
             cwd: bound(ContentSanitizer.redact(cols.count > 5 ? cols[5] : ""), 240),
-            host: named.isEmpty ? defaultHost : named,
+            host: named,
             front: AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "")
         )
     }

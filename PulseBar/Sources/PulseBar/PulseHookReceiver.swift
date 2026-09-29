@@ -6,11 +6,11 @@ import Foundation
 /// Parity with `src/pulse_hook.py` plus Attention Protocol v1: unknown kinds
 /// soft-fail (exit 0, no write) so vendor agents are never stalled by
 /// accident. One deliberate, bounded exception: a `PermissionRequest` may be
-/// **held** — waiting up to a hard-capped number of seconds for a verdict
-/// from the answering Mac — and only when the user opted in with a
-/// `respond-secret.key` *and* nobody is at this machine. Every hold path
-/// still ends in exit 0; a timeout leaves the vendor's own prompt in charge,
-/// exactly like the Python end of the protocol.
+/// **held** — waiting up to a hard-capped number of seconds for the verdict
+/// the user gives in Pulse on this Mac — and only when they opted in (the
+/// `respond-local.key` exists) *and* the prompt is not already in front of
+/// them. Every hold path still ends in exit 0; a timeout leaves the vendor's
+/// own prompt in charge, exactly like the Python end of the protocol.
 enum PulseHookReceiver {
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
     @discardableResult
@@ -176,7 +176,7 @@ enum PulseHookReceiver {
         ))
     }
 
-    // MARK: - Respond hold (Mac-to-Mac parity with pulse_hook.py)
+    // MARK: - Respond hold (parity with pulse_hook.py)
 
     /// Poll cadence while parked. (= RESPOND_POLL_SECONDS)
     static let respondPollMs = 250
@@ -218,11 +218,10 @@ enum PulseHookReceiver {
     /// How long without input before this Mac stops assuming someone is here,
     /// seconds. `PULSE_RESPOND_AWAY_SECONDS` overrides, clamped to [30, 3600].
     ///
-    /// The Python end runs on headless boxes with no idle information and
-    /// holds unconditionally. This Mac *has* the information, so it must use
-    /// it: holding in front of a present user freezes their agent for N
-    /// seconds before the prompt that was already going to appear
-    /// (plan-respond, "who is actually waiting").
+    /// Holding in front of a present user freezes their agent for N seconds
+    /// before the prompt that was already going to appear (plan-respond,
+    /// "who is actually waiting"). The Python end reads the same idle age
+    /// from `ioreg` and, knowing nothing about windows, holds only when away.
     static func awayAfterSeconds(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Double {
@@ -298,11 +297,10 @@ enum PulseHookReceiver {
         // Without the verbatim request bytes there is nothing the user could
         // actually review, so there is nothing Pulse may hold for.
         guard !rawStdin.isEmpty else { return nil }
-        // Either key will do: the shared one provisioned for a partner Mac,
-        // or the local one Pulse generates when answering this Mac's own
-        // agents is switched on. No key at all means this install never opted
-        // in, and an agent's behaviour must not change for those people.
-        guard RespondSpool.hasAnyKey() else { return nil }
+        // The local key Pulse generates when answering this Mac's own agents
+        // is switched on. No key means this install never opted in, and an
+        // agent's behaviour must not change for those people.
+        guard RespondSpool.localHasSecret() else { return nil }
         let requestID = ((payload["tool_use_id"] as? String) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // No stable id → a verdict could not be bound to this request.
@@ -320,7 +318,7 @@ enum PulseHookReceiver {
         let digest = RespondDigest.of(rawStdin)
         let now = clockMs()
         let deadlineMs = now + Int64(maxHoldSeconds(environment: environment)) * 1000
-        guard RespondSpool.writeOutboundRequest(
+        guard RespondSpool.writeRequest(
             requestID: requestID,
             agent: agent,
             host: host,

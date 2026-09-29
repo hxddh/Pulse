@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseManaged
 @testable import PulseRespond
 
 /// 2.5 Confirmed — the verdict's fate stops being a statement about Pulse.
@@ -142,24 +141,10 @@ final class ConfirmedTests: XCTestCase {
             (.expired, .respondExpiredUnclaimedNote),
         ] {
             s.respondDecided[subject.rowKey] = StatusStore.DecidedVerdict(
-                requestID: "toolu_a", isLocal: true, decidedAtMs: now, allow: false, fate: fate
+                requestID: "toolu_a", decidedAtMs: now, allow: false, fate: fate
             )
             XCTAssertEqual(s.respondFateNote(subject), s.tr(key), "\(fate)")
         }
-    }
-
-    /// The rule this version is built on, applied to itself: a remote
-    /// verdict's claim happens on the other machine, and whether the rename
-    /// ever comes back depends on a sync tool Pulse does not control. So the
-    /// remote row keeps saying the one thing that is true of it.
-    @MainActor
-    func testARemoteVerdictNeverClaimsToKnowItWasTaken() {
-        let s = store()
-        let subject = row()
-        s.respondDecided[subject.rowKey] = StatusStore.DecidedVerdict(
-            requestID: "toolu_a", isLocal: false, decidedAtMs: now, allow: false, fate: .waiting
-        )
-        XCTAssertEqual(s.respondFateNote(subject), s.tr(.respondSentNote))
     }
 
     @MainActor

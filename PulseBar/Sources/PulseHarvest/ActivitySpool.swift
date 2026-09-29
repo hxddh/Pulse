@@ -148,7 +148,7 @@ package enum ActivitySpool {
             else { continue }
             let rawTs = (object["ts_ms"] as? NSNumber)?.int64Value ?? 0
             // The writer is this machine, so a future stamp is a broken
-            // clock, not a fast remote one — clamp rather than trust.
+            // clock — clamp rather than trust.
             let tsMs = min(rawTs, nowMs)
             guard tsMs > 0, nowMs - tsMs <= maxAgeMs else { continue }
             events.append(Event(

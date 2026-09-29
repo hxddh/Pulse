@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 15.0 · Witness — render every Workbench surface fixture (Mission board,
-# working-copy card) in zh/en × light/dark and fail if any PNG is missing.
+# 15.0 · Witness — render every surface fixture (tray rows, the cards under a
+# row, the Why card, the self-check) in zh/en × light/dark and fail if any PNG
+# is missing.
 #
 #   ./scripts/qa_surfaces.sh
 #

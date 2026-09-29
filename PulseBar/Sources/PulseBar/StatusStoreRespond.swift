@@ -1,17 +1,15 @@
 import Foundation
 
-/// Respond (scene AR) — deliver the user's own decision to a remote
-/// permission request. See docs/respond-protocol.md for the file protocol and
+/// Respond (scene AR) — deliver the user's own decision to a permission
+/// request an agent on this Mac is holding for. See docs/respond-protocol.md for the file protocol and
 /// AGENTS.md for the invariant this must never cross: no judgment transfer,
 /// no blind approve, and every failure falls open to the vendor's own prompt.
 extension StatusStore {
     /// Match inbound full requests to rows. Called on the main thread after
     /// every applyScan with spool contents read on the scan queue.
     ///
-    /// A request only ever attaches to a REMOTE row of the same host and
-    /// agent: local rows never hold (the vendor prompt is already in front of
-    /// the user), so offering an answer on one would promise something the
-    /// hook will not collect.
+    /// A request attaches only to a row of the same agent (and session, when
+    /// both name one): a verdict must go back to the hook that is holding.
     /// - Parameter rows: **every** row this scan produced, not the windowed
     ///   `snapshot.rows`. The window is a display budget; a request whose row
     ///   fell outside it is still a request the hook is holding for.
@@ -47,7 +45,6 @@ extension StatusStore {
     /// A verdict this Mac wrote, and what has become of it.
     struct DecidedVerdict: Equatable {
         var requestID: String
-        var isLocal: Bool
         var decidedAtMs: Int64
         var allow: Bool
         var fate: RespondSpool.VerdictFate = .waiting
@@ -55,9 +52,6 @@ extension StatusStore {
 
     private func fateOf(rowKey: String, nowMs: Int64) -> RespondSpool.VerdictFate {
         guard let decided = respondDecided[rowKey] else { return .unknown }
-        // A remote verdict's claim happens on the other machine. Reading a
-        // fate here would be inventing one — see `VerdictFate`.
-        guard decided.isLocal else { return .waiting }
         let fate = RespondSpool.localVerdictFate(requestID: decided.requestID, nowMs: nowMs)
         // `.unknown` after a sweep is not news; keep the last real answer
         // rather than downgrading a receipt the user already earned.
@@ -75,17 +69,12 @@ extension StatusStore {
         case .taken: return tr(.respondTakenNote)
         case .expired: return tr(.respondExpiredUnclaimedNote)
         case .waiting, .unknown:
-            return decided.isLocal ? tr(.respondWaitingNote) : tr(.respondSentNote)
+            return tr(.respondWaitingNote)
         }
     }
 
     /// Pure matcher, so the attachment rules can be pinned by tests without
     /// seeding a snapshot.
-    ///
-    /// The two kinds never cross. A request read out of the local tree only
-    /// attaches to a row this Mac is actually observing, and a request that
-    /// arrived from a partner Mac only attaches to a remote row of that host —
-    /// otherwise a verdict would go back to a hook that is not the one holding.
     static func matchRespondInbound(
         _ inbound: [RespondSpool.InboundRequest],
         rows: [AgentRow]
@@ -95,12 +84,6 @@ extension StatusStore {
             let request = candidate.request
             guard !request.host.isEmpty else { continue }
             let match = rows.first { row in
-                if candidate.isLocal {
-                    guard row.observationSource != .remote else { return false }
-                } else {
-                    guard row.observationSource == .remote else { return false }
-                    guard row.host == request.host else { return false }
-                }
                 guard row.agent == request.agent else { return false }
                 if !request.session.isEmpty, !row.sessionID.isEmpty {
                     return row.sessionID == request.session
@@ -197,10 +180,10 @@ extension StatusStore {
         return RespondShown(attached) == shown ? attached : nil
     }
 
-    /// The full request, and Allow beside it, live in the Workbench
-    /// inspector's Respond card (scene AR).
+    /// The full request, and Allow beside it, live in the row's own Respond
+    /// card (scene AR): reveal the row in the tray with its card open.
     func openRespond(_ row: AgentRow) {
-        openAgentDetail(row)
+        requestTrayReveal(rowKey: row.rowKey)
     }
 
     /// Every exit from here is visible.
@@ -209,8 +192,8 @@ extension StatusStore {
     /// pressing Deny — the button this product promises is always available,
     /// because refusing something you have not fully read is the safe move —
     /// looked exactly like pressing a button that does nothing. Failure is
-    /// still fail-open: the remote agent falls back to its own prompt, which
-    /// is what the sentence says.
+    /// still fail-open: the agent falls back to its own prompt, which is what
+    /// the sentence says.
     private func writeRespondVerdict(_ row: AgentRow, allow: Bool, shown: RespondShown?) {
         guard let attached = respondInboundByRowKey[row.rowKey] else {
             noteRowAction(row.rowKey, tr(.respondRequestGone))
@@ -228,15 +211,11 @@ extension StatusStore {
             noteRowAction(row.rowKey, tr(.respondRefused))
             return
         }
-        let written = RespondSpool.writeVerdict(verdict, local: inbound.isLocal)
-        DebugLog.write(
-            "respond verdict allow=\(allow) host=\(inbound.request.host) "
-                + "local=\(inbound.isLocal) written=\(written)"
-        )
+        let written = RespondSpool.writeVerdict(verdict)
+        DebugLog.write("respond verdict allow=\(allow) written=\(written)")
         if written {
             respondDecided[row.rowKey] = DecidedVerdict(
                 requestID: verdict.requestID,
-                isLocal: inbound.isLocal,
                 decidedAtMs: nowMs,
                 allow: allow
             )

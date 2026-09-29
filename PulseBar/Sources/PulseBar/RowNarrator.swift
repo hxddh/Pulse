@@ -4,8 +4,8 @@ import Foundation
 ///
 /// 12.3 moved this out of `extension StatusStore`. Since 2.5 the narration
 /// lived in its own file but still read the world through the store: the
-/// clock (`Date()` in six places), the tray size (`snapshot.rows.count`) and
-/// the managed fleet. Every one of those is now an input, so the same row,
+/// clock (`Date()` in six places) and the tray size (`snapshot.rows.count`).
+/// Every one of those is now an input, so the same row,
 /// language and instant always produce the same sentence, and a test can pin
 /// the clock instead of racing it.
 ///
@@ -20,11 +20,6 @@ struct RowNarrator {
     let nowMs: Int64
     /// Same threshold as folding (`TrayFold.crowdedFrom`): screen is scarce.
     let crowded: Bool
-    /// First-party outcome facts of Pulse-managed sessions, by managed id.
-    let managedModels: [String: ManagedSession.Model]
-    /// 14.0 · check counts per working copy (`EvidenceBook.key`) that has a
-    /// ruler and at least one result.
-    let proofSummaries: [String: EvidenceBook.Summary]
     /// 21.0: the user's stall threshold, so a stalled row can say which
     /// rule it broke. 0 = stall detection off (or unknown).
     let stallMinutes: Int
@@ -33,31 +28,12 @@ struct RowNarrator {
         lang: ResolvedLanguage,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         crowded: Bool = false,
-        managedModels: [String: ManagedSession.Model] = [:],
-        proofSummaries: [String: EvidenceBook.Summary] = [:],
         stallMinutes: Int = 0
     ) {
         self.lang = lang
         self.nowMs = nowMs
         self.crowded = crowded
-        self.managedModels = managedModels
-        self.proofSummaries = proofSummaries
         self.stallMinutes = stallMinutes
-    }
-
-    /// `checks 2/3 passing · 1 failing` — the user's ruler on this row's
-    /// working copy, judged on the code as it is now. Empty when there is no
-    /// ruler or nothing has run: a count of zero passes is not a fact about
-    /// checks nobody ran.
-    func proofFact(_ row: AgentRow) -> String {
-        guard !row.isRemote,
-              let summary = proofSummaries[EvidenceBook.key(row.workspaceRoot)],
-              summary.total > 0
-        else { return "" }
-        var text = String(format: tr(.proofFact), summary.passing, summary.total)
-        if summary.failing > 0 { text += String(format: tr(.proofFailing), summary.failing) }
-        if summary.stale > 0 { text += String(format: tr(.proofStale), summary.stale) }
-        return text
     }
 
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
@@ -84,7 +60,7 @@ struct RowNarrator {
                 let reason = row.waitMessage.isEmpty ? localizedWaitKind(row.waitKind) : row.waitMessage
                 return String(format: tr(.whyVendor), reason)
             case .none:
-                return row.isManaged ? tr(.whyManaged) : nil
+                return nil
             }
         }
         if row.yourTurn, row.turnSinceMs > 0 {
@@ -296,11 +272,6 @@ struct RowNarrator {
     /// 0.92: story owns phase / tool gist / Changed; Waiting yields kind·duration
     /// to the chip; Limited opaque story carries age · strongest · nextStep once.
     func rowStoryLine(_ row: AgentRow) -> String {
-        // A remote row's story is the only honest thing there is to say about
-        // it: when we last heard, and whether we have stopped hearing. It
-        // takes precedence over every local template, none of which it can
-        // support with evidence.
-        if row.isRemote, let line = remoteStatusLine(row) { return line }
         // 1.2: an agent calling the same tool back to back is busy without
         // being any closer to done. The lamp cannot say that — it is running
         // and its clock is moving — and a window could never see it, because
@@ -363,20 +334,6 @@ struct RowNarrator {
             // than the one the clock alone implied. Not a lamp change: this
             // is still not healthy-green, it is a stall with an explanation.
             bits.append(row.isComputing ? tr(.stalledButComputing) : tr(.stalled))
-        } else if row.liveProcess, !row.isRecentOnly,
-                  row.hasWorkspaceEffect, row.workspaceUntouched,
-                  // A clean tree right after a commit is not "nothing landed"
-                  // — it is everything landing. Agents that commit as they go
-                  // were being accused of idling at their most productive
-                  // moment (G-1).
-                  !row.workspaceHeadMovedRecently,
-                  row.isComputing || row.bytesPerMinute > 0 {
-            // Busy — burning CPU, or filling a transcript — and the working
-            // copy is exactly as it was. Every earlier signal would call this
-            // healthy; only the disk can say it has produced nothing yet.
-            // **Not a lamp change**: it is running, and running is what the
-            // lamp says.
-            bits.append(tr(.movingNothingLanded))
         }
 
         let tool = row.tool.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -517,29 +474,7 @@ struct RowNarrator {
             return tr(.cacheEvidence)
         case .process:
             return tr(.limitedData)
-        case .remote:
-            // Name the machine. "Remote host" alone tells the user the one
-            // thing they already guessed and withholds the one they need.
-            return row.host.isEmpty ? tr(.remoteEvidence) : "\(tr(.remoteEvidence)) · \(row.host)"
         }
-    }
-
-    /// The line a remote row gets instead of "last activity".
-    ///
-    /// A local row's clock comes from the process table and the session file.
-    /// A remote row has neither: all Pulse can honestly report is when it last
-    /// heard anything, and — once that goes quiet — that it has stopped.
-    func remoteStatusLine(_ row: AgentRow, nowMs overrideMs: Int64? = nil) -> String? {
-        let nowMs = overrideMs ?? self.nowMs
-        guard row.isRemote else { return nil }
-        var parts: [String] = []
-        if row.lastHeardMs > 0 {
-            let age = durationLabel(seconds: Double(max(0, nowMs - row.lastHeardMs)) / 1000.0)
-            parts.append(String(format: tr(.remoteLastHeard), age))
-        }
-        if row.lostContact { parts.append(tr(.remoteLostContact)) }
-        if row.clockSuspect { parts.append(tr(.remoteClockSuspect)) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// The single strongest progress fact for this row.
@@ -621,13 +556,6 @@ struct RowNarrator {
         var bits: [String] = []
         if !lifecycle.isEmpty { bits.append(lifecycle) }
         if !changed.isEmpty { bits.append(changed) }
-        // The one fact no single agent can see: somebody else is editing this
-        // very working copy. Each agent knows only itself, so this is
-        // invisible from inside either of them — and it is quietly destroying
-        // one of their two sets of changes.
-        if row.workspacePeers > 0 {
-            bits.append(String(format: tr(.workspaceShared), row.workspacePeers))
-        }
         // A process-only row has no observation line, so the fault has nowhere
         // else to go and this line carries it. Everywhere else the observation
         // line owns it — one owner, because two owners with different
@@ -1007,19 +935,6 @@ struct RowNarrator {
 
         // 2 · Advance.
         var advance: [String] = []
-        // What actually landed. This outranks every other advance fact
-        // because it is the only one that is not the agent's own account of
-        // itself: a transcript can talk for an hour with nothing on disk, and
-        // until 2.6 that looked exactly like progress. Unknown says nothing —
-        // `hasWorkspaceEffect` is false for a path that was never confirmed,
-        // a directory that is not a working copy, and a repository too slow
-        // to ask.
-        if row.hasWorkspaceEffect, row.changedPaths > 0 {
-            advance.append(String(format: tr(.effectFiles), row.changedPaths))
-            if row.insertions > 0 || row.deletions > 0 {
-                advance.append(String(format: tr(.effectLines), row.insertions, row.deletions))
-            }
-        }
         if row.subTotal > 0 {
             advance.append(row.subRunning > 0
                 ? String(format: tr(.subagentsActive), row.subRunning, row.subTotal)
@@ -1029,21 +944,6 @@ struct RowNarrator {
             advance.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
         } else if row.progressDone > 0, !isProgressChange(change) {
             advance.append(String(format: tr(.turnsFact), row.progressDone))
-        }
-        // 8.0: a managed session's first-party outcome facts — cost·turns and
-        // what the last turn left on disk. Measured by Pulse's own stream and
-        // plumbing; absent facts stay absent.
-        // 14.0: the user's ruler outranks every self-reported advance — it
-        // is the one fact that says whether the work holds up.
-        let proof = proofFact(row)
-        if !proof.isEmpty { advance.insert(proof, at: 0) }
-        if !row.managedID.isEmpty, let managed = managedModels[row.managedID] {
-            if managed.totalCostUSD > 0 {
-                advance.append(String(format: tr(.managedCost), managed.totalCostUSD, managed.turns))
-            }
-            if let effect = managed.lastTurnEffect {
-                advance.append(String(format: tr(.managedTurnEffect), effect.insertions, effect.deletions))
-            }
         }
 
         // 3 · Motion.
@@ -1491,8 +1391,6 @@ struct RowNarrator {
             case .cache: return tr(.cacheEvidence)
             case .process:
                 return "\(tr(.limitedData)) · \(tr(.qualityNextOpenAgent))"
-            case .remote:
-                return tr(.remoteEvidence)
             }
         }
         return "\(observationGapReason(gap)) · \(observationGapNextStep(gap))"
@@ -1507,7 +1405,6 @@ struct RowNarrator {
         case "waiting_no_detail": return tr(.qualityReasonWaitingNoDetail)
         case "waiting_unsupported": return tr(.supportWaitingNoneDetail)
         case "scan_timeout": return tr(.qualityReasonScanTimeout)
-        case "remote_event_only": return tr(.remoteEvidence)
         default: return tr(.qualityReasonNotEmitted)
         }
     }
@@ -1519,7 +1416,6 @@ struct RowNarrator {
         case "use_attention_bridge": return tr(.qualityNextAttentionBridge)
         case "retry_scan": return tr(.qualityNextRetryScan)
         case "open_agent_for_session": return tr(.qualityNextOpenAgent)
-        case "wait_for_remote_host": return tr(.remoteNoFocus)
         default: return tr(.qualityNextOpenAgent)
         }
     }

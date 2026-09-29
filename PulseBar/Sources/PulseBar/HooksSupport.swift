@@ -168,15 +168,28 @@ enum HooksSupport {
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
             return HooksInstaller.containsPulseMarker(text)
         }
-        let codexOK: Bool = {
-            guard let text = try? String(contentsOf: codex, encoding: .utf8) else { return false }
-            return HooksInstaller.containsPulseMarker(text)
-        }()
+        // Codex hooks live in two places: `config.toml` `notify` and, since
+        // 18.0, `~/.codex/hooks.json` (Stop + UserPromptSubmit). Either one
+        // carrying Pulse's marker means Codex is wired.
+        let codexOK = codexHooked(
+            configTOML: try? String(contentsOf: codex, encoding: .utf8),
+            hooksJSON: try? String(contentsOf: HooksInstaller.codexHooksURL, encoding: .utf8)
+        )
         switch (claudeOK, codexOK) {
         case (true, true): return .installedBoth
         case (true, false): return .installedClaude
         case (false, true): return .installedCodex
         case (false, false): return .missing
+        }
+    }
+
+    /// Pure: is Codex wired to Pulse, given the text of `config.toml` and
+    /// `hooks.json` (nil when unreadable)? Either file carrying the marker
+    /// counts.
+    static func codexHooked(configTOML: String?, hooksJSON: String?) -> Bool {
+        [configTOML, hooksJSON].contains { text in
+            guard let text else { return false }
+            return HooksInstaller.containsPulseMarker(text)
         }
     }
 

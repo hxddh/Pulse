@@ -6,8 +6,16 @@ every crafted verdict is computed *here*, from the frozen canonical string
 ("v1\\n" + request_id + "\\n" + digest + ...), never by calling the hook's own
 helper — so a drift in the hook's canonical string turns this gate red.
 
+Local-only since 22.0: the one opt-in is <pulse_dir>/respond-local.key, and
+the hook holds only while nobody is at this Mac (it cannot see windows, so a
+present user's prompt may be in front of them — never hold). Subprocess cases
+run the hook through a wrapper that pins `idle_seconds`, so the gate does not
+depend on the machine it runs on.
+
 Covered:
-  1.  no secret key            -> no request file, empty stdout, exit 0
+  1.  no key                   -> no request file, empty stdout, exit 0
+  1b. someone present / idle unknown -> no hold, no request file
+  1c. the retired shared key (respond-secret.key) alone -> no hold
   2.  key + valid allow verdict-> decision JSON on stdout, verdict renamed .used
       (full subprocess round-trip, request-file contents and 0600 asserted)
   3.  tampered HMAC            -> not adopted
@@ -17,7 +25,8 @@ Covered:
   7.  same verdict a second time (already .used) -> not adopted
   8.  timeout path (subprocess, PULSE_RESPOND_MAX_HOLD_SECONDS=5)
       -> empty stdout, exit 0, elapsed within hold cap + 2 s
-  plus: request-id sanitizing, directory cap (64, oldest deleted)
+  plus: request-id sanitizing, directory cap (64, oldest deleted),
+        a verdict signed with a key this Mac does not hold
 
 Red-first discipline: while developing this gate, invert one assertion, run
 it, watch the script exit 1, then restore it. Done for this script on
@@ -49,7 +58,8 @@ import pulse_hook  # noqa: E402
 
 HOST = "checkhost"
 AGENT = "claude"
-KEY = b"gate-shared-secret"
+KEY = b"gate-local-key"
+AWAY = 10_000.0  # idle seconds well past any away threshold
 
 FAILURES: list[str] = []
 PASSED = 0
@@ -141,17 +151,19 @@ class FakeClock:
 
 
 def fresh_home(
-    tag: str, *, key: bytes | None = KEY, local_key: bytes | None = None, hold: str = "5"
+    tag: str, *, key: bytes | None = KEY, shared_key: bytes | None = None, hold: str = "5"
 ):
     home = Path(tempfile.mkdtemp(prefix=f"pulse-respond-check-{tag}-"))
     env = dict(os.environ)
     env["PULSE_HOME"] = str(home)
     env["PULSE_HOST"] = HOST
     env["PULSE_RESPOND_MAX_HOLD_SECONDS"] = hold
+    env.pop("PULSE_RESPOND_AWAY_SECONDS", None)
     if key is not None:
-        (home / "respond-secret.key").write_bytes(key + b"\n")
-    if local_key is not None:
-        (home / "respond-local.key").write_bytes(local_key + b"\n")
+        (home / "respond-local.key").write_bytes(key + b"\n")
+    if shared_key is not None:
+        # The pre-22.0 remote opt-in. It must not arm a hold any more.
+        (home / "respond-secret.key").write_bytes(shared_key + b"\n")
     return home, env
 
 
@@ -161,10 +173,21 @@ def apply_env(env: dict) -> None:
         os.environ[k] = env[k]
 
 
-def run_hook(env: dict, stdin_bytes: bytes):
+# Runs the real hook's main() with `idle_seconds` pinned: None means "could
+# not be read", a number is seconds since the last input on this Mac.
+WRAPPER = (
+    "import sys; sys.path.insert(0, sys.argv[1]); import pulse_hook; "
+    "raw = sys.argv[2]; "
+    "pulse_hook.idle_seconds = lambda: None if raw == 'none' else float(raw); "
+    "raise SystemExit(pulse_hook.main(['pulse_hook.py'] + sys.argv[3:]))"
+)
+
+
+def run_hook(env: dict, stdin_bytes: bytes, idle: float | None = AWAY):
     started = time.monotonic()
     proc = subprocess.run(
-        [sys.executable, str(HOOK), AGENT],
+        [sys.executable, "-c", WRAPPER, str(HOOK.parent),
+         "none" if idle is None else str(idle), AGENT],
         input=stdin_bytes,
         capture_output=True,
         env=env,
@@ -181,18 +204,54 @@ def place_verdict(home: Path, name: str, verdict: dict) -> Path:
     return path
 
 
+def requests_written(home: Path) -> list:
+    rdir = home / "respond.d" / "requests"
+    return list(rdir.glob("*")) if rdir.exists() else []
+
+
 def case_no_key() -> None:
-    print("case 1: no secret key -> legacy behavior, no request, no hold")
+    print("case 1: no key -> no request, no hold")
     home, env = fresh_home("nokey", key=None)
     try:
         proc, elapsed = run_hook(env, payload_bytes("toolu_nokey"))
         check("exit 0", proc.returncode == 0, f"rc={proc.returncode}")
         check("stdout empty", proc.stdout == b"", repr(proc.stdout[:120]))
-        requests = list((home / "respond.d" / "requests").glob("*")) if (
-            home / "respond.d" / "requests"
-        ).exists() else []
+        requests = requests_written(home)
         check("no request file written", requests == [], str(requests))
         check("attention tsv still written", (home / "attention.tsv").exists())
+        check("returned promptly (no hold)", elapsed < 3.0, f"{elapsed:.1f}s")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def case_present_user() -> None:
+    print("case 1b: someone at this Mac, or idle unknown -> never hold")
+    for label, idle in (("present (idle 3s)", 3.0), ("idle unknown", None)):
+        home, env = fresh_home("present")
+        try:
+            proc, elapsed = run_hook(env, payload_bytes("toolu_present"), idle=idle)
+            check(f"{label}: exit 0", proc.returncode == 0, f"rc={proc.returncode}")
+            check(f"{label}: stdout empty", proc.stdout == b"", repr(proc.stdout[:120]))
+            check(f"{label}: no request file", requests_written(home) == [])
+            check(f"{label}: returned promptly", elapsed < 3.0, f"{elapsed:.1f}s")
+        finally:
+            shutil.rmtree(home, ignore_errors=True)
+    os.environ.pop("PULSE_RESPOND_AWAY_SECONDS", None)
+    check("should_hold(None) is False", pulse_hook.should_hold(None) is False)
+    check("just under the away threshold does not hold",
+          pulse_hook.should_hold(pulse_hook.RESPOND_DEFAULT_AWAY_SECONDS - 0.5) is False)
+    check("at the away threshold holds",
+          pulse_hook.should_hold(float(pulse_hook.RESPOND_DEFAULT_AWAY_SECONDS)) is True)
+
+
+def case_shared_key_retired() -> None:
+    print("case 1c: the retired shared key alone -> no hold")
+    home, env = fresh_home("shared", key=None, shared_key=b"old-partner-key")
+    try:
+        proc, elapsed = run_hook(env, payload_bytes("toolu_shared"))
+        check("exit 0", proc.returncode == 0, f"rc={proc.returncode}")
+        check("stdout empty", proc.stdout == b"", repr(proc.stdout[:120]))
+        check("no request file written", requests_written(home) == [])
         check("returned promptly (no hold)", elapsed < 3.0, f"{elapsed:.1f}s")
     finally:
         shutil.rmtree(home, ignore_errors=True)
@@ -254,7 +313,8 @@ def case_allow_roundtrip() -> None:
 def hold_via_import(home: Path, rid: str, stdin: bytes, clock: FakeClock):
     payload = json.loads(stdin.decode("utf-8"))
     return pulse_hook.respond_decision_json(
-        AGENT, payload, stdin, "permission", clock_ms=clock.now, sleep=clock.sleep
+        AGENT, payload, stdin, "permission", clock_ms=clock.now, sleep=clock.sleep,
+        idle=lambda: AWAY,
     )
 
 
@@ -397,7 +457,7 @@ def case_timeout() -> None:
         check("held roughly the cap", 4.0 <= elapsed, f"{elapsed:.1f}s")
         check("finished within cap + 2s", elapsed <= 7.0, f"{elapsed:.1f}s")
         check(
-            "request was written for the sync tool",
+            "request was written for Pulse",
             (home / "respond.d" / "requests" / "toolu_timeout.json").exists(),
         )
     finally:
@@ -466,52 +526,16 @@ def case_permission_descriptor() -> None:
     check("descriptor bounded to one line", len(folded) == 140 and folded.endswith("…"), folded[-3:])
 
 
-def case_local_key_only() -> None:
-    print("case 10: local key alone -> opted in, and it verifies a local verdict")
-    rid = "toolu_local_1"
-    stdin = payload_bytes(rid)
-    digest = hashlib.sha256(stdin).hexdigest()
-    local = b"local-key-for-this-mac-only"
-    # No shared key at all: this is the single-Mac install, where Respond did
-    # nothing whatsoever before 2.4.
-    home, env = fresh_home("local", key=None, local_key=local)
-    try:
-        now = int(time.time() * 1000)
-        vpath = place_verdict(
-            home, rid, make_verdict(rid, digest, False, now, now + 90_000, key=local)
-        )
-        proc, elapsed = run_hook(env, stdin)
-        check("exit 0", proc.returncode == 0, f"rc={proc.returncode}")
-        decision = None
-        try:
-            decision = json.loads(proc.stdout.decode("utf-8"))
-        except ValueError:
-            pass
-        check("stdout is JSON", decision is not None, repr(proc.stdout[:200]))
-        hso = (decision or {}).get("hookSpecificOutput", {})
-        check(
-            "behavior is deny",
-            hso.get("decision", {}).get("behavior") == "deny",
-            str(hso),
-        )
-        check("verdict consumed exactly once (.used)",
-              not vpath.exists() and vpath.with_name(vpath.name + ".used").exists())
-        check("request file written", (home / "respond.d" / "requests" / f"{rid}.json").exists())
-        check("answered promptly (first poll)", elapsed < 4.0, f"{elapsed:.1f}s")
-    finally:
-        shutil.rmtree(home, ignore_errors=True)
-
-
 def case_local_key_cannot_be_forged() -> None:
-    print("case 11: a verdict signed with neither held key -> not adopted")
+    print("case 11: a verdict signed with a key this Mac does not hold -> not adopted")
     rid = "toolu_local_forged"
     stdin = payload_bytes(rid)
     digest = hashlib.sha256(stdin).hexdigest()
-    home, env = fresh_home("localforged", key=None, local_key=b"the-real-local-key", hold="2")
+    home, env = fresh_home("localforged", key=b"the-real-local-key", hold="2")
     try:
         now = int(time.time() * 1000)
-        # What a compromised sync share could put in verdicts/: a well-formed
-        # allow signed with a key this machine does not hold.
+        # A well-formed allow signed with a key this machine does not hold —
+        # including the retired shared key, which is no longer read.
         place_verdict(
             home, rid,
             make_verdict(rid, digest, True, now, now + 90_000, key=b"not-a-key-we-hold"),
@@ -588,6 +612,8 @@ def case_activity_events() -> None:
 def main() -> int:
     print(f"respond_hook_check — hook: {HOOK}")
     case_no_key()
+    case_present_user()
+    case_shared_key_retired()
     case_allow_roundtrip()
     case_tampered_hmac()
     case_digest_mismatch()
@@ -597,7 +623,6 @@ def main() -> int:
     case_timeout()
     case_hygiene()
     case_permission_descriptor()
-    case_local_key_only()
     case_local_key_cannot_be_forged()
     case_activity_events()
     print()
