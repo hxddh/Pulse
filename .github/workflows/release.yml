@@ -41,7 +41,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       release: ${{ steps.check.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve version and preconditions
         id: check
@@ -92,9 +92,9 @@ jobs:
     name: Build, package, publish
     needs: decide
     if: needs.decide.outputs.release == 'true'
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -196,7 +196,7 @@ jobs:
           } >> /tmp/notes.md
 
       - name: Publish
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Creates the tag at this commit when it does not exist yet, using the
           # workflow's own contents:write token.

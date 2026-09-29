@@ -1,6 +1,14 @@
-// swift-tools-version: 5.9
-// Requires a Swift 5.10 compiler: PulseCore uses `nonisolated(unsafe)`.
+// swift-tools-version: 6.2
+// 18.0: Xcode 26 / Swift 6.2. Every product target is in the Swift 6
+// language mode (complete concurrency checking is the language, not a flag)
+// and treats every warning as an error through the supported setting rather
+// than `unsafeFlags`.
 import PackageDescription
+
+/// The rule since 12.1/12.4, now spelled the supported way.
+let productSettings: [SwiftSetting] = [
+    .treatAllWarnings(as: .error),
+]
 
 let package = Package(
     name: "PulseBar",
@@ -17,12 +25,9 @@ let package = Package(
         .target(
             name: "PulseCore",
             path: "Sources/PulseCore",
-            swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency"),
-                // 12.1: zero warnings, and it stays that way. A concurrency
-                // warning here is a data race the compiler already found.
-                .unsafeFlags(["-warnings-as-errors"]),
-            ]
+            // 12.1: zero warnings, and it stays that way. A concurrency
+            // warning here is a data race the compiler already found.
+            swiftSettings: productSettings
         ),
         // 12.3 · Respond: the permission contract and the verdict spool.
         // Foundation (+ CoreGraphics for the presence probe) over PulseCore;
@@ -32,10 +37,7 @@ let package = Package(
             name: "PulseRespond",
             dependencies: ["PulseCore"],
             path: "Sources/PulseRespond",
-            swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency"),
-                .unsafeFlags(["-warnings-as-errors"]),
-            ]
+            swiftSettings: productSettings
         ),
         // 12.3 · Harvest: the native collector — the scan, the walk, the
         // vendor dialects, SQLite adapters, the process probe and the
@@ -45,10 +47,7 @@ let package = Package(
             name: "PulseHarvest",
             dependencies: ["PulseCore"],
             path: "Sources/PulseHarvest",
-            swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency"),
-                .unsafeFlags(["-warnings-as-errors"]),
-            ],
+            swiftSettings: productSettings,
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]
@@ -61,10 +60,7 @@ let package = Package(
             name: "PulseManaged",
             dependencies: ["PulseCore"],
             path: "Sources/PulseManaged",
-            swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency"),
-                .unsafeFlags(["-warnings-as-errors"]),
-            ]
+            swiftSettings: productSettings
         ),
         .executableTarget(
             name: "PulseBar",
@@ -78,10 +74,7 @@ let package = Package(
             ],
             // 12.4: every target is warning-free under complete concurrency
             // checking, and stays that way — the same rule as PulseCore.
-            swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency"),
-                .unsafeFlags(["-warnings-as-errors"]),
-            ],
+            swiftSettings: productSettings,
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]
@@ -92,6 +85,11 @@ let package = Package(
             name: "PulseBarTests",
             dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest", "PulseManaged"],
             path: "Tests/PulseBarTests",
+            // The XCTest suites predate Swift 6: twenty `@MainActor`
+            // XCTestCase subclasses are an error in the Swift 6 mode. New
+            // suites are Swift Testing (`import Testing`), which has no such
+            // superclass; the XCTest suites move over as they are touched.
+            swiftSettings: [.swiftLanguageMode(.v5)],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]

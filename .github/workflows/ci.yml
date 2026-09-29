@@ -18,8 +18,8 @@ jobs:
     name: Gates (version · coverage · python)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       # The one gate list. release.yml, scripts/release.sh and package.sh
@@ -29,13 +29,13 @@ jobs:
 
   build:
     name: Build & test (macOS)
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Show toolchain
         run: swift --version
       - name: Cache SwiftPM build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: PulseBar/.build
           key: spm-${{ runner.os }}-${{ hashFiles('PulseBar/Package.swift') }}-${{ github.sha }}
@@ -78,7 +78,7 @@ jobs:
             ./scripts/qa_observation_truth.sh
 
       - name: Upload observation-truth PNGs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ always() && steps.observation_truth.outcome == 'success' }}
         with:
           name: qa-observation-truth
@@ -86,7 +86,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload observation-truth PNGs (en · dark)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ always() && steps.observation_truth_en_dark.outcome == 'success' }}
         with:
           name: qa-observation-truth-en-dark
@@ -102,7 +102,7 @@ jobs:
         run: ./scripts/qa_surfaces.sh
 
       - name: Upload surface PNGs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ always() && steps.surfaces.outcome != 'skipped' }}
         with:
           name: qa-surfaces

@@ -167,12 +167,21 @@ enum HooksInstaller {
             &hooks,
             event: "Notification",
             command: hookCommand(agent: "claude"),
-            matcher: "permission_prompt|idle_prompt|agent_needs_input"
+            // 18.0: questions (elicitation) were never matched, so Claude's
+            // clarifying questions never reached Pulse.
+            matcher: "permission_prompt|idle_prompt|agent_needs_input|elicitation_dialog|elicitation_url_dialog|elicitation_complete|elicitation_response"
         )
         ensureClaudeEvent(
             &hooks,
             event: "Stop",
             command: hookCommand(agent: "claude", kind: "stop"),
+            matcher: nil
+        )
+        // 18.0: a turn that ended on an API error is over to the user too.
+        ensureClaudeEvent(
+            &hooks,
+            event: "StopFailure",
+            command: hookCommand(agent: "claude", kind: "stop_failure"),
             matcher: nil
         )
         ensureClaudeEvent(
