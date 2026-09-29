@@ -459,7 +459,9 @@ extension StatusStore {
     }
 
     func dismissWaiting(_ row: AgentRow) {
-        let isHarvestPending = row.waitSignal == .pending || row.skill == "pending"
+        // A vendor-reported wait (18.0) is dismissed the same soft way: the
+        // vendor will keep reporting it until the session moves.
+        let isHarvestPending = row.waitSignal == .pending || row.waitSignal == .vendor || row.skill == "pending"
         // 0.95: pure harvest soft-dismiss must not write agent-wide Attention
         // done (empty session clears every wait for that agent).
         if row.waitSignal == .hooks {

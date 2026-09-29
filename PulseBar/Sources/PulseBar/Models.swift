@@ -295,6 +295,8 @@ struct ObservationQuality: Equatable, Hashable {
 enum WaitSignalKind: String, Equatable {
     case hooks
     case pending
+    /// 18.0: the vendor's own report of a blocked session (`claude agents`).
+    case vendor
 }
 
 /// Honesty tier for Focus — never claim session/tab precision when we only activate an app.

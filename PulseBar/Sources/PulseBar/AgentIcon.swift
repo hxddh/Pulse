@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 
 enum AgentIcon {
-    private static let cache = NSCache<NSString, NSImage>()
+    // NSCache is documented thread-safe; Swift 6 cannot see that through
+    // its non-Sendable class type.
+    nonisolated(unsafe) private static let cache = NSCache<NSString, NSImage>()
     private static let rasterSize = 64
     private static let opticalSize: CGFloat = 52
 

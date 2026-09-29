@@ -665,6 +665,8 @@ enum L10n {
         case .workbenchDispatch: return "New session"
         case .workbenchDispatchRepo: return "Repository"
         case .workbenchDispatchTask: return "What should it do?"
+        case .signalVendor: return "Claude reports"
+        case .whyVendor: return "Red: Claude itself reports this session is waiting for %@"
         case .whyHook: return "Red: %@'s hook reported %@, %@"
         case .whyHookFront: return " — its window was in front, so no banner"
         case .whyPending: return "Red: %@'s session log shows it stopped at %@"
@@ -1372,6 +1374,8 @@ enum L10n {
         case .workbenchDispatch: return "派活"
         case .workbenchDispatchRepo: return "仓库"
         case .workbenchDispatchTask: return "要它做什么？"
+        case .signalVendor: return "Claude 自报"
+        case .whyVendor: return "红灯：Claude 自己报告这个会话在等「%@」"
         case .whyHook: return "红灯：%@ 的 hook 报告了「%@」· %@"
         case .whyHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
         case .whyPending: return "红灯：%@ 的会话记录显示它停在「%@」上"
@@ -1673,7 +1677,7 @@ enum L10n {
         case trayScanIncomplete
         // 14.0 · Proof
         case yourTurn, turnCount, jumpToTurn
-        case whyHook, whyHookFront, whyPending, whyManaged, whyTurn
+        case whyHook, whyHookFront, whyPending, whyManaged, whyTurn, whyVendor, signalVendor
         case whyTimeline, whyExport, whyExported, whyNoHistory, whyResolved
         case proofFact, proofFailing, proofStale, proofCard
         case proofHint, proofSaveChecks, proofRunChecks, proofSideEffects

@@ -133,6 +133,9 @@ extension StatusStore {
         // main. Mutating a captured `var` from a concurrently-executing
         // closure would be a race the type system is right to refuse.
         let priorEffectStore = workspaceEffects
+        // 18.0: Claude's hooks already say who is waiting, sooner; the
+        // agents probe only runs where they are not installed.
+        let claudeHooked = hooksStatus == .installedClaude || hooksStatus == .installedBoth
 
         scanQueue.async { [weak self] in
             let t0 = Date()
@@ -223,6 +226,11 @@ extension StatusStore {
             // carries them; the watcher's light path keeps them second-fresh
             // between scans.
             let activityEvents = ActivitySpool.readEvents(nowMs: scanNowMs)
+            let vendorWaits = ClaudeAgentsProbe.sample(
+                nowMs: scanNowMs,
+                claudeLive: procs.contains { $0.id.surfaceID == .claude },
+                hooksInstalled: claudeHooked
+            )
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DebugLog.write(
                 "scan done #\(ticket) \(ms)ms harvest=\(why) scoped=\(scopedHarvest) procs=\(procs.count) " +
@@ -268,7 +276,8 @@ extension StatusStore {
                     reason: reason,
                     respondInbound: respondInbound,
                     fleet: fleetReports,
-                    activityEvents: activityEvents
+                    activityEvents: activityEvents,
+                    vendorWaits: vendorWaits
                 )
             }
         }
@@ -429,7 +438,8 @@ extension StatusStore {
         reason: String = "",
         respondInbound: [RespondSpool.InboundRequest] = [],
         fleet: [FleetSnapshot.Report] = [],
-        activityEvents: [ActivitySpool.Event] = []
+        activityEvents: [ActivitySpool.Event] = [],
+        vendorWaits: [ClaudeAgentsProbe.Wait] = []
     ) {
         defer { finishScanFlight() }
 
@@ -533,7 +543,8 @@ extension StatusStore {
                 harvestUnreliable: harvestUnreliable,
                 attention: attention,
                 fleet: fleet,
-                activity: activityEvents
+                activity: activityEvents,
+                vendorWaits: vendorWaits
             ),
             previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: waitingKeysForEdges),
             context: SnapshotBuilder.Context(

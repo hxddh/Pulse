@@ -140,7 +140,9 @@ enum PulseNotify {
                 refreshAuthorization()
                 return
             }
-            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            // Looked up again rather than captured: the center is not
+            // Sendable, and this callback runs on the center's own queue.
+            Self.center?.requestAuthorization(options: [.alert, .sound]) { granted, _ in
                 authorizationHandler?(granted)
             }
         }

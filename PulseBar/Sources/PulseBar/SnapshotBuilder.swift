@@ -89,6 +89,8 @@ enum SnapshotBuilder {
         /// 2.9: push-fresh activity events from the hook's spool. Local
         /// sessions only; never a wait, never a new row.
         var activity: [ActivitySpool.Event] = []
+        /// 18.0: sessions Claude itself reports as waiting (`claude agents`).
+        var vendorWaits: [ClaudeAgentsProbe.Wait] = []
     }
 
     /// What the previous scan left behind, for edge detection.
@@ -562,6 +564,30 @@ enum SnapshotBuilder {
             row.waitSinceMs = att.tsMs
             row.waitRaisedInFront = att.front == true
             row.processCount = max(row.processCount, 1)
+            rowsByKey[key] = row
+        }
+
+        // 18.0: Claude's own report of a waiting session. A hook raise for the
+        // same session already said it (and said it first); a report with no
+        // row has no other evidence and makes none. Soft-dismissible like a
+        // harvest pending.
+        for wait in input.vendorWaits {
+            guard let key = rowsByKey.first(where: { _, row in
+                row.agent == .claude && !row.isRemote
+                    && ((!wait.sessionID.isEmpty && row.sessionID == wait.sessionID)
+                        || (wait.sessionID.isEmpty && wait.pid > 0 && row.pid == wait.pid))
+            })?.key, var row = rowsByKey[key], !row.waiting else { continue }
+            if context.dismissedPendingKeys.contains(key) { continue }
+            row.waiting = true
+            // The same protocol tokens a hook raise carries.
+            switch wait.kind {
+            case .permission: row.waitKind = "Permission"
+            case .question: row.waitKind = "Input"
+            default: row.waitKind = "Waiting"
+            }
+            row.waitSignal = .vendor
+            row.waitMessage = wait.reason
+            row.waitSinceMs = wait.sinceMs
             rowsByKey[key] = row
         }
 
