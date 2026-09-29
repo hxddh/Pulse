@@ -657,10 +657,14 @@ package enum AttentionReader {
     }
 
     package static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
+        let sources = AttentionIO.readSources()
+        // 17.0: everything read is also kept, bounded, so a lamp can later
+        // say which event lit it (`AttentionHistory`).
+        AttentionHistoryStore.ingest(sources, nowMs: nowMs)
         // Each source is parsed on its own: one host's `done` must never clear
         // another host's open permission, and per-file parsing is what keeps
         // that true without a single rule anywhere saying so.
-        AttentionIO.readSources().flatMap { source in
+        return sources.flatMap { source in
             parse(
                 source.text,
                 nowMs: nowMs,

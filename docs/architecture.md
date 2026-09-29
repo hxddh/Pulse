@@ -39,7 +39,9 @@ PulseBar/Sources/
   PulseBar/      可执行。builder、StatusStore、RowNarrator、WaitingDelivery、视图、hook 入口。
                  15.0：指挥台的判断面是纯值（SurfaceModels：MissionBoard / ProofCardModel），
                  视图只渲染值、发 intent，由 StatusStore 执行；SurfaceFixtures 的每个夹具在
-                 CI 里经 SurfaceCapture 渲染成 PNG（scripts/qa_surfaces.sh）。
+                 CI 里经 SurfaceCapture 渲染成 PNG（scripts/qa_surfaces.sh）。17.0：托盘行的脸
+                 同样是纯值（TrayRowModel → TrayRowFace）；AttentionHistory（PulseHarvest）
+                 把每次扫描读到的 hook 事件留成有界历史，供「为什么」与导出夹具。
                  PulseCoreExports.swift 以 @_exported 引入四个库。
 ```
 

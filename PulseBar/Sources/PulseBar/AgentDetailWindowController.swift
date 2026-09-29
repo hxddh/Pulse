@@ -48,6 +48,27 @@ final class AgentDetailWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+/// The store-bound owner of the Why card: builds the value, carries out the
+/// export, remembers what the export did.
+private struct WhyDetailSection: View {
+    @ObservedObject var store: StatusStore
+    let row: AgentRow
+    @State private var notice = ""
+
+    var body: some View {
+        let model = store.whyCard(row)
+        if !model.isEmpty {
+            WhyCardView(model: model, send: { intent in
+                switch intent {
+                case .export:
+                    let count = store.copyAttentionFixture(row)
+                    notice = String(format: store.tr(.whyExported), count)
+                }
+            }, notice: notice)
+        }
+    }
+}
+
 private struct AgentDetailView: View {
     @ObservedObject var store: StatusStore
     let rowKey: String
@@ -62,6 +83,8 @@ private struct AgentDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         identity(row)
+                        // 17.0: why this row is in its state, first.
+                        WhyDetailSection(store: store, row: row)
                         storyCard(row)
                         if row.waiting { waitingCard(row) }
                         if let inbound = store.respondRequest(for: row) {

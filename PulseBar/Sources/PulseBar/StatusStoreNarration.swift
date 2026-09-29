@@ -72,4 +72,5 @@ extension StatusStore {
     func observationGapNextStep(_ gap: ObservationGap) -> String { narrator.observationGapNextStep(gap) }
     func localizedWaitKind(_ kind: String) -> String { narrator.localizedWaitKind(kind) }
     func proofFact(_ row: AgentRow) -> String { narrator.proofFact(row) }
+    func whyLine(_ row: AgentRow) -> String? { narrator.whyLine(row) }
 }
