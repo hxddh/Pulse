@@ -237,7 +237,7 @@ enum HooksSupport {
                 stdin: #"{"message":"Pulse self-test","session_id":"selftest"}"#
             )
             let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
-            guard text.contains("codex\tidle_prompt\t"),
+            guard text.contains("codex\tquestion\t"),
                   text.contains("\tPulse self-test\tselftest\t")
             else { return .failed("hook output mismatch") }
             return .passed(Date())

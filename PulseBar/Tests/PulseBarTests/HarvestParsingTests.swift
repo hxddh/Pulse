@@ -607,7 +607,8 @@ final class AttentionReaderTests: XCTestCase {
     }
 
     /// And the grace still expires on the clock it is measured against: a
-    /// permission that really has been open past the window is cleared.
+    /// permission that really has been open past the window is cleared —
+    /// and since 16.0 what is left is "your turn", never a blocked wait.
     func testAStopStillClearsAPermissionPastTheGraceWindow() {
         let now: Int64 = 1_700_000_000_000
         let old = now - 60_000
@@ -615,6 +616,8 @@ final class AttentionReaderTests: XCTestCase {
             "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse",
             "claude\tstop\t\(old + 1)\t\tsession-10\t",
         ].joined(separator: "\n") + "\n"
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+        let entries = AttentionReader.parse(text, nowMs: now)
+        XCTAssertFalse(entries.contains(where: \.isBlocking))
+        XCTAssertEqual(entries.map(\.isTurn), [true])
     }
 }
