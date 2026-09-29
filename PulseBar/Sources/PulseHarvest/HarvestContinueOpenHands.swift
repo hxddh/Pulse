@@ -119,9 +119,18 @@ extension NativeActivityHarvest {
             default:
                 break
             }
+            // The conversation's words are in its own `events/` directory,
+            // one small file per event; the newest few carry the latest ask
+            // and reply. Read here so one fragment holds the whole row.
+            let messages = openHandsRecentMessages(url.deletingLastPathComponent().appendingPathComponent("events"))
+            if !messages.task.isEmpty {
+                fact.task = messages.task
+                fact.taskOrigin = .userPrompt
+            }
+            fact.lastWord = messages.lastWord
             // The file is autosaved on every state change; its mtime (the
             // walker's fallback) is when the conversation last moved.
-            return fact.cwd.isEmpty && fact.model.isEmpty ? [] : [fact]
+            return fact.cwd.isEmpty && fact.model.isEmpty && fact.task.isEmpty ? [] : [fact]
         case "meta.json":
             fact.sessionID = url.deletingLastPathComponent().lastPathComponent
             let title = cleanPiSessionTitle(firstString(object, keys: ["title"]))
@@ -133,28 +142,38 @@ extension NativeActivityHarvest {
             fact.cwd = normalizedPath(firstString(workspace, keys: ["working_dir"]))
             return title.isEmpty && fact.cwd.isEmpty ? [] : [fact]
         default:
-            guard url.deletingLastPathComponent().lastPathComponent == "events",
-                  firstString(object, keys: ["kind"]) == "MessageEvent",
-                  let message = object["llm_message"] as? [String: Any]
-            else { return [] }
-            fact.sessionID = url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+            // Event files are read through their conversation's
+            // base_state.json — one row per conversation, not per event.
+            return []
+        }
+    }
+
+    static let openHandsEventsRead = 60
+
+    package static func openHandsRecentMessages(_ events: URL) -> (task: String, lastWord: String) {
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: events.path)) ?? [])
+            .filter { $0.hasPrefix("event-") && $0.hasSuffix(".json") }
+            .sorted(by: >)
+            .prefix(openHandsEventsRead)
+        var task = ""
+        var word = ""
+        for name in names where task.isEmpty || word.isEmpty {
+            guard let data = FileManager.default.contents(atPath: events.appendingPathComponent(name).path),
+                  data.count < 512 * 1024,
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  firstString(event, keys: ["kind"]) == "MessageEvent",
+                  let message = event["llm_message"] as? [String: Any]
+            else { continue }
             let text = continueText(message["content"])
             switch firstString(message, keys: ["role"]) {
-            case "user":
-                let task = cleanPiSessionTitle(text)
-                guard !task.isEmpty else { return [] }
-                fact.task = task
-                fact.taskOrigin = .userPrompt
-            case "assistant":
-                let word = selfReportLine(text)
-                guard !word.isEmpty else { return [] }
-                fact.lastWord = word
+            case "user" where task.isEmpty:
+                task = cleanPiSessionTitle(text)
+            case "assistant" where word.isEmpty:
+                word = selfReportLine(text)
             default:
-                return []
+                break
             }
-            // Event timestamps are naive local time; the file's mtime is the
-            // honest clock, and the walker supplies it when this is zero.
-            return [fact]
         }
+        return (task, word)
     }
 }

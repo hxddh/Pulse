@@ -923,13 +923,14 @@ package enum NativeActivityHarvest {
         let structured = isSessionPath(item)
             || walk.structuredPathFragment.map { item.path.lowercased().contains($0) } == true
         let birth = values.creationDate.map { Int64($0.timeIntervalSince1970 * 1000) } ?? 0
-        var parsed = parseFacts(text, structured: structured, path: item.path)
-        if parsed.isEmpty, ext == "json",
+        let answer = parseFactsAnswering(text, structured: structured, path: item.path)
+        var parsed = answer.facts
+        if parsed.isEmpty, !answer.answered, ext == "json",
            let data = text.data(using: .utf8),
            (try? JSONSerialization.jsonObject(with: data)) == nil {
             error = true
         }
-        if parsed.isEmpty,
+        if parsed.isEmpty, !answer.answered,
            !(id == .pi && piLooksOfficial(text)),
            let fallback = textFacts(text, structured: structured, path: item.path) {
             parsed = [fallback]

@@ -75,7 +75,9 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertEqual(AgentID.pi.spec.walk.database, .pi)
         XCTAssertEqual(AgentID.goose.spec.walk.database, .goose)
         XCTAssertEqual(AgentID.grok.spec.walk.database, .grok)
-        XCTAssertEqual(AgentCatalog.all.filter { $0.walk.database != nil }.count, 5)
+        // 20.0: Goose's sessions.db and Kilo 7.x's OpenCode-schema kilo.db.
+        XCTAssertEqual(AgentID.kilo.spec.walk.database, .openCode)
+        XCTAssertEqual(AgentCatalog.all.filter { $0.walk.database != nil }.count, 7)
         XCTAssertTrue(DatabaseAdapter.pi.runsAfterTranscripts)
         XCTAssertFalse(DatabaseAdapter.pi.failsOnUnreadableFile)
         XCTAssertTrue(DatabaseAdapter.cursor.extensions.contains("vscdb"))
@@ -96,6 +98,7 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertEqual(AgentID.pi.spec.walk.headBytes, 96_000)
         XCTAssertEqual(AgentID.claude.spec.walk.windowBytes, 1_000_000)
         XCTAssertEqual(AgentID.grok.spec.walk.maxFileBytes, 16 * 1024 * 1024)
-        XCTAssertEqual(AgentCatalog.all.filter(\.walk.dropsContinuationPrompts).count, 11)
+        // 20.0: Goose is read from its database, not transcripts.
+        XCTAssertEqual(AgentCatalog.all.filter(\.walk.dropsContinuationPrompts).count, 10)
     }
 }

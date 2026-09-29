@@ -95,7 +95,8 @@ extension NativeActivityHarvest {
                     // new one.
                     let stepID = firstString(event, keys: ["stepUuid", "turnId"])
                     if stepID != step { step = stepID; words = "" }
-                    words += firstString(part, keys: ["text"])
+                    // Raw: a streamed chunk's edge spaces are part of the words.
+                    words += part["text"] as? String ?? ""
                     let line = selfReportLine(words)
                     if !line.isEmpty { fact.lastWord = line }
                 } else if firstString(event, keys: ["type"]) == "tool.call" {

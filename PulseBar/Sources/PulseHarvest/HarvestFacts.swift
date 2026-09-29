@@ -10,9 +10,24 @@ extension NativeActivityHarvest {
     // MARK: - Conservative metadata extraction
 
     package static func parseFacts(_ text: String, structured: Bool, path: String) -> [Fact] {
+        parseFactsAnswering(text, structured: structured, path: path).facts
+    }
+
+    /// `answered` is true when a vendor dialect read the file itself. Its
+    /// answer is final — an empty one means "this file says nothing" (an
+    /// index, a subagent's stream, a credential) and must not be handed to the
+    /// generic text reader afterwards, which is how an index file became a
+    /// row of its own.
+    package static func parseFactsAnswering(_ text: String, structured: Bool, path: String) -> (facts: [Fact], answered: Bool) {
         // 12.3 γ: vendor formats with their own reading are dialects.
         let dialect = TranscriptDialects.dialect(for: path)
-        if let facts = dialect?.parse(text, path: path) { return facts }
+        if let facts = dialect?.parse(text, path: path) { return (facts, true) }
+        return (parseGenericFacts(text, structured: structured, path: path, dialect: dialect), false)
+    }
+
+    private static func parseGenericFacts(
+        _ text: String, structured: Bool, path: String, dialect: (any TranscriptDialect)?
+    ) -> [Fact] {
         var objects: [(Any, String)] = []
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")),

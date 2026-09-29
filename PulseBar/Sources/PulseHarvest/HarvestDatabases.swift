@@ -178,7 +178,8 @@ extension NativeActivityHarvest {
             guard let update = params["update"] as? [String: Any] else { continue }
             let kind = firstString(update, keys: ["sessionUpdate"])
             let content = update["content"] as? [String: Any] ?? [:]
-            let text = firstString(content, keys: ["text"])
+            // Raw: a streamed chunk's edge spaces are part of the words.
+            let text = content["text"] as? String ?? ""
             fact.records += 1
             switch kind {
             case "user_message_chunk":
