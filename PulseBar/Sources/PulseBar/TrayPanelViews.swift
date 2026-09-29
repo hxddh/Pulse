@@ -229,7 +229,7 @@ private struct SectionHeader: View {
 /// next to a `folded` set nobody was clearing either.
 @MainActor
 struct TrayPanelHost: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
 
     var body: some View {
         TrayPanel(store: store)
@@ -239,7 +239,7 @@ struct TrayPanelHost: View {
 
 @MainActor
 struct TrayPanel: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     @State fileprivate var measuredHeight: CGFloat = 0
     /// Folding is opt-in and per-panel. A fresh glance shows every row; the
     /// header must never claim five sessions while the list silently shows one.
@@ -1087,7 +1087,7 @@ private struct AgentRowButton: View {
     /// `row` value and the same store *reference*, so SwiftUI saw identical
     /// inputs and skipped the child entirely. The result was a panel whose
     /// chrome was English and whose rows were still Chinese.
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     /// True when a project heading directly above already states this path, so
     /// the row must not repeat it. 0.25 wrote the rule "a fact appears once,
     /// row > heading > header" and then applied it only to the panel header —

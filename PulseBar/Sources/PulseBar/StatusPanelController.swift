@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 /// Native status item + a single-surface panel whose bounds exactly match the
@@ -22,7 +21,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private let shadowView = NSView()
     private let effectView = NSVisualEffectView()
     private let hosting: NSHostingController<TrayPanelHost>
-    private var subscriptions = Set<AnyCancellable>()
+    /// Follows only `snapshot` — a settings write does not touch the lamp.
+    private var snapshotLoop: ObservationLoop?
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var lastAnnouncedState: String?
@@ -65,13 +65,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         button.imageScaling = .scaleProportionallyDown
         button.font = .systemFont(ofSize: 11.5, weight: .semibold)
 
-        store.$snapshot
-            .receive(on: RunLoop.main)
-            .sink { [weak self] snapshot in
-                self?.updateStatusItem(snapshot)
-                self?.scheduleResize()
-            }
-            .store(in: &subscriptions)
+        let store = self.store
+        snapshotLoop = ObservationLoop(track: { _ = store.snapshot }) { [weak self] in
+            guard let self else { return }
+            self.updateStatusItem(self.store.snapshot)
+            self.scheduleResize()
+        }
         updateStatusItem(store.snapshot)
     }
 
@@ -79,7 +78,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         close()
         lampAttentionTask?.cancel()
         lampAttentionTask = nil
-        subscriptions.removeAll()
+        snapshotLoop?.cancel()
+        snapshotLoop = nil
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 

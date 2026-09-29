@@ -26,6 +26,12 @@ VIEWS = [
 ]
 PURE_FILES = ["SurfaceModels.swift", "SurfaceFixtures.swift", "TrayRowModel.swift"]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
+# 19.0: the store is @Observable. A Combine-era wrapper coming back would
+# silently restore whole-store invalidation for whatever view used it.
+COMBINE_ERA = re.compile(r"\b(ObservableObject|@Published|@ObservedObject|@EnvironmentObject|@StateObject|objectWillChange)\b|^\s*import\s+Combine\b", re.M)
+# Settings is redrawn by what it reads; a per-scan fact would redraw it
+# every scan. `snapshotAgents` is the one scan fact it may read.
+SCAN_FACT_FREE = [("SettingsViews.swift", re.compile(r"\bstore\.(snapshot|cachedAll)\b"))]
 
 
 def struct_body(source: str, name: str) -> str | None:
@@ -64,6 +70,12 @@ def main() -> int:
             errors.append(f"{file}: surface models must not reach the store")
         if re.search(r"^\s*import\s+(SwiftUI|AppKit)\b", source, re.M):
             errors.append(f"{file}: surface models must not import a UI framework")
+    for path in sorted(APP.glob("*.swift")):
+        if COMBINE_ERA.search(code_only(path.read_text())):
+            errors.append(f"{path.name}: Combine-era observation — the store is @Observable (19.0)")
+    for file, pattern in SCAN_FACT_FREE:
+        if pattern.search(code_only((APP / file).read_text())):
+            errors.append(f"{file}: reads a per-scan fact — every scan would redraw it")
     fixtures = (APP / "SurfaceFixtures.swift").read_text()
     names = re.search(r"static let names = \[(.*?)\]", fixtures, re.S)
     listed = re.findall(r'"([a-z0-9-]+)"', names.group(1)) if names else []

@@ -13,7 +13,7 @@ import SwiftUI
 /// beside the complete text, the fate note once a verdict is written.
 @MainActor
 struct SessionRespondCard: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
     let inbound: RespondSpool.InboundRequest
     var compact = false
@@ -54,7 +54,7 @@ struct SessionRespondCard: View {
 /// withdraws Allow, the hint that silence denies.
 @MainActor
 struct SessionPermissionCard: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let request: ManagedPermission.Request
     var compact = false
 
@@ -107,7 +107,7 @@ struct SessionPermissionCard: View {
 /// queued and interrupted say so honestly.
 @MainActor
 struct SessionManagedReply: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
     var compact = false
 
@@ -169,7 +169,7 @@ struct SessionManagedReply: View {
 /// The agent's own checklist, bounded for the compact face.
 @MainActor
 struct SessionPlanCompact: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     var body: some View {
@@ -207,7 +207,7 @@ struct SessionPlanCompact: View {
 /// interactive; the act surfaces stay on the full depth.
 @MainActor
 struct SessionBriefCard: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     /// Mirrors `AgentRowButton.heroLimit`: below it the hero already shows
@@ -264,7 +264,7 @@ struct SessionBriefCard: View {
 /// Nothing was deleted in the recomposition; it moved here.
 @MainActor
 struct SessionPanorama: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     var body: some View {
@@ -294,7 +294,7 @@ struct SessionPanorama: View {
 /// tokens, context. Absent facts are absent; nothing here is recomputed.
 @MainActor
 struct SessionWorkDetail: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     var body: some View {
@@ -318,7 +318,7 @@ struct SessionWorkDetail: View {
 /// remains the place to read whole conversations and land work.
 @MainActor
 struct TrayExpandedCard: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     var body: some View {

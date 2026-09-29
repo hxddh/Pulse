@@ -1,117 +1,140 @@
 import Foundation
 import AppKit
 import CryptoKit
+import Observation
 
+/// The app's one source of truth, observed field by field (19.0).
+///
+/// Before 19.0 this was an `ObservableObject`: any `@Published` assignment
+/// woke every view that held the store, whether or not it drew that field.
+/// Under Observation a view is invalidated only by the properties its body
+/// actually read. Two rules keep that honest:
+///
+/// - Engine bookkeeping (timers, tickets, caches no view draws) is
+///   `@ObservationIgnored`, so writing it wakes nothing.
+/// - The scan path still writes a tracked property only when its value
+///   changed — Observation announces every assignment, equal or not.
+///   `ScanQuietTests` tracks every property here and holds it to that.
 @MainActor
-final class StatusStore: ObservableObject {
-    @Published var snapshot = PulseSnapshot()
-    @Published var autoProbe = true
-    @Published var notifyOnIdle = true
-    @Published var notifyOnWaiting = true
+@Observable
+final class StatusStore {
+    var snapshot = PulseSnapshot() {
+        didSet {
+            let agents = Set(snapshot.rows.map(\.agent))
+            if agents != snapshotAgents { snapshotAgents = agents }
+        }
+    }
+    /// The agents in the current snapshot. Settings offers a mute switch per
+    /// agent Pulse has seen; reading this rather than `snapshot` keeps a
+    /// scan that only moved a row's activity from redrawing the form.
+    private(set) var snapshotAgents: Set<AgentID> = []
+    var autoProbe = true
+    var notifyOnIdle = true
+    var notifyOnWaiting = true
     /// Quiet hours suppress idle notify only; Waiting edges still fire when notifyOnWaiting.
-    @Published var quietHoursEnabled = false
+    var quietHoursEnabled = false
     /// Minutes since midnight — whole hours were too coarse for a 22:30 bedtime.
-    @Published var quietStartMinute: Int = 22 * 60
-    @Published var quietEndMinute: Int = 8 * 60
-    @Published var launchAtLogin = false
+    var quietStartMinute: Int = 22 * 60
+    var quietEndMinute: Int = 8 * 60
+    var launchAtLogin = false
     /// Whether launchd was actually left in the state `launchAtLogin` claims.
     /// `nil` until the toggle has been applied at least once this run.
-    @Published var loginItemApplied: Bool?
-    @Published var language: AppLanguage = .auto
-    @Published var hooksStatus: HooksSupport.Status = .unknown
+    var loginItemApplied: Bool?
+    var language: AppLanguage = .auto
+    var hooksStatus: HooksSupport.Status = .unknown
     /// Native `pulse-hook` launcher present — Attention bridge path, not Claude/Codex install.
-    @Published var pulseHookLauncherReady = false
-    @Published var didCopyAttentionRaise = false
-    @Published var showAllAgents = false
-    @Published var isRefreshing = false
+    var pulseHookLauncherReady = false
+    var didCopyAttentionRaise = false
+    var showAllAgents = false
+    var isRefreshing = false
     /// Transient "Copied" confirmation on the diagnostics button.
-    @Published var didCopyDiagnostics = false
+    var didCopyDiagnostics = false
     /// The shape report walks the session stores, so the button says so.
-    @Published var isCopyingShapeReport = false
-    @Published var didCopyShapeReport = false
+    var isCopyingShapeReport = false
+    var didCopyShapeReport = false
     /// Agents the user muted — no notifications, still shown in the tray.
-    @Published var mutedAgents: Set<AgentID> = []
-    @Published var hotkey: HotkeyChoice = .commandShiftP
-    @Published var hotkeyEnabled = false
+    var mutedAgents: Set<AgentID> = []
+    var hotkey: HotkeyChoice = .commandShiftP
+    var hotkeyEnabled = false
     /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
-    @Published var allowTerminalAutomation = false
-    @Published var allowWorkbenchActuation = false
+    var allowTerminalAutomation = false
+    var allowWorkbenchActuation = false
     /// Answer this Mac's own agents from Pulse, when the prompt is not in
     /// front of you. **The key file is the source of truth**, not this flag —
     /// a persisted setting could drift from the file the hook actually reads,
     /// and the hook is the half that decides whether an agent waits.
-    @Published var respondLocalEnabled = false
+    var respondLocalEnabled = false
     /// Measure what has landed in each agent's working copy. On by default —
     /// an evidence axis nobody switches on is worth nothing — and bounded,
     /// read-only and content-free by construction. Off means not one git
     /// command runs.
-    @Published var measureWorkspaceEffect = true
+    var measureWorkspaceEffect = true
     /// Write this Mac's own fleet snapshot for other machines to read. Off by
     /// default — content leaving the machine is the user's call, every time.
     /// Reading other hosts' snapshots is always on: it is passive, local and
     /// bounded, and the directory simply does not exist until a sync tool
     /// puts something there.
-    @Published var broadcastFleet = false
+    var broadcastFleet = false
     /// Last time the local snapshot was written, so the file is refreshed on
     /// the snapshot's own cadence rather than every 2-second tick.
-    var lastFleetWriteMs: Int64 = 0
-    @Published var trayGrouping: TrayGrouping = .status
-    @Published var playSoundOnWaiting = false
+    @ObservationIgnored var lastFleetWriteMs: Int64 = 0
+    var trayGrouping: TrayGrouping = .status
+    var playSoundOnWaiting = false
     /// Minutes of silence before a live row reads as stalled; 0 turns it off.
-    @Published var stallMinutes = 20
+    var stallMinutes = 20
     /// How long "Later" silences a wait.
-    @Published var snoozeMinutes = 10
+    var snoozeMinutes = 10
     /// False when the system refused the shortcut (another app owns it).
-    @Published var hotkeyRegistered = true
-    @Published var updateCheckEnabled = true
+    var hotkeyRegistered = true
+    var updateCheckEnabled = true
     /// Opt-in only: reading vendor Application Support/App Group data can
     /// trigger macOS's cross-app privacy prompt. The default scan remains
     /// useful through hooks, dot-directory sessions, and process evidence.
-    @Published var allowAppData = false
+    var allowAppData = false
     /// Protected app-data access is scoped to the agents the user actually
     /// wants richer details for. The all-agents switch remains available, but
     /// a single TCC decision must never silently widen the scan to every app.
-    @Published var appDataAgents: Set<AgentID> = []
-    @Published var updateStatus: UpdateCheck.Status = .idle
-    @Published var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
-    @Published var recoveredAfterCrash = false
-    @Published var recoveryExitKind: LaunchRecovery.ExitKind = .clean
+    var appDataAgents: Set<AgentID> = []
+    var updateStatus: UpdateCheck.Status = .idle
+    var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
+    var recoveredAfterCrash = false
+    var recoveryExitKind: LaunchRecovery.ExitKind = .clean
     /// Keep the unclean-exit banner through the first healthy scan so the user
     /// can actually see it; clear on the next healthy scan or explicit dismiss.
-    var recoveryNoticeSurvivedFirstHealthyScan = false
-    var launchRecovery: LaunchRecovery?
+    @ObservationIgnored var recoveryNoticeSurvivedFirstHealthyScan = false
+    @ObservationIgnored var launchRecovery: LaunchRecovery?
     /// SIGTERM → force-quit marker. Force Quit via SIGKILL still looks like a crash.
-    var terminationSignalSource: DispatchSourceSignal?
-    @Published var installReport = InstallTruth.Report.empty
-    @Published var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
+    @ObservationIgnored var terminationSignalSource: DispatchSourceSignal?
+    var installReport = InstallTruth.Report.empty
+    var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
-    @Published var notifyAuthorized: Bool?
+    var notifyAuthorized: Bool?
     /// True when the latest harvest stopped before every adapter reported.
     /// Existing per-agent health is retained in that case; the banner exposes
     /// the scan gap without turning every unvisited adapter into an error.
-    @Published var collectorScanIncomplete = false
+    var collectorScanIncomplete = false
     /// Waits that have already been resolved, newest first (P1-H).
-    @Published var waitHistory: [ResolvedWait] = []
+    var waitHistory: [ResolvedWait] = []
     /// Waits that ended while the tray was closed — "what did I miss?".
-    @Published var missedWhileAway = 0
+    var missedWhileAway = 0
     /// Sessions that moved / new waits while the tray was closed (Look Continuity).
-    @Published var lookMovedWhileAway = 0
-    @Published var lookNewWaitsWhileAway = 0
+    var lookMovedWhileAway = 0
+    var lookNewWaitsWhileAway = 0
     /// Localized Look Closure notice — named agents/sessions, not only counts (0.93).
-    @Published var lookContinuityNotice = ""
+    var lookContinuityNotice = ""
     /// Ordered Look Closure events (new wait → ended wait → moved).
-    @Published var lookContinuityItems: [LookDeltaItem] = []
+    var lookContinuityItems: [LookDeltaItem] = []
     /// Respond (scene AR): inbound full permission requests matched to rows,
     /// and the rows whose verdict this session already wrote. State only —
     /// matching and actions live in StatusStore+Respond.swift, which is also
     /// the only writer (internal set because extensions live in another file).
-    @Published var respondInboundByRowKey: [String: RespondSpool.InboundRequest] = [:]
-    @Published var respondVerdictSentRowKeys: Set<String> = []
+    var respondInboundByRowKey: [String: RespondSpool.InboundRequest] = [:]
+    var respondVerdictSentRowKeys: Set<String> = []
     /// Verdicts this Mac wrote, and what has become of each. The fate is read
     /// off disk every scan — `claimVerdict` renames a verdict to `.used`
     /// before reading it, so the agent taking it is a file fact rather than
     /// something Pulse infers.
-    @Published var respondDecided: [String: DecidedVerdict] = [:]
+    var respondDecided: [String: DecidedVerdict] = [:]
     /// What happened the last time the user pressed a button on this row.
     ///
     /// A click that reached nothing used to be indistinguishable from a dead
@@ -121,13 +144,13 @@ final class StatusStore: ObservableObject {
     /// with a real cause, and both deserve one short sentence on the row that
     /// offered the action — especially Deny, which the product documents as
     /// always available precisely because refusing is the safe move.
-    @Published var rowActionNotices: [String: String] = [:]
+    var rowActionNotices: [String: String] = [:]
     /// Row keys marked “moved while away” until the notice is acknowledged.
-    @Published var lookMovedRowKeys: Set<String> = []
+    var lookMovedRowKeys: Set<String> = []
     /// When the tray was last dismissed, for the missed-wait count.
-    var trayClosedAt: Date?
+    @ObservationIgnored var trayClosedAt: Date?
     /// Fingerprint of visible rows at last tray close — Look Continuity (0.92).
-    var trayCloseFingerprint: TrayLookFingerprint?
+    @ObservationIgnored var trayCloseFingerprint: TrayLookFingerprint?
 
     /// One named Look Closure event (0.93).
     struct LookDeltaItem: Equatable, Identifiable {
@@ -179,9 +202,9 @@ final class StatusStore: ObservableObject {
     }
     /// Install-copy discovery is diagnostic-only. Keep it off the main thread
     /// and avoid re-running a process/filesystem scan on every tray open.
-    var installTruthRefreshInFlight = false
-    var installTruthRefreshedAt: Date?
-    var installTruthGeneration = 0
+    @ObservationIgnored var installTruthRefreshInFlight = false
+    @ObservationIgnored var installTruthRefreshedAt: Date?
+    @ObservationIgnored var installTruthGeneration = 0
 
     /// A Waiting row that is no longer waiting — "did I miss something?".
     struct ResolvedWait: Identifiable, Equatable {
@@ -198,7 +221,7 @@ final class StatusStore: ObservableObject {
     /// Resolved waits kept for the Settings history list.
     static let maxWaitHistory = 12
 
-    var timer: Timer?
+    @ObservationIgnored var timer: Timer?
     /// 5.0-α — the engine boundary. Sources produce rows; the coordinator
     /// merges; `cachedAll` is the merged cache the display layer reads.
     /// The observed pipeline registers first and stays ground truth for any
@@ -207,27 +230,27 @@ final class StatusStore: ObservableObject {
     /// 5.0-β — registered on first dispatch (after observed, so the
     /// coordinator's ground-truth rule holds by construction).
     let managedSessions = ManagedSessionSource()
-    private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
+    @ObservationIgnored private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
     var cachedAll: [AgentRow] = []
     /// 6.0-γ: one-shot workbench selection request (attempt compare jumps).
-    @Published var workbenchSelectKey: String? = nil
-    var lastGoodHarvest: [ActivityHarvest.Row] = []
+    var workbenchSelectKey: String? = nil
+    @ObservationIgnored var lastGoodHarvest: [ActivityHarvest.Row] = []
     /// Result of the latest attempted adapter scan, including adapters that
     /// ran successfully but had no recent local session. This is deliberately
     /// separate from row evidence: zero rows is a useful result, not silence.
-    var collectorHealthByAgent: [AgentID: ActivityHarvest.CollectorHealth] = [:]
+    @ObservationIgnored var collectorHealthByAgent: [AgentID: ActivityHarvest.CollectorHealth] = [:]
     /// Latest successful collector read by Agent, retained even after its
     /// session row ages out so Settings can distinguish "not running" from
     /// "collector has never produced evidence".
-    var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
+    @ObservationIgnored var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
     /// Per-Agent retry/backoff/circuit policy. A bad store must not consume the
     /// next scan budget for every other adapter.
-    var harvestSupervisor = HarvestSupervisor()
+    @ObservationIgnored var harvestSupervisor = HarvestSupervisor()
     /// Per-repository-root measurements, their cadence, and the slow-repo
     /// circuit. Lives here because measuring forks git; the builder only ever
     /// sees the resulting table.
-    var workspaceEffects = WorkspaceEffectStore()
-    var workspaceEffectsByDirectory: [String: WorkspaceEffect.Measurement] = [:]
+    @ObservationIgnored var workspaceEffects = WorkspaceEffectStore()
+    @ObservationIgnored var workspaceEffectsByDirectory: [String: WorkspaceEffect.Measurement] = [:]
     /// Where the next native harvest should start.
     ///
     /// The collector walks its adapters in a fixed order, so before 0.98 a
@@ -238,8 +261,8 @@ final class StatusStore: ObservableObject {
     // reader and writer (StatusStoreEngine.swift).
     /// True while a finished scan is being landed on the main actor. Views
     /// that should not redraw per scan read it through `StoreObservation`.
-    var isApplyingScan = false
-    var harvestScanCursor = 0
+    @ObservationIgnored var isApplyingScan = false
+    @ObservationIgnored var harvestScanCursor = 0
     /// Deterministic event ages for visual fixtures only.
     var previewWaitingEventTimes: [AgentID: Int64]?
     /// Prevent a preview panel opening from immediately replacing its fixture
@@ -247,55 +270,55 @@ final class StatusStore: ObservableObject {
     var previewFixtureActive = false
     let powerMonitor = PowerMonitor()
     /// Tray panel is on screen — worth probing faster while the user reads it.
-    var trayOpen = false
+    @ObservationIgnored var trayOpen = false
     /// Close instant to apply Look Continuity *after* the opening scan (0.96).
-    var lookContinuityPendingClosedAt: Date?
+    @ObservationIgnored var lookContinuityPendingClosedAt: Date?
     /// Sample Waiting reveal waits until the row exists in `cachedAll`.
-    var pendingSampleRevealSession = ""
-    var activity: ProbeSchedule.Activity = .empty
-    var currentInterval: TimeInterval?
+    @ObservationIgnored var pendingSampleRevealSession = ""
+    @ObservationIgnored var activity: ProbeSchedule.Activity = .empty
+    @ObservationIgnored var currentInterval: TimeInterval?
     /// Live-process fingerprint; a change forces a harvest even off-cadence.
-    var lastProcessSignature = ""
-    var ticksSinceHarvest = Int.max
+    @ObservationIgnored var lastProcessSignature = ""
+    @ObservationIgnored var ticksSinceHarvest = Int.max
     /// Last value actually pushed to launchd — avoids re-running launchctl
     /// (two synchronous subprocesses) on every settings write.
-    var appliedLaunchAtLogin: Bool?
+    @ObservationIgnored var appliedLaunchAtLogin: Bool?
     /// Rolling scan counters, so the energy claim can be checked, not believed.
-    var probeStats = ProbeStats()
+    @ObservationIgnored var probeStats = ProbeStats()
     /// When the timer parked, for the parked-duration counter.
-    private var parkedSince: Date?
-    var knownWaitingKeys: Set<String> = []
+    @ObservationIgnored private var parkedSince: Date?
+    @ObservationIgnored var knownWaitingKeys: Set<String> = []
     /// First apply seeds waiting keys without firing edge notifications.
-    var waitingNotifySeeded = false
+    @ObservationIgnored var waitingNotifySeeded = false
     /// Waiting edges observed while macOS notification authorization is still
     /// resolving. Keep one row per session so a delayed permission callback
     /// cannot make an approval disappear without either a banner or a tray
     /// prompt.
-    var pendingWaitingNotifications: [String: AgentRow] = [:]
+    @ObservationIgnored var pendingWaitingNotifications: [String: AgentRow] = [:]
     /// One interruption per short window keeps a burst of parallel approvals
     /// useful without turning Notification Center into a stream of duplicates.
     static let waitingNotificationMinimumIntervalMs: Int64 = 3_000
-    var waitingDeliveryTask: Task<Void, Never>?
+    @ObservationIgnored var waitingDeliveryTask: Task<Void, Never>?
     /// Notification Center accepts requests asynchronously. Keep the event
     /// in-flight until its callback arrives so a fast follow-up scan cannot
     /// post a duplicate or mark a failed request as delivered.
-    var waitingDeliveryInFlight: Set<String> = []
+    @ObservationIgnored var waitingDeliveryInFlight: Set<String> = []
     /// Keep the optional sound as one cue per delivery window, not one cue per
     /// session when a batch is accepted as separate Notification Center
     /// requests.
-    var waitingDeliverySounded = false
+    @ObservationIgnored var waitingDeliverySounded = false
     /// Cross-launch Waiting/delivery state. This is deliberately separate from
     /// the agent-owned attention.tsv bridge so a restart cannot lose the only
     /// human-confirmation edge or emit it twice.
-    var attentionLedger = AttentionLedger.load()
+    @ObservationIgnored var attentionLedger = AttentionLedger.load()
     /// Soft-dismissed Cursor harvest pending until skill clears.
-    var dismissedPendingKeys: Set<String> = []
+    @ObservationIgnored var dismissedPendingKeys: Set<String> = []
     /// Row key → when its "remind me later" runs out.
-    var snoozedUntil: [String: Date] = [:]
+    @ObservationIgnored var snoozedUntil: [String: Date] = [:]
     let attentionWatcher = AttentionWatcher()
     let scanQueue = DispatchQueue(label: "com.pulse.scan", qos: .userInitiated)
-    var scanTicket: UInt64 = 0
-    var lastAppliedTicket: UInt64 = 0
+    @ObservationIgnored var scanTicket: UInt64 = 0
+    @ObservationIgnored var lastAppliedTicket: UInt64 = 0
     /// Tests exercising store behaviour must not start a real background scan.
     ///
     /// A scan is not read-only: it folds session digests and flushes them, so
@@ -305,7 +328,7 @@ final class StatusStore: ObservableObject {
     /// `AttentionIO.pathOverride` and `HooksInstaller.homeOverride`.
     static var suppressBackgroundScansForTesting = false
 
-    var scanInFlight = false
+    @ObservationIgnored var scanInFlight = false
     /// A refresh that arrived while one was already in flight.
     ///
     /// Only the reason used to survive the wait, so a scoped rescan replayed
@@ -329,7 +352,7 @@ final class StatusStore: ObservableObject {
         }
     }
 
-    var pendingRefresh: PendingRefresh?
+    @ObservationIgnored var pendingRefresh: PendingRefresh?
     private let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
@@ -424,7 +447,7 @@ final class StatusStore: ObservableObject {
     ///
     /// Called before the panel is ordered in, so the reset lands in the same
     /// layout pass rather than a frame after the user is already reading.
-    @Published var traySessionToken: Int = 0
+    var traySessionToken: Int = 0
 
     /// Current cadence, for Settings/diagnostics ("probing every 5s").
     var probeIntervalDescription: String {
@@ -488,20 +511,20 @@ final class StatusStore: ObservableObject {
     ///
     /// Injected so the clear path can be tested without a bundled app: an
     /// unbundled test process has no `UNUserNotificationCenter` at all.
-    var withdrawWaitingBanners: () -> Void = { PulseNotify.withdrawWaitingNotifications() }
+    @ObservationIgnored var withdrawWaitingBanners: () -> Void = { PulseNotify.withdrawWaitingNotifications() }
 
     /// When set, Settings expands the App Data scopes group and highlights
     /// this agent — used by Support Health and quality next-step deep links.
-    @Published var settingsFocusAppDataAgent: AgentID? = nil
-    @Published var settingsExpandAppDataScopes = false
+    var settingsFocusAppDataAgent: AgentID? = nil
+    var settingsExpandAppDataScopes = false
     /// When true, Settings scrolls/highlights the Waiting signals section
     /// (Attention bridge path for agents without a native Waiting contract).
-    @Published var settingsFocusWaitingSignals = false
+    var settingsFocusWaitingSignals = false
     /// Waiting-none Agent named when Support deep-links into Attention Reach.
-    @Published var settingsFocusWaitingAgent: AgentID? = nil
+    var settingsFocusWaitingAgent: AgentID? = nil
     /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump
     /// seeds a `rowKey`, TrayPanel selects+scrolls it, then clears.
-    @Published private(set) var pendingRevealRowKey: String? = nil
+    private(set) var pendingRevealRowKey: String? = nil
 
     /// Open the tray, optionally selecting a concrete row after it appears.
     func requestTrayReveal(rowKey: String = "") {

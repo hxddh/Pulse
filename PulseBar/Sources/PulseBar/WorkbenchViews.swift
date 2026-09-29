@@ -12,7 +12,7 @@ import AppKit
 
 @MainActor
 struct WorkbenchView: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     @State private var selectedKey: String?
     @State private var showDispatch = false
 
@@ -104,7 +104,7 @@ struct WorkbenchView: View {
 
 @MainActor
 private struct WorkbenchSidebarRow: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     private var lamp: Color {
@@ -143,7 +143,7 @@ private struct WorkbenchSidebarRow: View {
 
 @MainActor
 struct SessionInspectorView: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     /// The user's draft reply for the resume channel. Lives on the inspector,
@@ -478,7 +478,7 @@ struct SessionInspectorView: View {
 /// collector sees it — Pulse does not pretend it started observing early.
 @MainActor
 private struct DispatchSheet: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedRoot: String?
@@ -618,7 +618,7 @@ private struct DispatchSheet: View {
 /// and its reason. Rendering never quotes the path, only the content.
 @MainActor
 private struct TranscriptSection: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     @State private var excerpt: TranscriptReader.Excerpt?
@@ -767,7 +767,7 @@ private struct TranscriptSection: View {
 /// disk-confirmed root only; a remote row's path describes another machine.
 @MainActor
 struct WorkspaceDiffSection: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     @State private var patch: String?

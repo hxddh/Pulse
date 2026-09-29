@@ -10,7 +10,7 @@ import SwiftUI
 
 @MainActor
 struct ManagedSessionInspector: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let row: AgentRow
 
     @State private var reply = ""
@@ -481,7 +481,7 @@ struct ManagedSessionInspector: View {
 /// one parser, one look.
 @MainActor
 struct ManagedEntryRow: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     let agentName: String
     let entry: TranscriptReader.Entry
 

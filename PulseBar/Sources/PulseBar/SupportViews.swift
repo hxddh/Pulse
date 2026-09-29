@@ -5,7 +5,7 @@ import AppKit
 
 @MainActor
 struct SupportCoverageView: View {
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     @State private var query = ""
     // Support coverage is an inspection surface, not an alert inbox. Starting
     // on Observed keeps the first scan useful while “All” remains the explicit
@@ -281,7 +281,7 @@ struct SupportCoverageView: View {
 @MainActor
 struct SupportHealthRow: View {
     let item: AgentSupportHealth
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
     @State private var diagnosticsExpanded = true
 
     var body: some View {
@@ -576,7 +576,7 @@ struct SupportHealthRow: View {
 private struct SupportFactPill: View {
     let label: String
     let present: Bool
-    @ObservedObject var store: StatusStore
+    var store: StatusStore
 
     var body: some View {
         Label(
