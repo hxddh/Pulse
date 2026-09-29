@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 0.99.2 Live Wire — the rest of the path 0.99.1 只修了一半.
 ///
@@ -123,7 +122,6 @@ final class LiveWireTests: XCTestCase {
             maxVisibleRows: SnapshotBuilder.maxVisibleRows,
             dismissedPendingKeys: [],
             showAllAgents: false,
-            snoozedUntilMs: [:],
             stalledSeconds: AgentRow.stalledSeconds
         )
     }
@@ -134,7 +132,7 @@ final class LiveWireTests: XCTestCase {
     ) -> SnapshotBuilder.Result {
         SnapshotBuilder.build(
             SnapshotBuilder.Input(
-                procs: procs, harvest: rows, harvestUnreliable: false, attention: []
+                procs: procs, harvest: rows, attention: []
             ),
             previous: .init(),
             context: context()

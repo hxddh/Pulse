@@ -69,7 +69,7 @@ struct ClarityFixTests {
         vendorWaits: [ClaudeAgentsProbe.Wait] = [],
         dismissed: Set<String> = []
     ) -> SnapshotBuilder.Result {
-        var input = SnapshotBuilder.Input(procs: procs, harvest: harvest, harvestUnreliable: false, attention: attention)
+        var input = SnapshotBuilder.Input(procs: procs, harvest: harvest, attention: attention)
         input.vendorWaits = vendorWaits
         return SnapshotBuilder.build(
             input,
@@ -84,7 +84,7 @@ struct ClarityFixTests {
     }
 
     func turn(session: String, ago: Int64 = 2_000) -> [AttentionReader.Entry] {
-        let line = ["claude", "turn", "\(now - ago)", "", session, "/p"].joined(separator: "\t")
+        let line = ["claude", "turn", "\(now - ago)", "", session, "/p", "", ""].joined(separator: "\t")
         return AttentionReader.parse(AttentionProtocol.header + line + "\n", nowMs: now)
     }
 
@@ -123,8 +123,8 @@ struct ClarityFixTests {
     @Test func theStopGraceDoesNotDependOnWhenTheFileIsRead() {
         let raise = now - 10 * Self.minute
         let text = [
-            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p"],
-            ["claude", "stop", "\(raise + 1_000)", "", "s1", ""],
+            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", ""],
+            ["claude", "stop", "\(raise + 1_000)", "", "s1", "", "", ""],
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
         let soon = AttentionReader.parse(text, nowMs: raise + 2_000)
         let later = AttentionReader.parse(text, nowMs: now)
@@ -308,40 +308,30 @@ struct ClarityFixTests {
         #expect(UpdateCheck.Failure.http(503).detail == "HTTP 503")
     }
 
-    // MARK: - 11 · relaunch through Launch Services, without waiting
+    // MARK: - 12 · a summary banner's click is audited on every row it counted
 
-    @Test func theInstallerRelaunchesThroughOpen() {
-        let app = URL(fileURLWithPath: "/Applications/Pulse.app")
-        let command = UpdateInstaller.relaunchCommand(for: app)
-        #expect(command.executable == "/usr/bin/open")
-        #expect(command.arguments == ["-n", "/Applications/Pulse.app"])
-    }
-
-    // MARK: - 12 · "Later" on a summary defers every row it counted
-
-    @Test func laterOnASummaryBannerSnoozesEveryRow() {
-        #expect(PulseNotify.snoozeTargets(rowKey: "a", rowKeys: ["a", "b", "c", "b", ""]) == ["a", "b", "c"])
-        #expect(PulseNotify.snoozeTargets(rowKey: "solo", rowKeys: []) == ["solo"])
-        #expect(PulseNotify.snoozeTargets(rowKey: "", rowKeys: []).isEmpty)
+    @Test func aSummaryBannerStandsForEveryRow() {
+        #expect(PulseNotify.bannerTargets(rowKey: "a", rowKeys: ["a", "b", "c", "b", ""]) == ["a", "b", "c"])
+        #expect(PulseNotify.bannerTargets(rowKey: "solo", rowKeys: []) == ["solo"])
+        #expect(PulseNotify.bannerTargets(rowKey: "", rowKeys: []).isEmpty)
     }
 
     // MARK: - 13 / 14 · jumping to a wait
 
-    func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64, snoozed: Bool = false) -> AgentRow {
+    func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64) -> AgentRow {
         var row = AgentRow(rowKey: key, agent: agent)
         row.sessionID = session
         row.waiting = true
         row.waitSinceMs = since
-        row.snoozeRemainingSeconds = snoozed ? 300 : 0
         return row
     }
 
-    @Test func theJumpPrefersAWaitNobodySaidLaterTo() {
-        let snoozedOldest = waitingRow("a", .claude, since: now - 10 * Self.minute, snoozed: true)
-        let open = waitingRow("b", .codex, since: now - Self.minute)
-        #expect(StatusStore.oldestWaitRow(in: [snoozedOldest, open])?.rowKey == "b")
-        #expect(StatusStore.firstWaitingRow(in: [snoozedOldest, open])?.rowKey == "b")
-        #expect(StatusStore.oldestWaitRow(in: [snoozedOldest])?.rowKey == "a", "a snoozed wait is still better than none")
+    @Test func theJumpGoesToTheOldestWait() {
+        let oldest = waitingRow("a", .claude, since: now - 10 * Self.minute)
+        let newer = waitingRow("b", .codex, since: now - Self.minute)
+        #expect(StatusStore.oldestWaitRow(in: [newer, oldest])?.rowKey == "a")
+        #expect(StatusStore.firstWaitingRow(in: [newer, oldest])?.rowKey == "b")
+        #expect(StatusStore.oldestWaitRow(in: []) == nil)
     }
 
     @Test func aBannerClickStaysInsideItsAgentAndNeedsAUniquePrefix() {
@@ -392,13 +382,13 @@ struct ClarityFixTests {
         let file = home.url.appendingPathComponent("attention.tsv")
         try FileManager.default.createDirectory(at: home.url, withIntermediateDirectories: true)
         var bytes = Data(AttentionIO.header.utf8)
-        bytes.append(Data("claude\tpermission\t\(now)\tBash: npm test\ts1\t/p\n".utf8))
+        bytes.append(Data("claude\tpermission\t\(now)\tBash: npm test\ts1\t/p\t\t\n".utf8))
         bytes.append(Data([0x63, 0x6f, 0xff, 0x0a]))
         try bytes.write(to: file)
         AttentionIO.pathOverride = file
         defer { AttentionIO.pathOverride = nil }
 
-        AttentionIO.appendRawLine("codex\tdone\t\(now)\t\ts2\t")
+        AttentionIO.appendRawLine("codex\tdone\t\(now)\t\ts2\t\t\t")
         let written = try Data(contentsOf: file)
         let text = String(decoding: written, as: UTF8.self)
         #expect(text.contains("claude\tpermission"), "the rewrite used to start from an empty decode")

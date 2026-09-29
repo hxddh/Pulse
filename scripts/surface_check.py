@@ -28,12 +28,8 @@ VIEWS = [
     ("SessionDetailView.swift", "TimelineStripView"),
     ("SessionDetailView.swift", "LampShapeView"),
     # 19.0: the cards under a row.
-    ("SessionCards.swift", "RespondCardFace"),
     ("SessionCards.swift", "PlanCompactFace"),
-    ("SessionCards.swift", "BriefCardFace"),
     ("SessionCards.swift", "FactLinesFace"),
-    ("SessionCards.swift", "RowAsksFace"),
-    ("SessionCards.swift", "TrayExpandedFace"),
     # 19.0: the self-check.
     ("DoctorViews.swift", "DoctorReportView"),
 ]

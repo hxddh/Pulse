@@ -27,32 +27,35 @@
 PulseBar/Sources/
   PulseCore/     内核库。只 import Foundation（+ CryptoKit / CoreGraphics），严格并发 + warnings-as-errors。
                  AgentCatalog（每 Agent 的全部非解析事实）· PrivateFile / SafeRead
-                 · ProcessIO · ContentSanitizer · TranscriptReader · SessionDigest · AttentionProtocol
+                 · ProcessIO · ContentSanitizer · TranscriptReader · AttentionProtocol
                  · ProbeSchedule · ProbeStats · DebugLog · Guarded
   PulseHarvest/  采集库，依赖 Core。NativeActivityHarvest（扫描与遍历）· 厂商方言
                  （TranscriptDialect + HarvestCodex / Pi / Claude / SmallDialects）· HarvestDatabases
                  · ActivityHarvest · ProcessProbe · HarvestSupervisor · ScanEngine（ScanMemory）
                  · AttentionIO · ActivitySpool · TitleHeuristics · HarvestVocabulary
-  PulseRespond/  Respond 库，依赖 Core。RespondContract · RespondSpool（22.0 起仅本机）
   PulseBar/      可执行。builder、StatusStore、RowNarrator、WaitingDelivery、视图、hook 入口。
                  15.0 起表面是纯值：视图只渲染值、发 intent，由 StatusStore 执行；
                  SurfaceFixtures 的每个夹具在 CI 里经 SurfaceCapture 渲染成 PNG
                  （scripts/qa_surfaces.sh）。17.0：托盘行的脸同样是纯值（TrayRowModel →
                  TrayRowFace）；AttentionHistory（PulseHarvest）把每次扫描读到的 hook 事件
                  留成有界历史，供「为什么」与导出夹具。
-                 PulseCoreExports.swift 以 @_exported 引入三个库。
+                 PulseCoreExports.swift 以 @_exported 引入两个库。
 ```
 
 > **22.0 删除了 `PulseManaged`**（受管会话：ManagedRuntime、Session / Runner / Fleet、
 > Worktree、权限 MCP 服务、AcceptanceRunner、WorkspaceEffect、EvidenceBook、Mission）、
 > Core 里的 `AcceptanceEvidence` 与 `ProcessIO.runCheck`，以及 App 里的指挥台、Mission /
 > 工作副本验收卡、跨机器 Respond、舰队快照（`fleet.d/`）与远端收件箱（`attention.d/`）。
-> 一个状态灯应该看着编排器，而不是成为编排器。旧目录由 `LegacyCleanup` 在首次启动时删除一次。
+> 一个状态灯应该看着编排器，而不是成为编排器。
+>
+> **23.0 继续做减法**：更新器只剩「检查 GitHub Releases、打开发布页」；删除了设置迁移与
+> `LegacyCleanup`、「稍后」、离开期间的回看与等待历史、会话摘要（`SessionDigest`）与
+> `SessionSource` 接缝。
 
-四个 target 全部在完整并发检查下零警告并开启 warnings-as-errors（12.4）。
+三个 target 全部在完整并发检查下零警告并开启 warnings-as-errors（12.4）。
 依赖只能向下：没有一个库引用得到 `StatusStore`、AppKit 或任何视图，这由编译器保证，
 不靠 review。库成员是 `package` 可见（Core 是 `public`）。每个 Agent 的全部非解析事实
-（进程规则、采集根目录、别名、Waiting / 采集等级、单字母标记、Respond 可达性）只在
+（进程规则、采集根目录、别名、Waiting / 采集等级、单字母标记）只在
 `AgentCatalog.swift` 的一条 `AgentSpec` 里；`scripts/agent_catalog_check.py` 扫描所有 target，
 防止按 Agent 分支的表在别处重新长出来。
 
@@ -87,17 +90,9 @@ Antigravity。Focus 精度：Warp / 宿主仅 App、有绝对 cwd 时宿主工�
 JSON……每个 Agent 一个 bounded adapter，直接生成 Swift `Row` 和 `CollectorHealth`。
 不稳定的 SQLite/私有 schema 只标为 cache，不猜成结构化会话。
 
-1.1 起采集器多了一份**持久的会话摘要**（`SessionDigest.swift` →
-`~/Library/Application Support/Pulse/session-digests.json`，`0600`）。窗口读取只看得到
-会话记录的头尾；摘要记住读到的偏移，只折入新增字节，于是**中间那段被读一次**而不是永远跳过。
-存的只有计数与厂商工具名，不存正文、工具入参或会话记录里的路径；有界、14 天清理。
-文件变短 / 文件标识变 / 头部指纹变（含同长度就地重写）→ 从头重来。
-1.1 时摘要只用于把超窗口会话的 `records` 从未知变成精确值。**2.1 解耦了这道闸门**：
-`records` 仍然只在 `caughtUp` 时才采用（数窗口换行是下限，数量不估算），而工具直方图、
-错误数、最近工具序列、整场 token、会话起点与增长速率这些**定性事实照常流出**，
-由 `digestProgressPercent` 自证完整度 —— 一个正在追平的长会话恰恰最需要信息，
-把它们一并挡住是浪费。界面因此有义务标注「仍在追平 · 已读 N%」。
-窗口读取仍在，未被取代。
+窗口读取只看得到会话记录的头尾。23.0 删除了 1.1 起那份持久的会话摘要
+（`session-digests.json`）：它读中间那段来给出精确记录数、工具序列、整场 token 与增长速率，
+却没有一个画面还在用这些数。现在超出窗口的会话记录数报未知（数量不估算），其余事实只来自窗口。
 
 0.99 删除了旧版 `src/activity_scan.py`：它自 0.48 起就不是运行时通路，却仍占 11,470 行、
 一道门禁和一条逐字节同步检查，并让文档误以为存在一道并不存在的防线。现在只有一个采集器。
@@ -145,8 +140,8 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 ### AttentionReader（事件驱动）
 
 `~/Library/Application Support/Pulse/attention.tsv`，由原生 `pulse-hook` /
-`PulseBar --hook`（`PulseHookReceiver`）写入；可选 legacy `pulse_hook.py` 仍认
-同一 Attention Protocol v1。契约见
+`PulseBar --hook`（`PulseHookReceiver`）写入，或由桥接作者按 Attention Protocol v3
+（每行八列）直接追加。契约见
 [`attention-protocol.md`](attention-protocol.md)；产品政策见
 [`attention-bridge.md`](attention-bridge.md)。
 
@@ -187,11 +182,10 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 
 ## Attention ledger 与 StatusStore（外壳）
 
-AttentionReader 仍读取 agent-owned 的 attention.tsv，但 Waiting 边沿、通知时间、稍后截止
-时间、排队、确认、稳定事件 ID 和已解决历史由 Pulse-owned 的 attention-ledger.json 原子写入
+AttentionReader 仍读取 agent-owned 的 attention.tsv，但 Waiting 边沿、通知时间、
+排队、确认、稳定事件 ID 和已解决历史由 Pulse-owned 的 attention-ledger.json 原子写入
 Library/Application Support/Pulse。账本只保留 row key、Agent、会话短标识、项目尾部和
-时间戳，不保存提示内容或 tool 参数；首次可信扫描播种 baseline，崩溃/重启不会重复通知，
-清空历史只删除已解决事件。
+时间戳，不保存提示内容或 tool 参数；首次扫描播种 baseline，崩溃/重启不会重复通知。
 
 22.0 起每个等待事件还记下**通知去向**：`delivery`（`posted` / `summary`，或
 `WaitingDelivery.SkipReason` 的原始值 —— `inFront`、`muted`、`acknowledged`、`held`、
@@ -223,8 +217,8 @@ blocked / turn / recent，依据为 hook / pending / vendor / harvest / process�
   开关、授权、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）；每个决定都作为去向写进账本。
   安静时段与声音 22.0 起交给 macOS 的专注模式与通知设置。
 - **设置**。`PulseSettings` 负责解析和序列化，store 只做桥接和落盘。
-- **权限边界**。0.48 的 `appDataPolicyVersion` 不继承旧版全局授权；旧文件先回到关闭，用户在逐 Agent 选择后才重新启用，避免升级后的 ad-hoc 身份触发后台 TCC 弹窗。
-- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息、忽略 / 稍后 / 静音、Respond 拒绝与同意。
+- **权限边界**。受保护的应用数据默认关闭，用户逐 Agent（或全部）打开；23.0 起不再迁移旧版授权。
+- **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息、忽略 / 静音。
 
 ## 视图
 
@@ -255,11 +249,8 @@ blocked / turn / recent，依据为 hook / pending / vendor / harvest / process�
 未公证）、`stable`（公证成功，`PulseNotarized=true`）。无 Apple Developer ID 时 GitHub
 仍可将当前 semver 标为 **Latest**，但 Info.plist **不得**写 `stable`，About 保持
 preview/signed；只有 notarized 才能自称 Gatekeeper-ready。
-`InstallTruth` 发现用户安装副本的边界：Launch Services 已注册路径 + `/Applications`、
-`~/Applications`、Desktop、Downloads **一层** `*.app`，以及 Application Support 下的
-rollback；不递归扫嵌套目录。未注册且不在上述根的孤儿可能漏检。
-更新器在下载校验后先挂载预检，再由同一可执行文件的 helper 等待父进程退出，事务式移动旧 App 到
-`~/Library/Application Support/Pulse/rollback`；`current.json` 让下一次启动可以恢复未完成替换。
+更新检查只问 GitHub Releases 有没有更新的版本；有就显示「vX 可用」和一个打开发布页的按钮。
+Pulse 不下载、不校验、不替换自己（23.0 删除了下载、DMG 校验、原地安装与回滚）。
 
 `mismatch` 针对的是菜单栏应用的高频陷阱：装了新版，旧的还在跑。
 

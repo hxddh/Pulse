@@ -41,10 +41,6 @@ struct SessionDetailView: View {
                     if let strip = store.timelineStrip(for: row) {
                         TimelineStripView(model: strip, lang: store.lang)
                     }
-                    if let respond = cards.respond {
-                        RespondCardFace(model: respond) { store.performRowCard($0, row: row) }
-                            .pulseCard()
-                    }
                     if row.waiting {
                         actions(face)
                     }
@@ -116,7 +112,7 @@ struct SessionDetailView: View {
             }
             Spacer(minLength: PulseTheme.Space.s)
             if let chip = face.chip, face.lamp == .waiting {
-                PulseChip(label: chip.label, tone: .waiting, muted: chip.kind == .snoozed)
+                PulseChip(label: chip.label, tone: .waiting)
             }
             Text(face.accessoryTime)
                 .font(PulseTheme.Font.caption)
@@ -134,9 +130,6 @@ struct SessionDetailView: View {
                     .keyboardShortcut(.return, modifiers: [])
             }
             Button(store.tr(.dismissWait)) { store.dismissWaiting(row) }
-            Button(row.isSnoozed ? store.tr(.snoozed) : store.tr(.snooze)) {
-                row.isSnoozed ? store.unsnooze(row) : store.snooze(row)
-            }
             Spacer(minLength: 0)
         }
         .buttonStyle(.bordered)

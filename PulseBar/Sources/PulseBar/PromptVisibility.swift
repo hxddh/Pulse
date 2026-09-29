@@ -4,13 +4,9 @@ import Foundation
 
 /// Is the window the vendor is about to prompt in actually in front of the user?
 ///
-/// Respond's original gate asked a cruder question — *is anyone touching this
-/// Mac* — and treated "yes" as "the vendor's prompt is already in front of
-/// them, Pulse has nothing better to offer". That reasoning is exactly
-/// inverted in the product's own headline scene: someone in a meeting, or
-/// writing a document, is very much touching this Mac while six terminal
-/// windows sit behind a full-screen app. The prompt is *not* in front of them,
-/// and hunting for the right window is the cost Pulse exists to remove.
+/// The hook receiver asks this once per blocked event and records the answer
+/// in attention column 8 (`front`): a prompt already on screen needs no
+/// banner.
 ///
 /// The precise question is answerable without new permissions: the hook is a
 /// child of the agent, which is a child of the terminal or IDE, so the
@@ -79,8 +75,7 @@ enum PromptVisibility {
     /// The frontmost application's pid, or nil when this process cannot ask.
     ///
     /// A hook invocation is a short-lived child of the agent, not a GUI app.
-    /// It usually can ask; when it cannot, nil is the honest answer and the
-    /// caller falls back to the older, coarser rule.
+    /// It usually can ask; when it cannot, nil is the honest answer.
     static var frontmostPID: Int32? {
         NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
@@ -88,9 +83,7 @@ enum PromptVisibility {
     /// Will the vendor's prompt appear in front of whoever is at this Mac?
     ///
     /// `nil` means it could not be established — and **not knowing is never
-    /// treated as proof of anything**: `RespondHold` falls back to letting the
-    /// request straight through, because freezing an agent in front of a
-    /// present user is a cost paid for nothing.
+    /// treated as proof of anything**: the `front` column is left unknown.
     static func promptIsFrontmost(
         selfPID: Int32 = getpid(),
         frontmost: Int32? = frontmostPID,

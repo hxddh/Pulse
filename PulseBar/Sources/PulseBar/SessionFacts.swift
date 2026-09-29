@@ -26,19 +26,3 @@ struct SessionLiveAction: Hashable {
     var target: String = ""
     var atMs: Int64 = 0
 }
-
-/// 1.2/2.1 · facts only a full read of the transcript can produce.
-/// Carried, never recomputed — the read window could only contradict them.
-struct SessionDigestFacts: Hashable {
-    var loopTool: String = ""
-    var loopCount: Int = 0
-    var sessionErrors: Int = 0
-    var toolSummary: String = ""
-    var tokensIn: Int = 0
-    var tokensOut: Int = 0
-    var recentTools: [String] = []
-    var progressPercent: Int = 0
-    var caughtUp: Bool = false
-    var bytesPerMinute: Int = 0
-    var startedMs: Int64 = 0
-}

@@ -6,10 +6,10 @@ import Foundation
 /// orange, and never which session or which evidence decided the colour. This
 /// value names the rule that fired, up to three sessions that drove it (in
 /// the lamp's own order), each with its why-line, and what was left out
-/// (snoozed waits, sessions too old to show). Pure: rows in, sentences out.
+/// (sessions too old to show). Pure: rows in, sentences out.
 struct LampExplanation: Equatable, Sendable {
     enum Rule: String, Equatable, Sendable {
-        case blocked, allSnoozed, stalled, thinRunning, running, yourTurn, recent, idle, cantRefresh
+        case blocked, stalled, thinRunning, running, yourTurn, recent, idle, cantRefresh
     }
 
     struct Driver: Equatable, Sendable {
@@ -22,7 +22,6 @@ struct LampExplanation: Equatable, Sendable {
 
     var rule: Rule
     var drivers: [Driver]
-    var snoozed: Int
     var staleHidden: Int
 
     static let maxDrivers = 3
@@ -33,7 +32,6 @@ struct LampExplanation: Equatable, Sendable {
         staleHidden: Int,
         narrator: RowNarrator
     ) -> LampExplanation {
-        let snoozed = rows.filter(\.isSnoozed).count
         func drivers(_ subset: [AgentRow]) -> [Driver] {
             subset.prefix(maxDrivers).map { row in
                 Driver(
@@ -44,7 +42,6 @@ struct LampExplanation: Equatable, Sendable {
                 )
             }
         }
-        let blocked = rows.filter { $0.waiting && !$0.isSnoozed }
         let rule: Rule
         let chosen: [AgentRow]
         switch glance {
@@ -52,8 +49,8 @@ struct LampExplanation: Equatable, Sendable {
             rule = .cantRefresh
             chosen = []
         case .waiting:
-            rule = blocked.isEmpty ? .allSnoozed : .blocked
-            chosen = blocked.isEmpty ? rows.filter(\.isSnoozed) : blocked
+            rule = .blocked
+            chosen = rows.filter(\.waiting)
         case .stalled:
             let stalled = rows.filter(\.isStalled)
             if stalled.isEmpty {
@@ -82,7 +79,6 @@ struct LampExplanation: Equatable, Sendable {
         return LampExplanation(
             rule: rule,
             drivers: drivers(chosen),
-            snoozed: snoozed,
             staleHidden: staleHidden
         )
     }
@@ -94,7 +90,6 @@ struct LampExplanation: Equatable, Sendable {
         var out: [String] = []
         switch rule {
         case .blocked: out.append(t(.lampRuleBlocked))
-        case .allSnoozed: out.append(t(.lampRuleAllSnoozed))
         case .stalled: out.append(t(.lampRuleStalled))
         case .thinRunning: out.append(t(.lampRuleThin))
         case .running: out.append(t(.lampRuleRunning))
@@ -107,10 +102,7 @@ struct LampExplanation: Equatable, Sendable {
             let place = driver.project.isEmpty ? driver.agent.displayName : "\(driver.agent.displayName) · \(driver.project)"
             out.append("\(place) — \(driver.reason)")
         }
-        var left: [String] = []
-        if snoozed > 0, rule != .allSnoozed { left.append(String(format: t(.lampLeftSnoozed), snoozed)) }
-        if staleHidden > 0 { left.append(String(format: t(.lampLeftStale), staleHidden)) }
-        if !left.isEmpty { out.append(left.joined(separator: " · ")) }
+        if staleHidden > 0 { out.append(String(format: t(.lampLeftStale), staleHidden)) }
         return out
     }
 }

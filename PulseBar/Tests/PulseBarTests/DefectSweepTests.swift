@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
 ///
@@ -73,7 +72,7 @@ final class DefectSweepTests: XCTestCase {
     func testTheErrorCountSurvivesAnActiveChange() {
         let s = store()
         var row = liveRow()
-        row.sessionErrors = 7
+        row.errors = 7
         row.activityChange = .toolChanged
         row.activityChangedMs = row.harvestMs
         // The hole this closes: the observation line stood aside for any
@@ -87,7 +86,7 @@ final class DefectSweepTests: XCTestCase {
     func testAnErrorChangeIsNotAlsoStatedAsATotal() {
         let s = store()
         var row = liveRow()
-        row.sessionErrors = 7
+        row.errors = 7
         row.activityChange = .errors(2)
         row.activityChangedMs = row.harvestMs
         // The delta is the news; repeating the total is the same fact twice.
@@ -98,7 +97,7 @@ final class DefectSweepTests: XCTestCase {
     func testAQuietRowStillStatesItsErrors() {
         let s = store()
         var row = liveRow()
-        row.sessionErrors = 7
+        row.errors = 7
         XCTAssertTrue(s.rowObservationLine(row).contains("7"))
     }
 
@@ -106,7 +105,7 @@ final class DefectSweepTests: XCTestCase {
     func testOnlyOneLineOwnsTheFault() {
         let s = store()
         var row = liveRow()
-        row.sessionErrors = 7
+        row.errors = 7
         row.activityChange = .toolChanged
         row.activityChangedMs = row.harvestMs
         XCTAssertFalse(
@@ -122,22 +121,10 @@ final class DefectSweepTests: XCTestCase {
         row.liveProcess = true
         row.observationSource = .process
         row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.sessionErrors = 3
+        row.errors = 3
         XCTAssertTrue(row.isProcessOnly, "no title and no live tool")
         XCTAssertEqual(s.rowObservationLine(row), "", "this row has no observation line")
         XCTAssertTrue(s.rowSignalLine(row).contains("3"), s.rowSignalLine(row))
-    }
-
-    @MainActor
-    func testTheBetterScopedCountWins() {
-        let s = store()
-        var row = liveRow()
-        row.errors = 2
-        row.sessionErrors = 9
-        // Same fact over different spans: emit the wider one, never both.
-        let fault = s.faultFact(row)
-        XCTAssertTrue(fault.contains("9"), fault)
-        XCTAssertFalse(fault.contains("2"), fault)
     }
 
     @MainActor
@@ -262,7 +249,7 @@ final class DefectSweepTests: XCTestCase {
         // These only ever appear when something went wrong, which is exactly
         // when an untranslated or empty string would be found by a user
         // rather than by us.
-        for key in [L10n.Key.focusFailed, .respondWriteFailed, .respondRefused, .respondRequestGone] {
+        for key in [L10n.Key.focusFailed] {
             XCTAssertFalse(L10n.t(key, .en).isEmpty, "\(key)")
             XCTAssertFalse(L10n.t(key, .zh).isEmpty, "\(key)")
             XCTAssertNotEqual(L10n.t(key, .en), L10n.t(key, .zh), "\(key)")

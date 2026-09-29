@@ -18,7 +18,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${PULSE_APP:-/Applications/Pulse.app/Contents/MacOS/PulseBar}"
 OUT="${PULSE_QA_OUT:-$ROOT/zig-out/qa-cursor-appdata-ab}"
 SETTINGS="${HOME}/Library/Application Support/Pulse/settings.txt"
-POLICY_VERSION=2
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this script must run on the Mac that hosts Pulse" >&2
@@ -47,24 +46,14 @@ ensure_settings() {
   mkdir -p "$(dirname "$SETTINGS")"
   if [[ ! -f "$SETTINGS" ]]; then
     cat >"$SETTINGS" <<EOF
-auto=1
 notify=0
 notifyWaiting=1
-quiet=0
-quietStartMin=1320
-quietEndMin=480
 lang=auto
 login=0
 updates=1
 appData=0
 appDataAgents=
-appDataPolicyVersion=${POLICY_VERSION}
-hotkey=cmd_shift_p
-hotkeyEnabled=0
-grouping=project
-waitSound=0
-stallMin=20
-snoozeMin=10
+hotkey=off
 mute=
 EOF
   fi
@@ -73,16 +62,14 @@ EOF
 set_cursor_appdata() {
   local enabled="$1"
   ensure_settings
-  python3 - "$SETTINGS" "$enabled" "$POLICY_VERSION" <<'PY'
+  python3 - "$SETTINGS" "$enabled" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 enabled = sys.argv[2] == "1"
-policy = sys.argv[3]
 text = path.read_text(encoding="utf-8")
 lines = []
 seen_agents = False
 seen_all = False
-seen_policy = False
 for raw in text.splitlines():
     if raw.startswith("appDataAgents="):
         lines.append("appDataAgents=cursor" if enabled else "appDataAgents=")
@@ -91,17 +78,12 @@ for raw in text.splitlines():
         # Keep global off — scoped Cursor grant is the A/B under test.
         lines.append("appData=0")
         seen_all = True
-    elif raw.startswith("appDataPolicyVersion="):
-        lines.append(f"appDataPolicyVersion={policy}")
-        seen_policy = True
     else:
         lines.append(raw)
 if not seen_agents:
     lines.append("appDataAgents=cursor" if enabled else "appDataAgents=")
 if not seen_all:
     lines.append("appData=0")
-if not seen_policy:
-    lines.append(f"appDataPolicyVersion={policy}")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print(f"settings: Cursor App Data {'ON' if enabled else 'OFF'}")
 PY

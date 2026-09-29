@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 10.0 (scene BS) — the collapsed row's ONE composed meta line: three
 /// slots by value (now > outcome > way), project as filler, waiting rows
@@ -32,7 +31,7 @@ final class RowMetaLineTests: XCTestCase {
     func testAWaitingRowYieldsToItsQuestionLine() {
         var row = liveRow()
         row.waiting = true
-        row.sessionErrors = 3
+        row.errors = 3
         XCTAssertEqual(store().rowMetaLine(row), "")
     }
 
@@ -43,7 +42,7 @@ final class RowMetaLineTests: XCTestCase {
         row.liveTool = "Edit"
         row.liveTarget = "/Users/me/Pulse/Sources/Main.swift"
         row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.sessionErrors = 2
+        row.errors = 2
         let line = store().rowMetaLine(row)
         let segments = line.components(separatedBy: " · ")
         XCTAssertTrue(line.contains("Edit"), line)
@@ -53,23 +52,12 @@ final class RowMetaLineTests: XCTestCase {
     }
 
     @MainActor
-    func testLoopingOutranksTheFreshAction() {
-        var row = liveRow()
-        row.loopTool = "Bash"
-        row.loopCount = 6
-        row.liveTool = "Edit"
-        row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let line = store().rowMetaLine(row)
-        XCTAssertTrue(line.contains("Bash"), "a loop is the more urgent story: \(line)")
-    }
-
-    @MainActor
     func testThreeSlotsAtMost() {
         var row = liveRow()
         row.liveTool = "Edit"
         row.tool = "Edit"
         row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.sessionErrors = 1
+        row.errors = 1
         row.tokensIn = 12_000
         row.tokensOut = 3_000
         row.model = "claude-opus"

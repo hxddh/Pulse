@@ -93,23 +93,6 @@ def main() -> int:
     if re.search(r"lsof[\s\S]{0,400}?status == 0", probe):
         print("lsof output must not be gated on a zero exit status")
         return 1
-    # 1.1: an agent may only claim `respondReach == .hookSite` when Pulse is
-    # actually registered at that agent's permission decision point. Reach is a
-    # statement about an installed hook, not a capability — and a capability
-    # claim nobody installed is exactly the shape of bug this project keeps
-    # having to undo.
-    respond = swift_file("RespondContract.swift").read_text(encoding="utf-8")
-    installer = swift_file("HooksInstaller.swift").read_text(encoding="utf-8")
-    reaching = [agent.raw for agent in ROSTER if agent.respond_reach == "hookSite"]
-    for name in reaching:
-        raw = name
-        if '"PermissionRequest"' not in installer or f'agent: "{raw}", kind: "permission"' not in installer:
-            print(
-                f"{raw} claims respondReach .hookSite but no PermissionRequest hook installs it"
-            )
-            return 1
-    print(f"respond reach: {len(reaching)} at the decision point ({','.join(sorted(reaching)) or '-'})")
-
     terminal_focus_source = (
         ROOT / "PulseBar/Sources/PulseBar/TerminalFocus.swift"
     ).read_text(encoding="utf-8")
@@ -134,7 +117,6 @@ def main() -> int:
         return 1
     for label, path in {
         "TerminalFocus": ROOT / "PulseBar/Sources/PulseBar/TerminalFocus.swift",
-        "InstallTruth": ROOT / "PulseBar/Sources/PulseBar/InstallTruth.swift",
         "SingleInstanceGuard": ROOT / "PulseBar/Sources/PulseBar/SingleInstanceGuard.swift",
     }.items():
         source = path.read_text(encoding="utf-8")

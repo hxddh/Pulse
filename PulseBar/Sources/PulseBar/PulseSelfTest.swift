@@ -16,8 +16,6 @@ import Foundation
 enum PulseSelfTest {
     /// Resources the app cannot do its job without.
     private static let required: [(name: String, ext: String, dir: String?)] = [
-        ("pulse_hook", "py", nil),
-        ("install_hooks", "py", nil),
         ("pulse-mark", "png", "Brand"),
         ("claude", "png", "AgentIcons"),
     ]

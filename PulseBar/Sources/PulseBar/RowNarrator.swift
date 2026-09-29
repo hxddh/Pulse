@@ -272,15 +272,6 @@ struct RowNarrator {
     /// 0.92: story owns phase / tool gist / Changed; Waiting yields kind·duration
     /// to the chip; Limited opaque story carries age · strongest · nextStep once.
     func rowStoryLine(_ row: AgentRow) -> String {
-        // 1.2: an agent calling the same tool back to back is busy without
-        // being any closer to done. The lamp cannot say that — it is running
-        // and its clock is moving — and a window could never see it, because
-        // the repetition is spread through the part of the transcript that was
-        // never read. It outranks the ordinary story: "what it is doing" is
-        // less useful than "it has been doing this five times".
-        if row.isLooping, !row.waiting {
-            return String(format: tr(.loopingTool), row.loopTool, row.loopCount)
-        }
         if row.waiting {
             // Chip owns kind · duration; wait detail owns the message (0.92).
             // Story only surfaces the signal source when there is no message.
@@ -640,20 +631,9 @@ struct RowNarrator {
         return ""
     }
 
-    /// The fault fact, at the best scope available, or "" when there is none.
-    ///
-    /// `sessionErrors` counts the whole session and `errors` counts the read
-    /// window: the same fact over different spans, so only one is ever
-    /// emitted. The choice used to be made independently at each call site,
-    /// and the signal line's urgent companion only ever knew about `errors` —
-    /// so a session carrying seven errors, none of them inside the current
-    /// window, showed no fault at all for as long as anything else was
-    /// moving. Faults are the top tier precisely because they must not be
-    /// crowded out by motion.
+    /// The fault fact, or "" when there is none. Faults are the top tier
+    /// precisely because they must not be crowded out by motion.
     func faultFact(_ row: AgentRow) -> String {
-        if row.sessionErrors > 0 {
-            return String(format: tr(.sessionErrors), row.sessionErrors)
-        }
         guard row.errors > 0 else { return "" }
         return row.errors == 1
             ? tr(.errorFactOne)
@@ -765,9 +745,7 @@ struct RowNarrator {
     /// The value-ordered work slots. Internal so the tests can pin the
     /// guarantee fact-by-fact.
     func workSlots(_ row: AgentRow) -> [String] {
-        let session = evidenceSessionTokens(row)
-        let latest = tokenPair(input: row.tokensIn, output: row.tokensOut)
-        let tokens = session.isEmpty ? latest : session
+        let tokens = tokenPair(input: row.tokensIn, output: row.tokensOut)
         let skill = readableSkill(row.skill)
         let model = readableModel(row.model)
         let mode = readableMode(row.mode)
@@ -833,13 +811,10 @@ struct RowNarrator {
     }
 
     /// The meta line's now-slot — a deliberate mirror of the story line's
-    /// top tier (looping > seconds-fresh action > current plan step > phase).
+    /// top tier (seconds-fresh action > current plan step > phase).
     /// The story remains the verbose narrative on the expanded card; this is
     /// its one-slot summary, under the same honesty gates.
     private func metaNowFact(_ row: AgentRow) -> String? {
-        if row.isLooping {
-            return String(format: tr(.loopingTool), row.loopTool, row.loopCount)
-        }
         if row.liveActionFresh, !row.liveTool.isEmpty {
             var action = row.liveTool
             let target = row.liveTarget.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -865,27 +840,23 @@ struct RowNarrator {
     }
 
     /// Whether the collapsed meta line already renders the current plan step.
-    /// The 11.0 digest consults the same ownership decision so the step can
+    /// The 11.0 digest consulted the same ownership decision so the step can
     /// fill information hidden by a higher-value Now fact without appearing
     /// twice when it already leads the row.
     func rowMetaOwnsPlanStep(_ row: AgentRow) -> Bool {
         guard row.selfReportFresh,
               !row.planStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
-        if row.isLooping { return false }
         if row.liveActionFresh, !row.liveTool.isEmpty { return false }
         return true
     }
 
     /// 8.0 — the work-style detail for the expanded card: how this session
     /// works, every collected fact labelled. The raw skill name appears here
-    /// (the collapsed line keeps the recognisable-workflow mapping); the tool
-    /// timeline and session tokens are the digest's own, recomputing nothing.
+    /// (the collapsed line keeps the recognisable-workflow mapping).
     func workDetailFacts(_ row: AgentRow) -> [String] {
         guard !row.isProcessOnly else { return [] }
         var facts: [String] = []
-        let timeline = evidenceTimeline(row)
-        if !timeline.isEmpty { facts.append(timeline) }
         let skill = row.skill.trimmingCharacters(in: .whitespacesAndNewlines)
         if !skill.isEmpty, skill.lowercased() != "pending" {
             facts.append(String(format: tr(.skillFact), skill))
@@ -956,15 +927,6 @@ struct RowNarrator {
         if row.liveProcess, !row.isRecentOnly, row.isComputing {
             motion.append(String(format: tr(.cpuFact), Int(row.cpuPercent.rounded())))
         }
-        // Growth outranks token size: it is the only fact here that separates
-        // "working" from "sitting there". Live and not stalled only — a rate
-        // on a finished session is history dressed as motion.
-        if row.liveProcess, !row.isStalled, !row.isRecentOnly, row.bytesPerMinute > 0 {
-            let size = AgentRow.compactBytes(row.bytesPerMinute)
-            if !size.isEmpty {
-                motion.append(String(format: tr(.evidenceRateFact), size))
-            }
-        }
         // 8.1: tokens, context, model, mode and skill left this selection —
         // the work line renders them unconditionally. Files-touched stays:
         // it is reach into the working copy, an outcome-class fact.
@@ -980,12 +942,6 @@ struct RowNarrator {
         let hasProgressClass = !faults.isEmpty || !advance.isEmpty
         if !hasProgressClass, !workRich, row.records > 0 {
             volume.append(String(row.records) + tr(.recordsSuffix))
-        }
-        // The read-progress caveat is a qualifier, not a fact: it is only
-        // information when there is a count on this line for it to qualify.
-        if !faults.isEmpty || !advance.isEmpty || !volume.isEmpty {
-            let caveat = evidenceReadCompact(row)
-            if !caveat.isEmpty { volume.append(caveat) }
         }
 
         return ObservationTiers(
@@ -1253,19 +1209,6 @@ struct RowNarrator {
 
     // MARK: - Evidence sentences (moved from StatusStoreEvidence.swift)
 
-    // MARK: - 2.1 Evidence · the rest of what the digest already knew
-    //
-    // EXPERIENCE puts *complete evidence* in Details, and caps a tray row at
-    // four facts. 1.1 computed a session-wide picture and 1.2 spent three of
-    // those slots' worth of it; the remainder belongs here, where a label and
-    // a sentence can go next to each number. Everything below formats a fact
-    // the digest already produced — none of it recomputes anything.
-
-    /// `Read → Edit → Bash → Edit` — what it has been doing all along.
-    func evidenceTimeline(_ row: AgentRow) -> String {
-        AgentRow.toolTimeline(row.recentTools)
-    }
-
     /// The token pair, carrying only the halves that were actually reported.
     ///
     /// `compactToken` returns "" for 0, and every call site used to turn that
@@ -1285,21 +1228,6 @@ struct RowNarrator {
         return ""
     }
 
-    /// Whole-session token totals, kept visibly apart from the latest-message
-    /// pair the facts grid shows under Resources. Two token numbers that
-    /// disagree are a bug report waiting to happen unless each says its scope.
-    func evidenceSessionTokens(_ row: AgentRow) -> String {
-        tokenPair(input: row.sessionTokensIn, output: row.sessionTokensOut)
-    }
-
-    /// `12 KB/min`. Empty when unknown — never a fabricated zero, which would
-    /// read as "parked" rather than "not measured".
-    func evidenceRate(_ row: AgentRow) -> String {
-        let size = AgentRow.compactBytes(row.bytesPerMinute)
-        guard !size.isEmpty else { return "" }
-        return String(format: tr(.evidenceRatePerMinute), size)
-    }
-
     /// Real CPU share, or an em dash. **Never renders unknown as 0%**: the
     /// difference between "measured, and it is idle" and "no second sample
     /// yet" is the whole reason the probe reports -1.
@@ -1317,65 +1245,6 @@ struct RowNarrator {
     func evidenceMemory(_ row: AgentRow) -> String? {
         let size = AgentRow.compactBytes(row.rssBytes)
         return size.isEmpty ? nil : size
-    }
-
-    /// The sentence under the rate: what it is for, or that it is missing.
-    func evidenceRateNote(_ row: AgentRow) -> String {
-        row.bytesPerMinute > 0 ? tr(.evidenceRateHint) : tr(.evidenceRateUnknown)
-    }
-
-    /// How long this session has really been going. Empty when unknown, so the
-    /// row disappears rather than showing an age nothing measured.
-    func evidenceSessionLength(
-        _ row: AgentRow,
-        nowMs overrideMs: Int64? = nil
-    ) -> String {
-        let nowMs = overrideMs ?? self.nowMs
-        let seconds = row.sessionDurationSeconds(nowMs: nowMs)
-        guard seconds >= 60 else { return "" }
-        return durationLabel(seconds: seconds)
-    }
-
-    /// "Whole transcript read" vs "Still catching up · 78% read".
-    ///
-    /// This version lets qualitative digest facts reach the row before the
-    /// read is complete, so the surface owes the reader the other half of that
-    /// sentence: the counts beside it are not yet totals. Empty when there is
-    /// no digest at all — a cache-only row has no transcript to be behind on.
-    func evidenceReadState(_ row: AgentRow) -> String {
-        guard row.hasSessionDigest else { return "" }
-        if row.digestCaughtUp { return tr(.evidenceReadCaughtUp) }
-        return String(
-            format: tr(.evidenceReadCatchingUp),
-            max(0, min(100, row.digestProgressPercent))
-        )
-    }
-
-    /// True while the counts on the evidence card are still partial.
-    func evidenceCountsArePartial(_ row: AgentRow) -> Bool {
-        row.hasSessionDigest && !row.digestCaughtUp
-    }
-
-    /// `78% read` — the same caveat sized for a tray row.
-    ///
-    /// The Details wording carries its own `·`, which on a row would split into
-    /// what looks like two separate facts. A separator inside a fact is a fact
-    /// that lies about how many facts there are.
-    func evidenceReadCompact(_ row: AgentRow) -> String {
-        guard evidenceCountsArePartial(row) else { return "" }
-        return String(
-            format: tr(.evidenceReadCompact),
-            max(0, min(100, row.digestProgressPercent))
-        )
-    }
-
-    /// Anything worth drawing a card for.
-    func hasSessionEvidence(_ row: AgentRow) -> Bool {
-        !evidenceTimeline(row).isEmpty
-            || !evidenceSessionTokens(row).isEmpty
-            || row.bytesPerMinute > 0
-            || !evidenceSessionLength(row).isEmpty
-            || !evidenceReadState(row).isEmpty
     }
 
     // MARK: - Observation quality (moved from StatusStoreSupport / Waiting)

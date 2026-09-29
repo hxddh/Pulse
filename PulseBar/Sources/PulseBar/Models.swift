@@ -455,46 +455,6 @@ struct AgentRow: Identifiable, Hashable {
         liveAtMs = max(liveAtMs, stamp)
         activityChangedMs = max(activityChangedMs, stamp)
     }
-    /// 1.2 · facts only a full read of the transcript can produce.
-    ///
-    /// An agent calling the same tool back to back is busy without being any
-    /// closer to done — a state the lamp cannot express, because it is running
-    /// and its clock is moving. Naming it is the whole point.
-    var digest = SessionDigestFacts()
-    var loopTool: String { get { digest.loopTool } set { digest.loopTool = newValue } }
-    var loopCount: Int { get { digest.loopCount } set { digest.loopCount = newValue } }
-    /// Errors across the whole session, not just the read window.
-    var sessionErrors: Int { get { digest.sessionErrors } set { digest.sessionErrors = newValue } }
-    /// `Edit 12 · Bash 5` — bounded; Details only, never the tray row.
-    var toolSummary: String { get { digest.toolSummary } set { digest.toolSummary = newValue } }
-
-    /// 2.1 Evidence · the rest of what the digest already knew.
-    ///
-    /// Every field below is **carried, never recomputed**. They were produced
-    /// by reading the whole transcript; anything here that tried to re-derive
-    /// them from the read window would be guessing at bytes it never saw.
-    ///
-    /// Tokens across the whole session. Deliberately *not* merged into
-    /// `tokensIn` / `tokensOut`, which are the most recent message: 1.1 named
-    /// this fork and refused to let one overwrite the other. Both numbers are
-    /// true and they are not the same number, so whatever shows them has to
-    /// label them apart rather than let a reader watch two token counts
-    /// disagree.
-    var sessionTokensIn: Int { get { digest.tokensIn } set { digest.tokensIn = newValue } }
-    var sessionTokensOut: Int { get { digest.tokensOut } set { digest.tokensOut = newValue } }
-    /// The last few vendor tool names in order, oldest first (≤12).
-    /// "What it has been doing all along" — a fact the tray never had room for.
-    var recentTools: [String] { get { digest.recentTools } set { digest.recentTools = newValue } }
-    /// 0–100. 100 means the whole transcript has been folded.
-    var digestProgressPercent: Int { get { digest.progressPercent } set { digest.progressPercent = newValue } }
-    /// True when nothing in the file is still unread.
-    ///
-    /// While this is false the counts above are partial, and any surface that
-    /// shows them owes the reader that sentence.
-    var digestCaughtUp: Bool { get { digest.caughtUp } set { digest.caughtUp = newValue } }
-    /// Transcript growth, in bytes per minute. 0 = unknown, never estimated.
-    /// The difference between "moving" and "parked", which no counter states.
-    var bytesPerMinute: Int { get { digest.bytesPerMinute } set { digest.bytesPerMinute = newValue } }
     /// The workspace path was reconstructed from a dash-encoded vendor
     /// directory name and the disk could not confirm it.
     ///
@@ -509,50 +469,6 @@ struct AgentRow: Identifiable, Hashable {
     /// as text, never on the tray, never in any channel that leaves the
     /// machine. Empty for cache-tier and process-only rows.
     var transcriptPath: String = ""
-    /// The session's real start, in ms. More reliable than `startedMs`, which
-    /// some adapters can only fill from a file stamp. 0 = unknown.
-    var sessionStartedMs: Int64 { get { digest.startedMs } set { digest.startedMs = newValue } }
-
-    /// Enough repetition to be worth saying out loud.
-    var isLooping: Bool { !loopTool.isEmpty && loopCount >= 3 }
-
-    /// Whether a transcript digest exists for this row at all.
-    ///
-    /// Matters because `digestCaughtUp == false` has two very different
-    /// causes: a digest that is genuinely behind, and no digest at all (a
-    /// cache-only adapter has no transcript to read). Saying "still catching
-    /// up · 0% read" for the second would be inventing a state.
-    var hasSessionDigest: Bool {
-        digestCaughtUp || digestProgressPercent > 0 || !recentTools.isEmpty
-            || sessionTokensIn > 0 || sessionTokensOut > 0
-    }
-
-    /// How long this session has really been going, in seconds; 0 when unknown.
-    ///
-    /// Uses the digest's own start rather than `startedMs`.
-    func sessionDurationSeconds(nowMs: Int64) -> Double {
-        guard sessionStartedMs > 0, nowMs > sessionStartedMs else { return 0 }
-        return Double(nowMs - sessionStartedMs) / 1000.0
-    }
-
-    /// The most tool names a timeline will render before it starts eliding.
-    static let maxTimelineTools = 12
-
-    /// `Read → Edit → Bash → Edit` — the path it took, not a count of it.
-    ///
-    /// Older entries are dropped from the **front**, because the useful end of
-    /// a walk is the end you are standing on. When anything was dropped the
-    /// string says so with a leading `…`, so a truncated timeline is never
-    /// mistaken for the whole session.
-    static func toolTimeline(_ tools: [String], limit: Int = AgentRow.maxTimelineTools) -> String {
-        let cleaned = tools
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard !cleaned.isEmpty, limit > 0 else { return "" }
-        let shown = cleaned.suffix(limit).joined(separator: " → ")
-        return cleaned.count > limit ? "… → " + shown : shown
-    }
-
     /// `840 B` / `12 KB` / `1.4 MB`. Empty when the rate is unknown — an
     /// invented "0 KB" would read as "parked", which is a different claim.
     static func compactBytes(_ n: Int) -> String {
@@ -608,17 +524,6 @@ struct AgentRow: Identifiable, Hashable {
         guard startedMs > 0, nowMs > startedMs else { return 0 }
         return Double(nowMs - startedMs) / 1000.0
     }
-    /// Seconds left on a "remind me later", resolved at scan time. 0 = not snoozed.
-    ///
-    /// Snoozing suppresses the *interruption* — lamp, menu-bar text, banner —
-    /// and nothing else. The row stays in the list, in Needs-you, with the
-    /// remaining time on its chip. This mirrors the rule muting already
-    /// follows: a muted agent stops notifying and still appears. A button that
-    /// makes a row disappear is a button nobody dares press.
-    var snoozeRemainingSeconds: Double = 0
-
-    var isSnoozed: Bool { waiting && snoozeRemainingSeconds > 0 }
-
     var id: String { rowKey }
 
     var titleLine: String {
@@ -1268,80 +1173,8 @@ struct PulseSnapshot: Equatable {
     var updatedAt: Date = .distantPast
 }
 
-/// Which tray groups fold, and what a folded group still says.
-///
-/// Screenshots of 0.25.0 showed four rows, two of them Recent — finished
-/// sessions, nothing to act on, taking half the panel and half the reading.
-/// Folding them is the largest space win available without dropping a fact.
+/// When the tray counts as crowded — the narrator shortens its lines there.
 enum TrayFold {
-    /// Groups are visible on every fresh panel open. Folding is an explicit,
-    /// reversible user action; the aggregate count must never promise rows
-    /// that the default view silently hides.
-    static func isCollapsed(_ groupID: String, manuallyFolded: Set<String>) -> Bool {
-        manuallyFolded.contains(groupID)
-    }
-
-    /// Below this many rows the panel is not crowded, so nothing folds.
-    ///
-    /// A 0.27 screenshot showed three sessions with two of them folded away —
-    /// one visible row in a panel that had room for all three. Folding traded a
-    /// line of screen for a click and hidden content, which is only a good
-    /// trade when the screen is the scarce thing. It was not.
+    /// Below this many rows the panel is not crowded.
     static let crowdedFrom = 5
-
-    /// A project group folds when nothing in it is waiting.
-    ///
-    /// `foldable` only ever answered for the Recent *section*, so grouping by
-    /// project — the mode built for people running several repos at once — was
-    /// the one mode where nothing folded and the panel was a flat list of every
-    /// project. Same two guards as Recent, plus the one that matters here: a
-    /// project holding a wait is never folded away.
-    static func foldableProject(
-        hasWaiting: Bool,
-        groupCount: Int,
-        rowCount: Int,
-        totalRows: Int
-    ) -> Bool {
-        !hasWaiting && groupCount > 1 && rowCount >= 2 && totalRows >= crowdedFrom
-    }
-
-    /// Recent is foldable, but only when it is not the whole list.
-    ///
-    /// If Recent is all there is, those rows *are* the content and folding
-    /// them leaves a panel that says nothing. The rule is "hide the part you
-    /// are not here for", which requires there to be another part.
-    static func foldable(
-        section: TraySection,
-        groupCount: Int,
-        rowCount: Int,
-        totalRows: Int
-    ) -> Bool {
-        section == .recent && groupCount > 1 && rowCount >= 2 && totalRows >= crowdedFrom
-    }
-
-    /// True when the summary names every row, making the count a repeat.
-    ///
-    /// Three Claude sessions summarise to "Claude" — one name for three rows,
-    /// so the count is still the only thing saying how many. Two rows named
-    /// "Pi · Amp" are a different case: the names *are* the count.
-    static func summaryNamesEveryRow(_ rows: [AgentRow], limit: Int = 3) -> Bool {
-        let distinct = Set(rows.map(\.agent)).count
-        return distinct == rows.count && rows.count <= limit
-    }
-
-    /// Agents in the folded group, in first-seen order, deduplicated.
-    ///
-    /// A folded heading otherwise reads "Recent 3" — a count with no identity,
-    /// which is exactly the question folding creates.
-    static func summary(_ rows: [AgentRow], limit: Int = 3) -> String {
-        var seen = Set<AgentID>()
-        var names: [String] = []
-        for row in rows where !seen.contains(row.agent) {
-            seen.insert(row.agent)
-            names.append(row.agent.displayName)
-        }
-        guard !names.isEmpty else { return "" }
-        if names.count <= limit { return names.joined(separator: " · ") }
-        return names.prefix(limit).joined(separator: " · ") + " +\(names.count - limit)"
-    }
 }

@@ -9,8 +9,8 @@ import Foundation
 /// itself has seen and delivered.
 ///
 /// **What it stores, exactly.** Row identity, timestamps, delivery state — and
-/// the session `title`, capped at 160 characters, because the tray's recent-wait
-/// history renders it. That title is `AgentRow.usefulTask`: since 0.98 the hero
+/// the session `title`, capped at 160 characters, because the notification
+/// audit names the wait by it. That title is `AgentRow.usefulTask`: since 0.98 the hero
 /// is defined as the user's real goal, so the title is frequently the opening
 /// line of a prompt. It has passed `ContentSanitizer`, so credential-shaped
 /// content is already redacted, and nothing else from the transcript is kept —
@@ -22,8 +22,7 @@ import Foundation
 /// struct does rather than what it once intended.
 ///
 /// Retention is `retentionDays` for resolved events and `maxEvents` total;
-/// active Waiting events are live state and are never evicted by the cap. The
-/// user can clear the whole history from Preferences.
+/// active Waiting events are live state and are never evicted by the cap.
 struct AttentionLedger: Codable, Equatable {
     static let schemaVersion = 1
     /// How long a resolved Waiting event stays on disk.
@@ -50,7 +49,6 @@ struct AttentionLedger: Codable, Equatable {
         /// authorization. Keeping this in the ledger prevents a relaunch from
         /// silently losing an edge that never reached Notification Center.
         var queuedAtMs: Int64 = 0
-        var snoozedUntilMs: Int64 = 0
         var resolvedAtMs: Int64 = 0
         /// 22.0 · what happened to the banner: `posted`, `summary`, or a
         /// `WaitingDelivery.SkipReason` raw value. Optional so files written
@@ -103,29 +101,6 @@ struct AttentionLedger: Codable, Equatable {
 
     func canDeliver(nowMs: Int64, minimumIntervalMs: Int64) -> Bool {
         lastNotificationAtMs == 0 || nowMs - lastNotificationAtMs >= minimumIntervalMs
-    }
-
-    var snoozedUntil: [String: Date] {
-        var result: [String: Date] = [:]
-        for event in events where event.isActive && event.snoozedUntilMs > 0 {
-            let date = Date(timeIntervalSince1970: Double(event.snoozedUntilMs) / 1000)
-            // A hand-edited or older ledger may contain duplicate active
-            // records. Prefer the later deadline instead of crashing on
-            // Dictionary(uniqueKeysWithValues:), which would prevent Pulse
-            // from launching precisely when recovery is needed.
-            if let existing = result[event.rowKey] {
-                result[event.rowKey] = max(existing, date)
-            } else {
-                result[event.rowKey] = date
-            }
-        }
-        return result
-    }
-
-    var recentResolved: [Event] {
-        events
-            .filter { $0.resolvedAtMs > 0 }
-            .sorted { $0.resolvedAtMs > $1.resolvedAtMs }
     }
 
     /// Records the banner outcome for the row's active event. Returns
@@ -190,7 +165,6 @@ struct AttentionLedger: Codable, Equatable {
         for index in events.indices where events[index].isActive {
             guard !active.contains(events[index].rowKey) else { continue }
             events[index].resolvedAtMs = nowMs
-            events[index].snoozedUntilMs = 0
         }
         for row in activeRows { observe(row: row, nowMs: nowMs) }
         prune(nowMs: nowMs)
@@ -214,38 +188,15 @@ struct AttentionLedger: Codable, Equatable {
         events[index].queuedAtMs = 0
     }
 
-    mutating func clearQueued(rowKey: String) {
-        guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }) else { return }
-        events[index].queuedAtMs = 0
-    }
-
-    mutating func snooze(rowKey: String, untilMs: Int64) {
-        guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }) else { return }
-        events[index].snoozedUntilMs = untilMs
-    }
-
-    mutating func unsnooze(rowKey: String) {
-        guard let index = events.lastIndex(where: { $0.rowKey == rowKey && $0.isActive }) else { return }
-        events[index].snoozedUntilMs = 0
-    }
-
     mutating func markBaseline() {
         baselineEstablished = true
     }
 
-    /// Clear the resolved trail when the user explicitly clears Waiting
-    /// history. Active waits are never removed by this action: the current
-    /// agent-owned signal remains the source of truth and still needs a
-    /// visible response.
     mutating func remapRowKey(from oldKey: String, to newKey: String) {
         guard oldKey != newKey, !newKey.isEmpty else { return }
         for index in events.indices where events[index].rowKey == oldKey {
             events[index].rowKey = newKey
         }
-    }
-
-    mutating func clearResolved() {
-        events.removeAll { !$0.isActive }
     }
 
     mutating func prune(nowMs: Int64) {

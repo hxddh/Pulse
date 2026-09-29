@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 0.99 Quiet Data — what Pulse writes down, and whether it says so.
 ///
@@ -78,17 +77,6 @@ final class QuietDataTests: XCTestCase {
         XCTAssertFalse(title.isEmpty)
         XCTAssertLessThanOrEqual(title.count, 160, "the ledger records a headline, not a transcript")
         XCTAssertLessThan(title.count, row.task.count)
-    }
-
-    /// The Preferences line that describes retention is generated from the
-    /// ledger's own constants, so the sentence cannot drift away from it.
-    @MainActor
-    func testRetentionSentenceQuotesTheRealNumbers() {
-        let store = StatusStore()
-        store.language = .en
-        let line = store.waitHistoryRetentionLine
-        XCTAssertTrue(line.contains("\(AttentionLedger.retentionDays)"), line)
-        XCTAssertTrue(line.contains("\(AttentionLedger.maxEvents)"), line)
     }
 
     // MARK: - One chrome vocabulary, not three

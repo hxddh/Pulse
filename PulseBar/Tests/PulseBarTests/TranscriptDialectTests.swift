@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 12.3 γ — vendor formats are dialects in one table, not branches inside
 /// the generic parser. These pin the dispatch; the parsing itself stays

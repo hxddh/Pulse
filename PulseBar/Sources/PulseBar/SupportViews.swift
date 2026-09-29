@@ -445,10 +445,7 @@ struct SupportHealthRow: View {
                         case .openSettings: store.openSettings(focusAppDataFor: item.agent)
                         case .runAgent: store.focusAgent(idRaw: item.agent.rawValue)
                         case .openAttentionBridge:
-                            store.openSettings(
-                                focusWaitingSignals: true,
-                                focusWaitingAgent: item.agent
-                            )
+                            store.openSettings(focusWaitingSignals: true)
                         case .none: break
                         }
                     }

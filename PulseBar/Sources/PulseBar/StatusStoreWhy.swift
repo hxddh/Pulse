@@ -20,10 +20,6 @@ extension StatusStore {
         TrayRowModel.make(TrayRowModel.Input(
             row: row,
             narrator: narrator,
-            snoozeLabel: row.isSnoozed ? snoozeLabel(row) : "",
-            lookMarkedWhileAway: lookMarkedWhileAway(row),
-            respondOffered: respondRequest(for: row) != nil && !respondVerdictSent(row),
-            fateNote: respondFateNote(row),
             notice: rowActionNotice(row),
             needsReach: isWaitingNoneNeedsReach(row),
             muted: mutedAgents.contains(row.agent)

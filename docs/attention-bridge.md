@@ -5,13 +5,14 @@ Pulse 的 **hooks 安装器只覆盖 Claude Code 和 Codex**，这是刻意的�
 
 其他 agent 有两条路：
 
-1. **什么都不做** —— harvest 会尽力从它们的会话文件里认出 `pending`
-   （Cursor、Droid、Kimi、OpenCode…… 见 README 的支持矩阵）；
+1. **什么都不做** —— 格式有来源可查的 agent，harvest 会从它们的会话文件里认出 `pending`
+   （Kimi、OpenCode、Gemini、Cline…… 见 README 的支持矩阵）；格式「未核实」的 agent
+   （Cursor、Droid、Amp……）23.0 起不再从 harvest 推断等待；
 2. **走这座桥** —— 想要 hooks 级别的准确度（明确的授权 / 输入等待，而不是猜），
-   让工具在等待时按 **Attention Protocol**（现行 v3；v1 六列、v2 七列行仍被接受）写一行 TSV。
+   让工具在等待时按 **Attention Protocol**（v3，每行八列；23.0 起六列 / 七列的旧行不再读取）写一行 TSV。
 
 **契约正文：** [`attention-protocol.md`](attention-protocol.md)（header、八列
-（第七列 `host`、第八列 `front`，缺列视为本机 / 未知）、kind 白名单、raise / clear）。桥接进来的等待在 Tray 上标注为 `hooks`，与
+（第七列 `host` 留空且被忽略、第八列 `front` 留空即未知）、kind 白名单、raise / clear）。桥接进来的等待在 Tray 上标注为 `hooks`，与
 Claude / Codex 同级。
 
 ---
@@ -31,29 +32,17 @@ Claude / Codex 同级。
 | `antigravity` | Antigravity |
 | `junie` | Junie |
 | `zcode` | ZCode |
+| `cursor` | Cursor（23.0：格式未核实，不从 harvest 推断等待） |
+| `amp` / `amazonQ` / `cascade` / `windsurf` / `augment` / `zedAgent` / `kiro` / `droid` / `commandCode` | 同上（23.0） |
 | `aider` | Aider（20.0：历史写在项目目录，里面没有等待信号） |
 | `continue_` | Continue（20.0：待批准的工具调用与普通调用在磁盘上无法区分） |
 
-设置 → Waiting signals 是 **Waiting Reach 漏斗**（0.90）：
-
-1. **确保 pulse-hook** —— 只写原生 Attention 启动器，**不**装 Claude/Codex hooks；
-2. **打开 Attention 文件夹** / **打开桥接工具包** ——
-   `~/Library/Application Support/Pulse/` 与同级 `attention-bridge/`（`raise.sh` /
-   `clear.sh`，默认含 zcode）；
-3. **写入样本 Waiting** —— 可为单个聚焦 Agent 或全部 Waiting-none 追加
-   `pulse-sample` 会话；可复制 raise 命令给桥接作者；
-4. 托盘应亮红并可清除 —— **不扩 hook 安装器，不伪造原生 Waiting**。
-
-Support Health 对 Waiting-none 的 repair、托盘 nudge、空态入口都会深链到本节
-（尽量带上该 Agent 名）。
-
-「安装连接」仍只合并 Claude / Codex 官方 hooks；Waiting-none 请用上面的
-pulse-hook / Protocol 路径。
+App 里没有桥接工具（23.0 删除了设置里的样本与工具包按钮）：桥接作者直接按
+协议写行，或调用 `pulse-hook`。「安装连接」只合并 Claude / Codex 官方 hooks。
 
 **原生 hook：** Claude / Codex 的官方 Waiting 通路是
 `~/Library/Application Support/Pulse/pulse-hook` → `PulseBar --hook …`，
-与 `AttentionIO` 同一 flock/TSV 契约。旧的 `pulse_hook.py` 仍可识别与卸载，但
-新安装优先原生。
+与 `AttentionIO` 同一 flock/TSV 契约，写完一行立即退出，从不扣留。
 
 **session 身份：** Attention 行若带明确 `session`，优先挂到同 id 行；若现有行
 都已占用*别的* session，Pulse 会**新建** Waiting 行，而不会 smear 到兄弟会话
@@ -74,7 +63,7 @@ pulse-hook / Protocol 路径。
 ~/Library/Application Support/Pulse/attention.tsv
 ```
 
-制表符分隔，六列 —— 完整白名单与 header 见
+制表符分隔，八列 —— 完整白名单与 header 见
 [`attention-protocol.md`](attention-protocol.md)：
 
 | 列 | 内容 |
@@ -85,6 +74,8 @@ pulse-hook / Protocol 路径。
 | `message` | 一句原因，无制表符和换行 |
 | `session` | 可选，会话 id —— 有它才能挂到正确的会话行 |
 | `cwd` | 可选，项目路径 |
+| `host` | 留空；读取端忽略 |
+| `front` | 可选：`1` 提示窗口在最前、`0` 不在、留空未知 |
 
 Pulse 的读取规则：
 
@@ -101,9 +92,9 @@ Pulse 的读取规则：
 
 ## 写入方式
 
-### 推荐：原生 `pulse-hook`（无需 Python）
+### 推荐：原生 `pulse-hook`
 
-Settings → Waiting signals → 安装连接后，Application Support 里会有可执行的
+设置里安装连接后，Application Support 里会有可执行的
 `pulse-hook`（转调 `PulseBar --hook`）：
 
 ```bash
@@ -124,15 +115,6 @@ echo '{"notification_type":"permission","message":"Approve shell","session_id":"
 echo '{"session_id":"abc"}' | "$HOOK" replit done
 ```
 
-### 兼容：旧 `pulse_hook.py`
-
-仍随 app seed；probe / uninstall 认它。新安装优先原生 launcher。
-
-```bash
-HOOK="$HOME/Library/Application Support/Pulse/pulse_hook.py"
-python3 "$HOOK" replit permission   # 仅当你已有 Python 且仍指向旧脚本时
-```
-
 ### 退路：纯 shell 追加
 
 只在无法调用 `pulse-hook` 时用。**有竞态**，且不做行数回收：
@@ -141,7 +123,7 @@ python3 "$HOOK" replit permission   # 仅当你已有 Python 且仍指向旧脚�
 PULSE="$HOME/Library/Application Support/Pulse"
 mkdir -p "$PULSE"
 ms=$(($(date +%s) * 1000))
-printf 'replit\tpermission\t%s\tApprove tool\tsess1\t%s\n' "$ms" "$PWD" \
+printf 'replit\tpermission\t%s\tApprove tool\tsess1\t%s\t\t\n' "$ms" "$PWD" \
   >> "$PULSE/attention.tsv"
 ```
 
@@ -157,8 +139,7 @@ printf 'replit\tpermission\t%s\tApprove tool\tsess1\t%s\n' "$ms" "$PWD" \
   才能保证落到对的类别。
 - **永远不要接「批准之前」的事件。** Copilot 的 `permissionRequest`、Cursor 的
   `beforeShellExecution`、Kiro / Droid 的 `PreToolUse` 都在厂商自己的规则与自动批准**之前**
-  触发 —— 接了就是伪造等待。也不要把非 Claude 的 `PermissionRequest` 接进来：Respond 的
-  扣留只对 Claude 开放（20.0 起接收端也这样把守）。
+  触发 —— 接了就是伪造等待。也不要把非 Claude 的 `PermissionRequest` 接进来。
 - **Grok Build 默认会执行 `~/.claude/settings.json` 里的 hooks。** 20.0 起 `pulse-hook`
   凭 `GROK_HOOK_EVENT` / `GROK_SESSION_ID` 把这些调用记在 Grok 名下，不需要另配。
 

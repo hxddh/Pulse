@@ -3,7 +3,6 @@ import AppKit
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 final class StatusPanelChromeTests: XCTestCase {
     @MainActor
@@ -681,43 +680,6 @@ final class LocalizedCopyTests: XCTestCase {
         XCTAssertTrue(en.contains("Available 1"), en)
         XCTAssertTrue(zh.contains("可用 1"), zh)
         XCTAssertFalse(zh.contains("Available"), "the zh support header was English copy")
-    }
-
-    @MainActor
-    func testAttentionBridgeHintsAreLocalizedAndStillNameTheAgents() {
-        let store = StatusStore()
-        let names = StatusStore.attentionSampleAgents.map(\.displayName)
-        XCTAssertFalse(names.isEmpty)
-
-        store.language = .zh
-        let zhHint = store.attentionBridgeHintText()
-        XCTAssertEqual(
-            zhHint,
-            String(format: L10n.t(.attentionBridgeHintNamed, .zh), L10n.joinNames(names, .zh))
-        )
-        XCTAssertTrue(zhHint.contains(names[0]), "agent product names stay English inside zh copy")
-
-        store.language = .en
-        XCTAssertNotEqual(store.attentionBridgeHintText(), zhHint)
-        XCTAssertTrue(store.attentionBridgeWriteSampleHintText().contains("\(names.count)"))
-    }
-
-    @MainActor
-    func testFocusedBridgeCopyNamesTheAgentInBothLanguages() {
-        let store = StatusStore()
-        let agent = StatusStore.attentionSampleAgents[0]
-        store.settingsFocusWaitingAgent = agent
-
-        store.language = .zh
-        let zhSteps = store.waitingReachStepsText()
-        XCTAssertTrue(zhSteps.contains(agent.displayName))
-        XCTAssertTrue(store.attentionBridgeFocusHintText().contains(agent.displayName))
-
-        store.language = .en
-        XCTAssertNotEqual(store.waitingReachStepsText(), zhSteps)
-
-        store.settingsFocusWaitingAgent = nil
-        XCTAssertEqual(store.waitingReachStepsText(), L10n.t(.waitingReachSteps, .en))
     }
 
     /// One table for the tooltip, the chip and the banner.

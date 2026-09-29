@@ -2,9 +2,9 @@ import Darwin
 import Foundation
 import PulseCore
 
-/// Locked read/write for attention.tsv — same exclusive flock as pulse_hook.py /
-/// `PulseBar --hook`. Columns (v3): agent \\t kind \\t ms \\t message \\t session
-/// \\t cwd \\t host \\t front
+/// Locked read/write for attention.tsv — same exclusive flock as
+/// `PulseBar --hook`. Columns (v3, all eight required): agent \\t kind \\t ms
+/// \\t message \\t session \\t cwd \\t host (ignored) \\t front
 package enum AttentionIO {
     /// Tests and `PULSE_HOME` hook self-tests redirect the ledger without
     /// touching the user's real Application Support file.
@@ -26,9 +26,8 @@ package enum AttentionIO {
         return defaultPath
     }
 
-    /// Must match `AttentionProtocol.header`, `PulseHookReceiver`, and the
-    /// optional legacy `pulse_hook.py` — divergent headers used to coexist in
-    /// the same file and confuse readers.
+    /// Must match `AttentionProtocol.header` and `PulseHookReceiver` —
+    /// divergent headers used to coexist in the same file and confuse readers.
     package static var header: String { AttentionProtocol.header }
 
     package static let maxRetainedLines = 80
@@ -102,7 +101,7 @@ package enum AttentionIO {
                 separator: "\t",
                 omittingEmptySubsequences: false
             )
-            guard columns.count >= 3,
+            guard columns.count == AttentionProtocol.columnCount,
                   let agent = ActivityHarvest.mapAgent(String(columns[0])),
                   let ms = Int64(columns[2])
             else { continue }
@@ -152,34 +151,12 @@ package enum AttentionIO {
     /// Append a done event (optional session scopes the clear).
     package static func appendDone(agent: AgentID, session: String = "") {
         let ts = Int64(Date().timeIntervalSince1970 * 1000)
-        let line = "\(agent.rawValue)\tdone\t\(ts)\t\t\(session)\t"
+        // v3: all eight columns, host and front empty.
+        let line = "\(agent.rawValue)\tdone\t\(ts)\t\t\(session)\t\t\t"
         appendRawLine(line)
     }
 
-    /// Append a permission Waiting line — used by Settings sample and tests.
-    /// Never invents Waiting for adapters; the caller must be an explicit user action.
-    package static func appendPermission(
-        agent: AgentID,
-        message: String,
-        session: String = "",
-        cwd: String = ""
-    ) {
-        let ts = Int64(Date().timeIntervalSince1970 * 1000)
-        let safeMessage = message
-            .replacingOccurrences(of: "\t", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeSession = session
-            .replacingOccurrences(of: "\t", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-        let safeCwd = cwd
-            .replacingOccurrences(of: "\t", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-        let line = "\(agent.rawValue)\tpermission\t\(ts)\t\(safeMessage)\t\(safeSession)\t\(safeCwd)"
-        appendRawLine(line)
-    }
-
-    /// Shared by Settings samples and the native hook receiver.
+    /// Shared by the store (clears) and the native hook receiver.
     package static func appendRawLine(_ line: String) {
         withExclusiveLock { fd in
             let size = max(0, Int(lseek(fd, 0, SEEK_END)))

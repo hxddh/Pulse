@@ -14,11 +14,6 @@ enum NativeHarvestSelfTest {
             isDirectory: true
         )
         defer { try? fm.removeItem(at: home) }
-        // 1.1: the fixture wall exercises the session digest, but must never
-        // fold into — or prune — the real user's store.
-        SessionDigestStore.pathOverride = home.appendingPathComponent("session-digests.json")
-        HarvestDigests.resetForTesting()
-        defer { SessionDigestStore.pathOverride = nil }
 
         do {
             try fm.createDirectory(at: home, withIntermediateDirectories: true)
@@ -149,17 +144,13 @@ enum NativeHarvestSelfTest {
         )
         // The transcript is larger than Claude's read window, so the window
         // alone can only produce a floor — and EXPERIENCE forbids presenting a
-        // floor as a total. Until 1.1 this wall therefore required `0`.
-        //
-        // The session digest reads the middle of the file, so the count is now
-        // the real one. Requiring the *exact* number is a stronger wall than
-        // requiring zero ever was: it fails on an undercount, on a double
-        // count, and on a digest that silently stopped folding.
+        // floor as a total. 23.0 removed the session digest that read the
+        // middle of the file, so a truncated transcript reports unknown (0).
         if let claudeRow = result.rows.first(where: {
             $0.id == .claude && $0.task == "Fix the tray hero for Claude"
-        }), claudeRow.records != claudeTranscriptRecords {
+        }), claudeRow.records != 0 {
             failures.append(
-                "Claude transcript records \(claudeRow.records), expected exactly \(claudeTranscriptRecords)"
+                "Claude transcript records \(claudeRow.records), expected unknown (0) for a truncated read"
             )
         }
         require(
@@ -402,11 +393,6 @@ enum NativeHarvestSelfTest {
     /// is the production failure — it is what made the tray hero a tool dump,
     /// and it is deliberately larger than the read window so the truncation
     /// path is exercised too.
-    /// Records in the Claude transcript fixture: one user goal, one assistant
-    /// turn, and 800 tool-result envelopes. The fixture wall asserts the digest
-    /// reports exactly this.
-    static let claudeTranscriptRecords = 802
-
     private static func writeClaudeTranscriptFixture(home: URL) throws {
         let fm = FileManager.default
         let url = home.appendingPathComponent(

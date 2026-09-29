@@ -3,7 +3,6 @@ import SQLite3
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 final class NativeActivityHarvestTests: XCTestCase {
     func testNativeCollectorProducesUsefulFactsAndCompleteHealthWithoutPython() throws {
@@ -100,7 +99,9 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.cwd, "/Users/me/Client")
         XCTAssertEqual(row.contextPercent, 42)
         XCTAssertEqual(row.files, 3)
-        XCTAssertEqual(row.skill, "pending")
+        // 23.0: Cursor's format is unverified, so `hasBlockingPendingActions`
+        // is not a Waiting signal.
+        XCTAssertNotEqual(row.skill, "pending")
         XCTAssertEqual(row.mode, "agent", "unifiedMode must reach the tray, not invent local")
         XCTAssertEqual(
             row.lastWord, "Adapter refined — headers now verified.",
@@ -1405,7 +1406,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertNotEqual(answeredRow.skill, "pending", "askResponse means the user already answered")
     }
 
-    func testCascadeWaitingForResponseFlagIsPending() throws {
+    func testCascadeWaitingForResponseFlagIsNotPendingWhileUnverified() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cascade-wait-\(UUID().uuidString)")
         let windsurf = home.appendingPathComponent(".windsurf/session.json")
@@ -1425,7 +1426,8 @@ final class NativeActivityHarvestTests: XCTestCase {
 
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.windsurf])
         let row = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
-        XCTAssertEqual(row.skill, "pending")
+        // 23.0: Windsurf's format is unverified — no inferred Waiting.
+        XCTAssertNotEqual(row.skill, "pending")
         XCTAssertEqual(row.tool, "ask_clarifying_question")
         XCTAssertEqual(row.evidence, .cache)
     }
@@ -1643,8 +1645,7 @@ final class NativeActivityHarvestTests: XCTestCase {
     /// `ingestTranscriptFile` kept it off screen, which is luck, not a rule.
     ///
     /// The rule now: `records` comes from a window that really was the whole
-    /// file, or from a digest that has folded to the end. Nothing else offers
-    /// one. This rollout has far more lines than the parser ever looks at, so
+    /// file. Nothing else offers one. This rollout has far more lines than the parser ever looks at, so
     /// a parser-derived count would show 2,056 here instead of the truth.
     func testCodexRecordsCountTheFileNotTheParserWindow() throws {
         let fm = FileManager.default
@@ -1655,7 +1656,6 @@ final class NativeActivityHarvestTests: XCTestCase {
             .appendingPathComponent("rollout-records.jsonl")
         try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
-        HarvestDigests.resetForTesting()
 
         var lines = [
             #"{"type":"session_meta","payload":{"session_id":"rec-1","cwd":"/Users/me/Pulse"},"timestamp":1700000000}"#,

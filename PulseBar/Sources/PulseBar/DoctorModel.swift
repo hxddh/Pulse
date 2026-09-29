@@ -4,8 +4,7 @@ import Foundation
 /// with the agents, as a value.
 ///
 /// Every vendor contract Pulse depends on — `claude agents --json`, the
-/// Claude and Codex hook files, Codex's rollout format, Respond's verdict
-/// hand-off — was written from vendor source and tested on fixtures in CI.
+/// Claude and Codex hook files, Codex's rollout format — was written from vendor source and tested on fixtures in CI.
 /// None of it had been run on a real Mac by the people building it. This
 /// turns "needs real-machine confirmation" into one click: `DoctorProbe`
 /// gathers `Facts` read-only, `evaluate` judges them here (pure, tested),
@@ -116,12 +115,6 @@ enum DoctorModel {
         var codexNotifyInstalled = false
         var codexRollout: RolloutShape = .none
         var codexCompressedRollouts = 0
-
-        var respondEnabled = false
-        /// This run's local verdicts, by what became of them.
-        var respondWritten = 0
-        var respondTaken = 0
-        var respondExpired = 0
 
         /// 20.0: how much Pulse actually read from each agent's sessions this
         /// run, keyed by agent raw value. A format that drifted does not fail
@@ -247,20 +240,6 @@ enum DoctorModel {
         // Reading · did the parsers get what the formats carry (20.0)
         checks.append(coverageCheck(facts.readCoverage, c: c))
 
-        // Respond · the verdict hand-off (2.0 P0-0)
-        if !facts.respondEnabled {
-            checks.append(Check(id: "respond", title: c.respond, verdict: .absent, detail: c.respondOff))
-        } else if facts.respondTaken > 0 {
-            checks.append(Check(id: "respond", title: c.respond, verdict: .works, detail: c.respondTaken(facts.respondTaken, facts.respondWritten), next: c.respondShapeNote))
-        } else if facts.respondWritten > 0 {
-            checks.append(Check(
-                id: "respond", title: c.respond, verdict: .attention,
-                detail: c.respondUnclaimed(facts.respondWritten, facts.respondExpired), next: c.respondCheckHook
-            ))
-        } else {
-            checks.append(Check(id: "respond", title: c.respond, verdict: .unproven, detail: c.respondNone, next: c.respondTry))
-        }
-
         return Report(
             lang: lang,
             header: c.header(version: facts.version, channel: facts.channel, macOS: facts.macOS),
@@ -369,7 +348,6 @@ enum DoctorModel {
         var codexHooks: String { s("Codex hooks installed", "Codex hooks 已安装") }
         var codexFired: String { s("Codex hooks reach Pulse", "Codex hooks 到达 Pulse") }
         var codexRollout: String { s("Codex session log format", "Codex 会话记录格式") }
-        var respond: String { s("Respond verdict hand-off", "Respond 裁决交接") }
         var reading: String { s("Session formats read in full", "会话格式读全了") }
         var noSessions: String { s("No session files read this run", "本次运行没有读到会话文件") }
         func coverageGap(_ c: Coverage) -> String {
@@ -424,14 +402,6 @@ enum DoctorModel {
         }
         var rolloutUnknown: String { s("The newest log has neither format Pulse reads", "最新的记录两种格式都不是") }
         func compressed(_ n: Int) -> String { s(" · \(n) compressed older log(s) left alone", " · \(n) 个压缩的旧记录不读") }
-
-        var respondOff: String { s("Answering this Mac's own agents is off", "回答本机 Agent 未开启") }
-        func respondTaken(_ taken: Int, _ written: Int) -> String { s("\(taken) of \(written) verdict(s) this run were claimed by the hook", "本次运行 \(written) 个裁决中有 \(taken) 个被 hook 取走") }
-        var respondShapeNote: String { s("Claimed means the hook read it. Whether Claude honoured the decision shows in the agent itself", "取走表示 hook 读到了它；Claude 是否照办，要看 Agent 本身的行为") }
-        func respondUnclaimed(_ written: Int, _ expired: Int) -> String { s("\(written) verdict(s) written, none claimed, \(expired) expired", "写了 \(written) 个裁决，没有一个被取走，\(expired) 个已过期") }
-        var respondCheckHook: String { s("Check that Claude's PermissionRequest hook is installed (above)", "确认上面的 Claude PermissionRequest hook 已安装") }
-        var respondNone: String { s("No verdict written this run", "本次运行还没有写过裁决") }
-        var respondTry: String { s("Deny one harmless request from Pulse, then run the self-check again", "在 Pulse 里拒绝一个无害的请求，然后再自检一次") }
 
         func ago(_ ms: Int64) -> String {
             let minutes = ms / 60_000

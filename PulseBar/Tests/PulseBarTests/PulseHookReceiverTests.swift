@@ -1,28 +1,20 @@
-import CryptoKit
 import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 final class PulseHookReceiverTests: XCTestCase {
     private var tempHome: URL!
-    private let now: Int64 = 1_800_000_000_000
 
     override func setUpWithError() throws {
         tempHome = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-hook-recv-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
         AttentionIO.pathOverride = tempHome.appendingPathComponent("attention.tsv")
-        // Every test in this class must be isolated from the developer's real
-        // Respond spool: a run() with a permission payload would otherwise
-        // read (and on an opted-in machine, write) the real one.
-        RespondSpool.rootOverride = tempHome.appendingPathComponent("respond.d", isDirectory: true)
     }
 
     override func tearDownWithError() throws {
         AttentionIO.pathOverride = nil
-        RespondSpool.rootOverride = nil
         try? FileManager.default.removeItem(at: tempHome)
     }
 
@@ -35,8 +27,8 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(AttentionProtocol.normalizeKind("idle_prompt"), "turn",
                        "Claude's idle_prompt is a 60 s timer after every finished turn")
         XCTAssertEqual(AttentionProtocol.normalizeKind("stop"), "turn")
-        XCTAssertFalse(AttentionProtocol.isWaitingKind("idle_prompt"))
-        XCTAssertTrue(AttentionProtocol.isWaitingKind("elicitation_dialog"))
+        XCTAssertNotEqual(AttentionProtocol.kind("idle_prompt")?.isBlocking, true)
+        XCTAssertEqual(AttentionProtocol.kind("elicitation_dialog")?.isBlocking, true)
         XCTAssertTrue(AttentionProtocol.acceptsWrite(kind: "permission"))
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "totally_made_up_kind"))
     }
@@ -182,218 +174,20 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertFalse(text.contains("abcdefgh12345678"), "naming the ask must not leak the secret in it")
     }
 
-    // MARK: - Respond hold (parity with pulse_hook.py)
+    // MARK: - 23.0: nothing is held, every line is a full v3 record
 
-    private func writeRespondSecret(_ key: String = "sekrit\n") throws {
-        try Data(key.utf8).write(to: tempHome.appendingPathComponent("respond-local.key"))
-    }
-
-    private func writeVerdictFile(
-        id: String, digest: String, host: String, allow: Bool, key: String = "sekrit"
-    ) throws {
-        let directory = tempHome.appendingPathComponent("respond.d/verdicts", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let decided = now
-        let expires = now + 90_000
-        let message = "v1\n\(id)\n\(digest)\nclaude\n\(host)\n\(allow ? "allow" : "deny")\n\(decided)\n\(expires)"
-        let hmac = HMAC<SHA256>.authenticationCode(
-            for: Data(message.utf8), using: SymmetricKey(data: Data(key.utf8))
-        ).map { String(format: "%02x", $0) }.joined()
-        let object: [String: Any] = [
-            "v": 1, "request_id": id, "digest": digest, "agent": "claude", "host": host,
-            "allow": allow,
-            "decided_at_ms": NSNumber(value: decided),
-            "expires_at_ms": NSNumber(value: expires),
-            "hmac": hmac,
-        ]
-        try JSONSerialization.data(withJSONObject: object)
-            .write(to: directory.appendingPathComponent("\(id).json"))
-    }
-
-    private func permissionPayload(id: String = "toolu_x") -> [String: Any] {
-        [
-            "hook_event_name": "PermissionRequest",
-            "tool_use_id": id,
-            "tool_name": "Bash",
-            "tool_input": ["command": "ls"],
-            "session_id": "s1",
-            "cwd": "/w",
-        ]
-    }
-
-    func testHoldForVerdictClaimsAnExistingVerdictImmediately() throws {
-        try writeRespondSecret()
-        let digest = RespondDigest.of(Data("x".utf8))
-        try writeVerdictFile(id: "toolu_h", digest: digest, host: "agentbox", allow: false)
-        var sleeps = 0
-        let allow = PulseHookReceiver.holdForVerdict(
-            requestID: "toolu_h", digest: digest, agent: "claude", host: "agentbox",
-            truncated: false, deadlineMs: now + 60_000,
-            clockMs: { self.now }, sleepMs: { _ in sleeps += 1 }
-        )
-        XCTAssertEqual(allow, false)
-        XCTAssertEqual(sleeps, 0, "a verdict already on disk must not cost a single sleep")
-    }
-
-    func testHoldForVerdictTimesOutOnAFakeClockWithoutRealWaiting() {
-        var clock = now
-        var sleeps = 0
-        let allow = PulseHookReceiver.holdForVerdict(
-            requestID: "toolu_none", digest: "d", agent: "claude", host: "agentbox",
-            truncated: false, deadlineMs: now + 60_000,
-            clockMs: { clock },
-            sleepMs: { ms in
-                sleeps += 1
-                clock += Int64(ms)
-            }
-        )
-        XCTAssertNil(allow)
-        XCTAssertEqual(sleeps, 60_000 / 250, "60 s deadline at 250 ms per poll")
-    }
-
-    func testRespondDecisionJSONAnswersWithTheFrozenShape() throws {
-        try writeRespondSecret()
-        let payload = permissionPayload()
-        let raw = try JSONSerialization.data(withJSONObject: payload)
-        let digest = RespondDigest.of(raw)
-        // The verdict is already there: the first poll claims it.
-        try writeVerdictFile(id: "toolu_x", digest: digest, host: "agentbox", allow: true)
-        var sleeps = 0
-        let decision = PulseHookReceiver.respondDecisionJSON(
-            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 10_000,
-            environment: ["PULSE_HOST": "agentbox"],
-            clockMs: { self.now }, sleepMs: { _ in sleeps += 1 }
-        )
-        XCTAssertEqual(
-            decision,
-            "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\","
-                + "\"decision\":{\"behavior\":\"allow\",\"message\":\"Answered via Pulse from agentbox\"}}}"
-        )
-        XCTAssertEqual(sleeps, 0)
-        XCTAssertTrue(
-            FileManager.default.fileExists(
-                atPath: tempHome.appendingPathComponent("respond.d/requests/toolu_x.json").path
-            ),
-            "the request must be spooled for Pulse before the hold"
-        )
-    }
-
-    func testRespondDecisionJSONTimesOutSilently() throws {
-        try writeRespondSecret()
-        let payload = permissionPayload()
-        let raw = try JSONSerialization.data(withJSONObject: payload)
-        var clock = now
-        let decision = PulseHookReceiver.respondDecisionJSON(
-            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 10_000, environment: [:],
-            clockMs: { clock },
-            sleepMs: { ms in clock += Int64(ms) }
-        )
-        XCTAssertNil(decision, "a timeout leaves the vendor's own prompt in charge")
-    }
-
-    /// The regression the presence gate exists to prevent: freezing an agent
-    /// in front of the person whose own prompt was about to appear anyway.
-    func testRespondHoldIsSkippedWhenSomeoneIsAtThisMac() throws {
-        try writeRespondSecret()
-        let payload = permissionPayload()
-        let raw = try JSONSerialization.data(withJSONObject: payload)
-        let decision = PulseHookReceiver.respondDecisionJSON(
-            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 0, promptIsFrontmost: true, environment: [:],
-            clockMs: { self.now },
-            sleepMs: { _ in XCTFail("a present user must never cost a sleep") }
-        )
-        XCTAssertNil(decision)
-        XCTAssertFalse(
-            FileManager.default.fileExists(
-                atPath: tempHome.appendingPathComponent("respond.d/requests/toolu_x.json").path
-            ),
-            "a present user's request must not even be spooled"
-        )
-    }
-
-    /// 2.4: present, but looking at something that is not this agent's
-    /// window. 2.0 read "someone is touching this Mac" as "the prompt is in
-    /// front of them" and let the request straight through — which is why the
-    /// product's own headline scene (a meeting, a document) got no help at all.
-    func testRespondHoldsWhenThePromptIsNotInFrontOfYou() throws {
-        try writeRespondSecret()
-        let payload = permissionPayload()
-        let raw = try JSONSerialization.data(withJSONObject: payload)
-        let digest = RespondDigest.of(raw)
-        try writeVerdictFile(id: "toolu_x", digest: digest, host: "agentbox", allow: false)
-        let decision = PulseHookReceiver.respondDecisionJSON(
-            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 0, promptIsFrontmost: false,
-            environment: ["PULSE_HOST": "agentbox"],
-            clockMs: { self.now }, sleepMs: { _ in }
-        )
-        XCTAssertNotNil(decision)
-        XCTAssertTrue(decision?.contains("\"behavior\":\"deny\"") == true, decision ?? "nil")
-    }
-
-    /// Not knowing is not proof. The cost of a wrong hold is a frozen agent in
-    /// front of a present user, so an unanswerable question behaves like 2.3.
-    func testAnUnknownFrontmostLetsThePresentUserThrough() throws {
-        try writeRespondSecret()
-        let payload = permissionPayload()
-        let raw = try JSONSerialization.data(withJSONObject: payload)
-        XCTAssertNil(PulseHookReceiver.respondDecisionJSON(
-            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 0, promptIsFrontmost: nil, environment: [:],
-            clockMs: { self.now },
-            sleepMs: { _ in XCTFail("an unproven hold must never cost a sleep") }
-        ))
-    }
-
-    /// 22.0: the retired shared key is not an opt-in any more.
-    func testTheRetiredSharedKeyArmsNoHold() throws {
-        try Data("sekrit\n".utf8).write(to: tempHome.appendingPathComponent("respond-secret.key"))
-        let payload = permissionPayload()
-        let raw = try JSONSerialization.data(withJSONObject: payload)
-        XCTAssertNil(PulseHookReceiver.respondDecisionJSON(
-            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 10_000, environment: [:],
-            clockMs: { self.now },
-            sleepMs: { _ in XCTFail("the shared key must not arm a hold") }
-        ))
-    }
-
-    func testRespondStaysSilentWithoutTheOptInKey() throws {
-        let payload = permissionPayload()
-        let raw = try JSONSerialization.data(withJSONObject: payload)
-        XCTAssertNil(PulseHookReceiver.respondDecisionJSON(
-            agent: "claude", kind: "permission", payload: payload, rawStdin: raw,
-            idleSeconds: 10_000, environment: [:],
-            clockMs: { self.now },
-            sleepMs: { _ in XCTFail("no key must mean no hold") }
-        ))
-    }
-
-    func testHoldAndAwayEnvKnobsAreClamped() {
-        XCTAssertEqual(PulseHookReceiver.maxHoldSeconds(environment: [:]), 60)
-        XCTAssertEqual(
-            PulseHookReceiver.maxHoldSeconds(environment: ["PULSE_RESPOND_MAX_HOLD_SECONDS": "1"]), 5
-        )
-        XCTAssertEqual(
-            PulseHookReceiver.maxHoldSeconds(environment: ["PULSE_RESPOND_MAX_HOLD_SECONDS": "900"]), 300
-        )
-        XCTAssertEqual(
-            PulseHookReceiver.maxHoldSeconds(environment: ["PULSE_RESPOND_MAX_HOLD_SECONDS": "abc"]), 60
-        )
-        XCTAssertEqual(
-            PulseHookReceiver.awayAfterSeconds(environment: [:]),
-            RespondHold.defaultAwayAfterSeconds
-        )
-        XCTAssertEqual(
-            PulseHookReceiver.awayAfterSeconds(environment: ["PULSE_RESPOND_AWAY_SECONDS": "5"]), 30
-        )
-        XCTAssertEqual(
-            PulseHookReceiver.awayAfterSeconds(environment: ["PULSE_RESPOND_AWAY_SECONDS": "99999"]),
-            3600
-        )
+    func testAPermissionRequestIsWrittenAndNeverHeld() throws {
+        let stdin = #"{"hook_event_name":"PermissionRequest","tool_use_id":"toolu_x","tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"s1","cwd":"/w"}"#
+        let started = Date()
+        let code = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
+        XCTAssertEqual(code, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the receiver exits at once")
+        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+        let line = try XCTUnwrap(text.split(separator: "\n").first { $0.hasPrefix("claude\t") })
+        let columns = line.split(separator: "\t", omittingEmptySubsequences: false)
+        XCTAssertEqual(columns.count, AttentionProtocol.columnCount)
+        XCTAssertEqual(columns[1], "permission")
+        XCTAssertEqual(columns[6], "", "the host column is written empty")
     }
 }
 
@@ -416,7 +210,7 @@ final class HooksInstallerTests: XCTestCase {
     /// it complete — so a new event added to one and not the other fails here.
     func testTheSelfCheckRecognisesAFreshInstall() throws {
         _ = try HooksInstaller.install()
-        let facts = DoctorProbe.gather(home: tempHome, respond: .init(), nowMs: 1_800_000_000_000)
+        let facts = DoctorProbe.gather(home: tempHome, nowMs: 1_800_000_000_000)
         XCTAssertEqual(facts.claudeHookEvents, Set(DoctorModel.claudeEvents))
         XCTAssertTrue(DoctorModel.matcherTokens.allSatisfy { facts.claudeNotificationMatcher?.contains($0) == true })
         XCTAssertEqual(facts.codexHookEvents, Set(DoctorModel.codexEvents))
@@ -429,12 +223,12 @@ final class HooksInstallerTests: XCTestCase {
                        "installed is not trusted: only a fired event proves Codex runs them")
 
         _ = try HooksInstaller.uninstall()
-        let after = DoctorProbe.gather(home: tempHome, respond: .init(), nowMs: 1_800_000_000_000)
+        let after = DoctorProbe.gather(home: tempHome, nowMs: 1_800_000_000_000)
         XCTAssertTrue(after.claudeHookEvents.isEmpty)
         XCTAssertTrue(after.codexHookEvents.isEmpty)
     }
 
-    func testNativeInstallWritesClaudeAndCodexWithoutPython() throws {
+    func testNativeInstallWritesClaudeAndCodex() throws {
         try HooksInstaller.ensureLauncher()
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: HooksInstaller.launcherURL.path))
 
@@ -444,7 +238,6 @@ final class HooksInstallerTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(claude.contains("pulse-hook"))
-        XCTAssertFalse(claude.contains("pulse_hook.py"), "fresh install must prefer native launcher")
         XCTAssertTrue(claude.contains("PermissionRequest"))
         // 2.9: the hook finally speaks about work, not just waits.
         XCTAssertTrue(claude.contains("PreToolUse"))
@@ -479,28 +272,6 @@ final class HooksInstallerTests: XCTestCase {
             try String(contentsOf: HooksInstaller.codexHooksURL, encoding: .utf8)
         ))
         XCTAssertEqual(HooksSupport.probeStatus(), .missing)
-    }
-
-    func testInstallMigratesLegacyPythonNotify() throws {
-        let cfg = tempHome.appendingPathComponent(".codex/config.toml")
-        try FileManager.default.createDirectory(at: cfg.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try """
-        model = "gpt"
-        notify = ["python3", "/tmp/pulse_hook.py", "codex"]
-
-        [mcp]
-        enabled = true
-        """.write(to: cfg, atomically: true, encoding: .utf8)
-
-        try HooksInstaller.ensureLauncher()
-        _ = try HooksInstaller.install()
-        let text = try String(contentsOf: cfg, encoding: .utf8)
-        XCTAssertTrue(text.contains("pulse-hook"))
-        XCTAssertFalse(text.contains("pulse_hook.py"))
-        // Root-table notify must stay before the first [section].
-        let notifyIdx = try XCTUnwrap(text.range(of: "notify = "))
-        let sectionIdx = try XCTUnwrap(text.range(of: "[mcp]"))
-        XCTAssertLessThan(notifyIdx.lowerBound, sectionIdx.lowerBound)
     }
 
     func testInstallNeverOverwritesTheUsersOwnCodexNotify() throws {
@@ -588,9 +359,9 @@ final class HooksInstallerTests: XCTestCase {
         try HooksInstaller.ensureLauncher()
         _ = try HooksInstaller.install()
 
-        let previous = HooksInstaller.permissionRequestTimeoutSeconds
-        defer { HooksInstaller.permissionRequestTimeoutSeconds = previous }
-        HooksInstaller.permissionRequestTimeoutSeconds = 45
+        let previous = HooksInstaller.claudeHookTimeoutSeconds
+        defer { HooksInstaller.claudeHookTimeoutSeconds = previous }
+        HooksInstaller.claudeHookTimeoutSeconds = 45
         _ = try HooksInstaller.install()
 
         let settings = tempHome.appendingPathComponent(".claude/settings.json")

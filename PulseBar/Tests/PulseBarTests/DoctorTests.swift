@@ -24,9 +24,6 @@ struct DoctorTests {
         f.codexInstalled = true
         f.codexHookEvents = Set(DoctorModel.codexEvents)
         f.codexRollout = .paginated
-        f.respondEnabled = true
-        f.respondWritten = 2
-        f.respondTaken = 1
         f.readCoverage = ["claude": .init(name: "Claude", sessions: 3, withTask: 3, withLastWord: 2)]
         return f
     }
@@ -127,17 +124,6 @@ struct DoctorTests {
         var f = healthy()
         f.readCoverage["pi"] = .init(name: "Pi", sessions: 6, withTask: 6, withLastWord: 2)
         #expect(verdict(f, "reading") == .unproven)
-    }
-
-    @Test func respondIsProvenOnlyByAClaimedVerdict() {
-        var f = healthy()
-        #expect(verdict(f, "respond") == .works)
-        f.respondTaken = 0
-        #expect(verdict(f, "respond") == .attention, "written and never claimed")
-        f.respondWritten = 0
-        #expect(verdict(f, "respond") == .unproven)
-        f.respondEnabled = false
-        #expect(verdict(f, "respond") == .absent)
     }
 
     @Test(arguments: [

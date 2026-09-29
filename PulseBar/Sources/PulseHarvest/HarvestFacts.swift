@@ -816,49 +816,6 @@ extension NativeActivityHarvest {
         target.records = max(target.records, source.records)
         target.windowTruncated = target.windowTruncated || source.windowTruncated
         target.structured = target.structured || source.structured
-        mergeDigestFacts(&target, source)
-    }
-
-    /// Digest facts describe a whole file, not a fragment of one.
-    ///
-    /// Every fragment of the same transcript is stamped with the same digest,
-    /// so in the ordinary case these merges are no-ops. They exist for the
-    /// cases where they are not: a fragment shaped before the digest existed,
-    /// and two files that legitimately share one session id. Taking the
-    /// stronger side follows the tokens/progress rule already above — the
-    /// weaker side is always an emptier read of the same thing.
-    package static func mergeDigestFacts(_ target: inout Fact, _ source: Fact) {
-        // A longer run of the same tool is the more complete observation of
-        // the same tail; an empty target has loopCount 0 and always loses.
-        if source.loopCount > target.loopCount, !source.loopTool.isEmpty {
-            target.loopTool = source.loopTool
-            target.loopCount = source.loopCount
-        }
-        target.sessionErrors = max(target.sessionErrors, source.sessionErrors)
-        if target.toolSummary.isEmpty { target.toolSummary = source.toolSummary }
-        // Ordered, oldest first: the longer list is the one that saw more of
-        // the session. Merging them elementwise would invent an order neither
-        // side observed.
-        if source.recentTools.count > target.recentTools.count {
-            target.recentTools = source.recentTools
-        }
-        target.sessionTokensIn = max(target.sessionTokensIn, source.sessionTokensIn)
-        target.sessionTokensOut = max(target.sessionTokensOut, source.sessionTokensOut)
-        target.digestProgressPercent = max(
-            target.digestProgressPercent, source.digestProgressPercent
-        )
-        target.digestCaughtUp = target.digestCaughtUp || source.digestCaughtUp
-        target.bytesPerMinute = max(target.bytesPerMinute, source.bytesPerMinute)
-        // The one field here that is not a max. Everything else above is a
-        // count or a percentage, where "more" means "read more of the file";
-        // this is an *origin*, where the truthful answer is the earliest
-        // moment observed. Taking the max would make a session look younger
-        // every time a second fragment turned up — the opposite of the fact.
-        if target.sessionStartedMs == 0 {
-            target.sessionStartedMs = source.sessionStartedMs
-        } else if source.sessionStartedMs > 0 {
-            target.sessionStartedMs = min(target.sessionStartedMs, source.sessionStartedMs)
-        }
     }
 
     /// Merge two fragments' hero titles by the kind of record each came from.
@@ -1035,8 +992,6 @@ extension NativeActivityHarvest {
                 progressDone: max(0, fact.progressDone),
                 progressTotal: max(0, fact.progressTotal)
             )
-            // Digest facts are carried, never recomputed: they came from
-            // reading the whole file and the window has no way to check them.
             // Only meaningful while there is a path to qualify.
             row.cwdBestEffort = !cwd.isEmpty && fact.cwdBestEffort
             // 2.8 self-report facts — already sanitized and bounded at parse
@@ -1045,19 +1000,6 @@ extension NativeActivityHarvest {
             row.planSteps = Array(fact.planSteps.prefix(maxPlanSteps))
             row.lastWord = clean(fact.lastWord, limit: maxSelfReportLength)
             row.lastErrorText = clean(fact.lastErrorText, limit: maxSelfReportLength)
-            row.loopTool = fact.loopTool
-            row.loopCount = max(0, fact.loopCount)
-            row.sessionErrors = max(0, fact.sessionErrors)
-            row.toolSummary = fact.toolSummary
-            row.sessionTokensIn = max(0, fact.sessionTokensIn)
-            row.sessionTokensOut = max(0, fact.sessionTokensOut)
-            // Bounded again here: the fold already caps the list, and a row is
-            // the boundary where that stops being an internal detail.
-            row.recentTools = Array(fact.recentTools.suffix(SessionDigest.maxRecentTools))
-            row.digestProgressPercent = max(0, min(100, fact.digestProgressPercent))
-            row.digestCaughtUp = fact.digestCaughtUp
-            row.bytesPerMinute = max(0, fact.bytesPerMinute)
-            row.sessionStartedMs = max(0, fact.sessionStartedMs)
             // 4.0-α: only a real structured session transcript earns a read
             // handle — a cache/SQLite source has no conversation to render,
             // and offering one would be inventing content.

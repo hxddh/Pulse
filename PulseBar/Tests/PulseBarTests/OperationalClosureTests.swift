@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 final class OperationalClosureTests: XCTestCase {
     private func waitingRow(_ key: String = "codex|session-1") -> AgentRow {
@@ -113,51 +112,6 @@ final class OperationalClosureTests: XCTestCase {
         XCTAssertTrue(store.collectorScanIncomplete)
     }
 
-    func testLaunchRecoveryMarksUncleanThenClean() {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: url) }
-        let first = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a")
-        XCTAssertFalse(first.wasUnclean)
-        XCTAssertEqual(first.kind, .clean)
-        let second = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-a")
-        XCTAssertTrue(second.wasUnclean)
-        XCTAssertEqual(second.kind, .crash)
-        var cleaned = second.state
-        cleaned.markCleanShutdown(at: url)
-        let third = LaunchRecovery.begin(nowMs: 30, at: url, bootID: "boot-a")
-        XCTAssertFalse(third.wasUnclean)
-        XCTAssertEqual(third.kind, .clean)
-    }
-
-    func testLaunchRecoveryDistinguishesSystemRestartAndUpdateReplace() {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: url) }
-        let first = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a")
-        _ = first
-        let afterReboot = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-b")
-        XCTAssertTrue(afterReboot.wasUnclean)
-        XCTAssertEqual(afterReboot.kind, .systemRestart)
-
-        var replacing = afterReboot.state
-        replacing.markIntendedExit(.updateReplace, at: url)
-        let afterUpdate = LaunchRecovery.begin(nowMs: 30, at: url, bootID: "boot-b")
-        XCTAssertFalse(afterUpdate.wasUnclean)
-        XCTAssertEqual(afterUpdate.kind, .updateReplace)
-    }
-
-    func testLaunchRecoveryForceQuitMarkerSurvivesCleanShutdownHook() {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("launch-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: url) }
-        var state = LaunchRecovery.begin(nowMs: 10, at: url, bootID: "boot-a").state
-        state.markIntendedExit(.forceQuit, at: url)
-        // applicationWillTerminate still calls markCleanShutdown; intent must stick
-        // because StatusStore keeps the mutated value (same as this var).
-        state.markCleanShutdown(at: url)
-        let second = LaunchRecovery.begin(nowMs: 20, at: url, bootID: "boot-a")
-        XCTAssertTrue(second.wasUnclean)
-        XCTAssertEqual(second.kind, .forceQuit)
-    }
-
     func testSupervisorFailureTimelineOrdersNewestFirst() {
         var supervisor = HarvestSupervisor()
         let now: Int64 = 100_000
@@ -190,54 +144,5 @@ final class OperationalClosureTests: XCTestCase {
         let timeline = supervisor.failureTimeline(nowMs: now + 6_000)
         XCTAssertEqual(timeline.map(\.agent), [.claude, .codex])
         XCTAssertEqual(timeline.map(\.error), ["native_timeout", "locked"])
-    }
-
-    func testUpdateReplacementKeepsRollbackCopy() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("update-\(UUID().uuidString)")
-        let target = root.appendingPathComponent("Pulse.app")
-        let staged = root.appendingPathComponent("staged/Pulse.app")
-        let rollback = root.appendingPathComponent("rollback")
-        defer { try? FileManager.default.removeItem(at: root) }
-        try makeApp(target, version: "0.47.0", marker: "old")
-        try makeApp(staged, version: "0.49.0", marker: "new")
-        try UpdateInstaller.replace(stagedApp: staged, targetApp: target, backupRoot: rollback)
-        XCTAssertEqual(try String(contentsOf: target.appendingPathComponent("Contents/MacOS/PulseBar")), "new")
-        let backups = try FileManager.default.contentsOfDirectory(at: rollback, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "app" }
-        XCTAssertEqual(backups.count, 1)
-        XCTAssertEqual(try String(contentsOf: backups[0].appendingPathComponent("Contents/MacOS/PulseBar")), "old")
-    }
-
-    func testIncompleteUpdateRecoversBackupOnNextLaunch() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("recover-\(UUID().uuidString)")
-        let target = root.appendingPathComponent("Pulse.app")
-        let backup = root.appendingPathComponent("rollback/Pulse-old.app")
-        let stateURL = root.appendingPathComponent("rollback/current.json")
-        defer { try? FileManager.default.removeItem(at: root) }
-        try makeApp(backup, version: "0.48.0", marker: "recover-me")
-        try FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let state = UpdateInstaller.InstallTransaction(
-            target: target.path,
-            backup: backup.path,
-            version: "0.49.0",
-            phase: "replacing"
-        )
-        try JSONEncoder().encode(state).write(to: stateURL)
-        XCTAssertTrue(UpdateInstaller.recoverIfNeeded(at: target, backupRoot: stateURL.deletingLastPathComponent()))
-        XCTAssertEqual(try String(contentsOf: target.appendingPathComponent("Contents/MacOS/PulseBar")), "recover-me")
-    }
-
-    private func makeApp(_ app: URL, version: String, marker: String) throws {
-        let fm = FileManager.default
-        let contents = app.appendingPathComponent("Contents")
-        let macOS = contents.appendingPathComponent("MacOS")
-        try fm.createDirectory(at: macOS, withIntermediateDirectories: true)
-        let plist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.pulse.app</string><key>CFBundleExecutable</key><string>PulseBar</string><key>CFBundleShortVersionString</key><string>\(version)</string></dict></plist>
-        """
-        try plist.data(using: .utf8)!.write(to: contents.appendingPathComponent("Info.plist"))
-        try marker.data(using: .utf8)!.write(to: macOS.appendingPathComponent("PulseBar"))
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: macOS.appendingPathComponent("PulseBar").path)
     }
 }

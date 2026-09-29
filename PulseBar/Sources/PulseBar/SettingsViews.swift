@@ -17,17 +17,13 @@ struct SettingsView: View {
     /// 22.0 Lamp: one page. Five panes held 28 controls; most of them were
     /// consent switches for features that are gone, or preferences the
     /// system already owns (quiet hours → Focus, sound → Notifications).
-    /// What is left fits on one screen; the tools for wiring up an unlisted
-    /// agent stay folded under Advanced.
+    /// What is left fits on one screen.
 
     /// A binding into the store, like `$store.x`.
     private func bind<Value>(_ keyPath: ReferenceWritableKeyPath<StatusStore, Value>) -> Binding<Value> {
         let store = self.store
         return Binding(get: { store[keyPath: keyPath] }, set: { store[keyPath: keyPath] = $0 })
     }
-    @State private var confirmDuplicateRemoval = false
-    @State private var bridgeExpanded = false
-    @State private var advancedExpanded = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -43,34 +39,16 @@ struct SettingsView: View {
                 updatesSection
                 aboutSection
                 installSection
-                advancedSection
-                if advancedExpanded { bridgeSection.id("settings-bridge") }
             }
             .formStyle(.grouped)
             .onAppear {
                 store.hooksStatus = HooksSupport.probeStatus()
-                store.refreshInstallTruth()
                 PulseNotify.refreshAuthorization()
-                store.refreshPulseHookLauncherStatus()
                 followFocus(proxy)
             }
             // A token, not the focus values: a second deep link with the same
             // target must still land (the values would not change).
             .onChange(of: store.settingsFocusToken) { _, _ in followFocus(proxy) }
-        }
-        .alert(
-            store.tr(.removeDuplicateApps),
-            isPresented: $confirmDuplicateRemoval
-        ) {
-            Button(store.tr(.cancel), role: .cancel) {}
-            Button(store.tr(.moveToTrash), role: .destructive) {
-                store.recycleDuplicateApps()
-            }
-        } message: {
-            Text(String(
-                format: store.tr(.removeDuplicateAppsConfirm),
-                store.installReport.removableDuplicates.count
-            ))
         }
     }
 
@@ -78,9 +56,7 @@ struct SettingsView: View {
     private func followFocus(_ proxy: ScrollViewProxy) {
         let target: String?
         if store.settingsFocusWaitingSignals {
-            advancedExpanded = true
-            bridgeExpanded = store.settingsFocusWaitingAgent != nil
-            target = store.settingsFocusWaitingAgent != nil ? "settings-bridge" : "settings-connections"
+            target = "settings-connections"
         } else if store.settingsFocusAppDataAgent != nil {
             target = "settings-data"
         } else {
@@ -89,23 +65,6 @@ struct SettingsView: View {
         guard let target else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             withAnimation(PulseTheme.motion) { proxy.scrollTo(target, anchor: .top) }
-        }
-    }
-
-    /// Live updates and the Attention-bridge tools: for someone wiring up
-    /// an agent, not for everyday use.
-    private var advancedSection: some View {
-        Section {
-            DisclosureGroup(isExpanded: $advancedExpanded) {
-                explainedToggle(
-                    store.tr(.liveUpdates),
-                    hint: store.tr(.liveUpdatesHint),
-                    isOn: bind(\.autoProbe)
-                )
-                .onChange(of: store.autoProbe) { _, _ in store.saveSettings() }
-            } label: {
-                Text(store.tr(.settingsAdvanced))
-            }
         }
     }
 
@@ -253,78 +212,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Every other agent reports through the Attention bridge. Its tools are
-    /// for the person wiring an agent up, so they stay folded until asked
-    /// for — or until the tray sent you here for exactly that.
-    private var bridgeSection: some View {
-        Section {
-            Text(store.attentionBridgeHintText())
-                .font(PulseTheme.Font.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup(isExpanded: $bridgeExpanded) {
-                if store.settingsFocusWaitingSignals {
-                    Label(store.attentionBridgeFocusHintText(), systemImage: "link")
-                        .font(PulseTheme.Font.body)
-                    Text(store.waitingReachStepsText())
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                LabeledContent {
-                    Button(store.tr(.ensurePulseHook)) {
-                        store.ensurePulseHookLauncher()
-                    }
-                } label: {
-                    Text("pulse-hook")
-                    Text(store.pulseHookLauncherReady ? store.tr(.pulseHookReady) : store.tr(.pulseHookMissing))
-                        .foregroundStyle(store.pulseHookLauncherReady ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
-                }
-                if let error = store.pulseHookLauncherError {
-                    Text(error)
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(PulseTheme.Tone.attention.color)
-                }
-                if let agent = store.settingsFocusWaitingAgent {
-                    Button(String(format: store.tr(.attentionBridgeWriteSampleFocused), agent.displayName)) {
-                        store.writeAttentionBridgeSample(for: agent)
-                    }
-                    Button(
-                        store.didCopyAttentionRaise
-                            ? store.tr(.attentionRaiseCopied)
-                            : store.tr(.copyAttentionRaiseCommand)
-                    ) {
-                        store.copyAttentionRaiseCommand(for: agent)
-                    }
-                }
-                HStack(spacing: PulseTheme.Space.s) {
-                    Button(store.tr(.attentionBridgeWriteSample)) {
-                        store.writeAttentionBridgeSample()
-                    }
-                    Button(store.tr(.attentionBridgeClearSample)) {
-                        store.clearAttentionBridgeSample()
-                    }
-                }
-                HStack(spacing: PulseTheme.Space.s) {
-                    Button(store.tr(.revealAttentionFolder)) {
-                        store.revealAttentionBridgeFolder()
-                    }
-                    Button(store.tr(.revealAttentionBridgeKit)) {
-                        store.revealAttentionBridgeKit()
-                    }
-                }
-                Text(store.attentionBridgeWriteSampleHintText())
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } label: {
-                Text(store.tr(.settingsBridgeTools))
-            }
-        } header: {
-            Text(store.tr(.settingsOtherAgents))
-        }
-    }
-
     // MARK: Permissions
 
     private var dataAccessSection: some View {
@@ -390,16 +277,6 @@ struct SettingsView: View {
                 store.saveSettings()
                 store.refresh(reason: "terminalAutomation")
             }
-            // Off by default, and the switch is a key file: turning it off
-            // stops every hold immediately ("no key, no hold").
-            explainedToggle(
-                store.tr(.respondLocal),
-                hint: store.tr(.respondLocalHint),
-                isOn: Binding(
-                    get: { store.respondLocalEnabled },
-                    set: { store.setRespondLocalEnabled($0) }
-                )
-            )
         } header: {
             Text(store.tr(.settingsPaneControlHeader))
         }
@@ -446,18 +323,7 @@ struct SettingsView: View {
                 .onChange(of: store.updateCheckEnabled) { _, _ in store.saveSettings() }
             LabeledContent {
                 if let url = store.updateAvailableURL {
-                    if store.updateCanVerifyDownload {
-                        Button(store.tr(.downloadAndVerify)) {
-                            store.downloadAndVerifyUpdate()
-                        }
-                        .disabled(
-                            store.updateDownloadStatus == .downloading
-                                || store.updateDownloadStatus == .verifying
-                                || store.updateDownloadStatus == .installing
-                        )
-                    } else {
-                        Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
-                    }
+                    Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
                 } else {
                     Button(store.tr(.checkNow)) { store.checkForUpdatesNow() }
                 }
@@ -465,25 +331,7 @@ struct SettingsView: View {
                 Text(store.updateStatusText)
                     .foregroundStyle(store.updateAvailableURL == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.running.color))
             }
-            if let download = store.updateDownloadStatusText {
-                Text(download)
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(downloadColor)
-            }
-            if case .ready = store.updateDownloadStatus, store.updateCanInstallInPlace {
-                Button(store.tr(.installUpdate)) { store.installVerifiedUpdate() }
-            } else if case .ready = store.updateDownloadStatus, !store.updateCanInstallInPlace {
-                Text(store.tr(.updateInstallRequiresNotarized))
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
-    }
-
-    private var downloadColor: Color {
-        if case .failed = store.updateDownloadStatus { return PulseTheme.Tone.waiting.color }
-        if case .ready = store.updateDownloadStatus { return PulseTheme.Tone.running.color }
-        return .secondary
     }
 
     private var installSection: some View {
@@ -495,7 +343,7 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
             LabeledContent(store.tr(.runningFrom)) {
-                Text(store.installReport.runningURL.path)
+                Text(Bundle.main.bundleURL.path)
                     .font(PulseTheme.Font.code)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -507,45 +355,6 @@ struct SettingsView: View {
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.Tone.attention.color)
             }
-            if !store.installReport.duplicates.isEmpty {
-                VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
-                    Label(
-                        String(
-                            format: store.tr(.duplicateAppsFound),
-                            store.installReport.duplicates.count
-                        ),
-                        systemImage: "square.on.square"
-                    )
-                    .foregroundStyle(PulseTheme.Tone.attention.color)
-                    ForEach(store.installReport.aboutVisibleDuplicates) { copy in
-                        Text("\(copy.version) · \(copy.url.path)")
-                            .font(PulseTheme.Font.code)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    if store.installReport.aboutHiddenDuplicateCount > 0 {
-                        Text(
-                            String(
-                                format: store.tr(.duplicateAppsMore),
-                                store.installReport.aboutHiddenDuplicateCount
-                            )
-                        )
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    if !store.installReport.removableDuplicates.isEmpty {
-                        Button(store.tr(.removeDuplicateApps)) {
-                            confirmDuplicateRemoval = true
-                        }
-                    }
-                    if store.installReport.hasOtherRunningCopy {
-                        Text(store.tr(.duplicateAppRunning))
-                            .font(PulseTheme.Font.caption)
-                            .foregroundStyle(PulseTheme.Tone.attention.color)
-                    }
-                }
-            }
             Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
                 store.copyDiagnostics()
             }
@@ -556,54 +365,5 @@ struct SettingsView: View {
     private var buildText: String {
         let line = PulseVersion.buildLine
         return line.isEmpty ? store.tr(.devBuild) : line
-    }
-}
-
-
-/// Hour+minute picker backed by minutes-since-midnight.
-/// Quiet hours were whole-hour only, so 22:30 was not expressible.
-private struct MinutePicker: View {
-    let label: String
-    @Binding var minutes: Int
-    let onCommit: () -> Void
-
-    var body: some View {
-        LabeledContent(label) {
-            HStack(spacing: 4) {
-                Picker("", selection: hourBinding) {
-                    ForEach(0..<24, id: \.self) { h in
-                        Text(String(format: "%02d", h)).tag(h)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 62)
-                Text(":")
-                Picker("", selection: minuteBinding) {
-                    ForEach([0, 15, 30, 45], id: \.self) { m in
-                        Text(String(format: "%02d", m)).tag(m)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 62)
-            }
-        }
-    }
-
-    private var hourBinding: Binding<Int> {
-        Binding(
-            get: { min(23, max(0, minutes / 60)) },
-            set: { minutes = $0 * 60 + (minutes % 60); onCommit() }
-        )
-    }
-
-    private var minuteBinding: Binding<Int> {
-        Binding(
-            get: {
-                let m = minutes % 60
-                // Snap a legacy/odd value onto the nearest offered step.
-                return [0, 15, 30, 45].min(by: { abs($0 - m) < abs($1 - m) }) ?? 0
-            },
-            set: { minutes = (minutes / 60) * 60 + $0; onCommit() }
-        )
     }
 }

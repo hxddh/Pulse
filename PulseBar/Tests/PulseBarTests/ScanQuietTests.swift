@@ -4,7 +4,6 @@ import Testing
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 12.4 Surface — a scan that found the same world wakes no surface.
 ///
@@ -31,12 +30,9 @@ struct ScanQuietTests {
             ("allowAppData", \StatusStore.allowAppData),
             ("allowTerminalAutomation", \StatusStore.allowTerminalAutomation),
             ("appDataAgents", \StatusStore.appDataAgents),
-            ("autoProbe", \StatusStore.autoProbe),
             ("timelineRevision", \StatusStore.timelineRevision),
-            ("pulseHookLauncherError", \StatusStore.pulseHookLauncherError),
             ("cachedAll", \StatusStore.cachedAll),
             ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
-            ("didCopyAttentionRaise", \StatusStore.didCopyAttentionRaise),
             ("didCopyDiagnostics", \StatusStore.didCopyDiagnostics),
             ("didCopyDoctorReport", \StatusStore.didCopyDoctorReport),
             ("doctorReport", \StatusStore.doctorReport),
@@ -46,63 +42,37 @@ struct ScanQuietTests {
             ("hooksStatus", \StatusStore.hooksStatus),
             ("hotkey", \StatusStore.hotkey),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
-            ("installReport", \StatusStore.installReport),
             ("isCopyingShapeReport", \StatusStore.isCopyingShapeReport),
             ("isRefreshing", \StatusStore.isRefreshing),
             ("isRunningDoctor", \StatusStore.isRunningDoctor),
             ("language", \StatusStore.language),
             ("launchAtLogin", \StatusStore.launchAtLogin),
             ("loginItemApplied", \StatusStore.loginItemApplied),
-            ("lookContinuityItems", \StatusStore.lookContinuityItems),
-            ("lookContinuityNotice", \StatusStore.lookContinuityNotice),
-            ("lookMovedRowKeys", \StatusStore.lookMovedRowKeys),
-            ("lookMovedWhileAway", \StatusStore.lookMovedWhileAway),
-            ("lookNewWaitsWhileAway", \StatusStore.lookNewWaitsWhileAway),
-            ("missedWhileAway", \StatusStore.missedWhileAway),
             ("mutedAgents", \StatusStore.mutedAgents),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
             ("notifyOnIdle", \StatusStore.notifyOnIdle),
             ("notifyOnWaiting", \StatusStore.notifyOnWaiting),
             ("pendingRevealRowKey", \StatusStore.pendingRevealRowKey),
-            ("playSoundOnWaiting", \StatusStore.playSoundOnWaiting),
             ("previewFixtureActive", \StatusStore.previewFixtureActive),
             ("previewWaitingEventTimes", \StatusStore.previewWaitingEventTimes),
-            ("pulseHookLauncherReady", \StatusStore.pulseHookLauncherReady),
-            ("quietEndMinute", \StatusStore.quietEndMinute),
-            ("quietHoursEnabled", \StatusStore.quietHoursEnabled),
-            ("quietStartMinute", \StatusStore.quietStartMinute),
-            ("recoveredAfterCrash", \StatusStore.recoveredAfterCrash),
-            ("recoveryExitKind", \StatusStore.recoveryExitKind),
-            ("respondDecided", \StatusStore.respondDecided),
-            ("respondInboundByRowKey", \StatusStore.respondInboundByRowKey),
-            ("respondLocalEnabled", \StatusStore.respondLocalEnabled),
-            ("respondVerdictSentRowKeys", \StatusStore.respondVerdictSentRowKeys),
             ("rowActionNotices", \StatusStore.rowActionNotices),
             ("settingsExpandAppDataScopes", \StatusStore.settingsExpandAppDataScopes),
             ("settingsFocusAppDataAgent", \StatusStore.settingsFocusAppDataAgent),
-            ("settingsFocusWaitingAgent", \StatusStore.settingsFocusWaitingAgent),
             ("settingsFocusWaitingSignals", \StatusStore.settingsFocusWaitingSignals),
             ("settingsFocusToken", \StatusStore.settingsFocusToken),
             ("showAllAgents", \StatusStore.showAllAgents),
             ("snapshot", \StatusStore.snapshot),
             ("snapshotAgents", \StatusStore.snapshotAgents),
-            ("snoozeMinutes", \StatusStore.snoozeMinutes),
-            ("stallMinutes", \StatusStore.stallMinutes),
-            ("trayGrouping", \StatusStore.trayGrouping),
             ("traySessionToken", \StatusStore.traySessionToken),
             ("updateCheckEnabled", \StatusStore.updateCheckEnabled),
-            ("updateDownloadStatus", \StatusStore.updateDownloadStatus),
             ("updateStatus", \StatusStore.updateStatus),
-            ("waitHistory", \StatusStore.waitHistory),
             ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
         ]
     }
 
     private func quietStore() -> StatusStore {
-        let store = StatusStore()
-        // No probe timer: this test drives the scans itself.
-        store.autoProbe = false
-        return store
+        // This test drives the scans itself.
+        StatusStore()
     }
 
     private func scan(_ store: StatusStore, ticket: UInt64) {
@@ -165,7 +135,7 @@ struct ScanQuietTests {
         var snap = PulseSnapshot()
         snap.rows = [AgentRow(rowKey: "claude|s1", agent: .claude)]
         store.snapshot = snap
-        let fired = watch(store, [("snapshotAgents", \StatusStore.snapshotAgents), ("stallMinutes", \StatusStore.stallMinutes)])
+        let fired = watch(store, [("snapshotAgents", \StatusStore.snapshotAgents), ("notifyOnIdle", \StatusStore.notifyOnIdle)])
 
         snap.rows[0].task = "moved"
         store.snapshot = snap
@@ -183,7 +153,7 @@ struct ScanQuietTests {
         let loop = ObservationLoop(track: { _ = store.snapshot }, onChange: {})
         defer { loop.cancel() }
 
-        store.stallMinutes += 1
+        store.notifyOnIdle.toggle()
         store.showAllAgents.toggle()
         for _ in 0..<10 { await Task.yield() }
         #expect(loop.deliveries == 0, "a settings write does not touch the lamp")

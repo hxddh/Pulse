@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ROOT / "docs" / "scenarios.md"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 EXPERIENCE = ROOT / "EXPERIENCE.md"
-MIN_SCENARIOS = 67
+MIN_SCENARIOS = 60
 
 
 def main() -> int:
@@ -33,6 +33,9 @@ def main() -> int:
     # 19 scenarios with the features they specified (the Workbench, managed
     # sessions, Missions, working-copy checks, workspace effect, fleet
     # broadcast and the remote inbox) — the floor follows the spec down.
+    # 23.0 removed three more with Respond (AR, AU, AV), and four with the
+    # look-continuity notice, the session digest and adaptive depth (AF, AP,
+    # AQ, BV).
     if len(ids) < MIN_SCENARIOS:
         problems.append(f"docs/scenarios.md lists {len(ids)} scenarios; the spec has {MIN_SCENARIOS}")
     existing = {p.stem for p in TESTS.glob("*.swift")}

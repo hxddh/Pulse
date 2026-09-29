@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 0.95 Extinguish Honesty — false Waiting must not light; clear stays clear
 /// until genuine new evidence.
@@ -47,12 +46,11 @@ final class ExtinguishHonestyTests: XCTestCase {
     private func build(
         harvest rows: [ActivityHarvest.Row] = [],
         attention entries: [AttentionReader.Entry] = [],
-        dismissed: Set<String> = [],
-        unreliable: Bool = false
+        dismissed: Set<String> = []
     ) -> SnapshotBuilder.Result {
         SnapshotBuilder.build(
             SnapshotBuilder.Input(
-                procs: [], harvest: rows, harvestUnreliable: unreliable, attention: entries
+                procs: [], harvest: rows, attention: entries
             ),
             previous: .init(),
             context: context(dismissed: dismissed)
@@ -127,27 +125,19 @@ final class ExtinguishHonestyTests: XCTestCase {
         let wind = result.rows.filter { $0.id == .windsurf }
         XCTAssertFalse(cascade.isEmpty, "Cascade should claim the shared root")
         XCTAssertTrue(wind.isEmpty, "Windsurf shell must not duplicate when Cascade observed")
-        XCTAssertEqual(cascade.first?.skill, "pending")
+        // 23.0: Cascade's format is unverified — no inferred Waiting.
+        XCTAssertNotEqual(cascade.first?.skill, "pending")
     }
 
-    // MARK: Soft-dismiss absence / unreliable
+    // MARK: Soft-dismiss absence
 
     @MainActor
     func testDismissedKeyClearsWhenHarvestAbsentOnReliableScan() {
         let key = ActivityHarvest.sessionKey(
             id: .cline, sessionID: "cl-gone", project: "", cwd: "/Users/me/Pulse"
         )
-        let gone = build(harvest: [], dismissed: [key], unreliable: false)
+        let gone = build(harvest: [], dismissed: [key])
         XCTAssertTrue(gone.clearedPendingKeys.contains(key))
-    }
-
-    @MainActor
-    func testDismissedKeySurvivesUnreliableHarvestAbsence() {
-        let key = ActivityHarvest.sessionKey(
-            id: .cline, sessionID: "cl-keep", project: "", cwd: "/Users/me/Pulse"
-        )
-        let kept = build(harvest: [], dismissed: [key], unreliable: true)
-        XCTAssertFalse(kept.clearedPendingKeys.contains(key))
     }
 
     @MainActor
@@ -206,9 +196,9 @@ final class ExtinguishHonestyTests: XCTestCase {
     func testGenericWaitingSurvivesImmediateStopWithinGrace() {
         let nowMs = now
         let text = [
-            "agent\tkind\tms\tmessage\tsession\tcwd",
-            "zcode\twaiting\t\(nowMs - 1_000)\tNeed you\tz-1\t/tmp",
-            "zcode\tstop\t\(nowMs)\t\tz-1\t/tmp",
+            AttentionProtocol.header.trimmingCharacters(in: .newlines),
+            "zcode\twaiting\t\(nowMs - 1_000)\tNeed you\tz-1\t/tmp\t\t",
+            "zcode\tstop\t\(nowMs)\t\tz-1\t/tmp\t\t",
         ].joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: nowMs)
         XCTAssertEqual(entries.count, 1, "Waiting + Stop within grace must keep the raise")
@@ -224,13 +214,5 @@ final class ExtinguishHonestyTests: XCTestCase {
         row.liveProcess = true
         row.waiting = false
         XCTAssertTrue(store.isWaitingNoneNeedsReach(row))
-    }
-
-    // MARK: Look Closure EN copy
-
-    @MainActor
-    func testLookClosureEnglishSaysChangedNotMoved() {
-        XCTAssertEqual(L10n.t(.whileAwayNamedMoved, .en), "%@ changed")
-        XCTAssertEqual(L10n.t(.lookMovedMark, .en), "Changed while away")
     }
 }

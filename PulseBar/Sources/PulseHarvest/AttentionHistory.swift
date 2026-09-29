@@ -33,12 +33,11 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
         package var message: String
         package var session: String
         package var cwd: String
-        package var host: String
         package var front: Bool?
 
         package init(
             agent: String, kind: String, tsMs: Int64, message: String = "",
-            session: String = "", cwd: String = "", host: String = "", front: Bool? = nil
+            session: String = "", cwd: String = "", front: Bool? = nil
         ) {
             self.agent = agent
             self.kind = kind
@@ -46,7 +45,6 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
             self.message = message
             self.session = session
             self.cwd = cwd
-            self.host = host
             self.front = front
         }
 
@@ -56,7 +54,7 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
             AttentionHistory.key(agent: agent, session: session)
         }
 
-        var identity: String { "\(tsMs)|\(kind)|\(session)|\(host)|\(message)" }
+        var identity: String { "\(tsMs)|\(kind)|\(session)|\(message)" }
     }
 
     package var schemaVersion = AttentionHistory.currentSchemaVersion
@@ -82,9 +80,7 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
         var changed = false
         for source in sources {
             for line in source.text.split(whereSeparator: \.isNewline) {
-                let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if raw.isEmpty || raw.hasPrefix("#") { continue }
-                guard let event = Self.parse(raw) else { continue }
+                guard let event = Self.parse(String(line)) else { continue }
                 changed = append(event) || changed
             }
         }
@@ -92,26 +88,23 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
         return changed
     }
 
-    /// One TSV line → event; nil for anything the protocol does not accept.
-    /// The `host` column is kept as written so an export replays verbatim,
-    /// but it no longer keys anything: every line is this Mac's (22.0).
+    /// One v3 TSV line (8 columns) → event; nil for anything the protocol
+    /// does not accept. The `host` column is ignored: every line is this
+    /// Mac's.
     package static func parse(_ raw: String) -> Event? {
-        let cols = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        guard cols.count >= 3,
+        guard let cols = AttentionProtocol.columns(of: raw),
               ActivityHarvest.mapAgent(cols[0]) != nil,
               AttentionProtocol.acceptsWrite(kind: cols[1]),
               let ts = Int64(cols[2]), ts > 0
         else { return nil }
-        let named = cols.count > 6 ? AttentionProtocol.normalizeHost(cols[6]) : ""
         return Event(
             agent: cols[0],
             kind: AttentionProtocol.normalizeKind(cols[1]),
             tsMs: ts,
-            message: bound(ContentSanitizer.redact(cols.count > 3 ? cols[3] : ""), 200),
-            session: bound(cols.count > 4 ? cols[4] : "", 80),
-            cwd: bound(ContentSanitizer.redact(cols.count > 5 ? cols[5] : ""), 240),
-            host: named,
-            front: AttentionProtocol.parseFront(cols.count > 7 ? cols[7] : "")
+            message: bound(ContentSanitizer.redact(cols[3]), 200),
+            session: bound(cols[4], 80),
+            cwd: bound(ContentSanitizer.redact(cols[5]), 240),
+            front: AttentionProtocol.parseFront(cols[7])
         )
     }
 
@@ -157,7 +150,7 @@ package struct AttentionHistory: Codable, Equatable, Sendable {
             let cwd = event.cwd.isEmpty ? "" : "/" + (event.cwd.split(separator: "/").last.map(String.init) ?? "")
             return [
                 event.agent, event.kind, String(event.tsMs), event.message,
-                event.session, cwd, event.host, AttentionProtocol.frontField(event.front),
+                event.session, cwd, "", AttentionProtocol.frontField(event.front),
             ].joined(separator: "\t")
         }
         return AttentionProtocol.header + lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")

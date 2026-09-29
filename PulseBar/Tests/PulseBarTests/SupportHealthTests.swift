@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 final class SupportHealthTests: XCTestCase {
     private func health(
@@ -413,26 +412,13 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(item.repair, .openAttentionBridge)
     }
 
-    func testAttentionSampleAgentsCoverEveryWaitingNoneContract() {
+    func testWaitingNoneAgentsCoverEveryWaitingNoneContract() {
         let none = Set(AgentID.allCases.filter { $0.waitingSource == .none && $0 != .cursorAgent })
-        let samples = Set(StatusStore.attentionSampleAgents)
-        XCTAssertEqual(samples, none, "Settings sample must cover every Waiting-none Agent")
-        XCTAssertEqual(Set(AgentID.waitingNoneAgents), none)
-        XCTAssertFalse(samples.contains(.claude))
-        XCTAssertFalse(samples.contains(.codex))
-        XCTAssertTrue(samples.contains(.zcode))
-    }
-
-    @MainActor
-    func testAttentionReachNamesWaitingNoneAgent() {
-        let store = StatusStore()
-        store.language = .en
-        store.openSettings(focusWaitingSignals: true, focusWaitingAgent: .zcode)
-        XCTAssertTrue(store.settingsFocusWaitingSignals)
-        XCTAssertEqual(store.settingsFocusWaitingAgent, .zcode)
-        XCTAssertTrue(store.attentionBridgeFocusHintText().contains("ZCode"))
-        XCTAssertTrue(store.attentionBridgeWriteSampleHintText().contains("ZCode"))
-        XCTAssertTrue(store.attentionBridgeHintText().contains("ZCode"))
+        let listed = Set(AgentID.waitingNoneAgents)
+        XCTAssertEqual(listed, none)
+        XCTAssertFalse(listed.contains(.claude))
+        XCTAssertFalse(listed.contains(.codex))
+        XCTAssertTrue(listed.contains(.zcode))
     }
 
     @MainActor
@@ -451,58 +437,6 @@ final class SupportHealthTests: XCTestCase {
     }
 
     @MainActor
-    func testWaitingReachFunnelEnsuresLauncherWithoutClaudeCodexInstall() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-reach-\(UUID().uuidString)")
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
-        defer {
-            HooksInstaller.homeOverride = nil
-            try? fm.removeItem(at: home)
-        }
-        HooksInstaller.homeOverride = home
-        let store = StatusStore()
-        store.language = .en
-        store.openSettings(focusWaitingSignals: true, focusWaitingAgent: .trae)
-        XCTAssertTrue(store.waitingReachStepsText().contains("Trae"))
-        XCTAssertTrue(store.waitingReachStepsText().contains("pulse-hook"))
-        store.ensurePulseHookLauncher()
-        XCTAssertTrue(store.pulseHookLauncherReady)
-        XCTAssertTrue(fm.isExecutableFile(atPath: HooksInstaller.launcherURL.path))
-        let kitRaise = HooksSupport.attentionBridgeKitDir().appendingPathComponent("raise.sh")
-        let kitClear = HooksSupport.attentionBridgeKitDir().appendingPathComponent("clear.sh")
-        XCTAssertTrue(fm.isExecutableFile(atPath: kitRaise.path))
-        XCTAssertTrue(fm.isExecutableFile(atPath: kitClear.path))
-        let clearText = try String(contentsOf: kitClear, encoding: .utf8)
-        XCTAssertTrue(clearText.contains("zcode"), clearText)
-        // Launcher-only: Claude/Codex configs must stay untouched.
-        XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent(".claude/settings.json").path))
-        XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent(".codex/config.toml").path))
-        let command = store.attentionRaiseCommand(for: .trae)
-        XCTAssertTrue(command.contains("trae"), command)
-        XCTAssertTrue(command.contains("pulse-hook"), command)
-    }
-
-    @MainActor
-    func testFocusedAttentionSampleWritesOnlyThatAgent() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-sample-one-\(UUID().uuidString)")
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
-        defer {
-            AttentionIO.pathOverride = nil
-            HooksInstaller.homeOverride = nil
-            try? fm.removeItem(at: home)
-        }
-        HooksInstaller.homeOverride = home
-        AttentionIO.pathOverride = home.appendingPathComponent("attention.tsv")
-        let store = StatusStore()
-        store.writeAttentionBridgeSample(for: .zcode)
-        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
-        XCTAssertTrue(text.contains("zcode\tpermission\t"), text)
-        XCTAssertTrue(text.contains("pulse-sample"), text)
-        XCTAssertFalse(text.contains("replit\tpermission\t"), "focused sample must not raise every Waiting-none agent")
-    }
-
-    @MainActor
     func testMaintenanceNoticeOpensWaitingReachWithOpaqueAgent() {
         let store = StatusStore()
         store.language = .en
@@ -511,15 +445,12 @@ final class SupportHealthTests: XCTestCase {
         store.notifyOnWaiting = false
         store.installPreviewFixture("waiting")
         guard store.needsWaitingSignalNudge else {
-            store.openSettings(focusWaitingSignals: true, focusWaitingAgent: .zcode)
-            XCTAssertEqual(store.settingsFocusWaitingAgent, .zcode)
+            store.openSettings(focusWaitingSignals: true)
+            XCTAssertTrue(store.settingsFocusWaitingSignals)
             return
         }
         store.performMaintenanceNoticeAction()
         XCTAssertTrue(store.settingsFocusWaitingSignals)
-        if let agent = store.settingsFocusWaitingAgent {
-            XCTAssertEqual(agent.waitingSource, .none)
-        }
     }
 
     @MainActor

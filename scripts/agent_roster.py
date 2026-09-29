@@ -20,7 +20,6 @@ class Agent:
     display: str
     waiting: str       # hooks | harvestPending | none
     harvest: str       # structuredSession | bestEffortCache
-    respond_reach: str # hookSite | none
     has_collector: bool
 
 
@@ -69,7 +68,6 @@ def agents() -> list[Agent]:
             display=field("displayName").strip('"'),
             waiting=field("waiting").lstrip("."),
             harvest=field("harvest").lstrip("."),
-            respond_reach=field("respondReach").lstrip("."),
             has_collector=not field("harvestRoots").startswith("[]"),
         ))
     return out

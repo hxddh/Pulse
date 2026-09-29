@@ -171,47 +171,20 @@ private struct PulseCardChrome: ViewModifier {
 struct PulseChip: View {
     let label: String
     var tone: PulseTheme.Tone = .idle
-    /// A drained chip: a waiting row that agreed to be quiet.
-    var muted = false
 
     var body: some View {
         Text(label)
             .font(PulseTheme.Font.chip)
             .monospacedDigit()
-            .foregroundStyle(tone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(tone.color.opacity(muted ? 0.65 : 1)))
+            .foregroundStyle(tone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(tone.color))
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(
                 (tone == .idle ? Color.primary : tone.color)
-                    .opacity(muted ? PulseTheme.Fill.subtle : (tone == .idle ? PulseTheme.Fill.hover : PulseTheme.Fill.chip)),
+                    .opacity(tone == .idle ? PulseTheme.Fill.hover : PulseTheme.Fill.chip),
                 in: Capsule(style: .continuous)
             )
             .lineLimit(1)
             .fixedSize()
-    }
-}
-
-/// A small lamp dot in a state's tone. Carries a shape difference for the
-/// states colour alone would not separate (Differentiate Without Colour):
-/// waiting is a filled dot with a ring, attention a hollow ring.
-struct PulseLamp: View {
-    let tone: PulseTheme.Tone
-    var size: CGFloat = 7
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiate
-
-    var body: some View {
-        ZStack {
-            if differentiate, tone == .attention {
-                Circle().strokeBorder(tone.color, lineWidth: 1.5)
-            } else {
-                Circle().fill(tone.color)
-            }
-            if differentiate, tone == .waiting {
-                Circle().strokeBorder(tone.color.opacity(0.45), lineWidth: 1)
-                    .padding(-2)
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }

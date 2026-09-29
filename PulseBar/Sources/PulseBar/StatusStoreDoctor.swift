@@ -5,22 +5,6 @@ import Foundation
 /// keep the result for the view, copy the redacted text on another click.
 @MainActor
 extension StatusStore {
-    /// This run's local Respond verdicts, by fate — the one fact only the
-    /// store holds.
-    var doctorRespondTally: DoctorProbe.RespondTally {
-        var tally = DoctorProbe.RespondTally()
-        tally.enabled = respondLocalEnabled
-        for decided in respondDecided.values {
-            tally.written += 1
-            switch decided.fate {
-            case .taken: tally.taken += 1
-            case .expired: tally.expired += 1
-            case .waiting, .unknown: break
-            }
-        }
-        return tally
-    }
-
     /// 20.0: what the parsers got from each agent's session files this run —
     /// counts only.
     var doctorReadCoverage: [String: DoctorModel.Coverage] {
@@ -43,13 +27,12 @@ extension StatusStore {
         guard !isRunningDoctor else { return }
         isRunningDoctor = true
         let home = HooksInstaller.homeURL
-        let tally = doctorRespondTally
         let coverage = doctorReadCoverage
         let lang = self.lang
         DebugLog.write("self-check started")
         Task.detached(priority: .userInitiated) {
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-            let facts = DoctorProbe.gather(home: home, respond: tally, coverage: coverage, nowMs: nowMs)
+            let facts = DoctorProbe.gather(home: home, coverage: coverage, nowMs: nowMs)
             let report = DoctorModel.evaluate(facts, lang: lang)
             await MainActor.run { [weak self] in
                 guard let self else { return }

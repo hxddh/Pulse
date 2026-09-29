@@ -28,25 +28,14 @@ final class StatusStore {
     /// agent Pulse has seen; reading this rather than `snapshot` keeps a
     /// scan that only moved a row's activity from redrawing the form.
     private(set) var snapshotAgents: Set<AgentID> = []
-    var autoProbe = true
     var notifyOnIdle = true
     var notifyOnWaiting = true
-    /// Quiet hours suppress idle notify only; Waiting edges still fire when notifyOnWaiting.
-    var quietHoursEnabled = false
-    /// Minutes since midnight — whole hours were too coarse for a 22:30 bedtime.
-    var quietStartMinute: Int = 22 * 60
-    var quietEndMinute: Int = 8 * 60
     var launchAtLogin = false
     /// Whether launchd was actually left in the state `launchAtLogin` claims.
     /// `nil` until the toggle has been applied at least once this run.
     var loginItemApplied: Bool?
     var language: AppLanguage = .auto
     var hooksStatus: HooksSupport.Status = .unknown
-    /// Native `pulse-hook` launcher present — Attention bridge path, not Claude/Codex install.
-    var pulseHookLauncherReady = false
-    /// 21.0: why the last "ensure pulse-hook" click failed, shown beside it.
-    var pulseHookLauncherError: String?
-    var didCopyAttentionRaise = false
     var showAllAgents = false
     var isRefreshing = false
     /// Transient "Copied" confirmation on the diagnostics button.
@@ -62,20 +51,8 @@ final class StatusStore {
     var mutedAgents: Set<AgentID> = []
     /// `.off` until the person picks one (see `PulseSettings.hotkey`).
     var hotkey: HotkeyChoice = .off
-    var hotkeyEnabled: Bool { hotkey != .off }
     /// Opt-in: Terminal/iTerm tab Focus via Apple Events (may prompt Automation).
     var allowTerminalAutomation = false
-    /// Answer this Mac's own agents from Pulse, when the prompt is not in
-    /// front of you. **The key file is the source of truth**, not this flag —
-    /// a persisted setting could drift from the file the hook actually reads,
-    /// and the hook is the half that decides whether an agent waits.
-    var respondLocalEnabled = false
-    var trayGrouping: TrayGrouping = .status
-    var playSoundOnWaiting = false
-    /// Minutes of silence before a live row reads as stalled; 0 turns it off.
-    var stallMinutes = 20
-    /// How long "Later" silences a wait.
-    var snoozeMinutes = 10
     /// Persisted: the user uninstalled the hooks, so the tray stops offering
     /// them. Cleared by the next install.
     var hooksNudgeOff = false
@@ -95,16 +72,6 @@ final class StatusStore {
     /// a single TCC decision must never silently widen the scan to every app.
     var appDataAgents: Set<AgentID> = []
     var updateStatus: UpdateCheck.Status = .idle
-    var updateDownloadStatus: UpdateCheck.DownloadStatus = .idle
-    var recoveredAfterCrash = false
-    var recoveryExitKind: LaunchRecovery.ExitKind = .clean
-    /// Keep the unclean-exit banner through the first healthy scan so the user
-    /// can actually see it; clear on the next healthy scan or explicit dismiss.
-    @ObservationIgnored var recoveryNoticeSurvivedFirstHealthyScan = false
-    @ObservationIgnored var launchRecovery: LaunchRecovery?
-    /// SIGTERM → force-quit marker. Force Quit via SIGKILL still looks like a crash.
-    @ObservationIgnored var terminationSignalSource: DispatchSourceSignal?
-    var installReport = InstallTruth.Report.empty
     var hookSelfTestResult: HooksSupport.SelfTestResult = .idle
     /// Notification authorization — a denied prompt used to fail silently.
     var notifyAuthorized: Bool?
@@ -114,119 +81,16 @@ final class StatusStore {
     /// Existing per-agent health is retained in that case; the banner exposes
     /// the scan gap without turning every unvisited adapter into an error.
     var collectorScanIncomplete = false
-    /// Waits that have already been resolved, newest first (P1-H).
-    var waitHistory: [ResolvedWait] = []
-    /// Waits that ended while the tray was closed — "what did I miss?".
-    var missedWhileAway = 0
-    /// Sessions that moved / new waits while the tray was closed (Look Continuity).
-    var lookMovedWhileAway = 0
-    var lookNewWaitsWhileAway = 0
-    /// Localized Look Closure notice — named agents/sessions, not only counts (0.93).
-    var lookContinuityNotice = ""
-    /// Ordered Look Closure events (new wait → ended wait → moved).
-    var lookContinuityItems: [LookDeltaItem] = []
-    /// Respond (scene AR): inbound full permission requests matched to rows,
-    /// and the rows whose verdict this session already wrote. State only —
-    /// matching and actions live in StatusStore+Respond.swift, which is also
-    /// the only writer (internal set because extensions live in another file).
-    var respondInboundByRowKey: [String: RespondSpool.InboundRequest] = [:]
-    var respondVerdictSentRowKeys: Set<String> = []
-    /// Verdicts this Mac wrote, and what has become of each. The fate is read
-    /// off disk every scan — `claimVerdict` renames a verdict to `.used`
-    /// before reading it, so the agent taking it is a file fact rather than
-    /// something Pulse infers.
-    var respondDecided: [String: DecidedVerdict] = [:]
     /// What happened the last time the user pressed a button on this row.
     ///
     /// A click that reached nothing used to be indistinguishable from a dead
     /// button. `TerminalFocus.focus` returns whether it actually got
-    /// anywhere and every caller threw that away; a verdict that could not be
-    /// written went to `debug.log` and nowhere else. Both are honest failures
-    /// with a real cause, and both deserve one short sentence on the row that
-    /// offered the action — especially Deny, which the product documents as
-    /// always available precisely because refusing is the safe move.
+    /// anywhere and every caller threw that away. An honest failure with a
+    /// real cause deserves one short sentence on the row that offered the
+    /// action.
     var rowActionNotices: [String: String] = [:]
-    /// Row keys marked “moved while away” until the notice is acknowledged.
-    var lookMovedRowKeys: Set<String> = []
-    /// When the tray was last dismissed, for the missed-wait count.
-    @ObservationIgnored var trayClosedAt: Date?
-    /// Fingerprint of visible rows at last tray close — Look Continuity (0.92).
-    @ObservationIgnored var trayCloseFingerprint: TrayLookFingerprint?
-
-    /// One named Look Closure event (0.93).
-    struct LookDeltaItem: Equatable, Identifiable {
-        enum Kind: Equatable {
-            case newWait
-            case endedWait
-            case moved
-        }
-
-        var id: String { "\(kindTag)|\(rowKey)|\(label)" }
-        var kind: Kind
-        var rowKey: String
-        var label: String
-        /// True when the live tray still has this rowKey (can Go-Look reveal).
-        var revealable: Bool
-
-        private var kindTag: String {
-            switch kind {
-            case .newWait: return "new"
-            case .endedWait: return "ended"
-            case .moved: return "moved"
-            }
-        }
-    }
-
-    /// Compact tray-close snapshot for "what moved since you left".
-    struct TrayLookFingerprint: Equatable {
-        struct RowSnap: Equatable {
-            var rowKey: String
-            var agentRaw: String
-            var label: String
-            var waiting: Bool
-            var waitKind: String
-            var phase: String
-            var tool: String
-            var task: String
-            var harvestMs: Int64
-            var activityChangedMs: Int64
-            var changeTag: String
-            var tokensIn: Int
-            var tokensOut: Int
-            var progressDone: Int
-            /// Wait generation — same row can end one wait and start another.
-            var waitSinceMs: Int64 = 0
-        }
-
-        var closedAt: Date
-        var rows: [RowSnap]
-    }
-    /// Install-copy discovery is diagnostic-only. Keep it off the main thread
-    /// and avoid re-running a process/filesystem scan on every tray open.
-    @ObservationIgnored var installTruthRefreshInFlight = false
-    @ObservationIgnored var installTruthRefreshedAt: Date?
-    @ObservationIgnored var installTruthGeneration = 0
-
-    /// A Waiting row that is no longer waiting — "did I miss something?".
-    struct ResolvedWait: Identifiable, Equatable {
-        var id: String { "\(rowKey)|\(Int(resolvedAt.timeIntervalSince1970))" }
-        var rowKey: String
-        var agent: AgentID
-        var title: String
-        var kind: String
-        var project: String
-        var resolvedAt: Date
-        var waitedSeconds: Double
-    }
-
-    /// Resolved waits kept for the Settings history list.
-    static let maxWaitHistory = 12
-
     @ObservationIgnored var timer: Timer?
-    /// 5.0-α — the engine boundary. Sources produce rows; the coordinator
-    /// merges; `cachedAll` is the merged cache the display layer reads.
-    let observedSessions = ObservedSessionSource()
-    @ObservationIgnored private(set) lazy var sessionSources = SessionSourceCoordinator(sources: [observedSessions])
+    /// Every row the last scan produced; the display layer reads it.
     var cachedAll: [AgentRow] = []
     @ObservationIgnored var lastGoodHarvest: [ActivityHarvest.Row] = []
     /// Result of the latest attempted adapter scan, including adapters that
@@ -260,10 +124,6 @@ final class StatusStore {
     let powerMonitor = PowerMonitor()
     /// Tray panel is on screen — worth probing faster while the user reads it.
     @ObservationIgnored var trayOpen = false
-    /// Close instant to apply Look Continuity *after* the opening scan (0.96).
-    @ObservationIgnored var lookContinuityPendingClosedAt: Date?
-    /// Sample Waiting reveal waits until the row exists in `cachedAll`.
-    @ObservationIgnored var pendingSampleRevealSession = ""
     @ObservationIgnored var activity: ProbeSchedule.Activity = .empty
     @ObservationIgnored var currentInterval: TimeInterval?
     /// Live-process fingerprint; a change forces a harvest even off-cadence.
@@ -292,10 +152,6 @@ final class StatusStore {
     /// in-flight until its callback arrives so a fast follow-up scan cannot
     /// post a duplicate or mark a failed request as delivered.
     @ObservationIgnored var waitingDeliveryInFlight: Set<String> = []
-    /// Keep the optional sound as one cue per delivery window, not one cue per
-    /// session when a batch is accepted as separate Notification Center
-    /// requests.
-    @ObservationIgnored var waitingDeliverySounded = false
     /// Cross-launch Waiting/delivery state. This is deliberately separate from
     /// the agent-owned attention.tsv bridge so a restart cannot lose the only
     /// human-confirmation edge or emit it twice.
@@ -311,19 +167,16 @@ final class StatusStore {
     @ObservationIgnored var lastApplyLogSignature = ""
     /// Soft-dismissed Cursor harvest pending until skill clears.
     @ObservationIgnored var dismissedPendingKeys: Set<String> = []
-    /// Row key → when its "remind me later" runs out.
-    @ObservationIgnored var snoozedUntil: [String: Date] = [:]
     let attentionWatcher = AttentionWatcher()
     let scanQueue = DispatchQueue(label: "com.pulse.scan", qos: .userInitiated)
     @ObservationIgnored var scanTicket: UInt64 = 0
     @ObservationIgnored var lastAppliedTicket: UInt64 = 0
     /// Tests exercising store behaviour must not start a real background scan.
     ///
-    /// A scan is not read-only: it folds session digests and flushes them, so
-    /// an unguarded `refresh()` inside a unit test writes the developer's own
-    /// `session-digests.json` — the same class of accident 1.1 fixed when a
-    /// fixture scan leaked into the real digest store. Same shape as
-    /// `AttentionIO.pathOverride` and `HooksInstaller.homeOverride`.
+    /// A scan is not read-only: it writes the attention ledger and the
+    /// timeline, so an unguarded `refresh()` inside a unit test would touch
+    /// the developer's own files. Same shape as `AttentionIO.pathOverride`
+    /// and `HooksInstaller.homeOverride`.
     static var suppressBackgroundScansForTesting = false
 
     @ObservationIgnored var scanInFlight = false
@@ -449,14 +302,11 @@ final class StatusStore {
 
     /// Current cadence, for Settings/diagnostics ("probing every 5s").
     var probeIntervalDescription: String {
-        guard autoProbe else { return tr(.probePaused) }
         guard let interval = currentInterval else { return tr(.probeParked) }
         return String(format: tr(.probeEvery), Int(interval.rounded()))
     }
 
-    /// Close an open parked span. Switching live updates off is *not* parking —
-    /// settling here too keeps a week with probing disabled out of the parked
-    /// counter, which would otherwise swallow it whole on the next unpark.
+    /// Close an open parked span.
     private func settleParked() {
         guard let since = parkedSince else { return }
         probeStats.addParked(Date().timeIntervalSince(since))
@@ -466,11 +316,6 @@ final class StatusStore {
     func rescheduleTimer() {
         timer?.invalidate()
         timer = nil
-        guard autoProbe else {
-            settleParked()
-            currentInterval = nil
-            return
-        }
         let interval = ProbeSchedule.interval(
             activity: activity,
             power: powerMonitor.state,
@@ -488,7 +333,6 @@ final class StatusStore {
             // the captured `weak self` var from inside a Task is not allowed.
             guard let store = self else { return }
             Task { @MainActor in
-                guard store.autoProbe else { return }
                 store.refresh(reason: "timer")
                 // One date comparison unless a day has passed since the last
                 // answer — how a Mac that never sleeps still re-checks.
@@ -524,8 +368,6 @@ final class StatusStore {
     /// 22.0: moves on every deep link, so a second link to the same place
     /// still scrolls there.
     var settingsFocusToken = 0
-    /// Waiting-none Agent named when Support deep-links into Attention Reach.
-    var settingsFocusWaitingAgent: AgentID? = nil
     /// One-shot tray identity for Go-Look Closure: notify / hotkey / jump
     /// seeds a `rowKey`, TrayPanel selects+scrolls it, then clears.
     private(set) var pendingRevealRowKey: String? = nil

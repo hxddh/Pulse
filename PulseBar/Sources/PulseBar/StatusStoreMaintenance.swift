@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-/// 4.0-γ file split — Hooks install, updates, recovery, lifecycle and termination markers.
+/// 4.0-γ file split — Hooks install, the update check, lifecycle.
 /// Behavior-frozen: every member moved verbatim from StatusStore.swift;
 /// the full test suite is the contract that nothing changed.
 extension StatusStore {
@@ -72,14 +72,6 @@ extension StatusStore {
         UpdateCheck.shared.check(store: self, force: true)
     }
 
-    func downloadAndVerifyUpdate() {
-        UpdateCheck.shared.downloadAndOpen(store: self)
-    }
-
-    func installVerifiedUpdate() {
-        UpdateCheck.shared.installVerifiedUpdate(store: self)
-    }
-
     var updateStatusText: String {
         switch updateStatus {
         case .idle: return tr(.updateIdle)
@@ -104,56 +96,6 @@ extension StatusStore {
         return nil
     }
 
-    var updateCanVerifyDownload: Bool {
-        if case .available(let release) = updateStatus {
-            return release.canVerifyDownload
-        }
-        return false
-    }
-
-    /// In-place install is only honest on notarized stable builds.
-    var updateCanInstallInPlace: Bool {
-        PulseVersion.isGatekeeperReady
-    }
-
-    var updateDownloadStatusText: String? {
-        switch updateDownloadStatus {
-        case .idle: return nil
-        case .downloading: return tr(.updateDownloading)
-        case .verifying: return tr(.updateVerifying)
-        case .ready:
-            return updateCanInstallInPlace
-                ? tr(.updateVerified)
-                : tr(.updateVerifiedOpenOnly)
-        case .installing: return tr(.updateInstalling)
-        case .failed(let failure): return updateDownloadFailureText(failure)
-        }
-    }
-
-    /// The download / verify / install failure in the person's language. Only
-    /// a real verification failure says "verification failed"; a network or
-    /// HTTP failure says the installer could not be fetched.
-    func updateDownloadFailureText(_ failure: UpdateCheck.DownloadFailure) -> String {
-        switch failure {
-        case .network(let message):
-            return message.isEmpty ? tr(.updateFailedNetwork) : "\(tr(.updateFailedNetwork)) (\(message))"
-        case .http(let code):
-            return String(format: tr(.updateFailedHTTP), code)
-        case .verification(let message):
-            return "\(tr(.updateVerifyFailed)) · \(message)"
-        case .requiresNotarized:
-            return tr(.updateInstallRequiresNotarized)
-        case .install(let message):
-            return "\(tr(.updateInstallFailed)) · \(message)"
-        case .noVerifiableAsset:
-            return tr(.updateDownloadNoAsset)
-        case .unsupportedSystem:
-            return "\(tr(.updateDownloadUnsupported)) · \(failure.detail)"
-        case .notReady:
-            return tr(.updateDownloadNotReady)
-        }
-    }
-
     /// 21.0: the reason in the person's language; only the system's own
     /// network message stays as the system wrote it.
     func updateFailureText(_ failure: UpdateCheck.Failure) -> String {
@@ -168,9 +110,7 @@ extension StatusStore {
     }
 
     var maintenanceNoticeText: String? {
-        if recoveredAfterCrash { return recoveryNoticeText }
         if isVersionMismatch { return tr(.versionStale) }
-        if installReport.hasOtherRunningCopy { return tr(.duplicateAppRunning) }
         // A Waiting row is already visible in the tray, but without a system
         // notification the user has no interruption when the panel is closed.
         // Make the missing permission explicit and give the notice a direct
@@ -191,29 +131,7 @@ extension StatusStore {
         return nil
     }
 
-    private var recoveryNoticeText: String {
-        switch recoveryExitKind {
-        case .forceQuit: return tr(.recoveredAfterForceQuit)
-        case .systemRestart: return tr(.recoveredAfterSystemRestart)
-        case .crash, .unknown: return tr(.recoveredAfterCrash)
-        case .clean, .updateReplace:
-            // wasUnclean excludes these; never surface a crash lie here.
-            return ""
-        }
-    }
-
-    func dismissRecoveryNotice() {
-        recoveredAfterCrash = false
-        recoveryExitKind = .clean
-        recoveryNoticeSurvivedFirstHealthyScan = false
-    }
-
     func performMaintenanceNoticeAction() {
-        if recoveredAfterCrash {
-            dismissRecoveryNotice()
-            openSettings()
-            return
-        }
         if waitingNotificationNeedsSetup {
             if notifyAuthorized == false {
                 openSystemNotificationSettings()
@@ -231,14 +149,11 @@ extension StatusStore {
             return
         }
         if needsWaitingSignalNudge {
-            openSettings(
-                focusWaitingSignals: true,
-                focusWaitingAgent: firstLiveWaitingNoneAgent
-            )
+            openSettings(focusWaitingSignals: true)
             return
         }
-        if case .available = updateStatus, updateCanVerifyDownload {
-            downloadAndVerifyUpdate()
+        if let url = updateAvailableURL {
+            NSWorkspace.shared.open(url)
         } else {
             openSettings()
         }
@@ -252,34 +167,6 @@ extension StatusStore {
         notifyOnWaiting && notifyAuthorized != true && cachedAll.contains(where: \.waiting)
     }
 
-    func refreshInstallTruth(force: Bool = false) {
-        let now = Date()
-        if !force,
-           installTruthRefreshInFlight
-                || (installTruthRefreshedAt.map { now.timeIntervalSince($0) < 30 } ?? false) {
-            return
-        }
-        installTruthRefreshInFlight = true
-        installTruthGeneration += 1
-        let generation = installTruthGeneration
-        Task { @MainActor [weak self] in
-            let report = await Task.detached(priority: .utility) {
-                InstallTruth.inspect()
-            }.value
-            guard let self, self.installTruthGeneration == generation else { return }
-            self.installReport = report
-            self.installTruthRefreshedAt = Date()
-            self.installTruthRefreshInFlight = false
-        }
-    }
-
-    func recycleDuplicateApps() {
-        let candidates = installReport.removableDuplicates
-        InstallTruth.recycle(candidates) { [weak self] _ in
-            self?.refreshInstallTruth(force: true)
-        }
-    }
-
     var hookSelfTestText: String {
         switch hookSelfTestResult {
         case .idle: return tr(.hookTestIdle)
@@ -291,60 +178,13 @@ extension StatusStore {
         }
     }
 
-    /// `Permission · waited 4 分 · Pulse` for the resolved-wait list.
-    func historyDetail(_ entry: ResolvedWait) -> String {
-        var bits: [String] = []
-        if !entry.kind.isEmpty { bits.append(localizedWaitKind(entry.kind)) }
-        if entry.waitedSeconds >= 1 {
-            bits.append(String(format: tr(.waitedFor), durationLabel(seconds: entry.waitedSeconds)))
-        }
-        if !entry.project.isEmpty { bits.append(entry.project) }
-        bits.append(relative(entry.resolvedAt))
-        return bits.joined(separator: " · ")
-    }
-
-
     func openSupportHealth() {
         SupportCoverageWindowController.shared.show(store: self)
     }
 
     func quit() {
-        markCleanShutdown()
         attentionWatcher.stop()
         GlobalHotKey.uninstall()
         NSApp.terminate(nil)
-    }
-
-    func markCleanShutdown() {
-        guard var recovery = launchRecovery else { return }
-        recovery.markCleanShutdown()
-        launchRecovery = recovery
-    }
-
-    func markIntendedUpdateReplace() {
-        guard var recovery = launchRecovery else { return }
-        recovery.markIntendedExit(.updateReplace)
-        launchRecovery = recovery
-    }
-
-    func markIntendedForceQuit() {
-        guard var recovery = launchRecovery else { return }
-        recovery.markIntendedExit(.forceQuit)
-        launchRecovery = recovery
-    }
-
-    /// Soft termination (SIGTERM / Activity Monitor "Quit") writes a force-quit
-    /// intent so the next launch can distinguish it from a crash. True Force
-    /// Quit (SIGKILL) cannot be intercepted and remains classified as crash.
-    func installTerminationSignalMarker() {
-        guard terminationSignalSource == nil else { return }
-        signal(SIGTERM, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler { [weak self] in
-            self?.markIntendedForceQuit()
-            NSApp.terminate(nil)
-        }
-        source.resume()
-        terminationSignalSource = source
     }
 }

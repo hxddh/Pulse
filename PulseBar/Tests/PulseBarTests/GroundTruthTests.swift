@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 0.98 Ground Truth — the collector can be held to account.
 ///
@@ -142,146 +141,6 @@ final class GroundTruthTests: XCTestCase {
         let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
         let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
         XCTAssertEqual(row.records, 12, "an untruncated file reports its real record count")
-    }
-
-    /// **This assertion was reversed in 1.1, deliberately.**
-    ///
-    /// 0.98 asserted that a file past the window reports `0` — unknown — because
-    /// counting the newlines of a head+tail window is a floor, and EXPERIENCE
-    /// forbids presenting a floor as a total (数量不估算).
-    ///
-    /// 1.1 did not weaken that rule; it removed the reason for it. The session
-    /// digest folds the bytes between the head and the tail once, as they go
-    /// past, so once it has reached the end of the file the count is the file's
-    /// count. That is not an estimate — it is the exact number, from having
-    /// actually read every record.
-    ///
-    /// The rule still binds while the digest is *behind*: a partial fold must
-    /// not stand in for a total, which is why the collector only takes the
-    /// digest's answer when `caughtUp` is true. `SessionDigestTests` pins that
-    /// half, and the slices-equal-whole invariant pins the counting itself.
-    func testALargeTranscriptReportsAnExactRecordCount() throws {
-        let home = try makeHome("records-large")
-        defer { try? FileManager.default.removeItem(at: home) }
-        let filler = String(repeating: "padding ", count: 160)
-        var lines = [
-            #"{"sessionId":"gt-5","role":"user","content":"Large transcript goal","cwd":"/tmp/gt-large"}"#
-        ]
-        for index in 0..<900 {
-            lines.append(
-                #"{"sessionId":"gt-5","type":"note","index":\#(index),"text":"\#(filler)"}"#
-            )
-        }
-        try write(lines.joined(separator: "\n") + "\n", to: home, ".openhands/session.jsonl")
-
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
-        XCTAssertEqual(
-            row.records, lines.count,
-            "the digest read the middle of the file, so the count is exact rather than unknown"
-        )
-    }
-
-    /// **This reverses a 1.2 behaviour, deliberately.**
-    ///
-    /// 1.2 carried the digest's facts only when `caughtUp` was true: one gate
-    /// for `records` and for everything else. A long, busy transcript still
-    /// being folded therefore showed no tool histogram, no session error
-    /// total and no loop signal — the sessions most worth watching were the
-    /// ones Pulse said least about.
-    ///
-    /// 2.1 splits the gate rather than opening it. `records` still requires
-    /// `caughtUp`, because a partial fold is a floor and a floor must never
-    /// be rendered as an exact total (数量不估算). The qualitative facts were
-    /// never totals: "it has been running Bash and has hit errors" does not
-    /// become false while records remain unread, it becomes *incomplete* —
-    /// and the row carries its own completeness in `digestProgressPercent`
-    /// and `digestCaughtUp`, which the UI is obliged to label rather than
-    /// present as a finished count.
-    func testAnUncaughtUpSessionStillReportsItsQualitativeFacts() throws {
-        let home = try makeHome("catch-up")
-        defer { try? FileManager.default.removeItem(at: home) }
-        HarvestDigests.resetForTesting()
-
-        let filler = String(repeating: "padding ", count: 160)
-        var lines = [
-            #"{"sessionId":"gt-8","role":"user","content":"Catching up goal","cwd":"/tmp/gt-catchup"}"#,
-            #"{"sessionId":"gt-8","type":"tool_result","is_error":true}"#,
-            #"{"sessionId":"gt-8","type":"tool_result","is_error":true}"#,
-            #"{"sessionId":"gt-8","message":{"usage":{"input_tokens":1200,"output_tokens":340}}}"#,
-        ]
-        for index in 0..<2400 {
-            lines.append(
-                #"{"sessionId":"gt-8","type":"tool_use","name":"Bash","index":\#(index),"text":"\#(filler)"}"#
-            )
-        }
-        let text = lines.joined(separator: "\n") + "\n"
-        // The premise of the test: one pass cannot reach the end of this file.
-        XCTAssertGreaterThan(text.utf8.count, SessionDigestFold.maxCatchUpBytes)
-        try write(text, to: home, ".openhands/session.jsonl")
-
-        let result = NativeActivityHarvest.scan(
-            home: home,
-            agentDeadlineSeconds: 30,
-            totalDeadlineSeconds: 60,
-            agentFilter: [.openhands]
-        )
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
-
-        // The half that did not change: the count stays the window's answer,
-        // and for a file past its window that answer is "unknown".
-        XCTAssertFalse(row.digestCaughtUp)
-        XCTAssertEqual(
-            row.records, 0,
-            "a partial fold never stands in for a total — that gate is unchanged"
-        )
-
-        // The half this version fixes.
-        XCTAssertGreaterThan(row.digestProgressPercent, 0)
-        XCTAssertLessThan(
-            row.digestProgressPercent, 100,
-            "the row states how much of the file these facts cover"
-        )
-        XCTAssertTrue(row.toolSummary.contains("Bash"), row.toolSummary)
-        XCTAssertGreaterThan(row.sessionErrors, 0)
-        XCTAssertFalse(row.recentTools.isEmpty)
-        XCTAssertLessThanOrEqual(row.recentTools.count, SessionDigest.maxRecentTools)
-        XCTAssertEqual(row.recentTools.last, "Bash", "ordered, oldest first")
-        XCTAssertEqual(row.loopTool, "Bash")
-        XCTAssertGreaterThanOrEqual(row.loopCount, 3)
-        XCTAssertGreaterThan(row.sessionTokensIn, 0)
-        XCTAssertGreaterThan(row.sessionTokensOut, 0)
-        XCTAssertGreaterThan(
-            row.sessionStartedMs, 0,
-            "when Pulse first folded this transcript — the reliable start"
-        )
-    }
-
-    /// The other side of the same split: once the fold has reached the end,
-    /// the row says so, and only then does the count become the file's count.
-    func testACaughtUpSessionSaysItIsComplete() throws {
-        let home = try makeHome("caught-up")
-        defer { try? FileManager.default.removeItem(at: home) }
-        HarvestDigests.resetForTesting()
-
-        var lines = [
-            #"{"sessionId":"gt-9","role":"user","content":"Complete goal","cwd":"/tmp/gt-complete"}"#
-        ]
-        for index in 0..<40 {
-            lines.append(#"{"sessionId":"gt-9","type":"tool_use","name":"Edit","index":\#(index)}"#)
-        }
-        try write(lines.joined(separator: "\n") + "\n", to: home, ".openhands/session.jsonl")
-
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
-        XCTAssertTrue(row.digestCaughtUp)
-        XCTAssertEqual(row.digestProgressPercent, 100)
-        XCTAssertEqual(row.records, lines.count)
-        XCTAssertTrue(row.toolSummary.contains("Edit"), row.toolSummary)
-        XCTAssertEqual(
-            row.bytesPerMinute, 0,
-            "one fold is one point: a growth rate needs two, and 0 means unknown"
-        )
     }
 
     // MARK: - Installed is not the same as running
@@ -447,7 +306,6 @@ final class GroundTruthTests: XCTestCase {
     func testTheReadBudgetIsSpentOnTheNewestSessions() throws {
         let home = try makeHome("mtime-order")
         defer { try? FileManager.default.removeItem(at: home) }
-        HarvestDigests.resetForTesting()
 
         let total = 500
         let clock = Date()

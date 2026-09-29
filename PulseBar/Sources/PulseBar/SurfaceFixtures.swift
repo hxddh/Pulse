@@ -13,10 +13,6 @@ enum SurfaceFixtures {
         /// 22.0: a session's last hour.
         case timeline(TimelineStripModel, ResolvedLanguage)
         case why(WhyCardModel)
-        /// 19.0: the cards under a row — `asks` is the in-list "needs you
-        /// now" card, `expanded` the in-place inspector.
-        case asks(RowCardModel)
-        case expanded(RowCardModel)
         /// 19.0: the self-check's report.
         case doctor(DoctorModel.Report)
     }
@@ -30,11 +26,9 @@ enum SurfaceFixtures {
 
     static let names = [
         "row-permission", "row-question-front", "row-turn", "row-pending",
-        "row-stalled", "row-snoozed", "row-process-only",
+        "row-stalled", "row-process-only",
         "row-running", "row-running-hover", "timeline-strip",
         "why-permission", "why-turn",
-        "card-respond", "card-respond-truncated", "card-respond-decided",
-        "card-expanded",
         "doctor-report",
     ]
 
@@ -45,7 +39,6 @@ enum SurfaceFixtures {
             Fixture(name: "row-turn", width: 420, value: .row(rowModel(rowTurn(), lang: lang), expanded: true)),
             Fixture(name: "row-pending", width: 420, value: .row(rowModel(rowPending(), lang: lang), expanded: true)),
             Fixture(name: "row-stalled", width: 420, value: .row(rowModel(rowStalled(), lang: lang), expanded: false)),
-            Fixture(name: "row-snoozed", width: 420, value: .row(rowModel(rowSnoozed(), lang: lang, snoozeLabel: "Later · 12m"), expanded: false)),
             Fixture(name: "row-process-only", width: 420, value: .row(rowModel(rowProcessOnly(), lang: lang), expanded: false)),
             // 21.0: the common row, at rest and under the pointer — the
             // trailing controls must sit beside the time, never on it.
@@ -54,10 +47,6 @@ enum SurfaceFixtures {
             Fixture(name: "timeline-strip", width: 400, value: .timeline(timelineStrip(), lang)),
             Fixture(name: "why-permission", width: 520, value: .why(whyPermission(lang: lang))),
             Fixture(name: "why-turn", width: 520, value: .why(whyTurn(lang: lang))),
-            Fixture(name: "card-respond", width: 380, value: .asks(cardRespond(lang: lang))),
-            Fixture(name: "card-respond-truncated", width: 380, value: .asks(cardRespond(lang: lang, truncated: true))),
-            Fixture(name: "card-respond-decided", width: 380, value: .asks(cardRespond(lang: lang, decided: true))),
-            Fixture(name: "card-expanded", width: 380, value: .expanded(cardExpanded(lang: lang))),
             Fixture(name: "doctor-report", width: 520, value: .doctor(doctorReport(lang: lang))),
         ]
     }
@@ -73,11 +62,10 @@ enum SurfaceFixtures {
     static var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     static let minute: Int64 = 60_000
 
-    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, snoozeLabel: String = "") -> TrayRowModel {
+    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
             row: row,
-            narrator: RowNarrator(lang: lang, nowMs: nowMs),
-            snoozeLabel: snoozeLabel
+            narrator: RowNarrator(lang: lang, nowMs: nowMs)
         ))
     }
 
@@ -127,7 +115,7 @@ enum SurfaceFixtures {
     }
 
     static func rowPending() -> AgentRow {
-        var row = baseRow(.cursor, key: "fx-pending", task: "Refactor the settings screen")
+        var row = baseRow(.cline, key: "fx-pending", task: "Refactor the settings screen")
         row.waiting = true
         row.waitKind = "Permission"
         row.waitSignal = .pending
@@ -140,13 +128,6 @@ enum SurfaceFixtures {
         var row = baseRow(.gemini, key: "fx-stalled", task: "Port the parser to Swift")
         row.isStalled = true
         row.harvestMs = nowMs - 25 * minute
-        return row
-    }
-
-    static func rowSnoozed() -> AgentRow {
-        var row = rowPermission()
-        row.rowKey = "fx-snoozed"
-        row.snoozeRemainingSeconds = 12 * 60
         return row
     }
 
@@ -213,48 +194,10 @@ enum SurfaceFixtures {
         )
     }
 
-    // MARK: - 19.0 · The cards under a row
-
-    static func cardRespond(lang: ResolvedLanguage, truncated: Bool = false, decided: Bool = false) -> RowCardModel {
-        let row = rowPermission()
-        let full = #"{"tool_name":"Bash","tool_input":{"command":"rm -rf build && npm run build","description":"Clean rebuild"}}"#
-        let inbound = RespondSpool.InboundRequest(
-            request: PermissionRequest(
-                id: "toolu_fx", agent: .claude, session: row.sessionID,
-                fullRequest: truncated ? String(full.prefix(48)) : full,
-                truncated: truncated, receivedAtMs: nowMs - 8 * minute
-            ),
-            toolName: "Bash", expiresAtMs: nowMs + 10 * minute
-        )
-        let narrator = RowNarrator(lang: lang, nowMs: nowMs)
-        return RowCardModel.make(RowCardModel.Input(
-            row: row, narrator: narrator, inbound: inbound,
-            fateNote: decided ? narrator.tr(.respondTakenNote) : nil
-        ))
-    }
-
-    static func cardExpanded(lang: ResolvedLanguage) -> RowCardModel {
-        var row = baseRow(.claude, key: "fx-expanded", task: "Add an offline queue for login")
-        row.lastWord = "The queue drains on reconnect; writing the retry test next."
-        row.tool = "Edit"
-        row.progressDone = 2
-        row.progressTotal = 5
-        row.planSteps = [
-            .init(text: "Read the login flow", state: .done),
-            .init(text: "Add the offline queue", state: .done),
-            .init(text: "Retry on reconnect", state: .current),
-            .init(text: "Tests for the retry", state: .pending),
-            .init(text: "Update the changelog", state: .pending),
-        ]
-        return RowCardModel.make(RowCardModel.Input(
-            row: row, narrator: RowNarrator(lang: lang, nowMs: nowMs)
-        ))
-    }
-
     // MARK: - 19.0 · The self-check
 
     /// A Mac with a realistic mix: Claude proven, an old Claude without
-    /// `agents`, Codex installed but not yet trusted, Respond never tried.
+    /// `agents`, Codex installed but not yet trusted.
     static func doctorReport(lang: ResolvedLanguage) -> DoctorModel.Report {
         var f = DoctorModel.Facts()
         f.version = PulseVersion.semver
@@ -270,7 +213,6 @@ enum SurfaceFixtures {
         f.codexHookEvents = Set(DoctorModel.codexEvents)
         f.codexRollout = .paginated
         f.codexCompressedRollouts = 3
-        f.respondEnabled = true
         return DoctorModel.evaluate(f, lang: lang)
     }
 }

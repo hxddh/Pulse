@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 4.0-α — a session transcript is parsed by shape, bounded
 /// at every edge, and sanitized per entry. These tests pin each rule with

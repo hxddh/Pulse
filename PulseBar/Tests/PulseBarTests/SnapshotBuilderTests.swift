@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// The merge core. Until 0.23 this logic lived inside `StatusStore.applyScan`
 /// with zero coverage, despite being the single most regression-prone part of
@@ -26,7 +25,6 @@ final class SnapshotBuilderTests: XCTestCase {
         maxRows: Int = SnapshotBuilder.maxVisibleRows,
         terminal: TerminalFocus.Environment? = nil,
         lang: ResolvedLanguage = .en,
-        snoozed: [String: Int64] = [:],
         stalledSeconds: Double = AgentRow.stalledSeconds
     ) -> SnapshotBuilder.Context {
         SnapshotBuilder.Context(
@@ -37,7 +35,6 @@ final class SnapshotBuilderTests: XCTestCase {
             maxVisibleRows: maxRows,
             dismissedPendingKeys: dismissed,
             showAllAgents: showAll,
-            snoozedUntilMs: snoozed,
             stalledSeconds: stalledSeconds
         )
     }
@@ -87,13 +84,12 @@ final class SnapshotBuilderTests: XCTestCase {
         procs: [ProcessProbe.Hit] = [],
         harvest rows: [ActivityHarvest.Row] = [],
         attention entries: [AttentionReader.Entry] = [],
-        unreliable: Bool = false,
         previous: SnapshotBuilder.Previous = .init(),
         context ctx: SnapshotBuilder.Context? = nil
     ) -> SnapshotBuilder.Result {
         SnapshotBuilder.build(
             SnapshotBuilder.Input(
-                procs: procs, harvest: rows, harvestUnreliable: unreliable, attention: entries
+                procs: procs, harvest: rows, attention: entries
             ),
             previous: previous,
             context: ctx ?? context()
@@ -263,18 +259,11 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(result.rows.first?.processEvidence, .pathSignature)
     }
 
-    func testErrorOnlyWhenHarvestFailedAndNothingIsLive() {
-        let r = build(unreliable: true)
-        XCTAssertEqual(r.snapshot.glance, .error)
-        XCTAssertEqual(r.snapshot.title, "!")
-        XCTAssertNotNil(r.snapshot.probeError)
-    }
-
     func testLiveProcessSuppressesErrorEvenWhenHarvestFailed() {
-        // A dead harvest is not a dead machine — `ps` still saw the agent.
+        // An empty harvest is not a dead machine — `ps` still saw the agent.
         // Live Continuity: process-only is orange honesty, never the red error
         // lamp, and never a healthy green "fully observed" claim.
-        let r = build(procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 10)], unreliable: true)
+        let r = build(procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 10)])
         XCTAssertEqual(r.snapshot.glance, .stalled, "probe-only liveness is not healthy green")
         XCTAssertNotEqual(r.snapshot.glance, .error)
         XCTAssertNil(r.snapshot.probeError)
@@ -516,22 +505,34 @@ final class SnapshotBuilderTests: XCTestCase {
     // MARK: Waiting from harvest pending
 
     func testPendingSkillRaisesWaiting() {
-        let r = build(harvest: [harvest(.cursor, task: "Ask", session: "s1", skill: "pending")])
+        let r = build(harvest: [harvest(.gemini, task: "Ask", session: "s1", skill: "pending")])
         XCTAssertTrue(r.rows[0].waiting)
         XCTAssertEqual(r.rows[0].waitSignal, .pending)
         XCTAssertEqual(r.snapshot.glance, .waiting)
     }
 
+    /// 23.0: Cursor's on-disk format is `unverified` in vendor-formats.json,
+    /// so its spec says `waiting: .none` — a harvest `pending` row from it is
+    /// not evidence of a block and must never light the lamp.
+    func testUnverifiedAgentHarvestPendingIsNotWaiting() {
+        XCTAssertEqual(AgentID.cursor.waitingSource, .none)
+        let r = build(harvest: [harvest(.cursor, task: "Ask", session: "s1", skill: "pending")])
+        XCTAssertEqual(r.rows.count, 1)
+        XCTAssertFalse(r.rows[0].waiting)
+        XCTAssertNotEqual(r.rows[0].waitSignal, .pending)
+        XCTAssertNotEqual(r.snapshot.glance, .waiting)
+    }
+
     func testDismissedPendingStaysDismissed() {
-        let row = harvest(.cursor, task: "Ask", session: "s1", skill: "pending")
-        let key = ActivityHarvest.sessionKey(id: .cursor, sessionID: "s1", project: "", cwd: "")
+        let row = harvest(.gemini, task: "Ask", session: "s1", skill: "pending")
+        let key = ActivityHarvest.sessionKey(id: .gemini, sessionID: "s1", project: "", cwd: "")
         let r = build(harvest: [row], context: context(dismissed: [key]))
         XCTAssertFalse(r.rows[0].waiting, "a soft-dismissed pending must not come back")
     }
 
     func testPendingClearingReportsTheKeySoTheDismissCanBeForgotten() {
-        let row = harvest(.cursor, task: "Done", session: "s1", skill: "")
-        let key = ActivityHarvest.sessionKey(id: .cursor, sessionID: "s1", project: "", cwd: "")
+        let row = harvest(.gemini, task: "Done", session: "s1", skill: "")
+        let key = ActivityHarvest.sessionKey(id: .gemini, sessionID: "s1", project: "", cwd: "")
         let r = build(harvest: [row], context: context(dismissed: [key]))
         XCTAssertTrue(r.clearedPendingKeys.contains(key))
     }
@@ -633,17 +634,6 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(second.newlyWaiting.isEmpty, "rekey is identity, not a new wait")
         XCTAssertTrue(second.resolvedWaits.isEmpty, "rekey must not look like a clear")
         XCTAssertEqual(second.rows[0].rowKey, "codex|codex-wait-1")
-    }
-
-    func testAttentionAdoptionCarriesSnoozeOntoNewKey() {
-        let r = build(
-            procs: [hit(.codex, pid: 42)],
-            attention: [attention(.codex, message: "approve shell", session: "codex-wait-1")],
-            context: context(snoozed: ["codex": now + 300_000])
-        )
-        XCTAssertEqual(r.rows[0].rowKey, "codex|codex-wait-1")
-        XCTAssertTrue(r.rows[0].isSnoozed, "snooze must follow the adopted session key")
-        XCTAssertGreaterThan(r.rows[0].snoozeRemainingSeconds, 0)
     }
 
     func testHooksSignalOutranksHarvestPendingOnTheSameRow() {
@@ -873,96 +863,6 @@ final class SnapshotBuilderTests: XCTestCase {
             attention: [attention(.claude, ageMs: 30_000), attention(.codex, ageMs: 600_000)]
         )
         XCTAssertEqual(r.snapshot.longestWaitSeconds, 600, accuracy: 2)
-    }
-
-    // MARK: Snooze
-
-    /// The whole feature is that the menu bar goes quiet. If the lamp stays
-    /// red, "remind me later" reminds you continuously.
-
-    private func snoozedContext(_ keys: [String], minutes: Double = 10) -> SnapshotBuilder.Context {
-        var map: [String: Int64] = [:]
-        for k in keys { map[k] = now + Int64(minutes * 60 * 1000) }
-        return context(snoozed: map)
-    }
-
-    private func waitingRowKey(_ r: SnapshotBuilder.Result) -> String {
-        r.rows.first(where: \.waiting)?.rowKey ?? ""
-    }
-
-    func testSnoozingTheOnlyWaitTakesTheLampDown() {
-        let seed = build(procs: [hit(.claude)], attention: [attention(.claude)])
-        let key = waitingRowKey(seed)
-        XCTAssertFalse(key.isEmpty)
-        XCTAssertEqual(seed.snapshot.glance, .waiting)
-
-        let r = build(
-            procs: [hit(.claude)],
-            attention: [attention(.claude)],
-            context: snoozedContext([key])
-        )
-        XCTAssertNotEqual(r.snapshot.glance, .waiting, "the lamp is the interruption")
-        XCTAssertEqual(r.snapshot.title, "", "no count, no elapsed time, nothing in the corner")
-    }
-
-    /// …and the panel keeps telling the truth.
-    func testASnoozedWaitStaysInTheListAndInTheCount() {
-        let seed = build(procs: [hit(.claude)], attention: [attention(.claude)])
-        let r = build(
-            procs: [hit(.claude)],
-            attention: [attention(.claude)],
-            context: snoozedContext([waitingRowKey(seed)])
-        )
-        XCTAssertEqual(r.snapshot.sectionTotals[.needsYou], 1)
-        XCTAssertEqual(r.rows.filter(\.waiting).count, 1)
-        XCTAssertTrue(r.rows.contains { $0.isSnoozed })
-    }
-
-    /// One snoozed, one not: the lamp still belongs to the one that is awake.
-    func testAnUnsnoozedWaitStillLightsTheLamp() {
-        let seed = build(
-            procs: [hit(.claude), hit(.codex)],
-            attention: [attention(.claude), attention(.codex)]
-        )
-        let claudeKey = seed.rows.first { $0.agent == .claude && $0.waiting }?.rowKey ?? ""
-        XCTAssertFalse(claudeKey.isEmpty)
-        let r = build(
-            procs: [hit(.claude), hit(.codex)],
-            attention: [attention(.claude), attention(.codex)],
-            context: snoozedContext([claudeKey])
-        )
-        XCTAssertEqual(r.snapshot.glance, .waiting)
-        XCTAssertTrue(r.snapshot.title.contains("Codex"), r.snapshot.title)
-        XCTAssertFalse(r.snapshot.title.contains("Claude"), "a snoozed agent is not the headline")
-    }
-
-    /// Elapsed time in the menu bar must come from the waits still shouting.
-    func testTheMenuBarClockIgnoresSnoozedWaits() {
-        let seed = build(
-            procs: [hit(.claude), hit(.codex)],
-            attention: [attention(.claude, ageMs: 3_600_000), attention(.codex, ageMs: 30_000)]
-        )
-        let oldKey = seed.rows.first { $0.agent == .claude && $0.waiting }?.rowKey ?? ""
-        let r = build(
-            procs: [hit(.claude), hit(.codex)],
-            attention: [attention(.claude, ageMs: 3_600_000), attention(.codex, ageMs: 30_000)],
-            context: snoozedContext([oldKey])
-        )
-        XCTAssertFalse(r.snapshot.title.contains("1h"), "that hour belongs to the snoozed row: \(r.snapshot.title)")
-    }
-
-    /// A deadline in the past is not a snooze.
-    func testAnExpiredDeadlineDoesNotSuppressAnything() {
-        let seed = build(procs: [hit(.claude)], attention: [attention(.claude)])
-        var past: [String: Int64] = [:]
-        past[waitingRowKey(seed)] = now - 1
-        let r = build(
-            procs: [hit(.claude)],
-            attention: [attention(.claude)],
-            context: context(snoozed: past)
-        )
-        XCTAssertEqual(r.snapshot.glance, .waiting)
-        XCTAssertFalse(r.rows.contains { $0.isSnoozed })
     }
 
     // MARK: Stall threshold
@@ -1200,92 +1100,13 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.snapshot.hiddenCount, 3)
     }
 
-    // MARK: - 2.1 Evidence · digest facts are carried, never re-derived
-
-    /// The rule 1.2 set down and this version inherits: the digest read the
-    /// whole transcript, the builder read nothing. It copies. Any re-ordering,
-    /// clamping or re-counting here would be the builder guessing at bytes it
-    /// never saw — and it would do so silently, which is worse.
-    func testEvidenceFieldsAreCarriedVerbatimOntoTheRow() throws {
-        var act = ActivityHarvest.Row(
-            id: .claude, task: "Fix the auth module", project: "", cwd: "/Users/me/code/Pulse",
-            skill: "", tool: "", harvestMs: now,
-            subRunning: 0, subTotal: 0, sessionID: "s1", evidence: .session
-        )
-        act.sessionTokensIn = 412_000
-        act.sessionTokensOut = 98_500
-        act.recentTools = ["Read", "Edit", "Bash", "Edit"]
-        act.digestProgressPercent = 78
-        act.digestCaughtUp = false
-        act.bytesPerMinute = 12_800
-        act.sessionStartedMs = now - 3_600_000
-
-        let r = build(harvest: [act])
-        let row = try XCTUnwrap(r.rows.first { $0.agent == .claude })
-        XCTAssertEqual(row.sessionTokensIn, 412_000)
-        XCTAssertEqual(row.sessionTokensOut, 98_500)
-        XCTAssertEqual(row.recentTools, ["Read", "Edit", "Bash", "Edit"])
-        XCTAssertEqual(row.digestProgressPercent, 78)
-        XCTAssertFalse(row.digestCaughtUp)
-        XCTAssertEqual(row.bytesPerMinute, 12_800)
-        XCTAssertEqual(row.sessionStartedMs, now - 3_600_000)
-    }
-
-    /// The session totals must not land on `tokensIn` / `tokensOut`. Those are
-    /// the latest message, and 1.1 refused to let either overwrite the other.
-    func testSessionTokensDoNotOverwriteTheLatestMessageTokens() throws {
-        var act = ActivityHarvest.Row(
-            id: .claude, task: "Fix the auth module", project: "", cwd: "/tmp/p",
-            skill: "", tool: "", harvestMs: now,
-            subRunning: 0, subTotal: 0, sessionID: "s1", evidence: .session
-        )
-        act.tokensIn = 1_200
-        act.tokensOut = 300
-        act.sessionTokensIn = 412_000
-        act.sessionTokensOut = 98_500
-
-        let r = build(harvest: [act])
-        let row = try XCTUnwrap(r.rows.first { $0.agent == .claude })
-        XCTAssertEqual(row.tokensIn, 1_200)
-        XCTAssertEqual(row.tokensOut, 300)
-        XCTAssertEqual(row.sessionTokensIn, 412_000)
-        XCTAssertEqual(row.sessionTokensOut, 98_500)
-    }
-
-    /// A full read is a real answer, and so is a partial one. `true` must
-    /// survive the merge as readily as `false`.
-    func testCaughtUpSurvivesTheMerge() throws {
-        var act = ActivityHarvest.Row(
-            id: .codex, task: "Ship the release", project: "", cwd: "/tmp/p",
-            skill: "", tool: "", harvestMs: now,
-            subRunning: 0, subTotal: 0, sessionID: "s2", evidence: .session
-        )
-        act.digestCaughtUp = true
-        act.digestProgressPercent = 100
-
-        let r = build(harvest: [act])
-        let row = try XCTUnwrap(r.rows.first { $0.agent == .codex })
-        XCTAssertTrue(row.digestCaughtUp)
-        XCTAssertEqual(row.digestProgressPercent, 100)
-    }
-
-    /// An adapter with no transcript to read has no digest, and a row with no
-    /// digest must not read as "0% caught up".
-    func testARowWithoutADigestClaimsNothingAboutReadProgress() throws {
-        let r = build(harvest: [harvest(.cursor, task: "Refactor", session: "c1")])
-        let row = try XCTUnwrap(r.rows.first { $0.agent == .cursor })
-        XCTAssertFalse(row.hasSessionDigest)
-        XCTAssertTrue(row.recentTools.isEmpty)
-        XCTAssertEqual(row.bytesPerMinute, 0)
-    }
-
     // MARK: Row key stability (U-6)
 
     /// The suffix used to be "how many rows of this agent came before me",
     /// which is a fact about the array, not about the session. Two scans that
     /// enumerate the same two sessions in opposite order must still address
-    /// the same rows — snooze, soft-dismiss, notification de-duplication and
-    /// the Look fingerprint are all stored against `rowKey`.
+    /// the same rows — soft-dismiss and notification de-duplication are
+    /// stored against `rowKey`.
     func testRowKeysSurviveADifferentHarvestOrder() throws {
         let a = harvest(.codex, task: "Fix auth", project: "/w/Repo", cwd: "/w/Repo/api")
         let b = harvest(.codex, task: "Write docs", project: "/w/Repo", cwd: "/w/Repo/docs")
@@ -1303,9 +1124,9 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(forwardKeys, backwardKeys, "row identity must not depend on harvest order")
     }
 
-    /// A snooze set while two sessions shared a project must survive the
+    /// A dismissal made while two sessions shared a project must survive the
     /// sibling going stale. Under the ordinal suffix the survivor silently
-    /// changed key, and the snooze went with it.
+    /// changed key, and the dismissal went with it.
     func testARowKeepsItsKeyWhenASiblingSessionDisappears() throws {
         let a = harvest(.codex, task: "Fix auth", project: "/w/Repo", cwd: "/w/Repo/api")
         let b = harvest(.codex, task: "Write docs", project: "/w/Repo", cwd: "/w/Repo/docs")
@@ -1318,7 +1139,7 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(pairKey, soloKey)
     }
 
-    /// A snooze outlives a relaunch, so the key has to as well. `hashValue` is
+    /// A dismissal outlives a relaunch, so the key has to as well. `hashValue` is
     /// seeded per process; this digest is not, and the literal below is the
     /// wall that keeps it that way.
     func testTheIdentityDigestIsTheSameInEveryProcess() {

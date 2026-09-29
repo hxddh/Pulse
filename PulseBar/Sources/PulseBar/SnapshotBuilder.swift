@@ -44,8 +44,6 @@ enum SnapshotBuilder {
         /// Harvest `pending` rows the user soft-dismissed.
         var dismissedPendingKeys: Set<String>
         var showAllAgents: Bool
-        /// Silence deadlines by row key — a "remind me later" the user set.
-        var snoozedUntilMs: [String: Int64]
         /// Seconds of silence that make a live row stalled; 0 disables it.
         var stalledSeconds: Double
         /// Agents whose protected App Data the user has not granted. Used only
@@ -60,7 +58,6 @@ enum SnapshotBuilder {
             maxVisibleRows: Int = SnapshotBuilder.maxVisibleRows,
             dismissedPendingKeys: Set<String> = [],
             showAllAgents: Bool = false,
-            snoozedUntilMs: [String: Int64] = [:],
             stalledSeconds: Double = AgentRow.stalledSeconds,
             privacyLimitedAgents: Set<AgentID> = []
         ) {
@@ -71,7 +68,6 @@ enum SnapshotBuilder {
             self.maxVisibleRows = maxVisibleRows
             self.dismissedPendingKeys = dismissedPendingKeys
             self.showAllAgents = showAllAgents
-            self.snoozedUntilMs = snoozedUntilMs
             self.stalledSeconds = stalledSeconds
             self.privacyLimitedAgents = privacyLimitedAgents
         }
@@ -81,8 +77,6 @@ enum SnapshotBuilder {
         var procs: [ProcessProbe.Hit] = []
         /// Already resolved to the rows this scan should use (fresh or cached).
         var harvest: [ActivityHarvest.Row] = []
-        /// True when the harvest failed outright — only then can we claim Error.
-        var harvestUnreliable: Bool = false
         var attention: [AttentionReader.Entry] = []
         /// 2.9: push-fresh activity events from the hook's spool. Local
         /// sessions only; never a wait, never a new row.
@@ -143,7 +137,7 @@ enum SnapshotBuilder {
     /// Only fields that cannot change while the session is alive take part:
     /// the working directory it was started in and its start time. `tool`,
     /// `phase`, `progress` and friends move as the agent works, and a key that
-    /// moves with them would lose a snooze mid-wait. `task` is the last resort
+    /// moves with them would lose a dismissal mid-wait. `task` is the last resort
     /// rather than a first-class part of the seed — a vendor may rename a
     /// session once, early, which is still far steadier than array order.
     ///
@@ -283,9 +277,9 @@ enum SnapshotBuilder {
             // depended on harvest order: the same two sessions swapped keys
             // when the collector enumerated them the other way round, and the
             // survivor of a pair silently reverted to the bare key when its
-            // sibling went stale. Snooze, soft-dismiss, notification
-            // de-duplication and the Look fingerprint are all stored against
-            // `rowKey`, so every drift dropped a snooze or replayed a Waiting
+            // sibling went stale. Soft-dismiss and notification
+            // de-duplication are stored against
+            // `rowKey`, so every drift dropped a dismissal or replayed a Waiting
             // edge (U-6).
             //
             // A session id already makes the key unique and stable; when the
@@ -336,37 +330,19 @@ enum SnapshotBuilder {
             if !act.planSteps.isEmpty { row.planSteps = act.planSteps }
             if !act.lastWord.isEmpty { row.lastWord = act.lastWord }
             if !act.lastErrorText.isEmpty { row.lastErrorText = act.lastErrorText }
-            // Digest facts: carried straight through. They were produced by
-            // reading the whole transcript, and nothing here can second-guess
-            // them without reading it again.
-            if !act.loopTool.isEmpty {
-                row.loopTool = act.loopTool
-                row.loopCount = act.loopCount
-            }
-            if act.sessionErrors > 0 { row.sessionErrors = act.sessionErrors }
-            if !act.toolSummary.isEmpty { row.toolSummary = act.toolSummary }
-            // 2.1 Evidence: same discipline, more facts. Copied verbatim —
-            // no truncation, no re-ordering, no re-derivation. The digest read
-            // the transcript; the builder did not, so it has nothing to add
-            // and everything to lose by second-guessing.
-            if act.sessionTokensIn > 0 { row.sessionTokensIn = act.sessionTokensIn }
-            if act.sessionTokensOut > 0 { row.sessionTokensOut = act.sessionTokensOut }
-            if !act.recentTools.isEmpty { row.recentTools = act.recentTools }
-            if act.digestProgressPercent > 0 { row.digestProgressPercent = act.digestProgressPercent }
-            // `false` is a real answer here — "still catching up" must be able
-            // to survive a merge, so this one is assigned unconditionally.
-            row.digestCaughtUp = act.digestCaughtUp
-            if act.bytesPerMinute > 0 { row.bytesPerMinute = act.bytesPerMinute }
             // Carried, never re-derived: only the collector saw the disk.
             row.cwdBestEffort = act.cwdBestEffort
-            if act.sessionStartedMs > 0 { row.sessionStartedMs = act.sessionStartedMs }
             // 4.0-α: carried, never derived — only the collector knows which
             // file the facts came from.
             if !act.transcriptPath.isEmpty { row.transcriptPath = act.transcriptPath }
             row.observationSource = act.evidence
 
-            // Harvest pending (Cursor / OpenCode / Gemini / Codex / …) → Waiting.
-            if act.skill == "pending", ActivityHarvest.isFresh(act, nowMs: context.nowMs) {
+            // Harvest pending → Waiting, only for an agent whose format has
+            // a stated source (`waiting: .harvestPending`). 23.0: an
+            // unverified reader's `pending` is not evidence of a block.
+            if act.skill == "pending",
+               act.id.surfaceID.waitingSource == .harvestPending,
+               ActivityHarvest.isFresh(act, nowMs: context.nowMs) {
                 if !context.dismissedPendingKeys.contains(finalKey) {
                     row.waiting = true
                     row.waitKind = harvestWaitKind(tool: act.tool, phase: act.phase)
@@ -388,13 +364,11 @@ enum SnapshotBuilder {
             perAgentSessionCount[agentID] = count + 1
         }
 
-        // 0.95: a reliable complete scan that no longer observes a dismissed
-        // key means the session left — forget the tombstone so a genuine new
-        // pending on the same identity can re-raise.
-        if !input.harvestUnreliable {
-            for key in context.dismissedPendingKeys where !observedHarvestKeys.contains(key) {
-                result.clearedPendingKeys.insert(key)
-            }
+        // 0.95: a scan that no longer observes a dismissed key means the
+        // session left — forget the tombstone so a genuine new pending on the
+        // same identity can re-raise.
+        for key in context.dismissedPendingKeys where !observedHarvestKeys.contains(key) {
+            result.clearedPendingKeys.insert(key)
         }
 
         // Attach live process to at most one session row per agent (no smear).
@@ -508,7 +482,7 @@ enum SnapshotBuilder {
                 if best.sessionID.isEmpty, !att.session.isEmpty { best.sessionID = att.session }
                 if best.cwd.isEmpty, !att.cwd.isEmpty { best.cwd = att.cwd }
                 best.processCount = max(best.processCount, 1)
-                // 0.96: rekey process-only adoption so snooze/dismiss follow harvest identity.
+                // 0.96: rekey process-only adoption so dismiss follows harvest identity.
                 let newKey = ActivityHarvest.sessionKey(
                     id: best.agent,
                     sessionID: best.sessionID,
@@ -727,12 +701,6 @@ enum SnapshotBuilder {
 
         // Resolve focus once per scan. Doing this per row inside the SwiftUI body
         // meant enumerating running apps and stat-ing the disk on every redraw.
-        var snoozeUntilByKey = context.snoozedUntilMs
-        for (oldKey, newKey) in result.remappedRowKeys {
-            if let until = snoozeUntilByKey[oldKey] {
-                snoozeUntilByKey[newKey] = until
-            }
-        }
         for i in all.indices {
             let row = all[i]
             all[i].isStalled = !row.isCompletedPhase && AgentRow.stalled(
@@ -743,12 +711,6 @@ enum SnapshotBuilder {
                 threshold: context.stalledSeconds,
                 activityChangedMs: all[i].activityChangedMs
             )
-            // Resolved here for the same reason as `isStalled`: a countdown
-            // read from `Date()` inside a view body drifts away from the scan
-            // that produced the row it is drawn on.
-            if row.waiting, let until = snoozeUntilByKey[row.rowKey], until > context.nowMs {
-                all[i].snoozeRemainingSeconds = Double(until - context.nowMs) / 1000.0
-            }
             all[i].focusTier = TerminalFocus.focusTier(
                 tty: row.tty,
                 viaWarp: row.viaWarp,
@@ -877,24 +839,9 @@ enum SnapshotBuilder {
 
         // Header accounts for all four states; no live-but-stalled row is
         // allowed to inflate the healthy Running count.
-        if all.isEmpty, input.harvestUnreliable, liveHits.isEmpty {
-            snap.glance = .error
-            snap.title = "!"
-            snap.tooltip = t(.cantRefresh, lang)
-            snap.headerTitle = t(.cantRefresh, lang)
-            snap.headerDetail = ""
-            snap.header = t(.cantRefresh, lang)
-            snap.probeError = "probe+harvest unavailable"
-        } else if waitingCount > 0 {
-            // Snoozed waits keep their row, their section and their place in
-            // the count — the panel tells the truth. What they lose is the
-            // menu bar: no red lamp, no elapsed time, nothing in the corner of
-            // your eye. That suppression *is* the feature; without it "remind
-            // me later" reminds you continuously.
-            let waitingRows = all.filter { $0.waiting && !$0.isSnoozed }
-            snap.glance = waitingRows.isEmpty
-                ? liveFleetGlance()
-                : .waiting
+        if waitingCount > 0 {
+            let waitingRows = all.filter(\.waiting)
+            snap.glance = .waiting
             let nameJoin = waitingRows.prefix(3).map(\.agent.displayName).joined(separator: " · ")
             // The menu bar carries the two facts that decide whether to look:
             // how many are blocked, and how long the worst one has waited.
@@ -904,21 +851,13 @@ enum SnapshotBuilder {
             // the number is worth it, and let the label escalate on its own
             // from "Claude…" to a duration that still fits the 8-cell budget
             // (`1 · 4m` when `Claude · 4m` is too wide).
-            // Elapsed time in the menu bar must come from the waits that are
-            // still shouting, not from a snoozed one that happens to be older.
             let activeStamps = waitingRows.filter { $0.waitSinceMs > 0 }.map(\.waitSinceMs)
             let activeOldest = activeStamps.min().map { max(0, Double(context.nowMs - $0) / 1000.0) } ?? 0
             let rawDuration = activeOldest > 0
                 ? DurationFormat.label(seconds: activeOldest, lang: lang)
                 : ""
             let dur = rawDuration == t(.durNow, lang) ? "" : rawDuration
-            if waitingRows.isEmpty {
-                // Every wait is snoozed. The lamp already went quiet above; the
-                // menu bar text goes with it, and the panel keeps the count.
-                snap.title = ""
-                snap.tooltip = "\(t(.needsYou, lang)) · \(t(.snoozed, lang))"
-                snap.headerTitle = stateSummary()
-            } else if waitingRows.count == 1, let w = waitingRows.first {
+            if waitingRows.count == 1, let w = waitingRows.first {
                 let named = dur.isEmpty
                     ? "\(w.agent.displayName)…"
                     : "\(w.agent.displayName) · \(dur)"

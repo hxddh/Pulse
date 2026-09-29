@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 12.0 · the roster is one table, and the table is whole.
 final class AgentCatalogTests: XCTestCase {
@@ -52,8 +51,16 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertFalse(AgentID.cursor.spec.transcripts.allowsBoundedLargeFiles)
     }
 
-    func testOnlyClaudeReachesTheDecisionPoint() {
-        XCTAssertEqual(AgentCatalog.all.filter { $0.respondReach == .hookSite }.map(\.id), [.claude])
+    /// 23.0: an agent whose on-disk format is `unverified` in
+    /// docs/vendor-formats.json does not infer Waiting from its harvest.
+    func testUnverifiedFormatsInferNoWaiting() {
+        let unverified: [AgentID] = [
+            .cursor, .cursorAgent, .amp, .amazonQ, .cascade, .windsurf,
+            .augment, .zedAgent, .kiro, .droid, .commandCode,
+        ]
+        for id in unverified {
+            XCTAssertEqual(id.waitingSource, .none, id.rawValue)
+        }
     }
 
     // MARK: - 12.1 · the walk is data

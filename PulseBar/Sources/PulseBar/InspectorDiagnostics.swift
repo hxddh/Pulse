@@ -59,7 +59,7 @@ struct SessionDiagnosticsCard: View {
                             .buttonStyle(.link)
                         } else if gap.nextStep == "use_attention_bridge" {
                             Button(store.tr(.setupWaitingSignals)) {
-                                store.openSettings(focusWaitingSignals: true, focusWaitingAgent: row.agent)
+                                store.openSettings(focusWaitingSignals: true)
                             }
                             .buttonStyle(.link)
                         }
@@ -110,7 +110,6 @@ struct SessionDiagnosticsCard: View {
                     .foregroundStyle(.secondary)
             }
             line(store.tr(.waitingAcknowledgedAt), ms: event.acknowledgedAtMs)
-            line(store.tr(.waitingSnoozedUntil), ms: event.snoozedUntilMs)
             line(store.tr(.waitingResolvedAt), ms: event.resolvedAtMs)
         }
     }

@@ -7,7 +7,7 @@ import Foundation
 /// from it lost its first line (`queuedAtMs` is zeroed once delivered) and
 /// vanished the moment the wait resolved. This value renders one event as a
 /// short, ordered account: raised, what happened to the banner and why,
-/// clicked, snoozed, resolved.
+/// clicked, resolved.
 struct NotificationAuditModel: Equatable {
     var lines: [String]
 
@@ -34,9 +34,6 @@ struct NotificationAuditModel: Equatable {
         }
         if event.acknowledgedAtMs > 0 {
             lines.append(String(format: t(.auditAcknowledged), clock(event.acknowledgedAtMs)))
-        }
-        if event.snoozedUntilMs > 0 {
-            lines.append(String(format: t(.auditSnoozed), clock(event.snoozedUntilMs)))
         }
         if event.resolvedAtMs > 0 {
             lines.append(String(format: t(.auditResolved), clock(event.resolvedAtMs)))

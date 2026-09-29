@@ -29,16 +29,6 @@ let package = Package(
             // warning here is a data race the compiler already found.
             swiftSettings: productSettings
         ),
-        // 12.3 · Respond: the permission contract and the verdict spool.
-        // Foundation (+ CoreGraphics for the presence probe) over PulseCore;
-        // no AppKit, no StatusStore, so the rules that decide whether a
-        // verdict may be written cannot reach UI state.
-        .target(
-            name: "PulseRespond",
-            dependencies: ["PulseCore"],
-            path: "Sources/PulseRespond",
-            swiftSettings: productSettings
-        ),
         // 12.3 · Harvest: the native collector — the scan, the walk, the
         // vendor dialects, SQLite adapters, the process probe and the
         // attention spool. It sees the catalog and the kernel, never the
@@ -52,15 +42,14 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
             ]
         ),
-        // 22.0 removed the fourth library, PulseManaged (sessions Pulse ran
-        // itself). A status lamp watches orchestrators; it is not one.
+        // 22.0 removed PulseManaged (sessions Pulse ran itself) and 23.0
+        // removed PulseRespond (answering permission requests). A status
+        // lamp watches orchestrators; it is not one.
         .executableTarget(
             name: "PulseBar",
-            dependencies: ["PulseCore", "PulseRespond", "PulseHarvest"],
+            dependencies: ["PulseCore", "PulseHarvest"],
             path: "Sources/PulseBar",
             resources: [
-                .copy("Resources/pulse_hook.py"),
-                .copy("Resources/install_hooks.py"),
                 .copy("Resources/AgentIcons"),
                 .copy("Resources/Brand"),
             ],
@@ -75,7 +64,7 @@ let package = Package(
         // the product and had no coverage at all before 0.22.
         .testTarget(
             name: "PulseBarTests",
-            dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest"],
+            dependencies: ["PulseBar", "PulseCore", "PulseHarvest"],
             path: "Tests/PulseBarTests",
             // 19.0: the tests are in the Swift 6 mode too. An XCTestCase
             // subclass cannot be `@MainActor` (its superclass is not), so

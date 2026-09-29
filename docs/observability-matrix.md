@@ -2,8 +2,7 @@
 
 > **0.50 Signal Quality** — runtime rows carry a named
 > `ObservationQuality` envelope (`facts` / `missing` / `freshness` /
-> `confidence`). A missing field must explain why and what to do next; see
-> [`docs/archive/plan-0.50.md`](archive/plan-0.50.md). Process-only fallbacks are never
+> `confidence`). A missing field must explain why and what to do next. Process-only fallbacks are never
 > presented as equivalent to session/cache rows.
 
 Pulse does not count a detected process as “Agent support”. A useful row needs
@@ -72,10 +71,10 @@ may not have it.
 | --- | --- | --- | --- |
 | Claude Code | transcript | direct | latest model call, last meaningful action, records, session age, subagents, wait |
 | Codex | rollout | direct | latest model call, last meaningful action, session age, subagents, wait |
-| Cursor | composer database | direct | composer mode, pending/wait |
+| Cursor | composer database | direct | composer mode (23.0: no Waiting — format unverified) |
 | Grok | summary + signals + lifecycle events | direct | phase, outcome, model, agent mode, turns, failures, files, context usage, wait |
 | Pi | session JSONL | direct | tokens, last meaningful action, wait |
-| Amp | thread/session/history | direct | mode, session age, records, wait; continuation prompts are skipped |
+| Amp | thread/session/history | direct | mode, session age, records (23.0: no Waiting — format unverified); continuation prompts are skipped |
 | Aider | chat history | direct | last meaningful action, session age, records, wait |
 | Gemini CLI | session JSON | direct | tokens, last meaningful action, session age, records, wait |
 | GitHub Copilot | session store | direct | last meaningful action, session age, records, wait |
@@ -83,21 +82,21 @@ may not have it.
 | Goose | session store | direct | last meaningful action, session age, records, wait |
 | OpenHands | session store | direct | last meaningful action, session age, records, wait |
 | Continue | session store | direct | last meaningful action, session age, records, wait |
-| Droid | session JSONL | direct | last meaningful action, session age, records, wait |
-| Command Code | session JSONL | direct | last meaningful action, session age, records, wait |
+| Droid | session JSONL | direct | last meaningful action, session age, records (23.0: no Waiting — format unverified) |
+| Command Code | session JSONL | direct | last meaningful action, session age, records (23.0: no Waiting — format unverified) |
 | Kimi | session JSONL | direct | last meaningful action, session age, records, wait |
-| Amazon Q | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
+| Amazon Q | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
 | Cline | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
 | Roo Code | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
-| Cascade | verified cache | conditional | phase, model, mode, progress, outcome, records, session age, pending/wait |
-| Windsurf | verified cache | conditional | phase, model, mode, progress, outcome, records, session age, pending/wait |
-| Augment | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
-| Zed Agent | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
+| Cascade | verified cache | conditional | phase, model, mode, progress, outcome, records, session age (23.0: no Waiting — format unverified) |
+| Windsurf | verified cache | conditional | phase, model, mode, progress, outcome, records, session age (23.0: no Waiting — format unverified) |
+| Augment | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
+| Zed Agent | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
 | Trae | verified cache | conditional | phase, model, mode, progress, outcome |
 | Warp Agent | verified cache | conditional | phase, model, mode, progress, outcome |
 | Kilo Code | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
 | Devin | verified cache | conditional | phase, model, mode, progress, outcome |
-| Kiro | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
+| Kiro | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
 | Junie | verified cache | conditional | phase, model, mode, progress, outcome |
 | Replit Agent | verified cache | conditional | phase, model, mode, progress, outcome |
 | Antigravity | verified cache | conditional | phase, model, mode, progress, outcome |
@@ -127,7 +126,7 @@ still never `.session`. Runtime gate: `NativeActivityHarvest.makeRows` stamps
 regardless of path needles. Agents with `waitingSource=none` never promote
 harvest status words into Waiting.
 
-Cline / Roo / Cascade harvestPending recognizes explicit ask/block fields and
+Cline / Roo harvestPending recognizes (Cascade too, before 23.0 made unverified formats `waiting: .none`) explicit ask/block fields and
 ask tools (`ask=followup` without `askResponse`, `ask_followup_question`,
 `isWaitingForResponse`, …) — never substring matches like `depending`. Attention
 entries that name an unknown session create a dedicated Waiting row; they do

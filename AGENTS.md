@@ -11,21 +11,15 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the behaviour spec |
 | [`docs/scenarios.md`](docs/scenarios.md) | You add or change an acceptance scenario — each row names the tests that pin it |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, and why |
-| [`docs/review-11.0.md`](docs/review-11.0.md) | **The current review** — defects at the 11.0.3 baseline (fixed in 11.0.4) and the next-version evaluation (Kernel before Outcome) |
-| [`docs/archive/`](docs/archive/README.md) | Historical plans (0.23 – 6.0) and superseded reviews (0.21, 1.2, 2.2) |
-| [`docs/plan-2.0.md`](docs/plan-2.0.md) | The shipped 2.0 plan (Respond) — P0-0 evidence and the remaining real-machine confirmation checklist live here |
-| [`docs/plan-12.0.md`](docs/plan-12.0.md) | The 12.x plan (Kernel → Surface) — modules, catalog, dialects, narration, scan-quiet surfaces, and what each 12.x release completed |
-| [`docs/plan-outcome.md`](docs/plan-outcome.md) | Historical: the Outcome plan (13.0 Mission). Removed in 22.0 with the orchestrator |
-| [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels from Pulse to the hook holding for it |
 | [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch any vendor parser — each agent's format has a pinned source, a fixture and a weekly drift sentinel |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
-Everything is Swift under `PulseBar/`; `src/` retains only the optional hook
-scripts. There are four targets, dependencies pointing down only:
+Everything is Swift under `PulseBar/` (23.0 deleted `src/` and the Python
+hook scripts). There are three targets, dependencies pointing down only:
 `PulseCore` (the kernel — the agent catalog, bounded IO, process
 supervision, transcript parsing, probe cadence, the debug log),
-`PulseHarvest` (the collector), `PulseRespond` (the permission contract and
-spool) and the `PulseBar` app (22.0 removed `PulseManaged`). No
+`PulseHarvest` (the collector) and the `PulseBar` app (22.0 removed
+`PulseManaged`, 23.0 removed `PulseRespond`). No
 library may import AppKit, SwiftUI or reach `StatusStore`; library members are
 `package`, Core's are `public`. **Adding an agent** means one
 `case` and one `AgentSpec` in `PulseCore/AgentCatalog.swift`, plus its icon, README
@@ -48,20 +42,12 @@ compiles and ships.
   red lamp, never a banner; it comes only from hooks and never makes a row of
   its own.
 - **No quota, cost, or reset HUD.** That is a different product.
-- **No judgment transfer, and no blind approve.** Respond (scenes AR, AU)
-  delivers the user's own decision to a permission request raised by an
-  agent **on this Mac** — nothing crosses machines (22.0): key-file opt-in
-  (`respond-local.key`), single-use HMAC verdicts bound to request id +
-  content digest + agent + host, and **Allow exists only where the full
-  request is shown**
-  (`canOfferAllow`) — which is why the banner offers Deny and never Allow.
-  Everything else stays forbidden: rules engines, always-allow, auto-approve,
-  approving from a truncated summary, and **any hold that would freeze an
-  agent in front of the person using it** — 2.4 sharpened that last one rather
-  than relaxing it, because "someone is touching this Mac" was never the same
-  question as "the prompt is in front of them", and where the answer cannot be
-  established the request goes straight through. Every failure falls open to
-  the vendor's own prompt.
+- **No judgment transfer, and no blind approve.** 23.0 removed Respond:
+  Pulse never answers a permission request, and the hook receiver never
+  holds — it writes one attention line and exits. The answer is always given
+  in the vendor's own prompt. Forbidden: rules engines, always-allow,
+  auto-approve, approving from a truncated summary, and any hold that would
+  freeze an agent.
 - **Pulse watches orchestrators; it is not one.** No dispatching sessions,
   no managed runtimes, no worktrees, no running the user's checks, no typing
   into terminals. 22.0 removed all of it (see Current state); bringing any of
@@ -97,9 +83,9 @@ python3 scripts/package_check.py             # reads the built .app
 `NativeActivityHarvest.swift` is the collector. There is no second one: 0.99
 deleted `src/activity_scan.py`, its bundled copy and `harvest_stats_check.py`
 — 11,470 lines that never ran for a user, could not catch a native regression,
-and were documented as if they could. The remaining Python files are hook
-assets only, and a missing Python runtime must never block the app, harvest, or
-self-test.
+and were documented as if they could. 23.0 deleted the Python hook scripts
+too; the installer writes only the native `pulse-hook`. A missing Python
+runtime must never block the app, harvest, or self-test.
 
 **The wall that catches a parsing regression** is `PulseBar --native-fixture-test`
 (`NativeHarvestSelfTest.swift`) plus `swift test`; both assert hero **values**
@@ -177,8 +163,7 @@ worktrees, Missions, acceptance checks, `EvidenceBook`, workspace effect), the
 Workbench window and everything that existed for it (dispatch, terminal
 actuation, the resume channel, the Mission board and working-copy card),
 remote Respond (`requests.d/`, `verdicts.d/`, `secrets/`,
-`respond-secret.key` — Respond is local-only, see `docs/respond-protocol.md`;
-`pulse_hook.py` holds only when `ioreg` shows nobody at this Mac), and the
+`respond-secret.key`; 23.0 then removed local Respond too), and the
 fleet (`fleet.d/` snapshots, the `attention.d/` inbox, remote rows; the
 attention `host` column is ignored). The settings `workbenchActuation`,
 `workspaceEffect` and `fleetBroadcast` are gone, as are grouping, sound,
@@ -196,18 +181,17 @@ a stalled/failed row. The lamp has a shape as well as a tone
 `dotted`, idle `hollow`, drawn by `LampShapeView`); every other verb lives in
 the row `menu` (details, focus, dismiss, snooze, mute) and VoiceOver actions.
 `SessionDetailView` (→ or the menu's Details; ← / Esc back) shows the task,
-the why line, a `TimelineStripView` of the last hour, the full Respond request
-(Allow beside it), last words, plan, facts, the notification audit, then
+the why line, a `TimelineStripView` of the last hour, last words, plan, facts, the notification audit, then
 `WhyDetailSection` / `SessionDiagnosticsCard`. The tray is keyboard-first:
 typing filters (over every retained session), ↑↓ select, ↩ primary, → details,
-⌫ deny/dismiss a wait, Esc clears the filter, then closes the panel —
+⌫ dismiss a wait, Esc clears the filter, then closes the panel —
 `StatusStore.trayEscapeConsumed` (unobserved) tells the panel's key monitor
 that the view owns Escape. The header is one line of tone-coloured counts
 with a ⋯ menu (Health, Settings, Quit); at most one notice (maintenance /
 scan incomplete / paused); the footer carries "N more", the stale-hidden
 count and the key hints; the empty state is a checklist of what is true on
-this Mac. Settings is a single scrolling page of sections, with the Attention
-bridge tools under an Advanced disclosure; jumping in from elsewhere bumps
+this Mac. Settings is a single scrolling page of sections (23.0 removed the
+in-app Attention bridge tools); jumping in from elsewhere bumps
 `settingsFocusToken` and scrolls to the section.
 
 Observability: `SessionTimeline` turns each scan's rows into state
@@ -257,8 +241,7 @@ set), Goose (`sessions.db`, `DatabaseAdapter.goose`), Kimi Code, Grok's
 `updates.jsonl`, Copilot's `session-state`, Continue and OpenHands
 (`HarvestContinueOpenHands.swift`); OpenCode's `pending` is no longer a wait.
 Aider and Continue have `waiting: .none`. The hook receiver attributes calls
-carrying `GROK_*` to Grok, holds for Respond only where `respondReach` is
-`hookSite`, and rejects unknown event names instead of treating them as
+carrying `GROK_*` to Grok and rejects unknown event names instead of treating them as
 Waiting. Fact merge now carries `lastWord` across a session's files.
 
 19.0.0 (Observe) made the store observed field by field, every card under a row is a value, and the Mac can check
@@ -269,15 +252,13 @@ is added without being listed); AppKit follows the store with
 `ObservationLoop`; Settings reads `snapshotAgents`, never `snapshot`.
 `surface_check.py` rejects any Combine-era wrapper (`ObservableObject`,
 `@Published`, `@ObservedObject`, `@StateObject`, `objectWillChange`). The
-cards under a tray row — Respond, the expanded inspector, the digest (in
+cards under a tray row — the expanded inspector, the digest (in
 22.0 the detail view) —
 render `RowCardModel` and send
-`RowCardModel.Action`; a Respond click carries the request id and digest
-that were on screen. The self-check (`DoctorModel` pure, `DoctorProbe`
+`RowCardModel.Action`. The self-check (`DoctorModel` pure, `DoctorProbe`
 read-only IO, Settings → About) turns the real-machine confirmations into
 one click and a redacted report: Claude/Codex hooks installed and actually
-firing, `claude agents --json`, Codex rollout format, Respond verdicts
-claimed. The test target is in the Swift 6 mode too: XCTest suites isolate
+firing, `claude agents --json`, Codex rollout format. The test target is in the Swift 6 mode too: XCTest suites isolate
 their test methods to the main actor instead of the class; new suites are
 Swift Testing.
 
@@ -304,10 +285,9 @@ resolved, and column 8 `front` keeps banners away from a prompt already in
 front. Since 15.0 surfaces are values: `scripts/qa_surfaces.sh` renders
 their fixtures on CI and `scripts/surface_check.py` keeps views off the
 store — **a new surface comes with a model, a fixture and a capture.** 13.0
-accepted the orchestrator identity (review-11.0 §4.3) and 14.0 moved
-evidence to the working copy; 22.0 reversed that decision and removed both,
-so Outcome ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is history.
-The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
+accepted the orchestrator identity and 14.0 moved evidence to the working
+copy; 22.0 reversed that decision and removed both. The 12.x structural work
+is complete (see CHANGELOG).
 
 Every target builds warning-free under complete concurrency checking with
 `-warnings-as-errors` (12.4). A value that crosses a queue by convention goes
@@ -315,9 +295,10 @@ in `Unchecked` with a comment saying why; prefer `Sendable` types and `Guarded`.
 A scan that finds the same world must publish nothing (`ScanQuietTests`): write
 an observed store property on the scan path only when its value changed —
 Observation announces every assignment, equal or not.
-Respond's P0-0 real-machine confirmation (decision shape honoured) remains the
-one unverified item of 2.0 — a wrong shape is silently ignored and falls open,
-never a wrong approval.
+Since 23.0 an agent whose on-disk format is `unverified` in
+`docs/vendor-formats.json` has `waiting: .none`: its harvest `pending` is not
+evidence, and `SnapshotBuilder` lights harvest pending only for
+`waiting: .harvestPending`. Attention lines need all eight v3 columns.
 
 Without an Apple Developer ID, GitHub **Latest** tracks the current semver
 while the binary stays `preview` / ad-hoc — **never stamp `stable` or claim

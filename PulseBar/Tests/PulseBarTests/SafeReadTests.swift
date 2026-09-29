@@ -3,7 +3,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// Files a sync tool may have planted: only regular files are read, and never
 /// past the bound.
@@ -36,7 +35,6 @@ final class SafeReadTests: XCTestCase {
         let link = directory.appendingPathComponent("zero.json")
         try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "/dev/zero")
         XCTAssertNil(SafeRead.regularFile(atPath: link.path, limit: 256 * 1024))
-        XCTAssertNil(SafeRead.regularFileTail(atPath: link.path, limit: 256 * 1024))
     }
 
     func testDoesNotBlockOnAFIFO() throws {
@@ -44,19 +42,7 @@ final class SafeReadTests: XCTestCase {
         XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
         let started = Date()
         XCTAssertNil(SafeRead.regularFile(atPath: fifo.path, limit: 256 * 1024))
-        XCTAssertNil(SafeRead.regularFileTail(atPath: fifo.path, limit: 256 * 1024))
         XCTAssertLessThan(Date().timeIntervalSince(started), 1)
-    }
-
-    func testTailKeepsTheNewestBytes() throws {
-        let url = directory.appendingPathComponent("inbox.tsv")
-        try Data("old\nnew\n".utf8).write(to: url)
-        let tail = try XCTUnwrap(SafeRead.regularFileTail(atPath: url.path, limit: 4))
-        XCTAssertEqual(tail.data, Data("new\n".utf8))
-        XCTAssertTrue(tail.truncated)
-        let whole = try XCTUnwrap(SafeRead.regularFileTail(atPath: url.path, limit: 64))
-        XCTAssertEqual(whole.data, Data("old\nnew\n".utf8))
-        XCTAssertFalse(whole.truncated)
     }
 
     func testAnEmptyRegularFileIsEmptyNotMissing() throws {

@@ -13,6 +13,6 @@ if [ -x "$HOOK" ]; then
   exit 0
 fi
 ms=$(($(date +%s) * 1000))
-printf '%s\tpermission\t%s\tApprove tool (sample)\t%s\t%s\n' \
+printf '%s\tpermission\t%s\tApprove tool (sample)\t%s\t%s\t\t\n' \
   "zcode" "$ms" "$session" "${PWD}" >> "$PULSE/attention.tsv"
 echo "Wrote zcode Waiting → $PULSE/attention.tsv (session=$session)"

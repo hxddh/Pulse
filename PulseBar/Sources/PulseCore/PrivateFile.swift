@@ -31,8 +31,7 @@ public enum PrivateFile {
     /// Write `data` privately, then publish it atomically.
     ///
     /// `rename(2)` carries the mode across whether or not a file was already
-    /// there, which is the same shape `RespondSpool.atomicWrite0600` uses for
-    /// verdicts, and for the same reason.
+    /// there.
     @discardableResult
     public static func write(_ data: Data, to url: URL) -> Bool {
         let fm = FileManager.default
@@ -90,19 +89,6 @@ public enum SafeRead {
         defer { try? handle.close() }
         guard size <= limit else { return nil }
         return read(handle, upTo: limit)
-    }
-
-    /// At most the last `limit` bytes of a regular file, and whether anything
-    /// before them was skipped. For append-only logs, whose newest lines are
-    /// the ones that matter.
-    public static func regularFileTail(atPath path: String, limit: Int) -> (data: Data, truncated: Bool)? {
-        guard let opened = open(path) else { return nil }
-        let (handle, size) = opened
-        defer { try? handle.close() }
-        let truncated = size > limit
-        do { try handle.seek(toOffset: UInt64(truncated ? size - limit : 0)) } catch { return nil }
-        guard let data = read(handle, upTo: limit) else { return nil }
-        return (data, truncated)
     }
 
     private static func open(_ path: String) -> (FileHandle, Int)? {

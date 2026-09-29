@@ -13,15 +13,8 @@ enum DoctorProbe {
     /// Only logs this recent say anything about the Codex installed today.
     static let rolloutWindow: TimeInterval = 7 * 24 * 60 * 60
 
-    struct RespondTally: Sendable {
-        var enabled = false
-        var written = 0
-        var taken = 0
-        var expired = 0
-    }
-
     static func gather(
-        home: URL, respond: RespondTally, coverage: [String: DoctorModel.Coverage] = [:], nowMs: Int64
+        home: URL, coverage: [String: DoctorModel.Coverage] = [:], nowMs: Int64
     ) -> DoctorModel.Facts {
         var facts = DoctorModel.Facts()
         facts.readCoverage = coverage
@@ -79,11 +72,6 @@ enum DoctorProbe {
                 }
             }
         }
-
-        facts.respondEnabled = respond.enabled
-        facts.respondWritten = respond.written
-        facts.respondTaken = respond.taken
-        facts.respondExpired = respond.expired
         return facts
     }
 

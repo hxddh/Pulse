@@ -57,8 +57,6 @@ enum SurfaceCapture {
         case .timeline(let model, let lang):
             return AnyView(TimelineStripView(model: model, lang: lang))
         case .why(let model): return AnyView(WhyCardView(model: model))
-        case .asks(let model): return AnyView(RowAsksFace(model: model))
-        case .expanded(let model): return AnyView(TrayExpandedFace(model: model))
         case .doctor(let report): return AnyView(DoctorReportView(report: report))
         }
     }

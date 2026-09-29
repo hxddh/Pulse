@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 17.0 · Why — the history that remembers what the hooks said, the one
 /// sentence that says which evidence lit a row, the export that turns a real
@@ -55,8 +54,8 @@ final class WhyTests: XCTestCase {
     func testHistoryNeverKeepsWhatTheProtocolRejects() {
         var history = AttentionHistory()
         history.ingest([source([
-            ["claude", "totally_made_up", "\(now)", "nope", "s1", ""].joined(separator: "\t"),
-            ["not-an-agent", "permission", "\(now)", "nope", "s1", ""].joined(separator: "\t"),
+            ["claude", "totally_made_up", "\(now)", "nope", "s1", "", "", ""].joined(separator: "\t"),
+            ["not-an-agent", "permission", "\(now)", "nope", "s1", "", "", ""].joined(separator: "\t"),
         ])], nowMs: now)
         XCTAssertTrue(history.events.isEmpty)
     }
@@ -68,8 +67,8 @@ final class WhyTests: XCTestCase {
         XCTAssertFalse(message.contains("sk-abcdefghijklmnopqrstu"))
     }
 
-    /// 22.0: every line is this Mac's, so a `host` column does not split a
-    /// session's history in two.
+    /// Every line is this Mac's, so a value in the `host` column does not
+    /// split a session's history in two.
     func testAHostColumnDoesNotSplitASessionsHistory() {
         var history = AttentionHistory()
         var named = line("turn", ago: minute / 2).split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
@@ -202,7 +201,7 @@ final class WhyTests: XCTestCase {
         // 21.0: at most two visible verbs — answer it, or put it down.
         XCTAssertEqual(model.strip.map(\.action), [.focus, .dismiss])
         XCTAssertTrue(model.stripAlwaysVisible)
-        XCTAssertEqual(model.menu.map(\.action), [.details, .focus, .dismiss, .snooze, .mute],
+        XCTAssertEqual(model.menu.map(\.action), [.details, .focus, .dismiss, .mute],
                        "every verb is in the menu once")
         XCTAssertNotNil(model.why)
     }
@@ -216,13 +215,6 @@ final class WhyTests: XCTestCase {
         XCTAssertTrue(model.accessibilityLabel.contains("轮到你"))
     }
 
-    func testASnoozedWaitKeepsItsPlaceAndCanBeUndone() {
-        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowSnoozed(), lang: .en, snoozeLabel: "Later · 12m")
-        XCTAssertEqual(model.chip, TrayRowModel.Chip(kind: .snoozed, label: "Later · 12m"))
-        XCTAssertEqual(model.accent, .snoozed)
-        XCTAssertTrue(model.strip.contains { $0.action == .unsnooze })
-    }
-
     func testAProcessOnlyRowPointsAtSupportHealth() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowProcessOnly(), lang: .en)
         XCTAssertEqual(model.lamp, .process)
@@ -232,19 +224,6 @@ final class WhyTests: XCTestCase {
         XCTAssertTrue(model.whyInline || model.why == nil, "an orange row explains itself")
         XCTAssertEqual(model.accessibilityHint, L10n.t(.processOnlyHint, .en))
         XCTAssertFalse(model.canPrimary)
-    }
-
-    func testRespondOffersDenyAndReviewNeverAllow() {
-        let model = TrayRowModel.make(TrayRowModel.Input(
-            row: SurfaceFixtures.rowPermission(),
-            narrator: narrator(),
-            respondOffered: true,
-            fateNote: "should not show while an answer is still possible"
-        ))
-        XCTAssertEqual(model.strip.map(\.action), [.respondReview, .respondDeny])
-        XCTAssertNil(model.fateNote)
-        XCTAssertFalse(model.strip.contains { $0.title.lowercased().contains("allow") },
-                       "Allow lives only beside the full request")
     }
 
     func testEveryRowFixtureSpeaksBothLanguages() {

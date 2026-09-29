@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 final class HarvestParsingTests: XCTestCase {
     /// The collector redacts credential-shaped content before a row exists.
@@ -284,7 +283,7 @@ final class HarvestParsingTests: XCTestCase {
 
     func testAttentionFutureEventIsIgnored() {
         let now: Int64 = 1_700_000_000_000
-        let text = "codex\tpermission\t\(now + 6 * 60 * 1000)\tApprove\tsession-1\t/Users/me/Pulse\n"
+        let text = "codex\tpermission\t\(now + 6 * 60 * 1000)\tApprove\tsession-1\t/Users/me/Pulse\t\t\n"
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
     }
 
@@ -311,8 +310,12 @@ final class HarvestParsingTests: XCTestCase {
 final class AttentionReaderTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
+    /// Rows are padded to the eight v3 columns (host and front empty).
     private func tsv(_ rows: [[String]]) -> String {
-        rows.map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
+        rows.map { row in
+            (row + Array(repeating: "", count: max(0, AttentionProtocol.columnCount - row.count)))
+                .joined(separator: "\t")
+        }.joined(separator: "\n") + "\n"
     }
 
     func testLastEventWinsPerSession() {
@@ -398,6 +401,17 @@ final class AttentionReaderTests: XCTestCase {
     func testCommentsAndShortRowsAreSkipped() {
         let text = "# header\nclaude\tpermission\n\n"
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+    }
+
+    /// 23.0: v3 needs all eight columns. A v1 (six-column) or v2
+    /// (seven-column) line is not read.
+    func testAnOlderShorterLineIsNotRead() {
+        let v1 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\n"
+        let v2 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\n"
+        XCTAssertTrue(AttentionReader.parse(v1, nowMs: now).isEmpty)
+        XCTAssertTrue(AttentionReader.parse(v2, nowMs: now).isEmpty)
+        let v3 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t\n"
+        XCTAssertEqual(AttentionReader.parse(v3, nowMs: now).count, 1)
     }
 
     func testALaterSilentEventDoesNotEraseTheReason() throws {
@@ -555,8 +569,8 @@ final class AttentionReaderTests: XCTestCase {
         let now: Int64 = 1_700_000_000_000
         let raised = now - 60_000
         let text = [
-            "claude\tpermission\t\(raised)\tBash: npm run build\tsession-9\t/Users/me/Pulse",
-            "claude\tstop\t\(raised + 1)\t\tsession-9\t",
+            "claude\tpermission\t\(raised)\tBash: npm run build\tsession-9\t/Users/me/Pulse\t\t",
+            "claude\tstop\t\(raised + 1)\t\tsession-9\t\t\t",
         ].joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: now)
         let entry = try XCTUnwrap(entries.first, "the permission survived its own Stop")
@@ -564,19 +578,18 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertEqual(entry.kind, "Permission")
     }
 
-    /// 22.0: `attention.tsv` is this Mac's file. A `host` column (a hook
-    /// with `PULSE_HOST` set) no longer makes a separate, "remote" wait —
-    /// the same session with or without it is one wait, and one `done`
-    /// clears it.
+    /// `attention.tsv` is this Mac's file. A value in the `host` column
+    /// makes no separate wait — the same session with or without it is one
+    /// wait, and one `done` clears it.
     func testTheHostColumnIsIgnored() {
         let now: Int64 = 1_700_000_000_000
         let raised = now - 60_000
         let text = [
-            "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox",
-            "claude\tdone\t\(raised + 1_000)\t\tsession-1\t/x\t",
+            "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox\t",
+            "claude\tdone\t\(raised + 1_000)\t\tsession-1\t/x\t\t",
         ].joined(separator: "\n") + "\n"
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
-        let raisedOnly = "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox\n"
+        let raisedOnly = "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox\t\n"
         XCTAssertEqual(AttentionReader.parse(raisedOnly, nowMs: now).map(\.mapKey), ["claude|session-1"])
     }
 
@@ -587,10 +600,10 @@ final class AttentionReaderTests: XCTestCase {
         let now: Int64 = 1_700_000_000_000
         let old = now - 60_000
         let text = [
-            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse",
+            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t",
             // The Stop itself lands past the window: the grace is measured
             // between the two lines, not against the reader's clock.
-            "claude\tstop\t\(old + AttentionReader.stopGraceMs + 1)\t\tsession-10\t",
+            "claude\tstop\t\(old + AttentionReader.stopGraceMs + 1)\t\tsession-10\t\t\t",
         ].joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: now)
         XCTAssertFalse(entries.contains(where: \.isBlocking))

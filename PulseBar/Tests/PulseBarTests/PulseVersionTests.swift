@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// The 0.5.0-vs-0.21.0 drift that shipped for months was invisible because
 /// nothing ever compared the two.
@@ -49,30 +48,16 @@ final class PulseVersionTests: XCTestCase {
     }
 
     func testInterpretFindsNewerRelease() {
-        let sha = String(repeating: "a", count: 64)
         let json = """
         {
           "tag_name":"v99.0.0",
-          "html_url":"https://example.com/r",
-          "body":"SHA-256: \(sha)",
-          "assets":[{
-            "name":"pulse-99.0.0.dmg",
-            "browser_download_url":"https://example.com/pulse.dmg",
-            "size":765
-          }]
+          "html_url":"https://example.com/r"
         }
         """
         let status = UpdateCheck.interpret(data: Data(json.utf8), response: nil, error: nil)
         XCTAssertEqual(
             status,
-            .available(.init(
-                version: "99.0.0",
-                pageURL: "https://example.com/r",
-                assetURL: "https://example.com/pulse.dmg",
-                assetName: "pulse-99.0.0.dmg",
-                assetBytes: 765,
-                sha256: sha
-            ))
+            .available(.init(version: "99.0.0", pageURL: "https://example.com/r"))
         )
     }
 
@@ -157,124 +142,6 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertNotEqual(store.tr(.updateCurrentPrerelease), store.tr(.updateCurrentStable))
         XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPrerelease))
         XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("prerelease"))
-    }
-
-    func testUpdateInstallerDestinationNeverOverwritesExistingFiles() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-update-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let base = directory.appendingPathComponent("pulse-0.48.0.dmg")
-        FileManager.default.createFile(atPath: base.path, contents: Data("existing".utf8))
-        let first = UpdateCheck.nonDestructiveDestination(base: base)
-        XCTAssertEqual(first.lastPathComponent, "pulse-0.48.0 (1).dmg")
-        FileManager.default.createFile(atPath: first.path, contents: Data("existing-1".utf8))
-        let second = UpdateCheck.nonDestructiveDestination(base: base)
-        XCTAssertEqual(second.lastPathComponent, "pulse-0.48.0 (2).dmg")
-        XCTAssertEqual(try Data(contentsOf: base), Data("existing".utf8))
-    }
-
-    func testDuplicateCleanupNeverRemovesRunningOrNewerCopy() {
-        let current = InstallTruth.Copy(
-            url: URL(fileURLWithPath: "/Applications/Pulse.app"),
-            version: "0.36.0",
-            commit: "abc",
-            isRunning: true,
-            isCurrent: true,
-            kind: .currentInstalled
-        )
-        let old = InstallTruth.Copy(
-            url: URL(fileURLWithPath: "/Applications/Pulse old.app"),
-            version: "0.35.1",
-            commit: "old",
-            isRunning: false,
-            isCurrent: false,
-            kind: .orphanDuplicate
-        )
-        let newer = InstallTruth.Copy(
-            url: URL(fileURLWithPath: "/Applications/Pulse preview.app"),
-            version: "0.37.0",
-            commit: "new",
-            isRunning: false,
-            isCurrent: false,
-            kind: .orphanDuplicate
-        )
-        let runningOld = InstallTruth.Copy(
-            url: URL(fileURLWithPath: "/Applications/Pulse running.app"),
-            version: "0.34.0",
-            commit: "run",
-            isRunning: true,
-            isCurrent: false,
-            kind: .orphanDuplicate
-        )
-        let report = InstallTruth.Report(
-            runningURL: current.url,
-            copies: [current, old, newer, runningOld],
-            inspectedAt: Date()
-        )
-        XCTAssertEqual(report.removableDuplicates.map(\.version), ["0.35.1"])
-        XCTAssertTrue(report.hasOtherRunningCopy)
-    }
-
-    func testInstallTruthClassifiesBuildAndRollbackPaths() {
-        XCTAssertEqual(
-            InstallTruth.classify(
-                url: URL(fileURLWithPath: "/Users/me/Pulse/zig-out/package/Pulse.app"),
-                isCurrent: true
-            ),
-            .buildArtifact
-        )
-        XCTAssertEqual(
-            InstallTruth.classify(
-                url: URL(fileURLWithPath: "/Users/me/Library/Application Support/Pulse/rollback/Pulse.app"),
-                isCurrent: false
-            ),
-            .rollback
-        )
-        XCTAssertEqual(
-            InstallTruth.classify(
-                url: URL(fileURLWithPath: "/Applications/Pulse.app"),
-                isCurrent: true
-            ),
-            .currentInstalled
-        )
-        XCTAssertEqual(
-            InstallTruth.classify(
-                url: URL(fileURLWithPath: "/Users/me/Desktop/Pulse.app"),
-                isCurrent: false
-            ),
-            .orphanDuplicate
-        )
-    }
-
-    func testAboutDuplicateListReportsHiddenRemainder() {
-        let current = InstallTruth.Copy(
-            url: URL(fileURLWithPath: "/Applications/Pulse.app"),
-            version: "0.53.0",
-            commit: "abc",
-            isRunning: true,
-            isCurrent: true,
-            kind: .currentInstalled
-        )
-        let extras = (1...7).map { index in
-            InstallTruth.Copy(
-                url: URL(fileURLWithPath: "/Applications/Pulse \(index).app"),
-                version: "0.5\(index).0",
-                commit: "c\(index)",
-                isRunning: false,
-                isCurrent: false,
-                kind: .orphanDuplicate
-            )
-        }
-        let report = InstallTruth.Report(
-            runningURL: current.url,
-            copies: [current] + extras,
-            inspectedAt: Date()
-        )
-        XCTAssertEqual(report.duplicates.count, 7)
-        XCTAssertEqual(report.aboutVisibleDuplicates.count, InstallTruth.aboutDuplicateLimit)
-        XCTAssertEqual(report.aboutHiddenDuplicateCount, 2)
     }
 
     func testHookStatusIsPerAgentNotGlobal() {

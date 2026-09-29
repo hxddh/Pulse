@@ -27,22 +27,17 @@ Pulse 把这件事变成余光可见：
 色弱和灰度下也分得开。等待行多一行问题本身，停滞 / 失败多一行橙色原因；其余动作在右键菜单里。
 有可靠 Focus 句柄时整行可聚焦（TTY 标签 / 宿主工作区 / Warp 或宿主 App），否则点开是详情页，不制造无效动作。
 
-**键盘优先**：打开托盘直接打字就是过滤；↑↓ 选择，↩ 聚焦，→ 详情，⌫ 拒绝或忽略，Esc 先清过滤再关面板。
+**键盘优先**：打开托盘直接打字就是过滤；↑↓ 选择，↩ 聚焦，→ 详情，⌫ 忽略，Esc 先清过滤再关面板。
 头部一行彩色计数，「⋯」里是健康检查、设置、退出；同一时间最多一条提示。
 
 **每个颜色都说得清来历**：鼠标停在菜单栏图标上，提示写出决定颜色的规则和驱动它的会话；
-详情页有这个会话最近一小时的时间条（每种状态各几分钟）、完整的 Respond 请求、Agent 最后说的话、
+详情页有这个会话最近一小时的时间条（每种状态各几分钟）、Agent 最后说的话、
 计划，以及**这条通知发生了什么**（发了、合并、被拒，或没发以及为什么）；健康检查窗口的「活动」
 按时间倒序列出所有会话的状态变化和通知去向。
 
 **2.1 起说得更具体**：权限通知直接说出被请求的那件事（`Bash: npm run build`，
 命令里的凭据仍被抹掉）；行上的事实按信息量排序，**会话记录增长速率**排在 token 前 ——
 它是唯一能区分「在干活」与「杵着」的那个；读得不全就明说「仍在追平 · 已读 N%」。
-
-**可以就地回应**（设置里开启，默认关）：这台 Mac 上的 Agent 发来权限请求、而提示不在你眼前时，
-托盘行上可「拒绝」，详情页里完整请求旁可「同意」—— 判决用本机生成、从不离开这台 Mac 的
-密钥做 HMAC 签名、单次使用、绑定请求原文摘要；**没有密钥文件时这一切不存在**。
-详见 [`docs/respond-protocol.md`](docs/respond-protocol.md)。
 
 **22.0 起只做灯**：一个状态灯应该看着编排器，而不是成为编排器。指挥台（Workbench）、
 受管会话、派活、Mission、工作副本检查、盘上成效、终端代打、跨机器回应与舰队广播都已删除；
@@ -122,9 +117,11 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 | Agent | Probe | Harvest | Waiting |
 | --- | --- | --- | --- |
 | Claude / Codex | A | Structured session | hooks（+ Codex pending） |
-| Cursor / Grok / Pi / Amp / Gemini / Copilot / OpenCode / Goose / OpenHands / Droid / Command Code / Kimi | A* | Structured session | pending |
+| Grok / Pi / Gemini / Copilot / OpenCode / Goose / OpenHands / Kimi | A | Structured session | pending |
+| Cursor / Amp / Droid / Command Code | A* | Structured session | **none**（格式未核实，23.0 起不从 harvest 推断） |
 | Aider / Continue | A | Structured session | **none**（格式里没有等待信号，20.0 核对源码） |
-| Amazon Q / Cline / Roo / Cascade / Windsurf / Augment / Zed / Kilo / Kiro | A | Best effort cache | pending（尽力） |
+| Cline / Roo / Kilo | A | Best effort cache | pending（尽力） |
+| Amazon Q / Cascade / Windsurf / Augment / Zed / Kiro | A | Best effort cache | **none**（格式未核实，23.0 起不从 harvest 推断） |
 | Trae / Warp / Antigravity / Devin / Junie / Replit / ZCode | A | Best effort cache | **none**（本机无可靠信号） |
 
 \* Cursor 进程常跳过外壳，靠 harvest 认；其余 Agent 的 Probe 仍为 A。
@@ -171,10 +168,10 @@ Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、
 - **通知** —— 授权状态、新「需要你」通知、空闲通知；声音与安静时段交给 macOS 的通知设置与专注模式，
   静音某个 Agent 在行菜单里做
 - **hooks** —— Claude 与 Codex 的 hooks（安装 / 移除 / 测试）
-- **控制** / **数据访问** —— 可以做的事（终端自动化、本机 Respond）与可以读取的内容（受保护的应用数据，
+- **控制** / **数据访问** —— 可以做的事（终端自动化）与可以读取的内容（受保护的应用数据，
   全局或按 Agent），每项默认关闭并写明后果
 - **更新** / **关于** —— 可校验更新、版本、「健康检查」入口、构建指纹、运行路径、重复安装、复制诊断信息
-- **高级**（折叠）—— 实时更新，以及其他 Agent 接入 Attention 桥的工具
+- **高级**（折叠）—— 实时更新
 
 「健康检查」窗口把自检、活动记录（所有会话的状态变化与通知去向）、每个 Agent 能读到什么、
 上次读取的时间与耗时、可复制的报告放在一起。
@@ -275,27 +272,3 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v1 契约 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |
-| [`docs/archive/plan-0.91.md`](docs/archive/plan-0.91.md) | 0.91 计划 —— 行叙事 |
-| [`docs/archive/plan-0.90.md`](docs/archive/plan-0.90.md) | 0.90 计划 —— 等待可达 |
-| [`docs/archive/plan-0.82.md`](docs/archive/plan-0.82.md) | 0.82 计划 —— 舰队托盘实质 |
-| [`docs/archive/plan-0.81.md`](docs/archive/plan-0.81.md) | 0.81 计划 —— 托盘实质 |
-| [`docs/archive/plan-0.80.md`](docs/archive/plan-0.80.md) | 0.80 计划 —— 托盘可读 |
-| [`docs/archive/plan-0.70.md`](docs/archive/plan-0.70.md) | 0.70 计划 —— 契约诚实 |
-| [`docs/archive/plan-0.65.md`](docs/archive/plan-0.65.md) | 0.65 计划 —— 舰队覆盖 / ZCode |
-| [`docs/archive/plan-0.64.md`](docs/archive/plan-0.64.md) | 0.64 计划 —— 打断闭环 |
-| [`docs/archive/plan-0.63.md`](docs/archive/plan-0.63.md) | 0.63 计划 —— 绿灯可信 |
-| [`docs/archive/plan-0.62.md`](docs/archive/plan-0.62.md) | 0.62 计划 —— 开放 Attention 协议 |
-| [`docs/archive/plan-0.61.md`](docs/archive/plan-0.61.md) | 0.61 计划 —— 原生等待通路 |
-| [`docs/archive/plan-0.60.md`](docs/archive/plan-0.60.md) | 0.60 计划 —— 等待连续 |
-| [`docs/archive/plan-0.59.md`](docs/archive/plan-0.59.md) | 0.59 计划 —— 缓存连续 |
-| [`docs/archive/plan-0.58.md`](docs/archive/plan-0.58.md) | 0.58 计划 —— 舰队连续 |
-| [`docs/archive/plan-0.57.md`](docs/archive/plan-0.57.md) | 0.57 计划 —— 事实连续 |
-| [`docs/archive/plan-0.56.md`](docs/archive/plan-0.56.md) | 0.56 计划 —— 精确落地 |
-| [`docs/archive/plan-0.55.md`](docs/archive/plan-0.55.md) | 0.55 计划 —— 回到现场 |
-| [`docs/archive/plan-0.54.md`](docs/archive/plan-0.54.md) | 0.54 计划 —— 通道与契约连续 |
-| [`docs/archive/plan-0.53.md`](docs/archive/plan-0.53.md) | 0.53 计划 —— 交付连续信任 |
-| [`docs/archive/plan-0.23.md`](docs/archive/plan-0.23.md) | 0.23 的计划与验收（P2 两项仍开着） |
-| [`docs/archive/plan-0.24.md`](docs/archive/plan-0.24.md) | 0.24 计划 —— 辨识度与精致感 |
-| [`docs/archive/plan-0.25.md`](docs/archive/plan-0.25.md) | 0.25 计划与实施记录 —— 每行只说一次 |
-| [`docs/archive/plan-0.27.md`](docs/archive/plan-0.27.md) | 0.27 计划 —— 读完面板之后你能做什么 |
-| [`docs/archive/review-0.21.md`](docs/archive/review-0.21.md) | 0.21 全量审计记录（已全部关闭） |

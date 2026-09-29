@@ -13,26 +13,6 @@ enum PulseBarMain {
     nonisolated(unsafe) private static var instanceGuard: SingleInstanceGuard?
 
     static func main() {
-        if let dmg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-update=") }),
-           let target = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-target=") }),
-           let parent = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--install-parent-pid=") }),
-           let pid = pid_t(String(parent.dropFirst("--install-parent-pid=".count))) {
-            do {
-                let digest = ProcessInfo.processInfo.arguments
-                    .first(where: { $0.hasPrefix("--install-sha256=") })
-                    .map { String($0.dropFirst("--install-sha256=".count)) } ?? ""
-                try UpdateInstaller.runHelper(
-                    dmgURL: URL(fileURLWithPath: String(dmg.dropFirst("--install-update=".count))),
-                    targetApp: URL(fileURLWithPath: String(target.dropFirst("--install-target=".count))),
-                    parentPID: pid,
-                    expectedSHA256: digest
-                )
-                exit(0)
-            } catch {
-                fputs("Pulse update failed: \(error.localizedDescription)\n", stderr)
-                exit(1)
-            }
-        }
         if ProcessInfo.processInfo.arguments.contains("--selftest") {
             exit(PulseSelfTest.run() ? 0 : 1)
         }
@@ -65,7 +45,6 @@ enum PulseBarMain {
             )
             print(
                 "harvest rows=\(result.rows.count) adapters=\(result.health.count) "
-                    + "unreliable=\(result.unreliable) "
                     + "complete=\(result.complete) "
                     + "appData=\(settings.allowAppData ? 1 : 0) "
                     + "agents=\(agentsLabel) "
@@ -86,7 +65,7 @@ enum PulseBarMain {
                     }
                 }
             }
-            exit(result.unreliable ? 1 : 0)
+            exit(0)
         }
         if ProcessInfo.processInfo.arguments.contains("--native-fixture-test") {
             exit(NativeHarvestSelfTest.run() ? 0 : 1)
@@ -117,9 +96,6 @@ enum PulseBarMain {
                 print("\(health.id.rawValue) \(health.state.rawValue) \(health.explain.summary)")
             }
             exit(0)
-        }
-        if Bundle.main.bundleURL.pathExtension == "app" {
-            _ = UpdateInstaller.recoverIfNeeded(at: Bundle.main.bundleURL)
         }
         let guardLock = SingleInstanceGuard()
         guard guardLock.acquire() else {
@@ -318,7 +294,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         GlobalHotKey.uninstall()
         statusPanel?.uninstall()
-        AppServices.store.markCleanShutdown()
     }
 }
 

@@ -17,8 +17,7 @@ enum TrayChrome {
     /// The list's share of it: the panel minus header, notice and footer.
     static let maxListHeight: CGFloat = maxHeight - 120
     /// Shared identity grid for rows and headings, on the 4-pt grid: the
-    /// icon at 16, the identity line and every card under a row at 44, the
-    /// agent's name at 56.
+    /// icon at 16, the identity line at 44, the agent's name at 56.
     static let rowLeadingInset: CGFloat = PulseTheme.Space.l
     static let iconColumnWidth: CGFloat = 18
     static let iconToIdentityGap: CGFloat = 10
@@ -28,74 +27,17 @@ enum TrayChrome {
         rowLeadingInset + iconColumnWidth + iconToIdentityGap
     static let rowNameStart: CGFloat =
         rowIdentityStart + identityLampSize + identityLampToNameGap
-    /// Cards, the action strip and notices under a row start where the
-    /// row's text starts — one content column, not a column of their own.
-    static let contentInset: CGFloat = rowIdentityStart
     /// The row's hover and selection fill is inset from the panel edge.
     static let highlightInset: CGFloat = PulseTheme.Space.s
     /// Section headers keep their title on the same column as Agent names.
     static let sectionAccentPrefix: CGFloat = rowIdentityStart - padX
-    static let sectionHeaderLeadWidth: CGFloat =
-        rowNameStart - padX - 8
     /// One hit target for every compact header action.
     static let headerControlSize: CGFloat = 28
-    /// The row's trailing controls (disclosure + ⋯): reserved in layout so
-    /// they never sit on top of the time and chip.
-    static let rowControlSize = CGSize(width: 22, height: 20)
-    static let rowControlsWidth: CGFloat = rowControlSize.width * 2 + PulseTheme.Space.xs
     /// 22.0: where a row's second line starts — under the agent's name, past
     /// the lamp (8) and the icon (18) and their two gaps.
     static let oneLineTextStart: CGFloat = 8 + PulseTheme.Space.s + 18 + PulseTheme.Space.s
-    static var waitAccent: Color { PulseTheme.Tone.waiting.color }
-    static var runAccent: Color { PulseTheme.Tone.running.color }
-
-    // MARK: Type — the row's roles, on PulseTheme's semantic scale
-
-    static func heroFont(processOnly: Bool) -> Font {
-        processOnly ? PulseTheme.Font.heroQuiet : PulseTheme.Font.hero
-    }
-    /// Narration — the row's human sentence.
-    static let storyFont: Font = PulseTheme.Font.bodyEmphasis
-    /// Dense fact lines: work, observation, signal.
-    static let detailFont: Font = PulseTheme.Font.body
-    /// Inline row verbs.
-    static let actionFont: Font = PulseTheme.Font.bodyEmphasis
-    static let identityNameFont: Font = PulseTheme.Font.label
-    static let sourceLabelFont: Font = PulseTheme.Font.caption
-
-    /// Card chrome: the tray shares PulseTheme's family.
-    static let cardRadius: CGFloat = PulseTheme.Radius.card
-    static let innerRadius: CGFloat = PulseTheme.Radius.inner
-    static let cardPadding: CGFloat = PulseTheme.Space.m
-    static let cardSpacing: CGFloat = PulseTheme.Space.s
 }
 
-struct StatusChip: View {
-    enum Kind { case waiting, running, recent, process, snoozed }
-
-    let kind: Kind
-    let label: String
-
-    var body: some View {
-        PulseChip(label: label, tone: tone, muted: kind == .snoozed)
-    }
-
-    /// 21.0: a chip is in its state's tone — a stalled chip is orange like
-    /// its lamp, not grey.
-    private var tone: PulseTheme.Tone {
-        switch kind {
-        case .waiting, .snoozed: return .waiting
-        case .running: return .running
-        case .process: return .attention
-        case .recent: return .idle
-        }
-    }
-}
-
-// MARK: - Tray panel
-
-/// Measured height of the row list, so the panel is sized by its content
-/// instead of by arithmetic.
 // MARK: - Tray panel
 
 /// Measured height of the row list, so the panel is sized by its content.
@@ -163,8 +105,7 @@ struct TrayPanel: View {
         listFocused = true
     }
 
-    /// A reveal from a notification, the hotkey or Respond: select the row,
-    /// and open its detail when there is a request to read in full.
+    /// A reveal from a notification or the hotkey: select the row.
     fileprivate func applyPendingReveal() {
         guard let key = store.pendingRevealRowKey, !key.isEmpty else { return }
         query = ""
@@ -175,8 +116,7 @@ struct TrayPanel: View {
             return
         }
         guard let row = rows.first(where: { $0.rowKey == key }) else { return }
-        selectedKey = key
-        if store.respondRequest(for: row) != nil { detailKey = key }
+        selectedKey = row.rowKey
         listFocused = true
         store.clearPendingRevealRowKey()
     }
@@ -354,14 +294,6 @@ struct TrayPanel: View {
                 action: { store.openSupportHealth() }
             )
         }
-        if !store.autoProbe {
-            return .init(
-                text: store.tr(.probePaused),
-                systemImage: "pause.circle",
-                tone: .attention,
-                action: { store.openSettings() }
-            )
-        }
         return nil
     }
 
@@ -428,11 +360,7 @@ struct TrayPanel: View {
             }
             .onKeyPress(.delete) {
                 guard let row = selectedRow, row.waiting else { return .ignored }
-                if store.respondRequest(for: row) != nil {
-                    store.respondDeny(row)
-                } else {
-                    store.dismissWaiting(row)
-                }
+                store.dismissWaiting(row)
                 return .handled
             }
             .onKeyPress(.escape) {
@@ -655,10 +583,6 @@ private struct AgentRowButton: View {
         case .primary: store.primaryAction(row)
         case .details: onDetails()
         case .dismiss: store.dismissWaiting(row)
-        case .snooze: store.snooze(row)
-        case .unsnooze: store.unsnooze(row)
-        case .respondDeny: store.respondDeny(row)
-        case .respondReview: onDetails()
         case .focus: store.focusTerminal(row)
         case .supportHealth: store.openSupportHealth()
         case .setupWaiting: store.openWaitingReach(for: row)
@@ -728,14 +652,8 @@ struct TrayRowFace: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if model.isNew {
-                        Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 5, height: 5)
-                            .accessibilityLabel(t(.lookMovedMark))
-                    }
                     if model.lamp == .waiting, let chip = model.chip {
-                        PulseChip(label: chip.label, tone: .waiting, muted: chip.kind == .snoozed)
+                        PulseChip(label: chip.label, tone: .waiting)
                     }
                     ZStack(alignment: .trailing) {
                         Text(model.accessoryTime)
@@ -790,7 +708,7 @@ struct TrayRowFace: View {
                 }
                 .padding(.leading, TrayChrome.oneLineTextStart)
             }
-            if let note = model.fateNote ?? model.notice {
+            if let note = model.notice {
                 Text(note)
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(.secondary)
@@ -813,7 +731,7 @@ struct TrayRowFace: View {
 
     private var waitTint: Color {
         switch model.accent {
-        case .none, .snoozed: return .clear
+        case .none: return .clear
         case .normal: return PulseTheme.Tone.waiting.color.opacity(PulseTheme.Fill.waitTint)
         case .urgent: return PulseTheme.Tone.waiting.color.opacity(PulseTheme.Fill.waitTintUrgent)
         }

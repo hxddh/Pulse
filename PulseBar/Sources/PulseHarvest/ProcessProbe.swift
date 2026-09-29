@@ -22,8 +22,7 @@ package enum ProcessProbe {
 
     /// Last accumulated-CPU reading per pid: `(cputime seconds, wall clock ms)`.
     ///
-    /// Two points make a rate — the same shape `SessionDigest.bytesPerMinute`
-    /// uses for transcript growth. One reading of `cputime` says how much CPU a
+    /// Two points make a rate. One reading of `cputime` says how much CPU a
     /// process has burned *since it launched*, which for a three-hour agent is
     /// a fact about this morning, not about now. The difference between two
     /// readings is the only thing that answers "is it computing right now".
@@ -475,9 +474,7 @@ package enum ProcessProbe {
     /// minutes and has been parked for three hours still reports a healthy
     /// number. Presenting it as "busy now" would be a lie of exactly the kind
     /// this product exists to avoid. Two readings of the cumulative counter,
-    /// subtracted, describe the interval between them and nothing else — the
-    /// same construction `SessionDigest.bytesPerMinute` uses for transcript
-    /// growth.
+    /// subtracted, describe the interval between them and nothing else.
     ///
     /// Returns -1 for "not known": no previous reading, a window too short to
     /// divide by, or a counter that went backwards (pid reuse — a new process

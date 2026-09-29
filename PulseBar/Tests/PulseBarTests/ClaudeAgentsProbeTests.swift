@@ -81,7 +81,6 @@ struct ClaudeAgentsProbeTests {
                 maxVisibleRows: SnapshotBuilder.maxVisibleRows,
                 dismissedPendingKeys: dismissed,
                 showAllAgents: false,
-                snoozedUntilMs: [:],
                 stalledSeconds: AgentRow.stalledSeconds
             )
         )

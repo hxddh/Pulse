@@ -7,30 +7,15 @@ import AppKit
 extension StatusStore {
     func start() {
         DebugLog.write("start begin \(PulseVersion.fingerprint)")
-        // 22.0: once, sweep what the removed orchestrator, remote Respond
-        // and fleet broadcast left in Application Support.
-        LegacyCleanup.run()
-        let recovery = LaunchRecovery.begin(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
-        launchRecovery = recovery.state
-        recoveryExitKind = recovery.kind
-        // Update replacement is an intentional exit — never show the unclean banner.
-        recoveredAfterCrash = recovery.wasUnclean
-        if recoveredAfterCrash {
-            DebugLog.write("launch recovery unclean kind=\(recovery.kind.rawValue)")
-        }
         // Restore only Pulse-owned attention state. Agent-owned hooks remain
         // the source of truth for the current row; the ledger supplies the
-        // cross-launch baseline, snooze timers and delivery dedupe.
+        // cross-launch baseline and delivery dedupe.
         attentionLedger = AttentionLedger.load()
-        snoozedUntil = attentionLedger.snoozedUntil
         knownWaitingKeys = attentionLedger.activeKeys
         waitingNotifySeeded = attentionLedger.baselineEstablished
         dismissedPendingKeys = Self.loadDismissedPendingKeys()
-        respondLocalEnabled = RespondSpool.localHasSecret()
-        restoreAttentionHistory()
         HooksSupport.seedAssets()
         hooksStatus = HooksSupport.probeStatus()
-        refreshPulseHookLauncherStatus()
         loadSettings()
         applyHotkey()
         PulseNotify.registerCategories(lang: lang)
@@ -73,8 +58,7 @@ extension StatusStore {
             }
         }
         UpdateCheck.shared.startIfEnabled(store: self)
-        installTerminationSignalMarker()
-        DebugLog.write("start armed auto=\(autoProbe)")
+        DebugLog.write("start armed")
     }
 
 
@@ -173,23 +157,11 @@ extension StatusStore {
                 // Scoped permission rescans report only the affected adapters.
                 // Force a partial merge so other Agents keep their last good rows.
                 let complete = scopedHarvest ? false : result.complete
-                outcome = result.unreliable
-                    ? .failed(result.health, complete, intentionalPartial || scopedHarvest)
-                    : .fresh(result.rows, result.health, complete, intentionalPartial || scopedHarvest)
+                outcome = .fresh(result.rows, result.health, complete, intentionalPartial || scopedHarvest)
             }
 
             let attention = AttentionReader.load()
-            // Respond (scene AR): read the full requests this Mac's agents
-            // are holding for, off the main thread, alongside the other file
-            // sources — bounded (≤32 files). The spool is swept here too, not
-            // only when the hook writes a request, so an install that turned
-            // local answering back off does not keep its leftovers for ever.
             let scanNowMs = Int64(Date().timeIntervalSince1970 * 1000)
-            RespondSpool.cleanup(nowMs: scanNowMs)
-            let respondInbound = RespondSpool.readLocalRequests(
-                nowMs: scanNowMs,
-                host: PulseHookReceiver.respondHost()
-            )
             // 2.9: push-fresh activity events. Read here so a full rebuild
             // carries them; the watcher's light path keeps them second-fresh
             // between scans.
@@ -217,7 +189,7 @@ extension StatusStore {
                 defer { self.isApplyingScan = false }
                 self.harvestScanCursor = completedCursor
                 switch outcome {
-                case .fresh(_, let health, _, _), .failed(let health, _, _):
+                case .fresh(_, let health, _, _):
                     self.harvestSupervisor.record(
                         health,
                         nowMs: Int64(Date().timeIntervalSince1970 * 1000)
@@ -234,7 +206,6 @@ extension StatusStore {
                     harvestMs: completedHarvestMs,
                     clearRefreshing: showSpinner,
                     reason: reason,
-                    respondInbound: respondInbound,
                     activityEvents: activityEvents,
                     vendorWaits: vendorWaits
                 )
@@ -256,8 +227,6 @@ extension StatusStore {
         case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth], Bool, Bool)
         /// Deliberately not run this tick — cached rows are still current.
         case skipped
-        /// Ran and failed; cached rows may be stale.
-        case failed([ActivityHarvest.CollectorHealth], Bool, Bool)
     }
 
     /// A supervisor plan can intentionally omit adapters that are backing off
@@ -374,10 +343,9 @@ extension StatusStore {
             }
             return changed
         }
-        // 5.0-α: the light path patches the observed source, then
-        // re-merges.
-        if observedSessions.patchSessions(patch) {
-            setCachedAll(sessionSources.merged())
+        var rows = cachedAll
+        if patch(&rows) {
+            setCachedAll(rows)
         }
         var next = snapshot
         if patch(&next.rows) {
@@ -394,7 +362,6 @@ extension StatusStore {
         harvestMs: Int? = nil,
         clearRefreshing: Bool = false,
         reason: String = "",
-        respondInbound: [RespondSpool.InboundRequest] = [],
         activityEvents: [ActivitySpool.Event] = [],
         vendorWaits: [ClaudeAgentsProbe.Wait] = []
     ) {
@@ -449,32 +416,7 @@ extension StatusStore {
             // pending included, or Waiting would flicker off between harvests.
             acts = lastGoodHarvest
             ticksSinceHarvest = ticksSinceHarvest == Int.max ? 1 : ticksSinceHarvest + 1
-        case .failed(let health, let complete, let intentionalPartial):
-            recordCollectorHealth(
-                health,
-                complete: complete,
-                intentionalPartial: intentionalPartial
-            )
-            // 0.95: keep last-good pending intact. Stripping pending on failure
-            // manufactured a false clear then a re-raise on the next skip.
-            acts = lastGoodHarvest
-            ticksSinceHarvest = 0
-            DebugLog.write("harvest unreliable → reuse \(acts.count) cached rows (pending kept)")
         }
-        let harvestUnreliable: Bool = {
-            switch harvest {
-            case .failed(_, _, let intentionalPartial):
-                return !intentionalPartial
-            case .fresh(_, _, let complete, let intentionalPartial):
-                // A timed-out stream may contain useful rows, but it is not a
-                // complete baseline. Treat it as unreliable for attention
-                // edge reconciliation so an adapter that was never reached
-                // cannot silently resolve a real Waiting event.
-                return !complete && !intentionalPartial
-            case .skipped:
-                return false
-            }
-        }()
 
         let now = Date()
         lastScanAt = now
@@ -482,28 +424,15 @@ extension StatusStore {
             ProbeStats.Sample(at: now, harvested: harvestMs != nil, harvestMs: harvestMs)
         )
 
-        // A snooze that has run out must announce itself again, so forget the
-        // row was ever waiting: the builder's "newly waiting" edge is a set
-        // difference against these keys, and a wait that stayed in the set for
-        // the whole snooze would come back silently.
-        var waitingKeysForEdges = knownWaitingKeys
-        for (key, deadline) in snoozedUntil where deadline <= now {
-            snoozedUntil.removeValue(forKey: key)
-            attentionLedger.unsnooze(rowKey: key)
-            waitingKeysForEdges.remove(key)
-            DebugLog.write("snooze expired \(DebugLog.key(key))")
-        }
-
         let result = SnapshotBuilder.build(
             SnapshotBuilder.Input(
                 procs: procs,
                 harvest: acts,
-                harvestUnreliable: harvestUnreliable,
                 attention: attention,
                 activity: activityEvents,
                 vendorWaits: vendorWaits
             ),
-            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: waitingKeysForEdges),
+            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: knownWaitingKeys),
             context: SnapshotBuilder.Context(
                 nowMs: Int64(now.timeIntervalSince1970 * 1000),
                 terminal: TerminalFocus.Environment.current(
@@ -512,8 +441,6 @@ extension StatusStore {
                 lang: lang,
                 dismissedPendingKeys: dismissedPendingKeys,
                 showAllAgents: showAllAgents,
-                snoozedUntilMs: snoozedUntil.mapValues { Int64($0.timeIntervalSince1970 * 1000) },
-                stalledSeconds: Double(stallMinutes) * 60,
                 privacyLimitedAgents: Set(
                     AgentID.allCases.filter {
                         $0.requiresAppDataOptIn && !isAppDataAllowed(for: $0)
@@ -537,42 +464,22 @@ extension StatusStore {
         if dismissedPendingKeys.count != dismissedCountBefore {
             persistDismissedPendingKeys()
         }
-        // 5.0-α: the builder's rows enter through the observed source and
-        // the store caches the coordinator's merge — with only the observed
-        // source registered this is a verbatim passthrough.
         let previousRows = cachedAll
-        observedSessions.replaceSessions(result.rows)
-        setCachedAll(sessionSources.merged())
+        setCachedAll(result.rows)
         recordTimeline(
             previous: previousRows,
             current: result.rows,
             remapped: result.remappedRowKeys,
             nowMs: Int64(now.timeIntervalSince1970 * 1000)
         )
-        // Before any notification decision, not after the scan that made it.
-        // The banner's Deny is chosen from these matches, and a permission
-        // request only ever gets one banner — deciding from the previous
-        // scan's matches meant a brand-new request never carried the action
-        // it exists for (E-1). Matched against every row, not the visible
-        // window, or a request on a row that scrolled out of the tray would
-        // silently lose its controls (E-2).
-        refreshRespondInbound(respondInbound, rows: result.rows)
         if showAllAgents != result.showAllAgents { showAllAgents = result.showAllAgents }
         knownWaitingKeys = result.waitingKeys
-        // A wait that resolved on its own takes its snooze with it, or the next
-        // wait on the same row would start life already silenced.
-        snoozedUntil = snoozedUntil.filter { result.waitingKeys.contains($0.key) }
 
         // Reconcile before delivery so a restart can distinguish an already
-        // known wait from a newly crossed edge. An unreliable first scan is
-        // not a trustworthy baseline: seeding it would suppress the first
-        // real notification after the collector recovers. The ledger is
-        // written atomically; a crash during this scan leaves the previous
-        // complete state intact.
-        let attentionBaselineValid = !harvestUnreliable
-            || result.rows.contains(where: \.waiting)
-            || !attention.isEmpty
-        if attentionBaselineValid {
+        // known wait from a newly crossed edge. The ledger is written
+        // atomically; a crash during this scan leaves the previous complete
+        // state intact.
+        do {
             let nowMs = Int64(now.timeIntervalSince1970 * 1000)
             let ledgerBefore = attentionLedger
             attentionLedger.reconcile(
@@ -591,23 +498,10 @@ extension StatusStore {
             if !attentionLedger.hasSameDurableState(as: ledgerBefore) {
                 attentionLedger.save()
             }
-        } else {
-            DebugLog.write("attention ledger baseline deferred: harvest unreliable and no wait evidence")
         }
 
         var snap = result.snapshot
         snap.updatedAt = now
-
-        // A healthy scan after launch means recovery succeeded. Keep the banner
-        // through the first healthy scan so opening the tray once still shows
-        // it; clear on the subsequent healthy scan (or explicit dismiss).
-        if recoveredAfterCrash, !harvestUnreliable {
-            if recoveryNoticeSurvivedFirstHealthyScan {
-                dismissRecoveryNotice()
-            } else {
-                recoveryNoticeSurvivedFirstHealthyScan = true
-            }
-        }
 
         // Notification policy lives here; the builder only reports the edges.
         // 22.0: quiet hours are macOS Focus's job now; Focus already filters
@@ -657,11 +551,9 @@ extension StatusStore {
                 attentionLedger.save()
             }
         }
-        if !waitingNotifySeeded, attentionBaselineValid {
+        if !waitingNotifySeeded {
             waitingNotifySeeded = true
         }
-
-        recordResolvedWaits(result.resolvedWaits, at: now)
 
         // 12.4 Surface: a scan that found the same world leaves `snapshot`
         // alone, so no surface observing the store is woken for it — except
@@ -670,12 +562,6 @@ extension StatusStore {
             snapshot = snap
         }
         if clearRefreshing, isRefreshing { isRefreshing = false }
-        if reason == "trayOpen" {
-            applyPendingLookContinuity()
-        }
-        if reason == "trayOpen" || reason == "attentionSample" {
-            applyPendingSampleReveal()
-        }
 
         let previousActivity = activity
         activity = result.activity

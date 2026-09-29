@@ -47,7 +47,7 @@ extension StatusStore {
             PulseVersion.fingerprint,
             "channel: \(isVersionMismatch ? "mismatch" : PulseVersion.distributionChannel)",
             "macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-            "lang: \(language.rawValue) · autoProbe: \(autoProbe)",
+            "lang: \(language.rawValue)",
             "appDataScan: \(appDataScanDescription)",
             "harvest: native (no external runtime)",
             "hooks: \(hooksStatus.label(lang: lang))",
@@ -86,8 +86,7 @@ extension StatusStore {
             )
         }
         if let err = snapshot.probeError { lines.append("probeError: \(err)") }
-        lines.append("runningBundle: \(installReport.runningURL.path)")
-        lines.append("installCopies: \(installReport.copies.count)")
+        lines.append("runningBundle: \(Bundle.main.bundleURL.path)")
         for row in cachedAll.prefix(8) {
             lines.append(
                 "  \(row.agent.rawValue) waiting=\(row.waiting) live=\(row.liveProcess) "
@@ -146,7 +145,7 @@ extension StatusStore {
             "notarized: \(PulseVersion.isNotarized)",
             "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "Agents: \(healthItems.count)",
-            "waitingNone: \(Self.attentionSampleAgents.map(\.rawValue).joined(separator: ","))",
+            "waitingNone: \(AgentID.waitingNoneAgents.map(\.rawValue).joined(separator: ","))",
             "gatekeeperReady: \(PulseVersion.isGatekeeperReady)",
             "appDataScan: \(appDataScanDescription)",
             "appDataGrant: \(grantLabel)",
@@ -154,7 +153,6 @@ extension StatusStore {
             "probeCadence: \(probeIntervalDescription)",
             "launchAtLogin: \(launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
             "harvest: native (no external runtime)",
-            "sessionDigests: \(HarvestDigests.summary)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
             "factCoverage: present=\(factPresent) possible=\(factPossible) limitedAgents=\(limitedAgents)",
@@ -388,12 +386,6 @@ extension StatusStore {
     /// uses `snapshot.rows`; a query must search the bounded 500-row index so a
     /// session hidden behind the twelve-row viewport is still discoverable.
     var allRowsForDisplay: [AgentRow] { cachedAll }
-
-    /// Resolve a row for the detail inspector from the full index, not glance.
-    func rowForDetail(rowKey: String) -> AgentRow? {
-        cachedAll.first(where: { $0.rowKey == rowKey })
-            ?? snapshot.rows.first(where: { $0.rowKey == rowKey })
-    }
 
     /// Details lists actionable gaps first so truncation cannot hide the fix.
     func prioritizedObservationGaps(_ gaps: [ObservationGap]) -> [ObservationGap] {

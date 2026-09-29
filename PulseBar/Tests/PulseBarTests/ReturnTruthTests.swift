@@ -2,114 +2,10 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
-/// 0.96 Return Truth — Look after the opening scan, wait generation, Glance
-/// width, Attention compact/rekey, and Details honesty.
+/// 0.96 Return Truth — Glance width, Attention compact/rekey, and Details
+/// honesty.
 final class ReturnTruthTests: XCTestCase {
-
-    @MainActor
-    private func snap(
-        key: String,
-        agent: String = "claude",
-        waiting: Bool = false,
-        waitSinceMs: Int64 = 0,
-        harvestMs: Int64 = 1_000,
-        phase: String = "working",
-        tool: String = "Bash",
-        task: String = "Work",
-        changeTag: String = "",
-        tokensIn: Int = 0,
-        tokensOut: Int = 0,
-        progressDone: Int = 0,
-        activityChangedMs: Int64 = 0,
-        waitKind: String = ""
-    ) -> StatusStore.TrayLookFingerprint.RowSnap {
-        .init(
-            rowKey: key,
-            agentRaw: agent,
-            label: "\(agent) · \(task)",
-            waiting: waiting,
-            waitKind: waitKind,
-            phase: phase,
-            tool: tool,
-            task: task,
-            harvestMs: harvestMs,
-            activityChangedMs: activityChangedMs,
-            changeTag: changeTag,
-            tokensIn: tokensIn,
-            tokensOut: tokensOut,
-            progressDone: progressDone,
-            waitSinceMs: waitSinceMs
-        )
-    }
-
-    @MainActor
-    private func fingerprint(
-        _ rows: [StatusStore.TrayLookFingerprint.RowSnap],
-        closedAt: Date = Date()
-    ) -> StatusStore.TrayLookFingerprint {
-        .init(closedAt: closedAt, rows: rows)
-    }
-
-    // MARK: P0 Look Continuity
-
-    @MainActor
-    func testLookContinuityAppliesAfterTrayOpenScan() {
-        let store = StatusStore()
-        store.installPreviewFixture("status-running")
-        store.trayDidDisappear()
-        store.installPreviewFixture("status-waiting")
-        store.trayDidAppear()
-        XCTAssertEqual(store.lookNewWaitsWhileAway, 1)
-        XCTAssertEqual(store.lookContinuityItems.first?.kind, .newWait)
-        XCTAssertEqual(store.lookContinuityPrimaryRevealKey, "status-fixture")
-    }
-
-    @MainActor
-    func testSameRowNewWaitGenerationOutranksEnded() {
-        let prior = fingerprint([
-            snap(key: "claude|s1", waiting: true, waitSinceMs: 1_000, waitKind: "Permission"),
-        ])
-        let current = fingerprint([
-            snap(
-                key: "claude|s1",
-                waiting: true,
-                waitSinceMs: 9_000,
-                harvestMs: 2_000,
-                phase: "waiting",
-                tool: "",
-                changeTag: "phase",
-                waitKind: "Idle prompt"
-            ),
-        ])
-        let keys = StatusStore.lookContinuityKeyDelta(prior: prior, current: current)
-        XCTAssertEqual(keys.newWaitKeys, ["claude|s1"])
-        XCTAssertTrue(keys.movedKeys.isEmpty, "new wait generation must not also count as moved")
-    }
-
-    @MainActor
-    func testEndedWaitIsNotAlsoMoved() {
-        let store = StatusStore()
-        store.installPreviewFixture("status-waiting")
-        let prior = store.captureLookFingerprint()
-        store.seedWaitHistory([
-            .init(
-                rowKey: "status-fixture",
-                agent: .cursor,
-                title: "Approve the packaging step",
-                kind: "Permission",
-                project: "Pulse",
-                resolvedAt: Date(),
-                waitedSeconds: 120
-            ),
-        ])
-        store.installPreviewFixture("status-running")
-        store.applyLookContinuity(prior: prior, closedAt: prior.closedAt)
-        XCTAssertEqual(store.lookContinuityItems.map(\.kind), [.endedWait])
-        XCTAssertFalse(store.lookMovedRowKeys.contains("status-fixture"))
-        XCTAssertEqual(store.lookMovedWhileAway, 0, "ended key must not also count as moved")
-    }
 
     @MainActor
     func testGlanceTitleBudgetFitsEightCells() {
@@ -126,7 +22,7 @@ final class ReturnTruthTests: XCTestCase {
     @MainActor
     func testIdleGlanceStaysEmpty() {
         let r = SnapshotBuilder.build(
-            SnapshotBuilder.Input(procs: [], harvest: [], harvestUnreliable: false, attention: []),
+            SnapshotBuilder.Input(procs: [], harvest: [], attention: []),
             previous: .init(),
             context: SnapshotBuilder.Context(
                 nowMs: 1_700_000_000_000,
@@ -138,31 +34,15 @@ final class ReturnTruthTests: XCTestCase {
         XCTAssertEqual(r.snapshot.title, "")
     }
 
-    @MainActor
-    func testSampleRevealWaitsUntilTheRowExists() {
-        let store = StatusStore()
-        store.installPreviewFixture("status-running")
-        store.clearPendingRevealRowKey()
-        store.testingRevealSampleIfPresent(session: "pulse-sample")
-        XCTAssertTrue(store.testingHasPendingSampleReveal)
-        XCTAssertNil(store.pendingRevealRowKey)
-
-        store.installPreviewFixture("status-waiting")
-        store.clearPendingRevealRowKey()
-        store.testingRevealSampleIfPresent(session: "status-fixture")
-        XCTAssertEqual(store.pendingRevealRowKey, "status-fixture")
-        XCTAssertFalse(store.testingHasPendingSampleReveal)
-    }
-
     // MARK: P1 identity / compact
 
     @MainActor
     func testAttentionCompactKeepsUnresolvedRaise() {
         var lines: [String] = []
         for index in 0..<90 {
-            lines.append("amp\tdone\t\(1_700_000_000_000 + index)\tok\tsess-\(index)\t/tmp")
+            lines.append("amp\tdone\t\(1_700_000_000_000 + index)\tok\tsess-\(index)\t/tmp\t\t")
         }
-        lines.insert("amp\tpermission\t1\tapprove\tkeep-me\t/tmp", at: 0)
+        lines.insert("amp\tpermission\t1\tapprove\tkeep-me\t/tmp\t\t", at: 0)
         let compacted = AttentionIO.compactLines(lines, cap: 80)
         XCTAssertEqual(compacted.count, 80)
         XCTAssertTrue(
@@ -178,11 +58,8 @@ final class ReturnTruthTests: XCTestCase {
         row.waiting = true
         row.waitKind = "Permission"
         ledger.reconcile(activeRows: [row], nowMs: 1_000)
-        ledger.snooze(rowKey: "codex", untilMs: 9_000)
         ledger.remapRowKey(from: "codex", to: "codex|sess")
         XCTAssertEqual(ledger.activeKeys, ["codex|sess"])
-        XCTAssertNotNil(ledger.snoozedUntil["codex|sess"])
-        XCTAssertNil(ledger.snoozedUntil["codex"])
     }
 
     // MARK: P2 Details / story honesty

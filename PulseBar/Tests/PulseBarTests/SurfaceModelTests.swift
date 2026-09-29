@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 15.0 · Witness — the product's rules asserted on the surface values
 /// `SurfaceCapture` photographs, not on the store behind them. 22.0 removed
@@ -17,25 +16,16 @@ final class SurfaceModelTests: XCTestCase {
         XCTAssertEqual(Set(SurfaceFixtures.names).count, SurfaceFixtures.names.count)
     }
 
-    // MARK: - Allow only beside the full request
-
-    func testNoRespondFixtureOffersAllowWithoutTheWholeRequest() {
-        for lang in [ResolvedLanguage.en, .zh] {
-            for fixture in SurfaceFixtures.all(lang: lang) {
-                guard case .asks(let model) = fixture.value, let respond = model.respond else { continue }
-                if respond.canOfferAllow {
-                    XCTAssertFalse(respond.fullRequest.isEmpty, fixture.name)
-                }
-            }
-            XCTAssertFalse(SurfaceFixtures.cardRespond(lang: lang, truncated: true).respond?.canOfferAllow ?? true)
-        }
-    }
-
     // MARK: - Both languages
+
+    private func firstMenuTitle(_ lang: ResolvedLanguage) -> String? {
+        guard case .row(let model, _, _) = SurfaceFixtures.all(lang: lang).first?.value else { return nil }
+        return model.menu.first?.title
+    }
 
     func testEveryFixtureSpeaksBothLanguages() {
         XCTAssertEqual(SurfaceFixtures.all(lang: .zh).map(\.name), SurfaceFixtures.names)
-        XCTAssertNotEqual(SurfaceFixtures.cardRespond(lang: .zh).respond?.deny,
-                          SurfaceFixtures.cardRespond(lang: .en).respond?.deny)
+        XCTAssertNotNil(firstMenuTitle(.en))
+        XCTAssertNotEqual(firstMenuTitle(.zh), firstMenuTitle(.en))
     }
 }

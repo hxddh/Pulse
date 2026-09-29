@@ -23,12 +23,8 @@ extension StatusStore {
     /// Snapshot of the settings the store currently holds.
     var currentSettings: PulseSettings {
         PulseSettings(
-            autoProbe: autoProbe,
             notifyOnIdle: notifyOnIdle,
             notifyOnWaiting: notifyOnWaiting,
-            quietHoursEnabled: quietHoursEnabled,
-            quietStartMinute: quietStartMinute,
-            quietEndMinute: quietEndMinute,
             launchAtLogin: launchAtLogin,
             language: language,
             updateCheckEnabled: updateCheckEnabled,
@@ -37,21 +33,13 @@ extension StatusStore {
             hotkey: hotkey,
             allowTerminalAutomation: allowTerminalAutomation,
             mutedAgents: mutedAgents,
-            trayGrouping: trayGrouping,
-            playSoundOnWaiting: playSoundOnWaiting,
-            stallMinutes: stallMinutes,
-            snoozeMinutes: snoozeMinutes,
             hooksNudgeOff: hooksNudgeOff
         )
     }
 
     func apply(_ s: PulseSettings) {
-        autoProbe = s.autoProbe
         notifyOnIdle = s.notifyOnIdle
         notifyOnWaiting = s.notifyOnWaiting
-        quietHoursEnabled = s.quietHoursEnabled
-        quietStartMinute = s.quietStartMinute
-        quietEndMinute = s.quietEndMinute
         launchAtLogin = s.launchAtLogin
         language = s.language
         updateCheckEnabled = s.updateCheckEnabled
@@ -60,10 +48,6 @@ extension StatusStore {
         hotkey = s.hotkey
         allowTerminalAutomation = s.allowTerminalAutomation
         mutedAgents = s.mutedAgents
-        trayGrouping = s.trayGrouping
-        playSoundOnWaiting = s.playSoundOnWaiting
-        stallMinutes = s.stallMinutes
-        snoozeMinutes = s.snoozeMinutes
         hooksNudgeOff = s.hooksNudgeOff
     }
 
@@ -96,8 +80,6 @@ extension StatusStore {
     func persistSettingsOnly() {
         let dir = settingsURL().deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        quietStartMinute = PulseSettings.clampMinute(quietStartMinute)
-        quietEndMinute = PulseSettings.clampMinute(quietEndMinute)
         try? currentSettings.serialized().write(to: settingsURL(), atomically: true, encoding: .utf8)
     }
 
@@ -125,15 +107,12 @@ extension StatusStore {
         try? data.write(to: url, options: .atomic)
     }
 
-    /// Follow a process-only → session identity change so snooze/dismiss survive.
+    /// Follow a process-only → session identity change so dismiss and delivery state survive.
     func migrateRowIdentity(from oldKey: String, to newKey: String) {
         guard oldKey != newKey, !newKey.isEmpty else { return }
         if dismissedPendingKeys.remove(oldKey) != nil {
             dismissedPendingKeys.insert(newKey)
             persistDismissedPendingKeys()
-        }
-        if let until = snoozedUntil.removeValue(forKey: oldKey) {
-            snoozedUntil[newKey] = until
         }
         if let queued = pendingWaitingNotifications.removeValue(forKey: oldKey) {
             var moved = queued
@@ -142,9 +121,6 @@ extension StatusStore {
         }
         if knownWaitingKeys.remove(oldKey) != nil {
             knownWaitingKeys.insert(newKey)
-        }
-        if lookMovedRowKeys.remove(oldKey) != nil {
-            lookMovedRowKeys.insert(newKey)
         }
         if waitingDeliveryInFlight.remove(oldKey) != nil {
             waitingDeliveryInFlight.insert(newKey)
@@ -164,14 +140,22 @@ extension StatusStore {
         }
     }
 
-    /// Create or remove `respond-local.key`, then read back what actually
-    /// happened. The hook's rule is "no key, no hold", so a failed write must
-    /// leave the switch off rather than promising something no agent will do.
-    func setRespondLocalEnabled(_ enabled: Bool) {
-        RespondSpool.setLocalAnsweringEnabled(enabled)
-        let actual = RespondSpool.localHasSecret()
-        if respondLocalEnabled != actual { respondLocalEnabled = actual }
-        DebugLog.write("respond local answering requested=\(enabled) actual=\(actual)")
+    /// Open Settings, optionally scrolled to an agent's data access or to
+    /// the hook connections (how an agent gets a Waiting signal).
+    func openSettings(
+        focusAppDataFor agent: AgentID? = nil,
+        focusWaitingSignals: Bool = false
+    ) {
+        settingsFocusAppDataAgent = agent
+        if agent != nil {
+            settingsExpandAppDataScopes = true
+        }
+        settingsFocusWaitingSignals = focusWaitingSignals
+        SettingsWindowController.shared.show(
+            store: self,
+            focusAppDataFor: agent,
+            focusWaitingSignals: focusWaitingSignals
+        )
     }
 
     func toggleMute(_ agent: AgentID) {
@@ -181,9 +165,5 @@ extension StatusStore {
             mutedAgents.insert(agent)
         }
         saveSettings()
-    }
-
-    func isInQuietHours(now: Date = Date()) -> Bool {
-        currentSettings.isInQuietHours(now: now)
     }
 }

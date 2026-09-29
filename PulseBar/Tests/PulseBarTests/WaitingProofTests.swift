@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 0.94 Waiting Proof — harvest ask → tray Waiting → dismiss → clear → re-raise,
 /// Attention raise→clear for Waiting-none, and honesty guards (no fake Waiting).
@@ -69,7 +68,7 @@ final class WaitingProofTests: XCTestCase {
     ) -> SnapshotBuilder.Result {
         SnapshotBuilder.build(
             SnapshotBuilder.Input(
-                procs: [], harvest: rows, harvestUnreliable: false, attention: entries
+                procs: [], harvest: rows, attention: entries
             ),
             previous: .init(),
             context: context(dismissed: dismissed)
@@ -110,22 +109,22 @@ final class WaitingProofTests: XCTestCase {
     }
 
     @MainActor
-    func testCascadePendingRaisesWaiting() {
+    func testUnverifiedCascadePendingDoesNotRaiseWaiting() {
+        // 23.0: Windsurf/Cascade formats are unverified — `waiting: .none`.
         let row = harvest(
             .windsurf, session: "ws-1", skill: "pending", tool: "ask_clarifying_question"
         )
         let lit = build(harvest: [row])
-        XCTAssertTrue(lit.rows[0].waiting)
-        XCTAssertEqual(lit.rows[0].waitSignal, .pending)
+        XCTAssertFalse(lit.rows[0].waiting)
         XCTAssertEqual(lit.rows[0].observationSource, .cache)
     }
 
     @MainActor
-    func testCursorBlockingFlagPendingRaisesWaiting() {
+    func testUnverifiedCursorBlockingFlagDoesNotRaiseWaiting() {
+        // 23.0: Cursor's format is unverified — `waiting: .none`.
         let row = harvest(.cursor, session: "composer-1", skill: "pending", evidence: .session)
         let lit = build(harvest: [row])
-        XCTAssertTrue(lit.rows[0].waiting)
-        XCTAssertEqual(lit.rows[0].waitSignal, .pending)
+        XCTAssertFalse(lit.rows[0].waiting)
     }
 
     @MainActor
@@ -217,7 +216,6 @@ final class WaitingProofTests: XCTestCase {
         XCTAssertTrue(store.isWaitingNoneNeedsReach(row))
         store.openWaitingReach(for: row)
         XCTAssertTrue(store.settingsFocusWaitingSignals)
-        XCTAssertEqual(store.settingsFocusWaitingAgent, .zcode)
     }
 
     @MainActor

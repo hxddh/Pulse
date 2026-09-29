@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-/// 4.0-γ file split — Waiting delivery and actions — notifications, snooze, dismiss, focus.
+/// 4.0-γ file split — Waiting delivery and actions — notifications, dismiss, focus.
 /// Behavior-frozen: every member moved verbatim from StatusStore.swift;
 /// the full test suite is the contract that nothing changed.
 extension StatusStore {
@@ -42,9 +42,7 @@ extension StatusStore {
             asSummary = summary
         }
 
-        let wasIdleBeforeDelivery = waitingDeliveryInFlight.isEmpty
         let deliveryKeys = candidates.map(\.rowKey)
-        if wasIdleBeforeDelivery { waitingDeliverySounded = false }
         for waiting in candidates {
             pendingWaitingNotifications[waiting.rowKey] = waiting
             waitingDeliveryInFlight.insert(waiting.rowKey)
@@ -88,9 +86,6 @@ extension StatusStore {
                     session: waiting.sessionID,
                     rowKey: waiting.rowKey,
                     eventID: attentionLedger.eventID(for: waiting.rowKey) ?? "",
-                    // Only offer Deny on the banner when a full request is
-                    // really attached to this row.
-                    canRespond: canRespondFromBanner(waiting),
                     completion: { success in
                         // Each individual request owns one event; commit that
                         // event independently so one rejected request never
@@ -117,9 +112,7 @@ extension StatusStore {
     /// new wait once the agent cleared and asked again — 0.96 made a new
     /// `waitSinceMs` on the same key a new edge. The previous inline
     /// `Dictionary(uniqueKeysWithValues:)` **traps** on a duplicate key, so
-    /// that sequence crashed the menu bar outright. `AttentionLedger` had
-    /// already learned this lesson in `snoozedUntil`; the same landmine sat
-    /// here in the notification path.
+    /// that sequence crashed the menu bar outright.
     /// Index rows by their key, keeping the first of any pair that collides.
     ///
     /// `Dictionary(uniqueKeysWithValues:)` **traps** on a duplicate key, and
@@ -167,9 +160,6 @@ extension StatusStore {
                 pendingWaitingNotifications.removeValue(forKey: row.rowKey)
             }
             attentionLedger.save()
-            // Opt-in, and deliberately quiet: Tink, not an alert tone. A
-            // successful batch produces one cue even when several sessions
-            // crossed into Waiting together.
             // 22.0: the banner carries the system sound the person chose in
             // System Settings → Notifications; Pulse no longer plays its own.
         } else {
@@ -245,68 +235,6 @@ extension StatusStore {
         return bits.joined(separator: " · ")
     }
 
-    /// Rehydrate the small resolved-wait trail from the durable ledger. The
-    /// current rows still come exclusively from the live scan; only completed
-    /// attention edges are restored here so a relaunch can answer “what did I
-    /// miss?” without retaining prompts or raw agent payloads.
-    func restoreAttentionHistory() {
-        waitHistory = attentionLedger.recentResolved.prefix(Self.maxWaitHistory).compactMap { event in
-            guard let agent = AgentID(rawValue: event.agent), event.resolvedAtMs > 0 else { return nil }
-            let resolved = Date(timeIntervalSince1970: Double(event.resolvedAtMs) / 1000)
-            let observed = Date(timeIntervalSince1970: Double(event.observedAtMs) / 1000)
-            return ResolvedWait(
-                rowKey: event.rowKey,
-                agent: agent,
-                title: event.title,
-                kind: event.kind,
-                project: event.project,
-                resolvedAt: resolved,
-                waitedSeconds: max(0, resolved.timeIntervalSince(observed))
-            )
-        }
-    }
-
-    /// Keep a short trail of waits that already cleared, so "I think something
-    /// pinged me while I was away" has an answer. The builder decides *which*
-    /// waits resolved; this only records them.
-    func recordResolvedWaits(_ resolved: [AgentRow], at now: Date) {
-        guard !resolved.isEmpty else { return }
-        for row in resolved {
-            waitHistory.insert(
-                ResolvedWait(
-                    rowKey: row.rowKey,
-                    agent: row.agent,
-                    title: row.usefulTask ?? AgentRow.shortProject(row.project),
-                    kind: row.waitKind,
-                    project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
-                    resolvedAt: now,
-                    waitedSeconds: row.waitAgeSeconds
-                ),
-                at: 0
-            )
-        }
-        if waitHistory.count > Self.maxWaitHistory {
-            waitHistory = Array(waitHistory.prefix(Self.maxWaitHistory))
-        }
-    }
-
-    /// What the recent-wait list costs in stored data, in the panel that shows
-    /// it. The numbers come from the ledger itself so the sentence cannot drift
-    /// away from the retention it describes.
-    var waitHistoryRetentionLine: String {
-        String(
-            format: tr(.historyRetention),
-            AttentionLedger.retentionDays,
-            AttentionLedger.maxEvents
-        )
-    }
-
-    func clearWaitHistory() {
-        waitHistory = []
-        attentionLedger.clearResolved()
-        attentionLedger.save()
-    }
-
     func clearWaiting() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         // 0.95: extinguish delivery synchronously so a queued banner cannot
@@ -340,10 +268,7 @@ extension StatusStore {
 
     /// Open Waiting signals focused on this Waiting-none agent (0.94 Proof).
     func openWaitingReach(for row: AgentRow) {
-        openSettings(
-            focusWaitingSignals: true,
-            focusWaitingAgent: row.agent.waitingSource == .none ? row.agent : firstLiveWaitingNoneAgent
-        )
+        openSettings(focusWaitingSignals: true)
     }
 
     /// The row that has been blocked longest, if any.
@@ -355,23 +280,16 @@ extension StatusStore {
         Self.oldestWaitRow(in: cachedAll)
     }
 
-    /// A snoozed wait is one the user already said "later" to: the jump goes
-    /// to an unsnoozed wait first and falls back to a snoozed one only when
-    /// nothing else is waiting.
     nonisolated static func oldestWaitRow(in rows: [AgentRow]) -> AgentRow? {
-        func oldest(_ candidates: [AgentRow]) -> AgentRow? {
-            candidates
-                .filter { $0.waitSinceMs > 0 }
-                .min { $0.waitSinceMs < $1.waitSinceMs }
-                ?? candidates.first
-        }
         let waiting = rows.filter(\.waiting)
-        return oldest(waiting.filter { !$0.isSnoozed }) ?? oldest(waiting)
+        return waiting
+            .filter { $0.waitSinceMs > 0 }
+            .min { $0.waitSinceMs < $1.waitSinceMs }
+            ?? waiting.first
     }
 
-    /// Same preference for "the first waiting row".
     nonisolated static func firstWaitingRow(in rows: [AgentRow]) -> AgentRow? {
-        rows.first { $0.waiting && !$0.isSnoozed } ?? rows.first(where: \.waiting)
+        rows.first(where: \.waiting)
     }
 
     /// Focus the longest-outstanding wait. One step from "something needs me"
@@ -380,21 +298,6 @@ extension StatusStore {
         guard let row = oldestWait else { return }
         DebugLog.write("jump to oldest wait \(DebugLog.key(row.rowKey))")
         focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
-    }
-
-    /// "Today: 4 interruptions, 6m average wait" — built from the wait history
-    /// already kept for the Settings list. A single line, not a dashboard:
-    /// `EXPERIENCE.md` rules out a stats panel and this does not become one.
-    var interruptionsTodayLine: String? {
-        let calendar = Calendar.current
-        let today = waitHistory.filter { calendar.isDateInToday($0.resolvedAt) }
-        guard !today.isEmpty else { return nil }
-        let mean = today.reduce(0.0) { $0 + $1.waitedSeconds } / Double(today.count)
-        return String(
-            format: tr(.interruptionsToday),
-            today.count,
-            durationLabel(seconds: mean)
-        )
     }
 
     /// "12m ago" for a row's last activity, or "no activity yet".
@@ -434,67 +337,6 @@ extension StatusStore {
             return "\(tr(.supportDepthWaitingNone)) · \(harvest)"
         }
         return harvest
-    }
-
-    /// "Remind me later" — the answer that did not exist.
-    ///
-    /// A wait had exactly two available responses: deal with it now, or clear
-    /// it forever. The most common real one was neither, and fell back on the
-    /// user's memory — the thing this app was built to replace.
-    func snooze(_ row: AgentRow) {
-        let deadline = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
-        snoozedUntil[row.rowKey] = deadline
-        attentionLedger.snooze(
-            rowKey: row.rowKey,
-            untilMs: Int64(deadline.timeIntervalSince1970 * 1000)
-        )
-        attentionLedger.save()
-        DebugLog.write("snooze \(DebugLog.key(row.rowKey)) for \(snoozeMinutes)m")
-        refresh(reason: "snooze")
-    }
-
-    /// Undo a snooze from the row that shows it — a countdown you cannot stop
-    /// is a worse deal than no countdown.
-    func unsnooze(_ row: AgentRow) {
-        guard snoozedUntil.removeValue(forKey: row.rowKey) != nil else { return }
-        attentionLedger.unsnooze(rowKey: row.rowKey)
-        attentionLedger.save()
-        DebugLog.write("unsnooze \(DebugLog.key(row.rowKey))")
-        refresh(reason: "unsnooze")
-    }
-
-    /// Snooze by row key — the notification banner has a key, not a row.
-    func snooze(rowKey: String) {
-        guard !rowKey.isEmpty else { return }
-        let deadline = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
-        snoozedUntil[rowKey] = deadline
-        attentionLedger.snooze(
-            rowKey: rowKey,
-            untilMs: Int64(deadline.timeIntervalSince1970 * 1000)
-        )
-        attentionLedger.save()
-        DebugLog.write("snooze(notif) \(DebugLog.key(rowKey)) for \(snoozeMinutes)m")
-        refresh(reason: "snoozeNotification")
-    }
-
-    /// Snooze several rows at once — a summary banner's "Later". One ledger
-    /// write and one refresh, however many rows it names.
-    func snooze(rowKeys: [String]) {
-        let keys = rowKeys.filter { !$0.isEmpty }
-        guard !keys.isEmpty else { return }
-        let deadline = Date().addingTimeInterval(Double(snoozeMinutes) * 60)
-        let untilMs = Int64(deadline.timeIntervalSince1970 * 1000)
-        for key in keys {
-            snoozedUntil[key] = deadline
-            attentionLedger.snooze(rowKey: key, untilMs: untilMs)
-        }
-        attentionLedger.save()
-        DebugLog.write("snooze(notif) \(keys.count) rows for \(snoozeMinutes)m")
-        refresh(reason: "snoozeNotification")
-    }
-
-    func snoozeLabel(_ row: AgentRow) -> String {
-        String(format: tr(.snoozedFor), DurationFormat.label(seconds: row.snoozeRemainingSeconds, lang: lang))
     }
 
     func dismissWaiting(_ row: AgentRow) {

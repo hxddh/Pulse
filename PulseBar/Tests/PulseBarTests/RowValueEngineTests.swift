@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 8.0-α (scene BN) — the value engine.
 ///
@@ -42,7 +41,7 @@ final class RowValueEngineTests: XCTestCase {
         row.liveProcess = true
         row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.observationSource = .session
-        row.sessionErrors = 2
+        row.errors = 2
         row.subTotal = 2
         row.progressDone = 2
         row.progressTotal = 5
@@ -86,17 +85,6 @@ final class RowValueEngineTests: XCTestCase {
     }
 
     @MainActor
-    func testTheSessionRegisterOutranksTheLatestCall() {
-        let s = store()
-        var row = loadedRow()
-        row.sessionTokensIn = 412_000
-        row.sessionTokensOut = 98_000
-        let work = s.rowWorkLine(row)
-        XCTAssertTrue(work.contains("412k"), work)
-        XCTAssertFalse(work.contains("↑12k"), "one token scope per line: \(work)")
-    }
-
-    @MainActor
     func testTheLastToolLeadsTheWorkLineWithItsTarget() {
         let s = store()
         var row = loadedRow()
@@ -127,12 +115,10 @@ final class RowValueEngineTests: XCTestCase {
         let s = store()
         var row = loadedRow()
         row.skill = "product-design:audit"
-        row.sessionTokensIn = 30_000
-        row.sessionTokensOut = 9_000
         let facts = s.workDetailFacts(row)
         XCTAssertTrue(facts.contains { $0.contains("product-design:audit") }, "\(facts)")
         // 10.0: tokens/context moved to the panorama's work line beside it.
-        XCTAssertTrue(s.rowWorkLine(row).contains("30k"), s.rowWorkLine(row))
+        XCTAssertTrue(s.rowWorkLine(row).contains("12k"), s.rowWorkLine(row))
         XCTAssertTrue(s.rowWorkLine(row).contains("62"), s.rowWorkLine(row))
     }
 

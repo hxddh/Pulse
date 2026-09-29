@@ -3,7 +3,6 @@ import Testing
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 /// 16.0 · Turn — vendor event sequences, from the attention file to the lamp.
 ///
@@ -22,8 +21,8 @@ struct TurnTruthTests {
         _ agent: String, _ kind: String, ago: Int64, message: String = "",
         session: String = "s1", cwd: String = "/p", front: String? = nil
     ) -> String {
-        var cols = [agent, kind, "\(now - ago)", message, session, cwd]
-        if let front { cols += ["", front] }
+        // v3: all eight columns; host empty, front as given (empty = unknown).
+        let cols = [agent, kind, "\(now - ago)", message, session, cwd, "", front ?? ""]
         return cols.joined(separator: "\t")
     }
 
@@ -43,7 +42,7 @@ struct TurnTruthTests {
         let text = AttentionProtocol.header + lines.joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: now)
         return SnapshotBuilder.build(
-            SnapshotBuilder.Input(procs: [], harvest: harvest, harvestUnreliable: false, attention: entries, activity: activity),
+            SnapshotBuilder.Input(procs: [], harvest: harvest, attention: entries, activity: activity),
             previous: .init(),
             context: SnapshotBuilder.Context(
                 nowMs: now,
@@ -53,7 +52,6 @@ struct TurnTruthTests {
                 maxVisibleRows: SnapshotBuilder.maxVisibleRows,
                 dismissedPendingKeys: [],
                 showAllAgents: false,
-                snoozedUntilMs: [:],
                 stalledSeconds: AgentRow.stalledSeconds
             )
         )

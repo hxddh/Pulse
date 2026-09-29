@@ -2,7 +2,6 @@ import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
-@testable import PulseRespond
 
 final class GoLookClosureTests: XCTestCase {
     /// 19.0 (Swift 6 mode): built per test on the main actor — a
@@ -74,18 +73,5 @@ final class GoLookClosureTests: XCTestCase {
         store.focusAgent(idRaw: "claude", session: "", rowKey: "missing|session")
         // May resolve to a waiting claude from fixture, or keep the stale key.
         XCTAssertNotNil(store.pendingRevealRowKey)
-    }
-
-    @MainActor
-    func testLookClosureActivateReusesGoLookReveal() {
-        let store = makeStore()
-        store.installPreviewFixture("status-running")
-        let prior = store.captureLookFingerprint()
-        store.installPreviewFixture("status-waiting")
-        store.applyLookContinuity(prior: prior, closedAt: prior.closedAt)
-        store.clearPendingRevealRowKey()
-        store.activateLookContinuity()
-        XCTAssertEqual(store.pendingRevealRowKey, "status-fixture")
-        XCTAssertTrue(store.lookContinuityNotice.isEmpty)
     }
 }

@@ -26,9 +26,8 @@ Pulse 是**菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；点
 - 把偏好设置当第二块实时 HUD
 - 为「覆盖更多名字」牺牲会话可读性
 - 替用户判断 —— 没有规则引擎、没有 always-allow、没有「Pulse 认为可以」。
-  Respond（场景 AR）送达的是**你的**判断，只对这台 Mac 上、本机钥匙 opt-in 的请求、
-  只在完整请求可见时才出现「同意」；判断权一寸不转移。对着托盘一行截断摘要
-  的「盲批」仍然明确不做
+  23.0 起 Pulse 不回答权限请求（Respond 已删除）：答复永远在厂商自己的提示里，
+  判断权一寸不转移。对着托盘一行截断摘要的「盲批」明确不做
 - 做编排器 —— 22.0 起 Pulse 只看不管：不派活、不跑受管会话、不建 worktree、
   不替用户跑检查、不往终端里打字、不跨机器转发。一个状态灯应该看着编排器，
   而不是成为编排器
@@ -40,7 +39,7 @@ Pulse 是**菜单栏状态灯**：扫一眼知道编码 Agent 要不要你；点
 | 层 | 用户问题 | 唯一职责 | 禁止出现 |
 | --- | --- | --- | --- |
 | **Glance**（菜单栏） | 要不要抬头？ | 状态语义 + 极短线索 | 长句、token 明细、设置项 |
-| **Tray**（下拉） | 谁、为何、我能做什么？ | 等待优先列表 + 可行动作 | 实时更新开关、语言、hooks 安装 |
+| **Tray**（下拉） | 谁、为何、我能做什么？ | 等待优先列表 + 可行动作 | 语言、hooks 安装 |
 | **Preferences** | 我想怎么用 Pulse？ | 行为与连接配置 | 大标题状态看板、重复 tray 的信息 |
 
 **信息流向：** 探测 / hooks → SnapshotBuilder → Glance 编码状态 → Tray 展开细节 →
@@ -79,8 +78,8 @@ Prefs 只改开关与连接。
 - `LSUIElement`：无 Dock 图标；启动不闪窗。
 - Tooltip 一句状态，可略长于标题；停滞主导时尽量带无活动时长。
 - **灯为什么是这个颜色（22.0）**：Tooltip 在状态句下面写出决定颜色的那条规则（有人在等 /
-  全部已稍后 / 停滞 / 只有进程或数据太少 / 在跑 / 轮到你 / 最近 / 空闲 / 无法刷新）、最多三个
-  驱动它的会话（Agent · 项目 · 状态），以及没算进去的（已稍后、较早隐藏的）。取值是纯函数
+  停滞 / 只有进程或数据太少 / 在跑 / 轮到你 / 最近 / 空闲）、最多三个
+  驱动它的会话（Agent · 项目 · 状态），以及没算进去的（较早隐藏的）。取值是纯函数
   `LampExplanation`，经 `snapshot.lampLines` 交给状态栏；说不出依据就不写那一行。
 
 ---
@@ -121,7 +120,7 @@ Prefs 只改开关与连接。
 ### ② 提示
 
 **同一时间最多一条**，按优先级取：维护提示（通知未授权、hooks 待修等，点一下去处理）→
-扫描不完整（点一下打开健康检查）→ 实时更新已暂停（点一下打开设置）。两条提示同时出现时，
+扫描不完整（点一下打开健康检查）。两条提示同时出现时，
 用户读不出哪条更要紧 —— 那就只给更要紧的那条。
 
 ### ③ 会话行
@@ -133,9 +132,9 @@ Prefs 只改开关与连接。
 ```
 
 - **等待行**多一行：问题本身（Agent 的原话，正文色，≤2 行），以及至多两个可见动作
-  （有 Respond 时「查看并回应 / 拒绝」，能聚焦时「聚焦 / 忽略」）；等待芯片带时长。
+  （能聚焦时「聚焦 / 忽略」）；等待芯片带时长。
 - **停滞 / 失败 / 仅进程**的行多一行橙色原因（停滞说出阈值），不点开就知道为什么。
-- 其余动作都在**右键菜单**（详情、聚焦、忽略、稍后、静音该 Agent）与 VoiceOver 动作里，
+- 其余动作都在**右键菜单**（详情、聚焦、忽略、静音该 Agent）与 VoiceOver 动作里，
   每个动作只出现一次。悬停或选中时相对时间换成「›」，提示「→ 看详情」。
 - 主行（任务）按 `TrayRowLead` 的价值序取（场景 BL，规则不变）；截断走尾部省略，
   完整原话在详情页。禁止 `update_plan` / `Bash` / 文件名 / `Agent session` 当主行，
@@ -158,7 +157,7 @@ Prefs 只改开关与连接。
 | 编码 | 表达 |
 | --- | --- |
 | 灯（形状 + 颜色） | 每行的即时状态 |
-| 等待芯片 | 仅等待行：等待中（带时长）/ 已稍后 |
+| 等待芯片 | 仅等待行：等待中（带时长） |
 | 第二行 | 仅等待（问题）与停滞 / 失败 / 仅进程（原因） |
 
 **禁止**再叠加：行底色、图标透明度、整行透明度、主行字号差、分组表头。
@@ -174,7 +173,7 @@ Prefs 只改开关与连接。
 | ↑ ↓ | 选择行（打开托盘时默认选中第一条等待） |
 | ↩ | 主操作：聚焦该会话（没有聚焦句柄时不做任何事，用 → 看详情） |
 | → | 详情页 |
-| ⌫ | 等待行：有 Respond 请求时**拒绝**，否则**忽略** |
+| ⌫ | 等待行：**忽略** |
 | Esc | 先清过滤；详情页里先返回；都没有才关面板 |
 | ⌘R | 刷新 |
 
@@ -190,13 +189,12 @@ Prefs 只改开关与连接。
 3. 为什么是这个状态（`RowNarrator.whyLine`，说不出证据就不说）
 4. **最近一小时的时间条**（`TimelineStripView`）：按状态着色的分段，下方写出每种状态各几分钟；
    数据来自会话时间线（见 §7 数据诚实）
-5. 完整的 Respond 请求 —— **「同意」只在这里、只在完整请求旁**（`canOfferAllow`）
-6. 等待行的动作（聚焦 / 忽略 / 稍后）
+6. 等待行的动作（聚焦 / 忽略）
 7. Agent 最后说的话、错误原文、计划清单、工作事实（**没测到不渲染**）
 8. **这条通知发生了什么**（通知去向，见 §7 通知）
 9. 「hook 说过什么」（`WhyDetailSection`）与读取诊断（`SessionDiagnosticsCard`）
 
-通知 / 全局快捷键 / Respond 带着某行打开托盘时，该行被选中；有完整请求要读时直接进入它的详情页。
+通知 / 全局快捷键带着某行打开托盘时，该行被选中。
 
 > 10.0–21.0 的「行解剖学」「自适应深度」「行内展开卡」「列表内 ask 卡」在 22.0 被一行 +
 > 详情页取代。事实的选取纪律（动态优先、值为 0 / 未知不出现、同一事实不说两遍、
@@ -229,25 +227,10 @@ Support Health 对每个 Agent 标明 Focus 事实（工作区 / 仅 App / TTY /
 是否仍在推进；它增加一次应用切换，并把“工作区存在”误包装成“可操作”。cwd 留在信息层，
 只用于定位与区分会话。
 
-#### 稍后（Snooze）
+#### 没有「稍后」
 
-一个等待原本只有两种回应：现在处理，或永久清除。最常见的那一种——
-「知道了，等会儿再说」——不存在，只能靠用户自己记住，
-而「靠用户自己记住」正是这个产品存在的理由。
-
-**稍后压制的是打扰，不是事实。** 具体地说：
-
-| 压制 | 保留 |
-| --- | --- |
-| 菜单栏灯不变红 | 行留在列表里，仍排在等待之列 |
-| 菜单栏不显示它的计数与时长 | Header 计数照常算上它 |
-| 不发通知 | 芯片改成「已稍后 · 剩 N」 |
-
-这和静音是同一条规则（「静音的 Agent 不发通知，但照常出现在列表里」）。
-**一个会让行消失的按钮，是没人敢按的按钮。**
-
-再按一次即可取消——不能停的倒计时比没有倒计时更糟。
-稍后到期要重新发一次通知；等待自己结束了，稍后状态一并清掉。
+23.0 删除了「稍后」：一个等待就是一个等待。要它安静，忽略它或静音该 Agent；
+要自己专心，用 macOS 的专注模式。
 
 禁止：`-` / `—` 占位、空的等待行、把 Agent 名当 hero。
 
@@ -353,11 +336,10 @@ rounded),每个调用点声明这行**是什么角色**而不是它喜欢哪个�
 **一个状态灯应该看着编排器，而不是成为编排器**。派活、跑检查、代打字、替用户
 落地仓库都让 Pulse 从观察者变成行动者，而产品的价值恰恰在于它只说真话、不动手。
 
-删除后仍然成立的：托盘三层分工；Respond 只在这台 Mac 上、只在完整请求旁给「同意」。
+删除后仍然成立的：托盘三层分工。
 指挥台的检视器、摘要与展开卡在 22.0 合并成托盘里的**详情页**（§4），Why 卡与会话诊断卡
-（`InspectorDiagnostics.swift`）在详情页底部。旧版本留下的
-`evidence/`、`managed/`、`missions/`、`fleet.d/` 与跨机器 Respond 目录在 22.x
-首次启动时删除一次；`worktrees/` 里可能有你没提交的工作，Pulse 不碰。
+（`InspectorDiagnostics.swift`）在详情页底部。23.0 起 Pulse 不再清理旧版本留下的目录，
+也不迁移旧设置：认不出的设置键被忽略，缺的取默认值。
 
 ## 6. Preferences（设置窗）
 
@@ -370,23 +352,23 @@ rounded),每个调用点声明这行**是什么角色**而不是它喜欢哪个�
 **一页**，从上到下：
 
 1. **通用** —— 登录时启动 · 语言（弹出菜单，禁止按钮循环）
-2. **快捷键** —— 一个选择：「关闭」+ 四个组合键（旧设置自动迁移；未开启的仍为关闭）；被占用时明说
+2. **快捷键** —— 一个选择：「关闭」+ 四个组合键（默认关闭）；被占用时明说
    「已被其他应用占用」，不归咎辅助功能权限
 3. **通知** —— 授权状态与动作 · 新「需要你」通知 · 空闲通知
    - **权限被拒时**：开关置灰 + 常驻说明 + 「打开系统设置」；不循环索取。
      静默失效不可接受 —— 开关显示「开」就必须真的会响。
 4. **hooks** —— Claude 与 Codex 的 hooks：状态、安装 / 移除、测试连接；其他 Agent 一句说明
-5. **控制** —— 终端自动化、本机 Respond；每个开关下面一句后果
+5. **控制** —— 终端自动化；每个开关下面一句后果
 6. **数据访问** —— 「Pulse 可以读取的内容」（受保护应用数据，全局或按 Agent）
-7. **更新** —— 检查更新 + 状态；**就地安装按钮仅 notarized stable 出现**
+7. **更新** —— 检查更新 + 状态；有新版本时一行「vX 可用」和「打开发布页」按钮（在浏览器里下载，Pulse 不下载、不替换自己）
 8. **关于** —— 版本 · 分发通道三态（`preview` / `signed` 未公证 / `stable`）·「健康检查…」入口 ·
-   构建行（`sha · 日期`，可选中；无指纹时显示「开发构建」）· 运行路径 · 重复安装
-   （最多 5 条并写「另有 N 个」）· 复制诊断信息
-9. **高级**（折叠）—— 实时更新（下附一句后果）；展开后是 Attention 桥的开发者工具（pulse-hook、
+   构建行（`sha · 日期`，可选中；无指纹时显示「开发构建」）· 运行路径 · 复制诊断信息
+9. **高级**（折叠）—— Attention 桥的开发者工具（pulse-hook、
    示例、Attention 文件夹、raise 命令）
 
 删掉的：分组方式（托盘不再分组）、提示音与安静时段（交给 macOS 的通知设置与专注模式）、
-按 Agent 静音列表（改在行菜单里「静音该 Agent」）、停滞阈值、稍后时长、历史保留。
+按 Agent 静音列表（改在行菜单里「静音该 Agent」）、停滞阈值、稍后时长、历史保留；
+23.0 又删掉了实时更新开关（扫描总按 `ProbeSchedule` 进行）。
 从托盘或健康检查深链进设置时，页面**滚到对应的那一节**（hooks / 数据访问 / Attention 桥）。
 
 自检不在设置里：它和活动、每个 Agent 的读取情况、报告一起在「健康检查」窗口（见 §4）。
@@ -484,7 +466,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 - 静音的 Agent（行菜单「静音」）不发通知，但**照常出现在列表里**
 - **每条通知有去向（22.0）。** 等待账本给每个等待事件记下它的通知发生了什么：发了、合并进汇总、
   被系统拒收，或**没发以及为什么**（提示窗口在最前、已静音、已确认、限流排队、通知关了、没授权、
-  启动时就在等 —— `WaitingDelivery.SkipReason`），以及什么时候点了、确认了、推迟了、解决了。
+  启动时就在等 —— `WaitingDelivery.SkipReason`），以及什么时候点了、确认了、解决了。
   详情页「这条通知」一节逐行写出（`NotificationAuditModel`），健康检查的「活动」里也有。
   「为什么没响」从此有答案，而不是一句「可能是系统的问题」。
 
@@ -516,7 +498,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   一种颜色（系统动态色），托盘、设置、健康检查共用。等待行只有一处红（整行淡红底 +
   红点与标签；问题用正文色），可见按钮至多两个，其余在「⋯」与 VoiceOver 动作里各出现一次；
   展开与「⋯」参与布局，悬停不改变行高；新等待让灯暗一下（减少动态效果时不动）。头部是按状态计数
-  的胶囊和一行「多久前更新 · 多久读一次」；实时更新关闭时照实说。每个非绿色的行说为什么（停滞的
+  的胶囊和一行「多久前更新 · 多久读一次」。每个非绿色的行说为什么（停滞的
   阈值、失败的结果、只有进程）；较早而未显示的会话在列表底部说出来；「无法刷新」有自己的界面和
   重试。托盘一次只显示一条提示。空状态是按真实状态打勾的设置清单；Claude 或 Codex 在跑而没装
   hooks 时，提示一键安装。「健康检查」一个窗口。（22.0 起：头部只剩一行彩色计数，更新时间那一行
@@ -531,8 +513,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 - **自检（19.0，场景 CF）。** 设置 → 关于 → 「运行自检」：只读、只在点击时运行，读这台 Mac 上
   Claude 与 Codex 的 hook 文件和记录、运行一次 `claude agents --json`，逐条说明哪条约定在这里
   **已验证**、**未证实**、**需处理**或**不适用**，并给出下一步。已安装不等于已证实：hook 最近一天
-  没有触发过就是「未证实」，一周前触发的也是；Codex 是否信任它的 hooks 只有触发一次才知道；
-  Respond 只有裁决被 hook 取走才算已验证，而 Claude 是否照办仍要看 Agent 本身。「复制报告」
+  没有触发过就是「未证实」，一周前触发的也是；Codex 是否信任它的 hooks 只有触发一次才知道。「复制报告」
   只在点击时写到你自己的剪贴板，内容只有计数、事件名与时间，不含路径、提示词或会话 id。
 - **只重绘变了的（19.0）。** 一轮扫描只移动了一行时，只有读到这一行的视图重绘；设置窗口、
   状态栏图标不再被无关的写入唤醒。
@@ -542,7 +523,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   来源标「Claude 自报」，「为什么」一句照实说；同一会话 hook 已报时以 hook 为准；报告里对不上
   任何一行的会话不造行；可「忽略」，与 pending 同样软忽略。Claude hooks 现在也接住提问
   （elicitation）与因接口错误结束的回合（StopFailure → 轮到你，并说明原因）；经权限请求到来的
-  AskUserQuestion 是提问，永不走 Respond 的扣留。Codex 新的分页会话格式（`item_completed`）
+  AskUserQuestion 是提问。Codex 新的分页会话格式（`item_completed`）
   照样读出任务与最后一句话，7 天以上压缩成 `.zst` 的旧记录不当文本读；Codex 的 hooks
   只接 Stop 与 UserPromptSubmit —— 它的 PermissionRequest 在自动审查之前就触发，
   接了就是伪造等待。
@@ -586,9 +567,9 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 的临时文件带的是进程 umask，那个窗口覆盖整个写入加改名。创建模式管不到已经在盘上的
 文件，所以要顺着已经拿在手里的 fd 把老文件降下来；别人拥有的文件一律不动。
 
-**一次点击必须留下痕迹。** 动作够不着目标（窗口已关、判决写不出、请求已过期）时，
+**一次点击必须留下痕迹。** 动作够不着目标（窗口已关）时，
 提供了这个动作的那一行要说一句人话。够不着与按钮坏掉在屏幕上长得一模一样，而
-「拒绝」这种被承诺永远可用的动作，静默失败是最坏的一种。失败仍然 fail-open ——
+被承诺可用的动作静默失败是最坏的一种。失败仍然 fail-open ——
 句子里就说清楚它回落到哪儿。
 
 ---
@@ -601,7 +582,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 ## 9. 代码落点
 
 代码分四个 target（依赖只向下，见 [`docs/architecture.md`](docs/architecture.md)；22.0 删除了 `PulseManaged`）：
-`PulseCore` ← `PulseHarvest` / `PulseRespond` ← `PulseBar`（App）。
+`PulseCore` ← `PulseHarvest` ← `PulseBar`（App）。
 
 | 规格 | 文件 |
 | --- | --- |
@@ -615,17 +596,15 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Agent 目录（一处加 agent） | `PulseCore/AgentCatalog.swift` |
 | 采集 / 主行来源 / explain | `PulseHarvest/NativeActivityHarvest.swift` · 厂商方言 `TranscriptDialect.swift` + `HarvestCodex/Pi/Claude/SmallDialects.swift` |
 | 进程探测 | `PulseHarvest/ProcessProbe.swift`（跨扫描状态在 `ScanEngine.swift`） |
-| 状态与设置面 | `PulseBar/StatusStore.swift` + `StatusStore{Engine,Waiting,Look,Support,Settings,Maintenance,Bridge,Fixture,Respond,Narration}.swift` |
+| 状态与设置面 | `PulseBar/StatusStore.swift` + `StatusStore{Engine,Waiting,Look,Support,Settings,Maintenance,Fixture,Narration}.swift`（`Look` 在 23.0 只剩托盘开合） |
 | 会话事实簇 | `PulseBar/SessionFacts.swift` |
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
-| 价值引擎 / 自适应深度 / 主题 | `RowValueEngine.swift` · `RowDepth.swift` · `PulseTheme.swift` |
+| 价值引擎 / 主题 | `RowValueEngine.swift` · `PulseTheme.swift` |
 | 托盘行的脸（17.0） | `TrayRowModel.swift`（纯值：灯、身份、标记、主行、元信息、提问、为什么、动作条、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace` 只渲染值、只发动作；行下方的卡片是 `RowCardModel` |
 | 为什么 / hook 事件史（17.0） | `PulseHarvest/AttentionHistory.swift` · `RowNarrator.whyLine` · `WhyViews.swift` · `StatusStoreWhy.swift` |
 | 值化的表面 | `SurfaceModels.swift`（`WhyCardModel`）· `TrayRowModel.swift` · `RowCardModel.swift`；夹具 `SurfaceFixtures.swift`，CI 截图 `SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
-| 22.0 一次性清理 | `LegacyCleanup.swift`（删除已删功能的目录，带标记只跑一次） |
-| Respond（仅本机） | `PulseRespond/RespondContract.swift` · `RespondSpool.swift` · App 侧 `StatusStoreRespond.swift`；协议 [`docs/respond-protocol.md`](docs/respond-protocol.md) |
 | 探测节奏 | `PulseCore/ProbeSchedule.swift` + `PulseBar/PowerMonitor.swift` |
-| 设置与迁移 | `PulseSettings.swift` |
+| 设置 | `PulseSettings.swift`（23.0 起无迁移） |
 | 文案 | `L10n.swift` |
 | 版本 / 构建指纹 | `Models.swift` → `PulseVersion` |
 | Attention 协议 | `PulseCore/AttentionProtocol.swift`、`PulseHarvest/AttentionIO.swift`、`PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |

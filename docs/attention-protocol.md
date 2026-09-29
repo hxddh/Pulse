@@ -5,7 +5,8 @@ shell — without expanding the Claude/Codex hook installer.
 
 **Audience:** bridge authors and Waiting-none agent owners.  
 **Runtime path:** `~/Library/Application Support/Pulse/attention.tsv`  
-**Preferred writer:** `pulse-hook` → `PulseBar --hook` (native, no Python).  
+**Writers:** `pulse-hook` → `PulseBar --hook` (native), or append a line
+yourself.  
 **Swift source of truth:** `AttentionProtocol` in PulseBar.
 
 Companion:
@@ -23,9 +24,9 @@ UTF-8 TSV, one event per line. Header must be the first line:
 <agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<host>\t<front>
 ```
 
-**v1 and v2 lines stay valid.** Six columns means `host` is empty; seven means
-`front` is unknown. Readers accept every header version, so an installed older hook keeps
-lighting the lamp after an upgrade (but see the v3 kind changes below).
+**Every line has all eight columns** (since Pulse 23.0). A six-column (v1) or
+seven-column (v2) line is not read. Leave `host` and `front` empty when you
+have nothing to put there — the trailing tabs are part of the record.
 
 | Column | Rules |
 | --- | --- |
@@ -35,7 +36,7 @@ lighting the lamp after an upgrade (but see the v3 kind changes below).
 | `message` | Human-readable; tab/newline stripped; ≤200 chars |
 | `session` | Opaque session key; empty allowed |
 | `cwd` | Absolute project path hint; empty allowed |
-| `host` | Machine label (`PULSE_HOST`). `|`, `/`, tabs and newlines are replaced with `-`; a trailing `.local` is dropped; capped at 32 chars. **Since 22.0 the reader ignores it**: every line in `attention.tsv` is this Mac's |
+| `host` | Written empty; **the reader ignores it**: every line in `attention.tsv` is this Mac's |
 | `front` | v3. `1` when the prompt's own window was the frontmost application as the event was raised, `0` when it was not, **empty when unknown**. Only the local native receiver fills it (parent-chain walk, no new permission). Unknown is never read as "the user is looking" |
 
 Readers skip blank lines, `#` comments, and unknown kinds. Writers rewrite the
@@ -88,7 +89,7 @@ Vendor aliases are normalized before the allowlist check
 | `stop`, `idle_prompt`, `idle`, `agent_turn_complete`, `agent_completed`, `turn_complete`, `task_complete`, `stop_failure` (18.0: Claude's StopFailure) | `turn` |
 | `elicitation_complete`, `elicitation_response` (18.0) | `done` |
 
-18.0 additions: `elicitation_url_dialog` is a `question`; a PermissionRequest whose `tool_name` is `AskUserQuestion` is written as `question` and never held for a Respond verdict — no allow/deny answers a question.
+18.0 additions: `elicitation_url_dialog` is a `question`; a PermissionRequest whose `tool_name` is `AskUserQuestion` is written as `question` — no allow/deny answers a question.
 
 ### What v3 changed, and why
 
@@ -144,9 +145,8 @@ echo '{"session_id":"sess-1"}' | "$HOOK" replit done   # nothing owed
 
 | Writer | Status |
 | --- | --- |
-| Native `PulseBar --hook` / `pulse-hook` | Preferred (0.61+) |
-| Bundled / legacy `pulse_hook.py` | Same wire format + allowlist; still accepted |
-| Hand-append matching this header + kinds | Accepted if fields are valid |
+| Native `PulseBar --hook` / `pulse-hook` | Preferred (0.61+); writes and exits at once, never holds |
+| Hand-append matching this header + kinds | Accepted if all eight fields are valid |
 
 Pulse does **not** promise Composer deep links, tray approve/deny, or any path
 that infers Waiting from silence. Waiting-none agents never raise harvest
@@ -157,15 +157,15 @@ that infers Waiting from silence. Waiting-none agents never raise harvest
 - **v1** was additive only for new allowlisted kinds; **v2** added `host`;
   **v3** added `front` and changed the meaning of `idle_prompt`, `stop` and the
   turn-complete aliases (above) — Pulse 16.0.
-- Breaking changes require a new header version and a coexisting reader path.
+- 23.0 stopped reading v1/v2 (short) lines: every record has eight columns.
 - Divergent headers historically confused readers — keep this byte-identical
-  across Swift and optional Python writers.
+  across writers.
 
 ## Another machine (removed in 22.0)
 
 v2 added a remote inbox, `attention.d/<host>.tsv`, filled by the user's own
 sync tool, and rows for waits raised on other machines ("last heard", "lost
 contact"). 22.0 removed it: Pulse is a lamp for this Mac. The `host` column
-stays in the format so older writers keep working, and is ignored. Files a
+stays in the format, written empty, and is ignored. Files a
 sync tool still drops into `attention.d/` are not read (Pulse leaves the
 directory alone).

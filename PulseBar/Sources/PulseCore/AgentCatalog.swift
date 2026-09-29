@@ -66,9 +66,6 @@ public enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
     /// not unsupported.
     public var requiresAppDataOptIn: Bool { spec.requiresAppDataOptIn }
 
-    /// Reach is a statement about the installed hook, not about capability.
-    public var respondReach: RespondReach { spec.respondReach }
-
     public static let priority: [AgentID] = [
         .claude, .cursorAgent, .codex, .droid, .kimi, .commandCode, .devin,
         .antigravity, .cascade, .windsurf, .kiro, .junie, .kilo, .augment,
@@ -219,7 +216,6 @@ public struct AgentSpec: Sendable {
     public let harvest: HarvestSource
     public let requiresAppDataOptIn: Bool
     public let transcripts: TranscriptPolicy
-    public let respondReach: RespondReach
     /// Other spellings a hook or bridge may use for this agent, beyond
     /// its raw value.
     public let aliases: [String]
@@ -243,7 +239,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .hookSite,
             aliases: [],
             process: AgentProcessRule(basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude"], denyNeedles: ["Claude.app", "chrome-native-host"]),
             harvestRoots: [".claude/projects", ".claude/tasks"],
@@ -260,7 +255,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
             harvestRoots: [".codex/sessions", ".codex/rollouts"],
@@ -271,11 +265,10 @@ public enum AgentCatalog {
             id: .cursor,
             displayName: "Cursor",
             monogram: "Cu",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .structuredSession,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["Cursor", "cursor"], pathNeedles: ["Cursor.app/Contents/MacOS/Cursor"], denyNeedles: ["crashpad", "CursorUIViewService"]),
             harvestRoots: [
@@ -294,11 +287,10 @@ public enum AgentCatalog {
             id: .cursorAgent,
             displayName: "Cursor Agent",
             monogram: "CA",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(
                 basenames: ["cursor-agent", "cursor_agent"],
@@ -319,7 +311,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["grok"], pathNeedles: ["/.grok/bin/grok", "grok-0.", "GROK_AGENT=", "/bin/grok"], denyNeedles: []),
             harvestRoots: [".grok/sessions"],
@@ -338,7 +329,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .alwaysRead,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["pi"], pathNeedles: ["pi-coding-agent", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/.local/bin/pi"], denyNeedles: ["pip", "pip3", "pihole", "pickle", "pypi", "pixel", "piano"], allowBareBasename: true),
             // Pi's JSONL transcripts are the richest source; context-mode's
@@ -359,11 +349,10 @@ public enum AgentCatalog {
             id: .amp,
             displayName: "Amp",
             monogram: "Am",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(
                 basenames: ["amp"],
@@ -385,7 +374,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["aider"], pathNeedles: ["/bin/aider", "-m aider"], denyNeedles: []),
             harvestRoots: [".aider"],
@@ -400,7 +388,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: ["Gemini.app"]),
             // 20.0: under the macOS Seatbelt sandbox (`SANDBOX=sandbox-exec`)
@@ -417,7 +404,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(
                 basenames: ["copilot"],
@@ -438,7 +424,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .none,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["opencode", "open-code"], pathNeedles: ["/bin/opencode", "/opencode/", "opencode@", "@opencode"], denyNeedles: []),
             harvestRoots: [".local/share/opencode"],
@@ -456,7 +441,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["goose"], pathNeedles: ["/bin/goose", "block/goose", "goose-cli"], denyNeedles: []),
             // 20.0: since v1.10 every session is a row in
@@ -474,7 +458,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["openhands", "opendevin"], pathNeedles: ["openhands", "OpenHands", "OpenDevin"], denyNeedles: []),
             harvestRoots: [".openhands", ".openhands-state"],
@@ -491,7 +474,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["cline"], pathNeedles: ["saoudrizwan.claude-dev", "/cline/", "cline@", "claude-dev"], denyNeedles: ["crashpad", "decline", "incline"]),
             harvestRoots: [
@@ -514,7 +496,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["roo", "roo-code"], pathNeedles: ["roo-cline", "roo-code", "RooCode"], denyNeedles: ["crashpad"], allowBareBasename: true),
             harvestRoots: [
@@ -536,7 +517,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["continue", "continue-cli"], pathNeedles: ["continue.dev", "Continue.continue", "continue-cli"], denyNeedles: ["crashpad"]),
             harvestRoots: [".continue"],
@@ -547,11 +527,10 @@ public enum AgentCatalog {
             id: .amazonQ,
             displayName: "Amazon Q",
             monogram: "Q",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["amazon-q", "q"],
             process: AgentProcessRule(basenames: ["amazon-q", "q-chat", "qchat"], pathNeedles: ["amazon-q", "Amazon Q", "/opt/homebrew/bin/q"], denyNeedles: ["qemu", "QuickTime"]),
             harvestRoots: [
@@ -568,11 +547,10 @@ public enum AgentCatalog {
             id: .cascade,
             displayName: "Cascade",
             monogram: "Cs",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["windsurf-cascade"],
             process: AgentProcessRule(
                 basenames: ["cascade", "windsurf-cascade"],
@@ -591,11 +569,10 @@ public enum AgentCatalog {
             id: .windsurf,
             displayName: "Windsurf",
             monogram: "Ws",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(
                 basenames: ["Windsurf", "windsurf"],
@@ -610,11 +587,10 @@ public enum AgentCatalog {
             id: .augment,
             displayName: "Augment",
             monogram: "Au",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .bestEffortCache,
             requiresAppDataOptIn: false,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["auggie"],
             process: AgentProcessRule(
                 basenames: ["augment", "auggie"],
@@ -629,11 +605,10 @@ public enum AgentCatalog {
             id: .zedAgent,
             displayName: "Zed Agent",
             monogram: "Zd",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["zed-agent"],
             process: AgentProcessRule(
                 basenames: ["zed-agent", "zed_agent"],
@@ -655,7 +630,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: [],
             process: AgentProcessRule(
                 basenames: ["trae-agent", "TraeAgent"],
@@ -674,7 +648,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["warp-agent"],
             process: AgentProcessRule(
                 basenames: ["warp-agent", "warp_agent", "warp-ai"],
@@ -699,7 +672,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: false,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["devin-cli"],
             process: AgentProcessRule(
                 basenames: ["devin", "devin-cli"],
@@ -714,11 +686,10 @@ public enum AgentCatalog {
             id: .kiro,
             displayName: "Kiro",
             monogram: "Kr",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["kiro-cli", "kiro-agent"],
             process: AgentProcessRule(
                 basenames: ["kiro", "kiro-cli", "kiro-agent"],
@@ -737,7 +708,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["junie-cli"],
             process: AgentProcessRule(
                 basenames: ["junie", "junie-cli"],
@@ -756,7 +726,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["kilo-code", "kilocode"],
             process: AgentProcessRule(
                 basenames: ["kilo", "kilo-code"],
@@ -781,7 +750,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["replit-agent"],
             process: AgentProcessRule(
                 basenames: ["replit", "replit-agent"],
@@ -796,11 +764,10 @@ public enum AgentCatalog {
             id: .droid,
             displayName: "Droid",
             monogram: "Dr",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: ["factory", "factory-droid"],
             process: AgentProcessRule(
                 basenames: ["droid"],
@@ -815,11 +782,10 @@ public enum AgentCatalog {
             id: .commandCode,
             displayName: "Command Code",
             monogram: "CC",
-            waiting: .harvestPending,
+            waiting: .none,
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: ["command-code", "commandcode", "cmd"],
             process: AgentProcessRule(
                 basenames: ["cmd", "command-code"],
@@ -852,7 +818,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["antigravity-ide", "antigravity_ide", "agy"],
             process: AgentProcessRule(
                 basenames: ["Antigravity", "antigravity", "Antigravity IDE", "agy"],
@@ -884,7 +849,6 @@ public enum AgentCatalog {
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
-            respondReach: .none,
             aliases: ["kimi-code", "kimi_code"],
             process: AgentProcessRule(
                 basenames: ["kimi"],
@@ -910,7 +874,6 @@ public enum AgentCatalog {
             harvest: .bestEffortCache,
             requiresAppDataOptIn: true,
             transcripts: .none,
-            respondReach: .none,
             aliases: ["z-code", "ZCode", "zcode-agent"],
             process: AgentProcessRule(
                 basenames: ["ZCode", "zcode"],
@@ -954,20 +917,4 @@ public enum AgentCatalog {
         if let id = AgentID(rawValue: raw) { return id }
         return all.first { $0.aliases.contains(raw) }?.id
     }
-}
-
-/// Where Pulse stands in an agent's permission decision.
-///
-/// `hookSite` means Pulse's code is executed at the moment the decision is
-/// made — which `HooksInstaller` already arranges for Claude via the
-/// `PermissionRequest` event. **Being executed there is not the same as being
-/// able to answer.** Whether a reply can carry a verdict is a vendor contract
-/// question, and it is deliberately unanswered until `qa_respond_contract.sh`
-/// has been run on a real machine (plan-1.1 P0-0).
-public enum RespondReach: String, Equatable, Sendable {
-    /// Pulse never runs at this agent's decision point. Observation only.
-    case none
-    /// Pulse runs at the decision point. Whether its reply is honoured is
-    /// unverified, so nothing may advertise responding for this agent yet.
-    case hookSite
 }
