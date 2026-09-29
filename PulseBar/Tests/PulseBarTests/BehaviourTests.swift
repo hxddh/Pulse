@@ -73,9 +73,9 @@ final class StatusLampTests: XCTestCase {
             )
         }
 
-        let waiting = PulseBrand.statusColor(for: .waiting).usingColorSpace(.deviceRGB)!
-        let running = PulseBrand.statusColor(for: .running).usingColorSpace(.deviceRGB)!
-        let stalled = PulseBrand.statusColor(for: .stalled).usingColorSpace(.deviceRGB)!
+        let waiting = PulseBrand.statusColor(for: GlanceKind.waiting).usingColorSpace(.deviceRGB)!
+        let running = PulseBrand.statusColor(for: GlanceKind.running).usingColorSpace(.deviceRGB)!
+        let stalled = PulseBrand.statusColor(for: GlanceKind.stalled).usingColorSpace(.deviceRGB)!
         XCTAssertGreaterThan(waiting.redComponent, waiting.greenComponent)
         XCTAssertGreaterThan(running.greenComponent, running.redComponent)
         XCTAssertGreaterThan(stalled.redComponent, stalled.blueComponent)
