@@ -93,6 +93,94 @@ struct SessionLogTests {
         #expect(store.sessionLog.spans("claude|old").last?.endMs == wallNow - 30 * minute)
     }
 
+    /// 23.0 bug: a session still present at relaunch kept its open span,
+    /// and the first scan saw the same state and continued it — the strip
+    /// claimed the hours Pulse was not running.
+    @Test func aRelaunchDoesNotStretchALiveSessionsSpanOverTheDowntime() throws {
+        var log = SessionLog()
+        let here = running("codex|here", .codex)
+        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [here], nowMs: now))
+        let saved = now + 10 * minute
+        log.savedAtMs = saved
+        let relaunch = now + 3 * 60 * minute
+        // The first scan after launch: `previous` is empty, so the row is a
+        // transition again — dated by its evidence, which predates the save.
+        var seen = here
+        seen.activityMs = now + 5 * minute
+        let transitions = SessionTimeline.transitions(previous: [], current: [seen], nowMs: relaunch)
+        let applied = log.resumeAfterLaunch(transitions, nowMs: relaunch)
+        log.applyTimeline(applied)
+        let spans = log.spans("codex|here")
+        #expect(spans.count == 2)
+        let first = try #require(spans.first)
+        let last = try #require(spans.last)
+        #expect(first.endMs == saved, "closed where the last run stopped watching")
+        #expect(last.startMs == relaunch, "reopened when Pulse saw it again, not at the save")
+        #expect(last.endMs == nil)
+    }
+
+    @Test func aRelaunchKeepsEvidenceDatedAfterTheSave() {
+        var log = SessionLog()
+        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [running("claude|a")], nowMs: now))
+        let saved = now + minute
+        log.savedAtMs = saved
+        let relaunch = now + 60 * minute
+        let raisedWhileAway = waiting("claude|a", since: now + 30 * minute)
+        let transitions = SessionTimeline.transitions(previous: [], current: [raisedWhileAway], nowMs: relaunch)
+        let applied = log.resumeAfterLaunch(transitions, nowMs: relaunch)
+        log.applyTimeline(applied)
+        #expect(log.spans("claude|a").last?.startMs == now + 30 * minute, "a hook's own clock after the save is evidence")
+    }
+
+    // MARK: - A second ask on the same row
+
+    /// 23.0 bug: a second permission on a row that was still waiting reused
+    /// the open wait (same title, same kind) — no edge, no banner, and a
+    /// dismissal of the first muted the second.
+    @Test func aSecondAskOnTheSameRowIsItsOwnWait() throws {
+        var log = SessionLog()
+        log.reconcileWaits(rows: [waiting("claude|a", since: now - minute)], released: [], nowMs: now)
+        let first = try #require(log.openWait("claude|a"))
+        log.dismiss(waiting("claude|a", since: now - minute), soft: false, nowMs: now + 1_000)
+        #expect(log.dismissedKeys == ["claude|a"])
+
+        var second = waiting("claude|a", since: now + minute)
+        second.activityMs = now + 50_000 // the next tool call began the second ask
+        let changed = log.reconcileWaits(rows: [second], released: [], nowMs: now + minute + 2_000)
+        #expect(changed)
+        let open = try #require(log.openWait("claude|a"))
+        #expect(open.id != first.id)
+        #expect(open.sinceMs == now + minute)
+        #expect(open.dismissedMs == nil, "the new ask inherits no dismissal")
+        #expect(log.dismissedKeys.isEmpty)
+        let waits = log.sessions["claude|a"]?.waits ?? []
+        #expect(waits.count == 2)
+        #expect(waits.first?.resolvedMs != nil, "the first ask is resolved")
+        #expect(log.waitingSince["claude|a"] == now + minute)
+    }
+
+    @Test func theSameAskSaidTwiceIsOneWait() {
+        var log = SessionLog()
+        log.reconcileWaits(rows: [waiting("claude|a", since: now - minute)], released: [], nowMs: now)
+        // Claude's Notification lands a second after its PermissionRequest,
+        // with nothing done in between.
+        let echo = waiting("claude|a", since: now - minute + 1_000)
+        #expect(!SessionLog.isNewRaise(echo, previousSinceMs: now - minute))
+        log.reconcileWaits(rows: [echo], released: [], nowMs: now + 2_000)
+        let waits = log.sessions["claude|a"]?.waits ?? []
+        #expect(waits.count == 1)
+    }
+
+    @Test func aFilePendingWhoseClockMovesIsNotANewAsk() {
+        var log = SessionLog()
+        log.reconcileWaits(rows: [waiting("cline|a", .cline, since: now - minute, signal: .pending)], released: [], nowMs: now)
+        let moved = waiting("cline|a", .cline, since: now + 5 * minute, signal: .pending)
+        #expect(!SessionLog.isNewRaise(moved, previousSinceMs: now - minute), "a pending stamps the file's clock")
+        log.reconcileWaits(rows: [moved], released: [], nowMs: now + 5 * minute)
+        let waits = log.sessions["cline|a"]?.waits ?? []
+        #expect(waits.count == 1)
+    }
+
     // MARK: - 3 · the same owed wait is not a write
 
     @Test func queuingTwiceIsOneChange() {

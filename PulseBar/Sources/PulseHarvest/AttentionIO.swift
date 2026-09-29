@@ -32,20 +32,6 @@ package enum AttentionIO {
 
     package static let maxRetainedLines = 80
 
-    /// What a scan reads. One source since 22.0 removed the remote inbox
-    /// (`attention.d/<host>.tsv`): `attention.tsv` is this Mac's own file.
-    package struct Source {
-        package var text: String
-
-        package init(text: String) {
-            self.text = text
-        }
-    }
-
-    package static func readSources() -> [Source] {
-        [Source(text: readText())]
-    }
-
     /// Keep unresolved raises when compacting the TSV. A suffix-only cap can
     /// drop a still-open permission/waiting line with no `done`.
     package static func compactLines(_ lines: [String], cap: Int = maxRetainedLines) -> [String] {
@@ -79,23 +65,34 @@ package enum AttentionIO {
         return mustKeep.sorted().map { lines[$0] }
     }
 
-    package static func readText() -> String {
+    /// The file's text. `url` nil reads `path`; the hook self-test passes its
+    /// own temporary file instead of redirecting the global.
+    package static func readText(at url: URL? = nil) -> String {
         var result = ""
-        withExclusiveLock { fd in
+        withExclusiveLock(at: url ?? path) { fd in
             let size = lseek(fd, 0, SEEK_END)
             lseek(fd, 0, SEEK_SET)
             guard size > 0 else { return }
-            result = String(data: readAll(fd, size: Int(size)), encoding: .utf8) ?? ""
+            // Lossy, never empty: one invalid byte (a hook that wrote a
+            // truncated multibyte character) must not hide every open wait.
+            result = decode(readAll(fd, size: Int(size)))
         }
         return result
     }
 
+    /// Bytes as text, replacing invalid UTF-8 rather than giving up on the
+    /// whole file.
+    package static func decode(_ data: Data) -> String {
+        String(decoding: data, as: UTF8.self)
+    }
+
     /// Last raw hook/bridge event per Agent, including done/stop. Runtime
     /// support needs to answer "has this connection ever fired recently?"
-    /// without turning a completed event back into Waiting.
-    package static func latestEventTimes() -> [AgentID: Int64] {
+    /// without turning a completed event back into Waiting. Pure: the scan
+    /// reads the file once and hands the text here.
+    package static func latestEventTimes(in text: String) -> [AgentID: Int64] {
         var latest: [AgentID: Int64] = [:]
-        for line in readText().split(whereSeparator: \.isNewline) {
+        for line in text.split(whereSeparator: \.isNewline) {
             if line.hasPrefix("#") { continue }
             let columns = line.split(
                 separator: "\t",
@@ -164,24 +161,20 @@ package enum AttentionIO {
         }
     }
 
-    package static func clearAll() {
-        withExclusiveLock { fd in
-            ftruncate(fd, 0)
-            _ = header.withCString { ptr in write(fd, ptr, strlen(ptr)) }
-        }
-    }
-
-    /// Append a done event (optional session scopes the clear).
-    package static func appendDone(agent: AgentID, session: String = "") {
+    /// Append a done event. The session is written exactly as given: a
+    /// session clears that session, an empty one clears only the agent's
+    /// session-less entries (v3, 23.0).
+    package static func appendDone(agent: AgentID, session: String) {
         let ts = Int64(Date().timeIntervalSince1970 * 1000)
         // v3: all eight columns, host and front empty.
         let line = "\(agent.rawValue)\tdone\t\(ts)\t\t\(session)\t\t\t"
         appendRawLine(line)
     }
 
-    /// Shared by the store (clears) and the native hook receiver.
-    package static func appendRawLine(_ line: String) {
-        withExclusiveLock { fd in
+    /// Shared by the store (clears) and the native hook receiver. `url` nil
+    /// writes `path`.
+    package static func appendRawLine(_ line: String, at url: URL? = nil) {
+        withExclusiveLock(at: url ?? path) { fd in
             let size = max(0, Int(lseek(fd, 0, SEEK_END)))
             lseek(fd, 0, SEEK_SET)
             let newLine = line.trimmingCharacters(in: .newlines)
@@ -200,7 +193,7 @@ package enum AttentionIO {
             // Lossy, never empty: one invalid byte (a hook that wrote a
             // truncated multibyte character) used to decode the whole file
             // as "" — and the rewrite then erased every open wait.
-            let text = String(decoding: data, as: UTF8.self)
+            let text = decode(data)
             var lines = text.split(whereSeparator: \.isNewline)
                 .map(String.init)
                 .filter { !$0.isEmpty && !$0.hasPrefix("#") }
@@ -216,14 +209,14 @@ package enum AttentionIO {
         }
     }
 
-    private static func withExclusiveLock(_ body: (Int32) -> Void) {
-        let dir = path.deletingLastPathComponent()
+    private static func withExclusiveLock(at url: URL, _ body: (Int32) -> Void) {
+        let dir = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // 0600, not 0644: every line in this file is either a command an
         // agent asked to run or the directory it asked from. The creation
         // mode only covers new installs, so an existing file is brought down
         // through the descriptor already in hand — see `PrivateFile.tighten`.
-        let fd = path.path.withCString { open($0, O_RDWR | O_CREAT, 0o600) }
+        let fd = url.path.withCString { open($0, O_RDWR | O_CREAT, 0o600) }
         guard fd >= 0 else {
             DebugLog.write("attention open failed errno=\(errno)")
             return

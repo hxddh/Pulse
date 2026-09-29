@@ -453,7 +453,8 @@ package enum ActivityHarvest {
     }
 }
 
-/// Attention TSV reader — last event wins per (agent, session); `done` clears;
+/// Attention TSV reader — last event wins per (agent, session); `done` clears
+/// that (agent, session) — an empty session only the session-less entry;
 /// `turn` ends a blocked wait (after a short grace) and leaves "your turn".
 ///
 /// `attention.tsv` is this Mac's own file: every line in it was raised here.
@@ -521,12 +522,9 @@ package enum AttentionReader {
         }
     }
 
-    package static func load(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> [Entry] {
-        AttentionIO.readSources().flatMap { parse($0.text, nowMs: nowMs) }
-    }
-
-    /// Pure TSV → entries. Split out from `load` so the last-event-wins,
-    /// stop-grace and TTL rules are testable without touching the filesystem.
+    /// Pure TSV → entries (the scan reads `attention.tsv` once and hands the
+    /// text here), so the last-event-wins, stop-grace and TTL rules are
+    /// testable without touching the filesystem.
     package static func parse(_ text: String, nowMs: Int64) -> [Entry] {
         guard !text.isEmpty else { return [] }
 
@@ -548,12 +546,13 @@ package enum AttentionReader {
                 byKey.compactMap { key, entry in entry.id.surfaceID == id ? key : nil }
             }
 
+            // 23.0: a `done` clears exactly the entry it names — a session,
+            // or (session empty) the agent's session-less entry. An empty
+            // session is not "every session of this agent": dismissing a
+            // hook wait that carried no session must not clear the waits of
+            // the agent's other terminals.
             if kind == .done {
-                if session.isEmpty {
-                    for k in siblingKeys() { byKey[k] = nil }
-                } else {
-                    byKey[mapKey] = nil
-                }
+                byKey[mapKey] = nil
                 continue
             }
 

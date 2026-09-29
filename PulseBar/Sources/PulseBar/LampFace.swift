@@ -46,7 +46,6 @@ struct LampFace: Equatable {
         case .waiting: return LampFace(shape: .filled, tone: .waiting)
         case .running: return LampFace(shape: .ring, tone: .running)
         case .stalled: return LampFace(shape: .ring, tone: .attention)
-        case .error: return LampFace(shape: .hollow, tone: .attention)
         case .idle: return LampFace(shape: processOnly ? .dotted : .hollow, tone: .idle)
         }
     }

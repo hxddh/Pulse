@@ -19,15 +19,16 @@ enum PulseBarMain {
         if ProcessInfo.processInfo.arguments.contains("--hook") {
             // Native Waiting path for Claude/Codex — no Python. Always exit 0
             // so vendor hooks never block the agent process.
+            let arguments = ProcessInfo.processInfo.arguments
             var stdinText = ""
-            // Vendors pipe JSON on stdin. Never read when attached to a TTY —
-            // that would block the menu-bar binary until EOF.
-            if isatty(STDIN_FILENO) == 0,
-               let data = try? FileHandle.standardInput.readToEnd(),
-               let text = String(data: data, encoding: .utf8) {
-                stdinText = text
+            // Vendors pipe JSON on stdin. Never read when attached to a TTY,
+            // nor when the payload came in argv (Codex `notify`); otherwise
+            // read for at most a second — a pipe nobody closes must not hold
+            // the agent that is waiting on this hook.
+            if isatty(STDIN_FILENO) == 0, !PulseHookReceiver.payloadInArguments(arguments) {
+                stdinText = PulseHookReceiver.readStdin()
             }
-            exit(Int32(PulseHookReceiver.run(arguments: ProcessInfo.processInfo.arguments, stdin: stdinText)))
+            exit(Int32(PulseHookReceiver.run(arguments: arguments, stdin: stdinText)))
         }
         if ProcessInfo.processInfo.arguments.contains("--harvest-test") {
             let started = Date()
@@ -148,10 +149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if ProcessInfo.processInfo.arguments.contains("--appearance=light") {
             NSApp.appearance = NSAppearance(named: .aqua)
         }
+        // Wins over settings.json for this run, and is never saved.
         if ProcessInfo.processInfo.arguments.contains("--language=zh") {
-            AppServices.store.settings.language = .zh
+            AppServices.store.languageOverride = .zh
         } else if ProcessInfo.processInfo.arguments.contains("--language=en") {
-            AppServices.store.settings.language = .en
+            AppServices.store.languageOverride = .en
         }
         // 15.0 · Witness: render the surface fixtures and quit — no scan,
         // no tray, nothing read from this Mac.
@@ -279,8 +281,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         GlobalHotKey.uninstall()
         statusPanel?.uninstall()
-        // A debounced session-log change still in memory goes down now.
-        AppServices.store.sessionLogStore.flush()
+        // The log goes down now — a debounced change still in memory, and
+        // the quit time the next launch closes open spans at.
+        AppServices.store.sessionLogStore.flushAtQuit(AppServices.store.sessionLog)
     }
 }
 

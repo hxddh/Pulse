@@ -260,7 +260,7 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
 - **通知策略**。builder 报告边沿，`WaitNotifier` 决定要不要发：按 agent 静音（行菜单）、在最前、
   开关、授权、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）；每个决定都作为去向写进会话记录（`SessionLog`）。
   安静时段与声音 22.0 起交给 macOS 的专注模式与通知设置。
-- **设置**。`PulseSettings` 是 `Codable` 值，存为 `settings.json`（经 `PrivateFile` 以 `0600` 写入；
+- **设置**。`PulseSettings` 是 `Codable` 值，存为 `settings.json`（与 attention.tsv 同目录，`PULSE_HOME` 一起搬；经 `PrivateFile` 以 `0600` 写入；
   缺字段取默认、未知值取默认）。改设置只走 `StatusStore.set(_:_:)`：值变了才写盘并应用（登录项、
   快捷键、横幅按钮语言、重扫），且只在 `start()` 读过设置之后。23.0 不迁移：发现旧的
   `settings.txt` 直接删掉、用默认值。「全部空闲时通知」已删除。

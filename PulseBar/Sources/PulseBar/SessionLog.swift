@@ -48,6 +48,10 @@ struct SessionLog: Codable, Equatable, Sendable {
         var title: String
         /// The evidence's own clock when there was one, else the scan's.
         var raisedMs: Int64
+        /// The wait's own `sinceMs` as the evidence reported it (0 unknown),
+        /// unclamped — what a later raise on the same key is compared with
+        /// (`isNewRaise`). Absent in a log written before 23.0.
+        var sinceMs: Int64?
         /// A banner was owed but not yet accepted (rate limit, authorization).
         var queuedMs: Int64?
         /// Notification Center accepted the banner.
@@ -64,6 +68,12 @@ struct SessionLog: Codable, Equatable, Sendable {
         var resolvedMs: Int64?
 
         var isOpen: Bool { resolvedMs == nil }
+        /// What a later raise on the same key is compared with: the
+        /// evidence's own clock when it had one, else `raisedMs`.
+        var raiseClockMs: Int64 {
+            if let sinceMs, sinceMs > 0 { return sinceMs }
+            return raisedMs
+        }
         var suppresses: Bool { isOpen && dismissedMs != nil && holdsDismissal }
         var isQueued: Bool { isOpen && queuedMs != nil && notifiedMs == nil && dismissedMs == nil }
     }
@@ -118,6 +128,19 @@ struct SessionLog: Codable, Equatable, Sendable {
 
     /// Keys waiting as of the last reconcile — the previous scan's edge set.
     var waitingKeys: Set<String> { keys { $0.isOpen && !$0.suppresses } }
+    /// For each key in `waitingKeys`, when its open wait was raised
+    /// (`Wait.raiseClockMs`) — the edge identity the builder compares a new
+    /// raise with.
+    var waitingSince: [String: Int64] {
+        var out: [String: Int64] = [:]
+        for (key, session) in sessions {
+            guard let index = session.openWaitIndex() else { continue }
+            let wait = session.waits[index]
+            guard !wait.suppresses else { continue }
+            out[key] = wait.raiseClockMs
+        }
+        return out
+    }
     /// Soft-dismissed keys the builder must keep quiet.
     var suppressedKeys: Set<String> { keys { $0.suppresses } }
     /// Open waits whose banner is still owed.
@@ -147,6 +170,26 @@ struct SessionLog: Codable, Equatable, Sendable {
     static func raisedMs(_ row: AgentRow, nowMs: Int64) -> Int64 {
         let since = row.wait?.sinceMs ?? 0
         return since > 0 && since <= nowMs ? since : nowMs
+    }
+
+    /// A raise closer than this to the previous one on the same key is the
+    /// same ask said twice — Claude raises one approval as both a
+    /// `Notification` and a `PermissionRequest`, in an order that is not
+    /// ours — unless the session did something in between.
+    static let reraiseSlackMs: Int64 = 20_000
+
+    /// Whether the row's wait is a *new* raise on a key that was already
+    /// waiting since `previousSinceMs`: a second permission, a new question.
+    /// Only a hook or vendor raise carries a raise time; a harvest `pending`
+    /// stamps the file's clock, which moves while the same ask stands. A
+    /// later raise counts when the session moved after the old one (its
+    /// next tool call is how a second ask begins) or when it is past the
+    /// slack.
+    static func isNewRaise(_ row: AgentRow, previousSinceMs: Int64) -> Bool {
+        guard let wait = row.wait, wait.signal != .pending else { return false }
+        let since = wait.sinceMs
+        guard since > 0, previousSinceMs > 0, since > previousSinceMs else { return false }
+        return row.activityMs > previousSinceMs || since - previousSinceMs > reraiseSlackMs
     }
 
 
@@ -203,6 +246,27 @@ struct SessionLog: Codable, Equatable, Sendable {
         return changed
     }
 
+    /// 23.0 · the first scan after a launch. Every span the last run left
+    /// open — present sessions included — closes at that run's last save
+    /// (`savedAtMs`, stamped on every write and at quit), so the hours Pulse
+    /// was not running are claimed by no state. Returns the scan's
+    /// transitions with any that the evidence dates at or before that save
+    /// moved to now: Pulse saw nothing in between.
+    mutating func resumeAfterLaunch(
+        _ transitions: [TimelineTransition], nowMs: Int64
+    ) -> [TimelineTransition] {
+        let saved = savedAtMs
+        guard saved > 0, saved < nowMs else { return transitions }
+        closeAbsent(liveKeys: [], atMs: saved)
+        return transitions.map { t in
+            guard t.state != nil, t.atMs <= saved else { return t }
+            var moved = t
+            moved.atMs = nowMs
+            moved.exact = false
+            return moved
+        }
+    }
+
     // MARK: - Waits
 
     /// Brings the wait records in line with this scan's rows. A key that is
@@ -235,19 +299,33 @@ struct SessionLog: Codable, Equatable, Sendable {
             let title = Self.title(for: row)
             let kind = row.wait?.kind ?? ""
             if let index = session.openWaitIndex() {
-                if session.waits[index].title == title, session.waits[index].kind == kind { continue }
-                session.waits[index].title = title
-                session.waits[index].kind = kind
+                let open = session.waits[index]
+                if Self.isNewRaise(row, previousSinceMs: open.raiseClockMs) {
+                    // 23.0: a second ask on the same row is its own wait —
+                    // its own banner, and no dismissal inherited from the
+                    // first.
+                    session.waits[index].resolvedMs = max(open.raisedMs, nowMs)
+                    session.waits.append(Self.newWait(key: key, row: row, title: title, nowMs: nowMs))
+                } else {
+                    if open.title == title, open.kind == kind { continue }
+                    session.waits[index].title = title
+                    session.waits[index].kind = kind
+                }
             } else {
-                session.waits.append(Wait(
-                    id: "\(key)|\(nowMs)", kind: kind, title: title, raisedMs: Self.raisedMs(row, nowMs: nowMs),
-                    holdsDismissal: false
-                ))
+                session.waits.append(Self.newWait(key: key, row: row, title: title, nowMs: nowMs))
             }
             sessions[key] = session
             changed = true
         }
         return changed
+    }
+
+    private static func newWait(key: String, row: AgentRow, title: String, nowMs: Int64) -> Wait {
+        Wait(
+            id: "\(key)|\(nowMs)", kind: row.wait?.kind ?? "", title: title,
+            raisedMs: raisedMs(row, nowMs: nowMs), sinceMs: row.wait?.sinceMs,
+            holdsDismissal: false
+        )
     }
 
     private mutating func withOpenWait(_ key: String, _ body: (inout Wait) -> Bool) -> Bool {
@@ -318,11 +396,7 @@ struct SessionLog: Codable, Equatable, Sendable {
             index = open
         } else {
             guard row.isBlocked else { return false }
-            session.waits.append(Wait(
-                id: "\(key)|\(nowMs)", kind: row.wait?.kind ?? "", title: Self.title(for: row),
-                raisedMs: Self.raisedMs(row, nowMs: nowMs),
-                holdsDismissal: false
-            ))
+            session.waits.append(Self.newWait(key: key, row: row, title: Self.title(for: row), nowMs: nowMs))
             index = session.waits.count - 1
         }
         let before = session.waits[index]

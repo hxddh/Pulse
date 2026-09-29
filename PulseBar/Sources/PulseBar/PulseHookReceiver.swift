@@ -9,11 +9,16 @@ import Foundation
 /// prompt is always in charge.
 enum PulseHookReceiver {
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
+    ///
+    /// `attentionURL` nil writes the real attention file; the hook self-test
+    /// passes a temporary one (never a global override — a scan may be
+    /// reading at the same moment).
     @discardableResult
     static func run(
         arguments: [String],
         stdin: String = "",
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        attentionURL: URL? = nil
     ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
         let agentRaw = attributedAgent(
@@ -42,12 +47,18 @@ enum PulseHookReceiver {
             if plain == "prompt", !session.isEmpty {
                 _ = appendEvent(
                     agent: agentRaw, kind: AttentionKind.done.rawValue, message: "",
-                    session: session, cwd: cwd(from: payload)
+                    session: session, cwd: cwd(from: payload), attentionURL: attentionURL
                 )
             }
             return 0
         }
-        var kind = AttentionProtocol.normalizeKind(kindSource.isEmpty ? "waiting" : kindSource)
+        // 23.0: an event that does not say what it is about is not Waiting —
+        // it is rejected like any unknown kind (No fake Waiting).
+        guard !plain.isEmpty else {
+            DebugLog.write("attention reject empty kind agent=\(agentRaw)")
+            return 0
+        }
+        var kind = AttentionProtocol.normalizeKind(kindSource)
         // 18.0: Claude routes AskUserQuestion through PermissionRequest. It
         // is a question, not a permission: there is no allow/deny that
         // answers it.
@@ -70,7 +81,8 @@ enum PulseHookReceiver {
             return PromptVisibility.promptIsFrontmost()
         }()
         _ = appendEvent(
-            agent: agentRaw, kind: kind, message: message, session: session, cwd: cwd, front: front
+            agent: agentRaw, kind: kind, message: message, session: session, cwd: cwd, front: front,
+            attentionURL: attentionURL
         )
         return 0
     }
@@ -84,7 +96,8 @@ enum PulseHookReceiver {
         session: String = "",
         cwd: String = "",
         front: Bool? = nil,
-        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+        attentionURL: URL? = nil
     ) -> Bool {
         let normalized = AttentionProtocol.normalizeKind(kind)
         guard AttentionProtocol.acceptsWrite(kind: normalized) else { return false }
@@ -100,8 +113,49 @@ enum PulseHookReceiver {
             // v3 column 8.
             AttentionProtocol.frontField(front),
         ].joined(separator: "\t")
-        AttentionIO.appendRawLine(line)
+        AttentionIO.appendRawLine(line, at: attentionURL)
         return true
+    }
+
+    // MARK: - stdin
+
+    /// Whether the payload already came in argv (Codex `notify` appends its
+    /// JSON as the last argument) — then stdin is not read at all.
+    static func payloadInArguments(_ arguments: [String]) -> Bool {
+        arguments.drop(while: { $0 != "--hook" }).dropFirst().dropFirst().contains {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("{")
+        }
+    }
+
+    /// The most a hook payload may be; anything past it is not read.
+    static let stdinLimit = 1 << 20
+
+    /// Vendors pipe JSON on stdin, but a caller that leaves stdin open (a
+    /// terminal, a wrapper that never closes the pipe) must not keep the hook
+    /// — and the agent waiting on it — alive. Read on a background thread,
+    /// wait at most `timeout`, keep at most `limit` bytes; whatever arrived
+    /// by then is the payload. The reader thread is abandoned on a timeout:
+    /// the process exits right after.
+    static func readStdin(timeout: TimeInterval = 1, limit: Int = stdinLimit) -> String {
+        let box = Guarded(Data())
+        let finished = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+            while true {
+                let got = buffer.withUnsafeMutableBytes { read(STDIN_FILENO, $0.baseAddress, $0.count) }
+                if got < 0, errno == EINTR { continue }
+                if got <= 0 { break }
+                let full = box.withValue { (data: inout Data) -> Bool in
+                    data.append(contentsOf: buffer[0..<got])
+                    if data.count > limit { data = data.prefix(limit) }
+                    return data.count >= limit
+                }
+                if full { break }
+            }
+            finished.signal()
+        }
+        _ = finished.wait(timeout: .now() + timeout)
+        return AttentionIO.decode(box.snapshot)
     }
 
     // MARK: - Activity events (2.9)
@@ -209,13 +263,9 @@ enum PulseHookReceiver {
             // are rejected as unknown kinds instead of falling through to red.
             if !event.isEmpty { return event }
         }
-        let t = string(payload, keys: ["type", "event", "method"])
-        return t.isEmpty ? "waiting" : t
-    }
-
-    /// Compatibility alias — prefer `AttentionProtocol.normalizeKind`.
-    static func normalizeKind(_ kind: String) -> String {
-        AttentionProtocol.normalizeKind(kind)
+        // 23.0: nothing named — empty, which `run` rejects. It used to be
+        // `waiting`: a payload that said nothing lit the red lamp.
+        return string(payload, keys: ["type", "event", "method"])
     }
 
     private static func message(from payload: [String: Any]) -> String {

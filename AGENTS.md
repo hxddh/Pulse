@@ -250,12 +250,19 @@ reducer, `TrayKeys.reduce`, called by the panel's key monitor through
 `TrayUI` (the per-open state: keys, the frozen `TrayOrder`, the list's
 height budget): typing shows a visible filter (over every retained
 session), ⌫ only edits it, ↑↓ select, ↩ go (the terminal, else the detail),
-D dismiss, M mute, Esc clears the filter, then closes; ⌘R refreshes, ⌘,
-opens Settings. The header (`TrayHeaderModel`) is one line of tone-coloured
+⌘D (or ⌘⌫) dismiss, ⌘M mute — a bare letter always filters, since the tray
+opens with a row selected — Esc clears the filter, then closes; ⌘R
+refreshes, ⌘, opens Settings. While the tray is open the list is every row
+already shown this glance, in the frozen order, plus newcomers to the
+builder's window appended (`TrayOrder.openWindow`): a new wait never pushes
+a visible row out. The header (`TrayHeaderModel`) is one line of tone-coloured
 counts and the freshness (orange when the scan is late or the Mac asleep)
 with a ⋯ menu (Diagnostics, Settings, Quit); at most one notice
-(`TrayNoticeModel`, one action); the footer carries "N more" and the key
-hints; the empty state is one sentence. A banner click focuses the
+(`TrayNoticeModel`, one action); the header's freshness is judged against
+the interval that scheduled the last scan (`ScanEngine.lastScanInterval`),
+so opening the tray does not flash it orange; the footer carries "N more"
+(or "show less") and the key hints; the empty state is the mark, a
+headline and one hint. A banner click focuses the
 terminal and nothing else, or opens the row's detail when there is no
 handle (`BannerRoute`); the global shortcut toggles the tray. Settings is a
 single scrolling page of seven sections (`SettingsModel`); jumping in from
@@ -276,7 +283,14 @@ clicked by wait id, dismissed, resolved); owed banners (`queuedKeys`), soft
 dismissals (`suppressedKeys`) and the edge baseline (`waitingKeys`) derive
 from it. Bounded: 128 sessions, 48 spans, 24 h after end; open spans and
 waits are never evicted, and spans a quit left open close at the last
-save. Every change goes through `StatusStore.updateLog`, which bumps the
+save — at relaunch every open span, present sessions included, closes at
+`savedAtMs` (stamped at quit too) and what the first scan finds starts at
+that scan unless its evidence is dated after the save
+(`SessionLog.resumeAfterLaunch`). A second ask on a row that is still
+waiting is its own wait and its own edge (`SessionLog.isNewRaise`: a later
+hook/vendor raise after the session moved, or past a 20 s slack; never a
+harvest `pending`, whose clock is the file's), and inherits no dismissal.
+Every change goes through `StatusStore.updateLog`, which bumps the
 observed `logRevision` and writes only when content changed — a quiet scan
 writes nothing. `logRevision` and `settingsFocus` are observed store
 properties listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
@@ -302,7 +316,14 @@ none), so the transcript turning up later finds the same row; a process with
 no session row is its own ephemeral `agent|pid:<pid>` row that is simply not
 built once the agent has a session (or hook) row — the process attaches to
 that row instead. Hooks attach by session id, then by folder (never onto a
-row that owns a different session, never onto a process row). The remap
+row that owns a different session, never onto a process row; since 23.0 a
+hook that names no session never lands on a row that owns one, and the row
+keeps the entry's own session spelling in `attentionSession`, which is
+exactly what a dismissal's `done` carries — an empty `done` clears only the
+agent's session-less entry, never its other sessions). A hook wait goes out
+when its session's own activity (a PreToolUse or prompt event) is stamped
+after the raise: the answer was given in the vendor's prompt. An empty or
+unknown hook kind is rejected, never `waiting`. The remap
 machinery (`remappedRowKeys`, `SessionLog.remap`, timeline `remapped`,
 `WaitNotifier.followRemap`) is gone; `session-log.json` is schema 2 and a
 version-1 file is not read. `AgentRow` is slim: identity (key, agent,
@@ -414,6 +435,14 @@ Since 23.0 an agent whose on-disk format is `unverified` in
 `docs/vendor-formats.json` has `waiting: .none`: its harvest `pending` is not
 evidence, and `SnapshotBuilder` lights harvest pending only for
 `waiting: .harvestPending`. Attention lines need all eight v3 columns.
+The cadence (`SnapshotBuilder.activity`) and the VoiceOver census
+(`SnapshotBuilder.Census`) count rows by state, like the lamp: a bare
+process or a finished turn is not running. `settings.json` lives beside
+`attention.tsv` (`PULSE_HOME` moves it); `--language=` is
+`StatusStore.languageOverride`, never saved. The hook self-test passes its
+own file (`attentionURL`) and never touches `AttentionIO.pathOverride`; the
+`--hook` path skips stdin when the payload is in argv and otherwise reads it
+for at most a second.
 
 Without an Apple Developer ID, GitHub **Latest** tracks the current semver
 while the binary stays `preview` / ad-hoc — **never stamp `stable` or claim

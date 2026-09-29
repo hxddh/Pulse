@@ -91,12 +91,10 @@ extension StatusStore {
                 // A finished turn is grey, even while its process lives.
                 snap.glance = .idle
                 snap.sectionTotals[.running] = 1
-                snap.turnCount = 1
             default:
                 snap.glance = .idle
             }
             snap.headerTitle = name
-            snap.header = name
             snap.lamp = LampFace.glance(snap.glance)
             snap.tooltip = LampExplanation.make(rows: [fixtureRow], glance: snap.glance).sentence(lang)
             snap.accessibilityLabel = tr(snap.glance.accessibilityKey)
@@ -201,11 +199,8 @@ extension StatusStore {
                 tooltip: LampExplanation.make(rows: cachedAll, glance: .running).sentence(lang),
                 accessibilityLabel: tr(.a11yRunning),
                 headerTitle: "2 running",
-                headerDetail: "",
-                header: "2 running",
                 rows: cachedAll,
                 sectionTotals: [.running: 2, .recent: 1],
-                projectCount: 2,
                 lamp: LampFace.glance(.running),
                 totalCount: cachedAll.count,
                 updatedAt: Date()
@@ -302,8 +297,6 @@ extension StatusStore {
             return "\(count) \(tr(section.titleKey).lowercased())"
         }
         snap.headerTitle = bits.joined(separator: " · ")
-        snap.header = snap.headerTitle
-        snap.projectCount = Set(rows.map(\.displayPath).filter { !$0.isEmpty }).count
         snap.updatedAt = Date()
         snapshot = snap
     }

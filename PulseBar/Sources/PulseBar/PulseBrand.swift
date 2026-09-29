@@ -77,7 +77,7 @@ enum PulseBrand {
         switch glance {
         case .waiting: return .systemRed
         case .running: return .systemGreen
-        case .stalled, .error: return .systemOrange
+        case .stalled: return .systemOrange
         case .idle: return .systemGray
         }
     }

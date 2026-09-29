@@ -66,7 +66,7 @@ is idle at its prompt — a quiet count, never red) and **resolved**.
 
 | Kind | Meaning |
 | --- | --- |
-| `done` | Nothing is owed: clears blocked and your-turn for that session (`session` empty → the whole agent) |
+| `done` | Nothing is owed: clears blocked and your-turn for that session (`session` empty → only the agent's session-less entry; since 23.0 it no longer clears the agent's other sessions) |
 
 ### Lifecycle (stored for diagnostics; never lights anything)
 
@@ -75,7 +75,9 @@ is idle at its prompt — a quiet count, never red) and **resolved**.
 | `subagent_start` | Subagent began |
 | `subagent_stop` | Subagent ended |
 
-Anything else is **rejected** by `pulse-hook` / `PulseBar --hook` (exit 0, no
+Anything else — including an empty kind (no argv kind, no
+`notification_type`, no event name; before 23.0 that was written as
+`waiting`) — is **rejected** by `pulse-hook` / `PulseBar --hook` (exit 0, no
 write) and **ignored** by `AttentionReader` (never free-text Waiting). That is
 the No fake Waiting gate for this channel.
 
@@ -130,7 +132,14 @@ echo '{"session_id":"sess-1"}' | "$HOOK" replit done   # nothing owed
 ## Reader rules
 
 - Same `(agent, session)` — last write wins.
-- `done` clears that session (`session` empty → clear all for that agent).
+- `done` clears that session (`session` empty → only the agent's
+  session-less entry — 23.0; before, it cleared every session of the agent,
+  so dismissing one terminal's session-less wait put out the others).
+- A blocked hook entry that names no session never attaches to a session
+  row; it is its own row in its folder, and its `done` names no session.
+- A blocked hook entry goes out when that session's own activity event
+  (PreToolUse / UserPromptSubmit, stamped after the raise) arrives: the ask
+  was answered in the vendor's prompt.
 - `turn` clears a blocked wait, but within **20s** does not wipe a fresh
   `permission` / `question` / `waiting` (the order of a vendor's events is not
   ours); then it marks the session your turn. A session-less `turn` only

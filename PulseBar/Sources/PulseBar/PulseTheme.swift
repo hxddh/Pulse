@@ -76,9 +76,6 @@ enum PulseTheme {
     static let hairline: CGFloat = 1
     static let cardPadding: CGFloat = Space.m
     static let innerPadding: CGFloat = Space.s
-    static let cardSpacing: CGFloat = Space.s
-    static let cardRadius: CGFloat = Radius.card
-    static let innerRadius: CGFloat = Radius.inner
 
     // MARK: Motion
 
@@ -121,7 +118,7 @@ extension GlanceKind {
         switch self {
         case .waiting: return .waiting
         case .running: return .running
-        case .stalled, .error: return .attention
+        case .stalled: return .attention
         case .idle: return .idle
         }
     }

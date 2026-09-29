@@ -107,7 +107,16 @@ final class SessionLogStore {
         }
     }
 
-    /// Write whatever is queued, now (also on quit).
+    /// At quit: write `log` now, whether or not anything is queued, so its
+    /// `savedAtMs` says when this run stopped watching — the next launch
+    /// closes the spans left open there, not at an older write.
+    func flushAtQuit(_ log: SessionLog) {
+        guard enabled else { return }
+        pending = log
+        flush()
+    }
+
+    /// Write whatever is queued, now.
     func flush() {
         task?.cancel()
         task = nil
@@ -144,20 +153,18 @@ extension StatusStore {
     /// One scan's worth of history: state edges and the waits. Row keys never
     /// change (`RowIdentity`), so nothing has to follow one.
     func recordScan(previous: [AgentRow], result: SnapshotBuilder.Result, nowMs: Int64) {
-        // The first scan after launch closes what the last run left open, at
-        // the moment that run last wrote — not now, which would claim the
-        // hours Pulse was not running.
-        var closeAt = nowMs
-        if logAwaitsFirstScan {
-            logAwaitsFirstScan = false
-            let saved = sessionLog.savedAtMs
-            if saved > 0, saved < nowMs { closeAt = saved }
-        }
+        // The first scan after launch closes everything the last run left
+        // open — present sessions too — at the moment that run last wrote,
+        // before this scan's transitions: not now, and not continued, which
+        // would claim the hours Pulse was not running.
+        let firstScan = logAwaitsFirstScan
+        logAwaitsFirstScan = false
         let transitions = SessionTimeline.transitions(previous: previous, current: result.rows, nowMs: nowMs)
         let live = Set(result.rows.map(\.rowKey))
         updateLog { log in
-            log.applyTimeline(transitions)
-            log.closeAbsent(liveKeys: live, atMs: closeAt)
+            let applied = firstScan ? log.resumeAfterLaunch(transitions, nowMs: nowMs) : transitions
+            log.applyTimeline(applied)
+            log.closeAbsent(liveKeys: live, atMs: nowMs)
             log.reconcileWaits(rows: result.rows, released: result.clearedPendingKeys, nowMs: nowMs)
             log.markBaseline()
             log.prune(nowMs: nowMs)

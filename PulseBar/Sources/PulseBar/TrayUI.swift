@@ -12,6 +12,13 @@ final class TrayUI {
     var keys = TrayKeys.State()
     /// The order the rows had when the tray opened, newcomers appended.
     var frozen: [String] = []
+    /// Every row that has been on screen this glance. While the tray is open
+    /// they stay listed as long as they exist, even when the builder's
+    /// window would now fold them away for a newer wait.
+    var pinned: Set<String> = []
+    /// `store.showAllAgents` when `pinned` was taken — "show all / show
+    /// less" re-lays the list at the person's request.
+    var pinnedShowAll = false
     /// The list's height budget on the current screen.
     var maxListHeight: Double = Double(TrayChrome.maxListHeight)
     /// Asks the panel to close (Esc on an empty list).
@@ -23,12 +30,10 @@ final class TrayUI {
 
     // MARK: - What the tray lists
 
-    /// The rows on screen: the visible window (or every retained row while
-    /// filtering), in the frozen order.
-    var displayRows: [AgentRow] {
-        let source = keys.query.isEmpty ? store.snapshot.rows : store.allRowsForDisplay
-        return TrayOrder.arrange(TrayKeys.filter(source, query: keys.query), frozen: frozen)
-    }
+    /// The rows on screen: every retained row while filtering; otherwise
+    /// the rows already shown this glance plus newcomers to the builder's
+    /// window (`TrayOrder.openWindow`), in the frozen order.
+    var displayRows: [AgentRow] { displayRowsFor(keys) }
 
     /// The row whose detail page is open, while it still exists.
     var detailRow: AgentRow? {
@@ -54,6 +59,8 @@ final class TrayUI {
     /// selects the most urgent row; a click selects the oldest wait, if any.
     func open(selectMostUrgent: Bool) {
         frozen = store.snapshot.rows.map(\.rowKey)
+        pinned = Set(frozen)
+        pinnedShowAll = store.showAllAgents
         var next = TrayKeys.State()
         let rows = displayRowsFor(next)
         next.selected = selectMostUrgent ? rows.first?.rowKey : rows.first(where: \.isBlocked)?.rowKey
@@ -62,8 +69,17 @@ final class TrayUI {
     }
 
     private func displayRowsFor(_ state: TrayKeys.State) -> [AgentRow] {
-        let source = state.query.isEmpty ? store.snapshot.rows : store.allRowsForDisplay
-        return TrayOrder.arrange(TrayKeys.filter(source, query: state.query), frozen: frozen)
+        guard state.query.isEmpty else {
+            return TrayOrder.arrange(TrayKeys.filter(store.allRowsForDisplay, query: state.query), frozen: frozen)
+        }
+        let showAll = store.showAllAgents
+        return TrayOrder.openWindow(
+            all: store.allRowsForDisplay,
+            window: store.snapshot.rows,
+            pinned: pinnedShowAll == showAll ? pinned : [],
+            frozen: frozen,
+            cap: showAll ? Int.max : TrayOrder.openCap
+        )
     }
 
     /// A reveal from a banner or a jump: select the row — and open its
@@ -87,6 +103,11 @@ final class TrayUI {
     func absorbScan() {
         let extended = TrayOrder.extend(frozen, with: store.allRowsForDisplay)
         if extended != frozen { frozen = extended }
+        let showAll = store.showAllAgents
+        let shown = Set(displayRowsFor(TrayKeys.State()).map(\.rowKey))
+        let nextPinned = pinnedShowAll == showAll ? pinned.union(shown) : shown
+        if nextPinned != pinned { pinned = nextPinned }
+        if pinnedShowAll != showAll { pinnedShowAll = showAll }
         var next = keys
         if let detail = next.detail, lookup(detail) == nil { next.detail = nil }
         next = TrayKeys.normalize(next, rows: displayRowsFor(next).map { TrayKeys.Row($0) })
@@ -137,7 +158,7 @@ final class TrayUI {
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
         case .diagnostics: store.openDiagnostics()
-        case .setupWaiting: store.openWaitingReach(for: row)
+        case .setupWaiting: store.openWaitingReach()
         case .mute: store.toggleMute(row.agent)
         }
     }

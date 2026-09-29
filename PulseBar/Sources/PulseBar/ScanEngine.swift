@@ -19,7 +19,7 @@ final class ScanEngine {
     /// Tests exercising store behaviour must not start a real background scan.
     ///
     /// A scan is not read-only: it writes attention files and, once
-    /// `start()` has loaded it, the session log — so an unguarded `refresh()`
+    /// `start()` has loaded it, the session log — so an unguarded `refresh(reason:)`
     /// inside a unit test would touch the developer's own files. Same shape
     /// as `AttentionIO.pathOverride` and `HooksInstaller.homeOverride`.
     static var suppressBackgroundScansForTesting = false
@@ -45,6 +45,14 @@ final class ScanEngine {
     /// not, unlike `snapshot.updatedAt` which moves only when the snapshot
     /// changes. Read by the self-check; never drives a view.
     private(set) var lastScanAt: Date?
+    /// The cadence that scheduled the last applied scan. Opening the tray
+    /// shortens `currentInterval` at once, but the scan already on screen
+    /// was due by the old one — the header judges its age by this.
+    private(set) var lastScanInterval: TimeInterval?
+    /// The newest attention line per agent, from the text the last scan read
+    /// — Health's "has this hook fired". Cached here so a Diagnostics
+    /// redraw never reads (and locks) the attention file.
+    private(set) var latestHookEventMs: [AgentID: Int64] = [:]
 
     // MARK: Harvest bookkeeping
 
@@ -303,8 +311,11 @@ final class ScanEngine {
                 outcome = .fresh(result.rows, result.health, complete, intentionalPartial || scopedHarvest)
             }
 
-            let attention = AttentionReader.load()
             let scanNowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            // One read of the attention file serves the rows and Health.
+            let attentionText = AttentionIO.readText()
+            let attention = AttentionReader.parse(attentionText, nowMs: scanNowMs)
+            let hookEventTimes = AttentionIO.latestEventTimes(in: attentionText)
             // 2.9: push-fresh activity events. Read here so a full rebuild
             // carries them; the watcher's light path keeps them second-fresh
             // between scans.
@@ -346,7 +357,8 @@ final class ScanEngine {
                     harvestMs: completedHarvestMs,
                     reason: reason,
                     activityEvents: activityEvents,
-                    vendorWaits: vendorWaits
+                    vendorWaits: vendorWaits,
+                    hookEventTimes: hookEventTimes
                 )
             }
         }
@@ -460,7 +472,8 @@ final class ScanEngine {
         harvestMs: Int? = nil,
         reason: String = "",
         activityEvents: [ActivitySpool.Event] = [],
-        vendorWaits: [ClaudeAgentsProbe.Wait] = []
+        vendorWaits: [ClaudeAgentsProbe.Wait] = [],
+        hookEventTimes: [AgentID: Int64]? = nil
     ) {
         defer { finishScanFlight() }
         guard let model else { return }
@@ -516,6 +529,8 @@ final class ScanEngine {
         let now = Date()
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         lastScanAt = now
+        lastScanInterval = currentInterval
+        if let hookEventTimes { latestHookEventMs = hookEventTimes }
         probeStats.record(
             ProbeStats.Sample(at: now, harvested: harvestMs != nil, harvestMs: harvestMs)
         )
@@ -530,7 +545,11 @@ final class ScanEngine {
                 activity: activityEvents,
                 vendorWaits: vendorWaits
             ),
-            previous: SnapshotBuilder.Previous(rows: model.cachedAll, waitingKeys: model.sessionLog.waitingKeys),
+            previous: SnapshotBuilder.Previous(
+                rows: model.cachedAll,
+                waitingKeys: model.sessionLog.waitingKeys,
+                waitingSince: model.sessionLog.waitingSince
+            ),
             context: SnapshotBuilder.Context(
                 nowMs: nowMs,
                 terminal: TerminalFocus.Environment.current(

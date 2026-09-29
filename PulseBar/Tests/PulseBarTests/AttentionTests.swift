@@ -38,13 +38,20 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
     }
 
-    func testAgentLevelDoneClearsEverySessionOfThatAgent() {
+    /// 23.0 bug: dismissing a session-less hook wait wrote a session-less
+    /// `done`, which cleared every session of that agent — the other
+    /// terminals' permissions went dark with them. A `done` clears exactly
+    /// what it names: an empty session, only the session-less entry.
+    func testASessionlessDoneClearsOnlyTheSessionlessEntry() {
         let text = tsv([
             ["claude", "permission", "\(now - 5000)", "a", "s1", "/p"],
             ["claude", "permission", "\(now - 4000)", "b", "s2", "/q"],
+            ["claude", "permission", "\(now - 3000)", "c", "", "/r"],
             ["claude", "done", "\(now - 1000)", "", "", ""],
         ])
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+        let entries = AttentionReader.parse(text, nowMs: now)
+        let sessions = Set(entries.map(\.session))
+        XCTAssertEqual(sessions, ["s1", "s2"], "the sessions' own waits stay")
     }
 
     func testStopKeepsAFreshPermissionWithinGrace() {
@@ -328,10 +335,10 @@ final class PulseHookReceiverTests: XCTestCase {
     }
 
     func testV3SeparatesAQuestionFromYourTurn() {
-        XCTAssertEqual(PulseHookReceiver.normalizeKind("request_user_input"), "question")
-        XCTAssertEqual(PulseHookReceiver.normalizeKind("exec_approval_request"), "permission")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("request_user_input"), "question")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("exec_approval_request"), "permission")
         // 16.0: a finished turn is "your turn", not a clear and not a wait.
-        XCTAssertEqual(PulseHookReceiver.normalizeKind("agent-turn-complete"), "turn")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("agent-turn-complete"), "turn")
         XCTAssertEqual(AttentionProtocol.normalizeKind("idle"), "turn")
         XCTAssertEqual(AttentionProtocol.normalizeKind("idle_prompt"), "turn",
                        "Claude's idle_prompt is a 60 s timer after every finished turn")
@@ -371,6 +378,38 @@ final class PulseHookReceiverTests: XCTestCase {
         ))
     }
 
+    /// 23.0 bug: a hook call that named no kind — no argv kind, no
+    /// `notification_type`, no event — was written as `waiting` and lit the
+    /// red lamp. Empty is rejected like any unknown kind.
+    func testAnEmptyKindIsRejectedWithoutWrite() throws {
+        let code = PulseHookReceiver.run(
+            arguments: ["PulseBar", "--hook", "replit"],
+            stdin: #"{"message":"says nothing about what it is","session_id":"x"}"#
+        )
+        XCTAssertEqual(code, 0, "vendor hooks must never block")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttentionIO.path.path))
+        XCTAssertEqual(PulseHookReceiver.parseKind(from: ["message": "hello"]), "")
+        XCTAssertEqual(AttentionProtocol.normalizeKind(""), "")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("   "), "")
+        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: ""))
+        XCTAssertFalse(PulseHookReceiver.appendEvent(agent: "replit", kind: "", message: "nope"))
+        let line = "replit\t\t\(Int64(Date().timeIntervalSince1970 * 1000))\tnope\tx\t/p\t\t\n"
+        XCTAssertTrue(
+            AttentionReader.parse(line, nowMs: Int64(Date().timeIntervalSince1970 * 1000)).isEmpty,
+            "a line with an empty kind column is not Waiting either"
+        )
+    }
+
+    /// Codex `notify` hands its JSON as the last argument; stdin is then not
+    /// read at all, so a pipe nobody closes cannot hold the hook.
+    func testAPayloadInArgvSkipsStdin() {
+        XCTAssertTrue(PulseHookReceiver.payloadInArguments(
+            ["pulse-hook", "--hook", "codex", #"{"type":"agent-turn-complete"}"#]
+        ))
+        XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "claude"]))
+        XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "junie", "permission"]))
+    }
+
     func testExternalRaiseBecomesAttentionWaiting() throws {
         XCTAssertTrue(PulseHookReceiver.appendEvent(
             agent: "replit",
@@ -403,11 +442,33 @@ final class PulseHookReceiverTests: XCTestCase {
         // binary — breaking the machine's Waiting path until Pulse relaunches.
         HooksInstaller.homeOverride = tempHome
         defer { HooksInstaller.homeOverride = nil }
+        let before = AttentionIO.pathOverride
         let result = HooksSupport.selfTest()
         guard case .passed = result else {
             XCTFail("native self-test must pass without Python: \(result)")
             return
         }
+        // 23.0: it writes its own temporary file, passed explicitly — the
+        // global path a scan reads is never redirected, even for a moment.
+        XCTAssertEqual(AttentionIO.pathOverride, before)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: AttentionIO.path.path),
+            "the self-test's lines never reach the attention file a scan reads"
+        )
+    }
+
+    /// 23.0 bug: the file was decoded strictly, so one invalid byte (a hook
+    /// cut off mid-character) read as an empty file — every wait vanished.
+    func testOneBadByteDoesNotHideEveryWait() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        var bytes = Data(AttentionIO.header.utf8)
+        bytes.append(Data("claude\tpermission\t\(now - 1_000)\tBash: make\ts1\t/p\t\t\n".utf8))
+        bytes.append(contentsOf: [0x63, 0x6C, 0xE2, 0x82, 0x0A]) // "cl" + a truncated "€"
+        try bytes.write(to: AttentionIO.path)
+        let text = AttentionIO.readText()
+        XCTAssertFalse(text.isEmpty)
+        let entries = AttentionReader.parse(text, nowMs: now)
+        XCTAssertEqual(entries.map(\.session), ["s1"])
     }
 
     func testRunnerPathRefusesTestHarnessBinaries() throws {
@@ -973,7 +1034,8 @@ struct TurnTruthTests {
         #expect(row.isBlocked == c.expect.waiting)
         #expect(row.isYourTurn == c.expect.yourTurn)
         #expect((r.snapshot.glance == .waiting) == c.expect.red)
-        #expect(r.snapshot.turnCount == (c.expect.yourTurn ? 1 : 0))
+        let turns = r.rows.filter { $0.isYourTurn }.count
+        #expect(turns == (c.expect.yourTurn ? 1 : 0))
         #expect((row.wait?.inFront ?? false) == c.expect.inFront)
         if let kind = c.expect.waitKind { #expect(row.wait?.kind == kind) }
         let bannered: Bool

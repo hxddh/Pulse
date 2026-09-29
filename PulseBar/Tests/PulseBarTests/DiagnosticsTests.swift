@@ -368,6 +368,22 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(item.disposition, .limited)
     }
 
+    /// 23.0 bug: every Diagnostics redraw read (and locked) the attention
+    /// file for "has this hook fired". The scan reads it once and the
+    /// engine keeps the answer.
+    @MainActor
+    func testHookFireTimesComeFromTheLastScanNotTheFile() {
+        let store = StatusStore()
+        let fired: Int64 = 1_800_000_000_000
+        store.engine.applyScan(
+            procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: 1,
+            hookEventTimes: [.claude: fired]
+        )
+        XCTAssertEqual(store.engine.latestHookEventMs[.claude], fired)
+        let claude = store.supportHealth.first { $0.agent == .claude }
+        XCTAssertEqual(claude?.lastWaitingSignalMs, fired)
+    }
+
     @MainActor
     func testCursorAgentAliasDoesNotCreateDuplicateSupportEntry() {
         let store = StatusStore()
@@ -437,7 +453,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testOneAppDataSwitchDrivesThePrivacyBanner() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         store.installPreviewFixture("coverage")
         store.settings.readProtectedAppData = false
         XCTAssertTrue(store.settings.isPrivacyLimited(.cursor))
@@ -462,7 +478,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testScanIncompleteTimeoutCopyDiffersFromGeneric() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         store.engine.recordCollectorHealth(
             [
                 ActivityHarvest.CollectorHealth(
@@ -496,7 +512,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testIntentionalSupervisorPartialDoesNotLightIncompleteBanner() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         store.engine.recordCollectorHealth(
             [
                 ActivityHarvest.CollectorHealth(
@@ -562,7 +578,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testWaitingSignalsAreOneDeepLinkAway() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         store.openSettings(focus: .waitingSignals)
         XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
@@ -572,7 +588,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testReadingLineNamesWhatTheAdapterActuallyRead() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         var item = health()
         item.collectorExplain = ActivityHarvest.CollectorExplain(
             filesRead: 3,
@@ -595,7 +611,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testATruncatedWindowSaysTheCountsAreFloors() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         var item = health()
         item.collectorExplain = ActivityHarvest.CollectorExplain(
             filesRead: 2,
@@ -615,7 +631,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testAnEmptyAdapterSaysWhichLayerLostIt() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         var item = health(goal: false)
         for (tag, key) in [
             ("no_source", L10n.Key.supportEmptyNoSource),
@@ -637,7 +653,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testAnUnknownTagIsShownRatherThanSwallowed() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         // A reason added by a future adapter must be visible the day it ships.
         // Falling back to "" would hide it until somebody noticed the blank.
         XCTAssertEqual(store.collectorEmptyReasonLabel("some_future_reason"), "some_future_reason")
@@ -647,7 +663,7 @@ final class SupportHealthTests: XCTestCase {
     @MainActor
     func testNothingReadPrintsNothingRatherThanZeros() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         var item = health()
         item.collectorExplain = ActivityHarvest.CollectorExplain()
         XCTAssertEqual(store.supportReadingDetail(item), "")
@@ -664,7 +680,7 @@ final class SupportHealthTests: XCTestCase {
             factsParsed: 1,
             emptyReason: "deadline"
         )
-        store.language = .en
+        store.settings.language = .en
         let en = store.supportCollectorOutcomeDetail(item)
         store.language = .zh
         let zh = store.supportCollectorOutcomeDetail(item)
@@ -795,7 +811,7 @@ final class PulseVersionTests: XCTestCase {
     @MainActor
     func testUpdateCurrentCopyIsChannelRelative() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         store.updateStatus = .current
         // Copy follows the running build's channel — not a fixed string.
         // XCTest on CI often sees Bundle.main version keys, so channel may be
@@ -974,7 +990,7 @@ final class FactClassTests: XCTestCase {
     @MainActor
     func testTheSupportLineSaysDriftOutLoudAndYieldQuietly() {
         let store = StatusStore()
-        store.language = .en
+        store.settings.language = .en
         var item = AgentSupportHealth(
             agent: .claude, collectorState: .observed, collectorDurationMs: 1,
             collectorRows: 1, sourcePresent: true, collectorErrorKind: "",

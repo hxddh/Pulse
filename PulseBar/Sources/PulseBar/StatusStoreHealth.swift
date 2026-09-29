@@ -152,7 +152,8 @@ extension StatusStore {
     }
 
     var supportHealth: [AgentSupportHealth] {
-        let waitingEvents = previewWaitingEventTimes ?? AttentionIO.latestEventTimes()
+        // Cached by the scan: a Diagnostics redraw reads no file.
+        let waitingEvents = previewWaitingEventTimes ?? engine.latestHookEventMs
         // Cursor Agent is a transport identity, not a second product. Its
         // process/session rows are normalized into Cursor by SnapshotBuilder;
         // listing it again here made the coverage screen claim two adapters

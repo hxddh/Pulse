@@ -89,38 +89,34 @@ struct PulseSettings: Equatable, Codable, Sendable {
 
     static let readLimit = 64 * 1024
 
-    static func directory(home: URL) -> URL {
-        home.appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
+    /// Where `settings.json` lives: next to `attention.tsv` and
+    /// `session-log.json`, so `PULSE_HOME` moves all three. A `home` (tests)
+    /// names a home directory instead.
+    static func directory(home: URL? = nil) -> URL {
+        guard let home else { return AttentionIO.path.deletingLastPathComponent() }
+        return home.appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
     }
 
     /// Shared on-disk path so the menu-bar store and the `--harvest-*` CLI
     /// read the same privacy choice.
-    static func fileURL(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> URL {
+    static func fileURL(home: URL? = nil) -> URL {
         directory(home: home).appendingPathComponent("settings.json")
     }
 
     /// The pre-23.0 file. Deleted at load, never read.
-    static func retiredFileURL(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> URL {
+    static func retiredFileURL(home: URL? = nil) -> URL {
         directory(home: home).appendingPathComponent("settings.txt")
     }
 
     /// The saved settings, or the defaults when there is no readable file.
     /// A `settings.txt` from before 23.0 is removed, unread.
-    static func load(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> PulseSettings {
+    static func load(home: URL? = nil) -> PulseSettings {
         loadIfPresent(home: home) ?? PulseSettings()
     }
 
     /// The saved settings, or nil when there is no readable `settings.json`.
     /// A `settings.txt` from before 23.0 is removed, unread.
-    static func loadIfPresent(
-        home: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> PulseSettings? {
+    static func loadIfPresent(home: URL? = nil) -> PulseSettings? {
         let retired = retiredFileURL(home: home)
         if FileManager.default.fileExists(atPath: retired.path) {
             try? FileManager.default.removeItem(at: retired)
@@ -132,7 +128,7 @@ struct PulseSettings: Equatable, Codable, Sendable {
     }
 
     @discardableResult
-    func save(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+    func save(home: URL? = nil) -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         guard let data = try? encoder.encode(self) else { return false }

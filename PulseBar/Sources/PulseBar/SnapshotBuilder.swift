@@ -80,6 +80,11 @@ enum SnapshotBuilder {
     struct Previous {
         var rows: [AgentRow] = []
         var waitingKeys: Set<String> = []
+        /// When each open wait was raised, by its evidence's clock
+        /// (`SessionLog.waitingSince`). A key still waiting whose wait now
+        /// carries a later raise is a new wait (`SessionLog.isNewRaise`) —
+        /// the second ask on the same row gets its own edge.
+        var waitingSince: [String: Int64] = [:]
     }
 
     struct Result {
@@ -290,16 +295,19 @@ enum SnapshotBuilder {
             switch matchAttention(att, in: drafts.values.map(\.row)) {
             case .hit(let key):
                 guard var draft = drafts[key] else { continue }
-                if !att.session.isEmpty {
-                    draft.row.attentionSession = att.session
-                    if draft.row.sessionID.isEmpty { draft.row.sessionID = att.session }
-                }
+                if !att.session.isEmpty, draft.row.sessionID.isEmpty { draft.row.sessionID = att.session }
+                // 23.0: the entry's own session, exactly (possibly empty) —
+                // the `done` that clears it must carry the same spelling.
                 if att.isTurn {
                     // 16.0: a finished turn marks the row it belongs to and
                     // nothing else — no wait, no invented row.
-                    if draft.wait == nil { draft.turnSinceMs = att.tsMs }
+                    if draft.wait == nil {
+                        draft.turnSinceMs = att.tsMs
+                        draft.row.attentionSession = att.session
+                    }
                 } else {
                     draft.wait = hookWait(att)
+                    draft.row.attentionSession = att.session
                     if draft.row.cwd.isEmpty, !att.cwd.isEmpty { draft.row.cwd = att.cwd }
                 }
                 drafts[key] = draft
@@ -420,6 +428,22 @@ enum SnapshotBuilder {
             }
         }
 
+        // A hook raise is answered in the vendor's own prompt, and nothing
+        // writes `done` when it is: the approved tool simply runs. Its
+        // PreToolUse fired *before* the PermissionRequest, so only activity
+        // stamped after the raise — the next tool, a new prompt — says the
+        // session moved on. Session-scoped: the activity was applied above
+        // only to the row owning that exact session.
+        for (key, draft) in drafts {
+            guard let wait = draft.wait, wait.signal == .hooks,
+                  wait.sinceMs > 0, draft.row.activityMs > wait.sinceMs
+            else { continue }
+            var updated = draft
+            updated.wait = nil
+            drafts[key] = updated
+            result.debugNotes.append("hook wait answered \(draft.row.agent.rawValue) activity after raise")
+        }
+
         // MARK: 6 · One state per row.
 
         var all: [AgentRow] = []
@@ -491,29 +515,29 @@ enum SnapshotBuilder {
         result.showAllAgents = context.showAllAgents && all.count > context.maxVisibleRows
         result.waitingKeys = Set(all.filter(\.isBlocked).map(\.rowKey))
 
-        let snap = snapshot(rows: all, showAll: result.showAllAgents, staleHiddenByAgent: staleHiddenByAgent, context: context)
-        let stalledCount = snap.sectionTotals[.stalled] ?? 0
-        let liveRunning = snap.sectionTotals[.running] ?? 0
-        let recentOnly = snap.sectionTotals[.recent] ?? 0
-        let waitingCount = snap.sectionTotals[.needsYou] ?? 0
-        result.snapshot = snap
+        result.snapshot = snapshot(rows: all, showAll: result.showAllAgents, staleHiddenByAgent: staleHiddenByAgent, context: context)
 
         // Edges — reported, not acted on. `WaitNotifier` owns notification
-        // policy. Keys are stable, so an edge is a plain set difference.
-        let newcomers = result.waitingKeys.subtracting(previous.waitingKeys)
-        result.newlyWaiting = all.filter { newcomers.contains($0.rowKey) }
-        result.resolvedWaits = previous.rows.filter { $0.isBlocked && !result.waitingKeys.contains($0.rowKey) }
-
-        if waitingCount > 0 {
-            result.activity = .waiting
-        } else if liveRunning > 0 || stalledCount > 0 {
-            result.activity = .running
-        } else if recentOnly > 0 {
-            result.activity = .recent
-        } else {
-            result.activity = .empty
+        // policy. Keys are stable: an edge is a key that was not waiting, or
+        // one whose wait is a new raise (a second ask on the same row).
+        result.newlyWaiting = all.filter { row in
+            guard row.isBlocked else { return false }
+            guard previous.waitingKeys.contains(row.rowKey) else { return true }
+            guard let since = previous.waitingSince[row.rowKey] else { return false }
+            return SessionLog.isNewRaise(row, previousSinceMs: since)
         }
+        result.resolvedWaits = previous.rows.filter { $0.isBlocked && !result.waitingKeys.contains($0.rowKey) }
+        result.activity = activity(rows: all)
         return result
+    }
+
+    /// The cadence tier. 23.0: by row state, like the lamp and the header —
+    /// a process with no session, or a finished turn whose CLI stays open,
+    /// is not work in progress and must not hold the fast cadence.
+    static func activity(rows: [AgentRow]) -> ProbeSchedule.Activity {
+        if rows.contains(where: \.isBlocked) { return .waiting }
+        if rows.contains(where: { $0.state == .running }) { return .running }
+        return rows.isEmpty ? .empty : .recent
     }
 
     /// The glance, header, tooltip and lamp for a row list.
@@ -527,65 +551,28 @@ enum SnapshotBuilder {
         let nowMs = context.nowMs
         let waitingRows = all.filter(\.isBlocked)
         let waitingCount = waitingRows.count
-        let liveRunning = all.filter { $0.section == .running }.count
-        let stalledCount = all.filter { $0.section == .stalled }.count
-        let recentOnly = all.filter { $0.section == .recent }.count
+        let census = Census(rows: all)
 
         var snap = PulseSnapshot()
         snap.totalCount = all.count
-        snap.turnCount = all.filter(\.isYourTurn).count
         snap.sectionTotals = [
             .needsYou: waitingCount,
-            .running: liveRunning,
-            .stalled: stalledCount,
-            .recent: recentOnly,
+            .running: all.filter { $0.section == .running }.count,
+            .stalled: all.filter { $0.section == .stalled }.count,
+            .recent: all.filter { $0.section == .recent }.count,
         ]
         // Oldest wait = smallest non-zero timestamp.
         let waitStamps = waitingRows.compactMap { $0.wait?.sinceMs }.filter { $0 > 0 }
-        if let oldest = waitStamps.min() {
-            snap.longestWaitSeconds = max(0, Double(nowMs - oldest) / 1000.0)
-        }
         window(rows: all, showAll: showAll, maxVisible: context.maxVisibleRows, into: &snap)
-
-        // Distinct projects — the header's one legitimate subject.
-        var projectNames: [String] = []
-        for r in all {
-            let p = r.displayPath
-            guard !p.isEmpty, !projectNames.contains(p) else { continue }
-            projectNames.append(p)
-        }
-        snap.projectCount = projectNames.count
-
-        /// A header earns its line only by stating something no single row
-        /// can — how much is hidden, or how far the work is spread.
-        func aggregate() -> String {
-            if snap.hiddenCount > 0 {
-                return String(format: t(.andMore, lang), snap.hiddenCount)
-            }
-            if projectNames.count > 1 {
-                return String(format: t(.acrossProjects, lang), projectNames.count)
-            }
-            return ""
-        }
-
-        /// A complete operational census.
-        func stateSummary() -> String {
-            var bits: [String] = []
-            if waitingCount > 0 { bits.append("\(waitingCount) \(t(.waitingN, lang))") }
-            if liveRunning > 0 { bits.append("\(liveRunning) \(t(.runningN, lang))") }
-            if stalledCount > 0 { bits.append("\(stalledCount) \(t(.stalledN, lang))") }
-            if recentOnly > 0 { bits.append("\(recentOnly) \(t(.recentN, lang))") }
-            return bits.joined(separator: " · ")
-        }
 
         // 23.0 · the lamp. Red when anything is blocked; orange only for a
         // stalled session; green for a running session; grey otherwise — a
         // finished turn is grey even while its process lives, and a process
         // with no session is grey, never orange and never green.
-        let sessionRunning = all.contains { $0.state == .running && !$0.isStalled }
+        let sessionRunning = census.running > 0
         if waitingCount > 0 {
             snap.glance = .waiting
-        } else if stalledCount > 0 {
+        } else if census.stalled > 0 {
             snap.glance = .stalled
         } else if sessionRunning {
             snap.glance = .running
@@ -607,17 +594,7 @@ enum SnapshotBuilder {
             snap.title = ""
         }
 
-        if waitingCount > 0 || liveRunning > 0 || stalledCount > 0 {
-            snap.headerTitle = stateSummary()
-            snap.headerDetail = aggregate()
-        } else if recentOnly > 0 {
-            snap.headerTitle = recentOnly == 1 ? t(.recent1, lang) : "\(recentOnly) \(t(.recentN, lang))"
-            snap.headerDetail = aggregate()
-        } else {
-            snap.headerTitle = t(.noAgents, lang)
-            snap.headerDetail = ""
-        }
-        snap.header = snap.headerDetail.isEmpty ? snap.headerTitle : "\(snap.headerTitle) · \(snap.headerDetail)"
+        snap.headerTitle = census.summary(lang)
 
         // One sentence for the tooltip and VoiceOver: the rule that set the
         // lamp. The tray names the sessions.
@@ -632,6 +609,42 @@ enum SnapshotBuilder {
             (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
         }
         return snap
+    }
+
+    /// Every row counted once, by its state — the census VoiceOver announces.
+    struct Census: Equatable {
+        var blocked = 0
+        var running = 0
+        var stalled = 0
+        var yourTurn = 0
+        var processOnly = 0
+        var recent = 0
+
+        init(rows: [AgentRow]) {
+            for row in rows {
+                switch row.state {
+                case .blocked: blocked += 1
+                case .running: if row.isStalled { stalled += 1 } else { running += 1 }
+                case .yourTurn: yourTurn += 1
+                case .processOnly: processOnly += 1
+                case .recent: recent += 1
+                }
+            }
+        }
+
+        /// "1 needs you · 2 running · 1 recent", or "No coding agents".
+        func summary(_ lang: ResolvedLanguage) -> String {
+            func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+            var bits: [String] = []
+            // 23.0: "1 needs you", not "1 need you".
+            if blocked > 0 { bits.append("\(blocked) \(t(blocked == 1 ? .waiting1 : .waitingN))") }
+            if running > 0 { bits.append("\(running) \(t(.runningN))") }
+            if stalled > 0 { bits.append("\(stalled) \(t(.stalledN))") }
+            if yourTurn > 0 { bits.append("\(yourTurn) \(t(.yourTurnN))") }
+            if processOnly > 0 { bits.append("\(processOnly) \(t(.processOnlyN))") }
+            if recent > 0 { bits.append(recent == 1 ? t(.recent1) : "\(recent) \(t(.recentN))") }
+            return bits.isEmpty ? t(.noAgents) : bits.joined(separator: " · ")
+        }
     }
 
     /// Fold the row list down to what the tray shows.
@@ -731,12 +744,14 @@ enum SnapshotBuilder {
     /// Identity order: the session id (exact, else a prefix that fits one
     /// row only; several is `.ambiguous` and must not light) → the working
     /// directory. A hook that names a session never lands on a row that owns
-    /// a different one — only a row with no session id of its own can take
-    /// it by folder. Unmatched makes a hook-only row (the caller decides).
+    /// a different one, and (23.0) a hook that names none never lands on a
+    /// row that owns one — only a row with no session id of its own can take
+    /// an entry by folder, so the `done` that dismisses it names exactly the
+    /// entry it clears. Unmatched makes a hook-only row (the caller decides).
     static func matchAttention(_ att: AttentionReader.Entry, in rows: [AgentRow]) -> AttentionMatch {
         let candidates = rows.filter { $0.agent == att.id.surfaceID && !RowIdentity.isProcessKey($0.rowKey) }
         guard !candidates.isEmpty else { return .unmatched }
-        var pool = candidates
+        let pool = candidates.filter { $0.sessionID.isEmpty }
         if !att.session.isEmpty {
             let sessionMatches = candidates.filter {
                 !$0.sessionID.isEmpty && (
@@ -750,7 +765,6 @@ enum SnapshotBuilder {
             }
             if sessionMatches.count == 1 { return .hit(sessionMatches[0].rowKey) }
             if sessionMatches.count > 1 { return .ambiguous }
-            pool = candidates.filter { $0.sessionID.isEmpty }
         }
         guard !att.cwd.isEmpty, !pool.isEmpty else { return .unmatched }
         /// The freshest wins a tie; the key makes it total.

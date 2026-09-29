@@ -96,7 +96,7 @@ def main() -> int:
         "image.isTemplate = false",
         "case .waiting: return .systemRed",
         "case .running: return .systemGreen",
-        "case .stalled, .error: return .systemOrange",
+        "case .stalled: return .systemOrange",
         "case .idle: return .systemGray",
     ]
     for fragment in lamp_contract:

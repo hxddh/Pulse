@@ -119,8 +119,10 @@ enum HooksSupport {
     }
 
     /// Exercise the native hook receiver end-to-end in an isolated temporary
-    /// Pulse home. Never writes a fake wait into the user's attention log and
-    /// never asks for Automation, Accessibility, or Screen Recording.
+    /// file. Never writes a fake wait into the user's attention log and
+    /// never asks for Automation, Accessibility, or Screen Recording. The
+    /// file is passed explicitly: it runs off the main thread, and a global
+    /// override would redirect a scan reading at the same moment.
     static func selfTest() -> SelfTestResult {
         seedAssets()
         let fm = FileManager.default
@@ -128,33 +130,30 @@ enum HooksSupport {
             "pulse-hook-selftest-\(UUID().uuidString)",
             isDirectory: true
         )
-        let previousOverride = AttentionIO.pathOverride
+        defer { try? fm.removeItem(at: temp) }
         do {
             try fm.createDirectory(at: temp, withIntermediateDirectories: true)
-            defer {
-                AttentionIO.pathOverride = previousOverride
-                try? fm.removeItem(at: temp)
-            }
-            AttentionIO.pathOverride = temp.appendingPathComponent("attention.tsv")
+            let file = temp.appendingPathComponent("attention.tsv")
             PulseHookReceiver.appendEvent(
                 agent: "codex",
-                kind: PulseHookReceiver.normalizeKind("request_user_input"),
+                kind: AttentionProtocol.normalizeKind("request_user_input"),
                 message: "Pulse self-test",
                 session: "selftest",
-                cwd: ""
+                cwd: "",
+                attentionURL: file
             )
             // Also exercise argv/stdin parsing the vendor path uses.
             _ = PulseHookReceiver.run(
                 arguments: ["--hook", "codex", "request_user_input"],
-                stdin: #"{"message":"Pulse self-test","session_id":"selftest"}"#
+                stdin: #"{"message":"Pulse self-test","session_id":"selftest"}"#,
+                attentionURL: file
             )
-            let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
+            let text = try String(contentsOf: file, encoding: .utf8)
             guard text.contains("codex\tquestion\t"),
                   text.contains("\tPulse self-test\tselftest\t")
             else { return .failed("hook output mismatch") }
             return .passed(Date())
         } catch {
-            AttentionIO.pathOverride = previousOverride
             return .failed(error.localizedDescription)
         }
     }

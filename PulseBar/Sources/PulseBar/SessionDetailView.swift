@@ -185,7 +185,7 @@ struct SessionDetailFace: View {
                 Button {
                     send(.dismiss)
                 } label: {
-                    Text(t(.dismissWait)) + Text("  D").foregroundStyle(.secondary)
+                    Text(t(.dismissWait)) + Text("  ⌘D").foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)

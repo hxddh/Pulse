@@ -29,13 +29,18 @@ struct TrayHeaderModel: Equatable {
         var lastScanMs: Int64?
         /// The cadence in force; nil while parked.
         var intervalSeconds: Double?
+        /// The cadence that scheduled the last scan (`lastScanMs`); nil when
+        /// unknown. Opening the tray shortens `intervalSeconds` at once, but
+        /// the scan on screen was due by this one.
+        var lastScanIntervalSeconds: Double? = nil
         /// The display is asleep or the screen is locked: nothing is read.
         var asleep: Bool = false
     }
 
-    /// A scan is late only past twice its interval — and never sooner than
-    /// this, so opening the tray (which shortens the interval) does not flash
-    /// orange before the scan it asked for lands.
+    /// A scan is late only past twice its interval — the longer of the one
+    /// that scheduled it and the one in force, so opening the tray (which
+    /// shortens the interval) does not flash orange before the scan it asked
+    /// for lands — and never sooner than this.
     static let minimumStaleSeconds: Double = 30
 
     static func make(_ input: Input) -> TrayHeaderModel {
@@ -79,7 +84,8 @@ struct TrayHeaderModel: Equatable {
             return (t(.headerUpdating), input.asleep)
         }
         let age = max(0, Double(input.nowMs - last) / 1000)
-        let allowed = max(2 * (input.intervalSeconds ?? 0), minimumStaleSeconds)
+        let interval = max(input.intervalSeconds ?? 0, input.lastScanIntervalSeconds ?? 0)
+        let allowed = max(2 * interval, minimumStaleSeconds)
         if input.asleep || age > allowed {
             return (String(format: t(.headerNotUpdated), DurationFormat.label(seconds: age, lang: input.lang)), true)
         }
@@ -175,6 +181,28 @@ enum TrayOrder {
             .sorted { (position[$0.rowKey] ?? 0) < (position[$1.rowKey] ?? 0) }
         let newcomers = rows.filter { position[$0.rowKey] == nil }
         return known + newcomers
+    }
+
+    /// The most rows the open tray lists unfiltered while the builder's
+    /// window stays folded: room for newcomers beside the rows already shown.
+    static let openCap = SnapshotBuilder.maxVisibleRows * 2
+
+    /// What the open tray lists with no filter: every row already on screen
+    /// this glance (`pinned`) that still exists, in the frozen order, then
+    /// rows that entered the builder's `window` since, in the order they
+    /// came. A new wait is appended; it never pushes a row the person is
+    /// looking at out of the list. Newcomers stop at `cap`; pinned rows
+    /// never do. Pure.
+    static func openWindow(
+        all: [AgentRow], window: [AgentRow], pinned: Set<String>, frozen: [String], cap: Int
+    ) -> [AgentRow] {
+        let windowKeys = Set(window.map(\.rowKey))
+        let kept = arrange(all.filter { pinned.contains($0.rowKey) }, frozen: frozen)
+        let newcomers = arrange(
+            all.filter { !pinned.contains($0.rowKey) && windowKeys.contains($0.rowKey) },
+            frozen: frozen
+        )
+        return kept + newcomers.prefix(max(0, cap - kept.count))
     }
 
     /// The frozen order with newcomers appended, so a row keeps the place it

@@ -120,7 +120,6 @@ enum GlanceKind: Equatable {
     case running
     case stalled
     case waiting
-    case error
 
     /// VoiceOver reads this instead of the icon. It used to be hardcoded
     /// English, so a Chinese user heard "Needs attention" in an otherwise
@@ -131,7 +130,6 @@ enum GlanceKind: Equatable {
         case .running: return .a11yRunning
         case .stalled: return .a11yStalled
         case .waiting: return .a11yWaiting
-        case .error: return .a11yError
         }
     }
 }
@@ -204,12 +202,12 @@ struct AgentRow: Identifiable, Hashable {
     var agent: AgentID
     /// The vendor's session id; "" for a process-only row.
     var sessionID: String = ""
-    /// The session id the attention file used for this row's raise or turn.
-    /// It can be a prefix of `sessionID` (or the other way round); a `done`
-    /// must name the file's spelling or it clears nothing.
+    /// The session the attention entry behind this row's hook raise or turn
+    /// carried — exactly as the file spells it, possibly empty. It can be a
+    /// prefix of `sessionID` (or the other way round); a `done` must name the
+    /// file's spelling or it clears nothing, and an empty one clears only
+    /// the agent's session-less entry.
     var attentionSession: String = ""
-    /// The session a `done` line for this row must carry.
-    var doneSession: String { attentionSession.isEmpty ? sessionID : attentionSession }
     var cwd: String = ""
     /// The workspace path was reconstructed from a dash-encoded vendor
     /// directory name and the disk could not confirm it. Display only —
@@ -669,25 +667,14 @@ struct PulseSnapshot: Equatable {
     var tooltip: String = "Pulse"
     /// Glance state spoken by VoiceOver, in the resolved language.
     var accessibilityLabel: String = ""
-    /// Short status word for tray header (Needs you / Running / …).
+    /// The census VoiceOver announces when it changes ("1 needs you · 2
+    /// running"), counted by row state.
     var headerTitle: String = ""
-    /// Supporting line under headerTitle (names · relative time).
-    var headerDetail: String = ""
-    var header: String = "No coding agents"
     var rows: [AgentRow] = []
     /// Section totals over the *whole* list, so a heading can say "3 running"
     /// even when the window is showing two of them.
     var sectionTotals: [TraySection: Int] = [:]
-    /// Distinct projects across the whole list — an aggregate no single row
-    /// can state, which is the only kind of thing the header should say.
-    var projectCount: Int = 0
-    /// Longest outstanding wait, in seconds — the number that decides who to
-    /// deal with first, so it reaches the menu bar rather than staying buried
-    /// in a row's third line.
-    var longestWaitSeconds: Double = 0
     var hiddenCount: Int = 0
-    /// 16.0: sessions whose turn ended unseen, over the whole list.
-    var turnCount: Int = 0
     /// Sessions suppressed by the per-agent cap (never silently dropped).
     var cappedSessions: Int = 0
     /// 21.0: sessions older than the fresh window, left out of the list —
@@ -698,6 +685,5 @@ struct PulseSnapshot: Equatable {
     var lamp: LampFace = .idle
     var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0
-    var probeError: String?
     var updatedAt: Date = .distantPast
 }

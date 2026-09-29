@@ -11,7 +11,7 @@ import Foundation
 // Python gates. Adding an agent meant finding all of them; missing one
 // compiled and shipped. Now adding an agent is one `case` and one `AgentSpec`
 // in this file, plus its icon and README row — and
-// `scripts/agent_catalog_check.py` fails CI if a per-agent switch grows back
+// `scripts/catalog_check.py` fails CI if a per-agent switch grows back
 // anywhere else.
 //
 // Order is meaningful. `AgentCatalog.all` is `AgentID.allCases` order, which

@@ -128,14 +128,16 @@ struct TrayInteractionTests {
         #expect(escape.handled)
     }
 
-    @Test func theDetailPageTakesDAndMAndReturn() {
+    @Test func theDetailPageTakesCommandDAndCommandMAndReturn() {
         let open = TrayKeys.State(query: "", selected: "a", detail: "a")
-        let dismiss = press(open, [.character("d")])
+        let dismiss = press(open, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
-        let mute = press(open, [.character("M")])
+        let mute = press(open, [.mute])
         #expect(mute.effect == .toggleMute("a"))
         let go = press(open, [.enter])
         #expect(go.effect == .focus("a"))
+        let letter = press(open, [.character("d")])
+        #expect(letter.effect == nil, "a bare D is a letter, never a dismiss")
         let typing = press(open, [.character("x")])
         #expect(typing.state.query == "", "the detail page has no filter")
         #expect(typing.handled)
@@ -143,7 +145,7 @@ struct TrayInteractionTests {
 
     @Test func dismissOnADetailThatIsNotAWaitDoesNothing() {
         let open = TrayKeys.State(query: "", selected: "b", detail: "b")
-        let outcome = press(open, [.character("d")])
+        let outcome = press(open, [.dismiss])
         #expect(outcome.effect == nil)
     }
 
@@ -194,22 +196,41 @@ struct TrayInteractionTests {
         #expect(down.state.selected == nil)
     }
 
-    @Test func dAndMAreCommandsOnlyWhileTheFilterIsEmpty() {
+    /// 23.0 bug: the tray opens with a row selected, so typing "deploy" or
+    /// "main" to filter dismissed the selected wait or muted its agent on
+    /// the first letter. Letters always filter; the commands carry ⌘.
+    @Test func lettersAlwaysFilterEvenWithAWaitSelected() {
         let onWait = TrayKeys.State(query: "", selected: "a", detail: nil)
-        let dismiss = press(onWait, [.character("D")])
+        let typedD = press(onWait, [.character("d")])
+        #expect(typedD.effect == nil, "D on a selected wait is a letter")
+        #expect(typedD.state.query == "d")
+        let typedM = press(onWait, [.character("M")])
+        #expect(typedM.effect == nil, "M on a selected row is a letter")
+        #expect(typedM.state.query == "M")
+        let word = press(onWait, [.character("d"), .character("e"), .character("p")])
+        #expect(word.effect == nil)
+        #expect(word.state.query == "dep")
+    }
+
+    @Test func commandDAndCommandMActOnTheSelectedRow() {
+        let onWait = TrayKeys.State(query: "", selected: "a", detail: nil)
+        let dismiss = press(onWait, [.dismiss])
         #expect(dismiss.effect == .dismiss("a"))
-        let mute = press(onWait, [.character("m")])
+        let mute = press(onWait, [.mute])
         #expect(mute.effect == .toggleMute("a"))
 
         let onRunning = TrayKeys.State(query: "", selected: "b", detail: nil)
-        let letter = press(onRunning, [.character("d")])
-        #expect(letter.effect == nil, "D is not a dismiss on a row that is not waiting")
-        #expect(letter.state.query == "d")
+        let notAWait = press(onRunning, [.dismiss])
+        #expect(notAWait.effect == nil, "⌘D is not a dismiss on a row that is not waiting")
+        #expect(notAWait.state.query == "")
 
         let filtering = TrayKeys.State(query: "co", selected: "a", detail: nil)
-        let typed = press(filtering, [.character("d")])
-        #expect(typed.state.query == "cod")
-        #expect(typed.effect == nil)
+        let whileFiltering = press(filtering, [.dismiss])
+        #expect(whileFiltering.effect == .dismiss("a"), "⌘D works while filtering too")
+        #expect(whileFiltering.state.query == "co")
+
+        let nothingSelected = press(TrayKeys.State(), [.mute])
+        #expect(nothingSelected.effect == nil)
     }
 
     @Test func commandKeysWorkEverywhere() {
@@ -242,6 +263,14 @@ struct TrayInteractionTests {
         #expect(refresh == .refresh)
         let copy = TrayKeys.key(keyCode: 8, characters: "c", command: true, control: false, option: false)
         #expect(copy == nil, "⌘C stays the system's")
+        let dismiss = TrayKeys.key(keyCode: 2, characters: "d", command: true, control: false, option: false)
+        #expect(dismiss == .dismiss)
+        let dismissByDelete = TrayKeys.key(keyCode: 51, characters: "\u{7f}", command: true, control: false, option: false)
+        #expect(dismissByDelete == .dismiss)
+        let mute = TrayKeys.key(keyCode: 46, characters: "m", command: true, control: false, option: false)
+        #expect(mute == .mute)
+        let bareD = TrayKeys.key(keyCode: 2, characters: "d", command: false, control: false, option: false)
+        #expect(bareD == .character("d"))
         let letter = TrayKeys.key(keyCode: 0, characters: "a", command: false, control: false, option: false)
         #expect(letter == .character("a"))
         let function = TrayKeys.key(keyCode: 122, characters: "\u{F704}", command: false, control: false, option: false)
@@ -285,17 +314,65 @@ struct TrayInteractionTests {
         #expect(stable == ["a", "c", "e", "d"], "a newcomer keeps the place it was given")
     }
 
+    /// 23.0 bug: while the tray was open the list was the builder's top-12
+    /// window re-arranged, so a new wait sorting to the top pushed the
+    /// twelfth row — possibly the one under the pointer — out of the list.
+    @Test func aNewWaitWhileOpenIsAppendedAndPushesNothingOut() {
+        let shown = (0..<12).map { session("r\($0)") }
+        let frozen = shown.map { $0.rowKey }
+        let wait = blocked("new-wait")
+        // The builder now puts the wait first and folds the old twelfth row.
+        let window = [wait] + shown.prefix(11)
+        let all = [wait] + shown
+        let listed = TrayOrder.openWindow(
+            all: all, window: window, pinned: Set(frozen), frozen: frozen, cap: TrayOrder.openCap
+        )
+        let keys = listed.map { $0.rowKey }
+        #expect(keys == frozen + ["new-wait"], "every row shown stays, in place; the wait is appended")
+    }
+
+    @Test func theOpenListDropsRowsThatLeftAndCapsOnlyNewcomers() {
+        let a = session("a"), b = session("b"), c = session("c"), d = session("d")
+        let listed = TrayOrder.openWindow(
+            all: [c, a, d], window: [d, c, a], pinned: ["a", "b", "c"], frozen: ["a", "b", "c"], cap: 3
+        )
+        let keys = listed.map { $0.rowKey }
+        #expect(keys == ["a", "c", "d"], "b left the scan; d is new")
+        let capped = TrayOrder.openWindow(
+            all: [a, b, c, d], window: [d, a], pinned: ["a", "b", "c"], frozen: ["a", "b", "c"], cap: 3
+        )
+        let cappedKeys = capped.map { $0.rowKey }
+        #expect(cappedKeys == ["a", "b", "c"], "the cap holds newcomers back, never a row already shown")
+        let fresh = TrayOrder.openWindow(all: [a, b], window: [b], pinned: [], frozen: [], cap: 12)
+        let freshKeys = fresh.map { $0.rowKey }
+        #expect(freshKeys == ["b"], "nothing pinned: the builder's window")
+    }
+
     // MARK: - The header
 
-    private func header(rows: [AgentRow], scanAgoMs: Int64?, interval: Double? = 2, asleep: Bool = false, lang: ResolvedLanguage = .en) -> TrayHeaderModel {
+    private func header(
+        rows: [AgentRow], scanAgoMs: Int64?, interval: Double? = 2, lastScanInterval: Double? = nil,
+        asleep: Bool = false, lang: ResolvedLanguage = .en
+    ) -> TrayHeaderModel {
         TrayHeaderModel.make(TrayHeaderModel.Input(
             rows: rows,
             lang: lang,
             nowMs: now,
             lastScanMs: scanAgoMs.map { now - $0 },
             intervalSeconds: interval,
+            lastScanIntervalSeconds: lastScanInterval,
             asleep: asleep
         ))
+    }
+
+    /// 23.0 bug: opening the tray shortens the interval at once, and the
+    /// header judged the scan on screen — scheduled a minute apart — by the
+    /// new two seconds: orange "not updated" on every open.
+    @Test func openingTheTrayDoesNotFlashTheHeaderOrange() {
+        let opened = header(rows: [session("r")], scanAgoMs: 50_000, interval: 2, lastScanInterval: 60)
+        #expect(!opened.stale, "the last scan was due by the minute that scheduled it")
+        let late = header(rows: [session("r")], scanAgoMs: 125_000, interval: 2, lastScanInterval: 60)
+        #expect(late.stale, "past twice that interval it is late")
     }
 
     @Test func theHeaderCountsWhatMattersInTone() {
@@ -587,7 +664,7 @@ final class StatusLampTests: XCTestCase {
 /// VoiceOver must speak the interface language, not English.
 final class AccessibilityLocalizationTests: XCTestCase {
     func testGlanceStatesHaveDistinctLocalizedLabels() {
-        for glance in [GlanceKind.idle, .running, .stalled, .waiting, .error] {
+        for glance in [GlanceKind.idle, .running, .stalled, .waiting] {
             let en = L10n.t(glance.accessibilityKey, .en)
             let zh = L10n.t(glance.accessibilityKey, .zh)
             XCTAssertFalse(en.isEmpty)
@@ -991,7 +1068,7 @@ final class RowActionNoticeTests: XCTestCase {
     @MainActor
     private func store(_ lang: AppLanguage = .en) -> StatusStore {
         let store = StatusStore()
-        store.language = lang
+        store.settings.language = lang
         return store
     }
 

@@ -109,7 +109,6 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.rows.isEmpty)
         XCTAssertEqual(r.snapshot.glance, .idle)
         XCTAssertEqual(r.activity, .empty)
-        XCTAssertNil(r.snapshot.probeError)
     }
 
     func testStructuredObservabilityFactsSurviveMerge() {
@@ -178,8 +177,6 @@ final class SnapshotBuilderTests: XCTestCase {
         let r = build(procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 10)])
         XCTAssertEqual(r.snapshot.glance, .idle, "probe-only liveness is not green and not orange")
         XCTAssertEqual(r.snapshot.lamp, LampFace(shape: .dotted, tone: .idle))
-        XCTAssertNotEqual(r.snapshot.glance, .error)
-        XCTAssertNil(r.snapshot.probeError)
     }
 
     func testRuntimeEvidenceTierSurvivesTheMerge() {
@@ -478,7 +475,10 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(r.rows.first?.wait?.signal, .hooks)
     }
 
-    func testAttentionFallsBackToCwdWhenSessionIsUnknown() {
+    /// 23.0: a hook entry that names no session never lands on a row that
+    /// owns one — its `done` could not name that row's session — so it
+    /// keeps its own `agent|hook:<folder>` row, in its folder.
+    func testASessionlessHookKeepsItsOwnRowBesideSessionRows() {
         let r = build(
             harvest: [
                 harvest(.codex, task: "A", session: "s1", cwd: "/work/alpha"),
@@ -486,7 +486,11 @@ final class SnapshotBuilderTests: XCTestCase {
             ],
             attention: [attention(.codex, session: "", cwd: "/work/beta")]
         )
-        XCTAssertEqual(r.rows.filter(\.isBlocked).map(\.cwd), ["/work/beta"])
+        let blocked = r.rows.filter(\.isBlocked)
+        XCTAssertEqual(blocked.map(\.cwd), ["/work/beta"])
+        XCTAssertEqual(blocked.first?.rowKey, RowIdentity.hook(agent: .codex, session: "", cwd: "/work/beta"))
+        XCTAssertEqual(blocked.first?.attentionSession, "")
+        XCTAssertFalse(r.rows.contains { $0.sessionID == "s2" && $0.isBlocked }, "the session row stays as it was")
     }
 
     func testAttentionWithNoMatchingRowCreatesOne() {
@@ -588,7 +592,7 @@ final class SnapshotBuilderTests: XCTestCase {
     func testSingleWaitingIsACount() {
         let r = build(harvest: [harvest(.claude, task: "x", session: "s1", skill: "pending")])
         XCTAssertEqual(r.snapshot.title, "1")
-        XCTAssertEqual(r.snapshot.headerTitle, "1 \(L10n.t(.waitingN, .en))")
+        XCTAssertEqual(r.snapshot.headerTitle, "1 \(L10n.t(.waiting1, .en))", "one needs you, not \"1 need you\"")
     }
 
     /// A fresh wait says "now", which the lamp already conveys. The label
@@ -636,7 +640,7 @@ final class SnapshotBuilderTests: XCTestCase {
             context: context(lang: .zh)
         )
         XCTAssertNotEqual(en.snapshot.headerTitle, zh.snapshot.headerTitle)
-        XCTAssertEqual(zh.snapshot.headerTitle, "1 \(L10n.t(.waitingN, .zh))")
+        XCTAssertEqual(zh.snapshot.headerTitle, "1 \(L10n.t(.waiting1, .zh))")
     }
 
     // MARK: Edges
@@ -771,14 +775,6 @@ final class SnapshotBuilderTests: XCTestCase {
         )
     }
 
-    func testLongestWaitReachesTheSnapshot() {
-        let r = build(
-            procs: [hit(.claude), hit(.codex)],
-            attention: [attention(.claude, ageMs: 30_000), attention(.codex, ageMs: 600_000)]
-        )
-        XCTAssertEqual(r.snapshot.longestWaitSeconds, 600, accuracy: 2)
-    }
-
     // MARK: Stall threshold
 
     func testTheStallThresholdComesFromTheContext() {
@@ -803,11 +799,6 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertFalse(r.rows.contains { $0.isStalled })
     }
 
-    func testNoWaitsMeansNoLongestWait() {
-        let r = build(procs: [hit(.claude)], harvest: [harvest(.claude, task: "x")])
-        XCTAssertEqual(r.snapshot.longestWaitSeconds, 0)
-    }
-
     /// The menu bar has to carry count and age — that is the whole point of
     /// glancing at it instead of opening the panel.
     func testMenuBarTitleCarriesCountAndAge() {
@@ -817,41 +808,6 @@ final class SnapshotBuilderTests: XCTestCase {
         )
         XCTAssertTrue(r.snapshot.title.contains("2"), "count missing from \(r.snapshot.title)")
         XCTAssertTrue(r.snapshot.title.contains("10m"), "age missing from \(r.snapshot.title)")
-    }
-
-    // MARK: 0.25 — the header may only speak in aggregates
-
-    /// It was a constant ("just now"), then the agent names — which every row
-    /// already carried. Now it says nothing rather than repeat them.
-    func testHeaderStaysSilentWhenRowsSayItAll() {
-        let r = build(procs: [hit(.claude)], attention: [attention(.claude)])
-        XCTAssertEqual(r.snapshot.headerDetail, "", "must not restate what the rows show")
-    }
-
-    func testOneProjectIsNotWorthTheHeaderLine() {
-        let r = build(harvest: [
-            harvest(.claude, task: "a", session: "s1", cwd: "/tmp/alpha"),
-            harvest(.codex, task: "b", session: "s2", cwd: "/tmp/alpha"),
-        ])
-        XCTAssertEqual(r.snapshot.projectCount, 1)
-        XCTAssertEqual(r.snapshot.headerDetail, "")
-    }
-
-    /// Spread across projects is a genuine aggregate — no single row shows it.
-    func testSpreadAcrossProjectsIsAnAggregateWorthSaying() {
-        let r = build(harvest: [
-            harvest(.claude, task: "a", session: "s1", cwd: "/tmp/alpha"),
-            harvest(.codex, task: "b", session: "s2", cwd: "/tmp/beta"),
-        ])
-        XCTAssertEqual(r.snapshot.projectCount, 2)
-        XCTAssertTrue(r.snapshot.headerDetail.contains("2"), r.snapshot.headerDetail)
-    }
-
-    func testHiddenRowsOutrankProjectSpread() {
-        let rows = (1...9).map { harvest(.claude, task: "T\($0)", session: "s\($0)", cwd: "/tmp/p\($0)") }
-        let r = build(harvest: rows, context: context(maxSessions: 99, maxRows: 3))
-        XCTAssertGreaterThan(r.snapshot.hiddenCount, 0)
-        XCTAssertTrue(r.snapshot.headerDetail.contains("\(r.snapshot.hiddenCount)"), r.snapshot.headerDetail)
     }
 
     /// The header said "2 running" above four rows.
@@ -870,20 +826,6 @@ final class SnapshotBuilderTests: XCTestCase {
             r.snapshot.headerTitle.contains("\(running)") && r.snapshot.headerTitle.contains("\(recent)"),
             "header must account for every row: \(r.snapshot.headerTitle)"
         )
-    }
-
-    /// Two sessions in the home directory plus one whose project decoded to
-    /// the same place were counted as three projects.
-    func testHomeDoesNotInflateTheProjectCount() {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let user = (home as NSString).lastPathComponent
-        let r = build(harvest: [
-            harvest(.claude, task: "a", session: "s1", cwd: home),
-            harvest(.codex, task: "b", session: "s2", cwd: home),
-            harvest(.amp, task: "c", session: "s3", project: "users-\(user)"),
-            harvest(.gemini, task: "d", session: "s4", cwd: "/tmp/real"),
-        ])
-        XCTAssertEqual(r.snapshot.projectCount, 1, "only /tmp/real is a project")
     }
 
     /// A long-silent live session is worth a badge; the builder decides that
@@ -1762,7 +1704,7 @@ final class WaitingProofTests: XCTestCase {
         row.liveProcess = true
         row.state = .running
         XCTAssertTrue(store.isWaitingNoneNeedsReach(row))
-        store.openWaitingReach(for: row)
+        store.openWaitingReach()
         XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
 
@@ -1982,7 +1924,7 @@ struct BuilderFixTests {
         let row = try #require(r.rows.first)
         #expect(row.isYourTurn)
         #expect(row.sessionID == "sess-full")
-        #expect(row.doneSession == "sess-full-123", "a done under the row's id would clear nothing")
+        #expect(row.attentionSession == "sess-full-123", "a done under the row's id would clear nothing")
     }
 
     // MARK: - 20 · an old file ask with nothing alive is not red
@@ -2163,5 +2105,193 @@ final class ActivityEventBuilderTests: XCTestCase {
         let rows = build(harvest: [harvestRow()], activity: [toolEvent(tsMs: now + 600_000)])
         let row = try XCTUnwrap(rows.first { $0.sessionID == "sess-a" })
         XCTAssertLessThanOrEqual(row.activityMs, now)
+    }
+}
+
+/// 23.0 audit — each test pins a defect a person would have seen: a lamp
+/// that stayed red after the answer, a second ask with no banner, a dismiss
+/// that cleared other terminals, a cadence held fast by a bare process.
+@Suite("Builder audit fixes")
+struct BuilderAuditTests {
+    let now: Int64 = 1_800_000_000_000
+    let second: Int64 = 1_000
+
+    private func session(_ id: AgentID, _ sessionID: String, cwd: String = "/w/app") -> ActivityHarvest.Row {
+        ActivityHarvest.Row(
+            id: id, task: "Fix the login test", project: "", cwd: cwd, skill: "",
+            harvestMs: now - 60 * second, sessionID: sessionID, evidence: .session
+        )
+    }
+
+    private func hook(
+        _ id: AgentID = .claude, session: String = "s1", cwd: String = "/w/app", ago: Int64 = 30_000
+    ) -> AttentionReader.Entry {
+        AttentionReader.Entry(
+            id: id, kind: "Permission", message: "Bash: npm test", tsMs: now - ago, session: session, cwd: cwd
+        )
+    }
+
+    private func tool(session: String = "s1", at tsMs: Int64) -> ActivitySpool.Event {
+        ActivitySpool.Event(
+            agent: "claude", session: session, event: "tool", tool: "Bash", target: "npm test",
+            prompt: "", cwd: "/w/app", tsMs: tsMs
+        )
+    }
+
+    private func build(
+        procs: [ProcessProbe.Hit] = [],
+        harvest: [ActivityHarvest.Row] = [],
+        attention: [AttentionReader.Entry] = [],
+        activity: [ActivitySpool.Event] = [],
+        previous: SnapshotBuilder.Previous = .init(),
+        lang: ResolvedLanguage = .en
+    ) -> SnapshotBuilder.Result {
+        SnapshotBuilder.build(
+            SnapshotBuilder.Input(procs: procs, harvest: harvest, attention: attention, activity: activity),
+            previous: previous,
+            context: SnapshotBuilder.Context(
+                nowMs: now,
+                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
+                lang: lang
+            )
+        )
+    }
+
+    // MARK: - 1 · a permission answered in the terminal goes out
+
+    @Test func aHookWaitGoesOutWhenTheSessionMovesAfterIt() throws {
+        let raised = build(harvest: [session(.claude, "s1")], attention: [hook()])
+        let waiting = try #require(raised.rows.first)
+        #expect(waiting.isBlocked)
+
+        // Approved in the terminal: the tool runs, the next tool's
+        // PreToolUse lands after the raise. Nothing wrote `done`.
+        let answered = build(
+            harvest: [session(.claude, "s1")], attention: [hook()], activity: [tool(at: now - 10 * second)]
+        )
+        let row = try #require(answered.rows.first)
+        #expect(!row.isBlocked, "the answer was given in the vendor's own prompt")
+        #expect(answered.snapshot.glance != .waiting)
+    }
+
+    @Test func thePreToolUseBeforeTheRaiseDoesNotClearIt() throws {
+        // PreToolUse for the tool being asked about fires before the
+        // PermissionRequest: activity older than the raise is not an answer.
+        let r = build(
+            harvest: [session(.claude, "s1")], attention: [hook()], activity: [tool(at: now - 31 * second)]
+        )
+        let row = try #require(r.rows.first)
+        #expect(row.isBlocked)
+    }
+
+    @Test func activityInAnotherSessionNeverClearsAWait() throws {
+        let r = build(
+            harvest: [session(.claude, "s1"), session(.claude, "s2", cwd: "/w/other")],
+            attention: [hook(session: "s1")],
+            activity: [tool(session: "s2", at: now - second)]
+        )
+        let row = try #require(r.rows.first { $0.sessionID == "s1" })
+        #expect(row.isBlocked, "No fake resolution either: only the wait's own session can answer it")
+    }
+
+    // MARK: - 2 · a second ask on the same row is a new edge
+
+    @Test func aSecondAskOnAWaitingRowIsANewEdge() throws {
+        let first = build(harvest: [session(.claude, "s1")], attention: [hook(ago: 60 * second)])
+        let firstRow = try #require(first.rows.first)
+        let edgesFirst = first.newlyWaiting.map { $0.rowKey }
+        #expect(edgesFirst == [firstRow.rowKey])
+        let since = try #require(firstRow.wait?.sinceMs)
+
+        let previous = SnapshotBuilder.Previous(
+            rows: first.rows, waitingKeys: first.waitingKeys, waitingSince: [firstRow.rowKey: since]
+        )
+        let same = build(harvest: [session(.claude, "s1")], attention: [hook(ago: 60 * second)], previous: previous)
+        #expect(same.newlyWaiting.isEmpty, "the same ask is not a second edge")
+
+        // The first was approved, the next tool began, and it asks again —
+        // all between two scans.
+        let again = build(
+            harvest: [session(.claude, "s1")],
+            attention: [hook(ago: 5 * second)],
+            activity: [tool(at: now - 20 * second)],
+            previous: previous
+        )
+        let edges = again.newlyWaiting.map { $0.rowKey }
+        #expect(edges == [firstRow.rowKey], "a new raise on a key that was waiting gets its own edge")
+    }
+
+    // MARK: - 4 · a session-less hook wait is dismissed on its own
+
+    @Test func dismissingASessionlessHookWaitNamesNoSession() throws {
+        let r = build(
+            harvest: [session(.gemini, "g1")],
+            attention: [hook(.gemini, session: "", cwd: "/w/app")]
+        )
+        let blocked = r.rows.filter { $0.isBlocked }
+        let row = try #require(blocked.first)
+        #expect(blocked.count == 1)
+        #expect(row.sessionID.isEmpty, "not the session row in the same folder")
+        let done = try #require(StatusStore.doneLine(for: row))
+        #expect(done.session == "", "the done names exactly the entry: no session")
+        #expect(done.agent == .gemini)
+
+        let sessionRow = try #require(r.rows.first { $0.sessionID == "g1" })
+        #expect(StatusStore.doneLine(for: sessionRow) == nil, "a row that is not a hook wait writes no done")
+    }
+
+    @Test func aHookWaitOnASessionRowIsDismissedUnderTheFilesSpelling() throws {
+        let r = build(harvest: [session(.claude, "sess-full")], attention: [hook(session: "sess-full-123")])
+        let row = try #require(r.rows.first)
+        #expect(row.isBlocked)
+        let done = try #require(StatusStore.doneLine(for: row))
+        #expect(done.session == "sess-full-123")
+    }
+
+    // MARK: - 7 · cadence and census by state
+
+    @Test func aBareProcessDoesNotHoldTheRunningCadence() {
+        let r = build(procs: [ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 42)])
+        #expect(r.rows.first?.isProcessOnly == true)
+        #expect(r.activity == .recent, "a process with no session is not work in progress")
+        #expect(!r.snapshot.headerTitle.contains(L10n.t(.runningN, .en)), "and VoiceOver does not call it running")
+        #expect(r.snapshot.headerTitle == "1 \(L10n.t(.processOnlyN, .en))")
+    }
+
+    @Test func aFinishedTurnWithItsCLIOpenIsNotRunning() throws {
+        let turn = AttentionReader.Entry(
+            id: .claude, kind: "Turn", message: "", tsMs: now - 5 * second, session: "s1", cwd: "/w/app"
+        )
+        let r = build(
+            procs: [ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 42)],
+            harvest: [session(.claude, "s1")],
+            attention: [turn]
+        )
+        let row = try #require(r.rows.first)
+        #expect(row.isYourTurn)
+        #expect(r.activity == .recent)
+        #expect(r.snapshot.headerTitle == "1 \(L10n.t(.yourTurnN, .en))")
+    }
+
+    @Test func aRunningSessionStillHoldsTheRunningCadence() {
+        let r = build(
+            procs: [ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 42)],
+            harvest: [session(.claude, "s1")]
+        )
+        #expect(r.activity == .running)
+    }
+
+    // MARK: - 15 · one wait is singular
+
+    @Test func oneWaitIsSaidInTheSingular() {
+        let r = build(harvest: [session(.claude, "s1")], attention: [hook()])
+        #expect(r.snapshot.headerTitle == "1 \(L10n.t(.waiting1, .en))")
+        let zh = build(harvest: [session(.claude, "s1")], attention: [hook()], lang: .zh)
+        #expect(zh.snapshot.headerTitle == "1 \(L10n.t(.waiting1, .zh))")
+        let two = build(
+            harvest: [session(.claude, "s1"), session(.claude, "s2", cwd: "/w/b")],
+            attention: [hook(session: "s1"), hook(session: "s2", cwd: "/w/b")]
+        )
+        #expect(two.snapshot.headerTitle == "2 \(L10n.t(.waitingN, .en))")
     }
 }

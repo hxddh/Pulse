@@ -172,13 +172,11 @@ enum L10n {
         case .a11yRunning: return "Running"
         case .a11yStalled: return "Stalled"
         case .a11yWaiting: return "Needs you"
-        case .a11yError: return "Cannot refresh"
         case .sectionNeedsYou: return "Needs you"
         case .sectionRunning: return "Running"
         case .sectionStalled: return "Stalled"
         case .sectionRecent: return "Recent"
         case .moreActions: return "More actions"
-        case .acrossProjects: return "across %d projects"
         case .agoFormat: return "%@ ago"
         case .noActivityYet: return "no activity yet"
         case .stalled: return "Stalled"
@@ -301,7 +299,6 @@ enum L10n {
         case .lampRuleTurn: return "Grey: a turn ended — your move when you are ready."
         case .lampRuleRecent: return "Grey: nothing running; recent sessions are listed."
         case .lampRuleIdle: return "Grey: no coding agent is running."
-        case .lampRuleCantRefresh: return "Orange: Pulse could not read processes or sessions on its last try."
         case .auditRaised: return "Raised %@"
         case .auditPosted: return "Banner shown %@"
         case .auditSummary: return "Shown in a summary banner %@"
@@ -323,7 +320,7 @@ enum L10n {
         case .detailBack: return "Back"
         case .detailMinutesIn: return "%@ %d min"
         case .filterMatches: return "%d matches"
-        case .trayKeyHints: return "↑↓ select   ↩ go   → details   D dismiss   M mute   esc close"
+        case .trayKeyHints: return "↑↓ select   ↩ go   → details   ⌘D dismiss   ⌘M mute   esc close"
         case .activityLeft: return "left the list"
         case .activityFromSession: return "session record"
         case .activityFromProcess: return "process only"
@@ -545,13 +542,11 @@ enum L10n {
         case .a11yRunning: return "运行中"
         case .a11yStalled: return "停滞"
         case .a11yWaiting: return "需要你"
-        case .a11yError: return "无法刷新"
         case .sectionNeedsYou: return "需要你"
         case .sectionRunning: return "运行中"
         case .sectionStalled: return "停滞"
         case .sectionRecent: return "最近"
         case .moreActions: return "更多操作"
-        case .acrossProjects: return "%d 个项目"
         case .agoFormat: return "%@前"
         case .noActivityYet: return "暂无动静"
         case .stalled: return "停滞"
@@ -671,7 +666,6 @@ enum L10n {
         case .lampRuleTurn: return "灰：有回合结束了，轮到你（不急）。"
         case .lampRuleRecent: return "灰：没有在运行的；列出的是最近的会话。"
         case .lampRuleIdle: return "灰：没有在运行的编码 Agent。"
-        case .lampRuleCantRefresh: return "橙：Pulse 上一次没能读取进程和会话。"
         case .auditRaised: return "%@ 开始等待"
         case .auditPosted: return "%@ 发出通知"
         case .auditSummary: return "%@ 合并进汇总通知"
@@ -693,7 +687,7 @@ enum L10n {
         case .detailBack: return "返回"
         case .detailMinutesIn: return "%@ %d 分钟"
         case .filterMatches: return "%d 个匹配"
-        case .trayKeyHints: return "↑↓ 选择   ↩ 前往   → 详情   D 忽略   M 静音   esc 关闭"
+        case .trayKeyHints: return "↑↓ 选择   ↩ 前往   → 详情   ⌘D 忽略   ⌘M 静音   esc 关闭"
         case .activityLeft: return "离开了列表"
         case .activityFromSession: return "会话记录"
         case .activityFromProcess: return "仅进程"
@@ -850,10 +844,10 @@ enum L10n {
         case updateIdle, updateChecking, updateCurrent, updateCurrentPrerelease, updateCurrentStable
         case updateAvailable, updateFailed
         case probeEvery, probeParked
-        case a11yIdle, a11yRunning, a11yStalled, a11yWaiting, a11yError
+        case a11yIdle, a11yRunning, a11yStalled, a11yWaiting
         case sectionNeedsYou, sectionRunning, sectionStalled, sectionRecent
         case moreActions
-        case acrossProjects, agoFormat
+        case agoFormat
         case noActivityYet
         case stalled, stalledFor
         case supportScanIncomplete, supportScanIncompleteTimeout
@@ -916,7 +910,6 @@ enum L10n {
         case lampRuleTurn
         case lampRuleRecent
         case lampRuleIdle
-        case lampRuleCantRefresh
         case auditRaised
         case auditPosted
         case auditSummary

@@ -44,6 +44,7 @@ extension StatusStore {
             nowMs: Int64(now.timeIntervalSince1970 * 1000),
             lastScanMs: lastRead.map { Int64($0.timeIntervalSince1970 * 1000) },
             intervalSeconds: engine.currentInterval,
+            lastScanIntervalSeconds: engine.lastScanInterval,
             asleep: engine.powerParked
         ))
     }

@@ -14,19 +14,24 @@ import Foundation
 /// | ↩              | go: the terminal, else the detail      | go              |
 /// | → / Space      | detail (Space types when filtering)    | —               |
 /// | ← / Esc        | Esc: clear the filter, else close      | back            |
-/// | D              | dismiss the selected wait              | dismiss         |
-/// | M              | mute / unmute the selected agent       | mute / unmute   |
+/// | ⌘D / ⌘⌫        | dismiss the selected wait              | dismiss         |
+/// | ⌘M             | mute / unmute the selected agent       | mute / unmute   |
 /// | ⌫              | edit the filter                        | —               |
-/// | any other key  | type to filter                         | —               |
+/// | any letter     | type to filter                         | —               |
 /// | ⌘R ⌘, ⌘Q       | refresh · settings · quit              | same            |
 ///
-/// D and M are commands while the filter is empty and a row is selected
-/// (D only on a blocked row); otherwise they are letters like any other.
+/// 23.0: a bare letter is always the filter's. The tray opens with a row
+/// selected, so a bare D or M used to dismiss or mute when someone simply
+/// started typing a name; the commands carry ⌘.
 enum TrayKeys {
     enum Key: Equatable {
         case up, down, left, right, space, enter, escape, backspace
         /// Printable text typed without ⌘, ⌃ or ⌥.
         case character(String)
+        /// ⌘D or ⌘⌫
+        case dismiss
+        /// ⌘M
+        case mute
         /// ⌘R
         case refresh
         /// ⌘,
@@ -99,16 +104,11 @@ enum TrayKeys {
             case .enter:
                 guard let row, row.canFocus else { return done() }
                 return done(.focus(row.key))
-            case .character(let text):
-                switch text.lowercased() {
-                case "d":
-                    guard let row, row.blocked else { return done() }
-                    return done(.dismiss(row.key))
-                case "m":
-                    return done(.toggleMute(open))
-                default:
-                    return done()
-                }
+            case .dismiss:
+                guard let row, row.blocked else { return done() }
+                return done(.dismiss(row.key))
+            case .mute:
+                return done(.toggleMute(open))
             default:
                 return done()
             }
@@ -150,14 +150,13 @@ enum TrayKeys {
             return done()
         case .left:
             return done()
+        case .dismiss:
+            guard let selected, selected.blocked else { return done() }
+            return done(.dismiss(selected.key))
+        case .mute:
+            guard let selected else { return done() }
+            return done(.toggleMute(selected.key))
         case .character(let text):
-            if state.query.isEmpty, let selected {
-                switch text.lowercased() {
-                case "d" where selected.blocked: return done(.dismiss(selected.key))
-                case "m": return done(.toggleMute(selected.key))
-                default: break
-                }
-            }
             next.query += text
             next.selected = nil
             return done()
@@ -191,10 +190,13 @@ enum TrayKeys {
     /// An event as a `Key`, or nil when it is not the tray's.
     static func key(keyCode: UInt16, characters: String, command: Bool, control: Bool, option: Bool) -> Key? {
         if command {
+            if keyCode == 51 { return .dismiss }
             switch characters.lowercased() {
             case "r": return .refresh
             case ",": return .settings
             case "q": return .quit
+            case "d": return .dismiss
+            case "m": return .mute
             default: return nil
             }
         }

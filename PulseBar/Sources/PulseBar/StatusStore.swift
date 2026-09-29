@@ -110,12 +110,12 @@ final class StatusStore {
 
     // MARK: - Language
 
-    var language: AppLanguage {
-        get { settings.language }
-        set { settings.language = newValue }
-    }
+    /// `--language=` on the command line: wins over `settings.json` for this
+    /// run and is never saved. Set before `start()`; not observed — it does
+    /// not change while the app runs.
+    @ObservationIgnored var languageOverride: AppLanguage?
 
-    var lang: ResolvedLanguage { settings.language.resolved }
+    var lang: ResolvedLanguage { (languageOverride ?? settings.language).resolved }
 
     func tr(_ key: L10n.Key) -> String { L10n.t(key, lang) }
 
@@ -150,10 +150,6 @@ final class StatusStore {
         engine.stop()
         GlobalHotKey.uninstall()
         NSApp.terminate(nil)
-    }
-
-    func refresh() {
-        refresh(reason: "manual")
     }
 
     func refresh(reason: String, agentFilter: Set<AgentID>? = nil) {
@@ -242,8 +238,8 @@ final class StatusStore {
     // MARK: - Settings
 
     /// Read `settings.json` (a pre-23.0 `settings.txt` is deleted, unread).
-    /// With no file, whatever the store holds stays — the defaults, or a
-    /// `--language=` the command line set.
+    /// With no file, the defaults stay. A `--language=` from the command line
+    /// is `languageOverride`, not a setting, so a file cannot undo it.
     func loadSettings() {
         if let loaded = PulseSettings.loadIfPresent() {
             if loaded != settings { settings = loaded }
@@ -420,8 +416,8 @@ final class StatusStore {
     /// session-scoped `done` in the attention file is the record — it
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
-        guard row.isYourTurn, !row.doneSession.isEmpty else { return }
-        AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
+        guard row.isYourTurn, !row.attentionSession.isEmpty else { return }
+        AttentionIO.appendDone(agent: row.agent, session: row.attentionSession)
         refresh(reason: "turn-seen")
     }
 
@@ -433,19 +429,26 @@ final class StatusStore {
     }
 
     func dismissWaiting(_ row: AgentRow) {
-        let isHarvestPending = Self.dismissIsSoft(row)
-        // 0.95: pure harvest soft-dismiss must not write agent-wide Attention
-        // done (empty session clears every wait for that agent).
-        if row.wait?.signal == .hooks {
-            AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
-        } else if !isHarvestPending, !row.doneSession.isEmpty {
-            AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
+        let soft = Self.dismissIsSoft(row)
+        // A hook wait is cleared in the attention file under exactly the
+        // session its entry carried (23.0) — an empty one clears only that
+        // agent's session-less entry, never its other sessions. A harvest
+        // or vendor wait writes nothing there: the log keeps it quiet.
+        if let done = Self.doneLine(for: row) {
+            AttentionIO.appendDone(agent: done.agent, session: done.session)
         }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         updateLog(immediately: true) { log in
-            _ = log.dismiss(row, soft: isHarvestPending, nowMs: nowMs)
+            _ = log.dismiss(row, soft: soft, nowMs: nowMs)
         }
         refresh(reason: "dismissWaiting")
+    }
+
+    /// The `done` a dismissal writes: only for a hook wait, and with the
+    /// entry's own session spelling (possibly empty). Pure.
+    nonisolated static func doneLine(for row: AgentRow) -> (agent: AgentID, session: String)? {
+        guard row.wait?.signal == .hooks else { return nil }
+        return (row.agent, row.attentionSession)
     }
 
     /// Live Waiting-none session — needs Attention Reach, not a fake Waiting chip.
@@ -456,7 +459,7 @@ final class StatusStore {
     }
 
     /// Open Waiting signals (how an agent without a Waiting path gets one).
-    func openWaitingReach(for row: AgentRow) {
+    func openWaitingReach() {
         openSettings(focus: .waitingSignals)
     }
 
@@ -638,16 +641,19 @@ extension PulseSnapshot {
     /// Whether `next` must replace `current` for the surfaces to stay true.
     ///
     /// Content changed → yes. Otherwise only the clock can make a drawn fact
-    /// stale: a row whose wait or activity is younger than a minute shows a
-    /// seconds count that moves every scan, and minute labels move once a
-    /// minute. Nothing else about an unchanged world is worth a redraw.
+    /// stale: a wait younger than a minute shows a seconds count that moves
+    /// every scan, and minute labels move once a minute. Nothing else about
+    /// an unchanged world is worth a redraw.
     static func needsPublish(next: PulseSnapshot, current: PulseSnapshot) -> Bool {
         if current.updatedAt == .distantPast { return true }
         if !next.sameContent(as: current) { return true }
+        // Only a wait's age is drawn in seconds (the row's time while it is
+        // blocked); the menu-bar title's "2 · 4m" is content, so its minute
+        // label moving already made `next` differ above.
         let nowMs = Int64(next.updatedAt.timeIntervalSince1970 * 1000)
         let secondsOnScreen = next.rows.contains { row in
-            let newest = max(row.wait?.sinceMs ?? 0, row.activityMs, row.harvestMs)
-            return newest > 0 && nowMs - newest < secondsLabelWindowMs
+            guard let since = row.wait?.sinceMs, since > 0 else { return false }
+            return nowMs - since < secondsLabelWindowMs
         }
         if secondsOnScreen { return true }
         return next.updatedAt.timeIntervalSince(current.updatedAt) >= minuteLabelRefresh

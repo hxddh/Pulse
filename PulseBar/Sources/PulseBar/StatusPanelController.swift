@@ -31,8 +31,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     let ui: TrayUI
     /// Follows only `snapshot` — a settings write does not touch the lamp.
     private var snapshotLoop: ObservationLoop?
-    /// Follows the tray's own state (a filter, the detail page) to re-fit
-    /// the panel without animating it.
+    /// Follows the tray's own state (a filter, the detail page), the tray
+    /// notice and the row notices to re-fit the panel.
     private var uiLoop: ObservationLoop?
     /// What the last fit measured, so only a change in the number of rows
     /// animates the frame (EXPERIENCE §4: nothing moves on a plain scan).
@@ -97,7 +97,15 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             self.scheduleResize()
         }
         let ui = self.ui
-        uiLoop = ObservationLoop(track: { _ = ui.keys }) { [weak self] in
+        // The tray's own state, and the lines that come and go above and
+        // under the rows — the one notice, a row's brief action notice, the
+        // rows pinned while open — all change the panel's height.
+        uiLoop = ObservationLoop(track: {
+            _ = ui.keys
+            _ = ui.pinned
+            _ = store.trayNotice
+            _ = store.rowActionNotices
+        }) { [weak self] in
             self?.scheduleResize()
         }
         updateStatusItem(store.snapshot)

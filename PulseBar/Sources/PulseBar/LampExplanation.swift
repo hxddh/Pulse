@@ -9,7 +9,7 @@ import Foundation
 /// a rule out.
 struct LampExplanation: Equatable, Sendable {
     enum Rule: String, Equatable, Sendable {
-        case blocked, stalled, running, processOnly, yourTurn, recent, idle, cantRefresh
+        case blocked, stalled, running, processOnly, yourTurn, recent, idle
     }
 
     var rule: Rule
@@ -23,7 +23,6 @@ struct LampExplanation: Equatable, Sendable {
     /// from outside, then recent sessions.
     static func rule(rows: [AgentRow], glance: GlanceKind) -> Rule {
         switch glance {
-        case .error: return .cantRefresh
         case .waiting: return .blocked
         case .stalled: return .stalled
         case .running: return .running
@@ -46,7 +45,6 @@ struct LampExplanation: Equatable, Sendable {
         case .yourTurn: return t(.lampRuleTurn)
         case .recent: return t(.lampRuleRecent)
         case .idle: return t(.lampRuleIdle)
-        case .cantRefresh: return t(.lampRuleCantRefresh)
         }
     }
 }

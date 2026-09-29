@@ -111,7 +111,7 @@ struct ScanQuietTests {
         scan(store, ticket: 1)
         let fired = watch(store, Self.observed)
         var next = store.snapshot
-        next.header = "1 running"
+        next.headerTitle = "1 running"
         store.snapshot = next
         #expect(fired.names == ["snapshot"], "only what changed, and nothing else: \(fired.names)")
     }
@@ -167,14 +167,14 @@ struct ScanQuietTests {
         #expect(loop.deliveries == 0, "a settings write does not touch the lamp")
 
         var next = store.snapshot
-        next.header = "2 running"
+        next.headerTitle = "2 running"
         store.snapshot = next
-        next.header = "3 running"
+        next.headerTitle = "3 running"
         store.snapshot = next
         for _ in 0..<10 where loop.deliveries == 0 { await Task.yield() }
         #expect(loop.deliveries == 1, "a burst in one turn is one delivery")
 
-        next.header = "4 running"
+        next.headerTitle = "4 running"
         store.snapshot = next
         for _ in 0..<10 where loop.deliveries == 1 { await Task.yield() }
         #expect(loop.deliveries == 2, "and the loop re-arms")
@@ -189,8 +189,50 @@ struct ScanQuietTests {
         next.updatedAt = current.updatedAt.addingTimeInterval(2)
         #expect(!PulseSnapshot.needsPublish(next: next, current: current), "same world, two seconds later")
 
-        next.header = "1 running"
+        next.headerTitle = "1 running"
         #expect(PulseSnapshot.needsPublish(next: next, current: current), "content moved")
+    }
+
+    /// 23.0 bug: the snapshot carried the oldest wait's age in seconds, so
+    /// every scan while anything was blocked differed from the last and
+    /// republished — the tray and the lamp woke on every tick.
+    @Test func aStandingWaitIsQuietBetweenMinuteLabels() {
+        let t0: Int64 = 1_800_000_000_000
+        func scan(at nowMs: Int64) -> PulseSnapshot {
+            let entry = AttentionReader.Entry(
+                id: .claude, kind: "Permission", message: "Bash: make", tsMs: t0 - 10 * 60_000, session: "s1", cwd: "/w"
+            )
+            var snap = SnapshotBuilder.build(
+                SnapshotBuilder.Input(attention: [entry]),
+                previous: .init(),
+                context: SnapshotBuilder.Context(
+                    nowMs: nowMs,
+                    terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
+                    lang: .en
+                )
+            ).snapshot
+            snap.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
+            return snap
+        }
+        let first = scan(at: t0)
+        let second = scan(at: t0 + 2_000)
+        #expect(second.sameContent(as: first), "a ten-minute wait two seconds later is the same world")
+        #expect(!PulseSnapshot.needsPublish(next: second, current: first))
+    }
+
+    /// Only a wait's age is drawn in seconds; a running row's fresh activity
+    /// is no reason to redraw every scan.
+    @Test func freshActivityOnARunningRowDoesNotRepublish() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        var current = PulseSnapshot()
+        current.updatedAt = t0
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.state = .running
+        row.activityMs = Int64(t0.timeIntervalSince1970 * 1000) - 5_000
+        current.rows = [row]
+        var next = current
+        next.updatedAt = t0.addingTimeInterval(2)
+        #expect(!PulseSnapshot.needsPublish(next: next, current: current))
     }
 
     @Test func theFirstScanAlwaysLands() {

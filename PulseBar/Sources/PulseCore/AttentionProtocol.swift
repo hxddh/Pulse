@@ -53,9 +53,6 @@ public enum AttentionProtocol {
     public static let header =
         "# pulse-attention v3 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\thost\\tfront)\n"
 
-    /// Any line starting with this is a header, whatever version it names.
-    public static let headerPrefix = "# pulse-attention "
-
     /// Column count of a complete v3 record.
     public static let columnCount = 8
 
@@ -70,22 +67,13 @@ public enum AttentionProtocol {
         return cols.count == columnCount ? cols : nil
     }
 
-    /// Canonical kinds, as strings, for the writers and older call sites.
-    public static let waitingKinds: Set<String> = Set(
-        AttentionKind.allCases.filter(\.isBlocking).map(\.rawValue)
-    )
-    public static let clearKinds: Set<String> = [AttentionKind.done.rawValue]
-    public static let turnKinds: Set<String> = [AttentionKind.turn.rawValue]
-    public static let lifecycleKinds: Set<String> = [
-        AttentionKind.subagentStart.rawValue, AttentionKind.subagentStop.rawValue,
-    ]
-
     public static var acceptedWriteKinds: Set<String> {
         Set(AttentionKind.allCases.map(\.rawValue))
     }
 
-    /// Vendor event names onto the v3 kinds. Unknown tokens stay as-is so
-    /// `acceptsWrite(kind:)` can reject them.
+    /// Vendor event names onto the v3 kinds. Unknown tokens stay as-is — and
+    /// an empty one stays empty — so `acceptsWrite(kind:)` rejects them: a
+    /// line that does not say what it is about is never Waiting.
     ///
     /// v3 changes three meanings on purpose (docs/attention-protocol.md):
     /// `idle_prompt` / `idle` and `stop` are **your turn**, not blocked and
@@ -142,7 +130,7 @@ public enum AttentionProtocol {
         if low.contains("user_input"), !low.contains("response") {
             return AttentionKind.question.rawValue
         }
-        return k.isEmpty ? AttentionKind.waiting.rawValue : low
+        return low
     }
 
     /// The typed kind of a token, or nil when the protocol does not know it.
