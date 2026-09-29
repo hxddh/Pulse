@@ -121,23 +121,29 @@ struct AttentionLedger: Codable, Equatable {
             .sorted { $0.resolvedAtMs > $1.resolvedAtMs }
     }
 
+    static func title(for row: AgentRow) -> String {
+        let title = row.usefulTask ?? AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
+        return String(title.prefix(160))
+    }
+
     mutating func observe(row: AgentRow, nowMs: Int64) {
         let key = row.rowKey
         if let index = events.lastIndex(where: { $0.rowKey == key && $0.isActive }) {
             events[index].lastSeenAtMs = nowMs
-            let title = row.usefulTask ?? String(row.agent.displayName.prefix(160))
-            events[index].title = String(title.prefix(160))
+            // 21.0: the same title rule as a new event. The update used to
+            // fall back to the agent name while creation fell back to the
+            // project, so the second scan of every wait rewrote the file.
+            events[index].title = Self.title(for: row)
             events[index].kind = row.waitKind
             events[index].project = AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
             return
         }
-        let title = row.usefulTask ?? AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
         events.append(Event(
             id: "\(key)|\(nowMs)",
             rowKey: key,
             agent: row.agent.rawValue,
             session: row.sessionID,
-            title: String(title.prefix(160)),
+            title: Self.title(for: row),
             kind: row.waitKind,
             project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
             observedAtMs: nowMs,

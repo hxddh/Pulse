@@ -1134,7 +1134,7 @@ final class RowMetricsTests: XCTestCase {
         let story = store().rowStoryLine(r)
         // Chip owns kind·duration; story only carries signal when no message.
         XCTAssertFalse(story.localizedCaseInsensitiveContains("permission"), story)
-        XCTAssertTrue(story.contains("hooks") || story.contains("Hooks") || story.contains("钩子"), story)
+        XCTAssertTrue(story.contains(store().tr(.signalHooks)), story)
         let dur = store().waitDurationLabel(r)
         XCTAssertFalse(dur.isEmpty)
         XCTAssertNil(store().localizedWaitDetail(r))
@@ -1152,7 +1152,7 @@ final class RowMetricsTests: XCTestCase {
         let detail = store().localizedWaitDetail(r)
         XCTAssertNotNil(detail)
         XCTAssertTrue(detail!.hasPrefix("↳ Allow network"), detail!)
-        XCTAssertTrue(detail!.contains("hooks") || detail!.contains("Hooks") || detail!.contains("钩子"), detail!)
+        XCTAssertTrue(detail!.contains(store().tr(.signalHooks)), detail!)
         // Duration stays on the chip — not leading the detail.
         XCTAssertFalse(detail!.hasPrefix("↳ 1m"), detail!)
         XCTAssertFalse(detail!.hasPrefix("↳ 60"), detail!)
