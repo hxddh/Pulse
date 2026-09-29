@@ -341,7 +341,7 @@ enum SnapshotBuilder {
             // a stated source (`waiting: .harvestPending`). 23.0: an
             // unverified reader's `pending` is not evidence of a block.
             if act.skill == "pending",
-               act.id.surfaceID.waitingSource == .harvestPending,
+               act.id.surfaceID.waitingSource != .none,
                ActivityHarvest.isFresh(act, nowMs: context.nowMs) {
                 if !context.dismissedPendingKeys.contains(finalKey) {
                     row.waiting = true

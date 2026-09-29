@@ -44,7 +44,7 @@ final class EvidenceSurfaceTests: XCTestCase {
             parts.firstIndex { $0.contains(needle) } ?? -1
         }
 
-        XCTAssertEqual(at("error"), 0, "a fault changes what you do next: \(line)")
+        XCTAssertEqual(at("failure"), 0, "a fault changes what you do next: \(line)")
         // 8.1: the work facts live on their own line, value-ordered, and
         // never compete with outcome for the budget again.
         let work = store().rowWorkLine(row)

@@ -63,7 +63,7 @@ final class RowValueEngineTests: XCTestCase {
         XCTAssertTrue(work.contains("62"), work)
         // And the outcome line keeps what the work line cannot say.
         let observation = s.rowObservationLine(row)
-        XCTAssertTrue(observation.contains("error"), observation)
+        XCTAssertTrue(observation.contains("failure"), observation)
         let shown = Set(observation.components(separatedBy: " · "))
         for segment in work.components(separatedBy: " · ") {
             XCTAssertFalse(shown.contains(segment), "\(segment) said twice")
