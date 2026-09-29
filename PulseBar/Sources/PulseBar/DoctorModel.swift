@@ -106,7 +106,21 @@ enum DoctorModel {
         var respondTaken = 0
         var respondExpired = 0
 
+        /// 20.0: how much Pulse actually read from each agent's sessions this
+        /// run, keyed by agent raw value. A format that drifted does not fail
+        /// — it reads less; this is where that shows.
+        var readCoverage: [String: Coverage] = [:]
+
         var nowMs: Int64 = 0
+    }
+
+    struct Coverage: Equatable, Sendable {
+        var name: String
+        var sessions = 0
+        var withTask = 0
+        var withLastWord = 0
+        /// Whether this agent's format carries the assistant's words at all.
+        var expectsLastWord = true
     }
 
     /// What Pulse installs; a missing one is named.
@@ -213,6 +227,9 @@ enum DoctorModel {
             }
         }
 
+        // Reading · did the parsers get what the formats carry (20.0)
+        checks.append(coverageCheck(facts.readCoverage, c: c))
+
         // Respond · the verdict hand-off (2.0 P0-0)
         if !facts.respondEnabled {
             checks.append(Check(id: "respond", title: c.respond, verdict: .absent, detail: c.respondOff))
@@ -233,6 +250,37 @@ enum DoctorModel {
             checks: checks,
             ranAtMs: facts.nowMs
         )
+    }
+
+    /// Two or more sessions of an agent and not one title (or, where the
+    /// format carries it, not one last word) is what a drifted format looks
+    /// like from here. Fewer than half is a softer "cannot vouch".
+    static let coverageMinimumSessions = 2
+
+    private static func coverageCheck(_ coverage: [String: Coverage], c: Copy) -> Check {
+        let read = coverage.values.filter { $0.sessions > 0 }
+        guard !read.isEmpty else {
+            return Check(id: "reading", title: c.reading, verdict: .absent, detail: c.noSessions)
+        }
+        var empty: [String] = []
+        var thin: [String] = []
+        for item in read.sorted(by: { $0.name < $1.name }) where item.sessions >= coverageMinimumSessions {
+            let missingTask = item.withTask == 0
+            let missingWords = item.expectsLastWord && item.withLastWord == 0
+            if missingTask || missingWords {
+                empty.append(c.coverageGap(item))
+            } else if item.withTask * 2 < item.sessions || (item.expectsLastWord && item.withLastWord * 2 < item.sessions) {
+                thin.append(c.coverageGap(item))
+            }
+        }
+        let total = read.reduce(0) { $0 + $1.sessions }
+        if !empty.isEmpty {
+            return Check(id: "reading", title: c.reading, verdict: .attention, detail: empty.joined(separator: "; "), next: c.reportShape)
+        }
+        if !thin.isEmpty {
+            return Check(id: "reading", title: c.reading, verdict: .unproven, detail: thin.joined(separator: "; "), next: c.reportShape)
+        }
+        return Check(id: "reading", title: c.reading, verdict: .works, detail: c.coverageFine(total, read.count))
     }
 
     private static func fireCheck(id: String, agent: String, title: String, facts: Facts, c: Copy) -> Check {
@@ -305,6 +353,16 @@ enum DoctorModel {
         var codexFired: String { s("Codex hooks reach Pulse", "Codex hooks 到达 Pulse") }
         var codexRollout: String { s("Codex session log format", "Codex 会话记录格式") }
         var respond: String { s("Respond verdict hand-off", "Respond 裁决交接") }
+        var reading: String { s("Session formats read in full", "会话格式读全了") }
+        var noSessions: String { s("No session files read this run", "本次运行没有读到会话文件") }
+        func coverageGap(_ c: Coverage) -> String {
+            s("\(c.name): \(c.sessions) session(s), \(c.withTask) with a title" + (c.expectsLastWord ? ", \(c.withLastWord) with last words" : ""),
+              "\(c.name)：\(c.sessions) 个会话，\(c.withTask) 个有标题" + (c.expectsLastWord ? "，\(c.withLastWord) 个有最后一句话" : ""))
+        }
+        func coverageFine(_ sessions: Int, _ agents: Int) -> String {
+            s("\(sessions) session(s) from \(agents) agent(s), titles and words where the format carries them",
+              "\(agents) 个 Agent 的 \(sessions) 个会话，格式里有的标题与话都读到了")
+        }
 
         func notInstalled(_ agent: String) -> String { s("\(agent) is not installed on this Mac", "这台 Mac 没有安装 \(agent)") }
         var settingsUnreadable: String { s("The settings file is not valid JSON; Pulse will not edit it", "设置文件不是合法 JSON；Pulse 不会改它") }

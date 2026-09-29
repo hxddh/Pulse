@@ -1,0 +1,26 @@
+# 20.0 Drift sentinel. Once a week, checks whether any open-source vendor
+# changed the files its on-disk session format is defined in since the commit
+# Pulse's parser was checked against (docs/vendor-formats.json). Red means
+# "read those commits" — a parser may have gone stale. Read-only: it clones
+# public repositories without file contents and prints; it writes nothing.
+name: Vendor drift
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Vendor format drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - run: python3 scripts/vendor_drift.py

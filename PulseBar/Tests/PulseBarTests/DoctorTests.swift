@@ -27,6 +27,7 @@ struct DoctorTests {
         f.respondEnabled = true
         f.respondWritten = 2
         f.respondTaken = 1
+        f.readCoverage = ["claude": .init(name: "Claude", sessions: 3, withTask: 3, withLastWord: 2)]
         return f
     }
 
@@ -95,6 +96,37 @@ struct DoctorTests {
         var f = healthy()
         f.claudeAgents = answer
         #expect(verdict(f, "claude-agents") == expected)
+    }
+
+    // MARK: - 20.0 · reading less
+
+    @Test func aFormatThatReadsNothingIsFlaggedByName() throws {
+        var f = healthy()
+        f.readCoverage["gemini"] = .init(name: "Gemini", sessions: 4, withTask: 4, withLastWord: 0)
+        let check = try #require(DoctorModel.evaluate(f, lang: .en).checks.first { $0.id == "reading" })
+        #expect(check.verdict == .attention)
+        #expect(check.detail.contains("Gemini"))
+        #expect(!check.detail.contains("Claude"))
+    }
+
+    @Test func aFormatWithoutWordsIsNotAskedForThem() {
+        var f = healthy()
+        f.readCoverage["cline"] = .init(name: "Cline", sessions: 5, withTask: 5, withLastWord: 0, expectsLastWord: false)
+        #expect(verdict(f, "reading") == .works)
+    }
+
+    @Test func oneSessionProvesNothingEitherWay() {
+        var f = healthy()
+        f.readCoverage["goose"] = .init(name: "Goose", sessions: 1, withTask: 0, withLastWord: 0)
+        #expect(verdict(f, "reading") == .works)
+        f.readCoverage = [:]
+        #expect(verdict(f, "reading") == .absent)
+    }
+
+    @Test func fewerThanHalfIsUnproven() {
+        var f = healthy()
+        f.readCoverage["pi"] = .init(name: "Pi", sessions: 6, withTask: 6, withLastWord: 2)
+        #expect(verdict(f, "reading") == .unproven)
     }
 
     @Test func respondIsProvenOnlyByAClaimedVerdict() {
