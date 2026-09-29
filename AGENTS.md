@@ -17,6 +17,7 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 | [`docs/plan-12.0.md`](docs/plan-12.0.md) | The 12.x plan (Kernel → Surface) — modules, catalog, dialects, narration, scan-quiet surfaces, and what each 12.x release completed |
 | [`docs/plan-outcome.md`](docs/plan-outcome.md) | The Outcome plan — β/γ shipped as 13.0 Mission; the second runtime (Codex) is blocked on real-machine P0 evidence |
 | [`docs/respond-protocol.md`](docs/respond-protocol.md) | You are touching how a verdict travels between machines |
+| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch any vendor parser — each agent's format has a pinned source, a fixture and a weekly drift sentinel |
 | [`CHANGELOG.md`](CHANGELOG.md) | You need to know when something changed |
 
 Everything is Swift under `PulseBar/`; `src/` retains only the optional hook
@@ -27,9 +28,10 @@ IO, process supervision, transcript parsing, probe cadence, the debug log),
 spool), `PulseManaged` (sessions Pulse runs) and the `PulseBar` app. No
 library may import AppKit, SwiftUI or reach `StatusStore`; library members are
 `package`, Core's are `public`. **Adding an agent** means one
-`case` and one `AgentSpec` in `PulseCore/AgentCatalog.swift`, plus its icon and README
-row — `scripts/agent_catalog_check.py` fails if a per-agent table grows back
-anywhere else. The legacy Python collector was deleted in 0.99 and the Vercel Native
+`case` and one `AgentSpec` in `PulseCore/AgentCatalog.swift`, plus its icon, README
+row and an entry in `docs/vendor-formats.json` — `scripts/agent_catalog_check.py`
+fails if a per-agent table grows back anywhere else, and
+`scripts/vendor_formats_check.py` if the agent's format has no stated source. The legacy Python collector was deleted in 0.99 and the Vercel Native
 SDK shell in 0.22 — recover either from git history if you ever need it.
 
 ## Invariants
@@ -173,9 +175,24 @@ to users.
 
 ## Current state
 
-19.0.0 is the current source version (Observe — the store is observed
-field by field, every card under a row is a value, and the Mac can check
-itself). `StatusStore` is `@Observable` (Observation, macOS 14): a view is
+20.0.0 is the current source version (Drift — every parser names the vendor
+source it follows). Each agent's on-disk format has an entry in
+`docs/vendor-formats.json`: a pinned vendor commit and the files that define
+it (14 agents), the docs read (1), or an honest `unverified` (18); the gate
+checks it and `.github/workflows/vendor-drift.yml` goes red weekly when a
+pinned file moves. 20.0 rewrote the readers that had drifted, each from the
+vendor's source with a vendor-shaped fixture: Gemini (`HarvestGemini.swift`),
+the Cline family (`HarvestClineFamily.swift`, the vendors' own interactive-ask
+set), Goose (`sessions.db`, `DatabaseAdapter.goose`), Kimi Code, Grok's
+`updates.jsonl`, Copilot's `session-state`, Continue and OpenHands
+(`HarvestContinueOpenHands.swift`); OpenCode's `pending` is no longer a wait.
+Aider and Continue have `waiting: .none`. The hook receiver attributes calls
+carrying `GROK_*` to Grok, holds for Respond only where `respondReach` is
+`hookSite`, and rejects unknown event names instead of treating them as
+Waiting. Fact merge now carries `lastWord` across a session's files.
+
+19.0.0 (Observe) made the store observed field by field, every card under a row is a value, and the Mac can check
+itself. `StatusStore` is `@Observable` (Observation, macOS 14): a view is
 invalidated only by the properties its body read. Engine bookkeeping is
 `@ObservationIgnored`; the managed fleet (a plain class) is read through
 `managedSessions`, which tracks `managedRevision`, bumped on every fleet
@@ -225,7 +242,7 @@ orchestrator identity, and the Workbench stays in the tray's process until one
 of the split triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
 App Server), blocked on real-machine P0 evidence; the self-check is how that
-evidence is collected. It ships as a 19.x.
+evidence is collected. It ships as a 20.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with
