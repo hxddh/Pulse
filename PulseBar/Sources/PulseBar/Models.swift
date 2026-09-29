@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "23.0.0"
+    static let semver = "24.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -370,15 +370,6 @@ struct AgentRow: Identifiable, Hashable {
 
     /// The short project name a row shows beside the agent.
     var shortPlace: String { Self.shortProject(project.isEmpty ? cwd : project) }
-
-    /// `840 B` / `12 KB` / `1.4 MB`. Empty when unknown — an invented "0 KB"
-    /// would be a different claim.
-    static func compactBytes(_ n: Int) -> String {
-        guard n > 0 else { return "" }
-        if n < 1024 { return "\(n) B" }
-        if n < 1024 * 1024 { return "\(n / 1024) KB" }
-        return String(format: "%.1f MB", Double(n) / (1024.0 * 1024.0))
-    }
 
     /// Where this session lives, written the way a person would write it.
     /// The home directory is not a project, and a deep path keeps its tail.

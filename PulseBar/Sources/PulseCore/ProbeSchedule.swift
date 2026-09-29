@@ -12,8 +12,10 @@ import Foundation
 ///   idle bound, the recent window. No IO. It stops when nothing is on
 ///   screen or the display is asleep;
 /// - the **process scan** (libproc) finds agent processes that have no
-///   session yet — sessions started before Pulse was running — every 30 s,
-///   and at launch and wake.
+///   session yet — sessions started before Pulse was running — at launch
+///   and wake, when a hook names a pid no scan found, and on a timer that
+///   starts at 30 s and doubles while scans find the same processes, up to
+///   5 min.
 ///
 /// A resident menu-bar app flagged for energy use is a dead product.
 public enum ProbeSchedule {
@@ -105,9 +107,23 @@ public enum ProbeSchedule {
     /// Seconds between process scans; `nil` while the display sleeps or the
     /// screen is locked (a scan runs again on wake).
     public static let processScanSeconds: TimeInterval = 30
+    /// The slowest the process scan backs off to.
+    public static let processScanMaxSeconds: TimeInterval = 300
 
-    public static func processScan(power: Power) -> TimeInterval? {
+    /// `quietScans`: scans in a row that found the same processes — each
+    /// doubles the period, up to `processScanMaxSeconds` (low power doubles
+    /// the result, within the same cap).
+    public static func processScan(power: Power, quietScans: Int = 0) -> TimeInterval? {
         if power.parked { return nil }
-        return power.lowPowerMode ? processScanSeconds * 2 : processScanSeconds
+        let steps = min(max(quietScans, 0), 4)
+        var seconds = processScanSeconds * Double(1 << steps)
+        if power.lowPowerMode { seconds *= 2 }
+        return min(seconds, processScanMaxSeconds)
+    }
+
+    /// The backoff after a scan: one more quiet scan when it found the same
+    /// processes as the last one, none when anything changed.
+    public static func nextQuietScans(_ current: Int, same: Bool) -> Int {
+        same ? min(current + 1, 8) : 0
     }
 }

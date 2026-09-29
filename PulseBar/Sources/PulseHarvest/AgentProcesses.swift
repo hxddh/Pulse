@@ -58,7 +58,8 @@ package enum AgentProcesses {
     package struct Proc: Equatable, Sendable {
         package var pid: Int32
         package var ppid: Int32
-        /// Executable path and argv, joined by a space — the shape
+        /// The command line as `commandLine(path:argv:)` joins it — the
+        /// executable path, then argv after argv[0] — the shape
         /// `match(args:)` reads.
         package var args: String
         package var tty: String = ""
@@ -143,23 +144,78 @@ package enum AgentProcesses {
     private static let rules: [(id: AgentID, rule: AgentProcessRule)] =
         AgentCatalog.all.map { ($0.id, $0.process) }
 
+    /// Interpreters whose first non-flag argument is the program they run
+    /// (`node /opt/homebrew/bin/gemini`).
+    static let interpreters: Set<String> = ["node", "nodejs", "bun", "deno", "tsx"]
+
     /// The agent a command line (executable path, then argv) belongs to.
+    ///
+    /// Path fragments are matched only against the program itself — the
+    /// executable, and for an interpreter its script — and only at a path
+    /// component boundary: `/opt/homebrew/bin/pinentry-mac` is not Pi, a
+    /// `claude-*` helper is not Claude, and a file argument under a folder
+    /// named `opencode` is not OpenCode. The deny list reads the whole line.
     package static func match(args: String) -> AgentID? {
-        let exe = args.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? args
-        let base = (exe as NSString).lastPathComponent
+        let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let exe = tokens.first else { return nil }
+        var programs = [exe]
+        if interpreters.contains((exe as NSString).lastPathComponent.lowercased()),
+           let script = tokens.dropFirst().first(where: { !$0.hasPrefix("-") }) {
+            programs.append(script)
+        }
         for (id, rule) in rules {
             if rule.denyNeedles.contains(where: { args.contains($0) }) { continue }
-            if rule.pathNeedles.contains(where: { args.contains($0) }) { return id }
-            let baseHit = rule.basenames.contains { $0.caseInsensitiveCompare(base) == .orderedSame }
-            guard baseHit else { continue }
-            // Electron gives Cursor's helpers the same `Cursor` name as the
-            // app; only the app's own executable path is the app.
-            if id == .cursor { continue }
-            // A short bare name (`pi`) is evidence only where the rule says so.
-            if !rule.pathNeedles.isEmpty, base.count <= 3, !rule.allowBareBasename { continue }
-            return id
+            if rule.pathNeedles.contains(where: { needle in programs.contains { containsComponent($0, needle) } }) {
+                return id
+            }
+            for program in programs {
+                let base = (program as NSString).lastPathComponent
+                guard rule.basenames.contains(where: { $0.caseInsensitiveCompare(base) == .orderedSame }) else { continue }
+                // Electron gives Cursor's helpers the same `Cursor` name as
+                // the app; only the app's own executable path is the app.
+                if id == .cursor { continue }
+                // A short bare name (`pi`) is evidence only where the rule
+                // says so.
+                if !rule.pathNeedles.isEmpty, base.count <= 3, !rule.allowBareBasename { continue }
+                return id
+            }
         }
         return nil
+    }
+
+    /// Whether `needle` occurs in `path` on path-component boundaries: it
+    /// starts the path or follows a `/` (or starts with `/` itself), and it
+    /// ends the path or is followed by `/`, `@`, or a `-` and a version
+    /// digit (or ends with `/` or `@` itself).
+    static func containsComponent(_ path: String, _ needle: String) -> Bool {
+        guard !needle.isEmpty else { return false }
+        var searchStart = path.startIndex
+        while searchStart < path.endIndex,
+              let found = path.range(of: needle, range: searchStart..<path.endIndex) {
+            let startOK = needle.hasPrefix("/") || needle.hasPrefix("@")
+                || found.lowerBound == path.startIndex
+                || path[path.index(before: found.lowerBound)] == "/"
+            var endOK = needle.hasSuffix("/") || needle.hasSuffix("@") || found.upperBound == path.endIndex
+            if !endOK {
+                let next = path[found.upperBound]
+                if next == "/" || next == "@" {
+                    endOK = true
+                } else if next == "-" {
+                    let after = path.index(after: found.upperBound)
+                    endOK = after < path.endIndex && path[after].isNumber
+                }
+            }
+            if startOK && endOK { return true }
+            searchStart = path.index(after: found.lowerBound)
+        }
+        return false
+    }
+
+    /// One command line from its parts: the executable path (or argv[0]
+    /// when the path is unknown), then the arguments after argv[0].
+    package static func commandLine(path: String, argv: [String]) -> String {
+        let program = path.isEmpty ? (argv.first ?? "") : path
+        return ([program] + argv.dropFirst()).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     // MARK: - The table (libproc)
@@ -181,9 +237,7 @@ package enum AgentProcesses {
             var info = proc_bsdinfo()
             let size = Int32(MemoryLayout<proc_bsdinfo>.size)
             guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.pbi_uid == me else { continue }
-            let path = executablePath(of: pid)
-            let argv = arguments(of: pid, buffer: &argvBuffer) ?? ""
-            let args = [path, argv].filter { !$0.isEmpty }.joined(separator: " ")
+            let args = commandLine(path: executablePath(of: pid), argv: argv(of: pid, buffer: &argvBuffer) ?? [])
             guard !args.isEmpty else { continue }
             let started = Int64(info.pbi_start_tvsec) * 1000 + Int64(info.pbi_start_tvusec) / 1000
             table.append(Proc(
@@ -233,7 +287,9 @@ package enum AgentProcesses {
 
     // MARK: - argv (`KERN_PROCARGS2`)
 
-    static func argumentsMax() -> Int {
+    /// `KERN_ARGMAX`: the size one `KERN_PROCARGS2` buffer needs. A walk
+    /// over many pids allocates one buffer this size and reuses it.
+    package static func argumentsMax() -> Int {
         var argmax: Int32 = 0
         var size = MemoryLayout<Int32>.size
         var mib: [Int32] = [CTL_KERN, KERN_ARGMAX]
@@ -243,13 +299,9 @@ package enum AgentProcesses {
         return ok && argmax > 0 ? Int(argmax) : 256 * 1024
     }
 
-    /// A process's argv, from `sysctl(KERN_PROCARGS2)`.
-    package static func arguments(of pid: Int32) -> String? {
-        var buffer = [UInt8](repeating: 0, count: argumentsMax())
-        return arguments(of: pid, buffer: &buffer)
-    }
-
-    static func arguments(of pid: Int32, buffer: inout [UInt8]) -> String? {
+    /// A process's argv, from `sysctl(KERN_PROCARGS2)`, read into `buffer`
+    /// (sized by `argumentsMax()`, reused across a walk).
+    package static func argv(of pid: Int32, buffer: inout [UInt8]) -> [String]? {
         guard pid > 1, !buffer.isEmpty else { return nil }
         var size = buffer.count
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
@@ -259,13 +311,17 @@ package enum AgentProcesses {
             }
         }
         guard ok, size > 0 else { return nil }
-        return parseProcArgs(Array(buffer.prefix(size)))
+        return parseProcArgv(Array(buffer.prefix(size)))
+    }
+
+    /// The argv joined by spaces (`parseProcArgv`).
+    package static func parseProcArgs(_ bytes: [UInt8]) -> String? {
+        parseProcArgv(bytes).map { $0.joined(separator: " ") }
     }
 
     /// `KERN_PROCARGS2` bytes: argc (a 32-bit little-endian int), the exec
-    /// path, NUL padding, then argc NUL-terminated argv strings. The argv
-    /// joined by spaces.
-    package static func parseProcArgs(_ bytes: [UInt8]) -> String? {
+    /// path, NUL padding, then argc NUL-terminated argv strings.
+    package static func parseProcArgv(_ bytes: [UInt8]) -> [String]? {
         guard bytes.count > 4 else { return nil }
         let argc = Int(bytes[0]) | Int(bytes[1]) << 8 | Int(bytes[2]) << 16 | Int(bytes[3]) << 24
         guard argc > 0 else { return nil }
@@ -281,7 +337,7 @@ package enum AgentProcesses {
             }
             index += 1
         }
-        return args.isEmpty ? nil : args.joined(separator: " ")
+        return args.isEmpty ? nil : args
     }
 
     // MARK: - Working directories

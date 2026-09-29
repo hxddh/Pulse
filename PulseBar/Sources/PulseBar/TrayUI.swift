@@ -158,7 +158,6 @@ final class TrayUI {
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
         case .diagnostics: store.openDiagnostics()
-        case .setupWaiting: store.openWaitingReach()
         case .mute: store.toggleMute(row.agent)
         }
     }

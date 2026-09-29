@@ -17,7 +17,7 @@ macOS menu-bar status lamp for coding agents: `idle` / `running` / `needs you`.
 Everything is Swift under `PulseBar/` (23.0 deleted `src/` and the Python
 hook scripts). There are three targets, dependencies pointing down only:
 `PulseCore` (the kernel — the agent catalog, bounded IO, process
-supervision, bounded transcript tails, the cadence, the debug log),
+supervision, the cadence, the debug log),
 `PulseHarvest` (events and processes: attention IO, the activity spool,
 libproc `AgentProcesses`, `TranscriptSummary`, `RowIdentity`; 24.0 deleted
 the collector) and the `PulseBar` app (22.0 removed
@@ -94,7 +94,7 @@ cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 
 Tests live in `PulseBar/Tests/PulseBarTests/`, one file per component (23.0):
 `CoreTests` (catalog, bounded IO, libproc processes), `TranscriptTests`
-(bounded tails, the six transcript dialects), `VendorFormatTests` (hook
+(the six transcript dialects, read at both ends), `VendorFormatTests` (hook
 contracts and drift), `AttentionTests` (the book reading attention lines,
 protocol, hook receiver, installer), `SessionTests` (the seven agents' truth
 tables, projection, process-only rows, the builder, identity), `ExplainTests`, `SessionLogTests`, `NotifierTests`,
@@ -196,8 +196,7 @@ to users.
 
 ## Current state
 
-**24.0 "Exact", phase P1 (in progress on source, not yet released; version
-still 23.0.0).** The roster is seven agents, each wired through the vendor's
+**24.0.0 "Exact" is the current source version.** The roster is seven agents, each wired through the vendor's
 own documented, non-blocking hook (Claude, Codex, Gemini, Copilot, Cursor:
 command hooks; OpenCode: a plugin; Pi: an extension — `HooksInstaller`,
 `HookModules`). Attention Protocol v4 (`AttentionRecord`, ten columns: adds
@@ -243,7 +242,7 @@ no pid becomes `.recent` (`RecentReason.quiet`) after 30 minutes and
 a stall needs an agent that reports its work. `SnapshotBuilder` is thin
 (sort, window, lamp, title, edges). `ScanEngine` applies only unseen
 attention lines in file order, re-reads the spool (idempotent by
-`activityMs`), scans libproc every 30 s and at launch / wake, follows each
+`activityMs`), scans libproc at launch / wake / an unknown pid and on a 30 s → 5 min backoff, follows each
 session pid with `ProcessExitWatch` (`DispatchSource` exit), and reads a
 transcript (bounded, off the main thread, cached by path + size + mtime) at
 a turn, a wait, or when the detail opens; OpenCode has none and uses what
@@ -253,6 +252,43 @@ evidence is hook or process. Diagnostics and the self-check show hooks,
 last events, session and process-only counts only. Paragraphs below that
 name the harvest, `claude agents`, `pending`, `ProbeStats` or
 `applyScan` describe 23.0.
+
+**24.0 audit fixes (unreleased).** *Red goes out.* Gemini installs
+`AfterTool`, Copilot `postToolUse` / `postToolUseFailure`, Codex an async
+`PostToolUse` — observe-only (exit 0, empty output), each checked against
+its pinned source; `HookContract.toolActivityEvents` / `answerEvents` name
+them and `catalog_check` requires every agent that can block to install an
+answer. `SessionBook`: a `turn` inside `stopGraceMs` of a block is *held*
+(`Session.heldTurn`), never dropped — it lands when the grace ends
+(`settleHeldTurns`, called by every projection, or the next event) or at
+once when an answer stamped before it arrives, so a denied prompt cannot
+leave the lamp red. A block keeps the tool its ask names (`Block.tool`,
+`blockedTool`): only that tool's activity (or a prompt, `done`, turn)
+answers it — a parallel tool does not. A same-kind re-raise inside the
+grace keeps the first ask and clock. New kind `idle` (Claude's
+`idle_prompt`): a turn only while working or blocked, never reviving a
+seen turn. A `done` stamped before the current state began changes
+nothing. *Stalls* need `AgentID.reportsToolActivity` (from the contract;
+Cursor and OpenCode have none). *Installer*: per-agent results
+(`HooksInstaller.AgentResult`, `Failure` → L10n, paths only in the debug
+log), `HooksSupport.Status.installed(_, failed:)` / `.working`, one
+`installQueue`, buttons disabled while it runs; `JSONSplice` rewrites only
+the root `hooks` member (user keys, order and formatting untouched; their
+entries verbatim); the ledger is written through `PrivateFile`. *Modules*:
+payload as the last argv argument (no stdin pipe), OpenCode child sessions
+(`info.parentID`) dropped except their asks, sent under the root session.
+*Processes*: path needles match only the executable and an interpreter's
+script, at path-component boundaries (`containsComponent`); one
+`KERN_ARGMAX` buffer per walk (the hook's too); scans at launch / wake / an
+unknown hook pid, and a one-shot timer backing off 30 s → 5 min
+(`ProbeSchedule.processScan(power:quietScans:)`). *Engine*: `done` lines
+from the UI apply to the book at once and are written off the main thread;
+`latestHookEvents` (attention + activity) feeds the self-check;
+transcript stamps are pruned with their summaries. Codex/Cursor copy says
+"doesn't report when it waits" and offers no "connect" action. Deleted:
+`TranscriptReader`, `DoctorProbe.hookTable/pulseEvents`,
+`AttentionKind.clears`, `HookFormat.ownsFile`, `codexHooksURL`,
+`AgentRow.compactBytes`, `AttentionIO.appendDone/latestEventTimes`.
 
 23.0.0 is the last released version (Essence; see below). 22.0 (Lamp) was subtractive: a status
 lamp should watch orchestrators, not be one, so it removed the `PulseManaged`

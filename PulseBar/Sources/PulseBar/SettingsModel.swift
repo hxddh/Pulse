@@ -49,6 +49,8 @@ struct SettingsModel: Equatable {
     // Hooks
     var hooksStatus: String
     var hooksInstalled: Bool
+    /// An install or removal is running: both buttons wait for it.
+    var hooksBusy: Bool = false
     /// 24.0: one line per supported agent.
     var hookAgents: [HookAgent] = []
     var hookTest: String
@@ -77,6 +79,9 @@ struct SettingsModel: Equatable {
         var lastEvent: String
         /// Said for an agent whose hook never reports a wait.
         var note: String?
+        /// The last install or removal failed for this agent (the state
+        /// says why, in words from `L10n`).
+        var failed = false
 
         var id: AgentID { agent }
     }
@@ -87,13 +92,16 @@ struct SettingsModel: Equatable {
         present: Set<AgentID>,
         lastEventMs: [AgentID: Int64],
         nowMs: Int64,
-        lang: ResolvedLanguage
+        lang: ResolvedLanguage,
+        failed: [AgentID: HooksInstaller.Failure] = [:]
     ) -> [HookAgent] {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         return AgentID.priority.map { agent in
             let isInstalled = installed.contains(agent)
             let state: String
-            if isInstalled {
+            if let failure = failed[agent] {
+                state = t(.hooksFailed) + " · " + HooksSupport.Status.reason(failure, lang: lang)
+            } else if isInstalled {
                 state = t(.settingsHookInstalled)
             } else if present.contains(agent) {
                 state = t(.hooksMissing)
@@ -116,7 +124,8 @@ struct SettingsModel: Equatable {
                 state: state,
                 installed: isInstalled,
                 lastEvent: lastEvent,
-                note: agent.waitingSource == .none ? t(.settingsHookNoWait) : nil
+                note: agent.waitingSource == .none ? t(.settingsHookNoWait) : nil,
+                failed: failed[agent] != nil
             )
         }
     }

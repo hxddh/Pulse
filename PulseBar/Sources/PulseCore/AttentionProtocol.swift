@@ -9,6 +9,10 @@ import Foundation
 ///   on without you — the red lamp, a banner, a sound;
 /// - **your turn** (`turn`): it finished and is waiting for the next prompt —
 ///   a quiet count, never the red lamp;
+/// - **idle** (`idle`, 24.0): it has sat at its prompt a while (Claude's
+///   `idle_prompt`, about a minute after a turn). Your turn only when Pulse
+///   had not seen the turn end — the session was still working or blocked,
+///   or was never seen — so a turn the person already saw is not revived;
 /// - **resolved** (`done`): nothing is owed;
 /// - **lifecycle** (`start`, `working`, `end`): the session began, took a
 ///   prompt, or ended. Each says nothing is owed any more, so each clears the
@@ -18,6 +22,7 @@ public enum AttentionKind: String, Sendable, CaseIterable {
     case question
     case waiting
     case turn
+    case idle
     case done
     case start
     case working
@@ -31,13 +36,7 @@ public enum AttentionKind: String, Sendable, CaseIterable {
     }
 
     /// Still owed to the user — kept when the attention file is compacted.
-    public var isOpen: Bool { isBlocking || self == .turn }
-
-    /// Says nothing is owed for the session it names (24.0: the lifecycle
-    /// kinds clear like `done`).
-    public var clears: Bool {
-        self == .done || self == .start || self == .working || self == .end
-    }
+    public var isOpen: Bool { isBlocking || self == .turn || self == .idle }
 }
 
 /// One v4 record: ten tab-separated columns.
@@ -162,8 +161,9 @@ public enum AttentionProtocol {
     /// empty one stays empty — so `acceptsWrite(kind:)` rejects them: a line
     /// that does not say what it is about is never Waiting.
     ///
-    /// `idle_prompt` / `idle` and `stop` are **your turn**, not blocked and
-    /// not cleared; the question family has its own kind.
+    /// `stop` is **your turn**, not blocked and not cleared; `idle_prompt` /
+    /// `idle` is **idle** (your turn only if the turn's end was not seen);
+    /// the question family has its own kind.
     public static func normalizeKind(_ kind: String) -> String {
         let k = kind.trimmingCharacters(in: .whitespacesAndNewlines)
         let low = k.lowercased().replacingOccurrences(of: "-", with: "_")
@@ -171,8 +171,9 @@ public enum AttentionProtocol {
             // Your turn: the agent finished and is idle at its prompt.
             "turn": .turn,
             "stop": .turn,
-            "idle_prompt": .turn,
-            "idle": .turn,
+            // Sat at its prompt a while: your turn only if nobody saw it end.
+            "idle_prompt": .idle,
+            "idle": .idle,
             "agent_turn_complete": .turn,
             "turn_complete": .turn,
             "task_complete": .turn,

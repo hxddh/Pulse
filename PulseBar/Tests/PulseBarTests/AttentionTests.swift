@@ -170,7 +170,7 @@ final class AttentionBookTests: XCTestCase {
         ]))
         let wait = try XCTUnwrap(block(b, "claude|c1"))
         XCTAssertEqual(wait.ask, "Bash: npm run build")
-        XCTAssertEqual(wait.sinceMs, now - 1000, "the newer event still owns the clock")
+        XCTAssertEqual(wait.sinceMs, now - 2000, "24.0: a same-kind re-raise inside the grace is the same block — the first raise owns the clock")
     }
 
     /// The grace is measured between the two lines, not against the clock
@@ -230,8 +230,8 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(AttentionProtocol.normalizeKind("elicitation_dialog"), "question")
         XCTAssertEqual(AttentionProtocol.normalizeKind("permission_prompt"), "permission")
         XCTAssertEqual(AttentionProtocol.normalizeKind("agent-turn-complete"), "turn")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("idle_prompt"), "turn",
-                       "Claude's idle_prompt is a 60 s timer after every finished turn")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("idle_prompt"), "idle",
+                       "Claude's idle_prompt is a 60 s timer after every finished turn — not a turn of its own")
         XCTAssertEqual(AttentionProtocol.normalizeKind("stop"), "turn")
         XCTAssertEqual(AttentionProtocol.normalizeKind("session_start"), "start")
         XCTAssertEqual(AttentionProtocol.normalizeKind("prompt"), "working")
@@ -241,7 +241,6 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "totally_made_up_kind"))
         // 24.0: no free-text guessing — "…approval…" is not a permission.
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "exec_approval_request"))
-        XCTAssertTrue(AttentionKind.start.clears && AttentionKind.working.clears && AttentionKind.end.clears)
     }
 
     /// v4: ten columns, and a record survives its own line.
@@ -292,7 +291,7 @@ final class PulseHookReceiverTests: XCTestCase {
         note("agent_needs_input")
         note("idle_prompt")
         note("auth_success")
-        XCTAssertEqual(kinds(), ["permission", "question", "question", "turn"], "auth_success says nothing Pulse shows")
+        XCTAssertEqual(kinds(), ["permission", "question", "question", "idle"], "auth_success says nothing Pulse shows")
     }
 
     func testClaudeLifecycleAndTurn() {
@@ -427,6 +426,32 @@ final class PulseHookReceiverTests: XCTestCase {
         ))
         XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "claude"]))
         XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "gemini", "Notification"]))
+    }
+
+    /// 24.0: the OpenCode plugin and the Pi extension pass their payload as
+    /// the last argument — the event is whole the moment the hook is
+    /// spawned, so the one sent as the agent exits is not lost with a pipe.
+    func testAModulePayloadInArgvIsRead() {
+        let args = [
+            "PulseBar", "--hook", "opencode", "permission.asked",
+            #"{"sessionID":"o1","directory":"/w","permission":"bash","patterns":["npm test"]}"#,
+        ]
+        XCTAssertTrue(PulseHookReceiver.payloadInArguments(args))
+        PulseHookReceiver.run(arguments: args, stdin: "", locate: located)
+        let record = records().first
+        XCTAssertEqual(record?.kind, "permission")
+        XCTAssertEqual(record?.session, "o1")
+        XCTAssertEqual(record?.cwd, "/w")
+        XCTAssertEqual(record?.message, "bash: npm test")
+        let modules = [
+            HookModules.openCodePlugin(launcher: "/x/pulse-hook", events: ["session.idle"]),
+            HookModules.piExtension(launcher: "/x/pulse-hook", events: ["agent_settled"]),
+        ]
+        for module in modules {
+            XCTAssertTrue(module.contains("event, JSON.stringify(payload)]"), module)
+            XCTAssertTrue(module.contains(#"stdio: "ignore""#))
+            XCTAssertFalse(module.contains("child.stdin"), "no pipe to flush")
+        }
     }
 
     func testSelfTestDoesNotNeedPython() {
@@ -665,6 +690,7 @@ final class HooksInstallerTests: XCTestCase {
         let before = snapshot()
         let report = try HooksInstaller.install()
         XCTAssertEqual(report.count, AgentID.allCases.count)
+        XCTAssertTrue(report.allSatisfy { $0.failure == nil }, "\(report.map(\.line))")
         for agent in AgentID.allCases {
             let text = try XCTUnwrap(read(agent.spec.hooks.path), agent.rawValue)
             let events = try XCTUnwrap(HooksInstaller.installedEvents(agent, text: text), agent.rawValue)
@@ -674,7 +700,7 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertEqual(HooksSupport.probeStatus(), .all)
         XCTAssertNotEqual(snapshot(), before)
 
-        try HooksInstaller.uninstall()
+        HooksInstaller.uninstall()
         XCTAssertEqual(snapshot(), before, "every file and directory is back exactly as it was")
         XCTAssertEqual(HooksSupport.probeStatus(), .missing)
     }
@@ -684,7 +710,7 @@ final class HooksInstallerTests: XCTestCase {
         let before = snapshot()
         try HooksInstaller.install()
         try HooksInstaller.install()
-        try HooksInstaller.uninstall()
+        HooksInstaller.uninstall()
         XCTAssertEqual(snapshot(), before)
     }
 
@@ -750,7 +776,7 @@ final class HooksInstallerTests: XCTestCase {
         var root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         root["theme"] = "dark"
         try JSONSerialization.data(withJSONObject: root).write(to: url)
-        try HooksInstaller.uninstall(agents: [.claude])
+        HooksInstaller.uninstall(agents: [.claude])
         let after = try XCTUnwrap(read(".claude/settings.json"))
         XCTAssertFalse(HooksInstaller.containsPulseMarker(after))
         XCTAssertTrue(after.contains("\"theme\""))
@@ -759,7 +785,8 @@ final class HooksInstallerTests: XCTestCase {
 
     func testAModuleFilePulseDidNotWriteIsNeverReplaced() throws {
         try write(".config/opencode/plugins/pulse.js", "export const Mine = async () => ({})\n")
-        XCTAssertThrowsError(try HooksInstaller.install(agents: [.opencode]))
+        let results = try HooksInstaller.install(agents: [.opencode])
+        XCTAssertEqual(results.map(\.failure), [.notOurs])
         XCTAssertEqual(read(".config/opencode/plugins/pulse.js"), "export const Mine = async () => ({})\n")
     }
 
@@ -784,10 +811,27 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertFalse(copilot.contains("preToolUse"))
     }
 
+    /// 24.0: an OpenCode subagent runs in a child session. Its lifecycle
+    /// never reaches Pulse (its idle is not the person's turn, and it is not
+    /// a row); its asks block the parent's work and land on the parent.
+    func testOpenCodeSubagentsFoldIntoTheirParent() {
+        let plugin = HookModules.openCodePlugin(
+            launcher: "/x/pulse-hook", events: AgentID.opencode.spec.hooks.events.map(\.name)
+        )
+        XCTAssertTrue(plugin.contains("if (event.type === \"session.created\" && info.parentID && info.id) {"))
+        XCTAssertTrue(plugin.contains("PARENTS.set(info.id, info.parentID)"))
+        XCTAssertTrue(plugin.contains("if (child && !ASKS.has(event.type)) {"), "a child's lifecycle is dropped")
+        XCTAssertTrue(plugin.contains("sessionID: child ? rootOf(own) : own"), "a child's ask lands on its root session")
+        XCTAssertTrue(plugin.contains("PARENTS.size > 512"), "the map is bounded")
+        for ask in ["permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected"] {
+            XCTAssertTrue(plugin.contains("\"\(ask)\""), ask)
+        }
+    }
+
     func testInstallNeverOverwritesTheUsersOwnCodexNotify() throws {
         try write(".codex/config.toml", "notify = [\"/usr/local/bin/my-notifier\"]\n")
         let report = try HooksInstaller.install(agents: [.codex])
-        XCTAssertTrue(report.joined().contains("kept your own notify"))
+        XCTAssertTrue(report.map(\.line).joined().contains("kept your own notify"))
         let text = try XCTUnwrap(read(".codex/config.toml"))
         XCTAssertTrue(text.contains("my-notifier"))
         XCTAssertFalse(text.contains("pulse-hook"))
@@ -804,14 +848,108 @@ final class HooksInstallerTests: XCTestCase {
         let link = try FileManager.default.destinationOfSymbolicLink(atPath: tempHome.appendingPathComponent(".claude/settings.json").path)
         XCTAssertTrue(link.hasSuffix("dotfiles/claude-settings.json"), "the link is still a link")
         XCTAssertTrue(HooksInstaller.containsPulseMarker(read("dotfiles/claude-settings.json") ?? ""))
-        try HooksInstaller.uninstall(agents: [.claude])
+        HooksInstaller.uninstall(agents: [.claude])
         XCTAssertEqual(read("dotfiles/claude-settings.json"), "{\"model\": \"opus\"}\n")
     }
 
     func testInstallRefusesInvalidJSON() throws {
         try write(".claude/settings.json", "{ not json")
-        XCTAssertThrowsError(try HooksInstaller.install(agents: [.claude]))
+        let results = try HooksInstaller.install(agents: [.claude])
+        XCTAssertEqual(results.map(\.failure), [.invalidJSON])
         XCTAssertEqual(read(".claude/settings.json"), "{ not json", "the user's file is left alone")
+    }
+
+    /// 24.0: one agent's broken config stops that agent only — the others
+    /// are installed (and removed) all the same, and the result says which
+    /// failed and why, without a path.
+    func testOneBrokenConfigDoesNotStopTheOtherAgents() throws {
+        try seedVendors()
+        try write(".gemini/settings.json", "{ \"theme\": ")
+        let results = try HooksInstaller.install()
+        XCTAssertEqual(results.count, AgentID.allCases.count)
+        XCTAssertEqual(results.filter { $0.failure != nil }.map(\.agent), [.gemini])
+        XCTAssertEqual(results.first { $0.agent == .gemini }?.failure, .invalidJSON)
+        for agent in AgentID.priority where agent != .gemini {
+            XCTAssertTrue(HooksSupport.isWired(agent), "\(agent.rawValue) is installed although Gemini failed first in line")
+        }
+        XCTAssertEqual(read(".gemini/settings.json"), "{ \"theme\": ")
+
+        let status = HooksSupport.status(after: results)
+        XCTAssertEqual(status.failures, [.gemini: .invalidJSON])
+        XCTAssertTrue(status.isInstalled(for: .claude))
+        let label = status.label(lang: .zh)
+        XCTAssertTrue(label.contains("Gemini"), label)
+        XCTAssertTrue(label.contains(L10n.t(.hooksFailureInvalidJSON, .zh)), label)
+        XCTAssertFalse(label.contains(tempHome.path) || label.contains(".json"), "no path in the UI: \(label)")
+        XCTAssertFalse(label.contains("refusing"), "no English installer error in the zh UI: \(label)")
+
+        try write(".cursor/hooks.json", "[\"pulse-hook\"]")
+        let removed = HooksInstaller.uninstall()
+        XCTAssertEqual(removed.filter { $0.failure != nil }.map(\.agent), [.cursor], "\(removed.map(\.line))")
+        XCTAssertFalse(HooksSupport.isWired(.claude), "Claude is removed although Cursor failed")
+    }
+
+    /// 24.0: an install rewrites only `hooks` — every other key, its order
+    /// and its formatting stay exactly as the user wrote them.
+    func testInstallLeavesEverythingOutsideHooksUntouched() throws {
+        let original = """
+        {
+          "zeta": 1,
+          "model":    "opus",
+          "alpha": {"b": 2, "a": [1, 2.50, 3]},
+          "hooks": {
+            "PreToolUse": [
+              {"matcher": "Bash", "hooks": [{"type": "command", "command": "~/bin/guard.sh"}]}
+            ]
+          },
+          "env": {"Z": "1", "A": "2"}
+        }
+
+        """
+        try write(".claude/settings.json", original)
+        try HooksInstaller.install(agents: [.claude])
+        let installed = try XCTUnwrap(read(".claude/settings.json"))
+        let hooksStart = try XCTUnwrap(installed.range(of: "\"hooks\": ")).upperBound
+        let head = String(installed[..<hooksStart])
+        XCTAssertTrue(original.hasPrefix(head), "every byte before hooks is the user's")
+        XCTAssertTrue(installed.hasSuffix(",\n  \"env\": {\"Z\": \"1\", \"A\": \"2\"}\n}\n"), installed)
+        XCTAssertTrue(installed.contains(#"{"matcher": "Bash", "hooks": [{"type": "command", "command": "~/bin/guard.sh"}]}"#), "the user's own entry, verbatim")
+        let userHook = try XCTUnwrap(installed.range(of: "guard.sh"))
+        let pulseHook = try XCTUnwrap(installed.range(of: "claude SessionStart"))
+        XCTAssertLessThan(userHook.lowerBound, pulseHook.lowerBound, "the user's events keep their place; Pulse's come after")
+        XCTAssertNotNil(try JSONSerialization.jsonObject(with: Data(installed.utf8)) as? [String: Any])
+        XCTAssertEqual(HooksInstaller.installedEvents(.claude, text: installed), Set(AgentID.claude.spec.hooks.events.map(\.name)))
+
+        // Stripping after the user edited elsewhere keeps their edit and
+        // their formatting; only Pulse's entries leave.
+        let edited = installed.replacingOccurrences(of: "\"model\":    \"opus\"", with: "\"model\":    \"sonnet\"")
+        try write(".claude/settings.json", edited)
+        HooksInstaller.uninstall(agents: [.claude])
+        let after = try XCTUnwrap(read(".claude/settings.json"))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker(after))
+        XCTAssertTrue(after.hasPrefix("{\n  \"zeta\": 1,\n  \"model\":    \"sonnet\",\n  \"alpha\": {\"b\": 2, \"a\": [1, 2.50, 3]},\n  \"hooks\": "), after)
+        XCTAssertTrue(after.contains("~/bin/guard.sh"))
+        XCTAssertTrue(after.hasSuffix(",\n  \"env\": {\"Z\": \"1\", \"A\": \"2\"}\n}\n"), after)
+    }
+
+    /// A `hooks` member left empty by an uninstall goes, with its comma;
+    /// a file without one gets it after its last member.
+    func testTheHooksMemberIsAddedAndRemovedCleanly() throws {
+        let added = try JSONSplice.replacingHooks(
+            in: "{\n  \"a\": 1\n}\n", pulse: [("Stop", ["{\"x\": 1}"])],
+            isPulse: { _ in false }, ensureVersion: false, dropEmptyHooks: false
+        )
+        XCTAssertEqual(added, "{\n  \"a\": 1,\n  \"hooks\": {\n    \"Stop\": [\n      {\"x\": 1}\n    ]\n  }\n}\n")
+        let removed = try JSONSplice.replacingHooks(
+            in: added, pulse: [], isPulse: { $0.contains("\"x\"") }, ensureVersion: false, dropEmptyHooks: true
+        )
+        XCTAssertEqual(removed, "{\n  \"a\": 1\n}\n")
+        let inline = try JSONSplice.replacingHooks(
+            in: #"{"theme":"Dracula"}"#, pulse: [("Stop", [#"{"x": 1}"#])],
+            isPulse: { _ in false }, ensureVersion: true, dropEmptyHooks: false
+        )
+        XCTAssertEqual(inline, #"{"theme":"Dracula", "version": 1, "hooks": {"Stop": [{"x": 1}]}}"#)
+        XCTAssertThrowsError(try JSONSplice.replacingHooks(in: "[1]", pulse: [], isPulse: { _ in false }, ensureVersion: false, dropEmptyHooks: false))
     }
 
     func testRootTableEndFindsFirstSection() {
@@ -1012,7 +1150,7 @@ struct TurnTruthTests {
             expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: "Input")
         ),
         Case(
-            name: "claude · turn ends moments after a permission → the permission stands",
+            name: "claude · turn ends moments after a permission → held; the permission stands for the grace",
             lines: [
                 line("claude", "permission", ago: 6 * second, message: "Bash: npm run build"),
                 line("claude", "stop", ago: 1 * second),

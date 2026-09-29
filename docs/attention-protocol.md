@@ -55,6 +55,7 @@ one).
 | | `question` | A clarifying question or requested input is showing |
 | | `waiting` | Blocked, reason unknown |
 | Your turn (quiet, never red) | `turn` | The turn ended; the agent is idle at its prompt |
+| | `idle` | It has sat at its prompt a while (Claude's `idle_prompt`, ~60 s after a turn): your turn only if the session was still working or blocked (an Esc on a prompt fires no Stop) or is new to Pulse — never revives a turn already seen |
 | Resolved | `done` | Nothing is owed any more |
 | Lifecycle | `start` | The session started or resumed |
 | | `working` | The user submitted a prompt |
@@ -74,9 +75,9 @@ also rejected. That is the No fake Waiting gate for this channel.
 Bridge words normalized before the allowlist check
 (`AttentionProtocol.normalizeKind`): `permission_prompt`, `approval_request`
 → `permission`; `elicitation_dialog`, `elicitation_url_dialog`,
-`agent_needs_input` → `question`; `stop`, `idle`, `idle_prompt`,
-`agent-turn-complete`, `turn_complete`, `task_complete`, `stop_failure` →
-`turn`; `elicitation_complete`, `elicitation_response` → `done`;
+`agent_needs_input` → `question`; `stop`, `agent-turn-complete`,
+`turn_complete`, `task_complete`, `stop_failure` → `turn`; `idle`,
+`idle_prompt` → `idle`; `elicitation_complete`, `elicitation_response` → `done`;
 `session_start` → `start`; `prompt` → `working`; `session_end` → `end`.
 There is no free-text guessing: a word containing "approval" is not a
 permission.
@@ -96,24 +97,27 @@ that never are.
 | | `PermissionRequest` | `permission` — ask = `tool_name: command/file_path/url`; `AskUserQuestion` → `question` |
 | | `Notification` `permission_prompt` | `permission` |
 | | `Notification` `elicitation_dialog` / `elicitation_url_dialog` / `agent_needs_input` | `question` |
-| | `Notification` `idle_prompt` | `turn` |
+| | `Notification` `idle_prompt` | `idle` |
 | | `Notification` `elicitation_complete` / `elicitation_response` | `done` |
 | | `Stop`, `StopFailure` | `turn` (message = `last_assistant_message`) |
 | | `SessionEnd` | `end` |
 | **Codex** (`~/.codex/hooks.json` + `notify`) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` / `turn` / `end` |
+| | `PostToolUse` (async) | activity (spool only; the stall rule's evidence) |
 | | `notify` `agent-turn-complete` | `turn` (session = `thread-id`) |
 | | `PermissionRequest` | never installed; ignored if seen (fires before Codex's own auto-review) |
 | **Gemini CLI** (`~/.gemini/settings.json` `hooks`) | `SessionStart` / `SessionEnd` | `start` / `end` |
 | | `BeforeAgent` | `working` (exit 0, no output: never blocks) |
+| | `AfterTool` | activity (the tool ran: answers a `ToolPermission`) |
 | | `AfterAgent` | `turn` |
 | | `Notification` `notification_type: ToolPermission` | `permission` (ask = `message`) |
 | **Copilot CLI** (`~/.copilot/hooks/pulse.json`) | `sessionStart` / `sessionEnd` | `start` / `end` |
 | | `userPromptSubmitted` | `working` |
+| | `postToolUse` / `postToolUseFailure` | activity (the tool ran: answers a `permission_prompt`) |
 | | `agentStop` | `turn` |
 | | `notification` `permission_prompt` / `elicitation_dialog` | `permission` / `question` |
 | | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
 | | `errorOccurred` | `turn` when `recoverable: false`, else activity |
-| **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`) | `session.created` | `start` |
+| **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`; payload as the last argument; a subagent's child session is dropped, its asks sent under the root session) | `session.created` | `start` |
 | | `session.status` `busy` / `retry` | activity |
 | | `permission.asked` | `permission` (ask = `permission: patterns`) |
 | | `question.asked` | `question` (ask = first question) |
@@ -123,7 +127,7 @@ that never are.
 | **Cursor** (`~/.cursor/hooks.json`) — never blocked | `sessionStart` / `sessionEnd` | `start` / `end` |
 | | `afterAgentResponse` | activity |
 | | `stop` | `turn` (session = `conversation_id`, cwd = `workspace_roots[0]`) |
-| **Pi** (extension `~/.pi/agent/extensions/pulse.js`) | `session_start` / `session_shutdown` (not on `reload`) | `start` / `end` |
+| **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument) | `session_start` / `session_shutdown` (not on `reload`) | `start` / `end` |
 | | `agent_start` | `working` |
 | | `tool_execution_end` | activity |
 | | `ui_prompt_start` `kind: confirm` / other kinds | `permission` / `question` (ask = `title`) |
@@ -140,12 +144,21 @@ that never are.
 - A blocked entry that names no session never attaches to a session row; it
   is its own row in its folder.
 - A blocked entry goes out when that session's own activity event, stamped
-  after the raise, arrives: the ask was answered in the vendor's prompt.
-- `turn` clears a blocked wait, but within **20 s** does not wipe a fresh
-  `permission` / `question` / `waiting` (the order of a vendor's events is not
-  ours); then it marks the session your turn. A session-less `turn` only
+  after the raise, arrives: the ask was answered in the vendor's prompt. When
+  the raise names its tool (`Bash: npm test`) and the activity names one, only
+  the same tool answers it — a parallel tool finishing does not.
+- A re-raise of the same kind within **20 s** is the same block (Claude's
+  `PermissionRequest`, then its `Notification`): it keeps the first ask and
+  clock.
+- `turn` clears a blocked wait. Within **20 s** of the raise it is **held**,
+  not dropped (the order of a vendor's events is not ours): it lands when the
+  grace ends — on the next event or the tick — or at once when an answer
+  stamped before it arrives. So a denied prompt (no tool runs, the turn ends
+  seconds later) goes out within the grace. A session-less `turn` only
   clears. A `turn` never creates a row of its own. A `turn` with `front` = `1`
   only clears — the user watched it finish.
+- A `done` stamped before the current block or turn began is about an
+  earlier one and changes nothing.
 - A blocked line with `front` = `1` lights the lamp but raises no banner.
 - Entries older than **30 minutes** expire.
 

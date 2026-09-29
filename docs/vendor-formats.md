@@ -28,6 +28,16 @@ an entry carries anything besides `hooks` (the 20.0 format entries went with
 the harvest in 24.0), a repo block lacks a full commit or watch list, the
 events disagree with the catalog, a named test file does not exist or never
 mentions the agent, or the manifest names an agent the catalog no longer has.
+It also holds two facts about the events themselves: an agent that can raise
+a block installs at least one event that answers it
+(`HookContract.answerEvents`: a per-tool activity event, or the vendor's own
+"replied" / "prompt closed"), and Claude, Codex, Gemini and Copilot install
+their per-tool activity event (`PostToolUse`, `AfterTool`, `postToolUse`) —
+the answer to a permission, and the only silence that means a stall
+(`HookContract.reportsToolActivity`). Each was checked non-blocking at exit 0
+with empty output against the pinned source (Codex: `engine/discovery.rs`
+runs every event but `SessionEnd` async when asked; Gemini: "Global hook
+mechanics"; Copilot: "postToolUse output").
 **Changing a hook contract means updating its block and its test in the same
 change.**
 

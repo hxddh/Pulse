@@ -2,13 +2,16 @@ import Foundation
 
 /// 19.0 · the self-check's reads. Read-only by construction: it opens the
 /// agents' own hook configurations for reading and reduces them, with the
-/// attention file's newest line per agent, to `DoctorModel.Facts` — event
-/// names and timestamps. Nothing here writes, and nothing it keeps can
-/// identify a session or a project.
+/// newest hook event per agent the engine has seen, to `DoctorModel.Facts`
+/// — event names and timestamps. Nothing here writes, and nothing it keeps
+/// can identify a session or a project.
 ///
 /// Runs only on the user's click, off the main actor.
 enum DoctorProbe {
-    static func gather(home: URL, nowMs: Int64) -> DoctorModel.Facts {
+    /// `lastFire`: the newest hook event per agent — `ScanEngine`'s record of
+    /// every attention line and activity event since launch (the attention
+    /// file keeps only 80 lines; the activity spool a day).
+    static func gather(home: URL, nowMs: Int64, lastFire: [AgentID: DoctorModel.HookFire]) -> DoctorModel.Facts {
         var facts = DoctorModel.Facts()
         facts.channel = PulseVersion.distributionChannel
         let os = ProcessInfo.processInfo.operatingSystemVersion
@@ -28,9 +31,9 @@ enum DoctorProbe {
                     && HooksInstaller.containsPulseMarker(String(line))
             }
         }
-        // What the hooks said, newest per agent, from the attention file.
-        for (agent, event) in AttentionIO.latestEvents() {
-            facts.lastFire[agent.rawValue] = DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs)
+        // What the hooks said, newest per agent.
+        for (agent, fire) in lastFire {
+            facts.lastFire[agent.rawValue] = fire
         }
         return facts
     }
@@ -56,31 +59,5 @@ enum DoctorProbe {
         item.events = found.intersection(wanted)
         item.forbidden = found.intersection(DoctorModel.forbiddenEvents(agent))
         return item
-    }
-
-    // MARK: - Pure pieces (tested)
-
-    /// The `hooks` table of a Claude- or Codex-shaped hooks file; nil when
-    /// the file is not a JSON object (the user's file, never repaired here).
-    static func hookTable(_ data: Data) -> [String: Any]? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return root["hooks"] as? [String: Any] ?? [:]
-    }
-
-    /// Which events carry a Pulse command, and the matcher on Pulse's
-    /// Notification entry.
-    static func pulseEvents(_ hooks: [String: Any]) -> (events: Set<String>, notificationMatcher: String?) {
-        var events: Set<String> = []
-        var matcher: String?
-        for (event, value) in hooks {
-            guard let groups = value as? [[String: Any]] else { continue }
-            for group in groups {
-                let commands = (group["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String }
-                guard commands.contains(where: HooksInstaller.containsPulseMarker) else { continue }
-                events.insert(event)
-                if event == "Notification" { matcher = group["matcher"] as? String ?? "" }
-            }
-        }
-        return (events, matcher)
     }
 }

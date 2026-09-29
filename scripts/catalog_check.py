@@ -274,6 +274,26 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
     for must in ("PreToolUse", "preToolUse", "beforeShellExecution", "beforeSubmitPrompt", "BeforeTool", "tool.execute.before"):
         if must not in listed:
             problems.append(f"HookContract.gatingEvents must list {must}")
+    # A red lamp must have a way to go out besides the end of the turn: an
+    # agent that can raise a block installs an event that answers it (a tool
+    # ran after it, or the vendor's own "replied"). Per-tool activity is
+    # what makes a stall meaningful, so it is never a gating event either.
+    tool_block = re.search(r"toolActivityEvents: Set<String> = \[(.*?)\]", text, re.S)
+    tool_events = set(re.findall(r'"([^"]+)"', tool_block.group(1))) if tool_block else set()
+    answer_block = re.search(r"answerEvents: Set<String> = toolActivityEvents\.union\(\[(.*?)\]\)", text, re.S)
+    answer_events = tool_events | (set(re.findall(r'"([^"]+)"', answer_block.group(1))) if answer_block else set())
+    if not tool_events or not answer_block:
+        problems.append("HookContract.toolActivityEvents / answerEvents not found in AgentCatalog.swift")
+    for event in sorted(tool_events & listed):
+        problems.append(f"HookContract.toolActivityEvents lists {event}, a gating event")
+    for agent in roster:
+        if agent.waiting == "hooks" and not set(agent.hook_events) & answer_events:
+            problems.append(f"hooks — {agent.raw}: can raise a block but installs no event that answers it "
+                            f"(one of {sorted(answer_events)})")
+    for raw, needed in (("gemini", "AfterTool"), ("copilot", "postToolUse"), ("codex", "PostToolUse"), ("claude", "PostToolUse")):
+        agent = next((a for a in roster if a.raw == raw), None)
+        if agent and needed not in agent.hook_events:
+            problems.append(f"hooks — {raw}: {needed} is its per-tool activity (the answer to a block, the stall rule)")
     try:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8")).get("agents", {})
     except (OSError, json.JSONDecodeError):

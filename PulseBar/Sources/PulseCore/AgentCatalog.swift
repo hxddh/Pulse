@@ -26,6 +26,12 @@ public enum AgentID: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     public var displayName: String { spec.displayName }
 
+    /// Whether this agent's installed hook reports every tool call (see
+    /// `HookContract.toolActivityEvents`). Only then does silence mean a
+    /// stall: an agent that speaks only at a prompt and at the end of a turn
+    /// is silent through every long turn.
+    public var reportsToolActivity: Bool { spec.hooks.reportsToolActivity }
+
     /// Whether the vendor's hook says when a session is blocked on the user.
     /// Agents with `.none` still show running and your turn from their hooks.
     public var waitingSource: WaitingSource { spec.waiting }
@@ -76,12 +82,6 @@ public enum HookFormat: String, Sendable {
     case openCodePlugin
     /// A Pi extension module Pulse owns whole (`~/.pi/agent/extensions`).
     case piExtension
-
-    /// Pulse owns the whole file (it did not exist before, and uninstall
-    /// removes it), rather than adding entries to the user's own config.
-    public var ownsFile: Bool {
-        self == .copilotHooks || self == .openCodePlugin || self == .piExtension
-    }
 }
 
 /// One vendor event Pulse listens to.
@@ -106,7 +106,7 @@ public struct HookEvent: Sendable, Equatable {
 /// and every install is reversible byte for byte.
 public struct HookContract: Sendable {
     public let format: HookFormat
-    /// Home-relative file Pulse edits (or owns, see `HookFormat.ownsFile`).
+    /// Home-relative file Pulse edits (or, for Copilot, OpenCode and Pi, owns whole).
     public let path: String
     /// Home-relative directory the vendor itself creates. Pulse installs only
     /// where it exists: no config is planted for an agent that is not there.
@@ -130,6 +130,30 @@ public struct HookContract: Sendable {
         "beforeShellExecution", "beforeMCPExecution", "beforeReadFile", "beforeSubmitPrompt",
         "permissionRequest", "tool.execute.before", "tool_call", "permission.ask",
     ]
+
+    /// Observe-only events that fire once per tool call, after it ran
+    /// (Claude and Codex `PostToolUse`, Gemini `AfterTool`, Copilot
+    /// `postToolUse`, Pi `tool_execution_end`). An agent whose contract
+    /// installs one reports its work as it goes: silence from it means
+    /// something, so only such an agent can be stalled — and its tool name
+    /// is what answers a block raised for that tool.
+    public static let toolActivityEvents: Set<String> = [
+        "PostToolUse", "PostToolUseFailure", "AfterTool", "postToolUse", "postToolUseFailure",
+        "tool_execution_end",
+    ]
+
+    /// Events that say a block was answered: a tool ran after it, or the
+    /// vendor's own "replied" / "prompt closed". `catalog_check` holds every
+    /// agent that can raise a block to installing at least one — a red lamp
+    /// must have a way to go out besides the end of the turn.
+    public static let answerEvents: Set<String> = toolActivityEvents.union([
+        "permission.replied", "question.replied", "question.rejected", "ui_prompt_end",
+    ])
+
+    /// This contract installs a per-tool activity event (`toolActivityEvents`).
+    public var reportsToolActivity: Bool {
+        events.contains { Self.toolActivityEvents.contains($0.name) }
+    }
 }
 
 /// Which processes are this agent, by executable path and argv. See
@@ -171,7 +195,10 @@ public enum AgentCatalog {
             // elicitation_dialog, agent_needs_input (about six seconds later).
             waiting: .hooks,
             aliases: [],
-            process: AgentProcessRule(basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude"], denyNeedles: ["Claude.app", "chrome-native-host"]),
+            // The native install's `~/.local/bin/claude` links into
+            // `~/.local/share/claude/versions/<version>`, the path the kernel
+            // reports for the running binary.
+            process: AgentProcessRule(basenames: ["claude"], pathNeedles: ["/.local/bin/claude", "/bin/claude", "/.local/share/claude/versions/"], denyNeedles: ["Claude.app", "chrome-native-host"]),
             // Every entry runs `async: true`: an async hook cannot block or
             // decide anything (code.claude.com/docs/en/hooks, "Run hooks in
             // the background"). PostToolUse, not PreToolUse, marks activity.
@@ -197,10 +224,15 @@ public enum AgentCatalog {
             waiting: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["codex"], pathNeedles: ["/opt/homebrew/bin/codex", "/bin/codex", "Resources/codex"], denyNeedles: ["Codex Framework", "crashpad", "computer-use", "codex-code-mode-host"]),
+            // PostToolUse runs `async` (codex-rs/hooks engine/discovery.rs:
+            // only SessionEnd is forced synchronous), so it cannot change
+            // what Codex does; it is the per-tool activity the stall rule
+            // needs.
             hooks: HookContract(format: .codexHooks, path: ".codex/hooks.json", home: ".codex", events: [
                 HookEvent("SessionStart"),
                 HookEvent("SessionEnd"),
                 HookEvent("UserPromptSubmit"),
+                HookEvent("PostToolUse"),
                 HookEvent("Stop"),
             ])
         ),
@@ -258,12 +290,16 @@ public enum AgentCatalog {
             waiting: .hooks,
             aliases: [],
             process: AgentProcessRule(basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: ["Gemini.app"]),
-            // BeforeAgent and AfterAgent block only on exit 2 or a `decision`
-            // in stdout; Pulse's hook prints nothing and exits 0.
+            // BeforeAgent, AfterAgent and AfterTool act only on exit 2 or a
+            // `decision` / `continue` in stdout; Pulse's hook prints nothing
+            // and exits 0 (docs/hooks/reference.md, "Global hook
+            // mechanics"). AfterTool is the answer to a ToolPermission: the
+            // tool ran.
             hooks: HookContract(format: .geminiSettings, path: ".gemini/settings.json", home: ".gemini", events: [
                 HookEvent("SessionStart"),
                 HookEvent("SessionEnd"),
                 HookEvent("BeforeAgent"),
+                HookEvent("AfterTool"),
                 HookEvent("AfterAgent"),
                 HookEvent("Notification"),
             ])
@@ -281,10 +317,15 @@ public enum AgentCatalog {
                 pathNeedles: ["/bin/copilot", "github/gh-copilot", "@github/copilot", "copilot-cli"],
                 denyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
             ),
+            // postToolUse / postToolUseFailure: empty output keeps the tool's
+            // own result (hooks-reference.md, "postToolUse output"); the
+            // tool ran, so a permission raised for it was answered.
             hooks: HookContract(format: .copilotHooks, path: ".copilot/hooks/pulse.json", home: ".copilot", events: [
                 HookEvent("sessionStart"),
                 HookEvent("sessionEnd"),
                 HookEvent("userPromptSubmitted"),
+                HookEvent("postToolUse"),
+                HookEvent("postToolUseFailure"),
                 HookEvent("agentStop"),
                 HookEvent("notification"),
                 HookEvent("errorOccurred"),
@@ -298,7 +339,7 @@ public enum AgentCatalog {
             // `permission.replied` / `question.replied` / `question.rejected`.
             waiting: .hooks,
             aliases: [],
-            process: AgentProcessRule(basenames: ["opencode", "open-code"], pathNeedles: ["/bin/opencode", "/opencode/", "opencode@", "@opencode"], denyNeedles: []),
+            process: AgentProcessRule(basenames: ["opencode", "open-code"], pathNeedles: ["/bin/opencode", "opencode@", "@opencode"], denyNeedles: []),
             hooks: HookContract(format: .openCodePlugin, path: ".config/opencode/plugins/pulse.js", home: ".config/opencode", events: [
                 HookEvent("session.created"),
                 HookEvent("session.status"),

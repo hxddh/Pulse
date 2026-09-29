@@ -33,8 +33,10 @@ enum HookFeed {
         guard let reading = PulseHookReceiver.interpret(agent: agent, event: event, payload: payload) else { return Written() }
         if case .blocked = reading.action, agent.waitingSource == .none { return Written() }
         var out = Written()
+        // The tool name as the receiver's `writeActivity` stores it.
+        let tool = PulseHookReceiver.string(payload, keys: ["tool_name", "toolName"])
         func activity(_ kind: String) -> ActivitySpool.Event {
-            ActivitySpool.Event(agent: agent.rawValue, session: session, event: kind, tool: "", target: "", prompt: "", cwd: cwd, tsMs: ms)
+            ActivitySpool.Event(agent: agent.rawValue, session: session, event: kind, tool: kind == "tool" ? tool : "", target: "", prompt: "", cwd: cwd, tsMs: ms)
         }
         let kind: AttentionKind
         var message = ""
@@ -54,6 +56,7 @@ enum HookFeed {
         case .turn:
             kind = .turn
             message = PulseHookReceiver.genericMessage(from: payload)
+        case .idle: kind = .idle
         case .resolved: kind = .done
         case .end: kind = .end
         }
@@ -84,15 +87,29 @@ struct SessionBookTests {
     let t0: Int64 = 1_800_000_000_000
     let minute: Int64 = 60_000
 
-    /// Plays `steps` a minute apart; returns the session's state after each.
-    private func play(_ agent: AgentID, _ steps: [(String, [String: Any])]) -> (states: [String], book: SessionBook) {
+    let second: Int64 = 1_000
+
+    /// Plays `steps` `every` ms apart (a minute by default); returns the
+    /// session's state after each.
+    private func play(_ agent: AgentID, _ steps: [(String, [String: Any])], every spacing: Int64 = 60_000) -> (states: [String], book: SessionBook) {
+        playAt(agent, steps.enumerated().map { (Int64($0.offset) * spacing, $0.element.0, $0.element.1) })
+    }
+
+    /// Plays each step at its own offset from `t0` — the seconds a real
+    /// session spends between events, well inside `stopGraceMs` — and ticks
+    /// the book after each as the engine's projection does. A step named
+    /// "tick" is the clock alone.
+    private func playAt(_ agent: AgentID, _ steps: [(Int64, String, [String: Any])]) -> (states: [String], book: SessionBook) {
         var book = SessionBook()
         var states: [String] = []
-        for (index, step) in steps.enumerated() {
-            let ms = t0 + Int64(index) * minute
-            let written = HookFeed.write(agent, step.0, step.1, at: ms)
-            for line in written.lines { book.apply(line, nowMs: ms) }
-            for event in written.activity { book.apply(activity: event, nowMs: ms) }
+        for (offset, event, payload) in steps {
+            let ms = t0 + offset
+            if event != "tick" {
+                let written = HookFeed.write(agent, event, payload, at: ms)
+                for line in written.lines { book.apply(line, nowMs: ms) }
+                for activity in written.activity { book.apply(activity: activity, nowMs: ms) }
+            }
+            book.settleHeldTurns(nowMs: ms)
             states.append(HookFeed.word(book.sessions["\(agent.rawValue)|s1"]?.state))
         }
         return (states, book)
@@ -212,6 +229,149 @@ struct SessionBookTests {
         ])
         let ask = HookFeed.write(.opencode, "permission.asked", ["permission": "bash", "patterns": ["npm test"]], at: t0).lines.first?.message
         #expect(ask == "bash: npm test")
+    }
+
+    // MARK: - Answers, denials and held turns (realistic spacing)
+
+    /// Gemini asks, the tool runs (AfterTool): the answer is the tool.
+    @Test func geminiAnsweredByItsTool() {
+        let run = playAt(.gemini, [
+            (0, "BeforeAgent", [:]),
+            (4 * second, "Notification", ["notification_type": "ToolPermission", "message": "Allow run_shell_command?"]),
+            (7 * second, "AfterTool", ["tool_name": "run_shell_command"]),
+            (12 * second, "AfterAgent", [:]),
+        ])
+        #expect(run.states == ["working", "blocked:permission", "working", "turn"])
+    }
+
+    /// Gemini asks, the person denies: no tool runs, the turn ends 3 s
+    /// later — inside the grace. The turn is held, never dropped: the lamp
+    /// goes out when the grace ends.
+    @Test func geminiDeniedTurnLandsAfterTheGrace() {
+        let run = playAt(.gemini, [
+            (0, "BeforeAgent", [:]),
+            (4 * second, "Notification", ["notification_type": "ToolPermission", "message": "Allow run_shell_command?"]),
+            (7 * second, "AfterAgent", [:]),
+            (15 * second, "tick", [:]),
+            (25 * second, "tick", [:]),
+        ])
+        #expect(run.states == ["working", "blocked:permission", "blocked:permission", "blocked:permission", "turn"])
+        guard case .yourTurn(let since) = run.book.sessions["gemini|s1"]?.state else {
+            Issue.record("not your turn")
+            return
+        }
+        #expect(since == t0 + 7 * second, "the turn keeps its own clock")
+    }
+
+    @Test func copilotAnsweredByItsTool() {
+        let run = playAt(.copilot, [
+            (0, "userPromptSubmitted", [:]),
+            (3 * second, "notification", ["notification_type": "permission_prompt", "message": "Allow bash?"]),
+            (9 * second, "postToolUse", ["toolName": "bash"]),
+            (14 * second, "agentStop", [:]),
+        ])
+        #expect(run.states == ["working", "blocked:permission", "working", "turn"])
+    }
+
+    /// Claude: a denied permission fires no tool event and Stop follows
+    /// within seconds.
+    @Test func claudeDeniedTurnLandsAfterTheGrace() {
+        let run = playAt(.claude, [
+            (0, "UserPromptSubmit", ["prompt": "Clean up"]),
+            (5 * second, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"]]),
+            (9 * second, "Stop", [:]),
+            (26 * second, "tick", [:]),
+        ])
+        #expect(run.states == ["working", "blocked:permission", "blocked:permission", "turn"])
+    }
+
+    /// The Stop line is applied before the answering tool's activity (the
+    /// engine reads the attention file, then the spool): the held turn still
+    /// ends the session's turn once the answer lands.
+    @Test func aHeldTurnLandsWhenTheAnswerArrivesAfterIt() {
+        var book = SessionBook()
+        let raise = HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]], at: t0)
+        let stop = HookFeed.write(.claude, "Stop", [:], at: t0 + 8 * second)
+        let tool = HookFeed.write(.claude, "PostToolUse", ["tool_name": "Bash"], at: t0 + 4 * second)
+        for line in raise.lines + stop.lines { book.apply(line, nowMs: t0 + 9 * second) }
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
+        for event in tool.activity { book.apply(activity: event, nowMs: t0 + 9 * second) }
+        #expect(book.sessions["claude|s1"]?.state == .yourTurn(sinceMs: t0 + 8 * second))
+    }
+
+    /// Claude runs tools in parallel: a Read finishing while Bash waits for
+    /// permission is not the person saying yes. Bash's own PostToolUse is.
+    @Test func aParallelToolDoesNotAnswerAnotherToolsPermission() {
+        let run = playAt(.claude, [
+            (0, "UserPromptSubmit", [:]),
+            (2 * second, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]]),
+            (3 * second, "PostToolUse", ["tool_name": "Read", "tool_input": ["file_path": "/w/a.swift"]]),
+            (8 * second, "Notification", ["notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"]),
+            (12 * second, "PostToolUse", ["tool_name": "Bash"]),
+        ])
+        #expect(run.states == ["working", "blocked:permission", "blocked:permission", "blocked:permission", "working"])
+    }
+
+    /// A question with no tool named is answered by any tool that runs.
+    @Test func aBlockThatNamesNoToolIsAnsweredByAnyTool() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "copilot", kind: "permission", ms: t0, message: "Allow bash?", session: "s1"), nowMs: t0)
+        book.apply(activity: ActivitySpool.Event(agent: "copilot", session: "s1", event: "tool", tool: "bash", target: "", prompt: "", cwd: "", tsMs: t0 + second), nowMs: t0 + second)
+        #expect(HookFeed.word(book.sessions["copilot|s1"]?.state) == "working")
+        #expect(SessionBook.blockedTool("Bash: npm test") == "Bash")
+        #expect(SessionBook.blockedTool("AskUserQuestion") == "AskUserQuestion")
+        #expect(SessionBook.blockedTool("Allow bash?") == "")
+        #expect(SessionBook.blockedTool("Claude needs your permission to use Bash") == "")
+    }
+
+    /// Claude raises one approval twice (PermissionRequest, then its
+    /// Notification ~6 s later): the second keeps the first's words and
+    /// clock.
+    @Test func aReRaiseKeepsTheFirstAsk() {
+        let run = playAt(.claude, [
+            (0, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]]),
+            (6 * second, "Notification", ["notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"]),
+        ])
+        guard case .blocked(let block) = run.book.sessions["claude|s1"]?.state else {
+            Issue.record("not blocked")
+            return
+        }
+        #expect(block.ask == "Bash: npm test")
+        #expect(block.sinceMs == t0)
+        #expect(block.tool == "Bash")
+    }
+
+    /// `idle_prompt` comes about a minute after a turn — and again after the
+    /// person has seen it. It never revives a turn already seen.
+    @Test func idlePromptDoesNotReviveASeenTurn() {
+        var book = SessionBook()
+        for line in HookFeed.write(.claude, "Stop", [:], at: t0).lines { book.apply(line, nowMs: t0) }
+        book.apply(AttentionRecord(agent: "claude", kind: "done", ms: t0 + 10 * second, session: "s1"), nowMs: t0 + 10 * second)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "idle")
+        let idle = HookFeed.write(.claude, "Notification", ["notification_type": "idle_prompt", "message": "Claude is waiting for your input"], at: t0 + 60 * second)
+        let idleKinds = idle.lines.map(\.kind)
+        #expect(idleKinds == ["idle"])
+        for line in idle.lines { book.apply(line, nowMs: t0 + 60 * second) }
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "idle", "the seen turn stays seen")
+    }
+
+    /// Esc on a Claude permission prompt fires no Stop; `idle_prompt` a
+    /// minute later is the evidence the session is back at its prompt.
+    @Test func idlePromptEndsAWorkingOrBlockedSession() {
+        let run = playAt(.claude, [
+            (0, "PermissionRequest", ["tool_name": "Bash"]),
+            (70 * second, "Notification", ["notification_type": "idle_prompt"]),
+        ])
+        #expect(run.states == ["blocked:permission", "turn"])
+    }
+
+    /// A dismissal's `done` written while a new ask was being raised is
+    /// about the old one.
+    @Test func aDoneStampedBeforeTheRaiseDoesNotClearIt() {
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 + 2 * second, message: "Bash: ls", session: "s1"), nowMs: t0 + 3 * second)
+        book.apply(AttentionRecord(agent: "claude", kind: "done", ms: t0 + second, session: "s1"), nowMs: t0 + 3 * second)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
     }
 
     // MARK: - Invariants
@@ -493,6 +653,26 @@ struct SessionProjectionTests {
         #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled == false, "no activity events: silence is not evidence")
         b.apply(activity: ActivitySpool.Event(agent: "codex", session: "c1", event: "tool", tool: "", target: "", prompt: "", cwd: "", tsMs: t0 + minute), nowMs: t0 + minute)
         #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled)
+    }
+
+    /// 24.0: only an agent whose hook reports every tool call can be
+    /// stalled. Cursor and OpenCode speak at a prompt and at the end of a
+    /// reply; a long turn is silent, and silence from them is not evidence.
+    @Test func aLongTurnIsNotAStallForAnAgentWithoutToolEvents() throws {
+        #expect(AgentID.claude.reportsToolActivity)
+        #expect(AgentID.codex.reportsToolActivity)
+        #expect(AgentID.gemini.reportsToolActivity)
+        #expect(AgentID.copilot.reportsToolActivity)
+        #expect(AgentID.pi.reportsToolActivity)
+        #expect(!AgentID.cursor.reportsToolActivity)
+        #expect(!AgentID.opencode.reportsToolActivity)
+        for agent in [AgentID.cursor, .opencode] {
+            var b = book([AttentionRecord(agent: agent.rawValue, kind: "working", ms: t0, session: "x1", pid: 81)])
+            b.apply(activity: ActivitySpool.Event(agent: agent.rawValue, session: "x1", event: "tool", tool: "", target: "", prompt: "", cwd: "", tsMs: t0 + minute), nowMs: t0 + minute)
+            let row = try #require(rows(b, at: t0 + 40 * minute).rows.first)
+            #expect(row.state == .running)
+            #expect(!row.isStalled, "\(agent.rawValue)")
+        }
     }
 
     @Test func aBlockedRowCarriesTheProtocolToken() throws {

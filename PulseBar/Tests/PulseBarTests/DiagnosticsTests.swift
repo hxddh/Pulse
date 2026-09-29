@@ -106,21 +106,6 @@ struct DoctorTests {
         #expect(ids.allSatisfy { $0.hasSuffix("-hooks") || $0.hasSuffix("-fired") })
     }
 
-    @Test func onlyPulseEntriesCount() throws {
-        let json = #"""
-        {"hooks":{
-          "Stop":[{"hooks":[{"type":"command","command":"/Users/me/Library/Application Support/Pulse/pulse-hook claude stop"}]}],
-          "PreToolUse":[{"hooks":[{"type":"command","command":"mytool --hook-dir x"}]}],
-          "Notification":[{"matcher":"permission_prompt|elicitation_dialog","hooks":[{"type":"command","command":"pulse-hook claude"}]}]
-        }}
-        """#
-        let table = try #require(DoctorProbe.hookTable(Data(json.utf8)))
-        let found = DoctorProbe.pulseEvents(table)
-        #expect(found.events == ["Stop", "Notification"])
-        #expect(found.notificationMatcher == "permission_prompt|elicitation_dialog")
-        #expect(DoctorProbe.hookTable(Data("not json".utf8)) == nil)
-    }
-
     @Test(arguments: [ResolvedLanguage.en, .zh])
     func theCopiedReportCarriesNoHomePath(lang: ResolvedLanguage) {
         var report = DoctorModel.evaluate(healthy(), lang: lang)
@@ -168,10 +153,21 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(health(sessions: 0).disposition, .noRecentSession)
     }
 
-    func testOpaqueLiveAgentOffersTheHooksSection() {
-        let item = health(agent: .codex, sessions: 0, processOnly: 1)
-        XCTAssertEqual(item.agent.waitingSource, .none)
-        XCTAssertEqual(DiagnosticsModel.fix(for: item), .openHooksSettings)
+    /// 24.0: no setting makes Codex or Cursor report a wait, so their
+    /// line offers no "connect" action — it says what they do not report.
+    @MainActor
+    func testAWaitingNoneAgentIsOfferedNoImpossibleFix() {
+        for agent in AgentID.waitingNoneAgents {
+            let item = health(agent: agent, sessions: 1, processOnly: 1)
+            XCTAssertNil(DiagnosticsModel.fix(for: item), agent.rawValue)
+        }
+        XCTAssertEqual(L10n.t(.supportWaitingNoneDetail, .en), "Doesn't report when it waits — running and your turn only")
+        XCTAssertTrue(L10n.t(.supportWaitingNoneDetail, .zh).hasPrefix("不会告诉我们它在等你"))
+        for lang in [ResolvedLanguage.en, .zh] {
+            let copy = L10n.t(.supportWaitingNoneDetail, lang) + L10n.t(.settingsHookNoWait, lang)
+            XCTAssertFalse(copy.localizedCaseInsensitiveContains("bridge"))
+            XCTAssertFalse(copy.contains("桥"))
+        }
     }
 
     func testWaitingNoneAgentsCoverEveryWaitingNoneContract() {
@@ -219,8 +215,8 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(store.trayNotice?.action, .installHooks)
     }
 
-    /// 23.0: an agent with no Waiting path is not a tray notice any more —
-    /// its row menu offers the connection instead.
+    /// 23.0: an agent with no Waiting path is not a tray notice (24.0: and
+    /// nothing offers it a connection it cannot have).
     @MainActor
     func testAnOpaqueLiveAgentIsNotATrayNotice() {
         let store = StatusStore()

@@ -14,7 +14,6 @@ struct DiagnosticsModel: Equatable {
 
     enum Fix: Equatable {
         case installHooks
-        case openHooksSettings
         case doctor(DoctorModel.Fix)
     }
 
@@ -105,19 +104,15 @@ struct DiagnosticsModel: Equatable {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         switch fix {
         case .installHooks, .doctor(.installHooks): return t(.installHooks)
-        case .openHooksSettings, .doctor(.openConnections): return t(.setupWaitingSignals)
+        case .doctor(.openConnections): return t(.setupWaitingSignals)
         }
     }
 
-    /// The one action an agent's line offers: install a missing hook, or —
-    /// for a live agent whose hook cannot report a wait — the Hooks section,
-    /// which says so.
+    /// The one action an agent's line offers: install a missing hook. An
+    /// agent whose hook cannot report a wait (Codex, Cursor) is offered
+    /// nothing for it — no setting can make it report one; its line says so.
     static func fix(for item: AgentSupportHealth) -> Fix? {
-        if item.disposition == .needsAction { return .installHooks }
-        if item.agent.waitingSource == .none, item.sessionCount + item.processOnlyCount > 0 {
-            return .openHooksSettings
-        }
-        return nil
+        item.disposition == .needsAction ? .installHooks : nil
     }
 
     /// The disposition as a severity, a tone and a word.

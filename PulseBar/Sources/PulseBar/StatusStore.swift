@@ -385,8 +385,7 @@ final class StatusStore {
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
         guard row.isYourTurn, !row.attentionSession.isEmpty else { return }
-        AttentionIO.appendDone(agent: row.agent, session: row.attentionSession)
-        refresh(reason: "turn-seen")
+        writeDone(agent: row.agent, session: row.attentionSession)
     }
 
     /// The person dismissed a wait: a `done` in the attention file under
@@ -394,14 +393,37 @@ final class StatusStore {
     /// only that agent's session-less entries, never its other sessions —
     /// and the dismissal on the wait's record.
     func dismissWaiting(_ row: AgentRow) {
-        if let done = Self.doneLine(for: row) {
-            AttentionIO.appendDone(agent: done.agent, session: done.session)
-        }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         updateLog(immediately: true) { log in
             _ = log.dismiss(row, nowMs: nowMs)
         }
-        refresh(reason: "dismissWaiting")
+        if let done = Self.doneLine(for: row) {
+            writeDone(agent: done.agent, session: done.session, nowMs: nowMs)
+        }
+    }
+
+    /// File writes for `done` lines, one at a time, off the main thread:
+    /// the attention file is locked and fsync'd, and a click must not wait
+    /// on either.
+    private static let doneWrites = DispatchQueue(label: "com.pulse.attention-done", qos: .userInitiated)
+
+    /// A `done` line: applied to the book at once (the row moves under the
+    /// click), written to the attention file off the main thread. The watch
+    /// reads the line back; the book has already applied it, so it changes
+    /// nothing.
+    private func writeDone(agent: AgentID, session: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+        let record = AttentionRecord(
+            agent: agent.rawValue,
+            kind: AttentionKind.done.rawValue,
+            ms: nowMs,
+            session: session.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+        )
+        // A preview fixture's rows are not the book's; leave them on screen.
+        if !previewFixtureActive { engine.apply(records: [record], nowMs: nowMs) }
+        let line = record.line
+        Self.doneWrites.async {
+            AttentionIO.appendRawLine(line)
+        }
     }
 
     /// The `done` a dismissal writes, with the entry's own session spelling
@@ -409,18 +431,6 @@ final class StatusStore {
     nonisolated static func doneLine(for row: AgentRow) -> (agent: AgentID, session: String)? {
         guard row.isBlocked else { return nil }
         return (row.agent, row.attentionSession)
-    }
-
-    /// Live Waiting-none session — needs Attention Reach, not a fake Waiting chip.
-    func isWaitingNoneNeedsReach(_ row: AgentRow) -> Bool {
-        !row.isBlocked
-            && row.liveProcess
-            && row.agent.waitingSource == .none
-    }
-
-    /// Open Waiting signals (how an agent without a Waiting path gets one).
-    func openWaitingReach() {
-        openSettings(focus: .waitingSignals)
     }
 
     // MARK: - Focus
@@ -488,8 +498,11 @@ final class StatusStore {
 
     // MARK: - Hooks
 
+    /// Installs and removals run one at a time (`HooksSupport.installQueue`)
+    /// and the buttons are disabled while one runs (`.working`).
     func installHooks() {
-        landHooksStatus(.unknown)
+        guard !hooksStatus.isWorking else { return }
+        landHooksStatus(.working)
         setHooksNudgeOff(false)
         // `Task` inherits this class's main-actor isolation, so the assignment
         // lands on main while the optional hook installer stays off it.
@@ -502,7 +515,8 @@ final class StatusStore {
     }
 
     func uninstallHooks() {
-        landHooksStatus(.unknown)
+        guard !hooksStatus.isWorking else { return }
+        landHooksStatus(.working)
         // An uninstall is a decision: stop suggesting hooks until the user
         // installs them again.
         setHooksNudgeOff(true)

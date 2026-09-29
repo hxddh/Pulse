@@ -10,7 +10,7 @@
            │
            ▼
       SessionBook           纯值 reducer：apply(event) → 工作中 / 需要你 / 轮到你 / 结束
-           │   ◄── AgentProcesses（libproc，每 30 秒 + 启动 / 唤醒）· ProcessExitWatch（每个会话 pid 一个退出源）
+           │   ◄── AgentProcesses（libproc，启动 / 唤醒 / 未知 pid 时 + 30 秒起退避到 5 分钟）· ProcessExitWatch（每个会话 pid 一个退出源）
            │   ◄── TranscriptSummaryReader（轮到你 / 需要你 / 打开详情时有界读一次，离开主线程，按大小与 mtime 缓存）
            ▼
     SessionProjection       纯函数：会话 + 进程 + 会话摘要 → AgentRow（仅进程行、落地句柄、停滞、最近）
@@ -34,7 +34,7 @@
 PulseBar/Sources/
   PulseCore/     内核库。只 import Foundation（+ CryptoKit / CoreGraphics），严格并发 + warnings-as-errors。
                  AgentCatalog（每 Agent 的全部事实：进程规则、别名、Waiting、hook 契约）· PrivateFile / SafeRead
-                 · ProcessIO · ContentSanitizer · TranscriptReader（有界尾读）· AttentionProtocol
+                 · ProcessIO · ContentSanitizer · AttentionProtocol
                  · ProbeSchedule · DebugLog · Guarded
   PulseHarvest/  事件与进程库，依赖 Core。AttentionIO · ActivitySpool · AgentProcesses（libproc）
                  · TranscriptSummary（六种会话文件方言：标题、最后的消息、模型、最后的错误）
@@ -98,15 +98,20 @@ PulseBar/Sources/
 只把**没见过的行**按文件顺序交给会话簿（压缩后的文件不重放）；活动文件整份重读，会话簿按
 `activityMs` 去重。
 
-### 进程（便宜，每 30 秒）
+### 进程（便宜，按需）
 
 `AgentProcesses` 用 libproc：`proc_listallpids` 列出本用户的进程，`PROC_PIDTBSDINFO` 取父进程、
 TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与参数，按 `AgentCatalog` 的进程
-规则匹配到 `AgentID`（排除串必需：`pi` 要躲开 `pip`，`cursor-agent` 常驻 worker 不算会话）。
+规则匹配到 `AgentID`（排除串必需：`pi` 要躲开 `pip`，`cursor-agent` 常驻 worker 不算会话；24.0
+起路径片段只匹配程序本身 —— 可执行文件，解释器（node / bun / deno）则加上它的脚本 —— 且必须落在
+路径分段边界上：`/opt/homebrew/bin/pinentry-mac` 不是 Pi，`claude-*` 辅助程序不是 Claude）。
+一次遍历只分配一个 `KERN_ARGMAX` 大小的参数缓冲区（hook 查父链时也一样）。
 包装进程与它的子进程收成一个家族（取最上层的 pid）。顺着父进程链回答：真实 TTY、是否在 Warp 里、
 宿主 App；`PROC_PIDVNODEPATHINFO` 给出工作目录。不起 `ps` / `lsof` 子进程。
 
-它只在启动、唤醒与每 30 秒跑一次（`ProbeSchedule.processScan`，低电量加倍，息屏停表），用来：
+它只在有理由时跑：启动、唤醒、hook 报出一个上次扫描没见过的活 pid，以及一个一次性计时器 ——
+30 秒起，每次扫到同一批进程就加倍，封顶 5 分钟，有变化就回到 30 秒
+（`ProbeSchedule.processScan(power:quietScans:)`，低电量加倍，息屏停表）。用来：
 找出没有会话认领的进程（仅进程行 —— Pulse 启动前就在跑的会话，直到它的下一个事件）；以及知道
 会话的 pid 还在不在。每个会话 pid 另有一个 `DispatchSource.makeProcessSource(.exit)`
 （`ProcessExitWatch`），退出即结束会话，不等下一次扫描。**一次失败的扫描保留上一份有效列表。**
@@ -125,10 +130,15 @@ OpenCode 没有会话文件，用它的事件自带的内容。读不到文件�
 
 - 状态：`.idle`（刚开始 / 在提示处）、`.working`、`.blocked(Block)`、`.yourTurn(sinceMs:)`、`.ended(atMs:)`。
 - `start` → idle（进行中的保持 working）；`working` → working；阻塞 → blocked（`waiting: .none` 的
-  Agent 的阻塞行拒收）；`turn` → 轮到你（阻塞后 20 秒内不清；提示窗口在最前时算已看见 → idle）；
-  `done` → 清掉阻塞 / 轮到你；`end` → ended。子代理事件从不改变状态；未来戳拒收；
+  Agent 的阻塞行拒收；20 秒内同类的再次提出算同一次，保留第一次的问题与时钟）；`turn` → 轮到你
+  （阻塞后 20 秒内**暂存不丢**：宽限期满时由下一个事件或时钟落地，或在早于它的回答到达时立即落地 ——
+  被拒绝的权限不会让红灯一直亮；提示窗口在最前时算已看见 → idle）；`idle`（Claude 的 `idle_prompt`）
+  只在会话仍在工作或阻塞时算轮到你，从不复活已看过的回合；`done` → 清掉阻塞 / 轮到你（早于当前
+  状态的 `done` 不算）；`end` → ended。子代理事件从不改变状态；未来戳拒收；
   不点名会话的 `turn` 与 `done` / `end` 不造会话。
-- `apply(activity:nowMs:)`：同一会话在提问之后的活动熄灭等待（回答发生在厂商自己的提示里）。
+- `apply(activity:nowMs:)`：同一会话在提问之后的活动熄灭等待（回答发生在厂商自己的提示里）；
+  提问与活动都点名工具时，只有同一个工具的活动算回答（并行的别的工具结束不算）。
+- `settleHeldTurns(nowMs:)`：时钟（每次投影）落地宽限期已满的暂存回合。
 - `processExited(pid:atMs:)`、`endSessions(whosePidIsDead:)`、`prune(nowMs:)`（一天没动静的忘掉，至多 256 个）。
 
 ## SessionProjection 与 SnapshotBuilder（纯函数）
@@ -141,8 +151,9 @@ OpenCode 没有会话文件，用它的事件自带的内容。读不到文件�
    是仅进程行 `agent|pid:<pid>`（灰色虚线灯，永不橙、不装绿）。
 3. 标题与最后的消息来自会话摘要，否则来自 `turn` 事件带的原话；落地句柄先取事件的 landing 列，
    进程（TTY / Warp / 宿主）只补它没说的；`LandingPlan.make` 据此排出落地步骤（见 `docs/landing-hosts.md`）。
-4. 停滞（橙）只给报告过自己在干活的会话（有活动时钟）：Codex / Gemini / Copilot 的 hook 没有逐工具
-   事件，安静不算停滞。
+4. 停滞（橙）只给 hook 契约里有逐工具事件的 Agent（`HookContract.reportsToolActivity`：Claude /
+   Codex `PostToolUse`、Gemini `AfterTool`、Copilot `postToolUse`、Pi `tool_execution_end`），且会话
+   报告过活动；Cursor / OpenCode 只在提示与回复结束时说话，长回合的安静不算停滞。
 5. 最近停下的会话 45 分钟后离开列表，`staleHidden` 只计最近 24 小时里停下的。
 
 `SnapshotBuilder.build(rows:staleHidden:previous:context:)` 只做排序（Waiting 最久在前 → 状态 →
@@ -193,13 +204,14 @@ attention.tsv 归 hook 所有；Pulse 自己记下的一切只在一个文件里
 （「这条通知发生了什么」），都经 `DetailModel` 交给 `SessionDetailFace`；诊断窗口的
 `ActivityLogModel`（状态段与通知去向合成一条倒序记录，按 Agent 过滤）。时间一律经
 `LogClock`：今天 `HH:mm`，一周内 `周一 HH:mm` / `Mon HH:mm`，更早 `M/d HH:mm`。自检的「hook
-真的触发过」直接读 attention.tsv 每个 Agent 最新的一行（`AttentionIO.latestEvents`）。
+真的触发过」读 `ScanEngine.latestHookEvents`：启动以来见过的每个 Agent 最新的 attention 行与活动事件
+（活动池保留一天），不受 attention.tsv 80 行窗口限制。
 
 `ScanEngine`、`WaitNotifier` 与 `StatusStore` 一起拥有 builder 刻意不碰的东西：
 
 - **节奏**。没有固定的探测间隔：事件文件一变就处理。`ProbeSchedule.tick` 只是一个便宜的时钟
   （托盘打开或屏上有秒级等待时 5 秒，否则 60 秒，没有会话时停表），用来推进「最近」「停滞」与相对时间；
-  `ProbeSchedule.processScan` 是 30 秒一次的进程查看。`PowerMonitor` 提供息屏 / 锁屏 / 低电量状态：
+  `ProbeSchedule.processScan` 是进程查看的退避节奏（30 秒起，扫到同一批进程就加倍，封顶 5 分钟）。`PowerMonitor` 提供息屏 / 锁屏 / 低电量状态：
   低电量加倍，息屏停表 —— attention 文件变化仍会唤醒。
 - **通知策略**。builder 报告边沿，`WaitNotifier` 决定要不要发：按 agent 静音（行菜单）、在最前、
   开关、授权、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）；每个决定都作为去向写进会话记录（`SessionLog`）。

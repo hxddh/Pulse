@@ -11,7 +11,9 @@ import AppKit
 /// - the **activity spool** (`activity.d/`): a hook's tool or prompt event;
 /// - a **process exit**: kqueue (`ProcessExitWatch`) ends the sessions that
 ///   process ran;
-/// - the **process scan** (libproc, every 30 s, at launch and on wake): agent
+/// - the **process scan** (libproc — at launch, on wake, when a hook names
+///   a pid the last scan did not find, and on a timer that backs off from
+///   30 s to 5 min while the scans find the same processes): agent
 ///   processes no session has claimed become process-only rows;
 /// - the **tick** (`ProbeSchedule.tick`): a re-projection with no IO, so a
 ///   wait's age and the time rules move on screen.
@@ -50,14 +52,25 @@ final class ScanEngine {
     private(set) var transcripts: [String: TranscriptSummary] = [:]
     private var transcriptStamps: [String: FileStamp] = [:]
     private var transcriptReads: Set<String> = []
-    /// The newest attention line per agent — Settings' and Diagnostics'
-    /// "last event". Kept here so a redraw never reads the file.
-    private(set) var latestHookEventMs: [AgentID: Int64] = [:]
+    /// The newest hook event per agent — an attention line or an activity
+    /// event — for Settings' and Diagnostics' "last event" and the
+    /// self-check's "hooks reach Pulse". Kept here so a redraw never reads a
+    /// file, and so it outlives the attention file's 80-line window.
+    private(set) var latestHookEvents: [AgentID: DoctorModel.HookFire] = [:]
+    var latestHookEventMs: [AgentID: Int64] { latestHookEvents.mapValues(\.tsMs) }
 
     // MARK: Cadence
 
     private var tickTimer: Timer?
     private var processTimer: Timer?
+    /// Process scans in a row that found the same processes: the timer
+    /// backs off (`ProbeSchedule.processScan(power:quietScans:)`).
+    private(set) var quietProcessScans = 0
+    /// Pids a hook named that no scan had found — each asks for one scan.
+    private var pidsScannedFor: Set<Int32> = []
+    /// `start()` armed the watchers and timers. A store a test or a fixture
+    /// builds never starts a scan of its own.
+    private var armed = false
     /// The tray panel is on screen.
     private(set) var trayOpen = false
     private(set) var activity: ProbeSchedule.Activity = .empty
@@ -75,7 +88,7 @@ final class ScanEngine {
     /// event: the sooner of the tick and the process scan (each projects).
     /// nil when both are stopped. The header judges freshness against it.
     var expectedInterval: TimeInterval? {
-        let scan = ProbeSchedule.processScan(power: powerMonitor.state)
+        let scan = processScanInterval
         switch (currentInterval, scan) {
         case let (tick?, scan?): return min(tick, scan)
         case let (tick?, nil): return tick
@@ -84,6 +97,11 @@ final class ScanEngine {
         }
     }
     private var lastApplyLogSignature = ""
+
+    /// The process scan's current period; nil while parked.
+    var processScanInterval: TimeInterval? {
+        ProbeSchedule.processScan(power: powerMonitor.state, quietScans: quietProcessScans)
+    }
 
     /// Reads in flight, and reads asked for while one was.
     private enum Source: Hashable { case attention, activity, processes }
@@ -101,6 +119,7 @@ final class ScanEngine {
     /// timers and the power monitor. `StatusStore.start()` calls it once
     /// settings and the session log are loaded.
     func start() {
+        armed = true
         exitWatch.start { [weak self] pid in
             // Bind before the Task: the exit callback is @Sendable.
             guard let engine = self else { return }
@@ -121,6 +140,7 @@ final class ScanEngine {
                 self.rescheduleProcessScan()
                 // Back from sleep or lock: catch up at once.
                 if !self.powerMonitor.state.parked {
+                    self.quietProcessScans = 0
                     self.read(.processes)
                     self.project()
                     if let model = self.model { UpdateCheck.shared.startIfEnabled(store: model) }
@@ -135,6 +155,7 @@ final class ScanEngine {
     }
 
     func stop() {
+        armed = false
         attentionWatcher.stop()
         exitWatch.stop()
         tickTimer?.invalidate()
@@ -165,7 +186,7 @@ final class ScanEngine {
 
     /// For Diagnostics and the report.
     func probeIntervalDescription(lang: ResolvedLanguage) -> String {
-        guard let seconds = ProbeSchedule.processScan(power: powerMonitor.state) else {
+        guard let seconds = processScanInterval else {
             return L10n.t(.probeParked, lang)
         }
         return String(format: L10n.t(.probeEvery, lang), Int(seconds.rounded()))
@@ -192,13 +213,14 @@ final class ScanEngine {
         RunLoop.main.add(timer, forMode: .common)
     }
 
+    /// One-shot: each scan that lands re-arms it with the backed-off period.
     private func rescheduleProcessScan() {
         processTimer?.invalidate()
         processTimer = nil
-        guard let interval = ProbeSchedule.processScan(power: powerMonitor.state),
+        guard armed, let interval = processScanInterval,
               !Self.suppressBackgroundScansForTesting
         else { return }
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             guard let engine = self else { return }
             Task { @MainActor in
                 engine.read(.processes)
@@ -262,10 +284,14 @@ final class ScanEngine {
         let lines = text.split(whereSeparator: \.isNewline).map(String.init)
         let fresh = lines.filter { !seenLines.contains($0) }
         seenLines = Set(lines)
-        for (agent, ms) in AttentionIO.latestEventTimes(in: text) {
-            latestHookEventMs[agent] = max(latestHookEventMs[agent] ?? 0, ms)
+        for (agent, event) in AttentionIO.latestEvents(in: text) {
+            noteHookEvent(agent, DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs))
         }
         apply(records: fresh.compactMap { AttentionRecord(line: $0) }, nowMs: nowMs)
+    }
+
+    private func noteHookEvent(_ agent: AgentID, _ fire: DoctorModel.HookFire) {
+        if (latestHookEvents[agent]?.tsMs ?? 0) < fire.tsMs { latestHookEvents[agent] = fire }
     }
 
     /// Attention records, in order. Tests call this directly.
@@ -273,26 +299,51 @@ final class ScanEngine {
         for record in records { book.apply(record, nowMs: nowMs) }
         // A pid the file names that is gone ended while nobody watched.
         book.endSessions(whosePidIsDead: AgentProcesses.isAlive)
+        // A live pid no scan has found: one scan, so its terminal and host
+        // are known and a process-only row is not left beside its session.
+        if armed {
+            let known = Set(processes.flatMap(\.family))
+            let unknown = Set(records.map(\.pid).filter { $0 > 1 && !known.contains($0) })
+                .subtracting(pidsScannedFor)
+                .filter(AgentProcesses.isAlive)
+            if !unknown.isEmpty {
+                pidsScannedFor.formUnion(unknown)
+                if pidsScannedFor.count > 512 { pidsScannedFor = unknown }
+                quietProcessScans = 0
+                read(.processes)
+            }
+        }
         project(nowMs: nowMs)
     }
 
     /// Activity events (the spool is re-read whole; the book ignores what it
     /// has already seen).
     func apply(activity events: [ActivitySpool.Event], nowMs: Int64) {
-        for event in events { book.apply(activity: event, nowMs: nowMs) }
+        for event in events {
+            book.apply(activity: event, nowMs: nowMs)
+            if let agent = AgentCatalog.agent(named: event.agent) {
+                noteHookEvent(agent, DoctorModel.HookFire(kind: event.event == "prompt" ? "working" : "activity", tsMs: event.tsMs))
+            }
+        }
         project(nowMs: nowMs)
     }
 
     /// A process scan. `nil` — the table could not be read — keeps the last
-    /// good list.
+    /// good list. A scan that found the same processes as the last one
+    /// backs the timer off; one that found a change brings it back to 30 s.
     func apply(processes hits: [AgentProcesses.Hit]?, nowMs: Int64) {
         if let hits {
+            quietProcessScans = ProbeSchedule.nextQuietScans(
+                quietProcessScans,
+                same: Set(hits.map(\.pid)) == Set(processes.map(\.pid))
+            )
             processes = hits
         } else {
             DebugLog.write("process scan failed; keeping \(processes.count)")
         }
         book.endSessions(whosePidIsDead: AgentProcesses.isAlive)
         project(nowMs: nowMs)
+        rescheduleProcessScan()
     }
 
     /// kqueue said `pid` exited.
@@ -316,6 +367,9 @@ final class ScanEngine {
     /// The book as rows, landed on the model. Pure but for the landing.
     func project(nowMs: Int64 = ScanEngine.nowMs()) {
         guard let model else { return }
+        // A turn held for a block lands once its grace has passed, even when
+        // no event follows (a denied prompt, then Stop within 20 s).
+        book.settleHeldTurns(nowMs: nowMs)
         book.prune(nowMs: nowMs)
         let output = SessionProjection.rows(
             book: book,
@@ -351,7 +405,11 @@ final class ScanEngine {
         for session in book.sessions.values where Self.wantsTranscript(session, nowMs: nowMs) {
             requestTranscript(session)
         }
-        transcripts = transcripts.filter { path, _ in book.sessions.values.contains { $0.transcript == path } }
+        // Summaries and their stamps go together: a stamp without its
+        // summary would make a returning session's unchanged file look read.
+        let paths = Set(book.sessions.values.map(\.transcript))
+        transcripts = transcripts.filter { paths.contains($0.key) }
+        transcriptStamps = transcriptStamps.filter { paths.contains($0.key) }
 
         // Re-arm the tick only when its tier moved.
         let nextFreshWait = result.rows.contains { row in
@@ -389,7 +447,8 @@ final class ScanEngine {
         let path = session.transcript
         guard !path.isEmpty, !transcriptReads.contains(path), !Self.suppressBackgroundScansForTesting else { return }
         transcriptReads.insert(path)
-        let known = transcriptStamps[path]
+        // Only a stamp whose summary is still held can skip the read.
+        let known = transcripts[path] == nil ? nil : transcriptStamps[path]
         let agent = session.agent
         ioQueue.async { [weak self] in
             let stamp = Self.stamp(path)

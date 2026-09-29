@@ -37,11 +37,12 @@
           "codex-rs/hooks/src/schema.rs",
           "codex-rs/hooks/src/legacy_notify.rs"
         ],
-        "note": "hooks.json shares Claude's nested shape and honours async (SessionEnd always runs synchronously, capped at 3 s). PermissionRequest is never installed: it fires before Codex's own auto-review. The legacy notify argv (agent-turn-complete) stays.",
+        "note": "hooks.json shares Claude's nested shape and honours async (SessionEnd always runs synchronously, capped at 3 s). PermissionRequest is never installed: it fires before Codex's own auto-review. The legacy notify argv (agent-turn-complete) stays. PostToolUse is installed async (engine/discovery.rs: only SessionEnd is forced synchronous; an async handler's output is never read) — the per-tool activity that makes a stall meaningful.",
         "events": [
           "SessionStart",
           "SessionEnd",
           "UserPromptSubmit",
+          "PostToolUse",
           "Stop"
         ],
         "tests": [
@@ -106,11 +107,12 @@
           "docs/hooks/reference.md",
           "docs/hooks/index.md"
         ],
-        "note": "Exit 0 with empty stdout passes every event; only exit 2 or a decision in stdout blocks. Notification is observability only. Hooks run with a sanitized environment, so terminal handles may be missing.",
+        "note": "Exit 0 with empty stdout passes every event; only exit 2 or a decision in stdout blocks. Notification is observability only. Hooks run with a sanitized environment, so terminal handles may be missing. AfterTool is observe-only for Pulse (it prints nothing, so no decision, no continue:false, no tailToolCallRequest): the tool ran, which answers a ToolPermission raised for it.",
         "events": [
           "SessionStart",
           "SessionEnd",
           "BeforeAgent",
+          "AfterTool",
           "AfterAgent",
           "Notification"
         ],
@@ -129,11 +131,13 @@
         "watch": [
           "content/copilot/reference/hooks-reference.md"
         ],
-        "note": "camelCase event names select the camelCase payload. notification is fire-and-forget; agentStop/sessionStart outputs are ignored when stdout is empty. agent_idle/agent_completed describe background subagents and are not read as the session's turn.",
+        "note": "camelCase event names select the camelCase payload. notification is fire-and-forget; agentStop/sessionStart outputs are ignored when stdout is empty. agent_idle/agent_completed describe background subagents and are not read as the session's turn. postToolUse / postToolUseFailure: empty output keeps the original result (\"Return {} or empty output\"); only exit 2 on postToolUseFailure adds context, and Pulse exits 0 — the tool ran, which answers a permission_prompt.",
         "events": [
           "sessionStart",
           "sessionEnd",
           "userPromptSubmitted",
+          "postToolUse",
+          "postToolUseFailure",
           "agentStop",
           "notification",
           "errorOccurred"

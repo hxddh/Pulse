@@ -308,6 +308,42 @@ final class AgentProcessesTests: XCTestCase {
         )
     }
 
+    /// 24.0: path fragments match only the program — the executable, and
+    /// an interpreter's script — at a path-component boundary.
+    func testPathFragmentsMatchOnlyTheProgramAtAComponentBoundary() {
+        let notAgents = [
+            "/opt/homebrew/bin/pinentry-mac",
+            "/opt/homebrew/bin/pip3 install x",
+            "/usr/bin/vim /Users/me/src/opencode/README.md",
+            "/bin/cat /Users/me/.local/bin/claude",
+            "/Users/me/.local/bin/claude-mcp-server --port 3",
+            "/opt/homebrew/bin/claude-squad",
+            "/usr/bin/less /opt/homebrew/bin/gemini",
+            "/opt/homebrew/bin/node /Users/me/tools/copilot-cli-helper/index.js --watch",
+        ]
+        for argv in notAgents {
+            XCTAssertNil(AgentProcesses.match(args: argv), argv)
+        }
+        let agents: [(String, AgentID)] = [
+            ("/opt/homebrew/bin/pi", .pi),
+            ("/opt/homebrew/bin/node /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js", .pi),
+            ("/usr/local/bin/node --no-warnings /opt/homebrew/bin/claude --resume", .claude),
+            ("/opt/homebrew/bin/bun /Users/me/.bun/install/global/node_modules/@github/copilot/index.js", .copilot),
+            ("/Users/me/.opencode/bin/opencode", .opencode),
+            ("/Applications/Codex.app/Contents/Resources/codex app-server", .codex),
+            ("/Users/me/.local/share/claude/versions/2.1.3 --resume", .claude),
+        ]
+        for (argv, agent) in agents {
+            XCTAssertEqual(AgentProcesses.match(args: argv), agent, argv)
+        }
+        XCTAssertTrue(AgentProcesses.containsComponent("/opt/homebrew/bin/pi", "/opt/homebrew/bin/pi"))
+        XCTAssertFalse(AgentProcesses.containsComponent("/opt/homebrew/bin/pinentry-mac", "/opt/homebrew/bin/pi"))
+        XCTAssertTrue(AgentProcesses.containsComponent("/x/anysphere.cursor-agent-1.2.0/main.js", "anysphere.cursor-agent"))
+        XCTAssertFalse(AgentProcesses.containsComponent("/x/myanysphere.cursor-agent/main.js", "anysphere.cursor-agent"))
+        XCTAssertEqual(AgentProcesses.commandLine(path: "/usr/local/bin/node", argv: ["node", "/opt/homebrew/bin/gemini"]), "/usr/local/bin/node /opt/homebrew/bin/gemini")
+        XCTAssertEqual(AgentProcesses.commandLine(path: "", argv: ["pi", "--model", "x"]), "pi --model x")
+    }
+
     private func proc(_ pid: Int32, _ ppid: Int32, _ args: String, tty: String = "") -> AgentProcesses.Proc {
         AgentProcesses.Proc(pid: pid, ppid: ppid, args: args, tty: tty, startedMs: 1_800_000_000_000)
     }

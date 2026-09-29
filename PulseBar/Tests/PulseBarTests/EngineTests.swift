@@ -315,6 +315,31 @@ struct EventFeedTests {
         #expect(store.engine.latestHookEventMs[.gemini] == t0 - 60_000)
     }
 
+    /// 24.0: the self-check's "hooks reach Pulse" counts activity events
+    /// too, and remembers them past the attention file's 80 lines.
+    @Test func anActivityEventIsAHookEventToo() {
+        let store = StatusStore()
+        store.engine.apply(activity: [
+            ActivitySpool.Event(agent: "claude", session: "s1", event: "tool", tool: "Read", target: "", prompt: "", cwd: "/w", tsMs: t0 - 5_000),
+        ], nowMs: t0)
+        #expect(store.engine.latestHookEventMs[.claude] == t0 - 5_000)
+        #expect(store.engine.latestHookEvents[.claude]?.kind == "activity")
+        let facts = DoctorProbe.gather(home: FileManager.default.temporaryDirectory, nowMs: t0, lastFire: store.engine.latestHookEvents)
+        #expect(facts.lastFire["claude"]?.tsMs == t0 - 5_000)
+    }
+
+    /// A turn held inside a block's grace lands on the tick, with no event
+    /// after it (a denied prompt).
+    @Test func aHeldTurnLandsOnTheTick() {
+        let store = StatusStore()
+        let raise = AttentionRecord(agent: "gemini", kind: "permission", ms: t0 - 10_000, message: "Allow?", session: "g1", cwd: "/w/app")
+        let turn = AttentionRecord(agent: "gemini", kind: "turn", ms: t0 - 7_000, session: "g1", cwd: "/w/app")
+        store.engine.landAttention(file([raise, turn]), nowMs: t0)
+        #expect(store.cachedAll.first?.isBlocked == true, "inside the grace")
+        store.engine.project(nowMs: t0 + 15_000)
+        #expect(store.cachedAll.first?.isYourTurn == true, "the tick lands the held turn")
+    }
+
     @Test func aProcessScanThatFailsKeepsTheLastGoodList() {
         let store = StatusStore()
         let hit = AgentProcesses.Hit(agent: .codex, pid: 999_999, cwd: "/w/app")
@@ -394,6 +419,21 @@ final class ProbeScheduleTests: XCTestCase {
 
     func testTheProcessScanIsSlow() {
         XCTAssertEqual(ProbeSchedule.processScan(power: awake), 30)
+    }
+
+    /// 24.0: a scan that finds the same processes backs the next one off,
+    /// 30 s → 5 min; any change brings it back to 30 s.
+    func testTheProcessScanBacksOffWhileNothingChanges() {
+        XCTAssertEqual(ProbeSchedule.processScan(power: awake, quietScans: 1), 60)
+        XCTAssertEqual(ProbeSchedule.processScan(power: awake, quietScans: 3), 240)
+        XCTAssertEqual(ProbeSchedule.processScan(power: awake, quietScans: 4), ProbeSchedule.processScanMaxSeconds)
+        XCTAssertEqual(ProbeSchedule.processScan(power: awake, quietScans: 50), ProbeSchedule.processScanMaxSeconds)
+        var lowPower = ProbeSchedule.Power()
+        lowPower.lowPowerMode = true
+        XCTAssertEqual(ProbeSchedule.processScan(power: lowPower, quietScans: 4), ProbeSchedule.processScanMaxSeconds, "never past the cap")
+        XCTAssertEqual(ProbeSchedule.nextQuietScans(0, same: true), 1)
+        XCTAssertEqual(ProbeSchedule.nextQuietScans(3, same: true), 4)
+        XCTAssertEqual(ProbeSchedule.nextQuietScans(3, same: false), 0)
     }
 }
 

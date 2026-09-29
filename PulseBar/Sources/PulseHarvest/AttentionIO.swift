@@ -87,35 +87,10 @@ package enum AttentionIO {
         String(decoding: data, as: UTF8.self)
     }
 
-    /// Last raw hook/bridge event per Agent, including done/stop. Runtime
-    /// support needs to answer "has this connection ever fired recently?"
-    /// without turning a completed event back into Waiting. Pure: the scan
-    /// reads the file once and hands the text here.
-    package static func latestEventTimes(in text: String) -> [AgentID: Int64] {
-        var latest: [AgentID: Int64] = [:]
-        for line in text.split(whereSeparator: \.isNewline) {
-            if line.hasPrefix("#") { continue }
-            let columns = line.split(
-                separator: "\t",
-                omittingEmptySubsequences: false
-            )
-            guard columns.count == AttentionProtocol.columnCount,
-                  let agent = AgentCatalog.agent(named: String(columns[0])),
-                  let ms = Int64(columns[2])
-            else { continue }
-            latest[agent] = max(latest[agent] ?? 0, ms)
-        }
-        return latest
-    }
-
-    /// The newest protocol event per agent, with its v4 kind —
-    /// the self-check's "the hooks actually fire". 23.0: read from the file
-    /// itself; Pulse no longer keeps a second copy of every hook line.
-    package static func latestEvents() -> [AgentID: (kind: String, tsMs: Int64)] {
-        latestEvents(in: readText())
-    }
-
-    /// Pure: `latestEvents` over a file's text.
+    /// The newest protocol event per agent, with its v4 kind — Settings'
+    /// "last event" and the self-check's "the hooks actually fire" (the
+    /// engine keeps the newest it has seen). Pure: the engine reads the file
+    /// once and hands the text here.
     package static func latestEvents(in text: String) -> [AgentID: (kind: String, tsMs: Int64)] {
         var latest: [AgentID: (kind: String, tsMs: Int64)] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
@@ -160,16 +135,6 @@ package enum AttentionIO {
             if wrote <= 0 { break }
             offset += wrote
         }
-    }
-
-    /// Append a done event. The session is written exactly as given: a
-    /// session clears that session, an empty one clears only the agent's
-    /// session-less entries (23.0).
-    package static func appendDone(agent: AgentID, session: String) {
-        let ts = Int64(Date().timeIntervalSince1970 * 1000)
-        let clean = session.replacingOccurrences(of: "\t", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-        appendRawLine(AttentionRecord(agent: agent.rawValue, kind: AttentionKind.done.rawValue, ms: ts, session: clean).line)
     }
 
     /// Shared by the store (clears) and the native hook receiver. `url` nil

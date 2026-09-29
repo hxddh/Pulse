@@ -13,6 +13,9 @@ enum HookAction: Equatable {
     case blocked(AttentionKind)
     /// The turn is over: your turn.
     case turn
+    /// The agent has sat at its prompt a while (Claude's `idle_prompt`):
+    /// your turn only if the turn's end was not seen (`AttentionKind.idle`).
+    case idle
     /// The block was answered in the vendor's own prompt.
     case resolved
     /// The session ended.
@@ -89,7 +92,7 @@ enum PulseHookReceiver {
             // Session-scoped only: an agent-wide clear from one terminal
             // must not clear another's.
             guard !context.session.isEmpty else { return 0 }
-        case .start, .blocked, .turn, .resolved, .end:
+        case .start, .blocked, .turn, .idle, .resolved, .end:
             break
         }
         let kind: AttentionKind
@@ -98,6 +101,7 @@ enum PulseHookReceiver {
         case .prompt: kind = .working
         case .blocked(let blocked): kind = blocked.isBlocking ? blocked : .waiting
         case .turn: kind = .turn
+        case .idle: kind = .idle
         case .resolved: kind = .done
         case .end: kind = .end
         case .activity, .ignore: return 0
@@ -167,6 +171,7 @@ enum PulseHookReceiver {
         switch kind {
         case .permission, .question, .waiting: return HookReading(action: .blocked(kind))
         case .turn: return HookReading(action: .turn)
+        case .idle: return HookReading(action: .idle)
         case .done: return HookReading(action: .resolved)
         case .start: return HookReading(action: .start)
         case .working: return HookReading(action: .prompt)
@@ -194,7 +199,9 @@ enum PulseHookReceiver {
             case "permission_prompt": return HookReading(action: .blocked(.permission), ask: ask)
             case "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input":
                 return HookReading(action: .blocked(.question), ask: ask)
-            case "idle_prompt": return HookReading(action: .turn)
+            // About a minute after a turn, and again after the person saw
+            // it: never a turn of its own (`AttentionKind.idle`).
+            case "idle_prompt": return HookReading(action: .idle)
             case "elicitation_complete", "elicitation_response": return HookReading(action: .resolved)
             // A Notification that does not say it is a block is not one.
             default: return HookReading(action: .ignore)

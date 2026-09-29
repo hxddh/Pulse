@@ -16,12 +16,19 @@ import Foundation
 ///   `waiting`), and never for an agent whose hook cannot say it is blocked
 ///   (Codex, Cursor: `waiting: .none`).
 /// - **Your turn is quiet**: a `turn` is a count, never red, never a banner.
-///   A turn within `stopGraceMs` of a block does not clear it (the vendors'
-///   event order is not ours), and a turn the person watched finish (`front`)
-///   is owed to nobody.
+///   A turn within `stopGraceMs` of a block does not clear it at once (the
+///   vendors' event order is not ours): it is held, and applies when the
+///   grace ends (`settleHeldTurns`, the next event, the tick) or as soon as
+///   the block is answered before it — a turn is never dropped, so a denied
+///   prompt cannot leave the lamp red. A turn the person watched finish
+///   (`front`) is owed to nobody, and `idle` (Claude's `idle_prompt`, a
+///   minute after the turn) is a turn only while the session was still
+///   working or blocked — it never revives a turn already seen.
 /// - **An answer arrives as activity**: nothing writes `done` when a
 ///   permission is granted in the vendor's own prompt — the next tool call
-///   (or prompt) stamped after the raise is the answer.
+///   (or prompt) stamped after the raise is the answer. When the block and
+///   the activity both name their tool, only that tool's activity answers
+///   it: a parallel tool finishing is not the person saying yes.
 /// - **`done`** (the vendor's "resolved", or a dismissal in Pulse) clears the
 ///   session it names; an empty session clears only the agent's session-less
 ///   sessions, never one that has an id.
@@ -50,6 +57,16 @@ struct SessionBook: Equatable {
         var sinceMs: Int64
         /// The prompt's own window was in front when it was raised.
         var inFront: Bool
+        /// The tool the block is about, when the raise named it (`Bash`
+        /// from Claude's `Bash: npm test`); "" when unknown.
+        var tool: String = ""
+    }
+
+    /// A turn that arrived within `stopGraceMs` of a block: held, never
+    /// dropped.
+    struct HeldTurn: Equatable, Sendable {
+        var ms: Int64
+        var front: Bool
     }
 
     struct Session: Equatable, Sendable {
@@ -79,6 +96,8 @@ struct SessionBook: Equatable {
         /// its hook sends them) — the only words an agent with no transcript
         /// has.
         var message = ""
+        /// A turn waiting out the grace of the current block.
+        var heldTurn: HeldTurn?
 
         var isEnded: Bool {
             if case .ended = state { return true }
@@ -135,34 +154,39 @@ struct SessionBook: Equatable {
         guard var session = before ?? introduce(key: key, agent: agent, session: spelled, kind: kind, ms: ms) else {
             return false
         }
+        // A held turn whose grace this event's clock has passed goes first.
+        Self.settleHeldTurn(&session, nowMs: ms)
         note(record, ms: ms, into: &session)
 
         switch kind {
         case .start:
             // A start mid-work (a resume, a compaction) says nothing about
             // the work; otherwise the session is at its prompt.
-            if session.state != .working { set(&session, .idle, at: ms) }
+            if session.state != .working { Self.set(&session, .idle, at: ms) }
         case .working:
-            set(&session, .working, at: ms)
+            Self.answer(&session, at: ms)
         case .permission, .question, .waiting:
-            var ask = ContentSanitizer.redact(record.message)
-            // One approval is often raised twice (Claude's Notification and
-            // PermissionRequest); a later raise with no words keeps the
-            // earlier one's.
-            if ask.isEmpty, case .blocked(let open) = session.state { ask = open.ask }
-            set(&session, .blocked(Block(kind: kind, ask: ask, sinceMs: ms, inFront: record.front == true)), at: ms)
+            Self.raise(kind, record: record, at: ms, in: &session)
         case .turn:
             let message = ContentSanitizer.redact(record.message)
             if !message.isEmpty { session.message = message }
-            if case .blocked(let block) = session.state, ms - block.sinceMs < Self.stopGraceMs {
+            Self.turn(&session, at: ms, front: record.front == true)
+        case .idle:
+            // Sat at its prompt a while: news only if Pulse had not seen the
+            // turn end (still working or blocked — an Esc on a prompt fires
+            // no Stop — or a session met just now).
+            switch session.state {
+            case .working, .blocked:
+                Self.turn(&session, at: ms, front: record.front == true)
+            case .idle where before == nil:
+                Self.turn(&session, at: ms, front: record.front == true)
+            case .idle, .yourTurn, .ended:
                 break
             }
-            // The person watched it finish: nothing is owed.
-            set(&session, record.front == true ? .idle : .yourTurn(sinceMs: ms), at: ms)
         case .done:
-            _ = clear(&session, at: ms)
+            _ = Self.clear(&session, at: ms)
         case .end:
-            set(&session, .ended(atMs: ms), at: ms)
+            Self.set(&session, .ended(atMs: ms), at: ms)
         case .subagentStart, .subagentStop:
             break
         }
@@ -175,7 +199,7 @@ struct SessionBook: Equatable {
     private func introduce(key: String, agent: AgentID, session: String, kind: AttentionKind, ms: Int64) -> Session? {
         if kind == .done || kind == .end { return nil }
         // A turn with no identity has no session to belong to.
-        if kind == .turn, session.isEmpty { return nil }
+        if kind == .turn || kind == .idle, session.isEmpty { return nil }
         return Session(key: key, agent: agent, session: session, stateSinceMs: ms, startedMs: ms)
     }
 
@@ -189,20 +213,128 @@ struct SessionBook: Equatable {
         session.lastEventMs = max(session.lastEventMs, ms)
     }
 
-    private func set(_ session: inout Session, _ state: State, at ms: Int64) {
-        session.state = state
-        session.stateSinceMs = ms
+    /// A blocked event. A re-raise of the same kind inside the grace is the
+    /// same block said again (Claude's `PermissionRequest`, then its
+    /// `Notification` about six seconds later): it keeps the earlier words,
+    /// clock and tool. A later raise with no words keeps the earlier ones'.
+    private static func raise(_ kind: AttentionKind, record: AttentionRecord, at ms: Int64, in session: inout Session) {
+        var block = Block(
+            kind: kind,
+            ask: ContentSanitizer.redact(record.message),
+            sinceMs: ms,
+            inFront: record.front == true
+        )
+        block.tool = blockedTool(block.ask)
+        var held: HeldTurn?
+        if case .blocked(let open) = session.state {
+            if open.kind == kind, abs(ms - open.sinceMs) < Self.stopGraceMs {
+                if !open.ask.isEmpty { block.ask = open.ask }
+                if !open.tool.isEmpty || block.ask == open.ask { block.tool = open.tool }
+                block.sinceMs = min(open.sinceMs, ms)
+                block.inFront = open.inFront
+            } else if block.ask.isEmpty {
+                block.ask = open.ask
+                block.tool = open.tool
+            }
+            // A held turn outlives a raise stamped before it (the lines came
+            // out of order); a raise after it is a new block.
+            if let turn = session.heldTurn, turn.ms >= ms { held = turn }
+        }
+        Self.set(&session, .blocked(block), at: block.sinceMs)
+        session.heldTurn = held
     }
 
-    /// `done`: a block is answered (work goes on), a turn is seen (the
-    /// session is at its prompt). Anything else is left as it is.
-    private func clear(_ session: inout Session, at ms: Int64) -> Bool {
+    /// The tool a raise names, when its words are the receiver's tool
+    /// descriptor (`Tool` or `Tool: target`): one token of letters, digits
+    /// and `_ . -`. Anything else — prose, a question — names no tool.
+    static func blockedTool(_ ask: String) -> String {
+        let head = ask.components(separatedBy: ": ").first ?? ""
+        guard let first = head.unicodeScalars.first, CharacterSet.letters.contains(first),
+              head.count <= 64,
+              head.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_.-".unicodeScalars.contains($0) })
+        else { return "" }
+        return head
+    }
+
+    /// A new state from `ms`. A held turn belongs to the block it waits on
+    /// and goes with it.
+    private static func set(_ session: inout Session, _ state: State, at ms: Int64) {
+        session.state = state
+        session.stateSinceMs = ms
+        if case .blocked = state { return }
+        session.heldTurn = nil
+    }
+
+    /// A turn event: held while a block is inside its grace, else the turn
+    /// is over.
+    private static func turn(_ session: inout Session, at ms: Int64, front: Bool) {
+        if case .blocked(let block) = session.state, ms - block.sinceMs < stopGraceMs {
+            // Held, not dropped: the later of two held turns is the one.
+            if (session.heldTurn?.ms ?? .min) <= ms {
+                session.heldTurn = HeldTurn(ms: ms, front: front)
+            }
+            return
+        }
+        endTurn(&session, at: ms, front: front)
+    }
+
+    /// The turn is over: your turn, or nothing owed when the person watched
+    /// it finish.
+    private static func endTurn(_ session: inout Session, at ms: Int64, front: Bool) {
+        set(&session, front ? .idle : .yourTurn(sinceMs: ms), at: ms)
+    }
+
+    /// Work goes on (a prompt, a tool, a `done` for a block). A turn held
+    /// for the block that ended no earlier than this still ends it.
+    private static func answer(_ session: inout Session, at ms: Int64) {
+        let held = session.heldTurn
+        Self.set(&session, .working, at: ms)
+        if let held, held.ms >= ms { endTurn(&session, at: held.ms, front: held.front) }
+    }
+
+    /// Apply a held turn once `nowMs` is past its block's grace. Returns
+    /// whether it did.
+    @discardableResult
+    static func settleHeldTurn(_ session: inout Session, nowMs: Int64) -> Bool {
+        guard let held = session.heldTurn, case .blocked(let block) = session.state,
+              nowMs - block.sinceMs >= stopGraceMs
+        else { return false }
+        endTurn(&session, at: held.ms, front: held.front)
+        return true
+    }
+
+    /// Every held turn whose grace has passed — the tick's share of the
+    /// rule, so a turn after a denied prompt lands even when nothing else
+    /// happens. Returns whether anything changed.
+    @discardableResult
+    mutating func settleHeldTurns(nowMs: Int64) -> Bool {
+        var changed = false
+        for key in sessions.keys.sorted() {
+            guard var session = sessions[key], Self.settleHeldTurn(&session, nowMs: nowMs) else { continue }
+            sessions[key] = session
+            changed = true
+        }
+        return changed
+    }
+
+    /// `done`: a block is answered (work goes on — or, when a turn was held
+    /// for it, the turn is over), a turn is seen (the session is at its
+    /// prompt). Anything else is left as it is. A `done` stamped before the
+    /// state began is about an earlier one (a dismissal written while a new
+    /// ask was being raised) and changes nothing.
+    private static func clear(_ session: inout Session, at ms: Int64) -> Bool {
+        if case .blocked = session.state, ms < session.stateSinceMs { return false }
+        if case .yourTurn = session.state, ms < session.stateSinceMs { return false }
         switch session.state {
         case .blocked:
-            set(&session, .working, at: ms)
+            if let held = session.heldTurn {
+                endTurn(&session, at: held.ms, front: held.front)
+            } else {
+                Self.set(&session, .working, at: ms)
+            }
             return true
         case .yourTurn:
-            set(&session, .idle, at: ms)
+            Self.set(&session, .idle, at: ms)
             return true
         case .idle, .working, .ended:
             return false
@@ -210,7 +342,7 @@ struct SessionBook: Equatable {
     }
 
     private mutating func resolve(_ key: String, at ms: Int64) -> Bool {
-        guard var session = sessions[key], clear(&session, at: ms) else { return false }
+        guard var session = sessions[key], Self.clear(&session, at: ms) else { return false }
         session.lastEventMs = max(session.lastEventMs, ms)
         sessions[key] = session
         return true
@@ -221,8 +353,10 @@ struct SessionBook: Equatable {
     /// A tool ran or a prompt was submitted (the activity spool). Stamped
     /// after the current state began, it says the session is working: a
     /// block was answered in the vendor's prompt, a turn was taken up again,
-    /// a session at its prompt got going. Idempotent — the spool is re-read
-    /// whole, and an event no newer than the last one changes nothing.
+    /// a session at its prompt got going. A block that names its tool is
+    /// answered only by a prompt or by that tool (`answers`). Idempotent —
+    /// the spool is re-read whole, and an event no newer than the last one
+    /// changes nothing.
     @discardableResult
     mutating func apply(activity event: ActivitySpool.Event, nowMs: Int64) -> Bool {
         guard let agent = AgentID(rawValue: event.agent), !event.session.isEmpty else { return false }
@@ -238,16 +372,34 @@ struct SessionBook: Equatable {
             guard nowMs - ms <= Self.activityIntroductionMs else { return false }
             session = Session(key: key, agent: agent, session: event.session, stateSinceMs: ms, startedMs: ms)
         }
+        Self.settleHeldTurn(&session, nowMs: ms)
         session.activityMs = ms
         session.lastEventMs = max(session.lastEventMs, ms)
         if session.startedMs == 0 || ms < session.startedMs { session.startedMs = ms }
         let cwd = ContentSanitizer.redact(event.cwd)
         if session.cwd.isEmpty, !cwd.isEmpty { session.cwd = cwd }
         if ms > session.stateSinceMs || before == nil {
-            if session.state != .working { set(&session, .working, at: ms) }
+            switch session.state {
+            case .working:
+                break
+            case .blocked(let block):
+                if Self.answers(event, block) { Self.answer(&session, at: ms) }
+            case .idle, .yourTurn, .ended:
+                Self.set(&session, .working, at: ms)
+            }
         }
         sessions[key] = session
         return session != before
+    }
+
+    /// Whether an activity event answers a block: a prompt always does; a
+    /// tool does unless both name a tool and the names differ (a parallel
+    /// tool finishing is not the answer).
+    static func answers(_ event: ActivitySpool.Event, _ block: Block) -> Bool {
+        if event.event == "prompt" { return true }
+        let tool = event.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        if tool.isEmpty || block.tool.isEmpty { return true }
+        return tool.caseInsensitiveCompare(block.tool) == .orderedSame
     }
 
     // MARK: - Processes
@@ -259,7 +411,7 @@ struct SessionBook: Equatable {
         var changed = false
         for (key, session) in sessions where session.pid == pid && !session.isEnded {
             var copy = session
-            set(&copy, .ended(atMs: max(atMs, session.lastEventMs)), at: max(atMs, session.lastEventMs))
+            Self.set(&copy, .ended(atMs: max(atMs, session.lastEventMs)), at: max(atMs, session.lastEventMs))
             sessions[key] = copy
             changed = true
         }
@@ -273,7 +425,7 @@ struct SessionBook: Equatable {
         var changed = false
         for (key, session) in sessions where session.pid > 0 && !session.isEnded && !isAlive(session.pid) {
             var copy = session
-            set(&copy, .ended(atMs: session.lastEventMs), at: session.lastEventMs)
+            Self.set(&copy, .ended(atMs: session.lastEventMs), at: session.lastEventMs)
             sessions[key] = copy
             changed = true
         }
@@ -399,7 +551,10 @@ enum SessionProjection {
                 pid: live ? session.pid : 0, hostApp: hit?.hostApp
             )
 
+            // Silence is evidence only from an agent whose hook reports
+            // every tool call; the others are silent through every long turn.
             row.isStalled = row.state == .running
+                && session.agent.reportsToolActivity
                 && session.activityMs > 0
                 && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: context.stalledSeconds)
             out.rows.append(row)

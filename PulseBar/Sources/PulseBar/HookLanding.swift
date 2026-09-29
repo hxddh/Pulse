@@ -82,16 +82,19 @@ enum HookLanding {
     /// The agent pid and landing handles for the hook now running.
     static func current(agent: AgentID, environment: [String: String]) -> (pid: Int32, landing: String) {
         let parent = getppid()
+        // One `KERN_PROCARGS2` buffer for the whole walk.
+        var buffer = [UInt8](repeating: 0, count: AgentProcesses.argumentsMax())
         let pid = agentPID(
             agent: agent,
             start: parent,
             parentOf: PromptVisibility.parentPID(of:),
             argumentsOf: { pid in
                 // The executable path first, as the process scan matches it.
-                let argv = AgentProcesses.arguments(of: pid) ?? ""
-                let path = AgentProcesses.executablePath(of: pid)
-                let joined = [path, argv].filter { !$0.isEmpty }.joined(separator: " ")
-                return joined.isEmpty ? nil : joined
+                let line = AgentProcesses.commandLine(
+                    path: AgentProcesses.executablePath(of: pid),
+                    argv: AgentProcesses.argv(of: pid, buffer: &buffer) ?? []
+                )
+                return line.isEmpty ? nil : line
             }
         )
         let terminal = ownTTY() ?? tty(of: pid) ?? tty(of: parent)

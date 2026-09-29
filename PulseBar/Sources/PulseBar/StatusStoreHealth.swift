@@ -154,10 +154,11 @@ extension StatusStore {
         diagnostics.isRunningDoctor = true
         let home = HooksInstaller.homeURL
         let lang = self.lang
+        let lastFire = engine.latestHookEvents
         DebugLog.write("self-check started")
         Task.detached(priority: .userInitiated) {
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-            let facts = DoctorProbe.gather(home: home, nowMs: nowMs)
+            let facts = DoctorProbe.gather(home: home, nowMs: nowMs, lastFire: lastFire)
             let report = DoctorModel.evaluate(facts, lang: lang)
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -255,7 +256,6 @@ extension StatusStore {
     func performDiagnosticsFix(_ fix: DiagnosticsModel.Fix) {
         switch fix {
         case .installHooks: installHooks()
-        case .openHooksSettings: openSettings(focus: .waitingSignals)
         case .doctor(let doctorFix): performDoctorFix(doctorFix)
         }
     }

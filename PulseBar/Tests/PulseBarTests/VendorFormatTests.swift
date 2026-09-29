@@ -42,6 +42,23 @@ struct VendorDriftTests {
         #expect(AttentionProtocol.normalizeKind("stop") == AttentionKind.turn.rawValue, "a known alias still normalises")
     }
 
+    /// 24.0: a red lamp has a way to go out — every agent that can block
+    /// installs an event that answers it — and each per-tool event reads as
+    /// activity: never a decision, never a block.
+    @Test func everyAgentThatCanBlockInstallsItsAnswer() {
+        for agent in AgentID.allCases where agent.waitingSource == .hooks {
+            let names = Set(agent.spec.hooks.events.map(\.name))
+            #expect(!names.isDisjoint(with: HookContract.answerEvents), "\(agent.rawValue)")
+        }
+        for agent in AgentID.allCases {
+            for event in agent.spec.hooks.events where HookContract.toolActivityEvents.contains(event.name) {
+                let reading = PulseHookReceiver.interpret(agent: agent, event: event.name, payload: [:])
+                #expect(reading?.action == .activity, "\(agent.rawValue) \(event.name)")
+            }
+        }
+        #expect(HookContract.toolActivityEvents.isDisjoint(with: HookContract.gatingEvents))
+    }
+
     /// Every contract event Pulse installs is one the receiver knows —
     /// an installed event it could not read would be a hook that says
     /// nothing.

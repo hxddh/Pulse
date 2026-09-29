@@ -15,7 +15,6 @@ extension StatusStore {
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             notice: rowActionNotice(row),
-            needsReach: isWaitingNoneNeedsReach(row),
             muted: settings.mutedAgents.contains(row.agent)
         ))
     }
@@ -62,6 +61,7 @@ extension StatusStore {
         // The user took the hooks out on purpose; do not keep offering them.
         if settings.hooksNudgeOff { return false }
         if case .failed = hooksStatus { return false }
+        if hooksStatus.isWorking { return false }
         return cachedAll.contains {
             $0.liveProcess && !hooksStatus.isInstalled(for: $0.agent)
         }

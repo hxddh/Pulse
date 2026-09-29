@@ -63,12 +63,14 @@ extension StatusStore {
             mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
             hooksStatus: hooksStatus.label(lang: lang),
             hooksInstalled: hooksInstalled,
+            hooksBusy: hooksStatus.isWorking,
             hookAgents: SettingsModel.hookAgents(
                 installed: hooksStatus.installedAgents,
                 present: Set(AgentID.priority.filter(HooksInstaller.vendorPresent)),
                 lastEventMs: engine.latestHookEventMs,
                 nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-                lang: lang
+                lang: lang,
+                failed: hooksStatus.failures
             ),
             hookTest: hookSelfTestText,
             hookTestTone: hookTone,
@@ -234,8 +236,10 @@ struct SettingsFace: View {
                 HStack(spacing: PulseTheme.Space.s) {
                     if model.hooksInstalled {
                         Button(t(.uninstallHooks), role: .destructive) { send(.uninstallHooks) }
+                            .disabled(model.hooksBusy)
                     }
                     Button(t(.installHooks)) { send(.installHooks) }
+                        .disabled(model.hooksBusy)
                 }
             } label: {
                 Text(t(.settingsHooksTitle))
@@ -245,7 +249,10 @@ struct SettingsFace: View {
             ForEach(model.hookAgents) { line in
                 LabeledContent {
                     Text(line.state)
-                        .foregroundStyle(line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                        .foregroundStyle(
+                            line.failed ? AnyShapeStyle(PulseTheme.Tone.attention.color)
+                                : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+                        )
                 } label: {
                     Label {
                         Text(line.agent.displayName)
