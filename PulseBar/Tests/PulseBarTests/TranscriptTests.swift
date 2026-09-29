@@ -3,6 +3,228 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
+// Transcripts: the shared transcript reader, dialects and the plan facts read from them.
+
+/// 4.0-α — a session transcript is parsed by shape, bounded
+/// at every edge, and sanitized per entry. These tests pin each rule with
+/// vendor-real line shapes; the file-window behaviour runs against a real
+/// temporary file at the bottom.
+final class TranscriptReaderTests: XCTestCase {
+
+    private func parse(_ lines: [String], truncatedHead: Bool = false) -> TranscriptReader.Excerpt {
+        TranscriptReader.parse(
+            data: Data((lines.joined(separator: "\n") + "\n").utf8),
+            truncatedHead: truncatedHead
+        )
+    }
+
+    // MARK: - Claude-family shapes
+
+    func testAClaudeUserTurnAndAssistantReplyComeOutInOrder() {
+        let excerpt = parse([
+            #"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"fix the bug"}]},"timestamp":"2026-08-26T02:00:01.000Z"}"#,
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Looking at it."}]}}"#,
+        ])
+        XCTAssertEqual(excerpt.entries.map(\.kind), [.user, .agent])
+        XCTAssertEqual(excerpt.entries[0].text, "fix the bug")
+        XCTAssertEqual(excerpt.entries[0].tsMs, 1_787_709_601_000)
+        XCTAssertEqual(excerpt.entries[1].text, "Looking at it.")
+        XCTAssertEqual(excerpt.unparsedLines, 0)
+    }
+
+    func testAPlainStringContentIsStillAMessage() {
+        let excerpt = parse([
+            #"{"type":"user","message":{"role":"user","content":"just a string"}}"#,
+        ])
+        XCTAssertEqual(excerpt.entries.first?.text, "just a string")
+    }
+
+    func testAToolUseBlockBecomesAToolEntryWithItsTarget() {
+        let excerpt = parse([
+            #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/Main.swift"}}]}}"#,
+        ])
+        XCTAssertEqual(excerpt.entries.count, 1)
+        XCTAssertEqual(excerpt.entries[0].kind, .tool)
+        XCTAssertEqual(excerpt.entries[0].toolName, "Edit")
+        XCTAssertEqual(excerpt.entries[0].text, "/repo/Main.swift")
+    }
+
+    func testAFailedToolResultSurvivesEvenWhenSilentSuccessesAreDropped() {
+        let excerpt = parse([
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"","is_error":false}]}}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"compile failed","is_error":true}]}}"#,
+        ])
+        XCTAssertEqual(excerpt.entries.count, 1)
+        XCTAssertTrue(excerpt.entries[0].isError)
+        XCTAssertEqual(excerpt.entries[0].text, "compile failed")
+    }
+
+    func testAToolResultWithBlockContentReadsItsTextBlock() {
+        let excerpt = parse([
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":[{"type":"text","text":"3 files changed"}]}]}}"#,
+        ])
+        XCTAssertEqual(excerpt.entries.first?.text, "3 files changed")
+    }
+
+    // MARK: - Codex shapes
+
+    func testCodexEventMessagesMapToBothSpeakers() {
+        let excerpt = parse([
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"run the tests"}}"#,
+            #"{"type":"event_msg","payload":{"type":"agent_message","message":"They pass."}}"#,
+            #"{"type":"event_msg","payload":{"type":"token_count","count":512}}"#,
+        ])
+        XCTAssertEqual(excerpt.entries.map(\.kind), [.user, .agent])
+        XCTAssertEqual(excerpt.unparsedLines, 0, "bookkeeping is not an unrecognized line")
+    }
+
+    func testACodexResponseItemUnwrapsToItsInnerMessage() {
+        let excerpt = parse([
+            #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#,
+        ])
+        XCTAssertEqual(excerpt.entries.first?.kind, .agent)
+        XCTAssertEqual(excerpt.entries.first?.text, "done")
+    }
+
+    // MARK: - Generic shape and the honest counters
+
+    func testAGenericRoleContentRecordParses() {
+        let excerpt = parse([#"{"role":"user","content":"hello"}"#])
+        XCTAssertEqual(excerpt.entries.first?.kind, .user)
+    }
+
+    func testANonJSONLineIsCountedNeverGuessedAt() {
+        let excerpt = parse([
+            "not json at all",
+            #"{"role":"user","content":"real"}"#,
+        ])
+        XCTAssertEqual(excerpt.unparsedLines, 1)
+        XCTAssertEqual(excerpt.entries.count, 1)
+    }
+
+    func testATornFirstLineIsSkippedInATruncatedWindow() {
+        let excerpt = parse([
+            #"ext":"the back half of a record"}]}}"#,
+            #"{"role":"user","content":"whole"}"#,
+        ], truncatedHead: true)
+        XCTAssertEqual(excerpt.entries.count, 1)
+        XCTAssertEqual(excerpt.entries[0].text, "whole")
+        XCTAssertEqual(excerpt.unparsedLines, 0, "the torn half is skipped, not counted against the file")
+        XCTAssertTrue(excerpt.truncatedHead)
+    }
+
+    func testTheEntryCapKeepsTheNewestAndSaysSo() {
+        let lines = (0..<(TranscriptReader.maxEntries + 20)).map {
+            #"{"role":"user","content":"m\#($0)"}"#
+        }
+        let excerpt = parse(lines)
+        XCTAssertTrue(excerpt.entriesCapped)
+        XCTAssertEqual(excerpt.entries.count, TranscriptReader.maxEntries)
+        XCTAssertEqual(excerpt.entries.last?.text, "m\(TranscriptReader.maxEntries + 19)")
+        XCTAssertEqual(excerpt.entries.first?.text, "m20", "the oldest fall off the front")
+    }
+
+    func testEveryRenderedStringPassesTheSanitizer() {
+        let excerpt = parse([
+            #"{"role":"assistant","content":"the key is sk-proj-abcdefghijklmnop123456"}"#,
+        ])
+        let text = excerpt.entries.first?.text ?? ""
+        XCTAssertFalse(text.contains("sk-proj-abcdefghijklmnop123456"))
+        XCTAssertTrue(text.contains(ContentSanitizer.replacement))
+    }
+
+    func testAnOverlongEntryIsBoundedWithAVisibleEllipsis() {
+        let long = String(repeating: "a", count: TranscriptReader.maxEntryChars + 500)
+        let excerpt = parse([#"{"role":"user","content":"\#(long)"}"#])
+        let text = excerpt.entries.first?.text ?? ""
+        XCTAssertEqual(text.count, TranscriptReader.maxEntryChars + 1)
+        XCTAssertTrue(text.hasSuffix("…"))
+    }
+
+    func testANumericSecondsTimestampBecomesMilliseconds() {
+        let excerpt = parse([#"{"role":"user","content":"x","timestamp":1787709601}"#])
+        XCTAssertEqual(excerpt.entries.first?.tsMs, 1_787_709_601_000)
+    }
+
+    // MARK: - The real file window
+
+    func testReadingARealFileReportsItsSizesAndTailTruncation() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-transcript-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        // Enough lines to exceed the tail window, so the head must be cut
+        // and the reader must say so.
+        let filler = String(repeating: "x", count: 400)
+        var lines: [String] = []
+        for index in 0..<2000 {
+            lines.append(#"{"role":"user","content":"\#(filler) \#(index)"}"#)
+        }
+        let data = Data((lines.joined(separator: "\n") + "\n").utf8)
+        XCTAssertGreaterThan(data.count, TranscriptReader.tailWindowBytes)
+        try data.write(to: url)
+
+        let excerpt = try XCTUnwrap(TranscriptReader.read(path: url.path))
+        XCTAssertTrue(excerpt.truncatedHead)
+        XCTAssertEqual(excerpt.fileBytes, data.count)
+        XCTAssertLessThanOrEqual(excerpt.windowBytes, TranscriptReader.tailWindowBytes)
+        XCTAssertEqual(excerpt.entries.count, TranscriptReader.maxEntries)
+        XCTAssertTrue(excerpt.entries.last?.text.hasSuffix("1999") ?? false,
+                      "the tail of the file is the tail of the view")
+    }
+
+    func testAMissingFileIsNilNotAnEmptyExcerpt() {
+        XCTAssertNil(TranscriptReader.read(path: "/nonexistent/pulse-\(UUID().uuidString).jsonl"))
+        XCTAssertNil(TranscriptReader.read(path: ""))
+    }
+
+    func testASmallFileIsReadWholeWithNothingCut() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-transcript-small-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(#"{"role":"user","content":"only line"}"#.utf8).write(to: url)
+        let excerpt = try XCTUnwrap(TranscriptReader.read(path: url.path))
+        XCTAssertFalse(excerpt.truncatedHead)
+        XCTAssertEqual(excerpt.entries.count, 1)
+    }
+}
+
+/// 12.3 γ — vendor formats are dialects in one table, not branches inside
+/// the generic parser. These pin the dispatch; the parsing itself stays
+/// covered by the hero-value suites and the native fixture wall.
+final class TranscriptDialectTests: XCTestCase {
+    func testEachVendorPathIsClaimedByItsOwnDialect() {
+        XCTAssertTrue(TranscriptDialects.dialect(for: "/Users/me/.codex/sessions/2026/rollout-1.jsonl") is CodexDialect)
+        XCTAssertTrue(TranscriptDialects.dialect(for: "/Users/me/.pi/agent/sessions/--x--/s.jsonl") is PiDialect)
+        XCTAssertTrue(TranscriptDialects.dialect(for: "/Users/me/.pi/agent/sessions/--x--/s.NDJSON") is PiDialect)
+        XCTAssertTrue(TranscriptDialects.dialect(for: "/Users/me/.gemini/tmp/abc/chats/session.json") is GeminiDialect)
+    }
+
+    func testEverythingElseGoesToTheGenericWalker() {
+        XCTAssertNil(TranscriptDialects.dialect(for: "/Users/me/.claude/projects/-Users-me-x/s.jsonl"))
+        XCTAssertNil(TranscriptDialects.dialect(for: "/Users/me/.codex/config.toml"))
+        XCTAssertNil(TranscriptDialects.dialect(for: "/Users/me/.gemini/settings.json"))
+    }
+
+    func testAnOfficialPiEnvelopeWithoutAPromptIsAnAnswerNotAFallThrough() {
+        // An official Pi header with nothing a user said must yield "no facts",
+        // never the generic walker's cwd-only row.
+        let header = #"{"type":"session","version":3,"id":"abc","timestamp":"2026-01-01T00:00:00Z","cwd":"/Users/me/p"}"#
+        let facts = NativeActivityHarvest.parseFacts(
+            header, structured: true, path: "/Users/me/.pi/agent/sessions/--Users-me-p--/s.jsonl"
+        )
+        if NativeActivityHarvest.piLooksOfficial(header) {
+            XCTAssertTrue(facts.isEmpty)
+        }
+    }
+
+    func testTheScanMemoryHasOneLockedOwner() {
+        HarvestMemory.memory.withValue { $0.dashPaths["x-y"] = (path: "/x/y", verified: true) }
+        XCTAssertEqual(NativeActivityHarvest.dashPathCache["x-y"]?.path, "/x/y")
+        NativeActivityHarvest.dashPathCache.removeAll()
+        XCTAssertTrue(HarvestMemory.memory.snapshot.dashPaths.isEmpty)
+    }
+}
+
 /// 2.8 Progress — the agent's own plan, words, and errors.
 ///
 /// The most valuable structure in a transcript is the one the agent writes
@@ -10,7 +232,7 @@ import XCTest
 /// plan-step titles once polluted the tray hero. These tests hold the new
 /// deal: the structure is read on purpose, into fields that are not the
 /// hero, under self-report rules — sanitized, aged, and never Waiting.
-final class SelfReportTests: XCTestCase {
+final class TranscriptPlanTests: XCTestCase {
 
     private let now: Int64 = 1_800_000_000_000
     private var home: URL!
@@ -122,18 +344,6 @@ final class SelfReportTests: XCTestCase {
         )
     }
 
-    func testSelfReportFreshnessIsOneRuleForEverySurface() {
-        // Codex review on #74: Details showed "Current step" past the 30
-        // minutes where the story line had already withdrawn it. Every
-        // surface reads this one rule.
-        let clock: Int64 = 1_800_000_000_000
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.harvestMs = clock - 5 * 60 * 1000
-        XCTAssertTrue(row.selfReportFresh(at: clock))
-        row.harvestMs = clock - 31 * 60 * 1000
-        XCTAssertFalse(row.selfReportFresh(at: clock), "the headline and the detail page share this gate")
-    }
-
     func testATranscriptWithoutTodosInventsNothing() throws {
         let row = try claudeRow([
             userLine,
@@ -234,38 +444,5 @@ final class SelfReportTests: XCTestCase {
         XCTAssertEqual(row.planSteps.count, 3)
         XCTAssertEqual(row.lastWord, "Schema read; writing the migration now.")
         XCTAssertEqual(row.lastErrorText, "migration failed: duplicate column")
-    }
-
-    // MARK: - The plan on the detail page: informs, ages, never implies Waiting
-
-    private func planRow(step: String = "Running the gates") -> AgentRow {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.task = "Fix the auth module"
-        row.planSteps = [ActivityHarvest.PlanStep(text: step, state: .current)]
-        row.liveProcess = true
-        row.state = .running
-        row.harvestMs = now
-        return row
-    }
-
-    private func detail(_ row: AgentRow) -> DetailModel {
-        DetailModel.make(row: row, lang: .en, nowMs: now)
-    }
-
-    func testTheDetailPageShowsTheCurrentStep() {
-        XCTAssertEqual(detail(planRow()).plan?.steps.first?.text, "Running the gates")
-        XCTAssertEqual(detail(planRow()).plan?.steps.first?.current, true)
-    }
-
-    func testAStaleStepIsNotQuotedAsNow() {
-        var row = planRow()
-        row.harvestMs = now - 31 * 60 * 1000
-        XCTAssertNil(detail(row).plan, "a 31-minute-old plan is stale wearing fresh clothes")
-    }
-
-    func testAStepNeverImpliesWaiting() {
-        let row = planRow()
-        XCTAssertFalse(row.isBlocked, "nothing here may write Waiting")
-        XCTAssertFalse(detail(row).canDismiss)
     }
 }

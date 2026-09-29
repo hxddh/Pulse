@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "Where each agent's on-disk format was checked. Gate: scripts/vendor_formats_check.py. Weekly sentinel: scripts/vendor_drift.py.",
+  "about": "Where each agent's on-disk format was checked. Gate: scripts/catalog_check.py. Weekly sentinel: scripts/vendor_drift.py.",
   "agents": {
     "claude": {
       "source": "docs",
@@ -10,8 +10,7 @@
       ],
       "checked": "2026-09-29",
       "tests": [
-        "TurnTruthTests.swift",
-        "ClaudeAgentsProbeTests.swift",
+        "AttentionTests.swift",
         "NativeHarvestSelfTest.swift"
       ],
       "note": "Closed source; transcripts are the documented JSONL and hooks are the documented events."
@@ -26,7 +25,7 @@
         "codex-rs/protocol/src/protocol.rs"
       ],
       "tests": [
-        "CodexPaginatedRolloutTests.swift",
+        "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
       ]
     },
@@ -49,7 +48,7 @@
         "crates/codegen/xai-grok-hooks/src/discovery.rs"
       ],
       "tests": [
-        "VendorDriftTests.swift",
+        "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
       ]
     },
@@ -63,7 +62,7 @@
         "packages/ai/src/types.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift",
+        "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
       ]
     },
@@ -81,7 +80,7 @@
         "aider/args.py"
       ],
       "tests": [
-        "NativeActivityHarvestTests.swift"
+        "HarvestTests.swift"
       ],
       "note": "History is written in each project directory, not ~/.aider; no waiting state is persisted (waiting: none)."
     },
@@ -97,8 +96,8 @@
         "packages/core/src/config/projectRegistry.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift",
-        "NativeActivityHarvestTests.swift",
+        "VendorFormatTests.swift",
+        "HarvestTests.swift",
         "NativeHarvestSelfTest.swift"
       ]
     },
@@ -111,7 +110,7 @@
         "nodejs/src/generated/session-events.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift"
+        "VendorFormatTests.swift"
       ],
       "note": "Storage layout from github/docs copilot-cli config-dir reference."
     },
@@ -127,7 +126,7 @@
         "packages/schema/src/v1/session.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift",
+        "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
       ]
     },
@@ -142,7 +141,7 @@
         "crates/goose/src/config/paths.rs"
       ],
       "tests": [
-        "VendorDriftTests.swift",
+        "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
       ]
     },
@@ -158,7 +157,7 @@
         "openhands-sdk/openhands/sdk/event/llm_convertible/message.py"
       ],
       "tests": [
-        "VendorDriftTests.swift"
+        "VendorFormatTests.swift"
       ]
     },
     "cline": {
@@ -172,7 +171,7 @@
         "sdk/packages/core/src/session/models/session-manifest.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift",
+        "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
       ],
       "note": "Legacy bundle types read on branch legacy-extension at 7761370240ffce9e3890cb56f6c51655f3f5b0a7."
@@ -188,7 +187,7 @@
         "src/shared/globalFileNames.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift"
+        "VendorFormatTests.swift"
       ]
     },
     "continue": {
@@ -202,8 +201,8 @@
         "core/index.d.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift",
-        "NativeActivityHarvestTests.swift"
+        "VendorFormatTests.swift",
+        "HarvestTests.swift"
       ]
     },
     "amazon_q": {
@@ -256,7 +255,7 @@
         "packages/core/src/global.ts"
       ],
       "tests": [
-        "VendorDriftTests.swift"
+        "VendorFormatTests.swift"
       ],
       "note": "7.x uses the OpenCode schema in ~/.local/share/kilo/kilo.db; legacy task files per Kilo-Org/kilocode-legacy."
     },
@@ -289,7 +288,7 @@
         "packages/agent-core-v2/src/session/sessionMetadata/sessionMetadata.ts"
       ],
       "tests": [
-        "NativeActivityHarvestTests.swift",
+        "HarvestTests.swift",
         "NativeHarvestSelfTest.swift"
       ]
     },

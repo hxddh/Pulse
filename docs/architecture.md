@@ -61,7 +61,7 @@ PulseBar/Sources/
 依赖只能向下：没有一个库引用得到 `StatusStore`、AppKit 或任何视图，这由编译器保证，
 不靠 review。库成员是 `package` 可见（Core 是 `public`）。每个 Agent 的全部非解析事实
 （进程规则、采集根目录、别名、Waiting / 采集等级、单字母标记）只在
-`AgentCatalog.swift` 的一条 `AgentSpec` 里；`scripts/agent_catalog_check.py` 扫描所有 target，
+`AgentCatalog.swift` 的一条 `AgentSpec` 里；`scripts/catalog_check.py` 扫描所有 target，
 防止按 Agent 分支的表在别处重新长出来。
 
 19.0 起 `StatusStore` 是 `@Observable`：视图只因它的 body 实际读到的属性变化而重绘，
@@ -318,15 +318,22 @@ native harvest、hook install，或 self-test。
 | 脚本 | 守什么 |
 | --- | --- |
 | `version_check.py` | 版本只有一个真源，CHANGELOG 与 README 徽标跟随 |
-| `coverage_check.py` | 每个 `AgentID` 都有 harvest 接线；新增 id 未登记即失败 |
-| `matrix_check.py` | README 支持矩阵 == `AgentID.harvestSource` + `waitingSource` |
+| `catalog_check.py` | 23.0 合并原来的四个目录门禁：每个 `AgentID` 一条 spec、别处不长出按 Agent 的表；每个 Agent 都有 harvest 接线；Cursor worker 被拒、`lsof` 输出不看退出码；AppleScript 只在 Automation 授权后；README 支持矩阵 == 目录；每个 Agent 的格式有出处（`docs/vendor-formats.json`），未核实的格式没有 Waiting |
 | `make_agent_icons.py --check` | 每个 `AgentID` 都有图标，且与生成器逐字节一致 |
 | `appearance_check.py` | 没有把随外观变化的值冻进常量（0.27.1 因此丢了深色模式） |
+| `surface_check.py` | 表面渲染值、不碰 store；fixture 与截图清单一致 |
+| `scenario_map.py` | `docs/scenarios.md` 点名的测试套件与方法都存在 |
 | `--native-fixture-test` | native 端到端墙：厂商真实布局 → 真扫描器 → 断言主行**取值**（CI + `package.sh`） |
 | `resource_budget_check.py` | native fixture 墙钟 + RSS 上限（env 可调） |
 | `package_check.py` | 打出来的 `.app` 能找到自己的资源 |
 
-七个都在 `package.sh` 和 CI 里。加上 `swift test`、`--selftest` 与 `--native-fixture-test`，
+前六个由 `scripts/gates.sh` 一次跑完；全部都在 `package.sh` 和 CI 里。
+
+测试（`PulseBar/Tests/PulseBarTests/`）按组件分文件（23.0）：`CoreTests`（目录、有界 IO、进程）、
+`HarvestTests`、`TranscriptTests`、`VendorFormatTests`（按厂商源码造的夹具）、`AttentionTests`
+（读取器、协议、hook 接收器、安装器、`claude agents`）、`BuilderTests`、`ExplainTests`、
+`SessionLogTests`、`NotifierTests`、`TrayTests`、`SettingsTests`、`DiagnosticsTests`、`EngineTests`。
+新测试放进它所测组件的文件，不再按发版建文件；`docs/scenarios.md` 按套件名与方法名点名。加上 `swift test`、`--selftest` 与 `--native-fixture-test`，
 这是全部自动防线。
 
 **主行 / 解析类回归只属于 `--native-fixture-test` 与 `swift test`**：那里用厂商真实布局

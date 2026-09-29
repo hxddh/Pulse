@@ -4,6 +4,8 @@ import Testing
 @testable import PulseCore
 @testable import PulseHarvest
 
+// Settings: the persisted settings and the Settings page model.
+
 /// Settings are the one file Pulse keeps for the person. 23.0: a `Codable`
 /// value in `settings.json`; a pre-23.0 `settings.txt` is deleted, unread,
 /// and the defaults apply.
@@ -183,5 +185,75 @@ struct StoreSettingsTests {
         #expect(store.settings.readProtectedAppData)
         let cursorLimited = store.settings.isPrivacyLimited(.cursor)
         #expect(!cursorLimited)
+    }
+}
+
+/// 23.0 · the tray as values: the keyboard reducer, the frozen order, the
+/// header and its freshness, the one notice, the row's second line, where a
+/// banner click goes, and the Settings page's sections.
+@Suite("Settings model")
+struct SettingsModelTests {
+    // MARK: - Settings
+
+    @Test func settingsIsOnePageOfSevenSections() {
+        #expect(SettingsModel.sections == [.general, .shortcut, .notifications, .hooks, .terminal, .dataAccess, .updates])
+        let titles = SettingsModel.sections.map { SettingsModel.title($0, lang: .zh) }
+        #expect(Set(titles).count == titles.count, "every section has its own name")
+    }
+
+    @Test func deepLinksLandOnTheirSection() {
+        #expect(SettingsModel.section(for: .appData) == .dataAccess)
+        #expect(SettingsModel.section(for: .waitingSignals) == .hooks)
+        #expect(SettingsModel.section(for: .notifications) == .notifications)
+        #expect(SettingsModel.section(for: .updates) == .updates)
+    }
+
+    @Test func mutedAgentsReadInOrder() {
+        let muted = SettingsModel.sortedMuted([.gemini, .aider, .claude])
+        let names = muted.map { $0.displayName }
+        let ordered = names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        #expect(names == ordered)
+        #expect(SettingsModel.notifications(nil) == .notAsked)
+        #expect(SettingsModel.notifications(false) == .denied)
+    }
+
+    @MainActor
+    @Test func theSettingsPageReadsSettingsNotScans() {
+        let store = StatusStore()
+        store.settings.mutedAgents = [.codex]
+        store.notifyAuthorized = false
+        let model = store.settingsModel
+        #expect(model.mutedAgents == [.codex])
+        #expect(model.notifications == .denied)
+        #expect(!model.notifyOnWaiting, "the switch shows what takes effect")
+        store.performSettings(.unmute(.codex))
+        #expect(store.settings.mutedAgents.isEmpty)
+    }
+}
+
+/// 22.x · Lamp fixes — each pins one defect with the pure function that
+/// decides it.
+@Suite("Hooks nudge setting")
+struct HooksNudgeSettingTests {
+    // MARK: - "Don't suggest hooks" persists
+
+    @Test func hooksNudgeOffRoundTrips() throws {
+        var settings = PulseSettings()
+        settings.hooksNudgeOff = true
+        let data = try JSONEncoder().encode(settings)
+        let reparsed = try JSONDecoder().decode(PulseSettings.self, from: data)
+        #expect(reparsed.hooksNudgeOff)
+        let absent = try JSONDecoder().decode(PulseSettings.self, from: Data("{}".utf8))
+        #expect(!absent.hooksNudgeOff)
+    }
+
+    @MainActor
+    @Test func anUninstalledChoiceSilencesTheHooksNudge() {
+        let store = StatusStore()
+        store.installPreviewFixture("waiting")
+        store.notifyAuthorized = true
+        #expect(store.needsHooksNudge)
+        store.settings.hooksNudgeOff = true
+        #expect(!store.needsHooksNudge)
     }
 }

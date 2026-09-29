@@ -1,8 +1,12 @@
-import XCTest
+import Foundation
 import SQLite3
+import Testing
+import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+
+// Harvest: the native collector — adapters, row admission, pending, chrome.
 
 final class NativeActivityHarvestTests: XCTestCase {
     func testNativeCollectorProducesUsefulFactsAndCompleteHealthWithoutPython() throws {
@@ -1712,5 +1716,1028 @@ final class NativeActivityHarvestTests: XCTestCase {
         let row = try XCTUnwrap(result.rows.first { $0.id == .claude })
         XCTAssertEqual(row.cwd, "/Users/me/code/PulseNoSuchDir", "still worth showing")
         XCTAssertTrue(row.cwdBestEffort, "and it says the disk never confirmed it")
+    }
+}
+
+final class HarvestParsingTests: XCTestCase {
+    /// The collector redacts credential-shaped content before a row exists.
+    /// 0.99 deleted the legacy wire this used to be asserted through, so it is
+    /// asserted where the boundary actually is now: a real scan of a real file.
+    func testCollectorRedactsSecretsBeforeARowExists() throws {
+        let fakeKey = "sk-proj-ExampleSecret123456789"
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-redact-\(UUID().uuidString)")
+        let url = home.appendingPathComponent(".openhands/session.json")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: home) }
+        try #"{"sessionId":"redact-1","role":"user","content":"Deploy with KEY","cwd":"/tmp/redact"}"#
+            .replacingOccurrences(of: "KEY", with: fakeKey)
+            .write(to: url, atomically: true, encoding: .utf8)
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        XCTAssertFalse(row.task.contains(fakeKey))
+        XCTAssertTrue(row.task.contains(ContentSanitizer.replacement))
+    }
+
+    func testSanitizerKeepsOrdinaryTechnicalText() {
+        let safe = "Review token budget for sketch session 550e8400-e29b-41d4-a716-446655440000"
+        XCTAssertEqual(ContentSanitizer.redact(safe), safe)
+        XCTAssertEqual(
+            ContentSanitizer.redact("Authorization: Bearer fakeBearerValue123"),
+            "Authorization: Bearer ••••"
+        )
+        XCTAssertEqual(
+            ContentSanitizer.redact("password=hunterExample123"),
+            "password=••••"
+        )
+    }
+
+
+    /// 23.0: a row key is the vendor's session id, whole — or, without one,
+    /// a hash of the transcript path or of where and when the session began.
+    func testRowKeysAreStableAndNeverCarryAPath() {
+        let long = String(repeating: "a", count: 40)
+        let key = RowIdentity.session(agent: .claude, sessionID: long)
+        XCTAssertEqual(key, "claude|" + long)
+        XCTAssertEqual(key, RowIdentity.session(agent: .claude, sessionID: long), "same input, same key")
+        let placed = RowIdentity.session(agent: .codex, sessionID: "", cwd: "/a/b/Repo", startedMs: 5)
+        XCTAssertTrue(placed.hasPrefix("codex|at:"))
+        XCTAssertFalse(placed.contains("Repo"), "a key never carries a path")
+        XCTAssertEqual(RowIdentity.session(agent: .codex, sessionID: ""), "codex|anon")
+    }
+
+    func testFreshnessRequiresAMtimeUnlessSubagentsAreRunning() {
+        let now: Int64 = 1_700_000_000_000
+        var row = ActivityHarvest.Row(id: .claude, task: "t", project: "", cwd: "", skill: "")
+        XCTAssertFalse(ActivityHarvest.isFresh(row, nowMs: now), "no mtime is not a running signal")
+
+        row.subRunning = 1
+        XCTAssertTrue(ActivityHarvest.isFresh(row, nowMs: now))
+
+        row.subRunning = 0
+        row.harvestMs = now - 1000
+        XCTAssertTrue(ActivityHarvest.isFresh(row, nowMs: now))
+
+        row.harvestMs = now - ActivityHarvest.freshWindowMs - 1
+        XCTAssertFalse(ActivityHarvest.isFresh(row, nowMs: now))
+    }
+
+    func testFarFutureActivityTimestampIsNotFresh() {
+        let now: Int64 = 1_700_000_000_000
+        var row = ActivityHarvest.Row(id: .codex, task: "t", project: "", cwd: "", skill: "")
+        row.harvestMs = now + 5 * 60 * 1000 + 1
+        XCTAssertFalse(ActivityHarvest.isFresh(row, nowMs: now))
+    }
+
+    func testCursorLocalSessionsUseBoundedWorkWindow() {
+        let now: Int64 = 1_700_000_000_000
+        var cursor = ActivityHarvest.Row(id: .cursor, task: "Local task", project: "", cwd: "", skill: "")
+        cursor.mode = "local"
+        cursor.harvestMs = now - ActivityHarvest.freshWindowMs - 1
+        XCTAssertTrue(ActivityHarvest.isFresh(cursor, nowMs: now))
+
+        cursor.harvestMs = now - ActivityHarvest.cursorLocalWindowMs - 1
+        XCTAssertFalse(ActivityHarvest.isFresh(cursor, nowMs: now))
+
+        var generic = cursor
+        generic.id = .gemini
+        generic.harvestMs = now - ActivityHarvest.freshWindowMs - 1
+        XCTAssertFalse(ActivityHarvest.isFresh(generic, nowMs: now))
+    }
+
+    func testHealthCompletenessRequiresEveryUserFacingCollector() {
+        let unscanned = ActivityHarvest.expectedCollectorIDs.map { ActivityHarvest.CollectorHealth.unscanned($0) }
+        XCTAssertFalse(ActivityHarvest.isCompleteHealth(unscanned), "unscanned is an incomplete bounded scan")
+        let complete = unscanned.map {
+            ActivityHarvest.CollectorHealth(
+                id: $0.id,
+                state: .sourceAbsent,
+                durationMs: 1,
+                rowCount: 0,
+                sourcePresent: false,
+                errorKind: ""
+            )
+        }
+        XCTAssertTrue(ActivityHarvest.isCompleteHealth(complete))
+        XCTAssertFalse(ActivityHarvest.isCompleteHealth(Array(complete.dropLast())))
+
+        var cursorAlias = complete.filter { $0.id != .cursor }
+        cursorAlias.append(.unscanned(.cursorAgent))
+        XCTAssertTrue(ActivityHarvest.isCompleteHealth(cursorAlias), "Cursor Agent is the same user-facing collector")
+    }
+
+    func testPartialHarvestKeepsAdaptersTheChildNeverReached() {
+        let oldCodex = ActivityHarvest.Row(
+            id: .codex,
+            task: "Keep this session visible",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "codex-old"
+        )
+        let oldPi = ActivityHarvest.Row(
+            id: .pi,
+            task: "Replace after Pi reports",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "pi-old"
+        )
+        var freshCodex = oldCodex
+        freshCodex.task = "Fresh Codex evidence"
+        freshCodex.sessionID = "codex-new"
+        let health = [
+            ActivityHarvest.CollectorHealth(
+                id: .codex,
+                state: .observed,
+                durationMs: 10,
+                rowCount: 1,
+                sourcePresent: true,
+                errorKind: ""
+            )
+        ]
+
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [freshCodex],
+            health: health,
+            previous: [oldCodex, oldPi]
+        )
+
+        XCTAssertEqual(merged.map(\.sessionID), ["codex-new", "pi-old"])
+        XCTAssertFalse(merged.contains { $0.sessionID == "codex-old" })
+    }
+
+    func testAnAdapterThatTimedOutMidwayKeepsItsUnreachedSessions() {
+        func codex(_ session: String, _ task: String) -> ActivityHarvest.Row {
+            ActivityHarvest.Row(
+                id: .codex, task: task, project: "Pulse", cwd: "/Users/me/Pulse",
+                skill: "", harvestMs: 1_700_000_000_000, sessionID: session
+            )
+        }
+        let previous = [codex("a", "old a"), codex("b", "old b"), codex("c", "old c")]
+        let health = [
+            ActivityHarvest.CollectorHealth(
+                id: .codex, state: .failed, durationMs: 750, rowCount: 1,
+                sourcePresent: true, errorKind: "native_timeout"
+            )
+        ]
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [codex("a", "fresh a")], health: health, previous: previous
+        )
+        XCTAssertEqual(Set(merged.map(\.sessionID)), ["a", "b", "c"])
+        XCTAssertEqual(merged.first { $0.sessionID == "a" }?.task, "fresh a", "fresh evidence wins")
+        XCTAssertEqual(merged.filter { $0.sessionID == "a" }.count, 1, "no stale duplicate")
+    }
+
+    func testPartialHarvestWithNoAdapterBoundaryDoesNotEraseSnapshot() {
+        var previous = ActivityHarvest.Row(
+            id: .cursor,
+            task: "Cursor task",
+            project: "Client",
+            cwd: "/Users/me/Client",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "cursor-1"
+        )
+        previous.mode = "local"
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [],
+            health: [],
+            previous: [previous]
+        )
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.sessionID, previous.sessionID)
+        XCTAssertEqual(merged.first?.task, previous.task)
+        XCTAssertEqual(merged.first?.mode, previous.mode)
+    }
+
+    func testFailedEmptyAdapterRetainsLastGoodRowsUntilRetry() {
+        let previous = ActivityHarvest.Row(
+            id: .commandCode,
+            task: "Keep command session visible",
+            project: "Pulse",
+            cwd: "/Users/me/Pulse",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "command-old"
+        )
+        let health = [
+            ActivityHarvest.CollectorHealth(
+                id: .commandCode,
+                state: .failed,
+                durationMs: 750,
+                rowCount: 0,
+                sourcePresent: true,
+                errorKind: "native_timeout"
+            )
+        ]
+
+        let merged = ActivityHarvest.mergePartialRows(
+            current: [],
+            health: health,
+            previous: [previous]
+        )
+
+        XCTAssertEqual(merged.map(\.sessionID), ["command-old"])
+    }
+
+    func testEmptyPartialIssueBoundariesRetainLastGoodRows() {
+        let previous = ActivityHarvest.Row(
+            id: .cursor,
+            task: "Keep Cursor session visible",
+            project: "Client",
+            cwd: "/Users/me/Client",
+            skill: "",
+            harvestMs: 1_700_000_000_000,
+            sessionID: "cursor-old"
+        )
+        let states: [ActivityHarvest.CollectorState] = [
+            .permissionDenied, .schemaMismatch, .unscanned,
+        ]
+
+        for state in states {
+            let health = [ActivityHarvest.CollectorHealth(
+                id: .cursor,
+                state: state,
+                durationMs: 10,
+                rowCount: 0,
+                sourcePresent: true,
+                errorKind: "boundary"
+            )]
+            let merged = ActivityHarvest.mergePartialRows(
+                current: [],
+                health: health,
+                previous: [previous]
+            )
+            XCTAssertEqual(
+                merged.map(\.sessionID),
+                ["cursor-old"],
+                "empty \(state.rawValue) must not erase prior evidence"
+            )
+        }
+    }
+
+    func testAttentionFutureEventIsIgnored() {
+        let now: Int64 = 1_700_000_000_000
+        let text = "codex\tpermission\t\(now + 6 * 60 * 1000)\tApprove\tsession-1\t/Users/me/Pulse\t\t\n"
+        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
+    }
+
+    func testCompletionClassificationUsesPhaseOrOutcome() {
+        var row = ActivityHarvest.Row(id: .codex, task: "", project: "", cwd: "", skill: "")
+        XCTAssertFalse(row.isCompleted)
+        row.phase = "turn_complete"
+        XCTAssertTrue(row.isCompleted)
+        row.phase = ""
+        row.outcome = "failed"
+        XCTAssertTrue(row.isCompleted)
+    }
+
+    func testAgentAliasMapping() {
+        XCTAssertEqual(ActivityHarvest.mapAgent("amazon-q"), .amazonQ)
+        XCTAssertEqual(ActivityHarvest.mapAgent("auggie"), .augment)
+        XCTAssertEqual(ActivityHarvest.mapAgent("factory-droid"), .droid)
+        XCTAssertEqual(ActivityHarvest.mapAgent("cursor_agent"), .cursorAgent)
+        XCTAssertEqual(ActivityHarvest.mapAgent("agy"), .antigravity)
+        XCTAssertNil(ActivityHarvest.mapAgent("definitely-not-an-agent"))
+    }
+}
+
+/// 0.98 Ground Truth — the collector can be held to account.
+///
+/// Every test here runs the real `NativeActivityHarvest.scan` against real
+/// files at real paths. They cover the four things that made 0.96.1 through
+/// 0.97.2 ship green with a wrong tray hero, plus the counting and fairness
+/// defects found beside them.
+final class HarvestEvidenceTests: XCTestCase {
+
+    private func makeHome(_ label: String) throws -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-ground-truth-\(label)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        return home
+    }
+
+    private func write(_ text: String, to home: URL, _ relative: String) throws {
+        let url = home.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - A starved budget is not an empty source
+
+    /// Regression: when the global byte budget ran low (but not to zero),
+    /// `reserve` refused the file read silently, the adapter classified as
+    /// `no_sessions`, and mergePartialRows treated that as a trusted empty —
+    /// clearing the previous good rows. A refused read must classify as
+    /// `failed` so the last snapshot survives.
+    func testABudgetDenialNeverReportsNoSessions() throws {
+        let home = try makeHome("budget")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let lines = [
+            #"{"sessionId":"gt-b","title":"Real session","cwd":"/tmp/gt-budget"}"#,
+            #"{"sessionId":"gt-b","role":"user","content":"Do the thing"}"#,
+        ].joined(separator: "\n") + "\n"
+        try write(lines, to: home, ".openhands/session.jsonl")
+
+        // Sanity: a normal budget observes the session.
+        let healthy = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        XCTAssertEqual(healthy.health.first { $0.id == .openhands }?.state, .observed)
+
+        // Low-but-not-empty: the budget is alive, the file just does not fit.
+        let starved = NativeActivityHarvest.scan(
+            home: home,
+            agentFilter: [.openhands],
+            totalBudgetBytes: 8
+        )
+        let health = try XCTUnwrap(starved.health.first { $0.id == .openhands })
+        XCTAssertNotEqual(
+            health.state, .noSessions,
+            "a refused read says something about resources, not about sessions"
+        )
+        XCTAssertEqual(health.state, .failed, "failed keeps the previous rows through the partial merge")
+    }
+
+    // MARK: - Hero selection is ordinal, not lexical
+
+    /// The regression that cost four releases: a long vendor headline beat a
+    /// short real goal because `preferTask` ended in a length comparison.
+    func testShortUserPromptBeatsLongVendorHeadline() throws {
+        let home = try makeHome("origin")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let lines = [
+            #"{"sessionId":"gt-1","title":"Session 4 — automated maintenance sweep across the whole repository","cwd":"/tmp/gt-origin"}"#,
+            #"{"sessionId":"gt-1","role":"user","content":"Fix it"}"#,
+        ].joined(separator: "\n") + "\n"
+        try write(lines, to: home, ".openhands/session.jsonl")
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        XCTAssertEqual(
+            row.task, "Fix it",
+            "a user turn outranks a cache headline regardless of length"
+        )
+    }
+
+    /// The same comparison in the other direction: when nothing better exists,
+    /// the headline is still a legitimate hero.
+    func testVendorHeadlineSurvivesWhenThereIsNoUserTurn() throws {
+        let home = try makeHome("headline")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try write(
+            #"{"sessionId":"gt-2","title":"Automated maintenance sweep","cwd":"/tmp/gt-headline"}"#,
+            to: home,
+            ".openhands/session.json"
+        )
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        XCTAssertEqual(row.task, "Automated maintenance sweep")
+    }
+
+    func testTaskOriginRanksUserGoalsOverVendorChrome() {
+        XCTAssertLessThan(NativeActivityHarvest.TaskOrigin.chrome, .cacheTitle)
+        XCTAssertLessThan(NativeActivityHarvest.TaskOrigin.cacheTitle, .toolTitle)
+        XCTAssertLessThan(NativeActivityHarvest.TaskOrigin.toolTitle, .userPrompt)
+        XCTAssertLessThan(NativeActivityHarvest.TaskOrigin.userPrompt, .sessionName)
+    }
+
+    // MARK: - One chrome vocabulary
+
+    /// `isChromeTask` knew about `cascade session`; the copy inlined in
+    /// `makeRows` did not, so the same placeholder was chrome in a merge and a
+    /// legitimate hero at row admission.
+    func testPlaceholderTitleIsRejectedAtRowAdmission() throws {
+        let home = try makeHome("chrome")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try write(
+            #"{"sessionId":"gt-3","title":"Cascade session"}"#,
+            to: home,
+            ".openhands/session.json"
+        )
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        XCTAssertFalse(
+            result.rows.contains { $0.task.lowercased() == "cascade session" },
+            "a vendor placeholder with no other fact is not a session"
+        )
+    }
+
+    // MARK: - Counts are exact or unknown
+
+    func testWholeFileWindowStillCountsRecords() throws {
+        let home = try makeHome("records-small")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let line = #"{"sessionId":"gt-4","role":"user","content":"Small transcript","cwd":"/tmp/gt-small"}"#
+        try write(
+            Array(repeating: line, count: 12).joined(separator: "\n") + "\n",
+            to: home,
+            ".openhands/session.jsonl"
+        )
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        XCTAssertEqual(row.records, 12, "an untruncated file reports its real record count")
+    }
+
+    // MARK: - Budget starvation rotates
+
+    /// Adapter order was the literal order of `descriptors()`, so a budget
+    /// cutoff always fell in the same place and the tail adapters were
+    /// `unscanned` on every refresh, forever.
+    func testStartCursorRotatesWhichAdapterGoesFirst() throws {
+        let home = try makeHome("rotate")
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let filter: Set<AgentID> = [.claude, .codex, .openhands]
+        let first = NativeActivityHarvest.scan(home: home, agentFilter: filter, startCursor: 0)
+        let rotated = NativeActivityHarvest.scan(home: home, agentFilter: filter, startCursor: 1)
+        let firstOrder = first.health.map(\.id)
+        let rotatedOrder = rotated.health.map(\.id)
+
+        XCTAssertEqual(firstOrder.count, 3)
+        XCTAssertEqual(Set(firstOrder), Set(rotatedOrder), "rotation reorders, it never drops")
+        XCTAssertNotEqual(
+            firstOrder.first, rotatedOrder.first,
+            "the next scan starts where the previous one gave up"
+        )
+    }
+
+    /// The cursor names a place in the stable adapter list. When the
+    /// supervisor defers a different set next scan, it still resumes at the
+    /// adapter that was cut off, not at whatever now sits at the same index.
+    func testRotationResumesAtTheSameAdapterWhenTheFilterChanges() {
+        // Stable indices of the adapters this pass attempts; 4 was cut off
+        // last time. Adapter 2 is now deferred, which shifts every index in
+        // the filtered list — the old code would have started at 5.
+        XCTAssertEqual(
+            NativeActivityHarvest.rotationOffset(filteredStableIndices: [0, 1, 3, 4, 5], cursor: 4), 3
+        )
+        // The cut-off adapter itself is deferred now: start at the next one.
+        XCTAssertEqual(
+            NativeActivityHarvest.rotationOffset(filteredStableIndices: [0, 1, 5], cursor: 4), 2
+        )
+        // Past the end wraps to the head.
+        XCTAssertEqual(
+            NativeActivityHarvest.rotationOffset(filteredStableIndices: [0, 1], cursor: 9), 0
+        )
+    }
+
+    func testCompleteScanRewindsTheCursor() throws {
+        let home = try makeHome("cursor")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        XCTAssertEqual(
+            result.nextCursor, 0,
+            "a pass that reached every adapter starts the next one at the head"
+        )
+    }
+
+    // MARK: - The collector explains itself
+
+    func testExplainNamesTheRecordKindBehindTheHero() throws {
+        let home = try makeHome("explain-hero")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try write(
+            #"{"sessionId":"gt-6","role":"user","content":"Explain the hero","cwd":"/tmp/gt-explain"}"#,
+            to: home,
+            ".openhands/session.json"
+        )
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let health = try XCTUnwrap(result.health.first { $0.id == .openhands })
+        XCTAssertEqual(health.explain.heroOrigin, "user_prompt")
+        XCTAssertEqual(health.explain.emptyReason, "")
+        XCTAssertGreaterThan(health.explain.filesRead, 0)
+        XCTAssertGreaterThan(health.explain.bytesRead, 0)
+        XCTAssertTrue(health.explain.summary.contains("hero=user_prompt"))
+    }
+
+    func testExplainSaysWhyThereIsNoHero() throws {
+        let home = try makeHome("explain-empty")
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        // Continue has no CLI needle, so an empty home can only be
+        // `source_absent` — the reason stays deterministic on any runner.
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.continue_])
+        let health = try XCTUnwrap(result.health.first { $0.id == .continue_ })
+        XCTAssertEqual(health.state, .sourceAbsent)
+        XCTAssertEqual(health.explain.emptyReason, "no_source")
+        XCTAssertEqual(health.explain.heroOrigin, "")
+    }
+
+    func testExplainFlagsATruncatedRead() throws {
+        let home = try makeHome("explain-truncated")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let filler = String(repeating: "padding ", count: 160)
+        var lines = [
+            #"{"sessionId":"gt-7","role":"user","content":"Truncated goal","cwd":"/tmp/gt-trunc"}"#
+        ]
+        for index in 0..<900 {
+            lines.append(#"{"sessionId":"gt-7","type":"note","index":\#(index),"text":"\#(filler)"}"#)
+        }
+        try write(lines.joined(separator: "\n") + "\n", to: home, ".openhands/session.jsonl")
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let health = try XCTUnwrap(result.health.first { $0.id == .openhands })
+        XCTAssertTrue(health.explain.truncated)
+        XCTAssertTrue(health.explain.summary.contains("truncated"))
+    }
+
+    // MARK: - 2.2 · which sessions the read budget is spent on
+
+    /// Regression (B-8 / `H-M2`): the bounded walk read transcripts in
+    /// whatever order the filesystem handed them back, and stopped when it hit
+    /// its cap. Filesystem order is neither time order nor stable, so on a
+    /// heavy user's machine — Claude and Codex cross the cap within a couple
+    /// of months — "was the session you are actually running scanned?" was a
+    /// question about directory layout. Pi was fixed for exactly this in 0.97
+    /// and the fix was never generalised.
+    ///
+    /// The rows read must therefore be the newest ones, contiguously: a gap
+    /// in the sequence means something older displaced something newer.
+    func testTheReadBudgetIsSpentOnTheNewestSessions() throws {
+        let home = try makeHome("mtime-order")
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let total = 500
+        let clock = Date()
+        for index in 0..<total {
+            let id = String(format: "gt-order-%03d", index)
+            let relative = ".openhands/sessions/\(id).jsonl"
+            try write(
+                #"{"sessionId":"\#(id)","role":"user","content":"Session \#(id)","cwd":"/tmp/gt-order"}"# + "\n",
+                to: home,
+                relative
+            )
+            // 0 is the newest, `total - 1` the oldest; all inside the
+            // freshness window so nothing is skipped for age.
+            try FileManager.default.setAttributes(
+                [.modificationDate: clock.addingTimeInterval(-60 * Double(index))],
+                ofItemAtPath: home.appendingPathComponent(relative).path
+            )
+        }
+
+        // Generous deadlines: this asserts which files were chosen, not how
+        // fast the runner is.
+        let result = NativeActivityHarvest.scan(
+            home: home,
+            agentDeadlineSeconds: 60,
+            totalDeadlineSeconds: 120,
+            agentFilter: [.openhands]
+        )
+        let indices = result.rows
+            .filter { $0.id == .openhands }
+            .compactMap { Int($0.sessionID.dropFirst("gt-order-".count)) }
+            .sorted()
+
+        XCTAssertFalse(indices.isEmpty, "the adapter read something")
+        XCTAssertLessThan(
+            indices.count, total,
+            "the per-agent file cap must actually bite, or this proves nothing"
+        )
+        XCTAssertEqual(indices.first, 0, "the newest session is never the one left out")
+        XCTAssertEqual(
+            indices, Array(0..<indices.count),
+            "the sessions read are exactly the newest N — a gap means an older file took a live one's place"
+        )
+    }
+
+    // MARK: - 2.2 · Waiting is never inferred from prose
+
+    /// Regression (B-11 / `H-M5`): the free-text fallback parser raised
+    /// `skill=pending` from a `"status": "waiting"` regex match. It runs on
+    /// `.md` / `.txt` / `.log` files and on JSON no real parser could read,
+    /// where it cannot tell a session's own state from one quoted inside it —
+    /// so a design note describing the attention bridge lit a red lamp.
+    ///
+    /// Waiting comes from hooks or a structured `skill=pending`, never from
+    /// inference. The fallback may still supply display fields.
+    func testAQuotedStatusInProseNeverLightsWaiting() throws {
+        let home = try makeHome("prose-pending")
+        defer { try? FileManager.default.removeItem(at: home) }
+        // Deliberately not a JSON document and with no line that parses as
+        // one: this is the path where only the regex fallback runs.
+        let note = """
+        # Attention bridge notes
+
+        A raised event carries "sessionId": "gt-prose-1" and "cwd": "/tmp/gt-prose"
+        alongside "status": "waiting" — written here as documentation of the
+        wire format, not as a statement about this machine.
+        """
+        try write(note, to: home, ".openhands/notes.md")
+
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        XCTAssertEqual(row.cwd, "/tmp/gt-prose", "display fields still travel")
+        XCTAssertNotEqual(
+            row.skill, "pending",
+            "a status quoted in prose is not this session's status"
+        )
+    }
+}
+
+/// Clarity fixes — each test pins one defect found by reading the code: the
+/// value the user would have seen, before and after.
+@MainActor
+@Suite("Harvest fixes", .serialized)
+struct HarvestFixTests {
+    let now: Int64 = 1_800_000_000_000
+    static let minute: Int64 = 60_000
+
+    // MARK: - Harness
+
+    final class Home {
+        let url: URL
+        init() {
+            url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("pulse-clarity-\(UUID().uuidString)", isDirectory: true)
+        }
+        deinit { try? FileManager.default.removeItem(at: url) }
+
+        @discardableResult
+        func write(_ relative: String, _ text: String, modified: Date? = nil) throws -> URL {
+            let file = url.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            if let modified {
+                try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: file.path)
+            }
+            return file
+        }
+
+        func database(_ relative: String, _ statements: [String]) throws {
+            let file = url.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            var db: OpaquePointer?
+            guard sqlite3_open(file.path, &db) == SQLITE_OK, let db else { throw CocoaError(.fileWriteUnknown) }
+            defer { sqlite3_close(db) }
+            for sql in statements {
+                guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+                    throw NSError(domain: "clarity", code: 1, userInfo: [NSLocalizedDescriptionKey: sql])
+                }
+            }
+        }
+
+        func rows(_ id: AgentID) -> [ActivityHarvest.Row] {
+            NativeActivityHarvest.scan(
+                allowAppData: true, appDataAgents: [id], home: url, agentFilter: [id]
+            ).rows.filter { $0.id == id }
+        }
+    }
+
+    func session(_ id: AgentID, _ sessionID: String, skill: String = "", ageMs: Int64 = 70_000) -> ActivityHarvest.Row {
+        ActivityHarvest.Row(
+            id: id, task: "Fix the login flow", project: "p", cwd: "/p", skill: skill,
+            tool: "", harvestMs: now - ageMs, subRunning: 0, subTotal: 0, sessionID: sessionID,
+            evidence: .session
+        )
+    }
+
+    // MARK: - 3 / 19 · walks skip what is read another way
+
+    @Test func claudeSubagentTranscriptsNeverSpeakForTheParent() throws {
+        let home = Home()
+        let project = ".claude/projects/-Users-me-app"
+        let base = Date().addingTimeInterval(-120)
+        try home.write("\(project)/sess-1.jsonl", [
+            #"{"type":"user","sessionId":"sess-1","cwd":"/Users/me/app","message":{"role":"user","content":"Add an offline queue for login"}}"#,
+            #"{"type":"assistant","sessionId":"sess-1","cwd":"/Users/me/app","message":{"role":"assistant","content":[{"type":"text","text":"The queue drains on reconnect."}]}}"#,
+        ].joined(separator: "\n") + "\n", modified: base)
+        try home.write("\(project)/sess-1/subagents/agent-a1.jsonl", [
+            #"{"type":"user","isSidechain":true,"sessionId":"sess-1","cwd":"/Users/me/app","message":{"role":"user","content":"Search the repo for retry helpers"}}"#,
+            #"{"type":"assistant","isSidechain":true,"sessionId":"sess-1","cwd":"/Users/me/app","message":{"role":"assistant","content":[{"type":"text","text":"Found three helpers."}]}}"#,
+        ].joined(separator: "\n") + "\n")
+        let rows = home.rows(.claude)
+        #expect(rows.count == 1)
+        let row = try #require(rows.first)
+        #expect(row.lastWord == "The queue drains on reconnect.")
+        #expect(row.task == "Add an offline queue for login")
+        #expect(row.subTotal == 1, "still counted, by its own reader")
+    }
+
+    @Test func walksNameTheDirectoriesTheyLeaveToTheirReaders() {
+        #expect(AgentID.claude.spec.walk.skippedDirectoryNames.contains("subagents"))
+        #expect(AgentID.openhands.spec.walk.skippedDirectoryNames.contains("events"))
+    }
+
+    // MARK: - 4 · Pi follows the active branch
+
+    static let piPath = "/h/.pi/agent/sessions/--Users-me-app--/2026-09-29T10-00-00-000Z_0199a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b.jsonl"
+    static let piHeader = #"{"type":"session","version":3,"id":"0199a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b","timestamp":"2026-09-29T10:00:00.000Z","cwd":"/Users/me/app"}"#
+
+    static func piMessage(_ id: String, parent: String?, role: String, _ text: String, second: Int) -> String {
+        let parentJSON = parent.map { "\"\($0)\"" } ?? "null"
+        return #"{"type":"message","id":"\#(id)","parentId":\#(parentJSON),"timestamp":"2026-09-29T10:00:\#(String(format: "%02d", second)).000Z","message":{"role":"\#(role)","content":[{"type":"text","text":"\#(text)"}]}}"#
+    }
+
+    @Test func piLastWordFollowsTheBranchTheUserIsOn() throws {
+        let text = [
+            Self.piHeader,
+            Self.piMessage("a1", parent: nil, role: "user", "Add an offline queue for login", second: 1),
+            Self.piMessage("b1", parent: "a1", role: "assistant", "Two ways to do it.", second: 2),
+            Self.piMessage("c1", parent: "b1", role: "user", "Try the first way", second: 3),
+            Self.piMessage("d1", parent: "c1", role: "assistant", "The first way broke login.", second: 4),
+            // /tree back to b1 and continue from there.
+            Self.piMessage("e1", parent: "b1", role: "user", "Try the second way", second: 5),
+        ].joined(separator: "\n")
+        let fact = try #require(NativeActivityHarvest.parsePiFacts(text, path: Self.piPath).first)
+        #expect(fact.lastWord == "Two ways to do it.", "the abandoned branch's reply is not this session's last word")
+    }
+
+    @Test func piTitleComesFromTheActiveBranch() throws {
+        let text = [
+            Self.piHeader,
+            Self.piMessage("a1", parent: nil, role: "user", "Rewrite the parser", second: 1),
+            Self.piMessage("b1", parent: "a1", role: "assistant", "Started on the parser.", second: 2),
+            Self.piMessage("c1", parent: nil, role: "user", "Add an offline queue for login", second: 3),
+            Self.piMessage("d1", parent: "c1", role: "assistant", "Queue added.", second: 4),
+        ].joined(separator: "\n")
+        let fact = try #require(NativeActivityHarvest.parsePiFacts(text, path: Self.piPath).first)
+        #expect(fact.task == "Add an offline queue for login")
+        #expect(fact.lastWord == "Queue added.")
+    }
+
+    @Test func piAcceptsWhatTheWindowCutAwayFrom() throws {
+        let text = [
+            Self.piHeader,
+            Self.piMessage("a1", parent: nil, role: "user", "Add an offline queue for login", second: 1),
+            // …the middle of the file is outside the read window…
+            Self.piMessage("z9", parent: "y8", role: "assistant", "Queue added.", second: 9),
+        ].joined(separator: "\n")
+        let fact = try #require(NativeActivityHarvest.parsePiFacts(text, path: Self.piPath).first)
+        #expect(fact.task == "Add an offline queue for login", "a broken chain cannot place the head, so it is kept")
+        #expect(fact.lastWord == "Queue added.")
+    }
+
+    // MARK: - 7 · merge takes "now" from the newer fragment
+
+    @Test func mergeTakesNowFactsFromTheNewerFragmentWhateverTheOrder() throws {
+        var newer = NativeActivityHarvest.Fact()
+        newer.sessionID = "s1"
+        newer.activityMs = now
+        newer.tool = "Bash"
+        newer.model = "model-new"
+        newer.mode = "plan"
+        newer.tokensIn = 10
+        newer.planStep = "Running the gates"
+        newer.progressDone = 3
+        newer.progressTotal = 4
+        newer.lastErrorText = "exit 2"
+        var older = NativeActivityHarvest.Fact()
+        older.sessionID = "s1"
+        older.activityMs = now - 10 * Self.minute
+        older.tool = "Read"
+        older.model = "model-old"
+        older.mode = "code"
+        older.tokensIn = 99
+        older.planStep = "Fixing the parser"
+        older.progressDone = 1
+        older.progressTotal = 9
+        older.lastErrorText = "exit 1"
+
+        let merged = try #require(NativeActivityHarvest.merge([newer, older]).first)
+        #expect(merged.tool == "Bash")
+        #expect(merged.model == "model-new")
+        #expect(merged.mode == "plan")
+        #expect(merged.tokensIn == 10)
+        #expect(merged.planStep == "Running the gates")
+        #expect(merged.progressDone == 3 && merged.progressTotal == 4, "one plan, not one list's count with another's step")
+        #expect(merged.lastErrorText == "exit 2")
+    }
+
+    // MARK: - 8 · Pi's event count is not plan progress
+
+    @Test func piEventCountIsNotAProgressBar() throws {
+        let home = Home()
+        try home.database(".pi/agent/sessions/sessions.db", [
+            "CREATE TABLE session_meta (session_id TEXT, project_dir TEXT, started_at TEXT, last_event_at TEXT, event_count INTEGER);",
+            "CREATE TABLE session_events (id INTEGER PRIMARY KEY, session_id TEXT, type TEXT, category TEXT, data TEXT, project_dir TEXT, created_at TEXT, bytes_returned INTEGER);",
+            "INSERT INTO session_meta VALUES ('pi-count', '/Users/me/app', '1700000000', '1700000100', 412);",
+        ])
+        let row = try #require(home.rows(.pi).first)
+        #expect(row.progressTotal == 0)
+        #expect(row.progressDone == 0)
+    }
+
+    // MARK: - 18 · old Goose sessions are not decoded message by message
+
+    @Test func gooseReadsRecentMessagesOnlyForRecentSessions() {
+        #expect(NativeActivityHarvest.gooseReadsRecentMessages(updatedMs: now - Self.minute, nowMs: now))
+        #expect(!NativeActivityHarvest.gooseReadsRecentMessages(updatedMs: now - 73 * 60 * Self.minute, nowMs: now))
+        #expect(NativeActivityHarvest.gooseReadsRecentMessages(updatedMs: 0, nowMs: now), "unknown is read, not assumed old")
+    }
+
+    @Test func anOldGooseSessionKeepsItsTitleWithoutAnOldAsk() throws {
+        let home = Home()
+        let ask = #"[{"type":"actionRequired","data":{"actionType":"elicitation","id":"e1","message":"Which database?","requested_schema":{}}}]"#
+        try home.database(".local/share/goose/sessions/sessions.db", [
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', session_type TEXT NOT NULL DEFAULT 'user', working_dir TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, accumulated_input_tokens INTEGER, accumulated_output_tokens INTEGER, model_config_json TEXT, archived_at TIMESTAMP, parent_session_id TEXT);",
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT, session_id TEXT NOT NULL, role TEXT NOT NULL, content_json TEXT NOT NULL, created_timestamp INTEGER NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, tokens INTEGER, metadata_json TEXT);",
+            "INSERT INTO sessions (id, name, working_dir, updated_at) VALUES ('old_1', 'CLI Session', '/Users/me/app', datetime('now', '-10 days'));",
+            "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m1', 'old_1', 'user', '[{\"type\":\"text\",\"text\":\"Migrate the database\"}]', 1700000000);",
+            "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m2', 'old_1', 'assistant', '\(ask)', 1700000001);",
+        ])
+        let row = try #require(home.rows(.goose).first)
+        #expect(row.task == "Migrate the database")
+        #expect(row.skill != "pending")
+    }
+}
+
+/// 0.94 Waiting Proof — harvest ask → tray Waiting → dismiss → clear → re-raise,
+/// Attention raise→clear for Waiting-none, and honesty guards (no fake Waiting).
+final class HarvestPendingTests: XCTestCase {
+    private let now: Int64 = 1_700_000_000_000
+
+    @MainActor
+    private func harvest(
+        _ id: AgentID,
+        task: String = "Ask",
+        session: String = "s1",
+        cwd: String = "/Users/me/Pulse",
+        skill: String = "",
+        tool: String = "",
+        evidence: ObservationSource = .cache,
+        ageMs: Int64 = 1_000,
+        phase: String = ""
+    ) -> ActivityHarvest.Row {
+        var row = ActivityHarvest.Row(
+            id: id, task: task, project: "", cwd: cwd, skill: skill,
+            tool: tool, harvestMs: now - ageMs,
+            subRunning: 0, subTotal: 0, sessionID: session,
+            evidence: evidence
+        )
+        row.phase = phase
+        return row
+    }
+
+    // MARK: P0-2 harvest stamp honesty
+
+    @MainActor
+    func testBlockedOnUserFlagStampsPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-blocked-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".copilot/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"g-block","title":"Need you","cwd":"/tmp/g","status":"running","isBlockedOnUser":true}"#
+            .write(to: goose, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
+        XCTAssertEqual(row.skill, "pending")
+    }
+
+    @MainActor
+    func testAskUserQuestionToolStampsPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-asktool-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".copilot/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"g-ask","title":"Question","cwd":"/tmp/g","status":"running","currentTool":"ask_user_question"}"#
+            .write(to: goose, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
+        XCTAssertEqual(row.skill, "pending")
+    }
+
+    @MainActor
+    func testWaitingNoneStillNeverStampsHarvestPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-none-\(UUID().uuidString)")
+        let zcode = home.appendingPathComponent(".zcode/session.json")
+        try fm.createDirectory(at: zcode.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"{"sessionId":"z-1","title":"ZCode work","status":"awaiting_user","currentTool":"ask_followup_question","isWaitingForResponse":true}"#
+            .write(to: zcode, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.zcode])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .zcode })
+        XCTAssertNotEqual(row.skill, "pending")
+    }
+}
+
+/// 0.95 Extinguish Honesty — false Waiting must not light; clear stays clear
+/// until genuine new evidence.
+final class HarvestAnsweredAskTests: XCTestCase {
+    // MARK: Answered ask / terminal veto
+
+    @MainActor
+    func testAnsweredAskWithStaleAskToolDoesNotStampPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-answered-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".copilot/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"""
+        {"sessionId":"g-ans","title":"Answered","cwd":"/tmp/g","status":"running",
+         "ask":"followup","askResponse":"messageResponse","currentTool":"ask_followup_question"}
+        """#.write(to: goose, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
+        XCTAssertNotEqual(row.skill, "pending", "askResponse must veto ask-tool pending")
+    }
+
+    @MainActor
+    func testCompletedStatusWithAskToolDoesNotStampPending() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-done-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".copilot/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"""
+        {"sessionId":"g-done","title":"Done","cwd":"/tmp/g","status":"completed",
+         "currentTool":"ask_user_question"}
+        """#.write(to: goose, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
+        XCTAssertNotEqual(row.skill, "pending")
+    }
+
+    @MainActor
+    func testConflictingBoolFlagsAnyTrueWins() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-flags-\(UUID().uuidString)")
+        let goose = home.appendingPathComponent(".copilot/session.json")
+        try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"""
+        {"sessionId":"g-flag","title":"Block","cwd":"/tmp/g","status":"running",
+         "needsApproval":false,"isBlockedOnUser":true}
+        """#.write(to: goose, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
+        XCTAssertEqual(row.skill, "pending")
+    }
+
+    // MARK: Cascade / Windsurf arbitration
+
+    @MainActor
+    func testSharedWindsurfRootDoesNotDoubleRaiseCascadeAndWindsurf() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-cascade-\(UUID().uuidString)")
+        let windsurf = home.appendingPathComponent(".windsurf/session.json")
+        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+        try #"""
+        {"sessionId":"ws-dup","title":"Need you","cwd":"/tmp/ws","status":"running",
+         "isWaitingForResponse":true,"currentTool":"ask_clarifying_question"}
+        """#.write(to: windsurf, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home)
+        let cascade = result.rows.filter { $0.id == .cascade }
+        let wind = result.rows.filter { $0.id == .windsurf }
+        XCTAssertFalse(cascade.isEmpty, "Cascade should claim the shared root")
+        XCTAssertTrue(wind.isEmpty, "Windsurf shell must not duplicate when Cascade observed")
+        // 23.0: Cascade's format is unverified — no inferred Waiting.
+        XCTAssertNotEqual(cascade.first?.skill, "pending")
+    }
+}
+
+/// 0.99 Quiet Data — what Pulse writes down, and whether it says so.
+///
+/// 0.90–0.97 made the display honest and 0.98 made the collector honest. These
+/// cover the surface neither of them touched: the bytes that outlive the scan.
+final class ChromeVocabularyTests: XCTestCase {
+    // MARK: - One chrome vocabulary, not three
+
+    /// 0.98 collapsed the collector's two copies. The third lived in
+    /// `usefulTask`, was case-sensitive where the collector lowercases, and had
+    /// never learned `Cascade session`.
+    @MainActor
+    func testChromeTitlesAreRejectedWhateverTheirCase() {
+        for title in ["Cascade session", "CASCADE SESSION", "cascade session",
+                      "New Chat", "new chat", "Running", "running", "  Untitled  "] {
+            var row = AgentRow(rowKey: "k", agent: .cascade)
+            row.task = title
+            XCTAssertNil(row.usefulTask, "\(title) is not a user goal")
+        }
+    }
+
+    /// The collector and the row must agree on every entry. Two lists that
+    /// merely look alike are what 0.98 and 0.99 each had to unpick.
+    @MainActor
+    func testCollectorAndRowShareOneVocabulary() {
+        for title in AgentRow.chromeTitles {
+            XCTAssertTrue(
+                AgentRow.isChromeTitle(title.uppercased()),
+                "\(title) must be chrome in either case"
+            )
+            var row = AgentRow(rowKey: "k", agent: .claude)
+            row.task = title
+            XCTAssertNil(row.usefulTask, "\(title) reached a row as a goal")
+        }
+    }
+
+    func testARealGoalIsNotMistakenForChrome() {
+        XCTAssertFalse(AgentRow.isChromeTitle("Auth session"))
+        XCTAssertFalse(AgentRow.isChromeTitle("Fix the tray hero"))
     }
 }

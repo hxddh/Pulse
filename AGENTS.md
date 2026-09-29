@@ -23,9 +23,9 @@ supervision, transcript parsing, probe cadence, the debug log),
 library may import AppKit, SwiftUI or reach `StatusStore`; library members are
 `package`, Core's are `public`. **Adding an agent** means one
 `case` and one `AgentSpec` in `PulseCore/AgentCatalog.swift`, plus its icon, README
-row and an entry in `docs/vendor-formats.json` — `scripts/agent_catalog_check.py`
-fails if a per-agent table grows back anywhere else, and
-`scripts/vendor_formats_check.py` if the agent's format has no stated source. The legacy Python collector was deleted in 0.99 and the Vercel Native
+row and an entry in `docs/vendor-formats.json` — `scripts/catalog_check.py`
+fails if a per-agent table grows back anywhere else, if the README matrix
+disagrees with the catalog, or if the agent's format has no stated source. The legacy Python collector was deleted in 0.99 and the Vercel Native
 SDK shell in 0.22 — recover either from git history if you ever need it.
 
 ## Invariants
@@ -70,15 +70,35 @@ cd PulseBar && swift build      # targets macOS 14+; needs Xcode 26 / Swift 6.2+
 cd PulseBar && swift test       # test count is reported by SwiftPM/CI
 ```
 
+Tests live in `PulseBar/Tests/PulseBarTests/`, one file per component (23.0):
+`CoreTests` (catalog, bounded IO, processes), `HarvestTests`,
+`TranscriptTests`, `VendorFormatTests` (fixtures built from vendor source),
+`AttentionTests` (reader, protocol, hook receiver, installer, `claude
+agents`), `BuilderTests`, `ExplainTests`, `SessionLogTests`, `NotifierTests`,
+`TrayTests`, `SettingsTests`, `DiagnosticsTests`, `EngineTests`. A new test
+goes in the file of the component it tests — never a file named after a
+release. A file may hold several suites; `docs/scenarios.md` names suites
+and methods, and `scenario_map.py` checks both exist.
+
 Gates, from the repo root — CI, `release.yml`, `scripts/release.sh` and
 `package.sh` all run the same list:
 
 ```bash
-bash scripts/gates.sh                        # every source gate
+bash scripts/gates.sh                        # every source gate (below)
 python3 scripts/resource_budget_check.py     # native fixture wall + RSS (needs a build)
 python3 scripts/package_check.py             # reads the built .app
 ./scripts/qa_surfaces.sh                     # surface fixture PNGs (needs the .app)
+./scripts/qa_observation_truth.sh            # status fixture PNGs (needs the .app; CI)
 ```
+
+`gates.sh` runs `version_check` (one semver), `catalog_check` (roster,
+harvest roots, probe and privacy rules, README matrix, vendor formats —
+23.0 merged four gates into it), `make_agent_icons --check`,
+`appearance_check`, `surface_check`, `scenario_map` and a `Bundle.module`
+grep. A gate earns its place by guarding a real fact; one that only checks
+prose or long-deleted code is removed, not kept "just in case".
+`qa_mac_cursor_appdata_ab.sh` is a manual Mac-only A/B for the app-data
+switch, not CI.
 
 `NativeActivityHarvest.swift` is the collector. There is no second one: 0.99
 deleted `src/activity_scan.py`, its bundled copy and `harvest_stats_check.py`

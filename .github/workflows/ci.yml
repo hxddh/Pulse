@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   gates:
-    name: Gates (version · coverage · python)
+    name: Source gates (version · catalog · surfaces · scenarios)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

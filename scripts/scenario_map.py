@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Scenario → test map for docs/scenarios.md (12.4).
 
-The acceptance scenarios used to live as a 76-row table inside EXPERIENCE.md
-(67 rows since 22.0),
-and only seven tests named the scenario they pin. This keeps the map honest:
-every test file named in the "证明" column must exist, every scenario ID is
-unique, and EXPERIENCE.md no longer carries the table.
+The acceptance scenarios used to live as a table inside EXPERIENCE.md. This
+keeps the map honest: every test suite named in the "证明" column must be a
+declared test type (23.0 regrouped the tests by component, so a suite is a
+type, not a file), every method named in parentheses after it must exist in
+that type, every scenario ID is unique, and EXPERIENCE.md no longer carries
+the table.
 
     python3 scripts/scenario_map.py          # check (gates.sh runs this)
 """
@@ -19,7 +20,19 @@ ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ROOT / "docs" / "scenarios.md"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 EXPERIENCE = ROOT / "EXPERIENCE.md"
+# A floor, so a row cannot vanish unnoticed; it follows the spec down when a
+# release removes scenarios with the features they specified (22.0, 23.0).
 MIN_SCENARIOS = 60
+
+
+def test_types() -> dict[str, set[str]]:
+    """Test type name → the functions declared in its body."""
+    types: dict[str, set[str]] = {}
+    for path in sorted(TESTS.glob("*.swift")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"^(?:final class|struct) (\w+)[^\n]*\{\n(.*?)^\}", text, re.M | re.S):
+            types[match.group(1)] = set(re.findall(r"\bfunc (\w+)", match.group(2)))
+    return types
 
 
 def main() -> int:
@@ -29,21 +42,17 @@ def main() -> int:
     ids = [row[0] for row in rows]
     if len(ids) != len(set(ids)):
         problems.append("duplicate scenario ids in docs/scenarios.md")
-    # A floor, so a row cannot vanish unnoticed. 76 until 22.0, which removed
-    # 19 scenarios with the features they specified (the Workbench, managed
-    # sessions, Missions, working-copy checks, workspace effect, fleet
-    # broadcast and the remote inbox) — the floor follows the spec down.
-    # 23.0 removed three more with Respond (AR, AU, AV), and four with the
-    # look-continuity notice, the session digest and adaptive depth (AF, AP,
-    # AQ, BV). The row-narration scenarios went with `RowNarrator` (AD, AE,
-    # AS, BM, BN, BS) and stable identity came in (CN): still 60.
     if len(ids) < MIN_SCENARIOS:
         problems.append(f"docs/scenarios.md lists {len(ids)} scenarios; the spec has {MIN_SCENARIOS}")
-    existing = {p.stem for p in TESTS.glob("*.swift")}
+    types = test_types()
     for sid, rest in rows:
-        for name in re.findall(r"`(\w+Tests)`", rest):
-            if name not in existing:
-                problems.append(f"scenario {sid}: {name}.swift does not exist")
+        for name, methods in re.findall(r"`(\w+Tests)`(?:[（(]([^）)]*)[）)])?", rest):
+            if name not in types:
+                problems.append(f"scenario {sid}: no test type {name}")
+                continue
+            for method in re.findall(r"\b([a-z]\w{5,})\b", methods or ""):
+                if method not in types[name]:
+                    problems.append(f"scenario {sid}: {name} has no {method}")
     if re.search(r"^\| [A-Z]{1,2} \| ", EXPERIENCE.read_text(encoding="utf-8"), re.M):
         problems.append("EXPERIENCE.md carries a scenario table again — it lives in docs/scenarios.md")
     if problems:

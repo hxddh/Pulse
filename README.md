@@ -142,8 +142,8 @@ Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、
 未知 skill 不会原样泄露 namespace 或路径；无法映射时只保留安全的叶子名称，以
 `Workflow <name>` 进入默认行，避免丢失有价值的能力信号。
 
-这张表由 `scripts/matrix_check.py` 对着代码里的 `AgentID.harvestSource` 和
-`AgentID.waitingSource` 校验，
+这张表由 `scripts/catalog_check.py` 对着 `AgentCatalog.swift` 里每个 Agent 的采集等级与
+Waiting 来源校验，
 不一致 CI 就红——它是承诺，不是宣传。
 
 「诊断」窗口展示的是这台 Mac 的运行事实，而不是重复静态名单：问题排在最前，
@@ -189,19 +189,15 @@ cd PulseBar && swift run     # 开发壳，关于区显示 x.y.z-dev
 cd PulseBar && swift test    # 测试数量以 SwiftPM / CI 当次输出为准
 ```
 
-八个门禁，从仓库根目录跑（`package.sh` 和 CI 都会执行）：
+源码门禁只有一个入口，从仓库根目录跑（`package.sh`、`release.sh` 和 CI 都调用它）：
 
 ```bash
-python3 scripts/version_check.py            # 版本一致性（--fix 自动对齐）
-python3 scripts/coverage_check.py           # 每个 AgentID 都有 harvest 接线
-python3 scripts/matrix_check.py             # README 支持矩阵 == 代码
-python3 scripts/make_agent_icons.py --check # 每个 AgentID 都有图标，且与生成器一致
-python3 scripts/appearance_check.py         # 没有把外观冻进常量（0.27.1 因此丢了深色模式）
-python3 scripts/resource_budget_check.py    # native fixture 墙钟 + RSS
+bash scripts/gates.sh                       # 版本、Agent 目录、图标、外观、表面、场景
+python3 scripts/resource_budget_check.py    # native fixture 墙钟 + RSS（需先构建）
 python3 scripts/package_check.py            # 打出来的 .app 能找到自己的资源
 ```
 
-前七个读源码或跑 native fixture，最后一个读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
+`gates.sh` 只读源码，`resource_budget_check.py` 跑 native fixture，`package_check.py` 读**构建产物** —— 0.21 到 0.23.0 的启动崩溃全部发生在打包这一步，
 源码没问题、测试全绿，照样连发三个打不开的 DMG。这类 bug 只有对着 `.app` 才看得见。
 
 但门禁校验的是「我们以为运行时去哪找资源」，而那个假设本身就是当初错的地方。

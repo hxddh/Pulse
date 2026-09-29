@@ -1,8 +1,12 @@
 import Foundation
+import SQLite3
 import Testing
+import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+
+// Session log: spans, waits, retention and the file it is saved to.
 
 /// 23.0 · one record of what each session did. Each test pins a defect the
 /// four overlapping files it replaced (ledger, hook history, timeline,
@@ -236,5 +240,322 @@ struct SessionLogTests {
         log.prune(nowMs: now + 60 * minute)
         let count = log.sessions["claude|a"]?.waits.count ?? 0
         #expect(count == SessionLog.maxWaitsPerSession)
+    }
+}
+
+/// 22.0 · Lamp — the session timeline and the lamp's explanation are pure
+/// values; these pin what they say.
+@Suite("Session timeline")
+struct SessionTimelineTests {
+    let now: Int64 = 1_800_000_000_000
+    let minute: Int64 = 60_000
+
+    private func row(_ key: String, _ agent: AgentID = .claude) -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: agent)
+        row.sessionID = key
+        row.task = "Fix the login test"
+        row.liveProcess = true
+        row.state = .running
+        row.harvestMs = now - minute
+        return row
+    }
+
+    private func waiting(_ row: AgentRow, since: Int64 = 0, inFront: Bool = false) -> AgentRow {
+        var copy = row
+        copy.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks, inFront: inFront))
+        return copy
+    }
+
+    // MARK: - Timeline
+
+    @Test func theSameWorldTwiceIsSilent() {
+        let rows = [row("claude|a"), row("codex|b", .codex)]
+        #expect(SessionTimeline.transitions(previous: rows, current: rows, nowMs: now).isEmpty)
+    }
+
+    @Test func aWaitIsStampedWithTheHooksOwnClock() throws {
+        let before = row("claude|a")
+        let after = waiting(before, since: now - 3 * minute)
+        let edges = SessionTimeline.transitions(previous: [before], current: [after], nowMs: now)
+        let edge = try #require(edges.first)
+        #expect(edge.state == .blocked)
+        #expect(edge.evidence == .hook)
+        #expect(edge.atMs == now - 3 * minute)
+        #expect(edge.exact)
+    }
+
+    @Test func aSessionThatLeavesClosesItsSpan() {
+        var log = SessionLog()
+        let r = row("claude|a")
+        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now))
+        log.applyTimeline(SessionTimeline.transitions(previous: [r], current: [], nowMs: now + 5 * minute))
+        let spans = log.spans("claude|a")
+        #expect(spans.count == 1)
+        #expect(spans.first?.endMs == now + 5 * minute)
+    }
+
+    @Test func relaunchingDoesNotDuplicateAnOpenSpan() {
+        var log = SessionLog()
+        let r = row("claude|a")
+        let first = log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now))
+        #expect(first)
+        // A fresh process has no previous rows and re-sees the same session.
+        let again = log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now + minute))
+        #expect(!again)
+        #expect(log.spans("claude|a").count == 1)
+    }
+
+    @Test func theLogIsBounded() {
+        var log = SessionLog()
+        var previous: [AgentRow] = []
+        for i in 0..<120 {
+            let base = row("claude|a")
+            let r = i % 2 == 0 ? waiting(base, since: now + Int64(i) * minute) : base
+            log.applyTimeline(SessionTimeline.transitions(previous: previous, current: [r], nowMs: now + Int64(i) * minute))
+            previous = [r]
+        }
+        #expect(log.spans("claude|a").count <= SessionLog.maxSpansPerSession)
+        // The session leaves, closing its span; a day later nothing is kept.
+        // (An open span is the session's present state and stays.)
+        log.applyTimeline(SessionTimeline.transitions(previous: previous, current: [], nowMs: now + 121 * minute))
+        log.prune(nowMs: now + SessionLog.retentionMs * 3)
+        #expect(log.sessions.isEmpty, "a day later nothing is kept")
+    }
+
+    @Test func theStripSplitsTheHourByState() {
+        let spans = [
+            TimelineSpan(state: .running, evidence: .harvest, startMs: now - 40 * minute, endMs: now - 10 * minute),
+            TimelineSpan(state: .blocked, evidence: .hook, kind: "Permission", startMs: now - 10 * minute, endMs: nil),
+        ]
+        let strip = TimelineStripModel.make(spans: spans, nowMs: now)
+        let states = strip.segments.map { $0.state }
+        #expect(states == [nil, .running, .blocked])
+        let total = strip.segments.reduce(0.0) { $0 + $1.fraction }
+        #expect(abs(total - 1.0) < 0.0001)
+        let minutes = strip.minutesByState
+        #expect(minutes.first?.0 == .blocked && minutes.first?.1 == 10)
+    }
+
+    // The lamp's explanation is pinned in `ExplainTests` (23.0).
+
+    // MARK: - Why no banner
+
+    @Test func skippedRowsSayWhy() {
+        let front = waiting(row("claude|front"), inFront: true)
+        let muted = waiting(row("codex|m", .codex))
+        let delivery = WaitingDelivery(
+            muted: [.codex], acknowledged: [], inFlight: [],
+            canDeliverNow: true, msSinceLastNotification: 0, minimumIntervalMs: 0
+        )
+        let reasons = delivery.skipReasons([front, muted])
+        #expect(reasons["claude|front"] == .inFront)
+        #expect(reasons["codex|m"] == .muted)
+    }
+
+    @Test func theAuditKeepsWhenTheWaitBeganAndWhyThereWasNoBanner() {
+        var log = SessionLog()
+        let r = waiting(row("claude|a"))
+        log.reconcileWaits(rows: [r], released: [], nowMs: now)
+        let marked = log.markDelivery("claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now)
+        #expect(marked)
+        let markedAgain = log.markDelivery("claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now + 1)
+        #expect(!markedAgain, "the same outcome twice is not a write")
+        let wait = log.latestWait("claude|a")
+        #expect(wait != nil)
+        if let wait {
+            let lines = NotificationAuditModel.make(wait: wait, nowMs: now, lang: .en).lines
+            #expect(lines.count == 2)
+            #expect(lines.first?.hasPrefix("Raised ") == true)
+            #expect(lines.last?.contains("in front of you") == true)
+        }
+    }
+
+    // MARK: - Activity
+
+    @Test func theActivityLogMergesStateAndBanners() {
+        var log = SessionLog()
+        let before = row("claude|a")
+        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [before], nowMs: now - 10 * minute))
+        let r = waiting(before, since: now - 5 * minute)
+        log.applyTimeline(SessionTimeline.transitions(previous: [before], current: [r], nowMs: now))
+        log.reconcileWaits(rows: [r], released: [], nowMs: now - 5 * minute)
+        let marked = log.markDelivery("claude|a", outcome: "posted", nowMs: now - 5 * minute + 1_000)
+        #expect(marked)
+        let model = ActivityLogModel.make(log: log, rows: [r], lang: .en, nowMs: now)
+        let texts = model.entries.map { $0.text }
+        #expect(texts.count == 3)
+        #expect(texts.first == L10n.t(.auditPosted, .en).replacingOccurrences(of: " %@", with: ""))
+        #expect(texts.contains { $0.hasPrefix(L10n.t(.needsYou, .en)) })
+    }
+}
+
+/// 0.99 Quiet Data — what Pulse writes down, and whether it says so.
+///
+/// 0.90–0.97 made the display honest and 0.98 made the collector honest. These
+/// cover the surface neither of them touched: the bytes that outlive the scan.
+final class SessionLogRetentionTests: XCTestCase {
+
+    // MARK: - The session log stores what its comment says it stores
+
+    /// The retention the type documents is the retention `prune` enforces:
+    /// a resolved wait and a closed span outlive their end by a day, no more.
+    func testResolvedWaitsAndClosedSpansExpireAtTheDocumentedRetention() {
+        let now: Int64 = 1_800_000_000_000
+        let hour: Int64 = 60 * 60 * 1000
+        var log = SessionLog()
+        var row = AgentRow(rowKey: "claude|a", agent: .claude)
+        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        log.reconcileWaits(rows: [row], released: [], nowMs: now - 30 * hour)
+        log.reconcileWaits(rows: [], released: [], nowMs: now - 26 * hour)
+        var fresh = AgentRow(rowKey: "claude|b", agent: .claude)
+        fresh.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        log.reconcileWaits(rows: [fresh], released: [], nowMs: now - 2 * hour)
+        log.reconcileWaits(rows: [], released: [], nowMs: now - hour)
+
+        log.prune(nowMs: now)
+        XCTAssertNil(log.latestWait("claude|a"), "resolved more than a day ago")
+        XCTAssertNotNil(log.latestWait("claude|b"))
+    }
+
+    /// The cap trims history, never live state.
+    func testOpenWaitsAreNeverEvictedByTheSessionCap() {
+        let now: Int64 = 1_800_000_000_000
+        var log = SessionLog()
+        let resolved = (0..<(SessionLog.maxSessions + 40)).map { index -> AgentRow in
+            var row = AgentRow(rowKey: "claude|r\(index)", agent: .claude)
+            row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+            return row
+        }
+        log.reconcileWaits(rows: resolved, released: [], nowMs: now - 2_000)
+        log.reconcileWaits(rows: [], released: [], nowMs: now - 1_000)
+        var live = AgentRow(rowKey: "codex|live", agent: .codex)
+        live.task = "still waiting"
+        live.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        log.reconcileWaits(rows: [live], released: [], nowMs: now)
+
+        log.prune(nowMs: now)
+        XCTAssertLessThanOrEqual(log.sessions.count, SessionLog.maxSessions)
+        XCTAssertNotNil(log.openWait("codex|live"), "a live wait is product state, not history")
+    }
+
+    /// The stored title is bounded — the log records a headline, not a
+    /// transcript.
+    func testStoredTitleIsBoundedToOneHundredAndSixtyCharacters() throws {
+        var log = SessionLog()
+        var row = AgentRow(rowKey: "claude|long", agent: .claude)
+        row.task = String(repeating: "goal ", count: 200)
+        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
+        let title = try XCTUnwrap(log.openWait("claude|long")?.title)
+        XCTAssertFalse(title.isEmpty)
+        XCTAssertLessThanOrEqual(title.count, SessionLog.titleLimit, "the log records a headline, not a transcript")
+        XCTAssertLessThan(title.count, row.task.count)
+    }
+}
+
+/// Clarity fixes — each test pins one defect found by reading the code: the
+/// value the user would have seen, before and after.
+@MainActor
+@Suite("Session log fixes", .serialized)
+struct SessionLogFixTests {
+    let now: Int64 = 1_800_000_000_000
+    func session(_ id: AgentID, _ sessionID: String, skill: String = "", ageMs: Int64 = 70_000) -> ActivityHarvest.Row {
+        ActivityHarvest.Row(
+            id: id, task: "Fix the login flow", project: "p", cwd: "/p", skill: skill,
+            tool: "", harvestMs: now - ageMs, subRunning: 0, subTotal: 0, sessionID: sessionID,
+            evidence: .session
+        )
+    }
+
+    // MARK: - 13 / 14 · jumping to a wait
+
+    func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64) -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: agent)
+        row.sessionID = session
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks))
+        return row
+    }
+
+    // MARK: - 16 · a scan that finds the same world writes no log
+
+    @Test func reconcilingTheSameWaitsIsNotADurableChange() {
+        let row = waitingRow("claude|s1", .claude, session: "s1", since: now)
+        var log = SessionLog()
+        log.reconcileWaits(rows: [row], released: [], nowMs: now)
+        let before = log
+        let again = log.reconcileWaits(rows: [row], released: [], nowMs: now + 3_000)
+        #expect(!again)
+        #expect(log.hasSameDurableState(as: before))
+        log.reconcileWaits(rows: [], released: [], nowMs: now + 6_000)
+        #expect(!log.hasSameDurableState(as: before), "a resolved wait is a change")
+    }
+}
+
+/// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
+///
+/// Each of these is a place where the code said something it had not
+/// measured, dropped work it had been asked to do, or let a click reach
+/// nothing without saying so.
+final class SessionLogFileTests: XCTestCase {
+    func testTheSessionLogRoundTripsThroughItsPrivateWrite() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-log-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("session-log.json")
+
+        var log = SessionLog()
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.task = "Something the user actually typed"
+        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
+        XCTAssertTrue(SessionLogFile.save(log, to: url, nowMs: 1_800_000_000_100))
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        let loaded = SessionLogFile.load(from: url, nowMs: 1_800_000_000_200)
+        XCTAssertEqual(loaded.waitingKeys, ["claude|s1"])
+        XCTAssertEqual(loaded.savedAtMs, 1_800_000_000_100, "the write is stamped, for closing spans after a quit")
+        XCTAssertTrue(loaded.hasSameDurableState(as: log))
+    }
+}
+
+final class SessionLogPersistenceTests: XCTestCase {
+    private func waitingRow(_ key: String = "codex|session-1") -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: .codex)
+        row.sessionID = "session-1"
+        row.task = "Approve test command"
+        row.state = .blocked(RowWait(kind: "permission", signal: .hooks))
+        row.project = "Pulse"
+        return row
+    }
+
+    func testSessionLogPersistsQueueDismissalAndRateLimit() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("session-log-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var log = SessionLog()
+        log.reconcileWaits(rows: [waitingRow()], released: [], nowMs: 100)
+        log.markQueued("codex|session-1", nowMs: 110)
+        XCTAssertTrue(log.queuedKeys.contains("codex|session-1"))
+        log.markNotified("codex|session-1", nowMs: 200)
+        XCTAssertFalse(log.queuedKeys.contains("codex|session-1"), "a shown banner is no longer owed")
+        XCTAssertFalse(log.canDeliver(nowMs: 1_000, minimumIntervalMs: 3_000))
+        log.dismiss(waitingRow(), soft: false, nowMs: 300)
+        SessionLogFile.save(log, to: url, nowMs: 400)
+        let restored = SessionLogFile.load(from: url, nowMs: 500)
+        XCTAssertTrue(restored.dismissedKeys.contains("codex|session-1"))
+        XCTAssertEqual(restored.openWait("codex|session-1")?.notifiedMs, 200)
+        XCTAssertEqual(restored.openWait("codex|session-1")?.queuedMs, 110, "the audit keeps when it was queued")
+    }
+
+    func testSessionLogNeverEvictsOpenWaits() {
+        var log = SessionLog()
+        let rows = (0..<300).map { index in
+            waitingRow("codex|session-\(index)")
+        }
+        log.reconcileWaits(rows: rows, released: [], nowMs: 100)
+        log.prune(nowMs: 100)
+
+        XCTAssertEqual(log.waitingKeys.count, 300, "a live wait is product state, not history")
     }
 }

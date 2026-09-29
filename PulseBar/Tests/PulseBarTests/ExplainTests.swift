@@ -1,8 +1,11 @@
 import Foundation
 import Testing
+import XCTest
 @testable import PulseBar
 @testable import PulseCore
 @testable import PulseHarvest
+
+// Explain: the one explanation of a row and of the lamp.
 
 /// 23.0 · One Explain — the headline, the why and the source for a row, and
 /// the row face and detail page built on them. Ported from the truth tests
@@ -370,5 +373,38 @@ struct ExplainTests {
         let values = detail.facts.map { $0.value } + detail.diagnostics.map { $0.value }
         #expect(!values.contains("—"))
         #expect(!values.contains("session"), "an enum's raw value is not a word")
+    }
+}
+
+/// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
+///
+/// Each of these is a place where the code said something it had not
+/// measured, dropped work it had been asked to do, or let a click reach
+/// nothing without saying so.
+final class ExplainErrorTests: XCTestCase {
+    private func liveRow() -> AgentRow {
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.task = "Fix the auth module"
+        row.liveProcess = true
+        row.state = .running
+        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.source = .session
+        return row
+    }
+
+    // MARK: D-2 · a fault is not crowded out
+
+    /// 23.0: D-1 (token pairs) went with the facts; D-2 is one rule now —
+    /// a row that reported errors explains its orange lamp with them.
+    func testARowThatReportedErrorsSaysSo() {
+        var row = liveRow()
+        row.errors = 7
+        let why = Explain.make(row, lang: .en, nowMs: row.harvestMs).why
+        XCTAssertTrue(why.contains("7"), why)
+    }
+
+    func testNoErrorsIsNoFault() {
+        let why = Explain.make(liveRow(), lang: .en, nowMs: liveRow().harvestMs).why
+        XCTAssertFalse(why.contains("error"), why)
     }
 }
