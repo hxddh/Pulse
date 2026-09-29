@@ -58,8 +58,8 @@ enum GlobalHotKey {
             DispatchQueue.main.async {
                 // Prefer the Waiting Go-Look path when something needs you;
                 // otherwise just open the tray.
-                if AppServices.store.snapshot.rows.contains(where: \.waiting)
-                    || AppServices.store.allRowsForDisplay.contains(where: \.waiting) {
+                if AppServices.store.snapshot.rows.contains(where: \.isBlocked)
+                    || AppServices.store.allRowsForDisplay.contains(where: \.isBlocked) {
                     AppServices.store.focusFirstWaiting()
                 } else if AppServices.store.oldestTurn != nil {
                     // 16.0: nothing blocked — the next finished session.

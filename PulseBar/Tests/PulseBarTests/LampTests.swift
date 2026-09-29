@@ -14,8 +14,15 @@ struct LampTests {
         row.sessionID = key
         row.task = "Fix the login test"
         row.liveProcess = true
+        row.state = .running
         row.harvestMs = now - minute
         return row
+    }
+
+    private func waiting(_ row: AgentRow, since: Int64 = 0, inFront: Bool = false) -> AgentRow {
+        var copy = row
+        copy.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks, inFront: inFront))
+        return copy
     }
 
     // MARK: - Timeline
@@ -27,11 +34,7 @@ struct LampTests {
 
     @Test func aWaitIsStampedWithTheHooksOwnClock() throws {
         let before = row("claude|a")
-        var after = before
-        after.waiting = true
-        after.waitSignal = .hooks
-        after.waitKind = "Permission"
-        after.waitSinceMs = now - 3 * minute
+        let after = waiting(before, since: now - 3 * minute)
         let edges = SessionTimeline.transitions(previous: [before], current: [after], nowMs: now)
         let edge = try #require(edges.first)
         #expect(edge.state == .blocked)
@@ -61,24 +64,12 @@ struct LampTests {
         #expect(log.spans("claude|a").count == 1)
     }
 
-    @Test func aRemappedKeyKeepsItsHistory() {
-        let old = row("claude|pid-1")
-        var renamed = old
-        renamed.rowKey = "claude|s1"
-        let edges = SessionTimeline.transitions(
-            previous: [old], current: [renamed], remapped: ["claude|pid-1": "claude|s1"], nowMs: now
-        )
-        #expect(edges.isEmpty, "the same session under a better key is not a new edge")
-    }
-
     @Test func theLogIsBounded() {
         var log = SessionLog()
         var previous: [AgentRow] = []
         for i in 0..<120 {
-            var r = row("claude|a")
-            r.waiting = i % 2 == 0
-            r.waitSignal = r.waiting ? .hooks : nil
-            r.waitSinceMs = r.waiting ? now + Int64(i) * minute : 0
+            let base = row("claude|a")
+            let r = i % 2 == 0 ? waiting(base, since: now + Int64(i) * minute) : base
             log.applyTimeline(SessionTimeline.transitions(previous: previous, current: [r], nowMs: now + Int64(i) * minute))
             previous = [r]
         }
@@ -104,48 +95,13 @@ struct LampTests {
         #expect(minutes.first?.0 == .blocked && minutes.first?.1 == 10)
     }
 
-    // MARK: - Explain the lamp
-
-    @Test func aRedLampNamesWhoIsWaitingAndHow() {
-        var waiting = row("claude|a")
-        waiting.project = "pulse"
-        waiting.waiting = true
-        waiting.waitSignal = .hooks
-        waiting.waitKind = "Permission"
-        waiting.waitSinceMs = now - 4 * minute
-        let explanation = LampExplanation.make(
-            rows: [waiting, row("codex|b", .codex)],
-            glance: .waiting,
-            staleHidden: 3,
-            narrator: RowNarrator(lang: .en, nowMs: now)
-        )
-        #expect(explanation.rule == .blocked)
-        let keys = explanation.drivers.map { $0.rowKey }
-        #expect(keys == ["claude|a"])
-        let lines = explanation.lines(.en)
-        #expect(lines.first == L10n.t(.lampRuleBlocked, .en))
-        #expect(lines[1].hasPrefix("Claude · pulse — "))
-        #expect(lines.last?.contains("3") == true, "what was left out is said")
-    }
-
-    @Test func anOrangeLampWithoutAStallIsAProcessOnlySession() {
-        var process = AgentRow(rowKey: "cursor|p", agent: .cursor)
-        process.liveProcess = true
-        let explanation = LampExplanation.make(
-            rows: [process], glance: .stalled, staleHidden: 0, narrator: RowNarrator(lang: .zh, nowMs: now)
-        )
-        #expect(explanation.rule == .thinRunning)
-        #expect(explanation.drivers.first?.agent == .cursor)
-    }
+    // The lamp's explanation is pinned in `ExplainTests` (23.0).
 
     // MARK: - Why no banner
 
     @Test func skippedRowsSayWhy() {
-        var front = row("claude|front")
-        front.waiting = true
-        front.waitRaisedInFront = true
-        var muted = row("codex|m", .codex)
-        muted.waiting = true
+        let front = waiting(row("claude|front"), inFront: true)
+        let muted = waiting(row("codex|m", .codex))
         let delivery = WaitingDelivery(
             muted: [.codex], acknowledged: [], inFlight: [],
             canDeliverNow: true, msSinceLastNotification: 0, minimumIntervalMs: 0
@@ -157,8 +113,7 @@ struct LampTests {
 
     @Test func theAuditKeepsWhenTheWaitBeganAndWhyThereWasNoBanner() {
         var log = SessionLog()
-        var r = row("claude|a")
-        r.waiting = true
+        let r = waiting(row("claude|a"))
         log.reconcileWaits(rows: [r], released: [], nowMs: now)
         let marked = log.markDelivery("claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now)
         #expect(marked)
@@ -178,12 +133,9 @@ struct LampTests {
 
     @Test func theActivityLogMergesStateAndBanners() {
         var log = SessionLog()
-        var r = row("claude|a")
-        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [r], nowMs: now - 10 * minute))
-        let before = r
-        r.waiting = true
-        r.waitSignal = .hooks
-        r.waitSinceMs = now - 5 * minute
+        let before = row("claude|a")
+        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [before], nowMs: now - 10 * minute))
+        let r = waiting(before, since: now - 5 * minute)
         log.applyTimeline(SessionTimeline.transitions(previous: [before], current: [r], nowMs: now))
         log.reconcileWaits(rows: [r], released: [], nowMs: now - 5 * minute)
         let marked = log.markDelivery("claude|a", outcome: "posted", nowMs: now - 5 * minute + 1_000)

@@ -55,6 +55,10 @@ final class ScanEngine {
     /// session row ages out so Health can distinguish "not running" from
     /// "collector has never produced evidence".
     var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
+    /// 23.0: the processes the last applied scan saw, by (surface) agent,
+    /// stamped with when each began. Health reads them — the row no longer
+    /// carries process evidence, start or count.
+    var processesByAgent: [AgentID: ProcessFacts] = [:]
     /// Per-Agent retry/backoff/circuit policy. A bad store must not consume the
     /// next scan budget for every other adapter.
     private(set) var harvestSupervisor = HarvestSupervisor()
@@ -521,6 +525,7 @@ final class ScanEngine {
             ProbeStats.Sample(at: now, harvested: harvestMs != nil, harvestMs: harvestMs)
         )
 
+        processesByAgent = ProcessFacts.byAgent(procs, nowMs: nowMs)
         let settings = model.settings
         let result = SnapshotBuilder.build(
             SnapshotBuilder.Input(
@@ -538,8 +543,7 @@ final class ScanEngine {
                 ),
                 lang: model.lang,
                 dismissedPendingKeys: model.sessionLog.suppressedKeys,
-                showAllAgents: model.showAllAgents,
-                privacyLimitedAgents: Set(AgentID.allCases.filter { settings.isPrivacyLimited($0) })
+                showAllAgents: model.showAllAgents
             )
         )
 
@@ -566,5 +570,29 @@ final class ScanEngine {
             lastApplyLogSignature = applySignature
             DebugLog.write("apply #\(ticket) " + applySignature)
         }
+    }
+}
+
+/// What Health says about an agent's processes: how it was matched, when
+/// the oldest began, how many there are. Diagnostic only — never a row fact.
+struct ProcessFacts: Equatable {
+    var evidence: ProcessEvidence
+    var startedMs: Int64
+    var count: Int
+
+    static func byAgent(_ hits: [ProcessProbe.Hit], nowMs: Int64) -> [AgentID: ProcessFacts] {
+        var out: [AgentID: ProcessFacts] = [:]
+        for hit in hits {
+            let agent = hit.id.surfaceID
+            let started = hit.elapsedSeconds > 0 ? nowMs - Int64(hit.elapsedSeconds * 1000) : 0
+            if var existing = out[agent] {
+                existing.count = max(existing.count, hit.count)
+                if started > 0, existing.startedMs == 0 || started < existing.startedMs { existing.startedMs = started }
+                out[agent] = existing
+            } else {
+                out[agent] = ProcessFacts(evidence: hit.evidence, startedMs: started, count: hit.count)
+            }
+        }
+        return out
     }
 }

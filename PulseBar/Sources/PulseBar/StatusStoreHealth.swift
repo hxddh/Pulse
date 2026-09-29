@@ -66,8 +66,8 @@ extension StatusStore {
         lines.append("runningBundle: \(Bundle.main.bundleURL.path)")
         for row in cachedAll.prefix(8) {
             lines.append(
-                "  \(row.agent.rawValue) waiting=\(row.waiting) live=\(row.liveProcess) "
-                    + "signal=\(row.waitSignal?.rawValue ?? "-") sub=\(row.subRunning)/\(row.subTotal)"
+                "  \(row.agent.rawValue) waiting=\(row.isBlocked) live=\(row.liveProcess) "
+                    + "signal=\(row.wait?.signal.rawValue ?? "-") source=\(row.source.rawValue)"
             )
         }
         return lines.joined(separator: "\n")
@@ -236,11 +236,14 @@ extension StatusStore {
             let health = engine.collectorHealthByAgent[agent]
                 ?? (agent == .cursor ? engine.collectorHealthByAgent[.cursorAgent] : nil)
             let strongest: ObservationSource? = {
-                if rows.contains(where: { $0.observationSource == .session }) { return .session }
-                if rows.contains(where: { $0.observationSource == .cache }) { return .cache }
-                if rows.contains(where: { $0.observationSource == .process }) { return .process }
+                if rows.contains(where: { $0.source == .session }) { return .session }
+                if rows.contains(where: { $0.source == .cache }) { return .cache }
+                if !rows.isEmpty { return .process }
                 return nil
             }()
+            let process = engine.processesByAgent[agent]
+                ?? (agent == .cursor ? engine.processesByAgent[.cursorAgent] : nil)
+            let measured = health?.factClasses ?? []
             return AgentSupportHealth(
                 agent: agent,
                 collectorState: health?.state ?? .unscanned,
@@ -249,13 +252,9 @@ extension StatusStore {
                 sourcePresent: health?.sourcePresent ?? false,
                 collectorErrorKind: health?.errorKind ?? "",
                 processDetected: rows.contains(where: \.liveProcess),
-                processEvidence: rows.compactMap(\.processEvidence).first,
-                processStartedMs: rows
-                    .filter(\.liveProcess)
-                    .map(\.processStartedMs)
-                    .filter { $0 > 0 }
-                    .min() ?? 0,
-                processCount: rows.map(\.processCount).max() ?? 0,
+                processEvidence: process?.evidence,
+                processStartedMs: process?.startedMs ?? 0,
+                processCount: process?.count ?? 0,
                 evidence: strongest,
                 // This clock is when Pulse successfully read the adapter, not
                 // when the vendor session last changed. Reusing row.harvestMs
@@ -270,30 +269,23 @@ extension StatusStore {
                 // 4/4 core facts while simultaneously admitting the feed is
                 // unavailable.
                 hasActivity: rows.contains {
-                    $0.harvestMs > 0 && $0.observationSource != .process
+                    $0.harvestMs > 0 && ($0.source == .session || $0.source == .cache)
                 },
+                // What the session is getting on with: its plan, its words,
+                // its errors, its model — or, measured by the collector this
+                // scan, its tools and tokens.
                 hasProgress: rows.contains {
-                    !$0.phase.isEmpty || !$0.tool.isEmpty || !$0.outcome.isEmpty
-                        || $0.progressDone > 0 || $0.progressTotal > 0
-                        || $0.tokensIn > 0 || $0.tokensOut > 0
-                        || $0.subTotal > 0 || $0.errors > 0 || $0.files > 0
-                        || $0.contextPercent > 0 || !$0.model.isEmpty || !$0.mode.isEmpty
-                },
+                    !$0.planSteps.isEmpty || !$0.lastWord.isEmpty || $0.errors > 0 || !$0.model.isEmpty
+                } || !measured.isDisjoint(with: ["tool", "tokens", "progress", "plan", "word", "error", "model"]),
                 waitingSignalReady: waitingSignalReady(for: agent),
                 privacyLimited: settings.isPrivacyLimited(agent),
-                hasActionSignal: rows.contains { !$0.tool.isEmpty },
-                hasModelSignal: rows.contains { !$0.model.isEmpty },
-                hasResourceSignal: rows.contains {
-                    $0.tokensIn > 0 || $0.tokensOut > 0 || $0.records > 0
-                        || $0.errors > 0 || $0.files > 0 || $0.contextPercent > 0
-                },
+                hasActionSignal: measured.contains("tool"),
+                hasModelSignal: rows.contains { !$0.model.isEmpty } || measured.contains("model"),
+                hasResourceSignal: measured.contains("tokens") || rows.contains { $0.errors > 0 },
                 focusTier: bestSupportFocus(in: rows),
                 focusTTYNeedsOptIn: supportTTYNeedsOptIn(in: rows),
                 activityAgeSeconds: {
-                    let clocks = rows.compactMap { row -> Int64? in
-                        let ms = max(row.harvestMs, row.activityChangedMs)
-                        return ms > 0 ? ms : nil
-                    }
+                    let clocks = rows.map(\.lastActivityMs).filter { $0 > 0 }
                     guard let newest = clocks.max() else { return 0 }
                     return max(0, Date().timeIntervalSince1970 - Double(newest) / 1000.0)
                 }(),
@@ -340,17 +332,6 @@ extension StatusStore {
         }
     }
 
-    /// Details lists actionable gaps first so truncation cannot hide the fix.
-    func prioritizedObservationGaps(_ gaps: [ObservationGap]) -> [ObservationGap] {
-        let actionable: Set<String> = ["use_attention_bridge", "enable_app_data"]
-        return gaps.enumerated().sorted { left, right in
-            let leftAct = actionable.contains(left.element.nextStep)
-            let rightAct = actionable.contains(right.element.nextStep)
-            if leftAct != rightAct { return leftAct && !rightAct }
-            return left.offset < right.offset
-        }.map(\.element)
-    }
-
     var privacyLimitedAgents: [AgentSupportHealth] {
         supportHealth.filter(\.privacyLimited)
     }
@@ -380,29 +361,6 @@ extension StatusStore {
     /// Short tray notice sharing the Support incomplete vocabulary.
     var trayScanIncompleteNotice: String? {
         scanIncompleteBannerText
-    }
-
-    func confidenceLabel(_ confidence: ObservationConfidence) -> String {
-        switch confidence {
-        case .high: return tr(.qualityConfidenceHigh)
-        case .medium: return tr(.qualityConfidenceMedium)
-        case .low: return tr(.qualityConfidenceLow)
-        }
-    }
-
-    func factKeyLabel(_ key: ObservationFactKey) -> String {
-        switch key {
-        case .task: return tr(.supportGoal)
-        case .workspace: return tr(.supportWorkspace)
-        case .action: return tr(.supportAction)
-        case .phase: return tr(.detailPhase)
-        case .model: return tr(.supportModel)
-        case .progress: return tr(.supportProgress)
-        case .error: return tr(.detailErrors)
-        case .waitingReason: return tr(.supportMissingWaiting)
-        case .evidence: return tr(.supportEvidence)
-        case .freshness: return tr(.supportLastRead)
-        }
     }
 
     /// One line on the session log for the diagnostics copy — counts only.
@@ -629,12 +587,12 @@ extension StatusStore {
         }
         guard let row = candidates.max(by: { lhs, rhs in
             let left = (
-                lhs.waiting ? 4 : 0,
+                lhs.isBlocked ? 4 : 0,
                 lhs.liveProcess ? 2 : 0,
                 lhs.harvestMs
             )
             let right = (
-                rhs.waiting ? 4 : 0,
+                rhs.isBlocked ? 4 : 0,
                 rhs.liveProcess ? 2 : 0,
                 rhs.harvestMs
             )
@@ -642,45 +600,13 @@ extension StatusStore {
         }) else { return "" }
 
         var facts: [String] = []
-        func nonEmpty(_ raw: String) -> String? {
-            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : value
-        }
         if let task = row.usefulTask { facts.append(task) }
         if !row.displayPath.isEmpty { facts.append(row.displayPath) }
-        if let phase = readablePhase(row.phase, waiting: row.waiting) { facts.append(phase) }
-        if let tool = nonEmpty(row.tool) {
-            let action = readableAction(tool)
-            // Support diagnostics have more room than the tray's default row.
-            // Keep generic and previously unknown tools visible as a safe,
-            // human-readable last action instead of dropping the only
-            // capability signal an adapter emitted. Avoid saying "Testing"
-            // twice when the structured phase already supplied that fact.
-            if !action.isEmpty,
-               !facts.contains(where: { $0.caseInsensitiveCompare(action) == .orderedSame }) {
-                facts.append(String(format: tr(.lastAction), action))
-            }
-        }
-        if let model = nonEmpty(row.model) {
-            facts.append(String(format: tr(.modelFact), readableModel(model)))
-        }
-        if let mode = nonEmpty(readableMode(row.mode)) { facts.append(mode) }
-        if row.progressTotal > 0 {
-            facts.append(String(format: tr(.progressFact), row.progressDone, row.progressTotal))
-        } else if row.progressDone > 0 {
-            facts.append(String(format: tr(.turnsFact), row.progressDone))
-        }
+        let model = row.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !model.isEmpty { facts.append(String(format: tr(.modelFact), model)) }
         if row.errors > 0 {
             facts.append(row.errors == 1 ? tr(.errorFactOne) : String(format: tr(.errorsFact), row.errors))
         }
-        if row.files > 0 { facts.append(String(format: tr(.filesFact), row.files)) }
-        if row.contextPercent > 0 { facts.append(String(format: tr(.contextFact), row.contextPercent)) }
-        let tokens = tokenPair(input: row.tokensIn, output: row.tokensOut, scope: .reported)
-        if !tokens.isEmpty { facts.append(tokens) }
-        // Record count is a collector diagnostic, not execution progress. It
-        // belongs in Adapter diagnostics; letting it occupy the observed-fact
-        // line made a session with only a transcript look more informative than
-        // one with a real action, outcome, or token signal.
         guard !facts.isEmpty else { return "" }
         let clipped = facts.prefix(4).joined(separator: " · ")
         return String(format: tr(.supportObservedSignals), clipped)
@@ -827,7 +753,7 @@ extension StatusStore {
     /// counts only.
     var doctorReadCoverage: [String: DoctorModel.Coverage] {
         var coverage: [String: DoctorModel.Coverage] = [:]
-        for row in cachedAll where row.observationSource == .session {
+        for row in cachedAll where row.source == .session {
             let key = row.agent.rawValue
             var item = coverage[key] ?? DoctorModel.Coverage(
                 name: row.agent.displayName,

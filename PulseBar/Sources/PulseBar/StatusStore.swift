@@ -167,9 +167,6 @@ final class StatusStore {
     /// One finished scan. Each observed property is assigned only when its
     /// value changed; a scan that finds the same world announces nothing.
     func land(_ result: SnapshotBuilder.Result, snapshot next: PulseSnapshot, nowMs: Int64) {
-        for (oldKey, newKey) in result.remappedRowKeys {
-            notifier.followRemap(from: oldKey, to: newKey)
-        }
         let previousRows = cachedAll
         setCachedAll(result.rows)
         if showAllAgents != result.showAllAgents { showAllAgents = result.showAllAgents }
@@ -415,7 +412,7 @@ final class StatusStore {
     /// say so and rescan: the next row either carries a handle that works or
     /// stops offering one.
     func focusTerminal(_ row: AgentRow) {
-        if row.yourTurn { markTurnSeen(row) }
+        if row.isYourTurn { markTurnSeen(row) }
         guard !TerminalFocus.focus(row: row) else { return }
         noteRowAction(row.rowKey, tr(.focusFailed))
         refresh(reason: "focus-failed")
@@ -425,7 +422,7 @@ final class StatusStore {
     /// session-scoped `done` in the attention file is the record — it
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
-        guard row.yourTurn, !row.doneSession.isEmpty else { return }
+        guard row.isYourTurn, !row.doneSession.isEmpty else { return }
         AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
         refresh(reason: "turn-seen")
     }
@@ -434,14 +431,14 @@ final class StatusStore {
     /// softly: its source keeps reporting it until the session moves, so the
     /// log keeps it suppressed until then.
     nonisolated static func dismissIsSoft(_ row: AgentRow) -> Bool {
-        row.waitSignal == .pending || row.waitSignal == .vendor || row.skill == "pending"
+        row.wait?.signal == .pending || row.wait?.signal == .vendor
     }
 
     func dismissWaiting(_ row: AgentRow) {
         let isHarvestPending = Self.dismissIsSoft(row)
         // 0.95: pure harvest soft-dismiss must not write agent-wide Attention
         // done (empty session clears every wait for that agent).
-        if row.waitSignal == .hooks {
+        if row.wait?.signal == .hooks {
             AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
         } else if !isHarvestPending, !row.doneSession.isEmpty {
             AttentionIO.appendDone(agent: row.agent, session: row.doneSession)
@@ -461,7 +458,7 @@ final class StatusStore {
         // user cleared Waiting, so take back what was already submitted too
         // (scene AH, U-7).
         notifier.withdrawAll()
-        let waiting = cachedAll.filter(\.waiting)
+        let waiting = cachedAll.filter(\.isBlocked)
         updateLog(immediately: true) { log in
             for row in waiting {
                 log.dismiss(row, soft: Self.dismissIsSoft(row), nowMs: nowMs)
@@ -473,7 +470,7 @@ final class StatusStore {
 
     /// Live Waiting-none session — needs Attention Reach, not a fake Waiting chip.
     func isWaitingNoneNeedsReach(_ row: AgentRow) -> Bool {
-        !row.waiting
+        !row.isBlocked
             && row.liveProcess
             && row.agent.waitingSource == .none
     }
@@ -491,15 +488,15 @@ final class StatusStore {
     }
 
     nonisolated static func oldestWaitRow(in rows: [AgentRow]) -> AgentRow? {
-        let waiting = rows.filter(\.waiting)
+        let waiting = rows.filter(\.isBlocked)
         return waiting
-            .filter { $0.waitSinceMs > 0 }
-            .min { $0.waitSinceMs < $1.waitSinceMs }
+            .filter { ($0.wait?.sinceMs ?? 0) > 0 }
+            .min { ($0.wait?.sinceMs ?? 0) < ($1.wait?.sinceMs ?? 0) }
             ?? waiting.first
     }
 
     nonisolated static func firstWaitingRow(in rows: [AgentRow]) -> AgentRow? {
-        rows.first(where: \.waiting)
+        rows.first(where: \.isBlocked)
     }
 
     /// Focus the longest-outstanding wait.
@@ -511,7 +508,7 @@ final class StatusStore {
 
     /// 16.0: the finished session that has waited longest for a look.
     var oldestTurn: AgentRow? {
-        cachedAll.filter(\.yourTurn).min { $0.turnSinceMs < $1.turnSinceMs }
+        cachedAll.filter(\.isYourTurn).min { ($0.turnSinceMs ?? 0) < ($1.turnSinceMs ?? 0) }
     }
 
     /// Blocked first, then "your turn".
@@ -536,8 +533,8 @@ final class StatusStore {
         let row = Self.focusTarget(in: cachedAll, idRaw: idRaw, session: session, rowKey: rowKey)
         if let row {
             let didFocus = row.canFocusTerminal && TerminalFocus.focus(row: row)
-            if row.yourTurn { markTurnSeen(row) }
-            if row.waiting || !didFocus {
+            if row.isYourTurn { markTurnSeen(row) }
+            if row.isBlocked || !didFocus {
                 requestTrayReveal(rowKey: row.rowKey)
             }
             return
@@ -701,7 +698,7 @@ extension PulseSnapshot {
         if !next.sameContent(as: current) { return true }
         let nowMs = Int64(next.updatedAt.timeIntervalSince1970 * 1000)
         let secondsOnScreen = next.rows.contains { row in
-            let newest = max(row.waitSinceMs, row.activityChangedMs, row.harvestMs)
+            let newest = max(row.wait?.sinceMs ?? 0, row.activityMs, row.harvestMs)
             return newest > 0 && nowMs - newest < secondsLabelWindowMs
         }
         if secondsOnScreen { return true }

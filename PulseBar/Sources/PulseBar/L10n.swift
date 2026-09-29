@@ -513,6 +513,81 @@ enum L10n {
         case .activityHeading: return "Activity"
         case .activityEmpty: return "Nothing recorded yet. State changes and banners appear here as they happen."
         case .activityAllAgents: return "All agents"
+        case .explainHook: return "%@'s hook reported %@ %@"
+        case .explainHookFront: return " — its window was in front, so no banner"
+        case .explainPending: return "%@'s session file shows %@, first seen %@"
+        case .explainVendor: return "Claude itself reports %@, first seen %@"
+        case .explainTurn: return "%@'s hook reported the turn ended %@ — focus it or reply to clear"
+        case .explainProcessOnly: return "Seen only as a process — no session data"
+        case .explainStalled: return "No new output for %@ — past your %d-minute stall threshold"
+        case .explainStalledNoRule: return "No new output for %@"
+        case .explainStalledUnknown: return "Running, but Pulse has no clock for its activity"
+        case .explainErrors: return "The agent reported %d error(s) in this session"
+        case .explainRunning: return "%@ changed %@"
+        case .explainRunningNoClock: return "A live process, and no clock for its activity yet"
+        case .explainRecent: return "No live process; last activity %@"
+        case .explainRecentNoClock: return "No live process"
+        case .explainKindPermission: return "a permission request"
+        case .explainKindInput: return "a question"
+        case .explainKindWaiting: return "that it is waiting"
+        case .sourceSession: return "Session file"
+        case .sourceCache: return "App data"
+        case .sourceHooks: return "Hooks only"
+        case .sourceProcess: return "Process only"
+        case .detailModel: return "Model"
+        case .detailSource: return "Source"
+        case .detailFolder: return "Folder"
+        case .detailStarted: return "Started"
+        case .doctorVerdictWorks: return "works"
+        case .doctorVerdictUnproven: return "unproven"
+        case .doctorVerdictAttention: return "attention"
+        case .doctorVerdictAbsent: return "n/a"
+        case .doctorHeader: return "Pulse %@ (%@) · macOS %@ · self-check"
+        case .doctorClaudeHooks: return "Claude hooks installed"
+        case .doctorClaudeFired: return "Claude hooks reach Pulse"
+        case .doctorCodexHooks: return "Codex hooks installed"
+        case .doctorCodexFired: return "Codex hooks reach Pulse"
+        case .doctorCodexRollout: return "Codex session log format"
+        case .doctorReading: return "Session formats read in full"
+        case .doctorNoSessions: return "No session files read this run"
+        case .doctorCoverageGap: return "%@: %d session(s), %d with a title"
+        case .doctorCoverageGapWords: return ", %d with last words"
+        case .doctorCoverageFine: return "%d session(s) from %d agent(s), titles and words where the format carries them"
+        case .doctorNotInstalled: return "%@ is not installed on this Mac"
+        case .doctorSettingsUnreadable: return "The settings file is not valid JSON; Pulse will not edit it"
+        case .doctorFixSettings: return "Fix the JSON, then install hooks from Settings"
+        case .doctorNoHooks: return "No Pulse hook found"
+        case .doctorInstallHooks: return "Settings → Waiting signals → Install hooks"
+        case .doctorReinstallHooks: return "Reinstall hooks from Settings to pick up this version's events"
+        case .doctorMissing: return "Missing: %@"
+        case .doctorAllEvents: return "All %d events, questions included"
+        case .doctorNeverFired: return "No hook event recorded in the last day"
+        case .doctorUseOnceCodex: return "Finish one Codex turn; if nothing arrives, run /hooks in Codex and trust Pulse's hooks"
+        case .doctorUseOnceClaude: return "Finish one Claude turn, then run the self-check again"
+        case .doctorFired: return "Last event: %@, %@"
+        case .doctorFiredLongAgo: return "Last event %@ was %@ — too old to prove today's install"
+        case .doctorNoCLI: return "No claude executable found where Pulse looks"
+        case .doctorCLIOnPath: return "Install Claude Code's CLI, or ignore this if you only use hooks"
+        case .doctorAgentsTimedOut: return "Timed out after 3 s"
+        case .doctorAgentsFailed: return "Exited with status %d — this Claude may predate the command"
+        case .doctorUpdateClaude: return "Update Claude Code; hooks keep working meanwhile"
+        case .doctorAgentsUnreadable: return "Answered %d bytes Pulse cannot read as the documented shape"
+        case .doctorReportShape: return "Copy this report into an issue — the shape changed"
+        case .doctorAgentsParsed: return "Read %d session(s), %d waiting"
+        case .doctorCodexPermissionHook: return "A PermissionRequest hook is installed; it fires before Codex's own review and would show waits that are not real"
+        case .doctorNotifyOnly: return " (the older notify hook is present)"
+        case .doctorCodexNeedsTrust: return "Stop and UserPromptSubmit are installed; whether Codex trusts them only shows once one fires"
+        case .doctorCodexTrust: return "Run /hooks in Codex once and trust Pulse's entries"
+        case .doctorNoRollout: return "No session log in the last week to look at"
+        case .doctorRolloutLegacy: return "Classic event lines — parsed"
+        case .doctorRolloutPaginated: return "Paginated turn items — parsed (18.0)"
+        case .doctorRolloutMixed: return "Both formats in one log — parsed"
+        case .doctorRolloutUnknown: return "The newest log has neither format Pulse reads"
+        case .doctorCompressed: return " · %d compressed older log(s) left alone"
+        case .doctorAgoNow: return "just now"
+        case .doctorAgoMinutes: return "%d min ago"
+        case .doctorAgoHours: return "%d h ago"
+        case .doctorAgoDays: return "%d days ago"
         }
     }
 
@@ -954,6 +1029,81 @@ enum L10n {
         case .activityHeading: return "动态"
         case .activityEmpty: return "还没有记录。状态变化和通知会在发生时出现在这里。"
         case .activityAllAgents: return "全部 Agent"
+        case .explainHook: return "%@ 的 hook 报告了%@ · %@"
+        case .explainHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
+        case .explainPending: return "%@ 的会话文件显示%@ · 首次看到于%@"
+        case .explainVendor: return "Claude 自己报告了%@ · 首次看到于%@"
+        case .explainTurn: return "%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
+        case .explainProcessOnly: return "只看到进程——没有会话数据"
+        case .explainStalled: return "已经 %@ 没有新输出——超过你设的 %d 分钟停滞阈值"
+        case .explainStalledNoRule: return "已经 %@ 没有新输出"
+        case .explainStalledUnknown: return "在运行，但 Pulse 读不到它的活动时间"
+        case .explainErrors: return "Agent 在这个会话里报告了 %d 个错误"
+        case .explainRunning: return "%@更新于%@"
+        case .explainRunningNoClock: return "进程在运行，还读不到它的活动时间"
+        case .explainRecent: return "没有在运行的进程；最近活动 %@"
+        case .explainRecentNoClock: return "没有在运行的进程"
+        case .explainKindPermission: return "权限请求"
+        case .explainKindInput: return "一个问题"
+        case .explainKindWaiting: return "在等待"
+        case .sourceSession: return "会话文件"
+        case .sourceCache: return "应用数据"
+        case .sourceHooks: return "仅 hook"
+        case .sourceProcess: return "仅进程"
+        case .detailModel: return "模型"
+        case .detailSource: return "来源"
+        case .detailFolder: return "目录"
+        case .detailStarted: return "开始于"
+        case .doctorVerdictWorks: return "已验证"
+        case .doctorVerdictUnproven: return "未证实"
+        case .doctorVerdictAttention: return "需处理"
+        case .doctorVerdictAbsent: return "不适用"
+        case .doctorHeader: return "Pulse %@（%@）· macOS %@ · 自检"
+        case .doctorClaudeHooks: return "Claude hooks 已安装"
+        case .doctorClaudeFired: return "Claude hooks 到达 Pulse"
+        case .doctorCodexHooks: return "Codex hooks 已安装"
+        case .doctorCodexFired: return "Codex hooks 到达 Pulse"
+        case .doctorCodexRollout: return "Codex 会话记录格式"
+        case .doctorReading: return "会话格式读全了"
+        case .doctorNoSessions: return "本次运行没有读到会话文件"
+        case .doctorCoverageGap: return "%@：%d 个会话，%d 个有标题"
+        case .doctorCoverageGapWords: return "，%d 个有最后一句话"
+        case .doctorCoverageFine: return "%d 个会话，来自 %d 个 Agent，格式里有的标题与话都读到了"
+        case .doctorNotInstalled: return "这台 Mac 没有安装 %@"
+        case .doctorSettingsUnreadable: return "设置文件不是合法 JSON；Pulse 不会改它"
+        case .doctorFixSettings: return "修好 JSON 后在设置里安装 hooks"
+        case .doctorNoHooks: return "没有找到 Pulse 的 hook"
+        case .doctorInstallHooks: return "设置 → 等待信号 → 安装 hooks"
+        case .doctorReinstallHooks: return "在设置里重新安装 hooks，以获得这一版的事件"
+        case .doctorMissing: return "缺少：%@"
+        case .doctorAllEvents: return "全部 %d 个事件，含提问"
+        case .doctorNeverFired: return "最近一天没有记录到 hook 事件"
+        case .doctorUseOnceCodex: return "在 Codex 里完成一轮；若仍没有，在 Codex 里运行 /hooks 并信任 Pulse 的 hooks"
+        case .doctorUseOnceClaude: return "在 Claude 里完成一轮后再自检一次"
+        case .doctorFired: return "最近事件：%@，%@"
+        case .doctorFiredLongAgo: return "最近事件 %@ 在 %@——太久，证明不了现在的安装"
+        case .doctorNoCLI: return "在 Pulse 查找的位置没有 claude 可执行文件"
+        case .doctorCLIOnPath: return "安装 Claude Code 命令行；只用 hooks 可忽略"
+        case .doctorAgentsTimedOut: return "3 秒超时"
+        case .doctorAgentsFailed: return "退出码 %d——这版 Claude 可能还没有这个命令"
+        case .doctorUpdateClaude: return "升级 Claude Code；在此之前 hooks 照常工作"
+        case .doctorAgentsUnreadable: return "返回了 %d 字节，不是 Pulse 认识的格式"
+        case .doctorReportShape: return "把这份报告贴进 issue——格式变了"
+        case .doctorAgentsParsed: return "读到 %d 个会话，其中 %d 个在等"
+        case .doctorCodexPermissionHook: return "装了 PermissionRequest hook；它在 Codex 自己审批之前触发，会显示并不存在的等待"
+        case .doctorNotifyOnly: return "（仍有旧的 notify hook）"
+        case .doctorCodexNeedsTrust: return "Stop 与 UserPromptSubmit 已安装；Codex 是否信任它们，要等触发一次才知道"
+        case .doctorCodexTrust: return "在 Codex 里运行一次 /hooks 并信任 Pulse 的条目"
+        case .doctorNoRollout: return "最近一周没有可查看的会话记录"
+        case .doctorRolloutLegacy: return "经典事件行——可解析"
+        case .doctorRolloutPaginated: return "分页 turn 条目——可解析（18.0）"
+        case .doctorRolloutMixed: return "同一记录里两种格式——都可解析"
+        case .doctorRolloutUnknown: return "最新的记录两种格式都不是"
+        case .doctorCompressed: return " · %d 个压缩的旧记录不读"
+        case .doctorAgoNow: return "刚刚"
+        case .doctorAgoMinutes: return "%d 分钟前"
+        case .doctorAgoHours: return "%d 小时前"
+        case .doctorAgoDays: return "%d 天前"
         }
     }
 
@@ -1150,6 +1300,81 @@ enum L10n {
         case activityHeading
         case activityEmpty
         case activityAllAgents
+        case explainHook
+        case explainHookFront
+        case explainPending
+        case explainVendor
+        case explainTurn
+        case explainProcessOnly
+        case explainStalled
+        case explainStalledNoRule
+        case explainStalledUnknown
+        case explainErrors
+        case explainRunning
+        case explainRunningNoClock
+        case explainRecent
+        case explainRecentNoClock
+        case explainKindPermission
+        case explainKindInput
+        case explainKindWaiting
+        case sourceSession
+        case sourceCache
+        case sourceHooks
+        case sourceProcess
+        case detailModel
+        case detailSource
+        case detailFolder
+        case detailStarted
+        case doctorVerdictWorks
+        case doctorVerdictUnproven
+        case doctorVerdictAttention
+        case doctorVerdictAbsent
+        case doctorHeader
+        case doctorClaudeHooks
+        case doctorClaudeFired
+        case doctorCodexHooks
+        case doctorCodexFired
+        case doctorCodexRollout
+        case doctorReading
+        case doctorNoSessions
+        case doctorCoverageGap
+        case doctorCoverageGapWords
+        case doctorCoverageFine
+        case doctorNotInstalled
+        case doctorSettingsUnreadable
+        case doctorFixSettings
+        case doctorNoHooks
+        case doctorInstallHooks
+        case doctorReinstallHooks
+        case doctorMissing
+        case doctorAllEvents
+        case doctorNeverFired
+        case doctorUseOnceCodex
+        case doctorUseOnceClaude
+        case doctorFired
+        case doctorFiredLongAgo
+        case doctorNoCLI
+        case doctorCLIOnPath
+        case doctorAgentsTimedOut
+        case doctorAgentsFailed
+        case doctorUpdateClaude
+        case doctorAgentsUnreadable
+        case doctorReportShape
+        case doctorAgentsParsed
+        case doctorCodexPermissionHook
+        case doctorNotifyOnly
+        case doctorCodexNeedsTrust
+        case doctorCodexTrust
+        case doctorNoRollout
+        case doctorRolloutLegacy
+        case doctorRolloutPaginated
+        case doctorRolloutMixed
+        case doctorRolloutUnknown
+        case doctorCompressed
+        case doctorAgoNow
+        case doctorAgoMinutes
+        case doctorAgoHours
+        case doctorAgoDays
     }
 }
 

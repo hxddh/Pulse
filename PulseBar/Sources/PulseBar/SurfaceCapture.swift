@@ -56,7 +56,7 @@ enum SurfaceCapture {
             return AnyView(TrayRowFace(model: model, hovering: hovering))
         case .timeline(let model, let lang):
             return AnyView(TimelineStripView(model: model, lang: lang))
-        case .why(let model): return AnyView(WhyCardView(model: model))
+        case .detail(let model): return AnyView(SessionDetailFace(model: model, scrolls: false))
         case .doctor(let report): return AnyView(DoctorReportView(report: report))
         }
     }

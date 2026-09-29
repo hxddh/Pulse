@@ -17,18 +17,17 @@ struct SessionLogTests {
         row.sessionID = key
         row.task = "Fix the login test"
         row.liveProcess = true
+        row.state = .running
         row.harvestMs = now - minute
         return row
     }
 
     private func waiting(
-        _ key: String, _ agent: AgentID = .claude, since: Int64? = nil, signal: WaitSignalKind = .hooks
+        _ key: String, _ agent: AgentID = .claude, since: Int64? = nil, signal: WaitSignalKind = .hooks,
+        ask: String = ""
     ) -> AgentRow {
         var row = running(key, agent)
-        row.waiting = true
-        row.waitSignal = signal
-        row.waitKind = "Permission"
-        row.waitSinceMs = since ?? now - minute
+        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: since ?? now - minute, signal: signal))
         return row
     }
 
@@ -44,17 +43,16 @@ struct SessionLogTests {
     }
 
     @Test func owedBannersAreRebuiltFromThisScansRows() {
-        var fresh = waiting("claude|a")
-        fresh.waitMessage = "Bash: npm test"
+        let fresh = waiting("claude|a", ask: "Bash: npm test")
         let rows = [fresh, running("codex|b", .codex), waiting("cursor|c", .cursor)]
         let owed = WaitNotifier.queuedDeliveryRows(
             queued: ["claude|a", "codex|b", "gone|x", "cursor|c"],
             rows: rows,
             muted: [.cursor]
         )
-        let keys = owed.map(\.rowKey)
+        let keys = owed.map { $0.rowKey }
         #expect(keys == ["claude|a"], "only a key waiting now, unmuted, in a current row")
-        #expect(owed.first?.waitMessage == "Bash: npm test", "the current row, not a frozen copy")
+        #expect(owed.first?.wait?.ask == "Bash: npm test", "the current row, not a frozen copy")
     }
 
     // MARK: - 2 · spans a quit left open are closed
@@ -136,35 +134,6 @@ struct SessionLogTests {
         store.notifier.recordBannerClick(waitIDs: [id, "unknown|1"])
         let again = store.logRevision
         #expect(again == after)
-    }
-
-    // MARK: - 5 · a better key merges history
-
-    @Test func aRemapMergesBothHistories() {
-        var log = SessionLog()
-        let old = running("claude|pid-1")
-        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [old], nowMs: now - 20 * minute))
-        log.closeAbsent(liveKeys: [], atMs: now - 15 * minute)
-        let renamed = running("claude|s1")
-        log.applyTimeline(SessionTimeline.transitions(previous: [], current: [renamed], nowMs: now - 10 * minute))
-        // Both keys hold an open wait for the same session.
-        log.reconcileWaits(
-            rows: [waiting("claude|pid-1", since: now - 6 * minute), waiting("claude|s1", since: now - 5 * minute)],
-            released: [], nowMs: now - 4 * minute
-        )
-
-        let moved = log.remap(from: "claude|pid-1", to: "claude|s1")
-        #expect(moved)
-        #expect(log.sessions["claude|pid-1"] == nil)
-        let spans = log.spans("claude|s1")
-        #expect(spans.count == 2, "the old key's span used to be dropped when the new key had one")
-        let openSpans = spans.filter { $0.endMs == nil }
-        #expect(openSpans.count == 1)
-        let waits = log.sessions["claude|s1"]?.waits ?? []
-        let open = waits.filter { $0.isOpen }
-        #expect(waits.count == 2)
-        #expect(open.count == 1, "one open wait per key")
-        #expect(open.first?.raisedMs == now - 5 * minute, "the newest stands")
     }
 
     // MARK: - Dismissal lives in the log

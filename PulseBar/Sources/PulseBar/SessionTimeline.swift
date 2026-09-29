@@ -42,9 +42,6 @@ struct TimelineSpan: Codable, Equatable, Sendable {
     var endMs: Int64?
     /// False when no evidence clock existed and the scan time stood in.
     var exact: Bool = true
-    /// 23.0: for a blocked span, what the agent asked (sanitized, bounded —
-    /// `SessionLog.note`); "" otherwise. The Why card reads it.
-    var note: String = ""
 }
 
 struct TimelineTransition: Equatable, Sendable {
@@ -55,28 +52,28 @@ struct TimelineTransition: Equatable, Sendable {
     var kind: String
     var atMs: Int64
     var exact: Bool
-    var note: String = ""
 }
 
 enum SessionTimeline {
     /// The row's state and its evidence — the same predicates the lamp uses,
     /// so the strip can never disagree with the colour.
     static func classify(_ row: AgentRow) -> (state: TimelineState, evidence: TimelineEvidence, kind: String) {
-        if row.waiting {
-            let evidence: TimelineEvidence
-            switch row.waitSignal {
-            case .hooks?: evidence = .hook
-            case .vendor?: evidence = .vendor
-            case .pending?, nil: evidence = .pending
-            }
-            return (.blocked, evidence, row.waitKind)
-        }
         let evidence: TimelineEvidence = row.isProcessOnly ? .process : .harvest
-        if row.yourTurn { return (.turn, .hook, "") }
-        if row.isStalled { return (.stalled, evidence, "") }
-        if row.isProcessOnly || row.isThinRunning { return (.thin, evidence, "") }
-        if row.isRecentOnly { return (.recent, evidence, "") }
-        return (.running, evidence, "")
+        switch row.state {
+        case .blocked(let wait):
+            switch wait.signal {
+            case .hooks: return (.blocked, .hook, wait.kind)
+            case .vendor: return (.blocked, .vendor, wait.kind)
+            case .pending: return (.blocked, .pending, wait.kind)
+            }
+        case .yourTurn: return (.turn, .hook, "")
+        case .processOnly: return (.thin, .process, "")
+        case .recent: return (.recent, evidence, "")
+        case .running:
+            if row.isStalled { return (.stalled, evidence, "") }
+            if row.isThinRunning { return (.thin, evidence, "") }
+            return (.running, evidence, "")
+        }
     }
 
     /// Edges between two scans. A row whose state and evidence did not
@@ -84,11 +81,10 @@ enum SessionTimeline {
     static func transitions(
         previous: [AgentRow],
         current: [AgentRow],
-        remapped: [String: String] = [:],
         nowMs: Int64
     ) -> [TimelineTransition] {
         var before: [String: AgentRow] = [:]
-        for row in previous { before[remapped[row.rowKey] ?? row.rowKey] = row }
+        for row in previous { before[row.rowKey] = row }
         var out: [TimelineTransition] = []
         var seen = Set<String>()
         for row in current {
@@ -101,8 +97,7 @@ enum SessionTimeline {
             let stamp = evidenceStamp(row, state: now.state, nowMs: nowMs)
             out.append(TimelineTransition(
                 rowKey: row.rowKey, state: now.state, evidence: now.evidence,
-                kind: now.kind, atMs: stamp.ms, exact: stamp.exact,
-                note: now.state == .blocked ? SessionLog.note(row.waitMessage) : ""
+                kind: now.kind, atMs: stamp.ms, exact: stamp.exact
             ))
         }
         for (key, old) in before where !seen.contains(key) {
@@ -118,9 +113,9 @@ enum SessionTimeline {
     static func evidenceStamp(_ row: AgentRow, state: TimelineState, nowMs: Int64) -> (ms: Int64, exact: Bool) {
         let candidate: Int64
         switch state {
-        case .blocked: candidate = row.waitSinceMs
-        case .turn: candidate = row.turnSinceMs
-        case .running, .thin: candidate = row.activityChangedMs
+        case .blocked: candidate = row.wait?.sinceMs ?? 0
+        case .turn: candidate = row.turnSinceMs ?? 0
+        case .running, .thin: candidate = row.activityMs
         case .stalled, .recent: candidate = 0
         }
         // A clock from the future, or one older than the log keeps, is not

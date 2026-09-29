@@ -2,10 +2,9 @@ import Foundation
 
 /// 22.0 · Lamp — why the menu-bar lamp is this colour, right now.
 ///
-/// The tooltip said "2 running: Claude, Codex" whether the lamp was green or
-/// orange, and never which session or which evidence decided the colour. This
-/// value names the rule that fired, up to three sessions that drove it (in
-/// the lamp's own order), each with its why-line, and what was left out
+/// Names the rule that fired, up to three sessions that drove it (in the
+/// lamp's own order), each with `Explain`'s why (23.0 — one sentence per row,
+/// the same one the tray and the detail page say), and what was left out
 /// (sessions too old to show). Pure: rows in, sentences out.
 struct LampExplanation: Equatable, Sendable {
     enum Rule: String, Equatable, Sendable {
@@ -16,7 +15,7 @@ struct LampExplanation: Equatable, Sendable {
         var rowKey: String
         var agent: AgentID
         var project: String
-        /// The row's why-line, or its state when nothing needs explaining.
+        /// `Explain.why` for the row.
         var reason: String
     }
 
@@ -30,18 +29,10 @@ struct LampExplanation: Equatable, Sendable {
         rows: [AgentRow],
         glance: GlanceKind,
         staleHidden: Int,
-        narrator: RowNarrator
+        lang: ResolvedLanguage,
+        nowMs: Int64,
+        stallMinutes: Int = 0
     ) -> LampExplanation {
-        func drivers(_ subset: [AgentRow]) -> [Driver] {
-            subset.prefix(maxDrivers).map { row in
-                Driver(
-                    rowKey: row.rowKey,
-                    agent: row.agent,
-                    project: AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project),
-                    reason: narrator.whyLine(row) ?? narrator.tr(.running)
-                )
-            }
-        }
         let rule: Rule
         let chosen: [AgentRow]
         switch glance {
@@ -50,25 +41,25 @@ struct LampExplanation: Equatable, Sendable {
             chosen = []
         case .waiting:
             rule = .blocked
-            chosen = rows.filter(\.waiting)
+            chosen = rows.filter(\.isBlocked)
         case .stalled:
             let stalled = rows.filter(\.isStalled)
             if stalled.isEmpty {
                 rule = .thinRunning
-                chosen = rows.filter { !$0.waiting && ($0.isProcessOnly || $0.isThinRunning) }
+                chosen = rows.filter { !$0.isBlocked && ($0.isProcessOnly || $0.isThinRunning) }
             } else {
                 rule = .stalled
                 chosen = stalled
             }
         case .running:
             rule = .running
-            chosen = rows.filter { !$0.waiting && ($0.liveProcess || $0.isExplicitlyRunningPhase) }
+            chosen = rows.filter { $0.state == .running }
         case .idle:
-            let turns = rows.filter(\.yourTurn)
+            let turns = rows.filter(\.isYourTurn)
             if !turns.isEmpty {
                 rule = .yourTurn
                 chosen = turns
-            } else if rows.contains(where: \.isRecentOnly) {
+            } else if rows.contains(where: \.isRecent) {
                 rule = .recent
                 chosen = []
             } else {
@@ -78,7 +69,14 @@ struct LampExplanation: Equatable, Sendable {
         }
         return LampExplanation(
             rule: rule,
-            drivers: drivers(chosen),
+            drivers: chosen.prefix(maxDrivers).map { row in
+                Driver(
+                    rowKey: row.rowKey,
+                    agent: row.agent,
+                    project: row.shortPlace,
+                    reason: Explain.why(row, lang: lang, nowMs: nowMs, stallMinutes: stallMinutes)
+                )
+            },
             staleHidden: staleHidden
         )
     }

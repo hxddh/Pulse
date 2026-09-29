@@ -141,7 +141,8 @@ extension StatusStore {
         sessionLogStore.write(next, immediately: immediately)
     }
 
-    /// One scan's worth of history: identity moves, state edges, the waits.
+    /// One scan's worth of history: state edges and the waits. Row keys never
+    /// change (`RowIdentity`), so nothing has to follow one.
     func recordScan(previous: [AgentRow], result: SnapshotBuilder.Result, nowMs: Int64) {
         // The first scan after launch closes what the last run left open, at
         // the moment that run last wrote — not now, which would claim the
@@ -152,12 +153,9 @@ extension StatusStore {
             let saved = sessionLog.savedAtMs
             if saved > 0, saved < nowMs { closeAt = saved }
         }
-        let transitions = SessionTimeline.transitions(
-            previous: previous, current: result.rows, remapped: result.remappedRowKeys, nowMs: nowMs
-        )
+        let transitions = SessionTimeline.transitions(previous: previous, current: result.rows, nowMs: nowMs)
         let live = Set(result.rows.map(\.rowKey))
         updateLog { log in
-            for (old, new) in result.remappedRowKeys { log.remap(from: old, to: new) }
             log.applyTimeline(transitions)
             log.closeAbsent(liveKeys: live, atMs: closeAt)
             log.reconcileWaits(rows: result.rows, released: result.clearedPendingKeys, nowMs: nowMs)

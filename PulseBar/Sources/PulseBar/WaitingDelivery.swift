@@ -59,8 +59,8 @@ struct WaitingDelivery: Equatable {
     /// not "skipped" — their banner is on its way.
     func skipReasons(_ rows: [AgentRow]) -> [String: SkipReason] {
         var out: [String: SkipReason] = [:]
-        for row in rows where row.waiting {
-            if row.waitRaisedInFront {
+        for row in rows where row.isBlocked {
+            if row.wait?.inFront == true {
                 out[row.rowKey] = .inFront
             } else if muted.contains(row.agent) {
                 out[row.rowKey] = .muted
@@ -75,11 +75,11 @@ struct WaitingDelivery: Equatable {
 
     func plan(_ rows: [AgentRow]) -> Plan {
         let eligible = rows.filter { row in
-            row.waiting
+            row.isBlocked
                 // 16.0: the prompt was already in front of the user when it
                 // was raised — the lamp says so; a banner and a sound would
                 // only interrupt someone who is looking at it.
-                && !row.waitRaisedInFront
+                && row.wait?.inFront != true
                 && !muted.contains(row.agent)
                 && !acknowledged.contains(row.rowKey)
                 && !inFlight.contains(row.rowKey)

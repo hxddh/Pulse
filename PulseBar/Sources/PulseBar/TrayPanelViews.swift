@@ -215,7 +215,7 @@ struct TrayPanel: View {
 
     private var moreMenu: some View {
         Menu {
-            if store.snapshot.rows.contains(where: \.waiting) {
+            if store.snapshot.rows.contains(where: \.isBlocked) {
                 Button(store.tr(.jumpToOldest)) { store.focusOldestWait() }
                 Button(store.tr(.clearWaiting)) { store.clearWaiting() }
                 Divider()
@@ -268,7 +268,7 @@ struct TrayPanel: View {
         return store.allRowsForDisplay.filter { row in
             [
                 row.agent.displayName, row.agent.rawValue, row.task, row.project,
-                row.cwd, row.sessionID, row.tool, row.model,
+                row.cwd, row.sessionID, row.model, row.lastWord,
             ].contains { $0.localizedCaseInsensitiveContains(text) }
         }
     }
@@ -343,7 +343,7 @@ struct TrayPanel: View {
             .focused($listFocused)
             .onAppear {
                 listFocused = true
-                if selectedKey == nil { selectedKey = rows.first(where: \.waiting)?.rowKey }
+                if selectedKey == nil { selectedKey = rows.first(where: \.isBlocked)?.rowKey }
                 applyPendingReveal()
             }
             .onKeyPress(.downArrow) { moveSelection(1); return .handled }
@@ -359,7 +359,7 @@ struct TrayPanel: View {
                 return .handled
             }
             .onKeyPress(.delete) {
-                guard let row = selectedRow, row.waiting else { return .ignored }
+                guard let row = selectedRow, row.isBlocked else { return .ignored }
                 store.dismissWaiting(row)
                 return .handled
             }
@@ -621,7 +621,7 @@ struct TrayRowFace: View {
 
     private var secondLine: String? {
         if let ask = model.waitDetail { return ask }
-        if model.lamp == .error, model.whyInline, let why = model.why { return why }
+        if model.lamp == .error, model.whyInline { return model.why }
         return nil
     }
 
@@ -678,7 +678,7 @@ struct TrayRowFace: View {
                     Button(button.title) { send(button.action) }
                 }
             }
-            .help(model.why ?? "")
+            .help(model.why)
 
             if let line = secondLine {
                 HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {

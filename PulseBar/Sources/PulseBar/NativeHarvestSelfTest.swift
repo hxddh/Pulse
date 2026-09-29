@@ -219,8 +219,7 @@ enum NativeHarvestSelfTest {
             var row = AgentRow(rowKey: "codex|waiting-\(index)", agent: .codex)
             row.sessionID = "waiting-\(index)"
             row.task = "Approve fixture \(index)"
-            row.waiting = true
-            row.waitKind = "Permission"
+            row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
             waitingRows.append(row)
         }
         log.reconcileWaits(rows: waitingRows, released: [], nowMs: 1_800_000_000_000)

@@ -320,96 +320,92 @@ enum DoctorModel {
 
     // MARK: - Copy
 
-    /// The self-check's words. Kept beside the judgement rather than in
-    /// `L10n`: it is one diagnostic surface whose sentences are built from
-    /// the facts, and splitting each across two files made them harder to
-    /// keep exact.
+    /// The self-check's words, from `L10n` (23.0: the inline English/Chinese
+    /// pairs that lived here were a second localization mechanism).
     struct Copy {
         var lang: ResolvedLanguage
-        private func s(_ en: String, _ zh: String) -> String { lang == .zh ? zh : en }
+        private func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        private func f(_ key: L10n.Key, _ args: CVarArg...) -> String { String(format: t(key), arguments: args) }
 
         func verdict(_ v: Verdict) -> String {
             switch v {
-            case .works: return s("works", "已验证")
-            case .unproven: return s("unproven", "未证实")
-            case .attention: return s("attention", "需处理")
-            case .absent: return s("n/a", "不适用")
+            case .works: return t(.doctorVerdictWorks)
+            case .unproven: return t(.doctorVerdictUnproven)
+            case .attention: return t(.doctorVerdictAttention)
+            case .absent: return t(.doctorVerdictAbsent)
             }
         }
 
         func header(version: String, channel: String, macOS: String) -> String {
-            s("Pulse \(version) (\(channel)) · macOS \(macOS) · self-check",
-              "Pulse \(version)（\(channel)）· macOS \(macOS) · 自检")
+            f(.doctorHeader, version, channel, macOS)
         }
 
-        var claudeHooks: String { s("Claude hooks installed", "Claude hooks 已安装") }
-        var claudeFired: String { s("Claude hooks reach Pulse", "Claude hooks 到达 Pulse") }
-        var claudeAgents: String { s("claude agents --json", "claude agents --json") }
-        var codexHooks: String { s("Codex hooks installed", "Codex hooks 已安装") }
-        var codexFired: String { s("Codex hooks reach Pulse", "Codex hooks 到达 Pulse") }
-        var codexRollout: String { s("Codex session log format", "Codex 会话记录格式") }
-        var reading: String { s("Session formats read in full", "会话格式读全了") }
-        var noSessions: String { s("No session files read this run", "本次运行没有读到会话文件") }
+        var claudeHooks: String { t(.doctorClaudeHooks) }
+        var claudeFired: String { t(.doctorClaudeFired) }
+        /// A command's name, the same in every language.
+        var claudeAgents: String { "claude agents --json" }
+        var codexHooks: String { t(.doctorCodexHooks) }
+        var codexFired: String { t(.doctorCodexFired) }
+        var codexRollout: String { t(.doctorCodexRollout) }
+        var reading: String { t(.doctorReading) }
+        var noSessions: String { t(.doctorNoSessions) }
         func coverageGap(_ c: Coverage) -> String {
-            s("\(c.name): \(c.sessions) session(s), \(c.withTask) with a title" + (c.expectsLastWord ? ", \(c.withLastWord) with last words" : ""),
-              "\(c.name)：\(c.sessions) 个会话，\(c.withTask) 个有标题" + (c.expectsLastWord ? "，\(c.withLastWord) 个有最后一句话" : ""))
+            let base = f(.doctorCoverageGap, c.name, c.sessions, c.withTask)
+            return c.expectsLastWord ? base + f(.doctorCoverageGapWords, c.withLastWord) : base
         }
         func coverageFine(_ sessions: Int, _ agents: Int) -> String {
-            s("\(sessions) session(s) from \(agents) agent(s), titles and words where the format carries them",
-              "\(agents) 个 Agent 的 \(sessions) 个会话，格式里有的标题与话都读到了")
+            f(.doctorCoverageFine, sessions, agents)
         }
 
-        func notInstalled(_ agent: String) -> String { s("\(agent) is not installed on this Mac", "这台 Mac 没有安装 \(agent)") }
-        var settingsUnreadable: String { s("The settings file is not valid JSON; Pulse will not edit it", "设置文件不是合法 JSON；Pulse 不会改它") }
-        var fixSettings: String { s("Fix the JSON, then install hooks from Settings", "修好 JSON 后在设置里安装 hooks") }
-        var noHooks: String { s("No Pulse hook found", "没有找到 Pulse 的 hook") }
-        var installHooks: String { s("Settings → Waiting signals → Install hooks", "设置 → 等待信号 → 安装 hooks") }
-        var reinstallHooks: String { s("Reinstall hooks from Settings to pick up this version's events", "在设置里重新安装 hooks，以获得这一版的事件") }
-        func missing(_ items: [String]) -> String { s("Missing: \(items.joined(separator: ", "))", "缺少：\(items.joined(separator: "、"))") }
-        func allEvents(_ n: Int) -> String { s("All \(n) events, questions included", "全部 \(n) 个事件，含提问") }
+        func notInstalled(_ agent: String) -> String { f(.doctorNotInstalled, agent) }
+        var settingsUnreadable: String { t(.doctorSettingsUnreadable) }
+        var fixSettings: String { t(.doctorFixSettings) }
+        var noHooks: String { t(.doctorNoHooks) }
+        var installHooks: String { t(.doctorInstallHooks) }
+        var reinstallHooks: String { t(.doctorReinstallHooks) }
+        func missing(_ items: [String]) -> String { f(.doctorMissing, L10n.joinNames(items, lang)) }
+        func allEvents(_ n: Int) -> String { f(.doctorAllEvents, n) }
 
-        var neverFired: String { s("No hook event recorded in the last day", "最近一天没有记录到 hook 事件") }
+        var neverFired: String { t(.doctorNeverFired) }
         func useOnce(_ agent: String) -> String {
-            agent == "codex"
-                ? s("Finish one Codex turn; if nothing arrives, run /hooks in Codex and trust Pulse's hooks", "在 Codex 里完成一轮；若仍没有，在 Codex 里运行 /hooks 并信任 Pulse 的 hooks")
-                : s("Finish one Claude turn, then run the self-check again", "在 Claude 里完成一轮后再自检一次")
+            agent == "codex" ? t(.doctorUseOnceCodex) : t(.doctorUseOnceClaude)
         }
-        func fired(_ kind: String, _ ageMs: Int64) -> String { s("Last event: \(kind), \(ago(ageMs))", "最近事件：\(kind)，\(ago(ageMs))") }
-        func firedLongAgo(_ kind: String, _ ageMs: Int64) -> String { s("Last event \(kind) was \(ago(ageMs)) — too old to prove today's install", "最近事件 \(kind) 在 \(ago(ageMs))——太久，证明不了现在的安装") }
+        func fired(_ kind: String, _ ageMs: Int64) -> String { f(.doctorFired, kind, ago(ageMs)) }
+        func firedLongAgo(_ kind: String, _ ageMs: Int64) -> String { f(.doctorFiredLongAgo, kind, ago(ageMs)) }
 
-        var noCLI: String { s("No claude executable found where Pulse looks", "在 Pulse 查找的位置没有 claude 可执行文件") }
-        var cliOnPath: String { s("Install Claude Code's CLI, or ignore this if you only use hooks", "安装 Claude Code 命令行；只用 hooks 可忽略") }
-        var agentsTimedOut: String { s("Timed out after 3 s", "3 秒超时") }
-        func agentsFailed(_ status: Int32) -> String { s("Exited with status \(status) — this Claude may predate the command", "退出码 \(status)——这版 Claude 可能还没有这个命令") }
-        var updateClaude: String { s("Update Claude Code; hooks keep working meanwhile", "升级 Claude Code；在此之前 hooks 照常工作") }
-        func agentsUnreadable(_ bytes: Int) -> String { s("Answered \(bytes) bytes Pulse cannot read as the documented shape", "返回了 \(bytes) 字节，不是 Pulse 认识的格式") }
-        var reportShape: String { s("Copy this report into an issue — the shape changed", "把这份报告贴进 issue——格式变了") }
-        func agentsParsed(_ n: Int, _ w: Int) -> String { s("Read \(n) session(s), \(w) waiting", "读到 \(n) 个会话，其中 \(w) 个在等") }
+        var noCLI: String { t(.doctorNoCLI) }
+        var cliOnPath: String { t(.doctorCLIOnPath) }
+        var agentsTimedOut: String { t(.doctorAgentsTimedOut) }
+        func agentsFailed(_ status: Int32) -> String { f(.doctorAgentsFailed, Int(status)) }
+        var updateClaude: String { t(.doctorUpdateClaude) }
+        func agentsUnreadable(_ bytes: Int) -> String { f(.doctorAgentsUnreadable, bytes) }
+        var reportShape: String { t(.doctorReportShape) }
+        func agentsParsed(_ n: Int, _ w: Int) -> String { f(.doctorAgentsParsed, n, w) }
 
-        var codexPermissionHook: String { s("A PermissionRequest hook is installed; it fires before Codex's own review and would show waits that are not real", "装了 PermissionRequest hook；它在 Codex 自己审批之前触发，会显示并不存在的等待") }
-        var notifyOnly: String { s(" (the older notify hook is present)", "（仍有旧的 notify hook）") }
-        var codexInstalledNeedsTrust: String { s("Stop and UserPromptSubmit are installed; whether Codex trusts them only shows once one fires", "Stop 与 UserPromptSubmit 已安装；Codex 是否信任它们，要等触发一次才知道") }
-        var codexTrust: String { s("Run /hooks in Codex once and trust Pulse's entries", "在 Codex 里运行一次 /hooks 并信任 Pulse 的条目") }
+        var codexPermissionHook: String { t(.doctorCodexPermissionHook) }
+        var notifyOnly: String { t(.doctorNotifyOnly) }
+        var codexInstalledNeedsTrust: String { t(.doctorCodexNeedsTrust) }
+        var codexTrust: String { t(.doctorCodexTrust) }
 
-        var noRollout: String { s("No session log in the last week to look at", "最近一周没有可查看的会话记录") }
+        var noRollout: String { t(.doctorNoRollout) }
         func rollout(_ shape: RolloutShape) -> String {
             switch shape {
-            case .legacy: return s("Classic event lines — parsed", "经典事件行——可解析")
-            case .paginated: return s("Paginated turn items — parsed (18.0)", "分页 turn 条目——可解析（18.0）")
-            case .mixed: return s("Both formats in one log — parsed", "同一记录里两种格式——都可解析")
+            case .legacy: return t(.doctorRolloutLegacy)
+            case .paginated: return t(.doctorRolloutPaginated)
+            case .mixed: return t(.doctorRolloutMixed)
             case .none, .unknown: return ""
             }
         }
-        var rolloutUnknown: String { s("The newest log has neither format Pulse reads", "最新的记录两种格式都不是") }
-        func compressed(_ n: Int) -> String { s(" · \(n) compressed older log(s) left alone", " · \(n) 个压缩的旧记录不读") }
+        var rolloutUnknown: String { t(.doctorRolloutUnknown) }
+        func compressed(_ n: Int) -> String { f(.doctorCompressed, n) }
 
         func ago(_ ms: Int64) -> String {
-            let minutes = ms / 60_000
-            if minutes < 1 { return s("just now", "刚刚") }
-            if minutes < 60 { return s("\(minutes) min ago", "\(minutes) 分钟前") }
+            let minutes = Int(ms / 60_000)
+            if minutes < 1 { return t(.doctorAgoNow) }
+            if minutes < 60 { return f(.doctorAgoMinutes, minutes) }
             let hours = minutes / 60
-            if hours < 48 { return s("\(hours) h ago", "\(hours) 小时前") }
-            return s("\(hours / 24) days ago", "\(hours / 24) 天前")
+            if hours < 48 { return f(.doctorAgoHours, hours) }
+            return f(.doctorAgoDays, hours / 24)
         }
     }
 }

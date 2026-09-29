@@ -401,19 +401,6 @@ package enum ActivityHarvest {
         AgentCatalog.agent(named: raw)
     }
 
-    package static func sessionKey(id: AgentID, sessionID: String, project: String, cwd: String) -> String {
-        let sid = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !sid.isEmpty {
-            let short = sid.count > 24 ? String(sid.prefix(12)) + "…" + String(sid.suffix(6)) : sid
-            return "\(id.rawValue)|\(short)"
-        }
-        let short = TitleHeuristics.shortProject(project)
-        if !short.isEmpty { return "\(id.rawValue)|\(short)" }
-        let leaf = (cwd as NSString).lastPathComponent
-        if !leaf.isEmpty, leaf != "/" { return "\(id.rawValue)|\(leaf)" }
-        return id.rawValue
-    }
-
     /// Whether a harvest row may appear without a matching live process.
     package static func isFresh(_ row: Row, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> Bool {
         if row.subRunning > 0 { return true }

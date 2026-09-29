@@ -1,70 +1,42 @@
 import Foundation
 import AppKit
 
-/// What views draw, computed from the model: the narrator, the row models,
-/// and the tray's one-line notices. Nothing here writes state.
+/// What views draw, computed from the model: the row and detail values and
+/// the tray's one-line notices. Nothing here writes state.
 @MainActor
 extension StatusStore {
-    // MARK: - Narration (12.3: the narration itself is `RowNarrator`)
-
-    var narrator: RowNarrator {
-        RowNarrator(
-            lang: lang,
-            nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-            crowded: snapshot.rows.count >= TrayFold.crowdedFrom,
-            stallMinutes: Int(AgentRow.stalledSeconds / 60)
-        )
-    }
-
-    func detailPhase(_ row: AgentRow) -> String { narrator.detailPhase(row) }
-    func rowStoryLine(_ row: AgentRow) -> String { narrator.rowStoryLine(row) }
-    func storyOwnsChange(_ row: AgentRow) -> Bool { narrator.storyOwnsChange(row) }
-    func rowSourceLabel(_ row: AgentRow) -> String? { narrator.rowSourceLabel(row) }
-    func rowSignalLine(_ row: AgentRow) -> String { narrator.rowSignalLine(row) }
-    func rowObservationLine(_ row: AgentRow) -> String { narrator.rowObservationLine(row) }
-    func rowWorkLine(_ row: AgentRow) -> String { narrator.rowWorkLine(row) }
-    func workDetailFacts(_ row: AgentRow) -> [String] { narrator.workDetailFacts(row) }
-    func readablePhase(_ raw: String, waiting: Bool = false) -> String? { narrator.readablePhase(raw, waiting: waiting) }
-    func readableMode(_ raw: String) -> String { narrator.readableMode(raw) }
-    func readableModel(_ raw: String) -> String { narrator.readableModel(raw) }
-    func readableAction(_ raw: String) -> String { narrator.readableAction(raw) }
-    func focusActionTitle(_ row: AgentRow) -> String { narrator.focusActionTitle(row) }
-    func tokenPair(input rawIn: Int, output rawOut: Int, scope: TokenScope = .compact) -> String { narrator.tokenPair(input: rawIn, output: rawOut, scope: scope) }
-    func evidenceCPU(_ row: AgentRow) -> String { narrator.evidenceCPU(row) }
-    func evidenceCPUNote(_ row: AgentRow) -> String { narrator.evidenceCPUNote(row) }
-    func evidenceMemory(_ row: AgentRow) -> String? { narrator.evidenceMemory(row) }
-    func observationQualitySummary(_ row: AgentRow) -> String { narrator.observationQualitySummary(row) }
-    func observationGapReason(_ gap: ObservationGap) -> String { narrator.observationGapReason(gap) }
-    func observationGapNextStep(_ gap: ObservationGap) -> String { narrator.observationGapNextStep(gap) }
-    func localizedWaitKind(_ kind: String) -> String { narrator.localizedWaitKind(kind) }
-
     // MARK: - Row models
+
+    /// The stall rule in minutes, for `Explain`'s why.
+    var stallMinutes: Int { Int(AgentRow.stalledSeconds / 60) }
 
     /// 17.0: the tray row's face, as a value — the store contributes only
     /// what only it knows.
     func trayRowModel(_ row: AgentRow) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
             row: row,
-            narrator: narrator,
+            lang: lang,
+            nowMs: Int64(Date().timeIntervalSince1970 * 1000),
+            stallMinutes: stallMinutes,
             notice: rowActionNotice(row),
             needsReach: isWaitingNoneNeedsReach(row),
             muted: settings.mutedAgents.contains(row.agent)
         ))
     }
 
-    /// 19.0: the cards under a row.
-    func rowCardModel(_ row: AgentRow) -> RowCardModel {
-        RowCardModel.make(RowCardModel.Input(
+    /// 23.0: one session in full — the detail page's value. Reads
+    /// `logRevision` (through the audit and the strip), so a banner outcome
+    /// that lands while the page is open redraws it.
+    func detailModel(_ row: AgentRow) -> DetailModel {
+        DetailModel.make(
             row: row,
-            narrator: narrator
-        ))
-    }
-
-    /// 17.0 · Why — which record belongs to a row (23.0: the session log's
-    /// spans).
-    func whyCard(_ row: AgentRow) -> WhyCardModel {
-        _ = logRevision
-        return WhyCardModel.make(row: row, spans: sessionLog.spans(row.rowKey), narrator: narrator)
+            face: trayRowModel(row),
+            lang: lang,
+            nowMs: Int64(Date().timeIntervalSince1970 * 1000),
+            stallMinutes: stallMinutes,
+            audit: notificationAudit(for: row),
+            timeline: timelineStrip(for: row)
+        )
     }
 
     /// Full session inventory for the tray search surface. The normal glance
@@ -113,7 +85,7 @@ extension StatusStore {
     /// the in-tray prompt remains until the user fixes the route or turns the
     /// preference off, so an approval cannot be missed between scans.
     var waitingNotificationNeedsSetup: Bool {
-        settings.notifyOnWaiting && notifyAuthorized != true && cachedAll.contains(where: \.waiting)
+        settings.notifyOnWaiting && notifyAuthorized != true && cachedAll.contains(where: \.isBlocked)
     }
 
     var maintenanceNoticeText: String? {
@@ -125,7 +97,7 @@ extension StatusStore {
                 ? tr(.waitingNotifyDenied)
                 : tr(.waitingNotifyNotConfigured)
         }
-        if waitingBannerFailed, cachedAll.contains(where: \.waiting) { return tr(.waitingBannerFailed) }
+        if waitingBannerFailed, cachedAll.contains(where: \.isBlocked) { return tr(.waitingBannerFailed) }
         // 21.0: Claude or Codex is running without hooks. Waiting still
         // works without them, so this is an offer, not an alarm.
         if needsHooksNudge { return tr(.hooksNudge) }
@@ -143,7 +115,7 @@ extension StatusStore {
             }
             return
         }
-        if waitingBannerFailed, cachedAll.contains(where: \.waiting) {
+        if waitingBannerFailed, cachedAll.contains(where: \.isBlocked) {
             openSystemNotificationSettings()
             return
         }

@@ -68,18 +68,6 @@ struct LampFixTests {
         #expect(!HooksSupport.codexHooked(configTOML: "model = \"o3\"", hooksJSON: "{}"))
     }
 
-    // MARK: - Relative dates follow the app language
-
-    @MainActor
-    @Test func inspectorRelativeDatesUseTheAppLanguage() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let ms = Int64((now.timeIntervalSince1970 - 3_600) * 1000)
-        let en = SessionDiagnosticsCard.relativeText(ms: ms, now: now, lang: .en)
-        let zh = SessionDiagnosticsCard.relativeText(ms: ms, now: now, lang: .zh)
-        #expect(en.contains("ago"))
-        #expect(zh.contains("前"))
-    }
-
     // MARK: - The health line reads the last scan, not the last publish
 
     @Test func lastReadPrefersTheNewerScan() {

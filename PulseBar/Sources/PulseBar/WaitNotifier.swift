@@ -55,17 +55,6 @@ final class WaitNotifier {
         PulseNotify.registerCategories(lang: lang)
     }
 
-    /// Follow a process-only → session identity change so in-flight delivery
-    /// state survives it. The session log moves its own records
-    /// (`SessionLog.remap`, in `StatusStore.recordScan`).
-    func followRemap(from oldKey: String, to newKey: String) {
-        guard oldKey != newKey, !newKey.isEmpty else { return }
-        if inFlight.remove(oldKey) != nil {
-            inFlight.insert(newKey)
-        }
-        DebugLog.write("row identity \(DebugLog.key(oldKey)) → \(DebugLog.key(newKey))")
-    }
-
     // MARK: - A scan landed
 
     /// Notification policy for one scan; the builder only reports the edges.
@@ -282,7 +271,7 @@ final class WaitNotifier {
     ) -> [AgentRow] {
         guard !queued.isEmpty else { return [] }
         return Array(byRowKey(rows.filter { row in
-            row.waiting && queued.contains(row.rowKey) && !muted.contains(row.agent)
+            row.isBlocked && queued.contains(row.rowKey) && !muted.contains(row.agent)
         }).values)
     }
 
@@ -317,10 +306,11 @@ final class WaitNotifier {
     /// `Permission · Approve shell command` — the reason, not just "Needs you".
     func notificationBody(_ row: AgentRow) -> String {
         let lang = model?.lang ?? AppLanguage.auto.resolved
+        let kind = row.wait?.kind ?? ""
         var bits: [String] = [
-            row.waitKind.isEmpty ? L10n.t(.needsYou, lang) : L10n.waitKind(row.waitKind, lang)
+            kind.isEmpty ? L10n.t(.needsYou, lang) : L10n.waitKind(kind, lang)
         ]
-        let msg = row.waitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let msg = (row.wait?.ask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !msg.isEmpty {
             bits.append(msg.count > 120 ? String(msg.prefix(119)) + "…" : msg)
         } else if let task = row.usefulTask {

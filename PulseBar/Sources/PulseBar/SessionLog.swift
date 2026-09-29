@@ -14,22 +14,24 @@ import Foundation
 /// `SessionLog` is the single value. Per session key it holds:
 ///
 /// - **spans** — the state the lamp would show, with the evidence that put
-///   the session there and, for a block, the words that came with it;
+///   the session there;
 /// - **waits** — one record per wait: when it was raised, what happened to
 ///   its banner (queued, the outcome, clicked), whether the person dismissed
 ///   it, when it resolved.
 ///
 /// **What it stores, exactly.** Row keys, timestamps, states, wait kinds,
-/// banner outcomes — and two bounded pieces of text: the wait's `title`
+/// banner outcomes — and one bounded piece of text: the wait's `title`
 /// (`AgentRow.usefulTask`, often the opening line of the user's prompt, at
-/// most 160 characters) and a blocked span's `note` (the request the agent
-/// sent, at most 200 characters). Both pass `ContentSanitizer` on the way
-/// in. No transcript bodies, no tool arguments beyond that note, no paths.
+/// most 160 characters), passed through `ContentSanitizer` on the way in.
+/// No transcript bodies, no tool arguments, no paths (row keys hash any
+/// path they are built from — `RowIdentity`).
 ///
 /// Pure: every mutation returns whether anything durable changed, so the
 /// store writes `session-log.json` (via `SessionLogStore`) only when it did.
 struct SessionLog: Codable, Equatable, Sendable {
-    static let schemaVersion = 1
+    /// 2 since row keys became stable (`RowIdentity`): a version-1 file's
+    /// keys name rows that no longer exist, so it is not read.
+    static let schemaVersion = 2
     static let maxSessions = 128
     static let maxSpansPerSession = 48
     /// Resolved waits kept per session (open waits are never evicted).
@@ -37,7 +39,6 @@ struct SessionLog: Codable, Equatable, Sendable {
     /// Closed spans and resolved waits are kept this long.
     static let retentionMs: Int64 = 24 * 60 * 60 * 1000
     static let titleLimit = 160
-    static let noteLimit = 200
 
     struct Wait: Codable, Equatable, Sendable, Identifiable {
         /// `rowKey|scanMs` — what a banner carries, so a click lands on the
@@ -142,41 +143,12 @@ struct SessionLog: Codable, Equatable, Sendable {
         return String(ContentSanitizer.redact(title).prefix(titleLimit))
     }
 
-    static func note(_ raw: String) -> String {
-        let flat = raw.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespaces)
-        return String(ContentSanitizer.redact(flat).prefix(noteLimit))
+    /// The wait's own clock when it has a sane one, else the scan's.
+    static func raisedMs(_ row: AgentRow, nowMs: Int64) -> Int64 {
+        let since = row.wait?.sinceMs ?? 0
+        return since > 0 && since <= nowMs ? since : nowMs
     }
 
-    // MARK: - Identity
-
-    /// A row found a better key: everything recorded under the old one
-    /// follows it, merged with anything already under the new one — history
-    /// is never dropped because both keys had some.
-    @discardableResult
-    mutating func remap(from oldKey: String, to newKey: String) -> Bool {
-        guard oldKey != newKey, !newKey.isEmpty, let moved = sessions.removeValue(forKey: oldKey) else { return false }
-        guard var merged = sessions[newKey] else {
-            sessions[newKey] = moved
-            return true
-        }
-        var spans = (merged.spans + moved.spans).sorted { $0.startMs < $1.startMs }
-        for index in spans.indices.dropLast() where spans[index].endMs == nil {
-            spans[index].endMs = max(spans[index].startMs, spans[index + 1].startMs)
-        }
-        if spans.count > Self.maxSpansPerSession { spans.removeFirst(spans.count - Self.maxSpansPerSession) }
-        var waits = (merged.waits + moved.waits).sorted { $0.raisedMs < $1.raisedMs }
-        // One open wait per key: the newest stands, an older one ended when it began.
-        if let newestOpen = waits.lastIndex(where: \.isOpen) {
-            for index in waits.indices where index != newestOpen && waits[index].isOpen {
-                waits[index].resolvedMs = max(waits[index].raisedMs, waits[newestOpen].raisedMs)
-            }
-        }
-        merged.spans = spans
-        merged.waits = waits
-        sessions[newKey] = merged
-        return true
-    }
 
     // MARK: - Spans
 
@@ -201,7 +173,7 @@ struct SessionLog: Codable, Equatable, Sendable {
                 let start = max(t.atMs, list.last?.endMs ?? t.atMs)
                 list.append(TimelineSpan(
                     state: state, evidence: t.evidence, kind: t.kind,
-                    startMs: start, endMs: nil, exact: t.exact, note: t.note
+                    startMs: start, endMs: nil, exact: t.exact
                 ))
             }
             if list.count > Self.maxSpansPerSession {
@@ -240,7 +212,7 @@ struct SessionLog: Codable, Equatable, Sendable {
     @discardableResult
     mutating func reconcileWaits(rows: [AgentRow], released: Set<String>, nowMs: Int64) -> Bool {
         var waiting: [String: AgentRow] = [:]
-        for row in rows where row.waiting && waiting[row.rowKey] == nil { waiting[row.rowKey] = row }
+        for row in rows where row.isBlocked && waiting[row.rowKey] == nil { waiting[row.rowKey] = row }
         var changed = false
         for (key, session) in sessions {
             var copy = session
@@ -261,14 +233,14 @@ struct SessionLog: Codable, Equatable, Sendable {
         for (key, row) in waiting {
             var session = sessions[key] ?? Session()
             let title = Self.title(for: row)
+            let kind = row.wait?.kind ?? ""
             if let index = session.openWaitIndex() {
-                if session.waits[index].title == title, session.waits[index].kind == row.waitKind { continue }
+                if session.waits[index].title == title, session.waits[index].kind == kind { continue }
                 session.waits[index].title = title
-                session.waits[index].kind = row.waitKind
+                session.waits[index].kind = kind
             } else {
-                let raised = row.waitSinceMs > 0 && row.waitSinceMs <= nowMs ? row.waitSinceMs : nowMs
                 session.waits.append(Wait(
-                    id: "\(key)|\(nowMs)", kind: row.waitKind, title: title, raisedMs: raised,
+                    id: "\(key)|\(nowMs)", kind: kind, title: title, raisedMs: Self.raisedMs(row, nowMs: nowMs),
                     holdsDismissal: false
                 ))
             }
@@ -345,10 +317,10 @@ struct SessionLog: Codable, Equatable, Sendable {
         if let open = session.openWaitIndex() {
             index = open
         } else {
-            guard row.waiting else { return false }
+            guard row.isBlocked else { return false }
             session.waits.append(Wait(
-                id: "\(key)|\(nowMs)", kind: row.waitKind, title: Self.title(for: row),
-                raisedMs: row.waitSinceMs > 0 && row.waitSinceMs <= nowMs ? row.waitSinceMs : nowMs,
+                id: "\(key)|\(nowMs)", kind: row.wait?.kind ?? "", title: Self.title(for: row),
+                raisedMs: Self.raisedMs(row, nowMs: nowMs),
                 holdsDismissal: false
             ))
             index = session.waits.count - 1
