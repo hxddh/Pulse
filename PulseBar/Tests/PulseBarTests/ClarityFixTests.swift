@@ -95,7 +95,8 @@ struct ClarityFixTests {
             sessionID: "s1", pid: 0, cwd: "/p", kind: .permission, reason: "permission prompt", sinceMs: now
         )
         let raised = build(harvest: [session(.claude, "s1")], vendorWaits: [wait])
-        let key = try #require(raised.rows.first(where: \.waiting)).rowKey
+        let firstWaiting = raised.rows.first { $0.waiting }
+        let key = try #require(firstWaiting).rowKey
 
         let dismissed = build(harvest: [session(.claude, "s1")], vendorWaits: [wait], dismissed: [key])
         #expect(dismissed.rows.first { $0.rowKey == key }?.waiting == false)
@@ -127,8 +128,10 @@ struct ClarityFixTests {
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
         let soon = AttentionReader.parse(text, nowMs: raise + 2_000)
         let later = AttentionReader.parse(text, nowMs: now)
-        #expect(soon.map(\.kind) == ["Permission"])
-        #expect(later.map(\.kind) == soon.map(\.kind), "re-reading ten minutes later flipped the verdict")
+        let soonKinds = soon.map { $0.kind }
+        let laterKinds = later.map { $0.kind }
+        #expect(soonKinds == ["Permission"])
+        #expect(laterKinds == soonKinds, "re-reading ten minutes later flipped the verdict")
     }
 
     // MARK: - 3 / 19 · walks skip what is read another way

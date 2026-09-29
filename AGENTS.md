@@ -137,6 +137,8 @@ stays `preview` / ad-hoc / unnotarized — that artifact must never be labeled
 ## Release
 
 Write the `## x.y.z` section in CHANGELOG.md first — every path refuses without it.
+`version_check.py --fix` updates the README only; it never renames a CHANGELOG
+heading (before 21.0 it did, and 19.0/20.0 shipped 18.0's notes).
 
 ```bash
 ./scripts/release.sh 0.29.0            # dry run: bump + gates + diff
@@ -175,8 +177,24 @@ to users.
 
 ## Current state
 
-20.0.0 is the current source version (Drift — every parser names the vendor
-source it follows). Each agent's on-disk format has an entry in
+21.0.0 is the current source version (Clarity — bug fixes, one visual
+system, rows that explain themselves, fewer surfaces). `PulseTheme` owns
+spacing, radii, fills, semantic type and one `Tone` per state (system dynamic
+colours); views use `.pulseCard()` / `.pulseInner()` / `PulseChip` /
+`PulseLamp` instead of hand-written numbers. A tray row shows at most two
+verbs and only for a wait (`TrayRowModel.strip`); every verb is in `menu`
+once and in VoiceOver actions. `RowNarrator.whyLine` covers stalled, failed
+and process-only rows (`whyInline` shows it without a click). The snapshot
+counts sessions dropped for age (`staleHidden`). Settings is five panes
+(`SettingsView.Pane`); the global shortcut is one `HotkeyChoice` with `.off`
+(`hotkeyEnabled` is derived; older files migrate). The self-check, per-agent
+reading and reports are one Health window (`SupportCoverageView`); the
+Details window is gone — `openAgentDetail` selects the row in the Workbench,
+whose inspector carries the Why card and `SessionDiagnosticsCard`. On macOS
+26 the tray surface is `NSGlassEffectView`. `version_check.py --fix` never
+touches CHANGELOG any more (it had renamed 18.0's heading into 19.0 and 20.0).
+
+20.0.0 (Drift) made every parser name the vendor source it follows. Each agent's on-disk format has an entry in
 `docs/vendor-formats.json`: a pinned vendor commit and the files that define
 it (14 agents), the docs read (1), or an honest `unverified` (18); the gate
 checks it and `.github/workflows/vendor-drift.yml` goes red weekly when a
@@ -242,7 +260,7 @@ orchestrator identity, and the Workbench stays in the tray's process until one
 of the split triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
 App Server), blocked on real-machine P0 evidence; the self-check is how that
-evidence is collected. It ships as a 20.x.
+evidence is collected. It ships as a 21.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with
