@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 import Testing
 import XCTest
 @testable import PulseBar
@@ -22,16 +21,16 @@ struct SessionLogTests {
         row.task = "Fix the login test"
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = now - minute
+        row.eventMs = now - minute
         return row
     }
 
     private func waiting(
-        _ key: String, _ agent: AgentID = .claude, since: Int64? = nil, signal: WaitSignalKind = .hooks,
+        _ key: String, _ agent: AgentID = .claude, since: Int64? = nil,
         ask: String = ""
     ) -> AgentRow {
         var row = running(key, agent)
-        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: since ?? now - minute, signal: signal))
+        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: since ?? now - minute))
         return row
     }
 
@@ -39,10 +38,10 @@ struct SessionLogTests {
 
     @Test func aWaitThatResolvedLeavesTheQueue() {
         var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("claude|a")], released: [], nowMs: now)
+        log.reconcileWaits(rows: [waiting("claude|a")], nowMs: now)
         log.markQueued("claude|a", nowMs: now)
         #expect(log.queuedKeys == ["claude|a"])
-        log.reconcileWaits(rows: [running("claude|a")], released: [], nowMs: now + minute)
+        log.reconcileWaits(rows: [running("claude|a")], nowMs: now + minute)
         #expect(log.queuedKeys.isEmpty, "the queue used to keep it, and post it later")
     }
 
@@ -84,12 +83,12 @@ struct SessionLogTests {
         var log = SessionLog()
         let wallNow = Int64(Date().timeIntervalSince1970 * 1000)
         log.applyTimeline([TimelineTransition(
-            rowKey: "claude|old", state: .running, evidence: .harvest, kind: "",
+            rowKey: "claude|old", state: .running, evidence: .hook, kind: "",
             atMs: wallNow - 60 * minute, exact: true
         )])
         log.savedAtMs = wallNow - 30 * minute
         store.sessionLog = log
-        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: 1)
+        store.engine.project(nowMs: wallNow)
         #expect(store.sessionLog.spans("claude|old").last?.endMs == wallNow - 30 * minute)
     }
 
@@ -106,7 +105,7 @@ struct SessionLogTests {
         // The first scan after launch: `previous` is empty, so the row is a
         // transition again — dated by its evidence, which predates the save.
         var seen = here
-        seen.activityMs = now + 5 * minute
+        seen.stateSinceMs = now + 5 * minute
         let transitions = SessionTimeline.transitions(previous: [], current: [seen], nowMs: relaunch)
         let applied = log.resumeAfterLaunch(transitions, nowMs: relaunch)
         log.applyTimeline(applied)
@@ -139,14 +138,14 @@ struct SessionLogTests {
     /// dismissal of the first muted the second.
     @Test func aSecondAskOnTheSameRowIsItsOwnWait() throws {
         var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("claude|a", since: now - minute)], released: [], nowMs: now)
+        log.reconcileWaits(rows: [waiting("claude|a", since: now - minute)], nowMs: now)
         let first = try #require(log.openWait("claude|a"))
-        log.dismiss(waiting("claude|a", since: now - minute), soft: false, nowMs: now + 1_000)
+        log.dismiss(waiting("claude|a", since: now - minute), nowMs: now + 1_000)
         #expect(log.dismissedKeys == ["claude|a"])
 
         var second = waiting("claude|a", since: now + minute)
         second.activityMs = now + 50_000 // the next tool call began the second ask
-        let changed = log.reconcileWaits(rows: [second], released: [], nowMs: now + minute + 2_000)
+        let changed = log.reconcileWaits(rows: [second], nowMs: now + minute + 2_000)
         #expect(changed)
         let open = try #require(log.openWait("claude|a"))
         #expect(open.id != first.id)
@@ -161,23 +160,13 @@ struct SessionLogTests {
 
     @Test func theSameAskSaidTwiceIsOneWait() {
         var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("claude|a", since: now - minute)], released: [], nowMs: now)
+        log.reconcileWaits(rows: [waiting("claude|a", since: now - minute)], nowMs: now)
         // Claude's Notification lands a second after its PermissionRequest,
         // with nothing done in between.
         let echo = waiting("claude|a", since: now - minute + 1_000)
         #expect(!SessionLog.isNewRaise(echo, previousSinceMs: now - minute))
-        log.reconcileWaits(rows: [echo], released: [], nowMs: now + 2_000)
+        log.reconcileWaits(rows: [echo], nowMs: now + 2_000)
         let waits = log.sessions["claude|a"]?.waits ?? []
-        #expect(waits.count == 1)
-    }
-
-    @Test func aFilePendingWhoseClockMovesIsNotANewAsk() {
-        var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("cline|a", .cline, since: now - minute, signal: .pending)], released: [], nowMs: now)
-        let moved = waiting("cline|a", .cline, since: now + 5 * minute, signal: .pending)
-        #expect(!SessionLog.isNewRaise(moved, previousSinceMs: now - minute), "a pending stamps the file's clock")
-        log.reconcileWaits(rows: [moved], released: [], nowMs: now + 5 * minute)
-        let waits = log.sessions["cline|a"]?.waits ?? []
         #expect(waits.count == 1)
     }
 
@@ -185,7 +174,7 @@ struct SessionLogTests {
 
     @Test func queuingTwiceIsOneChange() {
         var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("claude|a")], released: [], nowMs: now)
+        log.reconcileWaits(rows: [waiting("claude|a")], nowMs: now)
         let first = log.markQueued("claude|a", nowMs: now)
         let second = log.markQueued("claude|a", nowMs: now + 3_000)
         #expect(first)
@@ -196,10 +185,10 @@ struct SessionLogTests {
 
     @Test func aClickOnAnOldBannerCreditsTheOldWait() throws {
         var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("claude|a")], released: [], nowMs: now)
+        log.reconcileWaits(rows: [waiting("claude|a")], nowMs: now)
         let old = try #require(log.openWait("claude|a"))
-        log.reconcileWaits(rows: [running("claude|a")], released: [], nowMs: now + minute)
-        log.reconcileWaits(rows: [waiting("claude|a", since: now + 2 * minute)], released: [], nowMs: now + 2 * minute)
+        log.reconcileWaits(rows: [running("claude|a")], nowMs: now + minute)
+        log.reconcileWaits(rows: [waiting("claude|a", since: now + 2 * minute)], nowMs: now + 2 * minute)
         let current = try #require(log.openWait("claude|a"))
         #expect(current.id != old.id)
 
@@ -216,7 +205,7 @@ struct SessionLogTests {
     @Test func aClickRedrawsTheAuditOnlyWhenItChangedSomething() throws {
         let store = StatusStore()
         var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("claude|a")], released: [], nowMs: now)
+        log.reconcileWaits(rows: [waiting("claude|a")], nowMs: now)
         store.sessionLog = log
         let id = try #require(log.openWait("claude|a")?.id)
         let before = store.logRevision
@@ -230,42 +219,14 @@ struct SessionLogTests {
 
     // MARK: - Dismissal lives in the log
 
-    @Test func aSoftDismissalHoldsUntilItsSourceLetsGo() {
-        var log = SessionLog()
-        let pending = waiting("cursor|a", .cursor, signal: .pending)
-        log.reconcileWaits(rows: [pending], released: [], nowMs: now)
-        log.dismiss(pending, soft: true, nowMs: now + 1_000)
-        #expect(log.suppressedKeys == ["cursor|a"])
-        #expect(!log.waitingKeys.contains("cursor|a"))
-
-        // Suppressed, the row is not waiting; the dismissal still holds.
-        log.reconcileWaits(rows: [running("cursor|a")], released: [], nowMs: now + minute)
-        #expect(log.suppressedKeys == ["cursor|a"])
-
-        // The builder saw the pending clear.
-        log.reconcileWaits(rows: [running("cursor|a")], released: ["cursor|a"], nowMs: now + 2 * minute)
-        #expect(log.suppressedKeys.isEmpty)
-        #expect(log.latestWait("cursor|a")?.resolvedMs == now + 2 * minute)
-    }
-
-    @Test func aNewWaitOnADismissedKeyEndsTheDismissal() {
-        var log = SessionLog()
-        let pending = waiting("cursor|a", .cursor, signal: .pending)
-        log.reconcileWaits(rows: [pending], released: [], nowMs: now)
-        log.dismiss(pending, soft: true, nowMs: now + 1_000)
-        log.reconcileWaits(rows: [waiting("cursor|a", .cursor, since: now + minute)], released: [], nowMs: now + minute)
-        #expect(log.suppressedKeys.isEmpty)
-        #expect(log.waitingKeys == ["cursor|a"])
-        #expect(log.openWait("cursor|a")?.dismissedMs == nil)
-    }
-
-    @Test func aHardDismissalIsNotASuppression() {
+    /// 24.0: every wait is a hook's, and a dismissal writes the `done`
+    /// that resolves it — there is no soft dismissal to hold.
+    @Test func aDismissalIsOwedNoBanner() {
         var log = SessionLog()
         let hook = waiting("claude|a")
-        log.reconcileWaits(rows: [hook], released: [], nowMs: now)
+        log.reconcileWaits(rows: [hook], nowMs: now)
         log.markQueued("claude|a", nowMs: now)
-        log.dismiss(hook, soft: false, nowMs: now + 1_000)
-        #expect(log.suppressedKeys.isEmpty)
+        log.dismiss(hook, nowMs: now + 1_000)
         #expect(log.dismissedKeys == ["claude|a"])
         #expect(log.queuedKeys.isEmpty, "a dismissed wait is owed no banner")
     }
@@ -289,7 +250,7 @@ struct SessionLogTests {
         let utc = try #require(TimeZone(identifier: "UTC"))
         var log = SessionLog()
         let day: Int64 = 24 * 60 * minute
-        log.reconcileWaits(rows: [waiting("claude|a", since: now - 2 * day)], released: [], nowMs: now - 2 * day)
+        log.reconcileWaits(rows: [waiting("claude|a", since: now - 2 * day)], nowMs: now - 2 * day)
         log.markDelivery("claude|a", outcome: "posted", nowMs: now - 2 * day)
         let wait = try #require(log.latestWait("claude|a"))
         let audit = NotificationAuditModel.make(wait: wait, nowMs: now, lang: .en, timeZone: utc)
@@ -304,10 +265,10 @@ struct SessionLogTests {
         var log = SessionLog()
         let rows = [running("claude|a"), waiting("codex|b")]
         log.applyTimeline(SessionTimeline.transitions(previous: [], current: rows, nowMs: now))
-        log.reconcileWaits(rows: rows, released: [], nowMs: now)
+        log.reconcileWaits(rows: rows, nowMs: now)
         let before = log
         let spans = log.applyTimeline(SessionTimeline.transitions(previous: rows, current: rows, nowMs: now + 3_000))
-        let waits = log.reconcileWaits(rows: rows, released: [], nowMs: now + 3_000)
+        let waits = log.reconcileWaits(rows: rows, nowMs: now + 3_000)
         let pruned = log.prune(nowMs: now + 3_000)
         #expect(!spans)
         #expect(!waits)
@@ -322,8 +283,8 @@ struct SessionLogTests {
         var log = SessionLog()
         for index in 0..<(SessionLog.maxWaitsPerSession + 10) {
             let at = now + Int64(index) * 2 * minute
-            log.reconcileWaits(rows: [waiting("claude|a", since: at)], released: [], nowMs: at)
-            log.reconcileWaits(rows: [], released: [], nowMs: at + minute)
+            log.reconcileWaits(rows: [waiting("claude|a", since: at)], nowMs: at)
+            log.reconcileWaits(rows: [], nowMs: at + minute)
         }
         log.prune(nowMs: now + 60 * minute)
         let count = log.sessions["claude|a"]?.waits.count ?? 0
@@ -344,13 +305,13 @@ struct SessionTimelineTests {
         row.task = "Fix the login test"
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = now - minute
+        row.eventMs = now - minute
         return row
     }
 
     private func waiting(_ row: AgentRow, since: Int64 = 0, inFront: Bool = false) -> AgentRow {
         var copy = row
-        copy.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks, inFront: inFront))
+        copy.state = .blocked(RowWait(kind: "Permission", sinceMs: since, inFront: inFront))
         return copy
     }
 
@@ -412,7 +373,7 @@ struct SessionTimelineTests {
 
     @Test func theStripSplitsTheHourByState() {
         let spans = [
-            TimelineSpan(state: .running, evidence: .harvest, startMs: now - 40 * minute, endMs: now - 10 * minute),
+            TimelineSpan(state: .running, evidence: .hook, startMs: now - 40 * minute, endMs: now - 10 * minute),
             TimelineSpan(state: .blocked, evidence: .hook, kind: "Permission", startMs: now - 10 * minute, endMs: nil),
         ]
         let strip = TimelineStripModel.make(spans: spans, nowMs: now)
@@ -443,7 +404,7 @@ struct SessionTimelineTests {
     @Test func theAuditKeepsWhenTheWaitBeganAndWhyThereWasNoBanner() {
         var log = SessionLog()
         let r = waiting(row("claude|a"))
-        log.reconcileWaits(rows: [r], released: [], nowMs: now)
+        log.reconcileWaits(rows: [r], nowMs: now)
         let marked = log.markDelivery("claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now)
         #expect(marked)
         let markedAgain = log.markDelivery("claude|a", outcome: WaitingDelivery.SkipReason.inFront.rawValue, nowMs: now + 1)
@@ -466,7 +427,7 @@ struct SessionTimelineTests {
         log.applyTimeline(SessionTimeline.transitions(previous: [], current: [before], nowMs: now - 10 * minute))
         let r = waiting(before, since: now - 5 * minute)
         log.applyTimeline(SessionTimeline.transitions(previous: [before], current: [r], nowMs: now))
-        log.reconcileWaits(rows: [r], released: [], nowMs: now - 5 * minute)
+        log.reconcileWaits(rows: [r], nowMs: now - 5 * minute)
         let marked = log.markDelivery("claude|a", outcome: "posted", nowMs: now - 5 * minute + 1_000)
         #expect(marked)
         let model = ActivityLogModel.make(log: log, rows: [r], lang: .en, nowMs: now)
@@ -492,13 +453,13 @@ final class SessionLogRetentionTests: XCTestCase {
         let hour: Int64 = 60 * 60 * 1000
         var log = SessionLog()
         var row = AgentRow(rowKey: "claude|a", agent: .claude)
-        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
-        log.reconcileWaits(rows: [row], released: [], nowMs: now - 30 * hour)
-        log.reconcileWaits(rows: [], released: [], nowMs: now - 26 * hour)
+        row.state = .blocked(RowWait(kind: "Permission"))
+        log.reconcileWaits(rows: [row], nowMs: now - 30 * hour)
+        log.reconcileWaits(rows: [], nowMs: now - 26 * hour)
         var fresh = AgentRow(rowKey: "claude|b", agent: .claude)
-        fresh.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
-        log.reconcileWaits(rows: [fresh], released: [], nowMs: now - 2 * hour)
-        log.reconcileWaits(rows: [], released: [], nowMs: now - hour)
+        fresh.state = .blocked(RowWait(kind: "Permission"))
+        log.reconcileWaits(rows: [fresh], nowMs: now - 2 * hour)
+        log.reconcileWaits(rows: [], nowMs: now - hour)
 
         log.prune(nowMs: now)
         XCTAssertNil(log.latestWait("claude|a"), "resolved more than a day ago")
@@ -511,15 +472,15 @@ final class SessionLogRetentionTests: XCTestCase {
         var log = SessionLog()
         let resolved = (0..<(SessionLog.maxSessions + 40)).map { index -> AgentRow in
             var row = AgentRow(rowKey: "claude|r\(index)", agent: .claude)
-            row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+            row.state = .blocked(RowWait(kind: "Permission"))
             return row
         }
-        log.reconcileWaits(rows: resolved, released: [], nowMs: now - 2_000)
-        log.reconcileWaits(rows: [], released: [], nowMs: now - 1_000)
+        log.reconcileWaits(rows: resolved, nowMs: now - 2_000)
+        log.reconcileWaits(rows: [], nowMs: now - 1_000)
         var live = AgentRow(rowKey: "codex|live", agent: .codex)
         live.task = "still waiting"
-        live.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
-        log.reconcileWaits(rows: [live], released: [], nowMs: now)
+        live.state = .blocked(RowWait(kind: "Permission"))
+        log.reconcileWaits(rows: [live], nowMs: now)
 
         log.prune(nowMs: now)
         XCTAssertLessThanOrEqual(log.sessions.count, SessionLog.maxSessions)
@@ -532,8 +493,8 @@ final class SessionLogRetentionTests: XCTestCase {
         var log = SessionLog()
         var row = AgentRow(rowKey: "claude|long", agent: .claude)
         row.task = String(repeating: "goal ", count: 200)
-        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
-        log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
+        row.state = .blocked(RowWait(kind: "Permission"))
+        log.reconcileWaits(rows: [row], nowMs: 1_800_000_000_000)
         let title = try XCTUnwrap(log.openWait("claude|long")?.title)
         XCTAssertFalse(title.isEmpty)
         XCTAssertLessThanOrEqual(title.count, SessionLog.titleLimit, "the log records a headline, not a transcript")
@@ -547,20 +508,12 @@ final class SessionLogRetentionTests: XCTestCase {
 @Suite("Session log fixes", .serialized)
 struct SessionLogFixTests {
     let now: Int64 = 1_800_000_000_000
-    func session(_ id: AgentID, _ sessionID: String, skill: String = "", ageMs: Int64 = 70_000) -> ActivityHarvest.Row {
-        ActivityHarvest.Row(
-            id: id, task: "Fix the login flow", project: "p", cwd: "/p", skill: skill,
-            tool: "", harvestMs: now - ageMs, subRunning: 0, subTotal: 0, sessionID: sessionID,
-            evidence: .session
-        )
-    }
-
     // MARK: - 13 / 14 · jumping to a wait
 
     func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64) -> AgentRow {
         var row = AgentRow(rowKey: key, agent: agent)
         row.sessionID = session
-        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since))
         return row
     }
 
@@ -569,12 +522,12 @@ struct SessionLogFixTests {
     @Test func reconcilingTheSameWaitsIsNotADurableChange() {
         let row = waitingRow("claude|s1", .claude, session: "s1", since: now)
         var log = SessionLog()
-        log.reconcileWaits(rows: [row], released: [], nowMs: now)
+        log.reconcileWaits(rows: [row], nowMs: now)
         let before = log
-        let again = log.reconcileWaits(rows: [row], released: [], nowMs: now + 3_000)
+        let again = log.reconcileWaits(rows: [row], nowMs: now + 3_000)
         #expect(!again)
         #expect(log.hasSameDurableState(as: before))
-        log.reconcileWaits(rows: [], released: [], nowMs: now + 6_000)
+        log.reconcileWaits(rows: [], nowMs: now + 6_000)
         #expect(!log.hasSameDurableState(as: before), "a resolved wait is a change")
     }
 }
@@ -595,8 +548,8 @@ final class SessionLogFileTests: XCTestCase {
         var log = SessionLog()
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.task = "Something the user actually typed"
-        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
-        log.reconcileWaits(rows: [row], released: [], nowMs: 1_800_000_000_000)
+        row.state = .blocked(RowWait(kind: "Permission"))
+        log.reconcileWaits(rows: [row], nowMs: 1_800_000_000_000)
         XCTAssertTrue(SessionLogFile.save(log, to: url, nowMs: 1_800_000_000_100))
 
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -613,7 +566,7 @@ final class SessionLogPersistenceTests: XCTestCase {
         var row = AgentRow(rowKey: key, agent: .codex)
         row.sessionID = "session-1"
         row.task = "Approve test command"
-        row.state = .blocked(RowWait(kind: "permission", signal: .hooks))
+        row.state = .blocked(RowWait(kind: "permission"))
         row.project = "Pulse"
         return row
     }
@@ -622,13 +575,13 @@ final class SessionLogPersistenceTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("session-log-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         var log = SessionLog()
-        log.reconcileWaits(rows: [waitingRow()], released: [], nowMs: 100)
+        log.reconcileWaits(rows: [waitingRow()], nowMs: 100)
         log.markQueued("codex|session-1", nowMs: 110)
         XCTAssertTrue(log.queuedKeys.contains("codex|session-1"))
         log.markNotified("codex|session-1", nowMs: 200)
         XCTAssertFalse(log.queuedKeys.contains("codex|session-1"), "a shown banner is no longer owed")
         XCTAssertFalse(log.canDeliver(nowMs: 1_000, minimumIntervalMs: 3_000))
-        log.dismiss(waitingRow(), soft: false, nowMs: 300)
+        log.dismiss(waitingRow(), nowMs: 300)
         SessionLogFile.save(log, to: url, nowMs: 400)
         let restored = SessionLogFile.load(from: url, nowMs: 500)
         XCTAssertTrue(restored.dismissedKeys.contains("codex|session-1"))
@@ -641,7 +594,7 @@ final class SessionLogPersistenceTests: XCTestCase {
         let rows = (0..<300).map { index in
             waitingRow("codex|session-\(index)")
         }
-        log.reconcileWaits(rows: rows, released: [], nowMs: 100)
+        log.reconcileWaits(rows: rows, nowMs: 100)
         log.prune(nowMs: 100)
 
         XCTAssertEqual(log.waitingKeys.count, 300, "a live wait is product state, not history")

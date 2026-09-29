@@ -16,7 +16,7 @@ struct TrayRowModel: Equatable {
     enum Action: String, Equatable, Hashable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
-        case details, dismiss, focus, diagnostics, setupWaiting, mute
+        case details, dismiss, focus, diagnostics, mute
     }
 
     struct Button: Equatable, Identifiable {
@@ -30,7 +30,7 @@ struct TrayRowModel: Equatable {
         enum Kind: Equatable {
             /// What a blocked row is asking, in the agent's words.
             case ask
-            /// Why a stalled or failing row is orange.
+            /// Why a stalled row is orange.
             case warning
         }
         var kind: Kind
@@ -73,7 +73,6 @@ struct TrayRowModel: Equatable {
         var lang: ResolvedLanguage
         var nowMs: Int64
         var notice: String? = nil
-        var needsReach: Bool = false
         var muted: Bool = false
     }
 
@@ -99,7 +98,6 @@ struct TrayRowModel: Equatable {
         if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.dismissWait))) }
         // 22.0: muting lives on the row it silences, not in a 32-switch list.
         menu.append(Button(action: .mute, title: t(input.muted ? .unmute : .mute)))
-        if input.needsReach { menu.append(Button(action: .setupWaiting, title: t(.setupWaitingSignals))) }
         if row.isProcessOnly { menu.append(Button(action: .diagnostics, title: t(.diagnosticsOpen))) }
 
         var spoken = [row.agent.displayName, explain.state, explain.headline]

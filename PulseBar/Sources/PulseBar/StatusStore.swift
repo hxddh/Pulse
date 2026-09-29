@@ -7,9 +7,9 @@ import Observation
 ///
 /// Three classes share what used to be one ~100-property store:
 ///
-/// - `ScanEngine` (not observed) owns the cadence, the background scan and
-///   every piece of bookkeeping a scan keeps between passes. It hands each
-///   finished scan to `land(_:snapshot:nowMs:)`.
+/// - `ScanEngine` (not observed) owns the session book, the watchers, the
+///   process scan and the tick. It hands each projection to
+///   `land(_:snapshot:nowMs:)`.
 /// - `WaitNotifier` (not observed) owns the "needs you" banner: planning,
 ///   posting, rate limiting, outcomes and clicks.
 /// - `StatusStore` (this, `@Observable`) holds the snapshot and rows, the
@@ -29,8 +29,7 @@ final class StatusStore {
     /// `snapshot.rows`); search, Health and focus read this.
     var cachedAll: [AgentRow] = []
     /// The person's settings, persisted as `settings.json`. Change them
-    /// through `set(_:_:)` / `setReadProtectedAppData(_:)` so the change is
-    /// saved and applied.
+    /// through `set(_:_:)` so the change is saved and applied.
     var settings = PulseSettings()
     /// Moves only when the session log did; views that draw the log read it.
     var logRevision = 0
@@ -47,8 +46,6 @@ final class StatusStore {
     var notifyAuthorized: Bool?
     /// 21.0: Notification Center refused the last "needs you" banner.
     var waitingBannerFailed = false
-    /// True when the latest harvest stopped before every adapter reported.
-    var collectorScanIncomplete = false
     var updateStatus: UpdateCheck.Status = .idle
     /// What happened the last time the user pressed a button on this row —
     /// a click that reached nothing says so, briefly.
@@ -152,22 +149,23 @@ final class StatusStore {
         NSApp.terminate(nil)
     }
 
-    func refresh(reason: String, agentFilter: Set<AgentID>? = nil) {
-        engine.refresh(reason: reason, agentFilter: agentFilter)
+    func refresh(reason: String) {
+        engine.refresh(reason: reason)
     }
 
     // MARK: - What the engine and the notifier hand over
 
-    /// One finished scan. Each observed property is assigned only when its
-    /// value changed; a scan that finds the same world announces nothing.
+    /// One projection. Each observed property is assigned only when its
+    /// value changed; a projection that finds the same world announces
+    /// nothing.
     func land(_ result: SnapshotBuilder.Result, snapshot next: PulseSnapshot, nowMs: Int64) {
         let previousRows = cachedAll
         setCachedAll(result.rows)
         if showAllAgents != result.showAllAgents { showAllAgents = result.showAllAgents }
         // Reconcile before delivery so a restart can distinguish an already
-        // known wait from a newly crossed edge. Spans, waits, released soft
-        // dismissals and the baseline move in one change; a scan that finds
-        // the same world changes nothing and writes nothing.
+        // known wait from a newly crossed edge. Spans, waits and the baseline
+        // move in one change; a projection that finds the same world changes
+        // nothing and writes nothing.
         recordScan(previous: previousRows, result: result, nowMs: nowMs)
         notifier.scanLanded(result, nowMs: nowMs)
         // 12.4 Surface: a scan that found the same world leaves `snapshot`
@@ -177,46 +175,10 @@ final class StatusStore {
         }
     }
 
-    /// The watcher's light path: patch matching rows in place.
-    func landActivityEvents(_ events: [ActivitySpool.Event], nowMs: Int64) {
-        var byKey: [String: ActivitySpool.Event] = [:]
-        for event in events {
-            guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
-            byKey[agent.rawValue + "|" + event.session] = event
-        }
-        guard !byKey.isEmpty else { return }
-        func patch(_ rows: inout [AgentRow]) -> Bool {
-            var changed = false
-            for index in rows.indices where !rows[index].sessionID.isEmpty {
-                let key = rows[index].agent.rawValue + "|" + rows[index].sessionID
-                guard let event = byKey[key] else { continue }
-                var row = rows[index]
-                row.applyActivity(event, nowMs: nowMs)
-                if row != rows[index] {
-                    rows[index] = row
-                    changed = true
-                }
-            }
-            return changed
-        }
-        var rows = cachedAll
-        if patch(&rows) {
-            setCachedAll(rows)
-        }
-        var next = snapshot
-        if patch(&next.rows) {
-            snapshot = next
-        }
-    }
-
     /// The merged rows every surface reads. Re-merged on every scan, so the
     /// write is guarded: an identical merge must not wake the tray.
     func setCachedAll(_ rows: [AgentRow]) {
         if rows != cachedAll { cachedAll = rows }
-    }
-
-    func landCollectorScanIncomplete(_ value: Bool) {
-        if collectorScanIncomplete != value { collectorScanIncomplete = value }
     }
 
     func landNotifyAuthorized(_ value: Bool?) {
@@ -266,16 +228,6 @@ final class StatusStore {
         refresh(reason: "saveSettings")
     }
 
-    /// The one app-data switch. Only the protected agents need a new
-    /// harvest pass, so the rescan is scoped to them.
-    func setReadProtectedAppData(_ enabled: Bool) {
-        guard settings.readProtectedAppData != enabled else { return }
-        settings.readProtectedAppData = enabled
-        persistSettings()
-        let protected = Set(AgentID.allCases.filter(\.requiresAppDataOptIn))
-        refresh(reason: "appData", agentFilter: protected)
-    }
-
     func toggleMute(_ agent: AgentID) {
         var muted = settings.mutedAgents
         if muted.contains(agent) {
@@ -314,8 +266,8 @@ final class StatusStore {
         }
     }
 
-    /// Open Settings, optionally scrolled to a section: the app-data switch,
-    /// or the hook connections (how an agent gets a Waiting signal).
+    /// Open Settings, optionally scrolled to a section — the hook connections
+    /// (how an agent gets a Waiting signal), notifications, updates.
     func openSettings(focus target: SettingsFocus.Target? = nil) {
         var next = settingsFocus
         next.target = target
@@ -335,7 +287,7 @@ final class StatusStore {
         }
     }
 
-    /// Tray panel appeared — probe faster while the user is looking at it.
+    /// Tray panel appeared — tick faster while the user is looking at it.
     func trayDidAppear() {
         engine.setTrayOpen(true)
         if !previewFixtureActive {
@@ -401,15 +353,31 @@ final class StatusStore {
         }
     }
 
-    /// The focus handle was derived by the scan that produced this row, and a
-    /// window can close between then and the click. When nothing was reached,
-    /// say so and rescan: the next row either carries a handle that works or
-    /// stops offering one.
+    /// The detail page opened: its transcript is worth a (cached) read.
+    func detailOpened(_ row: AgentRow) {
+        engine.detailOpened(rowKey: row.rowKey)
+    }
+
+    /// The landing plan was made by the projection that produced this row,
+    /// and a window can close between then and the click. Say how it landed,
+    /// never rounded up: exact says nothing, the app alone says so, and
+    /// nothing reached says so and re-reads — the next row either carries a
+    /// handle that works or stops offering one.
     func focusTerminal(_ row: AgentRow) {
         if row.isYourTurn { markTurnSeen(row) }
-        guard !TerminalFocus.focus(row: row) else { return }
-        noteRowAction(row.rowKey, tr(.focusFailed))
-        refresh(reason: "focus-failed")
+        reportLanding(TerminalFocus.land(row.landingPlan), row: row)
+    }
+
+    func reportLanding(_ outcome: LandingOutcome, row: AgentRow) {
+        switch outcome {
+        case .exact:
+            return
+        case .appOnly:
+            noteRowAction(row.rowKey, tr(.focusAppOnly))
+        case .failed:
+            noteRowAction(row.rowKey, tr(.focusFailed))
+            refresh(reason: "focus-failed")
+        }
     }
 
     /// Looking at a finished session is what "your turn" was asking for. A
@@ -417,50 +385,52 @@ final class StatusStore {
     /// survives a restart, and it is the same line a new prompt would write.
     func markTurnSeen(_ row: AgentRow) {
         guard row.isYourTurn, !row.attentionSession.isEmpty else { return }
-        AttentionIO.appendDone(agent: row.agent, session: row.attentionSession)
-        refresh(reason: "turn-seen")
+        writeDone(agent: row.agent, session: row.attentionSession)
     }
 
-    /// A harvest `pending` — or a vendor-reported wait (18.0) — is dismissed
-    /// softly: its source keeps reporting it until the session moves, so the
-    /// log keeps it suppressed until then.
-    nonisolated static func dismissIsSoft(_ row: AgentRow) -> Bool {
-        row.wait?.signal == .pending || row.wait?.signal == .vendor
-    }
-
+    /// The person dismissed a wait: a `done` in the attention file under
+    /// exactly the session its entry carried (23.0) — an empty one clears
+    /// only that agent's session-less entries, never its other sessions —
+    /// and the dismissal on the wait's record.
     func dismissWaiting(_ row: AgentRow) {
-        let soft = Self.dismissIsSoft(row)
-        // A hook wait is cleared in the attention file under exactly the
-        // session its entry carried (23.0) — an empty one clears only that
-        // agent's session-less entry, never its other sessions. A harvest
-        // or vendor wait writes nothing there: the log keeps it quiet.
-        if let done = Self.doneLine(for: row) {
-            AttentionIO.appendDone(agent: done.agent, session: done.session)
-        }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         updateLog(immediately: true) { log in
-            _ = log.dismiss(row, soft: soft, nowMs: nowMs)
+            _ = log.dismiss(row, nowMs: nowMs)
         }
-        refresh(reason: "dismissWaiting")
+        if let done = Self.doneLine(for: row) {
+            writeDone(agent: done.agent, session: done.session, nowMs: nowMs)
+        }
     }
 
-    /// The `done` a dismissal writes: only for a hook wait, and with the
-    /// entry's own session spelling (possibly empty). Pure.
+    /// File writes for `done` lines, one at a time, off the main thread:
+    /// the attention file is locked and fsync'd, and a click must not wait
+    /// on either.
+    private static let doneWrites = DispatchQueue(label: "com.pulse.attention-done", qos: .userInitiated)
+
+    /// A `done` line: applied to the book at once (the row moves under the
+    /// click), written to the attention file off the main thread. The watch
+    /// reads the line back; the book has already applied it, so it changes
+    /// nothing.
+    private func writeDone(agent: AgentID, session: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+        let record = AttentionRecord(
+            agent: agent.rawValue,
+            kind: AttentionKind.done.rawValue,
+            ms: nowMs,
+            session: session.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+        )
+        // A preview fixture's rows are not the book's; leave them on screen.
+        if !previewFixtureActive { engine.apply(records: [record], nowMs: nowMs) }
+        let line = record.line
+        Self.doneWrites.async {
+            AttentionIO.appendRawLine(line)
+        }
+    }
+
+    /// The `done` a dismissal writes, with the entry's own session spelling
+    /// (possibly empty). Pure.
     nonisolated static func doneLine(for row: AgentRow) -> (agent: AgentID, session: String)? {
-        guard row.wait?.signal == .hooks else { return nil }
+        guard row.isBlocked else { return nil }
         return (row.agent, row.attentionSession)
-    }
-
-    /// Live Waiting-none session — needs Attention Reach, not a fake Waiting chip.
-    func isWaitingNoneNeedsReach(_ row: AgentRow) -> Bool {
-        !row.isBlocked
-            && row.liveProcess
-            && row.agent.waitingSource == .none
-    }
-
-    /// Open Waiting signals (how an agent without a Waiting path gets one).
-    func openWaitingReach() {
-        openSettings(focus: .waitingSignals)
     }
 
     // MARK: - Focus
@@ -484,7 +454,12 @@ final class StatusStore {
     /// row that is gone opens the tray. `BannerRoute` decides.
     func focusAgent(idRaw: String, session: String = "", rowKey: String = "") {
         let row = Self.focusTarget(in: cachedAll, idRaw: idRaw, session: session, rowKey: rowKey)
-        let focused = row.map { $0.canFocusTerminal && TerminalFocus.focus(row: $0) } ?? false
+        var focused = false
+        if let row, row.canFocusTerminal {
+            let outcome = TerminalFocus.land(row.landingPlan)
+            focused = outcome != .failed
+            if outcome == .appOnly { noteRowAction(row.rowKey, tr(.focusAppOnly)) }
+        }
         if let row, row.isYourTurn { markTurnSeen(row) }
         switch BannerRoute.decide(target: row?.rowKey, focused: focused) {
         case .terminal:
@@ -499,15 +474,15 @@ final class StatusStore {
     /// Prefer exact `rowKey`, then session, then first waiting/live row for
     /// agent. The session match stays inside the named agent and takes a
     /// prefix only when exactly one row fits — the same rule the builder
-    /// applies to attention ids, so a truncated id cannot send a banner click
-    /// to the wrong row.
+    /// used to apply to attention ids, so a truncated id cannot send a banner
+    /// click to the wrong row.
     nonisolated static func focusTarget(
         in rows: [AgentRow], idRaw: String, session: String, rowKey: String
     ) -> AgentRow? {
         if !rowKey.isEmpty, let row = rows.first(where: { $0.rowKey == rowKey }) {
             return row
         }
-        let agent = ActivityHarvest.mapAgent(idRaw)?.surfaceID
+        let agent = AgentCatalog.agent(named: idRaw)
         if !session.isEmpty {
             let sameAgent = rows.filter { !$0.sessionID.isEmpty && (agent == nil || $0.agent == agent) }
             if let exact = sameAgent.first(where: { $0.sessionID == session }) { return exact }
@@ -523,8 +498,11 @@ final class StatusStore {
 
     // MARK: - Hooks
 
+    /// Installs and removals run one at a time (`HooksSupport.installQueue`)
+    /// and the buttons are disabled while one runs (`.working`).
     func installHooks() {
-        landHooksStatus(.unknown)
+        guard !hooksStatus.isWorking else { return }
+        landHooksStatus(.working)
         setHooksNudgeOff(false)
         // `Task` inherits this class's main-actor isolation, so the assignment
         // lands on main while the optional hook installer stays off it.
@@ -537,7 +515,8 @@ final class StatusStore {
     }
 
     func uninstallHooks() {
-        landHooksStatus(.unknown)
+        guard !hooksStatus.isWorking else { return }
+        landHooksStatus(.working)
         // An uninstall is a decision: stop suggesting hooks until the user
         // installs them again.
         setHooksNudgeOff(true)
@@ -567,10 +546,7 @@ final class StatusStore {
     }
 
     var hooksInstalled: Bool {
-        switch hooksStatus {
-        case .installedBoth, .installedClaude, .installedCodex: return true
-        case .unknown, .missing, .failed: return false
-        }
+        !hooksStatus.installedAgents.isEmpty
     }
 
     // MARK: - Notifications and updates
@@ -601,7 +577,6 @@ final class StatusStore {
 /// every deep link, so a second link to the same place still scrolls there.
 struct SettingsFocus: Equatable {
     enum Target: Equatable {
-        case appData
         /// The hooks: how an agent gets a "needs you" signal.
         case waitingSignals
         case notifications
@@ -616,9 +591,6 @@ struct SettingsFocus: Equatable {
 struct DiagnosticsState: Equatable {
     var doctorReport: DoctorModel.Report?
     var isRunningDoctor = false
-    /// The shape report walks the session stores, so the button says so.
-    var isCopyingShapeReport = false
-    var didCopyShapeReport = false
     /// Transient "Copied" confirmation on "Copy report".
     var didCopyDiagnostics = false
 }

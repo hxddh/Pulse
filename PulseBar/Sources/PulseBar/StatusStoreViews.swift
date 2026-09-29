@@ -15,7 +15,6 @@ extension StatusStore {
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             notice: rowActionNotice(row),
-            needsReach: isWaitingNoneNeedsReach(row),
             muted: settings.mutedAgents.contains(row.agent)
         ))
     }
@@ -43,7 +42,7 @@ extension StatusStore {
             lang: lang,
             nowMs: Int64(now.timeIntervalSince1970 * 1000),
             lastScanMs: lastRead.map { Int64($0.timeIntervalSince1970 * 1000) },
-            intervalSeconds: engine.currentInterval,
+            intervalSeconds: engine.expectedInterval,
             lastScanIntervalSeconds: engine.lastScanInterval,
             asleep: engine.powerParked
         ))
@@ -56,13 +55,15 @@ extension StatusStore {
 
     // MARK: - The tray's one notice
 
-    /// Claude/Codex live but hooks not wired — tray nudge only.
+    /// A live agent whose hook is not wired — tray nudge only (24.0: any of
+    /// the seven, not just Claude and Codex).
     var needsHooksNudge: Bool {
         // The user took the hooks out on purpose; do not keep offering them.
         if settings.hooksNudgeOff { return false }
-        guard hooksStatus == .missing || hooksStatus == .unknown else { return false }
+        if case .failed = hooksStatus { return false }
+        if hooksStatus.isWorking { return false }
         return cachedAll.contains {
-            $0.liveProcess && ($0.agent == .claude || $0.agent == .codex)
+            $0.liveProcess && !hooksStatus.isInstalled(for: $0.agent)
         }
     }
 
@@ -85,8 +86,7 @@ extension StatusStore {
             notifyOnWaiting: settings.notifyOnWaiting,
             notifyAuthorized: notifyAuthorized,
             bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
-            hooksMissing: needsHooksNudge,
-            scanIncomplete: collectorScanIncomplete
+            hooksMissing: needsHooksNudge
         ))
     }
 
@@ -95,7 +95,6 @@ extension StatusStore {
         case .openNotificationSettings: openSystemNotificationSettings()
         case .enableNotifications: requestNotificationAuthorization()
         case .installHooks: installHooks()
-        case .openDiagnostics: openDiagnostics()
         }
     }
 

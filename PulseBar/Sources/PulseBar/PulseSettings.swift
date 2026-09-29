@@ -21,11 +21,6 @@ struct PulseSettings: Equatable, Codable, Sendable {
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
     var allowTerminalAutomation = false
-    /// One switch for every agent whose sessions live in data macOS protects
-    /// (`AgentID.requiresAppDataOptIn`). Off by default: reading it can
-    /// trigger the cross-app privacy prompt. 23.0 folded the per-agent
-    /// scopes into this one boolean.
-    var readProtectedAppData = false
     var updateCheckEnabled = true
     /// Set when the user uninstalls the hooks: the tray stops suggesting
     /// them. Installing again clears it.
@@ -35,7 +30,7 @@ struct PulseSettings: Equatable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case launchAtLogin, language, hotkey, notifyOnWaiting, mutedAgents
-        case allowTerminalAutomation, readProtectedAppData, updateCheckEnabled, hooksNudgeOff
+        case allowTerminalAutomation, updateCheckEnabled, hooksNudgeOff
     }
 
     init(from decoder: any Decoder) throws {
@@ -54,7 +49,6 @@ struct PulseSettings: Equatable, Codable, Sendable {
         let muted = (try? c.decodeIfPresent([String].self, forKey: .mutedAgents)) ?? []
         mutedAgents = Set(muted.compactMap(AgentID.init(rawValue:)))
         allowTerminalAutomation = bool(.allowTerminalAutomation, d.allowTerminalAutomation)
-        readProtectedAppData = bool(.readProtectedAppData, d.readProtectedAppData)
         updateCheckEnabled = bool(.updateCheckEnabled, d.updateCheckEnabled)
         hooksNudgeOff = bool(.hooksNudgeOff, d.hooksNudgeOff)
     }
@@ -67,14 +61,8 @@ struct PulseSettings: Equatable, Codable, Sendable {
         try c.encode(notifyOnWaiting, forKey: .notifyOnWaiting)
         try c.encode(mutedAgents.map(\.rawValue).sorted(), forKey: .mutedAgents)
         try c.encode(allowTerminalAutomation, forKey: .allowTerminalAutomation)
-        try c.encode(readProtectedAppData, forKey: .readProtectedAppData)
         try c.encode(updateCheckEnabled, forKey: .updateCheckEnabled)
         try c.encode(hooksNudgeOff, forKey: .hooksNudgeOff)
-    }
-
-    /// Whether this agent's sessions are out of reach under these settings.
-    func isPrivacyLimited(_ agent: AgentID) -> Bool {
-        agent.requiresAppDataOptIn && !readProtectedAppData
     }
 
     /// One-line summary for the debug log.
@@ -82,7 +70,7 @@ struct PulseSettings: Equatable, Codable, Sendable {
         "notifyWait=\(notifyOnWaiting) lang=\(language.rawValue) login=\(launchAtLogin) "
             + "hotkey=\(hotkey.rawValue) terminalAutomation=\(allowTerminalAutomation) "
             + "muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
-            + "appData=\(readProtectedAppData) hooksNudgeOff=\(hooksNudgeOff)"
+            + "hooksNudgeOff=\(hooksNudgeOff)"
     }
 
     // MARK: - On disk
@@ -97,8 +85,7 @@ struct PulseSettings: Equatable, Codable, Sendable {
         return home.appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
     }
 
-    /// Shared on-disk path so the menu-bar store and the `--harvest-*` CLI
-    /// read the same privacy choice.
+    /// Where `settings.json` is.
     static func fileURL(home: URL? = nil) -> URL {
         directory(home: home).appendingPathComponent("settings.json")
     }

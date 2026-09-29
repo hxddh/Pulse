@@ -6,7 +6,7 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Core: the agent catalog, bounded IO, processes and the probe's parsers.
+// Core: the agent catalog, bounded IO, and the agent processes (libproc).
 
 /// 12.0 · the roster is one table, and the table is whole.
 final class AgentCatalogTests: XCTestCase {
@@ -44,73 +44,45 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertNil(AgentCatalog.agent(named: "not-an-agent"))
     }
 
-    func testOnlyCursorAgentHasNoCollectorOfItsOwn() {
-        let without = AgentCatalog.all.filter { $0.harvestRoots.isEmpty }.map(\.id)
-        XCTAssertEqual(without, [.cursorAgent])
+    /// 24.0 (Exact): the owner's roster, and nothing else.
+    func testRosterIsTheSevenSupportedAgents() {
+        XCTAssertEqual(
+            AgentID.allCases.map(\.rawValue),
+            ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
+        )
+        XCTAssertEqual(Set(AgentID.priority), Set(AgentID.allCases))
+        XCTAssertEqual(AgentCatalog.agent(named: "cursor-agent"), .cursor, "the CLI is Cursor")
+        XCTAssertEqual(AgentCatalog.agent(named: "cursor_agent"), .cursor)
     }
 
-    func testTranscriptPolicyKeepsPiReadingIdleFiles() {
-        XCTAssertFalse(AgentID.pi.spec.transcripts.skipsStaleFiles)
-        XCTAssertTrue(AgentID.pi.spec.transcripts.allowsBoundedLargeFiles)
-        XCTAssertTrue(AgentID.claude.spec.transcripts.skipsStaleFiles)
-        XCTAssertFalse(AgentID.cursor.spec.transcripts.allowsBoundedLargeFiles)
-    }
-
-    /// 23.0: an agent whose on-disk format is `unverified` in
-    /// docs/vendor-formats.json does not infer Waiting from its harvest.
-    func testUnverifiedFormatsInferNoWaiting() {
-        let unverified: [AgentID] = [
-            .cursor, .cursorAgent, .amp, .amazonQ, .cascade, .windsurf,
-            .augment, .zedAgent, .kiro, .droid, .commandCode,
-        ]
-        for id in unverified {
-            XCTAssertEqual(id.waitingSource, .none, id.rawValue)
+    /// 24.0: Waiting by evidence — only a vendor hook that reports a block.
+    func testWaitingComesOnlyFromAVendorBlockEvent() {
+        let reportsBlocks: Set<AgentID> = [.claude, .gemini, .copilot, .opencode, .pi]
+        for id in AgentID.allCases {
+            XCTAssertEqual(id.waitingSource == .hooks, reportsBlocks.contains(id), id.rawValue)
         }
+        // Codex's PermissionRequest fires before its own auto-review;
+        // Cursor has no observe-only block event.
+        XCTAssertEqual(AgentID.codex.waitingSource, .none)
+        XCTAssertEqual(AgentID.cursor.waitingSource, .none)
+        XCTAssertEqual(AgentID.waitingNoneAgents, [.codex, .cursor])
     }
 
-    // MARK: - 12.1 · the walk is data
-
-    func testEveryCollectorHasAPlaceOnTheFixtureWall() {
-        // Agents with a hand-written fixture in NativeHarvestSelfTest, plus
-        // Cursor Agent, which has no collector of its own.
-        let handWritten: Set<AgentID> = [.cursor, .cursorAgent, .grok, .pi, .opencode, .warpAgent, .goose]
-        for spec in AgentCatalog.all where !handWritten.contains(spec.id) {
-            XCTAssertNotNil(spec.walk.fixturePath, "\(spec.id.rawValue) has no generic fixture")
+    /// 24.0: every agent's hook is the vendor's documented, non-blocking one.
+    func testEveryHookContractIsObserveOnly() {
+        for spec in AgentCatalog.all {
+            let names = spec.hooks.events.map(\.name)
+            XCTAssertFalse(names.isEmpty, spec.id.rawValue)
+            XCTAssertEqual(Set(names).count, names.count, "\(spec.id.rawValue) lists an event twice")
+            for name in names {
+                XCTAssertFalse(HookContract.gatingEvents.contains(name), "\(spec.id.rawValue) installs gating \(name)")
+            }
+            XCTAssertFalse(spec.hooks.path.hasPrefix("/"), "hook paths are home-relative")
+            XCTAssertTrue(spec.hooks.path.hasPrefix(spec.hooks.home + "/"), "\(spec.id.rawValue) writes inside its vendor directory")
         }
-    }
-
-    func testDatabaseAdaptersAreWhereTheyWere() {
-        XCTAssertEqual(AgentID.cursor.spec.walk.database, .cursor)
-        XCTAssertEqual(AgentID.opencode.spec.walk.database, .openCode)
-        XCTAssertEqual(AgentID.warpAgent.spec.walk.database, .warp)
-        XCTAssertEqual(AgentID.pi.spec.walk.database, .pi)
-        XCTAssertEqual(AgentID.goose.spec.walk.database, .goose)
-        XCTAssertEqual(AgentID.grok.spec.walk.database, .grok)
-        // 20.0: Goose's sessions.db and Kilo 7.x's OpenCode-schema kilo.db.
-        XCTAssertEqual(AgentID.kilo.spec.walk.database, .openCode)
-        XCTAssertEqual(AgentCatalog.all.filter { $0.walk.database != nil }.count, 7)
-        XCTAssertTrue(DatabaseAdapter.pi.runsAfterTranscripts)
-        XCTAssertFalse(DatabaseAdapter.pi.failsOnUnreadableFile)
-        XCTAssertTrue(DatabaseAdapter.cursor.extensions.contains("vscdb"))
-    }
-
-    func testTranscriptSelection() {
-        XCTAssertFalse(AgentID.grok.spec.walk.transcripts.admits("/users/me/.grok/sessions/a.jsonl"))
-        XCTAssertTrue(AgentID.pi.spec.walk.transcripts.admits("/users/me/.pi/agent/sessions/x.jsonl"))
-        XCTAssertFalse(AgentID.pi.spec.walk.transcripts.admits("/users/me/.pi/context-mode/cache.json"))
-        XCTAssertFalse(AgentID.gemini.spec.walk.transcripts.admits("/users/me/.gemini/tmp/x/src/main.json"))
-        XCTAssertTrue(AgentID.claude.spec.walk.transcripts.admits("/anything"))
-    }
-
-    func testReadWindowsKeepTheirVendorSizes() {
-        XCTAssertEqual(AgentID.codex.spec.walk.windowBytes, 8_000_000)
-        XCTAssertEqual(AgentID.codex.spec.walk.deadlineSeconds, 1.2)
-        XCTAssertEqual(AgentID.pi.spec.walk.windowBytes, 496_000)
-        XCTAssertEqual(AgentID.pi.spec.walk.headBytes, 96_000)
-        XCTAssertEqual(AgentID.claude.spec.walk.windowBytes, 1_000_000)
-        XCTAssertEqual(AgentID.grok.spec.walk.maxFileBytes, 16 * 1024 * 1024)
-        // 20.0: Goose is read from its database, not transcripts.
-        XCTAssertEqual(AgentCatalog.all.filter(\.walk.dropsContinuationPrompts).count, 10)
+        XCTAssertFalse(AgentID.codex.spec.hooks.events.contains { $0.name == "PermissionRequest" })
+        XCTAssertFalse(AgentID.claude.spec.hooks.events.contains { $0.name == "PreToolUse" })
+        XCTAssertFalse(AgentID.cursor.spec.hooks.events.contains { $0.name.hasPrefix("before") })
     }
 }
 
@@ -285,63 +257,33 @@ final class AgentIconAlignmentTests: XCTestCase {
     }
 }
 
-/// `ps` parsing and the harvest-skip fingerprint.
-final class ProcessProbeTests: XCTestCase {
+/// 24.0 · agent processes, from the kernel's table: which command line is
+/// which agent (shared with the hook's pid lookup), how a wrapper and its
+/// child become one family, and the handles Focus reads off the parent
+/// chain. Pure: the table is injected.
+final class AgentProcessesTests: XCTestCase {
     func testEverySupportedAgentHasACanonicalProcessSignature() {
         let samples: [(AgentID, String)] = [
             (.claude, "/Users/me/.local/bin/claude"),
             (.codex, "/opt/homebrew/bin/codex app-server"),
             (.cursor, "/Applications/Cursor.app/Contents/MacOS/Cursor"),
-            (.cursorAgent, "/Users/me/.local/bin/cursor-agent"),
-            (.antigravity, "/Users/me/.local/bin/agy"),
-            (.grok, "/Users/me/.grok/bin/grok"),
             (.pi, "pi"),
-            (.amp, "amp"),
-            (.aider, "aider"),
-            (.gemini, "gemini"),
+            (.gemini, "/opt/homebrew/bin/node /opt/homebrew/bin/gemini"),
             (.copilot, "/opt/homebrew/bin/copilot"),
             (.opencode, "opencode"),
-            (.goose, "goose"),
-            (.openhands, "openhands"),
-            (.cline, "/tmp/saoudrizwan.claude-dev/cline"),
-            (.roo, "roo"),
-            (.continue_, "continue"),
-            (.amazonQ, "/opt/homebrew/bin/q chat"),
-            (.cascade, "/tmp/cascade-agent"),
-            (.windsurf, "/Applications/Windsurf.app/Contents/MacOS/Windsurf"),
-            (.augment, "augment"),
-            (.zedAgent, "/tmp/zed-agent"),
-            (.trae, "/tmp/trae-agent"),
-            (.warpAgent, "/tmp/warp-agent"),
-            (.devin, "devin"),
-            (.kiro, "kiro"),
-            (.junie, "junie"),
-            (.kilo, "kilo"),
-            (.replit, "replit"),
-            (.droid, "droid"),
-            (.commandCode, "cmd"),
-            (.kimi, "kimi"),
-            (.zcode, "/Applications/ZCode.app/Contents/MacOS/ZCode"),
         ]
 
         XCTAssertEqual(samples.count, AgentID.allCases.count)
         XCTAssertEqual(Set(samples.map(\.0)), Set(AgentID.allCases))
         for (agent, argv) in samples {
-            XCTAssertEqual(ProcessProbe.match(args: argv), agent, "\(agent.displayName): \(argv)")
+            XCTAssertEqual(AgentProcesses.match(args: argv), agent, "\(agent.displayName): \(argv)")
         }
     }
 
-    func testProcessMatchExplainsRuleWithoutKeepingArgv() {
-        XCTAssertEqual(
-            ProcessProbe.matchEvidence(args: "/Applications/Antigravity.app/Contents/MacOS/Antigravity")?.evidence,
-            .pathSignature
-        )
-        XCTAssertEqual(ProcessProbe.matchEvidence(args: "amp")?.evidence, .executable)
-        XCTAssertEqual(
-            ProcessProbe.match(args: "⌘ Command Code · rustji COLORTERM=truecolor"),
-            .commandCode,
-            "process titles rewritten by Node must still identify Command Code"
-        )
+    /// 24.0: the IDE and the `cursor-agent` CLI are one agent.
+    func testCursorAgentCLIIsCursor() {
+        XCTAssertEqual(AgentProcesses.match(args: "/Users/me/.local/bin/cursor-agent"), .cursor)
+        XCTAssertEqual(AgentProcesses.match(args: "node /Users/me/.local/share/cursor-agent/versions/1/index.js"), .cursor)
     }
 
     func testShortAgentNamesDoNotReintroduceKnownFalsePositives() {
@@ -354,136 +296,117 @@ final class ProcessProbeTests: XCTestCase {
             "/opt/android/cmdline-tools",
         ]
         for argv in falsePositives {
-            XCTAssertNil(ProcessProbe.match(args: argv), argv)
+            XCTAssertNil(AgentProcesses.match(args: argv), argv)
         }
         XCTAssertNil(
-            ProcessProbe.match(args: "/Users/me/.local/bin/cursor-agent worker start --worker-dir /Users/me/code/Pulse"),
-            "Cursor's persistent worker is infrastructure until a composer session provides activity"
+            AgentProcesses.match(args: "/Users/me/.local/bin/cursor-agent worker start --worker-dir /Users/me/code/Pulse"),
+            "Cursor's persistent worker is infrastructure, not a session"
         )
         XCTAssertNil(
-            ProcessProbe.match(args: "Cursor --type=renderer --app-path=/Applications/Cursor.app/Contents/Resources/app"),
-            "Cursor helper processes must not inflate the GUI fallback count"
+            AgentProcesses.match(args: "Cursor --type=renderer --app-path=/Applications/Cursor.app/Contents/Resources/app"),
+            "Cursor helper processes must not inflate the process rows"
         )
     }
 
-    func testParsesProcessElapsedTimeWithoutCallingItSessionAge() {
-        XCTAssertEqual(ProcessProbe.parseElapsed("04:12"), 252)
-        XCTAssertEqual(ProcessProbe.parseElapsed("02:04:12"), 7_452)
-        XCTAssertEqual(ProcessProbe.parseElapsed("3-02:04:12"), 266_652)
-        XCTAssertEqual(ProcessProbe.parseElapsed("not-a-time"), 0)
+    /// 24.0: path fragments match only the program — the executable, and
+    /// an interpreter's script — at a path-component boundary.
+    func testPathFragmentsMatchOnlyTheProgramAtAComponentBoundary() {
+        let notAgents = [
+            "/opt/homebrew/bin/pinentry-mac",
+            "/opt/homebrew/bin/pip3 install x",
+            "/usr/bin/vim /Users/me/src/opencode/README.md",
+            "/bin/cat /Users/me/.local/bin/claude",
+            "/Users/me/.local/bin/claude-mcp-server --port 3",
+            "/opt/homebrew/bin/claude-squad",
+            "/usr/bin/less /opt/homebrew/bin/gemini",
+            "/opt/homebrew/bin/node /Users/me/tools/copilot-cli-helper/index.js --watch",
+        ]
+        for argv in notAgents {
+            XCTAssertNil(AgentProcesses.match(args: argv), argv)
+        }
+        let agents: [(String, AgentID)] = [
+            ("/opt/homebrew/bin/pi", .pi),
+            ("/opt/homebrew/bin/node /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js", .pi),
+            ("/usr/local/bin/node --no-warnings /opt/homebrew/bin/claude --resume", .claude),
+            ("/opt/homebrew/bin/bun /Users/me/.bun/install/global/node_modules/@github/copilot/index.js", .copilot),
+            ("/Users/me/.opencode/bin/opencode", .opencode),
+            ("/Applications/Codex.app/Contents/Resources/codex app-server", .codex),
+            ("/Users/me/.local/share/claude/versions/2.1.3 --resume", .claude),
+        ]
+        for (argv, agent) in agents {
+            XCTAssertEqual(AgentProcesses.match(args: argv), agent, argv)
+        }
+        XCTAssertTrue(AgentProcesses.containsComponent("/opt/homebrew/bin/pi", "/opt/homebrew/bin/pi"))
+        XCTAssertFalse(AgentProcesses.containsComponent("/opt/homebrew/bin/pinentry-mac", "/opt/homebrew/bin/pi"))
+        XCTAssertTrue(AgentProcesses.containsComponent("/x/anysphere.cursor-agent-1.2.0/main.js", "anysphere.cursor-agent"))
+        XCTAssertFalse(AgentProcesses.containsComponent("/x/myanysphere.cursor-agent/main.js", "anysphere.cursor-agent"))
+        XCTAssertEqual(AgentProcesses.commandLine(path: "/usr/local/bin/node", argv: ["node", "/opt/homebrew/bin/gemini"]), "/usr/local/bin/node /opt/homebrew/bin/gemini")
+        XCTAssertEqual(AgentProcesses.commandLine(path: "", argv: ["pi", "--model", "x"]), "pi --model x")
     }
 
-    func testSignatureIsOrderIndependent() {
-        let a = ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 10)
-        let b = ProcessProbe.Hit(id: .codex, count: 2, viaWarp: false, pid: 20)
-        XCTAssertEqual(ProcessProbe.signature([a, b]), ProcessProbe.signature([b, a]))
+    private func proc(_ pid: Int32, _ ppid: Int32, _ args: String, tty: String = "") -> AgentProcesses.Proc {
+        AgentProcesses.Proc(pid: pid, ppid: ppid, args: args, tty: tty, startedMs: 1_800_000_000_000)
     }
 
-    func testSignatureChangesWhenTheAgentSetChanges() {
-        let a = ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 10)
-        let more = ProcessProbe.Hit(id: .claude, count: 2, viaWarp: false, pid: 10)
-        XCTAssertNotEqual(ProcessProbe.signature([a]), ProcessProbe.signature([more]))
-        XCTAssertNotEqual(ProcessProbe.signature([a]), ProcessProbe.signature([]))
+    /// `codex` (the npm wrapper) runs the native `codex`: one family, keyed
+    /// by the top-most, holding both pids — the hook names the child.
+    func testAWrapperAndItsChildAreOneFamily() throws {
+        let table = [
+            proc(100, 50, "/bin/zsh -l", tty: "ttys004"),
+            proc(200, 100, "/opt/homebrew/bin/node /opt/homebrew/bin/codex"),
+            proc(201, 200, "/opt/homebrew/lib/node_modules/@openai/codex/vendor/codex/codex"),
+        ]
+        let hits = AgentProcesses.hits(in: table, cwd: { _ in "/Users/me/code/app" })
+        let hit = try XCTUnwrap(hits.first)
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(hit.agent, .codex)
+        XCTAssertEqual(hit.pid, 200)
+        XCTAssertEqual(hit.family, [200, 201])
+        XCTAssertEqual(hit.tty, "ttys004", "the nearest real terminal up the chain")
+        XCTAssertEqual(hit.cwd, "/Users/me/code/app")
     }
 
-    func testWorkingDirectoryParserKeepsEachPidAttachedToItsCwd() {
-        let output = """
-        p101
-        fcwd
-        n/Users/me/code/Pulse
-        p202
-        fcwd
-        n/Users/me/code/Other
-        """
-        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[101], "/Users/me/code/Pulse")
-        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[202], "/Users/me/code/Other")
+    func testTwoSessionsOfOneAgentAreTwoProcesses() {
+        let table = [
+            proc(300, 1, "/Users/me/.local/bin/claude"),
+            proc(301, 1, "/Users/me/.local/bin/claude --resume"),
+        ]
+        XCTAssertEqual(AgentProcesses.hits(in: table, cwd: { _ in "" }).map(\.pid), [300, 301])
     }
 
-    /// The shape `lsof` actually emits when the `f` field is not requested.
-    ///
-    /// This is the regression that shipped: the fixture above was written by
-    /// hand with an `fcwd` line, the parser required it, and `-Fpn` never sent
-    /// one — so every real lookup returned nothing, the caller read that as
-    /// "lsof unavailable", and no process row ever recovered a workspace.
-    func testWorkingDirectoryParserHandlesOutputWithoutTheFieldDescriptor() {
-        let output = """
-        p4432
-        n/Users/me/code/Pulse
-        """
-        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[4432], "/Users/me/code/Pulse")
-    }
-
-    /// A process whose cwd lsof could not read must not inherit the next
-    /// process's path.
-    func testWorkingDirectoryParserDoesNotLeakAPathToTheNextPid() {
-        let output = """
-        p101
-        p202
-        n/Users/me/code/Other
-        """
-        XCTAssertNil(ProcessProbe.parseWorkingDirectories(output)[101])
-        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[202], "/Users/me/code/Other")
-    }
-
-    /// With the `f` field present, a non-cwd descriptor's path is not a cwd.
-    func testWorkingDirectoryParserIgnoresNonCwdDescriptors() {
-        let output = """
-        p101
-        f3
-        n/Users/me/some/open/file.txt
-        fcwd
-        n/Users/me/code/Pulse
-        """
-        XCTAssertEqual(ProcessProbe.parseWorkingDirectories(output)[101], "/Users/me/code/Pulse")
+    func testTheParentChainSaysWarpAndTheHostApp() throws {
+        let warp = [
+            proc(10, 1, "/Applications/Warp.app/Contents/MacOS/stable"),
+            proc(11, 10, "/bin/zsh"),
+            proc(12, 11, "/Users/me/.local/bin/claude"),
+        ]
+        XCTAssertTrue(try XCTUnwrap(AgentProcesses.hits(in: warp, cwd: { _ in "" }).first).viaWarp)
+        let ide = [
+            proc(20, 1, "/Applications/Visual Studio Code.app/Contents/MacOS/Electron"),
+            proc(21, 20, "/bin/zsh"),
+            proc(22, 21, "/opt/homebrew/bin/copilot"),
+        ]
+        XCTAssertEqual(try XCTUnwrap(AgentProcesses.hits(in: ide, cwd: { _ in "" }).first).hostApp, .vsCode)
     }
 
     func testWorkingDirectoryFilterRejectsInfrastructurePaths() {
-        XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/"), "")
-        XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/Applications/Pulse.app"), "")
-        XCTAssertEqual(ProcessProbe.usefulWorkingDirectory("/Users/me/code/Pulse"), "/Users/me/code/Pulse")
-    }
-}
-
-/// The process table, parsed. 23.0 dropped the CPU and memory columns
-/// (nothing rendered them); what is left identifies an agent process.
-final class ProcessProbeParseTests: XCTestCase {
-    /// Real `ps -axo pid=,ppid=,tty=,etime=,args=` output, columns padded the
-    /// way `ps` pads them.
-    private let psOutput = """
-          4432   4401 ttys003      02:04:12 node /Users/me/.local/bin/claude --model opus --resume
-          9001      1 ??         5-00:00:00 /Applications/Pulse.app/Contents/MacOS/Pulse --serve
-          3 fields only
-        """
-
-    func testProcessLinesKeepArgumentsWhole() {
-        let procs = ProcessProbe.parseProcessLines(psOutput)
-        XCTAssertEqual(procs.count, 2, "a line without every column is dropped, not half-read")
-
-        let claude = procs[0]
-        XCTAssertEqual(claude.pid, 4432)
-        XCTAssertEqual(claude.ppid, 4401)
-        XCTAssertEqual(claude.tty, "ttys003")
-        XCTAssertEqual(claude.elapsedSeconds, 7_452, accuracy: 0.0001)
-        XCTAssertEqual(
-            claude.args,
-            "node /Users/me/.local/bin/claude --model opus --resume",
-            "args is the last column precisely because it contains spaces"
-        )
-
-        let pulse = procs[1]
-        XCTAssertEqual(pulse.pid, 9001)
-        XCTAssertEqual(pulse.tty, "??")
-        XCTAssertEqual(pulse.elapsedSeconds, 432_000, accuracy: 0.0001)
-        XCTAssertEqual(pulse.args, "/Applications/Pulse.app/Contents/MacOS/Pulse --serve")
+        XCTAssertEqual(AgentProcesses.usefulWorkingDirectory("/"), "")
+        XCTAssertEqual(AgentProcesses.usefulWorkingDirectory("/Applications/Pulse.app"), "")
+        XCTAssertEqual(AgentProcesses.usefulWorkingDirectory(FileManager.default.homeDirectoryForCurrentUser.path), "")
+        XCTAssertEqual(AgentProcesses.usefulWorkingDirectory("/Users/me/code/Pulse"), "/Users/me/code/Pulse")
+        XCTAssertEqual(AgentProcesses.usefulWorkingDirectory("/Users/me/Documents/Work (old)"), "/Users/me/Documents/Work (old)")
     }
 
-    /// The fingerprint answers "did the process set change" — the same set
-    /// twice is the same string.
-    func testTheFingerprintIsTheProcessSet() {
-        let one = ProcessProbe.Hit(id: .claude, count: 1, viaWarp: false, pid: 10)
-        let two = ProcessProbe.Hit(id: .codex, count: 2, viaWarp: false, pid: 11)
-        XCTAssertEqual(ProcessProbe.signature([one, two]), ProcessProbe.signature([two, one]))
-        XCTAssertNotEqual(ProcessProbe.signature([one]), ProcessProbe.signature([one, two]))
+    func testLivenessNeedsNoSignal() {
+        XCTAssertTrue(AgentProcesses.isAlive(ProcessInfo.processInfo.processIdentifier))
+        XCTAssertFalse(AgentProcesses.isAlive(999_999))
+        XCTAssertFalse(AgentProcesses.isAlive(0))
+    }
+
+    /// The real table: this test process is in it, and it is no agent.
+    func testTheScanReadsTheTableAndFindsNoAgentInATestRunner() throws {
+        let table = try XCTUnwrap(AgentProcesses.processTable())
+        XCTAssertTrue(table.contains { $0.pid == ProcessInfo.processInfo.processIdentifier })
     }
 }
 
@@ -647,206 +570,6 @@ final class PrivateFileTests: XCTestCase {
 
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
-    }
-}
-
-/// 0.99.2 Live Wire — the rest of the path 0.99.1 只修了一半.
-///
-/// 0.99.1 fixed how `lsof` output is parsed. These cover what happens to that
-/// output afterwards: the gate that decided whether to keep it at all, the
-/// subprocess wrapper underneath, and the code downstream that had never once
-/// run with a working directory in hand.
-final class LsofBackoffTests: XCTestCase {
-    // MARK: - lsof exits 1 while still answering
-
-    /// Measured, not assumed: with one live and one dead PID, `lsof -Ffpn -a
-    /// -d cwd -p <live>,<dead>` prints the live process and exits **1**.
-    /// Requiring status 0 threw the live answer away.
-    func testAnExitCodeOfOneStillCarriesEveryResolvedProcess() {
-        let output = """
-        p101
-        fcwd
-        n/Users/me/code/Pulse
-        """
-        let resolved = ProcessProbe.workingDirectories(
-            from: ProcessProbe.Invocation(stdout: output, status: 1)
-        )
-        XCTAssertEqual(resolved[101], "/Users/me/code/Pulse", "status 1 is not a reason to discard a path")
-
-        // Same bytes, clean exit — the status must make no difference at all.
-        XCTAssertEqual(
-            resolved,
-            ProcessProbe.workingDirectories(
-                from: ProcessProbe.Invocation(stdout: output, status: 0)
-            )
-        )
-        XCTAssertTrue(ProcessProbe.workingDirectories(from: nil).isEmpty)
-    }
-
-    /// The batch is one PID per agent. A finished agent must not cost every
-    /// other agent five minutes of workspace.
-    func testADeadProcessAloneDoesNotArmTheBackoff() {
-        let deadPid = 999_999
-        XCTAssertFalse(ProcessProbe.processExists(deadPid), "pid must be absent for this test")
-        XCTAssertFalse(
-            ProcessProbe.shouldBackOff(
-                ProcessProbe.Invocation(stdout: "", status: 1), pids: [deadPid]
-            ),
-            "an exited process explains the silence by itself"
-        )
-    }
-
-    /// Silence about a process that is demonstrably alive is the case backoff
-    /// exists for — a denied or unusable lookup.
-    func testSilenceAboutALiveProcessStillArmsTheBackoff() {
-        let livePid = Int(ProcessInfo.processInfo.processIdentifier)
-        XCTAssertTrue(ProcessProbe.processExists(livePid))
-        XCTAssertTrue(
-            ProcessProbe.shouldBackOff(
-                ProcessProbe.Invocation(stdout: "", status: 1), pids: [livePid]
-            )
-        )
-    }
-
-    func testAFailedLaunchAlwaysArmsTheBackoff() {
-        XCTAssertTrue(ProcessProbe.shouldBackOff(nil, pids: [999_999]))
-    }
-
-    /// Exit 0 with nothing to say is not a PID that vanished; it is a tool
-    /// that answered and told us nothing.
-    func testACleanButEmptyAnswerArmsTheBackoff() {
-        XCTAssertTrue(
-            ProcessProbe.shouldBackOff(
-                ProcessProbe.Invocation(stdout: "", status: 0), pids: [999_999]
-            )
-        )
-    }
-}
-
-/// 0.98 Ground Truth — the collector can be held to account.
-///
-/// Every test here runs the real `NativeActivityHarvest.scan` against real
-/// files at real paths. They cover the four things that made 0.96.1 through
-/// 0.97.2 ship green with a wrong tray hero, plus the counting and fairness
-/// defects found beside them.
-final class CommandSearchPathTests: XCTestCase {
-
-    private func makeHome(_ label: String) throws -> URL {
-        let home = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pulse-ground-truth-\(label)-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        return home
-    }
-
-    private func write(_ text: String, to home: URL, _ relative: String) throws {
-        let url = home.appendingPathComponent(relative)
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try text.write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    // MARK: - Installed is not the same as running
-
-    /// A menu-bar app launched by Finder/launchd inherits
-    /// `/usr/bin:/bin:/usr/sbin:/sbin`, so an agent installed in `~/.local/bin`
-    /// used to report `source_absent` ("not installed") instead of
-    /// `no_sessions` ("installed, nothing running").
-    func testInstalledCLIIsFoundUnderLaunchdMinimalPath() throws {
-        let home = try makeHome("path")
-        defer { try? FileManager.default.removeItem(at: home) }
-        let bin = home.appendingPathComponent(".local/bin")
-        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-        let tool = bin.appendingPathComponent("pulse-fixture-cli")
-        try "#!/bin/sh\n".write(to: tool, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: tool.path
-        )
-
-        let launchdPath = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
-        XCTAssertTrue(
-            NativeActivityHarvest.executableExists(
-                "pulse-fixture-cli", home: home, environment: launchdPath
-            )
-        )
-        XCTAssertFalse(
-            NativeActivityHarvest.executableExists(
-                "pulse-fixture-not-installed", home: home, environment: launchdPath
-            )
-        )
-    }
-
-    func testCommandSearchPathsCoverTheCommonInstallRoots() {
-        let home = URL(fileURLWithPath: "/Users/fixture")
-        let paths = NativeActivityHarvest.commandSearchPaths(
-            home: home,
-            environment: ["PATH": "/usr/bin:/bin"]
-        )
-        XCTAssertTrue(paths.contains("/opt/homebrew/bin"))
-        XCTAssertTrue(paths.contains("/usr/local/bin"))
-        XCTAssertTrue(paths.contains("/Users/fixture/.local/bin"))
-        XCTAssertTrue(paths.contains("/Users/fixture/.bun/bin"))
-        XCTAssertEqual(paths.count, Set(paths).count, "search paths are de-duplicated")
-    }
-}
-
-/// Regressions for two defects found by reading 0.99.0.
-///
-/// Both had the same shape: something that looked verified was not. One test
-/// asserted a tool's output format the tool does not produce; one dictionary
-/// assumed keys could not collide when two independent lists fed it.
-final class LsofWorkspaceTests: XCTestCase {
-
-    // MARK: - lsof workspace recovery
-
-    /// The end-to-end shape: a real `-Ffpn -a -d cwd` reply for two processes,
-    /// one of which lsof could not resolve.
-    func testRealLsofReplyYieldsAWorkspacePerResolvableProcess() {
-        let output = """
-        p101
-        fcwd
-        n/Users/me/code/Pulse
-        p202
-        fcwd
-        n/Users/me/code/Other
-        p303
-        fcwd
-        n/Users/me/code/Locked (readlink: Permission denied)
-        """
-        let parsed = ProcessProbe.parseWorkingDirectories(output)
-        XCTAssertEqual(parsed[101], "/Users/me/code/Pulse")
-        XCTAssertEqual(parsed[202], "/Users/me/code/Other")
-        XCTAssertEqual(
-            ProcessProbe.usefulWorkingDirectory(parsed[303] ?? ""), "",
-            "an lsof error annotation is not a workspace"
-        )
-    }
-
-    func testUnreadableDirectoryAnnotationIsRejected() {
-        XCTAssertEqual(
-            ProcessProbe.usefulWorkingDirectory("/Users/me/x (readlink: Permission denied)"),
-            ""
-        )
-        XCTAssertEqual(
-            ProcessProbe.usefulWorkingDirectory("/Users/me/x (stat: No such file or directory)"),
-            ""
-        )
-        XCTAssertEqual(
-            ProcessProbe.usefulWorkingDirectory("/Users/me/code/Pulse"),
-            "/Users/me/code/Pulse"
-        )
-    }
-
-    /// A directory whose name simply contains a parenthesis is still a
-    /// workspace — the annotation check is anchored, not a blanket ban.
-    func testAnOrdinaryDirectoryWithParenthesesIsStillAWorkspace() {
-        XCTAssertFalse(ProcessProbe.isLsofErrorAnnotated("/Users/me/Documents/Work (old)"))
-        XCTAssertEqual(
-            ProcessProbe.usefulWorkingDirectory("/Users/me/Documents/Work (old)"),
-            "/Users/me/Documents/Work (old)"
-        )
     }
 }
 

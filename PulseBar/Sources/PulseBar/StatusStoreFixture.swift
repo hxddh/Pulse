@@ -19,7 +19,7 @@ extension StatusStore {
             _ agent: AgentID,
             task: String,
             cwd: String = "/Users/me/code/Pulse",
-            source: RowSource = .session,
+            source: RowSource = .hooks,
             live: Bool = true,
             ageMinutes: Int = 1
         ) -> AgentRow {
@@ -31,7 +31,7 @@ extension StatusStore {
             value.source = source
             value.liveProcess = live
             value.state = live ? .running : .recent
-            value.harvestMs = now - Int64(ageMinutes * 60 * 1000)
+            value.eventMs = now - Int64(ageMinutes * 60 * 1000)
             value.startedMs = now - 54 * 60 * 1000
             return value
         }
@@ -39,7 +39,7 @@ extension StatusStore {
         if name.hasPrefix("status-") {
             // Compact status fixtures used to only stamp glance/header and left
             // `rows` empty, so `--capture-tray-panel` still showed whatever live
-            // harvest (or nothing) was present. Inject one concrete row so
+            // sessions (or nothing) were present. Inject one concrete row so
             // visual QA exercises the real tray layout for that lamp state.
             var fixtureRow = row(
                 "status-fixture",
@@ -55,17 +55,13 @@ extension StatusStore {
                 fixtureRow.state = .blocked(RowWait(
                     kind: "Permission",
                     ask: "Bash: ./scripts/release.sh 2.0.0 --commit",
-                    sinceMs: now - 8 * 60 * 1000,
-                    signal: .hooks
+                    sinceMs: now - 8 * 60 * 1000
                 ))
             case "status-stalled":
                 fixtureRow.isStalled = true
-                fixtureRow.harvestMs = now - 25 * 60 * 1000
+                fixtureRow.eventMs = now - 25 * 60 * 1000
             case "status-running":
-                fixtureRow.planSteps = [
-                    ActivityHarvest.PlanStep(text: "Read the collector", state: .done),
-                    ActivityHarvest.PlanStep(text: "Run the fixtures", state: .current),
-                ]
+                fixtureRow.lastWord = "Running the fixtures."
             case "status-turn":
                 // 16.0: finished, unseen — a quiet count, not the red lamp.
                 fixtureRow.state = .yourTurn(sinceMs: now - 3 * 60 * 1000)
@@ -114,85 +110,30 @@ extension StatusStore {
             )
             codex.model = "gpt-5"
 
-            var amp = row(
-                "coverage-amp",
-                .amp,
+            var pi = row(
+                "coverage-pi",
+                .pi,
                 task: "",
                 cwd: "",
                 source: .process
             )
-            amp.harvestMs = 0
-            amp.state = .processOnly
-            amp.startedMs = now - 60 * 60 * 1000
+            pi.eventMs = 0
+            pi.state = .processOnly
+            pi.startedMs = now - 60 * 60 * 1000
 
             let cursor = row(
                 "coverage-cursor",
                 .cursor,
                 task: "Refine adapter coverage",
                 cwd: "/Users/me/code/Client",
-                source: .cache,
                 live: false
             )
-            setCachedAll([codex, amp, cursor])
-            engine.processesByAgent = [
-                .codex: ProcessFacts(evidence: .pathSignature, startedMs: now - 54 * 60 * 1000, count: 1),
-                .amp: ProcessFacts(evidence: .executable, startedMs: now - 60 * 60 * 1000, count: 2),
-            ]
-            hooksStatus = .installedBoth
+            setCachedAll([codex, pi, cursor])
+            hooksStatus = .all
             previewWaitingEventTimes = [
                 .claude: now - 48_000,
                 .codex: now - 12_000,
             ]
-            var health = Dictionary(
-                uniqueKeysWithValues: AgentID.allCases.map { agent in
-                    (
-                        agent,
-                        ActivityHarvest.CollectorHealth(
-                            id: agent,
-                            state: .sourceAbsent,
-                            durationMs: 1,
-                            rowCount: 0,
-                            sourcePresent: false,
-                            errorKind: ""
-                        )
-                    )
-                }
-            )
-            health[.codex] = .init(
-                    id: .codex,
-                    state: .observed,
-                    durationMs: 31,
-                    rowCount: 1,
-                    sourcePresent: true,
-                    errorKind: ""
-                )
-            health[.amp] = .init(
-                    id: .amp,
-                    state: .noSessions,
-                    durationMs: 4,
-                    rowCount: 0,
-                    sourcePresent: true,
-                    errorKind: ""
-                )
-            health[.cursor] = .init(
-                    id: .cursor,
-                    state: .schemaMismatch,
-                    durationMs: 18,
-                    rowCount: 0,
-                    sourcePresent: true,
-                    errorKind: "JSONDecodeError"
-                )
-            health[.claude] = .init(
-                    id: .claude,
-                    state: .permissionDenied,
-                    durationMs: 3,
-                    rowCount: 0,
-                    sourcePresent: true,
-                    errorKind: "PermissionError"
-                )
-            engine.recordCollectorHealth(Array(health.values))
-            engine.lastSuccessfulReadByAgent[.codex] = codex.harvestMs
-            engine.lastSuccessfulReadByAgent[.cursor] = cursor.harvestMs
             snapshot = PulseSnapshot(
                 glance: .running,
                 title: "",
@@ -212,8 +153,7 @@ extension StatusStore {
         waiting.state = .blocked(RowWait(
             kind: "Permission",
             ask: "Bash: ./scripts/release.sh 2.0.0 --commit",
-            sinceMs: now - 8 * 60 * 1000,
-            signal: .hooks
+            sinceMs: now - 8 * 60 * 1000
         ))
 
         var active = row(
@@ -245,24 +185,23 @@ extension StatusStore {
 
         var rows = [waiting, active, stalled, recent]
         if name != "compact" {
-            let cache = row(
-                "kiro-preview",
-                .kiro,
+            let quiet = row(
+                "gemini-preview",
+                .gemini,
                 task: "Audit settings copy",
                 cwd: "/Users/me/code/Docs",
-                source: .cache,
                 live: false,
                 ageMinutes: 6
             )
             var process = row(
-                "replit-preview",
-                .replit,
+                "copilot-preview",
+                .copilot,
                 task: "",
                 cwd: "",
                 source: .process,
                 ageMinutes: 0
             )
-            process.harvestMs = 0
+            process.eventMs = 0
             process.state = .processOnly
             process.startedMs = now - 70 * 60 * 1000
             var sub = row(
@@ -272,7 +211,7 @@ extension StatusStore {
                 cwd: "/Users/me/code/Pulse"
             )
             sub.model = "claude-sonnet-4"
-            rows += [cache, process, sub]
+            rows += [quiet, process, sub]
         }
         rows.sort { $0.section.rawValue < $1.section.rawValue }
         setCachedAll(rows)

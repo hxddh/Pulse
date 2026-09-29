@@ -3,8 +3,9 @@ import Foundation
 import PulseCore
 
 /// Locked read/write for attention.tsv — same exclusive flock as
-/// `PulseBar --hook`. Columns (v3, all eight required): agent \\t kind \\t ms
-/// \\t message \\t session \\t cwd \\t host (ignored) \\t front
+/// `PulseBar --hook`. Columns (v4, all ten required): agent, kind, ms,
+/// message, session, cwd, front, pid, transcript, landing
+/// (`AttentionRecord`).
 package enum AttentionIO {
     /// Tests and `PULSE_HOME` hook self-tests redirect the ledger without
     /// touching the user's real Application Support file.
@@ -41,11 +42,11 @@ package enum AttentionIO {
         for (index, raw) in lines.enumerated() {
             let columns = raw.split(separator: "\t", omittingEmptySubsequences: false)
             guard columns.count >= 3,
-                  let agent = ActivityHarvest.mapAgent(String(columns[0]))
+                  let agent = AgentCatalog.agent(named: String(columns[0]))
             else { continue }
             let kind = AttentionProtocol.kind(String(columns[1]))
             let session = columns.count > 4 ? String(columns[4]) : ""
-            let key = session.isEmpty ? agent.surfaceID.rawValue : "\(agent.surfaceID.rawValue)|\(session)"
+            let key = session.isEmpty ? agent.rawValue : "\(agent.rawValue)|\(session)"
             lastOpen[key] = kind?.isOpen == true
             lastIndex[key] = index
         }
@@ -86,40 +87,15 @@ package enum AttentionIO {
         String(decoding: data, as: UTF8.self)
     }
 
-    /// Last raw hook/bridge event per Agent, including done/stop. Runtime
-    /// support needs to answer "has this connection ever fired recently?"
-    /// without turning a completed event back into Waiting. Pure: the scan
-    /// reads the file once and hands the text here.
-    package static func latestEventTimes(in text: String) -> [AgentID: Int64] {
-        var latest: [AgentID: Int64] = [:]
-        for line in text.split(whereSeparator: \.isNewline) {
-            if line.hasPrefix("#") { continue }
-            let columns = line.split(
-                separator: "\t",
-                omittingEmptySubsequences: false
-            )
-            guard columns.count == AttentionProtocol.columnCount,
-                  let agent = ActivityHarvest.mapAgent(String(columns[0])),
-                  let ms = Int64(columns[2])
-            else { continue }
-            latest[agent] = max(latest[agent] ?? 0, ms)
-        }
-        return latest
-    }
-
-    /// The newest protocol event per agent (surface id), with its v3 kind —
-    /// the self-check's "the hooks actually fire". 23.0: read from the file
-    /// itself; Pulse no longer keeps a second copy of every hook line.
-    package static func latestEvents() -> [AgentID: (kind: String, tsMs: Int64)] {
-        latestEvents(in: readText())
-    }
-
-    /// Pure: `latestEvents` over a file's text.
+    /// The newest protocol event per agent, with its v4 kind — Settings'
+    /// "last event" and the self-check's "the hooks actually fire" (the
+    /// engine keeps the newest it has seen). Pure: the engine reads the file
+    /// once and hands the text here.
     package static func latestEvents(in text: String) -> [AgentID: (kind: String, tsMs: Int64)] {
         var latest: [AgentID: (kind: String, tsMs: Int64)] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
             guard let cols = AttentionProtocol.columns(of: line),
-                  let agent = ActivityHarvest.mapAgent(cols[0])?.surfaceID,
+                  let agent = AgentCatalog.agent(named: cols[0]),
                   AttentionProtocol.acceptsWrite(kind: cols[1]),
                   let ms = Int64(cols[2]), ms > 0
             else { continue }
@@ -159,16 +135,6 @@ package enum AttentionIO {
             if wrote <= 0 { break }
             offset += wrote
         }
-    }
-
-    /// Append a done event. The session is written exactly as given: a
-    /// session clears that session, an empty one clears only the agent's
-    /// session-less entries (v3, 23.0).
-    package static func appendDone(agent: AgentID, session: String) {
-        let ts = Int64(Date().timeIntervalSince1970 * 1000)
-        // v3: all eight columns, host and front empty.
-        let line = "\(agent.rawValue)\tdone\t\(ts)\t\t\(session)\t\t\t"
-        appendRawLine(line)
     }
 
     /// Shared by the store (clears) and the native hook receiver. `url` nil

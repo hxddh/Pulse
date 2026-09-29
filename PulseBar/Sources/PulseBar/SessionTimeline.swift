@@ -6,8 +6,8 @@ import Foundation
 /// of them: "why did the lamp go red at 14:02, and for how long?" had no
 /// answer once the moment passed. The timeline keeps those edges, bounded,
 /// and stamps each one with the evidence's own clock where there is one
-/// (the hook's raise time, the turn's time, the transcript's last change),
-/// so an identical scan produces no transition and writes nothing.
+/// (the hook's raise time, the turn's time, the last activity), so an
+/// identical projection produces no transition and writes nothing.
 ///
 /// Pure: `transitions` compares two row lists; `SessionLog` applies them
 /// (23.0 — the spans live there beside the waits); `TimelineStripModel`
@@ -30,9 +30,10 @@ enum TimelineState: String, Codable, Equatable, Sendable {
     }
 }
 
-/// Which evidence put the session in that state.
+/// Which evidence put the session in that state (24.0: the agent's own
+/// hook events, or only a process).
 enum TimelineEvidence: String, Codable, Equatable, Sendable {
-    case hook, pending, vendor, harvest, process
+    case hook, process
 }
 
 struct TimelineSpan: Codable, Equatable, Sendable {
@@ -61,20 +62,12 @@ enum SessionTimeline {
     /// The row's state and its evidence — the same predicates the lamp uses,
     /// so the strip can never disagree with the colour.
     static func classify(_ row: AgentRow) -> (state: TimelineState, evidence: TimelineEvidence, kind: String) {
-        let evidence: TimelineEvidence = row.isProcessOnly ? .process : .harvest
         switch row.state {
-        case .blocked(let wait):
-            switch wait.signal {
-            case .hooks: return (.blocked, .hook, wait.kind)
-            case .vendor: return (.blocked, .vendor, wait.kind)
-            case .pending: return (.blocked, .pending, wait.kind)
-            }
+        case .blocked(let wait): return (.blocked, .hook, wait.kind)
         case .yourTurn: return (.turn, .hook, "")
         case .processOnly: return (.thin, .process, "")
-        case .recent: return (.recent, evidence, "")
-        case .running:
-            if row.isStalled { return (.stalled, evidence, "") }
-            return (.running, evidence, "")
+        case .recent: return (.recent, .hook, "")
+        case .running: return (row.isStalled ? .stalled : .running, .hook, "")
         }
     }
 
@@ -117,8 +110,11 @@ enum SessionTimeline {
         switch state {
         case .blocked: candidate = row.wait?.sinceMs ?? 0
         case .turn: candidate = row.turnSinceMs ?? 0
-        case .running, .thin: candidate = row.activityMs
-        case .stalled, .recent: candidate = 0
+        // Running starts at the event that made it so — the newest one: a
+        // stall ends with an event, not at the work's first start.
+        case .running: candidate = row.lastActivityMs
+        case .thin, .recent: candidate = row.stateSinceMs
+        case .stalled: candidate = 0
         }
         // A clock from the future, or one older than the log keeps, is not
         // evidence of when this edge happened.

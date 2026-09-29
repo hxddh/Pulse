@@ -12,20 +12,20 @@ real fact; prose checks ("EXPERIENCE.md must say 32 visible Agents") went.
    no per-agent table grows back elsewhere (12.0): outside the catalog no
    `case` line or list names more than MAX_PER_CASE agents and no file's
    `case` lines name more than MAX_PER_FILE.
-2. Harvest — the native descriptors are built from the catalog and every
-   agent but the `cursor_agent` transport alias has harvest roots.
-3. Process probe — Cursor's private worker daemon is denied, and `lsof`
-   output is read independently of its exit status (0.99.2: status 1 still
-   carries every resolved process).
-4. Privacy — AppleScript only behind the Terminal/iTerm Automation opt-in;
+2. Processes (24.0) — agent processes come from the kernel's table
+   (libproc, `AgentProcesses.swift`): no `ps`, no `lsof`, no subprocess; and
+   Cursor's private worker daemon is denied. No file-scraping collector
+   grows back (`NativeActivityHarvest`, harvest roots).
+3. Privacy — AppleScript only behind the Terminal/iTerm Automation opt-in;
    no enumeration of every running app.
-5. README support matrix — each row's harvest and waiting cells equal the
-   catalog, and every agent has a row.
-6. Vendor formats — every agent has an entry in docs/vendor-formats.json
-   (repo with a full commit and watch list, docs with URLs, or an honest
-   `unverified` with a reason); a named test file exists and mentions the
-   agent; and an `unverified` format has `waiting: .none` (23.0 — pending
-   read from a format nobody checked is not evidence).
+4. README support matrix — each row's waiting cell equals the catalog, and
+   every agent has a row.
+5. Vendor sources (24.0) — every agent has an entry in
+   docs/vendor-formats.json with a `hooks` block: the roster is exactly the
+   seven supported agents; each has a `HookContract` whose events are never
+   a gating event, and its manifest entry names the source it was read from
+   (repo + full commit, or docs URLs), the date, the same event list and a
+   test file that mentions the agent.
 
 Run: python3 scripts/catalog_check.py
 """
@@ -43,10 +43,10 @@ CATALOG = SOURCES / "PulseCore" / "AgentCatalog.swift"
 README = ROOT / "README.md"
 MANIFEST = ROOT / "docs" / "vendor-formats.json"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
-SELF_TEST = SOURCES / "PulseBar" / "NativeHarvestSelfTest.swift"
 MAX_PER_CASE = 6
 MAX_PER_FILE = 8
-ALIAS = "cursor_agent"  # a transport alias of cursor: no roots, no README row
+# 24.0 (Exact): the owner's roster. Adding an agent is a product decision.
+ROSTER = ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
 
 
 @dataclass
@@ -54,9 +54,9 @@ class Agent:
     case: str          # Swift case name, e.g. commandCode
     raw: str           # raw value, e.g. command_code
     display: str
-    waiting: str       # hooks | harvestPending | none
-    harvest: str       # structuredSession | bestEffortCache
-    has_collector: bool
+    waiting: str       # hooks | none
+    hook_format: str   # HookFormat case
+    hook_events: list[str]
 
 
 def swift_file(name: str) -> Path:
@@ -100,13 +100,14 @@ def agents(text: str) -> list[Agent]:
             return m.group(1).rstrip(",").strip()
 
         case = field("id").lstrip(".")
+        fmt = re.search(r"hooks: HookContract\(format: \.(\w+)", chunk)
         out.append(Agent(
             case=case,
             raw=raw_of[case],
             display=field("displayName").strip('"'),
             waiting=field("waiting").lstrip("."),
-            harvest=field("harvest").lstrip("."),
-            has_collector=not field("harvestRoots").startswith("[]"),
+            hook_format=fmt.group(1) if fmt else "",
+            hook_events=re.findall(r'HookEvent\("([^"]+)"', chunk),
         ))
     return out
 
@@ -155,37 +156,39 @@ def check_roster(text: str, roster: list[Agent], problems: list[str]) -> None:
                             "an exhaustive per-agent table belongs in AgentCatalog")
 
 
-# 2 · harvest ----------------------------------------------------------------
+# 2 · processes --------------------------------------------------------------
 
-def check_harvest(roster: list[Agent], problems: list[str]) -> None:
-    native = swift_file("NativeActivityHarvest.swift").read_text(encoding="utf-8")
-    if "AgentCatalog.all" not in native or "harvestRoots" not in native:
-        problems.append("NativeActivityHarvest.descriptors() must be built from AgentCatalog")
-    missing = sorted(a.raw for a in roster if a.raw != ALIAS and not a.has_collector)
-    if missing:
-        problems.append(f"no native harvest roots: {', '.join(missing)}")
-
-
-# 3 · process probe ----------------------------------------------------------
-
-def check_probe(text: str, problems: list[str]) -> None:
+def check_processes(text: str, problems: list[str]) -> None:
     if '"worker start"' not in text or '"--worker-dir"' not in text:
         problems.append("Cursor's private worker daemon must be denied — it is infrastructure, not a session")
-    probe = swift_file("ProcessProbe.swift").read_text(encoding="utf-8")
-    if "workingDirectories(from:" not in probe or "shouldBackOff(" not in probe:
-        problems.append("ProcessProbe must read lsof output independently of its exit status; "
-                        "keep workingDirectories(from:) and shouldBackOff()")
-    if re.search(r"lsof[\s\S]{0,400}?status == 0", probe):
-        problems.append("lsof output must not be gated on a zero exit status")
+    scan = swift_file("AgentProcesses.swift").read_text(encoding="utf-8")
+    if "proc_listallpids" not in scan or "KERN_PROCARGS2" not in scan:
+        problems.append("AgentProcesses must read the process table through libproc and KERN_PROCARGS2")
+    for path in sorted(SOURCES.glob("*/*.swift")):
+        source = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8"))
+        if re.search(r'"/(usr/)?s?bin/(ps|lsof)"', source):
+            problems.append(f"{path.name}: no ps or lsof subprocess — the process table is libproc (24.0)")
+    for gone in ("NativeActivityHarvest.swift", "HarvestFacts.swift", "ProcessProbe.swift"):
+        if list(SOURCES.glob(f"*/{gone}")):
+            problems.append(f"{gone} is back — 24.0 deleted the file-scraping collector")
+    if "harvestRoots" in text:
+        problems.append("the catalog has harvest roots again — Pulse reads no vendor directory (24.0)")
 
 
-# 4 · privacy ----------------------------------------------------------------
+# 3 · privacy ----------------------------------------------------------------
 
 def check_privacy(problems: list[str]) -> None:
     focus = swift_file("TerminalFocus.swift").read_text(encoding="utf-8")
+    plan = swift_file("LandingPlan.swift").read_text(encoding="utf-8")
+    # 24.0: LandingPlan decides (pure), TerminalFocus runs. Every AppleScript
+    # step is planned only behind the Automation opt-in.
+    make = plan[plan.find("static func make("):]
+    make = make[:make.find("\n    }\n")]
+    gated = make[make.find("if allowAutomation"):] if "if allowAutomation" in make else ""
+    for step in (".iTermSession(", ".ttyTab("):
+        if step in make and step not in gated:
+            problems.append(f"LandingPlan.make must plan {step[1:-1]} only behind allowAutomation")
     scripts = "/usr/bin/osascript" in focus or "tell application" in focus
-    if "allowTTYAutomation" not in focus:
-        problems.append("TerminalFocus must gate TTY focus on allowTTYAutomation")
     if scripts and "focusTTY" not in focus:
         problems.append("AppleScript is allowed only inside the opt-in Terminal/iTerm tab focus")
     for name in ("TerminalFocus.swift", "SingleInstanceGuard.swift"):
@@ -197,11 +200,11 @@ def check_privacy(problems: list[str]) -> None:
             problems.append(f"{name} must not enumerate every running app")
 
 
-# 5 · README support matrix --------------------------------------------------
+# 4 · README support matrix --------------------------------------------------
 
-def readme_rows() -> list[tuple[str, str, str, int]]:
-    """(names cell, harvest cell, waiting cell, line number)."""
-    rows: list[tuple[str, str, str, int]] = []
+def readme_rows() -> list[tuple[str, str, int]]:
+    """(names cell, waiting cell, line number)."""
+    rows: list[tuple[str, str, int]] = []
     in_table = False
     for n, line in enumerate(README.read_text(encoding="utf-8").splitlines(), start=1):
         if line.startswith("| Agent |"):
@@ -213,7 +216,7 @@ def readme_rows() -> list[tuple[str, str, str, int]]:
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             if len(cells) < 4 or set(cells[0]) <= set("- "):
                 continue
-            rows.append((cells[0], cells[2], cells[3], n))
+            rows.append((cells[0], cells[3], n))
     return rows
 
 
@@ -221,36 +224,23 @@ def waiting_kind(cell: str) -> str:
     low = cell.lower()
     if "none" in low:
         return "none"
-    if "hooks" in low:
+    if "hooks" in low or "plugin" in low or "extension" in low:
         return "hooks"
-    if "pending" in low:
-        return "harvestPending"
-    return "?"
-
-
-def harvest_kind(cell: str) -> str:
-    low = cell.lower()
-    if "structured" in low or "结构化" in low:
-        return "structuredSession"
-    if "best" in low or "尽力" in low:
-        return "bestEffortCache"
     return "?"
 
 
 def check_matrix(roster: list[Agent], problems: list[str]) -> int:
     by_case = {a.case: a for a in roster}
     by_display = {a.display: a for a in roster}
-    # The short forms the README table uses.
-    by_display.update({"Zed": by_case["zedAgent"], "Warp": by_case["warpAgent"]})
     rows = readme_rows()
     if not rows:
         problems.append("README has no support matrix (expected a '| Agent |' table)")
         return 0
     covered: set[str] = set()
-    for names_cell, harvest_cell, waiting_cell, lineno in rows:
-        want_wait, want_harvest = waiting_kind(waiting_cell), harvest_kind(harvest_cell)
-        if want_wait == "?" or want_harvest == "?":
-            problems.append(f"README:{lineno} unreadable cells {harvest_cell!r} / {waiting_cell!r}")
+    for names_cell, waiting_cell, lineno in rows:
+        want_wait = waiting_kind(waiting_cell)
+        if want_wait == "?":
+            problems.append(f"README:{lineno} unreadable waiting cell {waiting_cell!r}")
             continue
         for raw in names_cell.split("/"):
             name = raw.strip().rstrip("*").strip()
@@ -263,71 +253,99 @@ def check_matrix(roster: list[Agent], problems: list[str]) -> int:
             covered.add(agent.case)
             if agent.waiting != want_wait:
                 problems.append(f"README:{lineno} {name}: waiting says {want_wait}, catalog says {agent.waiting}")
-            if agent.harvest != want_harvest:
-                problems.append(f"README:{lineno} {name}: harvest says {want_harvest}, catalog says {agent.harvest}")
     for case, agent in by_case.items():
-        if agent.raw != ALIAS and case not in covered:
+        if case not in covered:
             problems.append(f"{agent.display}: absent from the README support matrix")
     return len(covered)
 
-
-# 6 · vendor formats ---------------------------------------------------------
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def check_vendor_formats(roster: list[Agent], problems: list[str]) -> dict[str, int]:
+# 5 · vendor sources: hook contracts ---------------------------------------------------------
+
+def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
+    raws = [a.raw for a in roster]
+    if sorted(raws) != sorted(ROSTER):
+        problems.append(f"roster must be exactly {ROSTER} (24.0), found {raws}")
+    gating = re.search(r"gatingEvents: Set<String> = \[(.*?)\]", text, re.S)
+    listed = set(re.findall(r'"([^"]+)"', gating.group(1))) if gating else set()
+    for must in ("PreToolUse", "preToolUse", "beforeShellExecution", "beforeSubmitPrompt", "BeforeTool", "tool.execute.before"):
+        if must not in listed:
+            problems.append(f"HookContract.gatingEvents must list {must}")
+    # A red lamp must have a way to go out besides the end of the turn: an
+    # agent that can raise a block installs an event that answers it (a tool
+    # ran after it, or the vendor's own "replied"). Per-tool activity is
+    # what makes a stall meaningful, so it is never a gating event either.
+    tool_block = re.search(r"toolActivityEvents: Set<String> = \[(.*?)\]", text, re.S)
+    tool_events = set(re.findall(r'"([^"]+)"', tool_block.group(1))) if tool_block else set()
+    answer_block = re.search(r"answerEvents: Set<String> = toolActivityEvents\.union\(\[(.*?)\]\)", text, re.S)
+    answer_events = tool_events | (set(re.findall(r'"([^"]+)"', answer_block.group(1))) if answer_block else set())
+    if not tool_events or not answer_block:
+        problems.append("HookContract.toolActivityEvents / answerEvents not found in AgentCatalog.swift")
+    for event in sorted(tool_events & listed):
+        problems.append(f"HookContract.toolActivityEvents lists {event}, a gating event")
+    for agent in roster:
+        if agent.waiting == "hooks" and not set(agent.hook_events) & answer_events:
+            problems.append(f"hooks — {agent.raw}: can raise a block but installs no event that answers it "
+                            f"(one of {sorted(answer_events)})")
+    for raw, needed in (("gemini", "AfterTool"), ("copilot", "postToolUse"), ("codex", "PostToolUse"), ("claude", "PostToolUse")):
+        agent = next((a for a in roster if a.raw == raw), None)
+        if agent and needed not in agent.hook_events:
+            problems.append(f"hooks — {raw}: {needed} is its per-tool activity (the answer to a block, the stall rule)")
     try:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8")).get("agents", {})
-    except (OSError, json.JSONDecodeError) as error:
-        problems.append(f"{MANIFEST.relative_to(ROOT)}: {error}")
-        return {}
-    counts: dict[str, int] = {}
-    for agent in roster:
-        raw = agent.raw
-        entry = manifest.get(raw)
-        if entry is None:
-            problems.append(f"vendor formats — {raw}: no entry; say where its format was checked or that it was not")
-            continue
-        source = entry.get("source")
-        counts[source] = counts.get(source, 0) + 1
-        if source not in {"repo", "docs", "unverified"}:
-            problems.append(f"vendor formats — {raw}: source must be repo, docs or unverified")
-            continue
-        if source == "repo":
-            if not str(entry.get("repo", "")).startswith("https://github.com/"):
-                problems.append(f"vendor formats — {raw}: repo must be a https://github.com/ URL")
-            if not SHA.match(str(entry.get("commit", ""))):
-                problems.append(f"vendor formats — {raw}: commit must be the full 40-hex SHA that was read")
-            if not entry.get("watch"):
-                problems.append(f"vendor formats — {raw}: watch must list the vendor files that define the format")
-        if source == "docs" and not entry.get("urls"):
-            problems.append(f"vendor formats — {raw}: docs entries list the URLs read")
-        if source in {"repo", "docs"}:
-            if not DATE.match(str(entry.get("checked", ""))):
-                problems.append(f"vendor formats — {raw}: checked must be the YYYY-MM-DD the source was read")
-            tests = entry.get("tests", [])
-            if not tests:
-                problems.append(f"vendor formats — {raw}: name at least one test whose fixture follows this source")
-            needles = {raw.lower(), agent.display.lower(), raw.replace("_", "").lower()}
-            for test in tests:
-                path = SELF_TEST if test == SELF_TEST.name else TESTS / test
-                if not path.exists():
-                    problems.append(f"vendor formats — {raw}: test file {test} does not exist")
-                elif not any(n in path.read_text(encoding="utf-8").lower() for n in needles):
-                    problems.append(f"vendor formats — {raw}: {test} never mentions {agent.display}")
-        if source == "unverified":
-            if not entry.get("why"):
-                problems.append(f"vendor formats — {raw}: say why the format could not be checked")
-            if agent.waiting != "none":
-                problems.append(f"vendor formats — {raw}: an unverified format must have waiting: .none, "
-                                f"not .{agent.waiting}")
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
     known = {a.raw for a in roster}
     for raw in manifest:
         if raw not in known:
-            problems.append(f"vendor formats — {raw}: in the manifest but not in the catalog")
-    return counts
+            problems.append(f"vendor sources — {raw}: in the manifest but not in the catalog")
+    for agent in roster:
+        entry = manifest.get(agent.raw) or {}
+        if set(entry) - {"hooks"}:
+            problems.append(f"vendor sources — {agent.raw}: only a hooks block is kept (24.0 reads no session store); "
+                            f"found {sorted(set(entry) - {'hooks'})}")
+        if not agent.hook_format or not agent.hook_events:
+            problems.append(f"hooks — {agent.raw}: no HookContract with events in the catalog")
+            continue
+        for event in agent.hook_events:
+            if event in listed:
+                problems.append(f"hooks — {agent.raw}: {event} is a gating event and is never installed")
+        if agent.raw == "codex" and "PermissionRequest" in agent.hook_events:
+            problems.append("hooks — codex: PermissionRequest fires before Codex's own auto-review (fake Waiting)")
+        hooks = (manifest.get(agent.raw) or {}).get("hooks")
+        if not isinstance(hooks, dict):
+            problems.append(f"hooks — {agent.raw}: vendor-formats.json needs a hooks block (source, events)")
+            continue
+        source = hooks.get("source")
+        if source == "repo":
+            if not str(hooks.get("repo", "")).startswith("https://github.com/"):
+                problems.append(f"hooks — {agent.raw}: repo must be a https://github.com/ URL")
+            if not SHA.match(str(hooks.get("commit", ""))):
+                problems.append(f"hooks — {agent.raw}: commit must be the full 40-hex SHA that was read")
+            if not hooks.get("watch"):
+                problems.append(f"hooks — {agent.raw}: watch must list the vendor files that define the hooks")
+        elif source == "docs":
+            if not hooks.get("urls"):
+                problems.append(f"hooks — {agent.raw}: docs hooks list the URLs read")
+        else:
+            problems.append(f"hooks — {agent.raw}: hooks source must be repo or docs")
+        if not DATE.match(str(hooks.get("checked", ""))):
+            problems.append(f"hooks — {agent.raw}: checked must be the YYYY-MM-DD the source was read")
+        if sorted(hooks.get("events", [])) != sorted(agent.hook_events):
+            problems.append(f"hooks — {agent.raw}: manifest events {hooks.get('events')} ≠ catalog {agent.hook_events}")
+        tests = hooks.get("tests", [])
+        if not tests:
+            problems.append(f"hooks — {agent.raw}: name at least one test that exercises this contract")
+        needles = {agent.raw.lower(), agent.display.lower()}
+        for test in tests:
+            path = TESTS / test
+            if not path.exists():
+                problems.append(f"hooks — {agent.raw}: test file {test} does not exist")
+            elif not any(n in path.read_text(encoding="utf-8").lower() for n in needles):
+                problems.append(f"hooks — {agent.raw}: {test} never mentions {agent.display}")
 
 
 def main() -> int:
@@ -335,18 +353,16 @@ def main() -> int:
     roster = agents(text)
     problems: list[str] = []
     check_roster(text, roster, problems)
-    check_harvest(roster, problems)
-    check_probe(text, problems)
+    check_processes(text, problems)
     check_privacy(problems)
     in_matrix = check_matrix(roster, problems)
-    counts = check_vendor_formats(roster, problems)
+    check_hooks(text, roster, problems)
     if problems:
         for problem in problems:
             print(f"::error::{problem}")
         return 1
-    sources = ", ".join(f"{counts.get(s, 0)} {s}" for s in ("repo", "docs", "unverified"))
-    print(f"catalog OK — {len(roster)} agents, one spec each; {in_matrix} in the README matrix; "
-          f"vendor formats {sources}")
+    print(f"catalog OK — {len(roster)} agents, one spec and one hook contract each; "
+          f"{in_matrix} in the README matrix; every hook contract has a source")
     return 0
 
 

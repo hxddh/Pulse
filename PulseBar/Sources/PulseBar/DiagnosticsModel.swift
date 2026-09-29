@@ -14,9 +14,6 @@ struct DiagnosticsModel: Equatable {
 
     enum Fix: Equatable {
         case installHooks
-        case retryScan
-        case openDataAccess
-        case openHooksSettings
         case doctor(DoctorModel.Fix)
     }
 
@@ -38,7 +35,7 @@ struct DiagnosticsModel: Equatable {
         var severity: Int
         var fix: Fix?
         var fixTitle: String = ""
-        /// Said in orange on the collapsed line: drift, a timeout.
+        /// Said in orange on the collapsed line.
         var warning: String?
         /// Everything else, one sentence per line, shown on expansion.
         var details: [String]
@@ -60,8 +57,8 @@ struct DiagnosticsModel: Equatable {
     struct Input {
         var lang: ResolvedLanguage
         var scanLine: String
-        /// Standing problems on this Mac (data access, an incomplete scan,
-        /// a stale bundle), already worded.
+        /// Standing problems on this Mac (a hook missing, a stale bundle),
+        /// already worded.
         var banners: [Problem]
         var doctor: DoctorModel.Report?
         var doctorRunning: Bool
@@ -107,20 +104,22 @@ struct DiagnosticsModel: Equatable {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         switch fix {
         case .installHooks, .doctor(.installHooks): return t(.installHooks)
-        case .retryScan: return t(.supportRetry)
-        case .openDataAccess: return t(.supportEnableData)
-        case .openHooksSettings, .doctor(.openConnections): return t(.setupWaitingSignals)
-        case .doctor(.copyShapeReport): return t(.supportCopyShapeReport)
+        case .doctor(.openConnections): return t(.setupWaitingSignals)
         }
     }
 
-    /// The support disposition as a severity, a tone and a word.
+    /// The one action an agent's line offers: install a missing hook. An
+    /// agent whose hook cannot report a wait (Codex, Cursor) is offered
+    /// nothing for it — no setting can make it report one; its line says so.
+    static func fix(for item: AgentSupportHealth) -> Fix? {
+        item.disposition == .needsAction ? .installHooks : nil
+    }
+
+    /// The disposition as a severity, a tone and a word.
     static func severity(_ disposition: SupportDisposition) -> Int {
         switch disposition {
-        case .needsAction: return 7
-        case .permissionDenied: return 6
-        case .limited: return 5
-        case .unscanned: return 4
+        case .needsAction: return 5
+        case .unproven: return 4
         case .available: return 3
         case .noRecentSession: return 2
         case .notInstalled: return 1
@@ -130,9 +129,9 @@ struct DiagnosticsModel: Equatable {
     /// Red is for a blocked agent, so nothing here is red.
     static func tone(_ disposition: SupportDisposition) -> PulseTheme.Tone {
         switch disposition {
-        case .needsAction, .limited, .permissionDenied: return .attention
+        case .needsAction, .unproven: return .attention
         case .available: return .running
-        case .notInstalled, .noRecentSession, .unscanned: return .idle
+        case .notInstalled, .noRecentSession: return .idle
         }
     }
 
@@ -140,22 +139,10 @@ struct DiagnosticsModel: Equatable {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         switch disposition {
         case .needsAction: return t(.supportNeedsAction)
-        case .limited: return t(.supportLimited)
+        case .unproven: return t(.supportUnproven)
         case .available: return t(.supportAvailable)
         case .notInstalled: return t(.supportNotInstalled)
         case .noRecentSession: return t(.supportNoRecentSession)
-        case .permissionDenied: return t(.supportPermissionDenied)
-        case .unscanned: return t(.supportUnscanned)
-        }
-    }
-
-    static func fix(_ repair: SupportRepair) -> Fix? {
-        switch repair {
-        case .installHooks: return .installHooks
-        case .retry: return .retryScan
-        case .openSettings: return .openDataAccess
-        case .openAttentionBridge: return .openHooksSettings
-        case .runAgent, .none: return nil
         }
     }
 }

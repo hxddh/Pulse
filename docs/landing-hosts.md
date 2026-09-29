@@ -1,33 +1,32 @@
-# Host landing — what Pulse can (and cannot) deep-link
+# Landing — how ↩ / click / banner reach the exact prompt
 
-0.56 Landing Precision documents the spike for Cursor / VS Code / Zed /
-Windsurf / Trae / Antigravity. Goal: land nearer than bare app activate when
-evidence allows, without new TCC prompts at scan time.
+24.0. The hook records where its session lives (`HookLanding.handles`, the v4
+`landing` column): `tmux:%3;tmuxsock:<socket>;iterm:w0t1p0:<uuid>;tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<__CFBundleIdentifier>`.
+`LandingPlan.make(handle:cwd:allowAutomation:pid:hostApp:)` (pure, once per
+projection) turns it into ordered steps; `TerminalFocus.land` (on the click)
+runs them until one succeeds and reports **exact**, **app only** or
+**failed** — never rounded up. The process table only fills what the hook did
+not say (tty, Warp, host editor) and gives process-only rows their fallback.
 
-## Available without Automation
-
-| Host | App activate | Workspace folder | Composer / tab / session |
+| Handle | Steps | Precision | Needs Automation |
 | --- | --- | --- | --- |
-| Cursor | `NSWorkspace` / bundle id | `open -a Cursor.app <cwd>` | **Blocked** — no stable public URL scheme for a composer id without vendor API / TCC |
-| VS Code | same | `open -a "Visual Studio Code.app" <cwd>` | **Blocked** — `vscode://file/...` opens a file, not a chat; unreliable across builds |
-| Windsurf | same | `open -a Windsurf.app <cwd>` | **Blocked** — no documented session deep link |
-| Zed | same | `open -a Zed.app <cwd>` | **Blocked** — workspace ok; no agent-thread URL |
-| Trae | same | `open -a Trae.app <cwd>` | **Blocked** |
-| Antigravity | same | `open -a Antigravity.app <cwd>` | **Blocked** |
-| Warp | `NSWorkspace` | n/a (terminal app) | **Blocked** without Automation — Pulse advertises **Warp (app)** only |
+| `tmux:` (+ `tmuxsock:`) | `tmux [-S sock] switch-client ; select-window ; select-pane -t %N`, then activate the app owning the tmux client (its pid's parent chain), else the `term:`/`app:` app | exact | no |
+| `iterm:` + `term:iTerm.app` | AppleScript: select the session whose `unique id` is the part after `:` | exact | yes |
+| `tty:` + Terminal / iTerm (or unknown) | AppleScript tab search by tty (running apps only) | exact | yes |
+| `term:ghostty` / `WezTerm` / `kitty` / `WarpTerminal` | activate the running app | app | no |
+| `term:vscode` (`app:` tells Cursor, Windsurf… apart), `zed`, a host editor on the parent chain | `open -b <bundle> <cwd>`, then activate | app | no |
+| none, live pid | activate the first regular app on the pid's parent chain | app | no |
+| none | no Go; ↩ and banners open the detail page | — | — |
 
-## Pulse mapping
+The label follows the plan: **Go to terminal** only when the first step is
+exact, otherwise **Open app**. An app-only landing says "Opened the app —
+can't select the exact terminal"; a failed one says so and rescans.
 
-| Evidence | `FocusTier` | Click |
-| --- | --- | --- |
-| `viaWarp` | `.warp` | Activate Warp.app |
-| Host + absolute `cwd` | `.hostWorkspace` | `open -a Host.app <cwd>`; fall back to activate |
-| Host, no usable cwd | `.hostApp` | Activate host only |
-| Real TTY + Shortcuts opt-in | `.tty` | AppleScript tab select (may prompt Automation once) |
-| None | nil | Observation only; notify opens tray |
+## Non-goals
 
-## Explicit non-goals
-
-- Finder “Open directory” is not Focus (EXPERIENCE).
-- Expanding the Claude/Codex hook installer is not a landing substitute.
-- Scan-time enumeration of `NSWorkspace.shared.runningApplications` stays forbidden.
+- No IDE extension: an editor cannot be told which integrated terminal, so it
+  stays app precision.
+- Nothing is launched to look for a session: only running terminals are
+  activated or scripted.
+- No typing into terminals, no Finder "open folder", no scan-time enumeration
+  of `NSWorkspace.shared.runningApplications`.

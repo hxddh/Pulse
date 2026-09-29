@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "23.0.0"
+    static let semver = "24.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -91,30 +91,6 @@ enum PulseVersion {
     }
 }
 
-
-
-/// How this row's Waiting was raised.
-enum WaitSignalKind: String, Equatable, Sendable {
-    /// A Claude / Codex hook (or an Attention bridge line) said so.
-    case hooks
-    /// The vendor's own session file holds an open ask (`skill=pending`).
-    case pending
-    /// 18.0: the vendor's own report of a blocked session (`claude agents`).
-    case vendor
-}
-
-/// Honesty tier for Focus — never claim session/tab precision when we only activate an app.
-enum FocusTier: Equatable, Hashable {
-    /// Terminal/iTerm tab select (Automation opt-in only).
-    case tty
-    /// Warp app activate — never tab-precise.
-    case warp
-    /// Host IDE with an absolute workspace path we can open via `open -a`.
-    case hostWorkspace(HostAppKind)
-    /// Host IDE app activate only.
-    case hostApp(HostAppKind)
-}
-
 enum GlanceKind: Equatable {
     case idle
     case running
@@ -134,67 +110,64 @@ enum GlanceKind: Equatable {
     }
 }
 
-/// 23.0 · what a blocked row is blocked on, and on what evidence.
+/// 23.0 · what a blocked row is blocked on. 24.0: always a hook's blocked
+/// event — the only source of a wait.
 struct RowWait: Hashable, Sendable {
     /// Protocol token (`Permission` / `Input` / `Waiting`), never user copy —
     /// `L10n.waitKind` translates it.
     var kind: String
     /// What the agent asked, in its own words (sanitized); "" when unknown.
     var ask: String = ""
-    /// When the wait was raised, by the evidence's own clock; 0 = unknown.
+    /// When the wait was raised, by the hook's own clock; 0 = unknown.
     var sinceMs: Int64 = 0
-    var signal: WaitSignalKind
     /// 16.0: the prompt's own window was frontmost when it was raised — the
     /// lamp still lights, but no banner and no sound.
     var inFront: Bool = false
 }
 
-/// 23.0 · the one state a row is in. It replaces the booleans that used to
-/// say it in pieces (`waiting`, `yourTurn`, `isProcessOnly`, a completed
-/// phase…), which could disagree. Decided once, by `SnapshotBuilder`.
+/// 23.0 · the one state a row is in, decided once (24.0: by
+/// `SessionProjection`, from the session book).
 enum RowState: Hashable, Sendable {
-    /// Red: a permission, a question, or a wait the vendor reported.
+    /// Red: the vendor's hook reported a permission request or a question.
     case blocked(RowWait)
-    /// A live session (a process, an explicit running phase, or subagents).
+    /// The session took a prompt or reported work, and nothing since says
+    /// otherwise.
     case running
     /// 16.0: the agent finished its turn and nobody has looked since. From
     /// hooks only; never red.
     case yourTurn(sinceMs: Int64)
-    /// A session with no live evidence — finished or gone quiet.
+    /// At its prompt with nothing owed, ended, or quiet past what Pulse can
+    /// vouch for.
     case recent
-    /// A process and nothing else: no session file, no hook. Ephemeral — it
-    /// is not built once a session row for the agent exists.
+    /// An agent process no session has claimed — typically one started
+    /// before Pulse was running. Ephemeral: once a hook event names its
+    /// session, the process belongs to that row.
     case processOnly
+}
+
+/// 24.0 · why a session is shown as recent rather than live.
+enum RecentReason: Hashable, Sendable {
+    /// At its prompt with nothing owed: it started, or its turn was seen or
+    /// aged out.
+    case atPrompt
+    /// It ended, or its process exited.
+    case ended
+    /// Its process is not known and nothing was heard for the idle bound —
+    /// Pulse cannot vouch that it is still there.
+    case quiet
 }
 
 /// 23.0 · where a row's facts came from, in the words `Explain` uses.
 enum RowSource: String, Equatable, Hashable, Sendable {
-    /// The vendor's structured session file.
-    case session
-    /// A vendor cache or database.
-    case cache
-    /// Only a hook said anything (no session file found yet).
+    /// The agent's own hook events.
     case hooks
-    /// Only a process.
+    /// Only a process (the process table).
     case process
-
-    init(_ evidence: ObservationSource) {
-        switch evidence {
-        case .session: self = .session
-        case .cache: self = .cache
-        case .process: self = .process
-        }
-    }
 }
 
-/// One tray row: a session (or a process, or a hook wait) and exactly what
-/// the tray row, the detail page, the lamp and the notifier read.
-///
-/// 23.0 cut ~70 stored and ~36 computed fields down to these. Tokens, CPU,
-/// memory, context, files, tool histograms, subagent counts, phase and
-/// outcome strings and the observation-quality envelope existed for
-/// narration sentences that are gone; `Explain` builds the few sentences
-/// left from what is here.
+/// One tray row: a session (or a process no session has claimed) and
+/// exactly what the tray row, the detail page, the lamp and the notifier
+/// read. `Explain` builds the few sentences Pulse says from what is here.
 struct AgentRow: Identifiable, Hashable {
     // MARK: Identity — `RowIdentity` decides the key, and it never changes.
 
@@ -209,51 +182,48 @@ struct AgentRow: Identifiable, Hashable {
     /// the agent's session-less entry.
     var attentionSession: String = ""
     var cwd: String = ""
-    /// The workspace path was reconstructed from a dash-encoded vendor
-    /// directory name and the disk could not confirm it. Display only —
-    /// `focusTier` never offers workspace precision for it.
-    var cwdBestEffort: Bool = false
     var project: String = ""
 
     // MARK: The process and how to reach it
 
-    /// A live process of this agent was attached to this row.
+    /// The row's process is known and alive (an exit ends the session).
     var liveProcess: Bool = false
     var pid: Int = 0
-    var tty: String = ""
-    var viaWarp: Bool = false
-    /// Host IDE detected by walking the process parent chain (`ps` only).
-    var hostApp: HostAppKind? = nil
-    /// How this row can be focused — resolved once per scan, never in a view body.
-    var focusTier: FocusTier? = nil
+    /// Where the session can be reached: the hook's landing handle, filled
+    /// in from the process table where the hook said nothing.
+    var landing = LandingHandle()
+    /// How a click lands (`LandingPlan.make`) — resolved once per projection,
+    /// never in a view body.
+    var landingPlan = LandingPlan()
 
-    // MARK: What it is doing
+    // MARK: What it is doing (24.0: from its transcript, read lazily)
 
+    /// The session's title: the vendor's own name, else the first prompt.
     var task: String = ""
     var model: String = ""
     /// The first line of the agent's latest message (self-report tier).
     var lastWord: String = ""
-    /// The agent's own plan (TodoWrite / update_plan), bounded.
-    var planSteps: [ActivityHarvest.PlanStep] = []
-    var errors: Int = 0
+    /// The first line of the latest error the transcript holds.
     var lastErrorText: String = ""
 
     // MARK: State
 
     var state: RowState = .recent
-    /// Resolved once per scan against the scan's clock and the stall rule
-    /// (`SnapshotBuilder`), never against `Date()` in a view.
+    /// Why a `.recent` row is recent — `Explain` says the rule.
+    var recentReason: RecentReason = .atPrompt
+    /// Resolved once per projection against its clock and the stall rule
+    /// (`SessionProjection`), never against `Date()` in a view.
     var isStalled: Bool = false
-    /// The session file's last change, in ms; 0 = unknown.
-    var harvestMs: Int64 = 0
-    /// The live-signal clock: a hook activity event, or a fact that moved
-    /// while the file's mtime did not. 0 = none.
+    /// When the row entered its state, by the event's clock (a process-only
+    /// row: when the process began); 0 = unknown.
+    var stateSinceMs: Int64 = 0
+    /// The newest event of any kind, in ms; 0 = none.
+    var eventMs: Int64 = 0
+    /// The newest activity event (a tool ran, a prompt); 0 = none.
     var activityMs: Int64 = 0
     /// When the session (or, for a process-only row, the process) began.
     var startedMs: Int64 = 0
     var source: RowSource = .process
-    /// Sessions of this agent that exist but did not fit the per-agent cap.
-    var hiddenSessions: Int = 0
 
     var id: String { rowKey }
 
@@ -288,38 +258,34 @@ struct AgentRow: Identifiable, Hashable {
         }
     }
 
-    var canFocusTerminal: Bool { focusTier != nil }
+    var canFocusTerminal: Bool { !landingPlan.isEmpty }
+
+    /// A click can land on the exact pane, session or tab.
+    var landsExactly: Bool { landingPlan.precision == .exact }
 
     /// The newest clock this row has, in ms; 0 = unknown.
-    var lastActivityMs: Int64 { max(harvestMs, activityMs) }
+    var lastActivityMs: Int64 { max(eventMs, activityMs) }
 
     /// Seconds since this session last did anything, against the caller's
-    /// clock (the builder must pass `Context.nowMs`); 0 when unknown.
+    /// clock (the projection passes its `nowMs`); 0 when unknown.
     func lastActivitySeconds(at nowMs: Int64) -> Double {
         let last = lastActivityMs
         guard last > 0 else { return 0 }
         return max(0, Double(nowMs - last) / 1000.0)
     }
 
-    /// Whether the agent's plan and words may be quoted as *now*: past 30
-    /// minutes of silence a "current step" would be stale wearing fresh
-    /// clothes.
+    /// Whether the agent's words may be quoted as *now*: past 30 minutes of
+    /// silence they would be stale wearing fresh clothes.
     func selfReportFresh(at nowMs: Int64) -> Bool {
         lastActivitySeconds(at: nowMs) <= 30 * 60
     }
 
-    /// A 2.9 hook activity event moved this session now. The stamp feeds
-    /// the live-signal clock, never `harvestMs`: the session moved, but its
-    /// harvested facts are as old as their harvest.
-    mutating func applyActivity(_ event: ActivitySpool.Event, nowMs: Int64) {
-        activityMs = max(activityMs, min(event.tsMs, nowMs))
-    }
-
     // MARK: - Stall
 
-    /// The stall rule: twenty minutes of silence from a live session. Not a
-    /// setting (23.0); `SnapshotBuilder.Context` carries it so a test can
-    /// move it.
+    /// The stall rule: twenty minutes with no event from a working session
+    /// whose agent reports its work (24.0: one that has sent an activity
+    /// event). Not a setting; `SessionProjection.Context` carries it so a
+    /// test can move it.
     static let stalledSeconds: Double = 20 * 60
 
     /// Whether a live row would be stalled at the given instant.
@@ -405,15 +371,6 @@ struct AgentRow: Identifiable, Hashable {
     /// The short project name a row shows beside the agent.
     var shortPlace: String { Self.shortProject(project.isEmpty ? cwd : project) }
 
-    /// `840 B` / `12 KB` / `1.4 MB`. Empty when unknown — an invented "0 KB"
-    /// would be a different claim.
-    static func compactBytes(_ n: Int) -> String {
-        guard n > 0 else { return "" }
-        if n < 1024 { return "\(n) B" }
-        if n < 1024 * 1024 { return "\(n / 1024) KB" }
-        return String(format: "%.1f MB", Double(n) / (1024.0 * 1024.0))
-    }
-
     /// Where this session lives, written the way a person would write it.
     /// The home directory is not a project, and a deep path keeps its tail.
     var displayPath: String {
@@ -466,198 +423,48 @@ enum TraySection: Int, CaseIterable, Hashable {
     }
 }
 
-/// Runtime truth for one supported Agent.
-///
-/// The support matrix says what an adapter is designed to read. This model
-/// says what Pulse actually observed on this Mac in the latest good scan.
-/// Keeping the two distinct prevents a declared collector from being presented
-/// as rich support when the vendor store is missing, unreadable, or changed.
+/// 24.0 · one agent, as Diagnostics says it: is its hook installed, has it
+/// fired, what does Pulse see of it now. Counts and states only.
 struct AgentSupportHealth: Identifiable, Equatable {
     var agent: AgentID
-    var collectorState: ActivityHarvest.CollectorState
-    var collectorDurationMs: Int
-    var collectorRows: Int
-    var sourcePresent: Bool
-    var collectorErrorKind: String
-    var processDetected: Bool
-    var processEvidence: ProcessEvidence?
-    /// Earliest matched process start for this Agent, when the probe provided
-    /// it. This is process evidence, not session age.
-    var processStartedMs: Int64 = 0
-    /// Number of matching processes represented by the support row.
-    var processCount: Int = 0
-    var evidence: ObservationSource?
-    var lastSuccessfulReadMs: Int64
-    var lastWaitingSignalMs: Int64
-    var hasGoal: Bool
-    var hasWorkspace: Bool
-    var hasActivity: Bool
-    var hasProgress: Bool
-    var waitingSignalReady: Bool
-    /// True when the latest result may be incomplete because the user keeps
-    /// protected app-data reads disabled. This is explanatory UI state, not a
-    /// claim that the Agent is installed.
-    var privacyLimited: Bool = false
-    /// Optional operational facts shown separately from the four core facts.
-    /// These are inventory signals, not quality gates: an Agent may not expose
-    /// a model or resource counter in its local store, but that absence must be
-    /// visible instead of silently making every adapter look equivalent.
-    var hasActionSignal: Bool = false
-    var hasModelSignal: Bool = false
-    var hasResourceSignal: Bool = false
-    /// Best Focus handle among this Agent's rows this scan — nil means observation only.
-    var focusTier: FocusTier? = nil
-    /// A real TTY exists but Shortcuts Automation is off — honest, not clickable.
-    var focusTTYNeedsOptIn: Bool = false
-    /// Seconds since the freshest session activity clock (0 = unknown).
-    /// Distinct from `lastSuccessfulReadMs` (Pulse read the adapter).
-    var activityAgeSeconds: Double = 0
-    /// True when any live row for this Agent is currently marked stalled.
-    var hasStalledLive: Bool = false
-    /// How the adapter reached the result above: how much it read, whether the
-    /// window was truncated, and — when there is no hero title — which layer
-    /// lost it. Diagnostic only; it carries counts and fixed tags, never
-    /// titles, prompts or vendor paths, and it is never promoted to a tray
-    /// fact. It has been collected since 1.2 and until now only reached
-    /// debug.log, which meant the one question Support Health exists to answer
-    /// — "why is this row empty?" — still cost a terminal to ask.
-    var collectorExplain: ActivityHarvest.CollectorExplain = ActivityHarvest.CollectorExplain()
-    /// 2.9 · measured fact classes from the latest scan (names only). The
-    /// declared tier is a promise; this is what actually came out.
-    var factClasses: Set<String> = []
-    /// Declared structured, produced rows, zero core facts — drift, not
-    /// idleness. See `CollectorHealth.looksDrifted`.
-    var looksDrifted: Bool = false
+    /// Pulse's hook is in the vendor's configuration.
+    var hookInstalled: Bool
+    /// The vendor's own directory exists on this Mac.
+    var vendorPresent: Bool
+    /// The newest attention line from this agent; 0 never.
+    var lastEventMs: Int64
+    /// Sessions the hooks told Pulse about that are on the list now.
+    var sessionCount: Int
+    /// Agent processes no session has claimed (started before Pulse, or
+    /// with no hook).
+    var processOnlyCount: Int
+    /// How this agent's rows land: exact only when every reachable row does;
+    /// nil means observation only.
+    var focusPrecision: LandingPlan.Precision? = nil
 
     var id: AgentID { agent }
 
-    var isObserved: Bool { processDetected || evidence != nil }
-
-    var missingCapabilities: [SupportCapability] {
-        guard isObserved else { return [.notDetected] }
-        var missing: [SupportCapability] = []
-        if evidence == .process || !hasActivity { missing.append(.activityFeed) }
-        if !hasGoal { missing.append(.goal) }
-        if !hasWorkspace { missing.append(.workspace) }
-        if agent.waitingSource != .none, !waitingSignalReady {
-            missing.append(.waitingSignal)
-        }
-        return missing
-    }
-
-    var observedFactCount: Int {
-        [
-            hasGoal,
-            hasWorkspace,
-            hasActivity,
-            evidence != nil || processDetected,
-        ].filter { $0 }.count
-    }
-
-    /// User-value scorecard: goal, workspace, activity, progress, and a usable
-    /// Waiting route when that Agent actually exposes one. Process detection is
-    /// evidence, not useful content; an Agent with no Waiting contract must not
-    /// lose a point for a capability it cannot provide.
-    var usefulFactCount: Int {
-        var facts = [
-            hasGoal,
-            hasWorkspace,
-            hasActivity,
-            hasProgress,
-        ]
-        if agent.waitingSource != .none {
-            facts.append(waitingSignalReady)
-        }
-        return facts.filter { $0 }.count
-    }
-
-    /// Number of useful signals that are meaningful for this Agent's local
-    /// contract. This keeps the support UI honest for cloud/opaque agents that
-    /// do not expose a Waiting event at all.
-    var usefulFactTotal: Int {
-        agent.waitingSource == .none ? 4 : 5
-    }
-
     var disposition: SupportDisposition {
-        // A scan that ended before this adapter reported is an observation
-        // gap, not an adapter failure. The support window shows the global
-        // partial-scan banner and preserves the previous per-agent result.
-        if collectorState == .unscanned {
-            return isObserved ? .limited : .unscanned
+        if !hookInstalled {
+            return vendorPresent || processOnlyCount > 0 ? .needsAction : .notInstalled
         }
-        if collectorState.isIssue {
-            // A bounded timeout that already returned rows is actionable for
-            // diagnostics, but the partial rows are still usable. Keep them
-            // visible as limited rather than hiding them behind an error state.
-            if collectorState == .failed, collectorRows > 0 { return .limited }
-            if collectorState == .permissionDenied { return .permissionDenied }
-            return .needsAction
-        }
-        if privacyLimited && !isObserved { return .permissionDenied }
-        if isObserved,
-           agent.waitingSource == .hooks,
-           !waitingSignalReady {
-            return .needsAction
-        }
-        guard isObserved else {
-            if collectorState == .sourceAbsent { return .notInstalled }
-            return .noRecentSession
-        }
-        if collectorState == .noSessions || collectorState == .noRecentData {
-            return .noRecentSession
-        }
-        if evidence == .process
-            || !hasGoal
-            || !hasWorkspace
-            || !hasActivity
-            || !hasProgress
-            || (agent.waitingSource != .none && !waitingSignalReady) {
-            return .limited
-        }
-        return .available
-    }
-
-    var repair: SupportRepair {
-        if disposition == .needsAction,
-           agent.waitingSource == .hooks,
-           !waitingSignalReady {
-            return .installHooks
-        }
-        if disposition == .permissionDenied { return .openSettings }
-        if collectorState.isIssue { return .retry }
-        // Live opaque agents cannot invent Waiting — point at the Attention bridge.
-        if agent.waitingSource == .none, processDetected {
-            return .openAttentionBridge
-        }
-        return .none
+        if sessionCount > 0 { return .available }
+        return lastEventMs > 0 ? .noRecentSession : .unproven
     }
 }
 
+/// 24.0 · what Diagnostics says of an agent, in one word.
 enum SupportDisposition: Int, Equatable {
+    /// Hook installed, sessions on the list.
     case available = 0
+    /// The agent is here and its hook is not.
     case needsAction = 1
-    case limited = 2
-    case notInstalled = 3
-    case noRecentSession = 4
-    case permissionDenied = 5
-    case unscanned = 6
-}
-
-enum SupportRepair: Equatable {
-    case none
-    case installHooks
-    case retry
-    case openSettings
-    case runAgent
-    case openAttentionBridge
-}
-
-enum SupportCapability: String, Equatable {
-    case notDetected
-    case activityFeed
-    case goal
-    case workspace
-    case waitingSignal
+    /// Hook installed, never fired.
+    case unproven = 2
+    /// Hook installed and has fired; nothing going on now.
+    case noRecentSession = 3
+    /// Not on this Mac.
+    case notInstalled = 4
 }
 
 struct PulseSnapshot: Equatable {
@@ -675,11 +482,8 @@ struct PulseSnapshot: Equatable {
     /// even when the window is showing two of them.
     var sectionTotals: [TraySection: Int] = [:]
     var hiddenCount: Int = 0
-    /// Sessions suppressed by the per-agent cap (never silently dropped).
-    var cappedSessions: Int = 0
-    /// 21.0: sessions older than the fresh window, left out of the list —
-    /// and which agents they belong to. A row that went quiet for 46
-    /// minutes used to vanish with no trace outside debug.log.
+    /// 21.0: sessions quiet past the recent window, left out of the list —
+    /// and which agents they belong to (the last 24 hours only).
     var staleHidden: Int = 0
     /// 23.0: the menu-bar lamp's shape and tone (`LampFace.glance`).
     var lamp: LampFace = .idle

@@ -29,18 +29,16 @@ let package = Package(
             // warning here is a data race the compiler already found.
             swiftSettings: productSettings
         ),
-        // 12.3 · Harvest: the native collector — the scan, the walk, the
-        // vendor dialects, SQLite adapters, the process probe and the
-        // attention spool. It sees the catalog and the kernel, never the
-        // store or the UI; the app reads what it returns.
+        // 12.3 · Harvest; 24.0: the event sources — the attention file and
+        // the activity spool the hooks write, the process table (libproc),
+        // and the bounded read of one known transcript. It sees the catalog
+        // and the kernel, never the store or the UI; the app reads what it
+        // returns. (The name stays; the file-scraping collector is gone.)
         .target(
             name: "PulseHarvest",
             dependencies: ["PulseCore"],
             path: "Sources/PulseHarvest",
-            swiftSettings: productSettings,
-            linkerSettings: [
-                .linkedLibrary("sqlite3"),
-            ]
+            swiftSettings: productSettings
         ),
         // 22.0 removed PulseManaged (sessions Pulse ran itself) and 23.0
         // removed PulseRespond (answering permission requests). A status
@@ -55,24 +53,18 @@ let package = Package(
             ],
             // 12.4: every target is warning-free under complete concurrency
             // checking, and stays that way — the same rule as PulseCore.
-            swiftSettings: productSettings,
-            linkerSettings: [
-                .linkedLibrary("sqlite3"),
-            ]
+            swiftSettings: productSettings
         ),
-        // The merge logic in StatusStore is the most regression-prone part of
-        // the product and had no coverage at all before 0.22.
+        // The session reducer and its projection are the most
+        // regression-prone part of the product.
         .testTarget(
             name: "PulseBarTests",
             dependencies: ["PulseBar", "PulseCore", "PulseHarvest"],
-            path: "Tests/PulseBarTests",
+            path: "Tests/PulseBarTests"
             // 19.0: the tests are in the Swift 6 mode too. An XCTestCase
             // subclass cannot be `@MainActor` (its superclass is not), so
             // the main-actor suites isolate their test methods instead; new
             // suites are Swift Testing (`import Testing`).
-            linkerSettings: [
-                .linkedLibrary("sqlite3"),
-            ]
         ),
     ]
 )

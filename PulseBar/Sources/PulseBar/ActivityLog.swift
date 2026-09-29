@@ -108,9 +108,6 @@ struct ActivityLogModel: Equatable {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         switch evidence {
         case .hook: return t(.signalHooks)
-        case .pending: return t(.signalPending)
-        case .vendor: return t(.signalVendor)
-        case .harvest: return t(.activityFromSession)
         case .process: return t(.activityFromProcess)
         }
     }

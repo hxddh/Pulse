@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import SQLite3
 import Testing
 import XCTest
 @testable import PulseBar
@@ -13,28 +12,16 @@ import XCTest
 // memory facts they rendered) with `RowNarrator`; what a row says is pinned
 // in `ExplainTests`. The focus-honesty rule below stays.
 
-/// A workspace the disk could not confirm must not be offered as a landing.
+/// A folder that cannot be a workspace is never opened as one: the editor
+/// drops to app precision.
 final class BestEffortWorkspaceTests: XCTestCase {
-    @MainActor
-    func testAnUnverifiedWorkspaceDropsToAppPrecision() {
-        let env = TerminalFocus.Environment(
-            warpRunning: true,
-            ttyHostRunning: true,
-            allowTTYAutomation: true
-        )
-        let verified = TerminalFocus.focusTier(
-            tty: "", viaWarp: false, hostApp: .cursor,
-            workspace: "/Users/me/my-project", workspaceVerified: true, env: env
-        )
-        let guessed = TerminalFocus.focusTier(
-            tty: "", viaWarp: false, hostApp: .cursor,
-            workspace: "/Users/me/my/project", workspaceVerified: false, env: env
-        )
-        if case .hostWorkspace = verified {} else {
-            XCTFail("a confirmed path still lands on the workspace: \(String(describing: verified))")
-        }
-        if case .hostApp = guessed {} else {
-            XCTFail("an unconfirmed decode must not open a folder: \(String(describing: guessed))")
+    func testOnlyAnAbsoluteWorkspaceIsOpened() {
+        let handle = LandingHandle(term: "vscode")
+        let opened = LandingPlan.make(handle: handle, cwd: "/Users/me/my-project", allowAutomation: false)
+        XCTAssertEqual(opened.steps.first, LandingStep.openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/my-project"))
+        for cwd in ["", "relative/path", "/", "/tmp", "/private/tmp"] {
+            let plan = LandingPlan.make(handle: handle, cwd: cwd, allowAutomation: false)
+            XCTAssertEqual(plan.steps, [.activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs)], "\(cwd) is not a workspace")
         }
     }
 }
@@ -54,14 +41,14 @@ struct TrayInteractionTests {
         row.project = "app"
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = now - minute
-        row.source = .session
+        row.eventMs = now - minute
+        row.source = .hooks
         return row
     }
 
     private func blocked(_ key: String, ask: String = "Bash: npm test") -> AgentRow {
         var row = session(key)
-        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: now - 4 * minute, signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: now - 4 * minute))
         return row
     }
 
@@ -418,7 +405,7 @@ struct TrayInteractionTests {
         #expect(none.counts.isEmpty)
         #expect(none.title == L10n.t(.noAgents, .en))
         #expect(none.freshness == L10n.t(.headerUpdating, .en))
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .amp, pid: 1), agent: .amp)
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 1), agent: .codex)
         process.state = .processOnly
         let grey = header(rows: [process], scanAgoMs: 1_000, lang: .zh)
         #expect(grey.title == "1 " + L10n.t(.processOnlyN, .zh))
@@ -428,26 +415,24 @@ struct TrayInteractionTests {
 
     private func notice(
         notify: Bool = true, authorized: Bool? = true, banner: Bool = false,
-        hooks: Bool = false, scan: Bool = false
+        hooks: Bool = false
     ) -> TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: .en, notifyOnWaiting: notify, notifyAuthorized: authorized,
-            bannerFailed: banner, hooksMissing: hooks, scanIncomplete: scan
+            bannerFailed: banner, hooksMissing: hooks
         ))
     }
 
     @Test func atMostOneNoticeInItsOrder() {
-        let all = notice(authorized: false, banner: true, hooks: true, scan: true)
+        let all = notice(authorized: false, banner: true, hooks: true)
         #expect(all?.kind == .notificationsDenied)
         #expect(all?.action == .openNotificationSettings)
         let notAsked = notice(authorized: nil, hooks: true)
         #expect(notAsked?.kind == .notificationsOff)
         #expect(notAsked?.action == .enableNotifications)
-        let hooks = notice(hooks: true, scan: true)
+        let hooks = notice(hooks: true)
         #expect(hooks?.kind == .hooksMissing)
         #expect(hooks?.action == .installHooks)
-        let scan = notice(scan: true)
-        #expect(scan?.action == .openDiagnostics)
         #expect(notice() == nil)
         let optedOut = notice(notify: false, authorized: false)
         #expect(optedOut == nil, "notifications turned off in Pulse are not a problem")
@@ -467,10 +452,9 @@ struct TrayInteractionTests {
         #expect(stalled.secondLine?.kind == .warning)
         var failingRow = session("f")
         failingRow.state = .recent
-        failingRow.errors = 1
+        failingRow.lastErrorText = "npm ERR!"
         let failing = face(failingRow)
-        #expect(failing.secondLine?.kind == .warning)
-        #expect(failing.lamp == LampFace(shape: .hollow, tone: .attention))
+        #expect(failing.secondLine == nil, "24.0: an error is a detail-page fact, not an orange row")
         var turnRow = session("t")
         turnRow.state = .yourTurn(sinceMs: now)
         let turn = face(turnRow)
@@ -674,12 +658,8 @@ final class AccessibilityLocalizationTests: XCTestCase {
     }
 
     func testSnapshotCarriesTheResolvedLabelSoTheViewNeedsNoLanguage() {
-        let ctx = SnapshotBuilder.Context(
-            nowMs: 1_700_000_000_000,
-            terminal: .init(warpRunning: false, ttyHostRunning: false),
-            lang: .zh
-        )
-        let result = SnapshotBuilder.build(.init(), previous: .init(), context: ctx)
+        let ctx = SnapshotBuilder.Context(nowMs: 1_700_000_000_000, lang: .zh)
+        let result = SnapshotBuilder.build(rows: [], previous: .init(), context: ctx)
         XCTAssertEqual(result.snapshot.accessibilityLabel, L10n.t(.a11yIdle, .zh))
     }
 
@@ -767,128 +747,105 @@ final class SurfaceModelTests: XCTestCase {
     }
 }
 
-/// Focus honesty: never claim a TTY we cannot select.
-final class FocusTierTests: XCTestCase {
-    private let fullEnv = TerminalFocus.Environment(
-        warpRunning: true, ttyHostRunning: true, allowTTYAutomation: true
-    )
-
-    func testWarpWins_WhenProcessRunsUnderWarp() {
-        let tier = TerminalFocus.focusTier(tty: "ttys003", viaWarp: true, env: fullEnv)
-        XCTAssertEqual(tier, .warp, "TTY tab select does not work inside Warp")
+/// 24.0 · landing: the handle decides, the plan says how precisely, and the
+/// label never promises more than the plan.
+@Suite("Landing plan")
+struct LandingPlanTests {
+    @Test func aTmuxPaneLandsExactlyWithoutAutomation() {
+        let handle = LandingHandle("tmux:%3;tmuxsock:/private/tmp/tmux-501/default;iterm:w0t1p0:ABCD;tty:/dev/ttys004;term:tmux;app:com.googlecode.iterm2")
+        #expect(handle.tmuxPane == "%3")
+        #expect(handle.tmuxSocket == "/private/tmp/tmux-501/default")
+        #expect(handle.tty == "ttys004")
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: false)
+        #expect(plan.steps == [
+            .tmuxPane(pane: "%3", socket: "/private/tmp/tmux-501/default", hostBundleIDs: ["com.googlecode.iterm2"]),
+            .activateApp(bundleIDs: ["com.googlecode.iterm2"]),
+        ], "inside tmux the pane is the handle; the tty and iTerm id are the server's")
+        #expect(plan.precision == .exact)
+        #expect(LandingPlan.tmuxArguments(pane: "%3", socket: "/s") == [
+            "-S", "/s",
+            "switch-client", "-t", "%3", ";",
+            "select-window", "-t", "%3", ";",
+            "select-pane", "-t", "%3", ";",
+            "display-message", "-p", "-t", "%3", "#{session_id}",
+        ])
+        #expect(LandingPlan.tmuxArguments(pane: "%3", socket: "").first == "switch-client")
     }
 
-    func testHostAppIsAdvertisedWithoutAutomation() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "", viaWarp: false, hostApp: .cursor, env: env
-            ),
-            .hostApp(.cursor)
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "ttys003", viaWarp: false, hostApp: .vsCode, env: env
-            ),
-            .hostApp(.vsCode)
-        )
+    @Test func anITermSessionIsSelectedByItsUniqueID() {
+        let handle = LandingHandle("iterm:w0t1p0:9F1C-UUID;tty:/dev/ttys007;term:iTerm.app")
+        #expect(handle.itermUniqueID == "9F1C-UUID")
+        let plan = LandingPlan.make(handle: handle, cwd: "/Users/me/app", allowAutomation: true)
+        #expect(plan.steps == [
+            .iTermSession(uniqueID: "9F1C-UUID"),
+            .ttyTab(tty: "ttys007"),
+            .activateApp(bundleIDs: [LandingPlan.iTermBundleID]),
+        ])
+        #expect(plan.precision == .exact)
     }
 
-    func testAbsoluteWorkspacePromotesHostWorkspaceTier() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "",
-                viaWarp: false,
-                hostApp: .cursor,
-                workspace: "/Users/me/code/Pulse",
-                env: env
-            ),
-            .hostWorkspace(.cursor)
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "",
-                viaWarp: false,
-                hostApp: .zed,
-                workspace: "/",
-                env: env
-            ),
-            .hostApp(.zed),
-            "root is not a usable workspace advertisement"
-        )
-        XCTAssertFalse(TerminalFocus.isAbsoluteWorkspacePath(""))
-        XCTAssertFalse(TerminalFocus.isAbsoluteWorkspacePath("relative/path"))
-        XCTAssertTrue(TerminalFocus.isAbsoluteWorkspacePath("/Users/me/proj"))
+    @Test func aTerminalTabIsFoundByItsTTY() {
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001;term:Apple_Terminal"), cwd: "", allowAutomation: true)
+        #expect(plan.steps == [.ttyTab(tty: "ttys001"), .activateApp(bundleIDs: [LandingPlan.terminalBundleID])])
+        #expect(plan.precision == .exact)
     }
 
-    func testWarpBeatsHostApp() {
-        let env = TerminalFocus.Environment(
-            warpRunning: true, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(
-                tty: "", viaWarp: true, hostApp: .cursor, workspace: "/Users/me/p", env: env
-            ),
-            .warp
-        )
+    @Test func ghosttyIsTheAppOnly() {
+        let plan = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys002;term:ghostty"), cwd: "/Users/me/app", allowAutomation: true)
+        #expect(plan.steps == [.activateApp(bundleIDs: ["com.mitchellh.ghostty"])], "the tab search asks only Terminal and iTerm")
+        #expect(plan.precision == .app)
     }
 
-    func testTTYIsNotAdvertisedUntilAutomationOptIn() {
-        let off = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: false
+    @Test func anEditorTerminalOpensTheFolderInThatEditor() {
+        let vscode = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys005;term:vscode"), cwd: "/Users/me/app", allowAutomation: true, pid: 812)
+        #expect(vscode.steps == [
+            .openFolder(bundleIDs: HostAppKind.vsCode.bundleIDs, path: "/Users/me/app"),
+            .activateApp(bundleIDs: HostAppKind.vsCode.bundleIDs),
+            .activateOwner(pid: 812),
+        ])
+        #expect(vscode.precision == .app)
+        let cursor = LandingPlan.make(
+            handle: LandingHandle("term:vscode;app:com.todesktop.230313mzl4w4u92"), cwd: "/Users/me/app", allowAutomation: false
         )
-        XCTAssertNil(
-            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: off),
-            "default off — never advertise TTY before Shortcuts opt-in"
-        )
-        let on = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: true
-        )
-        XCTAssertEqual(
-            TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: on),
-            .tty
-        )
+        #expect(cursor.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.cursor.bundleIDs, path: "/Users/me/app"), "Cursor also says vscode")
     }
 
-    func testCwdDoesNotPretendToBeAFocusHandle() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertNil(TerminalFocus.focusTier(tty: "ttys003", viaWarp: false, env: env))
+    @Test func anEmptyHandleFallsBackToTheProcessOwnerOrNothing() {
+        #expect(LandingPlan.make(handle: LandingHandle(""), cwd: "/Users/me/app", allowAutomation: true).isEmpty)
+        #expect(LandingPlan.make(handle: LandingHandle(), cwd: "", allowAutomation: true).precision == nil)
+        let process = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312)
+        #expect(process.steps == [.activateOwner(pid: 4312)])
+        #expect(process.precision == .app)
+        let ide = LandingPlan.make(handle: LandingHandle(), cwd: "/Users/me/app", allowAutomation: false, pid: 4312, hostApp: .zed)
+        #expect(ide.steps.first == LandingStep.openFolder(bundleIDs: HostAppKind.zed.bundleIDs, path: "/Users/me/app"))
     }
 
-    func testNoHandleMeansNoFocusButtonAtAll() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: false, allowTTYAutomation: false
-        )
-        XCTAssertNil(TerminalFocus.focusTier(tty: "", viaWarp: false, env: env))
-    }
-
-    func testPlaceholderTTYValuesAreNotRealHandles() {
-        let env = TerminalFocus.Environment(
-            warpRunning: false, ttyHostRunning: true, allowTTYAutomation: true
-        )
-        for placeholder in ["", "?", "??", "-"] {
-            XCTAssertNil(
-                TerminalFocus.focusTier(tty: placeholder, viaWarp: false, env: env),
-                "\(placeholder) should not count as a TTY"
-            )
+    @Test func automationOffNeverScriptsATerminal() {
+        let iterm = LandingPlan.make(handle: LandingHandle("iterm:w0t1p0:ABCD;tty:/dev/ttys007;term:iTerm.app"), cwd: "", allowAutomation: false)
+        #expect(iterm.steps == [.activateApp(bundleIDs: [LandingPlan.iTermBundleID])])
+        #expect(iterm.precision == .app)
+        let terminal = LandingPlan.make(handle: LandingHandle("tty:/dev/ttys001"), cwd: "", allowAutomation: false)
+        #expect(terminal.isEmpty, "a bare tty with automation off is not a handle")
+        for placeholder in ["tty:?", "tty:??", "tty:-"] {
+            #expect(LandingPlan.make(handle: LandingHandle(placeholder), cwd: "", allowAutomation: true).isEmpty, "\(placeholder)")
         }
     }
 
-    func testFocusHostAppActionCopyIsProductNameNotGenericTerminal() {
-        let enApp = L10n.t(.focusHostApp, .en)
-        XCTAssertEqual(String(format: enApp, HostAppKind.cursor.displayName), "Go to Cursor (app)")
-        let enWs = L10n.t(.focusHostWorkspace, .en)
-        XCTAssertEqual(String(format: enWs, HostAppKind.zed.displayName), "Go to the workspace in Zed")
-        XCTAssertEqual(L10n.t(.focusWarp, .en), "Go to Warp (app)")
-        let zh = L10n.t(.focusHostApp, .zh)
-        XCTAssertEqual(String(format: zh, "Cursor"), "前往 Cursor（应用）")
+    @Test func theLabelFollowsThePrecision() {
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        #expect(!row.canFocusTerminal)
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("term:ghostty"), cwd: "", allowAutomation: true)
+        #expect(Explain.focusTitle(row, lang: .en) == "Open app")
+        #expect(Explain.focusTitle(row, lang: .zh) == "打开应用")
+        row.landingPlan = LandingPlan.make(handle: LandingHandle("tmux:%1"), cwd: "", allowAutomation: false)
+        #expect(Explain.focusTitle(row, lang: .en) == "Go to terminal")
+        #expect(Explain.focusTitle(row, lang: .zh) == "前往终端")
+        #expect(row.landsExactly)
+        #expect(StatusStore.supportFocus(in: [row]) == .exact)
+        var app = row
+        app.landingPlan = LandingPlan(steps: [.activateOwner(pid: 9)])
+        #expect(StatusStore.supportFocus(in: [row, app]) == .app, "exact only when every row is")
+        #expect(StatusStore.supportFocus(in: []) == nil)
     }
 }
 
@@ -974,72 +931,40 @@ final class GlanceTitleTests: XCTestCase {
     @MainActor
     func testIdleGlanceStaysEmpty() {
         let r = SnapshotBuilder.build(
-            SnapshotBuilder.Input(procs: [], harvest: [], attention: []),
+            rows: [],
             previous: .init(),
-            context: SnapshotBuilder.Context(
-                nowMs: 1_700_000_000_000,
-                terminal: TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false),
-                lang: .en
-            )
+            context: SnapshotBuilder.Context(nowMs: 1_700_000_000_000, lang: .en)
         )
         XCTAssertEqual(r.snapshot.glance, .idle)
         XCTAssertEqual(r.snapshot.title, "")
     }
 }
 
-/// 2.8 Progress — the agent's own plan, words, and errors.
-///
-/// The most valuable structure in a transcript is the one the agent writes
-/// for itself: its todo list. It used to be filtered out wholesale because
-/// plan-step titles once polluted the tray hero. These tests hold the new
-/// deal: the structure is read on purpose, into fields that are not the
-/// hero, under self-report rules — sanitized, aged, and never Waiting.
+/// The agent's own words are quoted as *now* only while they are fresh —
+/// one rule for every surface.
 final class DetailPlanTests: XCTestCase {
-
     private let now: Int64 = 1_800_000_000_000
+
     func testSelfReportFreshnessIsOneRuleForEverySurface() {
         // Codex review on #74: Details showed "Current step" past the 30
         // minutes where the story line had already withdrawn it. Every
         // surface reads this one rule.
-        let clock: Int64 = 1_800_000_000_000
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.harvestMs = clock - 5 * 60 * 1000
-        XCTAssertTrue(row.selfReportFresh(at: clock))
-        row.harvestMs = clock - 31 * 60 * 1000
-        XCTAssertFalse(row.selfReportFresh(at: clock), "the headline and the detail page share this gate")
+        row.eventMs = now - 5 * 60 * 1000
+        XCTAssertTrue(row.selfReportFresh(at: now))
+        row.eventMs = now - 31 * 60 * 1000
+        XCTAssertFalse(row.selfReportFresh(at: now), "the headline and the detail page share this gate")
     }
 
-    // MARK: - The plan on the detail page: informs, ages, never implies Waiting
-
-    private func planRow(step: String = "Running the gates") -> AgentRow {
+    func testTheLastMessageNeverImpliesWaiting() {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.task = "Fix the auth module"
-        row.planSteps = [ActivityHarvest.PlanStep(text: step, state: .current)]
-        row.liveProcess = true
+        row.lastWord = "Waiting for your review."
         row.state = .running
-        row.harvestMs = now
-        return row
-    }
-
-    private func detail(_ row: AgentRow) -> DetailModel {
-        DetailModel.make(row: row, lang: .en, nowMs: now)
-    }
-
-    func testTheDetailPageShowsTheCurrentStep() {
-        XCTAssertEqual(detail(planRow()).plan?.steps.first?.text, "Running the gates")
-        XCTAssertEqual(detail(planRow()).plan?.steps.first?.current, true)
-    }
-
-    func testAStaleStepIsNotQuotedAsNow() {
-        var row = planRow()
-        row.harvestMs = now - 31 * 60 * 1000
-        XCTAssertNil(detail(row).plan, "a 31-minute-old plan is stale wearing fresh clothes")
-    }
-
-    func testAStepNeverImpliesWaiting() {
-        let row = planRow()
-        XCTAssertFalse(row.isBlocked, "nothing here may write Waiting")
-        XCTAssertFalse(detail(row).canDismiss)
+        row.eventMs = now
+        let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
+        XCTAssertEqual(detail.lastMessage, "Waiting for your review.")
+        XCTAssertFalse(row.isBlocked, "words never write Waiting")
+        XCTAssertFalse(detail.canDismiss)
     }
 }
 
@@ -1055,6 +980,13 @@ struct TerminalTabScriptTests {
         let match = try #require(script.range(of: "if ttyName contains"))
         let activate = try #require(script.range(of: "activate"))
         #expect(activate.lowerBound > match.upperBound, "activating before the search brought an unrelated window forward")
+    }
+
+    @Test func theITermSessionSearchActivatesOnlyOnItsUniqueID() throws {
+        let script = TerminalFocus.iTermSessionScript(uniqueID: "9F1C-\"x")
+        let match = try #require(script.range(of: "if (unique id of s as text) is \"9F1C-\\\"x\""))
+        let activate = try #require(script.range(of: "activate"))
+        #expect(activate.lowerBound > match.upperBound)
     }
 }
 
@@ -1077,8 +1009,8 @@ final class RowActionNoticeTests: XCTestCase {
         row.task = "Fix the auth module"
         row.liveProcess = true
         row.state = .running
-        row.harvestMs = Int64(Date().timeIntervalSince1970 * 1000)
-        row.source = .session
+        row.eventMs = Int64(Date().timeIntervalSince1970 * 1000)
+        row.source = .hooks
         return row
     }
 
@@ -1102,7 +1034,7 @@ final class RowActionNoticeTests: XCTestCase {
         // These only ever appear when something went wrong, which is exactly
         // when an untranslated or empty string would be found by a user
         // rather than by us.
-        for key in [L10n.Key.focusFailed] {
+        for key in [L10n.Key.focusFailed, .focusAppOnly] {
             XCTAssertFalse(L10n.t(key, .en).isEmpty, "\(key)")
             XCTAssertFalse(L10n.t(key, .zh).isEmpty, "\(key)")
             XCTAssertNotEqual(L10n.t(key, .en), L10n.t(key, .zh), "\(key)")

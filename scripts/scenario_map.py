@@ -21,8 +21,9 @@ SCENARIOS = ROOT / "docs" / "scenarios.md"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 EXPERIENCE = ROOT / "EXPERIENCE.md"
 # A floor, so a row cannot vanish unnoticed; it follows the spec down when a
-# release removes scenarios with the features they specified (22.0, 23.0).
-MIN_SCENARIOS = 60
+# release removes scenarios with the features they specified (22.0, 23.0,
+# 24.0: the harvest scenarios went with the harvest).
+MIN_SCENARIOS = 55
 
 
 def test_types() -> dict[str, set[str]]:

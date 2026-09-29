@@ -55,16 +55,6 @@ jobs:
       - name: Package and verify the app bundle
         run: ./PulseBar/Scripts/package.sh
 
-      # The native end-to-end wall: real vendor-shaped files at real paths
-      # through the real scanner, asserting hero VALUES. This ran only as a
-      # side effect of the resource gate before 0.98, which is part of why
-      # four consecutive releases shipped a wrong tray hero with CI green.
-      - name: Native fixture wall
-        run: ./zig-out/package/Pulse.app/Contents/MacOS/PulseBar --native-fixture-test
-
-      - name: Resource budget (native fixture)
-        run: python3 scripts/resource_budget_check.py
-
       - name: Observation Truth captures
         id: observation_truth
         run: ./scripts/qa_observation_truth.sh

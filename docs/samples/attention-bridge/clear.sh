@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Clear Attention bridge Waiting for one agent id (argv) or all Waiting-none.
+# Clear one session's attention (Attention Protocol v4 `done`).
+# usage: clear.sh <agent> [session]
 set -euo pipefail
 PULSE="${PULSE_HOME:-$HOME/Library/Application Support/Pulse}"
 mkdir -p "$PULSE"
+agent="${1:?usage: clear.sh <agent> [session]}"
+session="${2:-sample-$agent}"
 ms=$(($(date +%s) * 1000))
-agents=("$@")
-if [ ${#agents[@]} -eq 0 ]; then
-  agents=(replit devin warpAgent trae antigravity junie zcode)
-fi
-for agent in "${agents[@]}"; do
-  printf '%s\tdone\t%s\t\t\t\t\t\n' "$agent" "$ms" >> "$PULSE/attention.tsv"
-  echo "Cleared $agent"
-done
+# agent kind ms message session cwd front pid transcript landing
+printf '%s\tdone\t%s\t\t%s\t\t\t\t\t\n' "$agent" "$ms" "$session" >> "$PULSE/attention.tsv"
+echo "Cleared $agent $session"

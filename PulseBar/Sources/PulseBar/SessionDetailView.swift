@@ -17,12 +17,14 @@ struct SessionDetailView: View {
         SessionDetailFace(model: store.detailModel(row), maxHeight: CGFloat(ui.maxListHeight)) { action in
             ui.send(action, row: row)
         }
+        // 24.0: the moment a person looks is when its transcript is read.
+        .onAppear { store.detailOpened(row) }
     }
 }
 
 /// 23.0 · renders a `DetailModel` and nothing else: the header (back, lamp,
 /// agent · project, state and age), then the ask with Go and Dismiss, the
-/// why, the last hour, the last message, the plan, the error, the banner's
+/// why, the last hour, the last message, the error, the banner's
 /// story and the facts — each block only when it has something to say —
 /// with how Pulse reads the session folded at the bottom.
 struct SessionDetailFace: View {
@@ -132,9 +134,6 @@ struct SessionDetailFace: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if let plan = model.plan {
-                section(t(.detailPlanHeading)) { PlanFace(model: plan) }
-            }
             if let error = model.error {
                 section(t(.detailErrorHeading)) {
                     Text(error)
@@ -223,38 +222,6 @@ struct FactGrid: View {
             }
         }
         .font(PulseTheme.Font.caption)
-    }
-}
-
-/// The agent's own checklist.
-struct PlanFace: View {
-    let model: DetailModel.Plan
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let progress = model.progress {
-                Text(progress)
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(Array(model.steps.enumerated()), id: \.offset) { _, step in
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(step.mark)
-                        .font(PulseTheme.Font.code)
-                        .foregroundStyle(step.current ? .primary : .secondary)
-                    Text(step.text)
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(step.current ? .primary : .secondary)
-                        .strikethrough(step.done)
-                        .lineLimit(1)
-                }
-            }
-            if model.overflow > 0 {
-                Text("… \(model.overflow)")
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 }
 

@@ -40,7 +40,6 @@ struct PulseSettingsTests {
         original.notifyOnWaiting = false
         original.mutedAgents = [.claude, .codex]
         original.allowTerminalAutomation = true
-        original.readProtectedAppData = true
         original.updateCheckEnabled = false
         original.hooksNudgeOff = true
         let reparsed = try roundTrip(original)
@@ -59,7 +58,6 @@ struct PulseSettingsTests {
         #expect(d.hotkey == .off, "the global shortcut is opt-in")
         #expect(d.notifyOnWaiting)
         #expect(!d.allowTerminalAutomation)
-        #expect(!d.readProtectedAppData, "protected app data is opt-in")
         #expect(d.updateCheckEnabled)
         #expect(!d.hooksNudgeOff)
     }
@@ -88,20 +86,13 @@ struct PulseSettingsTests {
         #expect(decoded.language == .zh)
     }
 
-    // MARK: The app-data switch
-
-    @Test func oneSwitchCoversEveryProtectedAgent() {
-        var settings = PulseSettings()
-        let protected = AgentID.allCases.filter(\.requiresAppDataOptIn)
-        #expect(!protected.isEmpty)
-        let limitedWhenOff = protected.allSatisfy { settings.isPrivacyLimited($0) }
-        #expect(limitedWhenOff)
-        settings.readProtectedAppData = true
-        let limitedWhenOn = protected.contains { settings.isPrivacyLimited($0) }
-        #expect(!limitedWhenOn)
-        let open = AgentID.allCases.filter { !$0.requiresAppDataOptIn }
-        let openLimited = open.contains { PulseSettings().isPrivacyLimited($0) }
-        #expect(!openLimited, "an agent that needs no opt-in is never privacy-limited")
+    /// 24.0: a `readProtectedAppData` key from 23.0 is simply ignored —
+    /// Pulse reads no other app's data any more.
+    @Test func theRetiredAppDataKeyIsIgnored() throws {
+        let decoded = try decode(#"{"readProtectedAppData": true, "notifyOnWaiting": false}"#)
+        #expect(!decoded.notifyOnWaiting)
+        let encoded = try JSONEncoder().encode(decoded)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("readProtectedAppData"))
     }
 
     // MARK: On disk
@@ -110,7 +101,7 @@ struct PulseSettingsTests {
         let home = try temporaryHome()
         defer { try? FileManager.default.removeItem(at: home) }
         var settings = PulseSettings()
-        settings.readProtectedAppData = true
+        settings.allowTerminalAutomation = true
         settings.mutedAgents = [.gemini]
         let saved = settings.save(home: home)
         #expect(saved)
@@ -176,16 +167,6 @@ struct StoreSettingsTests {
         let mutedAfterSecond = store.settings.mutedAgents
         #expect(mutedAfterSecond.isEmpty)
     }
-
-    @Test func theAppDataSwitchIsOneBoolean() {
-        ScanEngine.suppressBackgroundScansForTesting = true
-        defer { ScanEngine.suppressBackgroundScansForTesting = false }
-        let store = StatusStore()
-        store.setReadProtectedAppData(true)
-        #expect(store.settings.readProtectedAppData)
-        let cursorLimited = store.settings.isPrivacyLimited(.cursor)
-        #expect(!cursorLimited)
-    }
 }
 
 /// 23.0 · the tray as values: the keyboard reducer, the frozen order, the
@@ -195,21 +176,20 @@ struct StoreSettingsTests {
 struct SettingsModelTests {
     // MARK: - Settings
 
-    @Test func settingsIsOnePageOfSevenSections() {
-        #expect(SettingsModel.sections == [.general, .shortcut, .notifications, .hooks, .terminal, .dataAccess, .updates])
+    @Test func settingsIsOnePageOfSixSections() {
+        #expect(SettingsModel.sections == [.general, .shortcut, .notifications, .hooks, .terminal, .updates])
         let titles = SettingsModel.sections.map { SettingsModel.title($0, lang: .zh) }
         #expect(Set(titles).count == titles.count, "every section has its own name")
     }
 
     @Test func deepLinksLandOnTheirSection() {
-        #expect(SettingsModel.section(for: .appData) == .dataAccess)
         #expect(SettingsModel.section(for: .waitingSignals) == .hooks)
         #expect(SettingsModel.section(for: .notifications) == .notifications)
         #expect(SettingsModel.section(for: .updates) == .updates)
     }
 
     @Test func mutedAgentsReadInOrder() {
-        let muted = SettingsModel.sortedMuted([.gemini, .aider, .claude])
+        let muted = SettingsModel.sortedMuted([.gemini, .pi, .claude])
         let names = muted.map { $0.displayName }
         let ordered = names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         #expect(names == ordered)

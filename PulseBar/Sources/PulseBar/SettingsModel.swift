@@ -1,15 +1,15 @@
 import Foundation
 
-/// 23.0 · Settings as a value: one page, seven short groups, a footer.
+/// 23.0 · Settings as a value: one page, six short groups, a footer.
 ///
 /// General (login, language) · Shortcut · Notifications (and the muted
-/// agents, each with ✕) · Hooks (Claude and Codex) · Terminal control ·
-/// Data access · Updates. About, build and "running from" collapsed into a
+/// agents, each with ✕) · Hooks (one line per agent, 24.0) · Terminal control ·
+/// Updates (24.0: Data access went — Pulse reads no other app's data). About, build and "running from" collapsed into a
 /// footer line. `SettingsFace` renders this and sends `Action`s; the store
 /// builds it from `settings` and a few flags — never from a scan. Pure.
 struct SettingsModel: Equatable {
     enum Section: String, CaseIterable, Equatable {
-        case general, shortcut, notifications, hooks, terminal, dataAccess, updates
+        case general, shortcut, notifications, hooks, terminal, updates
     }
 
     /// Whether macOS lets Pulse post a banner.
@@ -27,7 +27,6 @@ struct SettingsModel: Equatable {
         case uninstallHooks
         case testHooks
         case setTerminalAutomation(Bool)
-        case setReadAppData(Bool)
         case setUpdateCheck(Bool)
         case checkForUpdates
         case openRelease
@@ -50,12 +49,15 @@ struct SettingsModel: Equatable {
     // Hooks
     var hooksStatus: String
     var hooksInstalled: Bool
+    /// An install or removal is running: both buttons wait for it.
+    var hooksBusy: Bool = false
+    /// 24.0: one line per supported agent.
+    var hookAgents: [HookAgent] = []
     var hookTest: String
     var hookTestTone: PulseTheme.Tone
     var hookTestRunning: Bool
-    // Terminal control, data access
+    // Terminal control
     var allowTerminalAutomation: Bool
-    var readProtectedAppData: Bool
     // Updates
     var updateCheckEnabled: Bool
     var updateStatus: String
@@ -67,13 +69,73 @@ struct SettingsModel: Equatable {
     /// Where a deep link asked the page to scroll.
     var focus: Section?
 
+    /// One agent's hook, as the Hooks section says it.
+    struct HookAgent: Equatable, Identifiable {
+        var agent: AgentID
+        /// Installed / not installed / not on this Mac.
+        var state: String
+        var installed: Bool
+        /// "last event 12s ago" / "no event yet"; empty when not installed.
+        var lastEvent: String
+        /// Said for an agent whose hook never reports a wait.
+        var note: String?
+        /// The last install or removal failed for this agent (the state
+        /// says why, in words from `L10n`).
+        var failed = false
+
+        var id: AgentID { agent }
+    }
+
+    /// Pure: the Hooks section's lines, in roster order.
+    static func hookAgents(
+        installed: Set<AgentID>,
+        present: Set<AgentID>,
+        lastEventMs: [AgentID: Int64],
+        nowMs: Int64,
+        lang: ResolvedLanguage,
+        failed: [AgentID: HooksInstaller.Failure] = [:]
+    ) -> [HookAgent] {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        return AgentID.priority.map { agent in
+            let isInstalled = installed.contains(agent)
+            let state: String
+            if let failure = failed[agent] {
+                state = t(.hooksFailed) + " · " + HooksSupport.Status.reason(failure, lang: lang)
+            } else if isInstalled {
+                state = t(.settingsHookInstalled)
+            } else if present.contains(agent) {
+                state = t(.hooksMissing)
+            } else {
+                state = t(.settingsHookNotFound)
+            }
+            var lastEvent = ""
+            if isInstalled {
+                if let ms = lastEventMs[agent], ms > 0 {
+                    let seconds = Double(max(0, nowMs - ms)) / 1000
+                    lastEvent = seconds < 5
+                        ? t(.settingsHookLastEventNow)
+                        : String(format: t(.settingsHookLastEvent), DurationFormat.label(seconds: seconds, lang: lang))
+                } else {
+                    lastEvent = t(.settingsHookNoEvent)
+                }
+            }
+            return HookAgent(
+                agent: agent,
+                state: state,
+                installed: isInstalled,
+                lastEvent: lastEvent,
+                note: agent.waitingSource == .none ? t(.settingsHookNoWait) : nil,
+                failed: failed[agent] != nil
+            )
+        }
+    }
+
     /// The page, top to bottom.
-    static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .terminal, .dataAccess, .updates]
+    static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .terminal, .updates]
 
     /// A deep link's target, as the section it scrolls to.
     static func section(for target: SettingsFocus.Target) -> Section {
         switch target {
-        case .appData: return .dataAccess
         case .waitingSignals: return .hooks
         case .notifications: return .notifications
         case .updates: return .updates
@@ -88,7 +150,6 @@ struct SettingsModel: Equatable {
         case .notifications: return t(.notificationsSection)
         case .hooks: return t(.settingsHooksSection)
         case .terminal: return t(.settingsTerminalSection)
-        case .dataAccess: return t(.settingsDataSection)
         case .updates: return t(.settingsUpdatesSection)
         }
     }

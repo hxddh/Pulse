@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import SQLite3
 import Testing
 import XCTest
 @testable import PulseBar
@@ -14,7 +13,7 @@ import XCTest
 final class WaitingDeliveryTests: XCTestCase {
     private func waiting(_ key: String, agent: AgentID = .claude) -> AgentRow {
         var row = AgentRow(rowKey: key, agent: agent)
-        row.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Permission"))
         return row
     }
 
@@ -87,7 +86,7 @@ final class NotificationCopyTests: XCTestCase {
     func testBodyCarriesReasonAndMessageNotJustNeedsYou() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.state = .blocked(RowWait(kind: "Permission", ask: "Approve shell command", signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Permission", ask: "Approve shell command"))
         row.project = "/Users/me/code/Pulse"
 
         let body = store.notifier.notificationBody(row)
@@ -100,7 +99,7 @@ final class NotificationCopyTests: XCTestCase {
     func testLongMessagesAreTruncated() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .codex)
-        row.state = .blocked(RowWait(kind: "", ask: String(repeating: "x", count: 400), signal: .hooks))
+        row.state = .blocked(RowWait(kind: "", ask: String(repeating: "x", count: 400)))
         XCTAssertLessThanOrEqual(store.notifier.notificationBody(row).count, 160)
     }
 
@@ -108,7 +107,7 @@ final class NotificationCopyTests: XCTestCase {
     func testTitleFallsBackToAgentWhenNoProject() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .codex)
-        row.state = .blocked(RowWait(kind: "Input", signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Input"))
         XCTAssertEqual(store.notifier.notificationTitle(row), "Codex")
     }
 }
@@ -190,11 +189,11 @@ final class DeliveryPlanningTests: XCTestCase {
     @MainActor
     func testAQueuedRowAndAFreshEdgeForTheSameSessionDoNotCrash() {
         var queued = AgentRow(rowKey: "codex|abc", agent: .codex)
-        queued.state = .blocked(RowWait(kind: "Permission", sinceMs: 1_000, signal: .hooks))
+        queued.state = .blocked(RowWait(kind: "Permission", sinceMs: 1_000))
         queued.task = "the queued copy"
 
         var fresh = queued
-        fresh.state = .blocked(RowWait(kind: "Permission", sinceMs: 9_000, signal: .hooks))
+        fresh.state = .blocked(RowWait(kind: "Permission", sinceMs: 9_000))
         fresh.task = "the newer wait"
 
         let rows = WaitNotifier.waitingDeliveryRows(edges: [fresh], queued: [queued])
@@ -205,11 +204,11 @@ final class DeliveryPlanningTests: XCTestCase {
     @MainActor
     func testDistinctSessionsAreAllDelivered() {
         var a = AgentRow(rowKey: "codex|a", agent: .codex)
-        a.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        a.state = .blocked(RowWait(kind: "Permission"))
         var b = AgentRow(rowKey: "claude|b", agent: .claude)
-        b.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        b.state = .blocked(RowWait(kind: "Permission"))
         var c = AgentRow(rowKey: "cursor|c", agent: .cursor)
-        c.state = .blocked(RowWait(kind: "Permission", signal: .hooks))
+        c.state = .blocked(RowWait(kind: "Permission"))
 
         let rows = WaitNotifier.waitingDeliveryRows(edges: [a, b], queued: [c])
         XCTAssertEqual(Set(rows.map(\.rowKey)), ["codex|a", "claude|b", "cursor|c"])
@@ -229,14 +228,6 @@ struct BannerRoutingTests {
     let now: Int64 = 1_800_000_000_000
     static let minute: Int64 = 60_000
 
-    func session(_ id: AgentID, _ sessionID: String, skill: String = "", ageMs: Int64 = 70_000) -> ActivityHarvest.Row {
-        ActivityHarvest.Row(
-            id: id, task: "Fix the login flow", project: "p", cwd: "/p", skill: skill,
-            tool: "", harvestMs: now - ageMs, subRunning: 0, subTotal: 0, sessionID: sessionID,
-            evidence: .session
-        )
-    }
-
     // MARK: - 12 · a summary banner's click is audited on every wait it counted
 
     @Test func aSummaryBannerStandsForEveryWait() {
@@ -250,7 +241,7 @@ struct BannerRoutingTests {
     func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64) -> AgentRow {
         var row = AgentRow(rowKey: key, agent: agent)
         row.sessionID = session
-        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since, signal: .hooks))
+        row.state = .blocked(RowWait(kind: "Permission", sinceMs: since))
         return row
     }
 

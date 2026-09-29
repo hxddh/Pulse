@@ -11,9 +11,10 @@ import Foundation
 /// | hollow | your turn, recent, idle            |
 /// | dotted | seen only as a process             |
 ///
-/// Tones: red is blocked, green is running, orange is **only** a stall or an
-/// error, grey is everything else. A process-only session is grey dotted —
-/// a process is not a session, so it is never orange and never green.
+/// Tones: red is blocked, green is running, orange is **only** a stall (24.0:
+/// the error count went with the harvest), grey is everything else. A
+/// process-only session is grey dotted — a process is not a session, so it
+/// is never orange and never green.
 /// Shape plus tone, so the state reads without colour too. Pure.
 struct LampFace: Equatable {
     enum Shape: String, Equatable {
@@ -33,9 +34,9 @@ struct LampFace: Equatable {
         case .processOnly:
             return LampFace(shape: .dotted, tone: .idle)
         case .running:
-            return LampFace(shape: .ring, tone: row.isStalled || row.errors > 0 ? .attention : .running)
+            return LampFace(shape: .ring, tone: row.isStalled ? .attention : .running)
         case .yourTurn, .recent:
-            return LampFace(shape: .hollow, tone: row.errors > 0 ? .attention : .idle)
+            return LampFace(shape: .hollow, tone: .idle)
         }
     }
 

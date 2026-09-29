@@ -14,11 +14,13 @@ import PulseCore
 ///
 /// Rules, all inherited from older scars:
 /// - **An activity event is not a wait and must never become one.** Nothing
-///   here touches attention.tsv, and the builder never derives Waiting from
-///   a spool entry.
+///   here touches attention.tsv, and `SessionBook` never derives Waiting
+///   from a spool entry.
 /// - **An event moves a session's live clock and nothing else** (23.0):
-///   it keeps a working session from reading as stalled and ends a "your
-///   turn"; the row no longer quotes the tool in the present tense.
+///   it keeps a working session from reading as stalled, ends a "your
+///   turn", and (24.0) answers a wait raised before it in the same session.
+///   The whole directory is re-read on a change; the book is idempotent by
+///   `activityMs`, so a file read twice is not news.
 /// - **The filename decides identity** (agent + sanitized session); a body
 ///   that disagrees is refused — the respond spool's rule.
 /// - Bounded everything: file count, bytes per file, age; unknown agents are

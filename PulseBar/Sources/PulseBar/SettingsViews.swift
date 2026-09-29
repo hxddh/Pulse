@@ -63,11 +63,19 @@ extension StatusStore {
             mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
             hooksStatus: hooksStatus.label(lang: lang),
             hooksInstalled: hooksInstalled,
+            hooksBusy: hooksStatus.isWorking,
+            hookAgents: SettingsModel.hookAgents(
+                installed: hooksStatus.installedAgents,
+                present: Set(AgentID.priority.filter(HooksInstaller.vendorPresent)),
+                lastEventMs: engine.latestHookEventMs,
+                nowMs: Int64(Date().timeIntervalSince1970 * 1000),
+                lang: lang,
+                failed: hooksStatus.failures
+            ),
             hookTest: hookSelfTestText,
             hookTestTone: hookTone,
             hookTestRunning: hookSelfTestResult == .running,
             allowTerminalAutomation: settings.allowTerminalAutomation,
-            readProtectedAppData: settings.readProtectedAppData,
             updateCheckEnabled: settings.updateCheckEnabled,
             updateStatus: updateStatusText,
             updateAvailable: updateAvailableURL != nil,
@@ -93,7 +101,6 @@ extension StatusStore {
         case .uninstallHooks: uninstallHooks()
         case .testHooks: runHookSelfTest()
         case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
-        case .setReadAppData(let on): setReadProtectedAppData(on)
         case .setUpdateCheck(let on): set(\.updateCheckEnabled, on)
         case .checkForUpdates: checkForUpdatesNow()
         case .openRelease:
@@ -229,13 +236,36 @@ struct SettingsFace: View {
                 HStack(spacing: PulseTheme.Space.s) {
                     if model.hooksInstalled {
                         Button(t(.uninstallHooks), role: .destructive) { send(.uninstallHooks) }
+                            .disabled(model.hooksBusy)
                     }
                     Button(t(.installHooks)) { send(.installHooks) }
+                        .disabled(model.hooksBusy)
                 }
             } label: {
                 Text(t(.settingsHooksTitle))
                 Text(model.hooksStatus)
                     .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
+            }
+            ForEach(model.hookAgents) { line in
+                LabeledContent {
+                    Text(line.state)
+                        .foregroundStyle(
+                            line.failed ? AnyShapeStyle(PulseTheme.Tone.attention.color)
+                                : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+                        )
+                } label: {
+                    Label {
+                        Text(line.agent.displayName)
+                        if !line.lastEvent.isEmpty {
+                            Text(line.lastEvent)
+                        }
+                        if let note = line.note {
+                            Text(note)
+                        }
+                    } icon: {
+                        AgentIconView(id: line.agent)
+                    }
+                }
             }
             LabeledContent {
                 Button(t(.testWaitingSignal)) { send(.testHooks) }
@@ -250,16 +280,6 @@ struct SettingsFace: View {
                 Text(t(.allowTerminalAutomation))
                 Text(t(.allowTerminalAutomationHint))
             }
-        case .dataAccess:
-            Toggle(isOn: binding(model.readProtectedAppData) { .setReadAppData($0) }) {
-                Text(t(.agentDataAccess))
-                Text(t(.agentDataAccessHint))
-            }
-            .listRowBackground(
-                model.focus == .dataAccess
-                    ? Color.accentColor.opacity(PulseTheme.Fill.selected)
-                    : Color.clear
-            )
         case .updates:
             Toggle(t(.checkForUpdates), isOn: binding(model.updateCheckEnabled) { .setUpdateCheck($0) })
             LabeledContent {
@@ -280,10 +300,6 @@ struct SettingsFace: View {
         switch section {
         case .hooks:
             Text(t(.hooksHint))
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(.secondary)
-        case .dataAccess:
-            Text(t(.agentDataAccessSkipHint))
                 .font(PulseTheme.Font.caption)
                 .foregroundStyle(.secondary)
         case .general, .shortcut, .notifications, .terminal, .updates:

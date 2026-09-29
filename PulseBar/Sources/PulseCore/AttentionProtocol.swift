@@ -1,25 +1,32 @@
 import Foundation
 
-/// 16.0 · what an attention event means, as a type.
+/// What an attention event means, as a type.
 ///
-/// Until 15.0 the canonical kinds were bare strings, and one of them —
-/// `idle_prompt` — meant two things: a clarifying question (the bridge docs)
-/// and Claude's `idle_prompt` notification, which is a 60-second timer that
-/// fires after every finished turn. Both lit the red lamp, so every Claude
-/// session that finished its work went red a minute later and stayed red.
-/// v3 separates the three things a person can owe an agent:
+/// v3 (16.0) separated the three things a person can owe an agent; v4 (24.0)
+/// adds the session lifecycle the vendors' own hooks report:
 ///
 /// - **blocked** (`permission`, `question`, `waiting`): the agent cannot go
 ///   on without you — the red lamp, a banner, a sound;
 /// - **your turn** (`turn`): it finished and is waiting for the next prompt —
 ///   a quiet count, never the red lamp;
-/// - **resolved** (`done`): nothing is owed.
+/// - **idle** (`idle`, 24.0): it has sat at its prompt a while (Claude's
+///   `idle_prompt`, about a minute after a turn). Your turn only when Pulse
+///   had not seen the turn end — the session was still working or blocked,
+///   or was never seen — so a turn the person already saw is not revived;
+/// - **resolved** (`done`): nothing is owed;
+/// - **lifecycle** (`start`, `working`, `end`): the session began, took a
+///   prompt, or ended. Each says nothing is owed any more, so each clears the
+///   session's entry exactly like `done`.
 public enum AttentionKind: String, Sendable, CaseIterable {
     case permission
     case question
     case waiting
     case turn
+    case idle
     case done
+    case start
+    case working
+    case end
     case subagentStart = "subagent_start"
     case subagentStop = "subagent_stop"
 
@@ -29,37 +36,115 @@ public enum AttentionKind: String, Sendable, CaseIterable {
     }
 
     /// Still owed to the user — kept when the attention file is compacted.
-    public var isOpen: Bool { isBlocking || self == .turn }
+    public var isOpen: Bool { isBlocking || self == .turn || self == .idle }
 }
 
-/// Frozen Attention bridge contract (v3) — the public Waiting path for any
-/// agent that can invoke `pulse-hook` / `PulseBar --hook` without expanding
-/// the Claude/Codex hook installer.
+/// One v4 record: ten tab-separated columns.
+///
+/// `agent  kind  ms  message  session  cwd  front  pid  transcript  landing`
+///
+/// - `front`: `1` when the prompt's own window was frontmost as the event was
+///   raised, `0` when it was not, empty when that could not be established;
+/// - `pid`: the agent process the hook ran under, `0`/empty when unknown;
+/// - `transcript`: the vendor's transcript path, when its hook names one;
+/// - `landing`: where the session can be reached, most specific first,
+///   `;`-separated — `tmux:%3`, `iterm:w0t1p0:<uuid>`, `tty:/dev/ttys004`,
+///   `term:<TERM_PROGRAM>`.
+///
+/// Writers clean every field (no tabs, no line breaks) before building one.
+public struct AttentionRecord: Equatable, Sendable {
+    public var agent: String
+    public var kind: String
+    public var ms: Int64
+    public var message: String
+    public var session: String
+    public var cwd: String
+    public var front: Bool?
+    public var pid: Int32
+    public var transcript: String
+    public var landing: String
+
+    public init(
+        agent: String,
+        kind: String,
+        ms: Int64,
+        message: String = "",
+        session: String = "",
+        cwd: String = "",
+        front: Bool? = nil,
+        pid: Int32 = 0,
+        transcript: String = "",
+        landing: String = ""
+    ) {
+        self.agent = agent
+        self.kind = kind
+        self.ms = ms
+        self.message = message
+        self.session = session
+        self.cwd = cwd
+        self.front = front
+        self.pid = pid
+        self.transcript = transcript
+        self.landing = landing
+    }
+
+    /// The record as one line, without a line break.
+    public var line: String {
+        [
+            agent,
+            kind,
+            String(ms),
+            message,
+            session,
+            cwd,
+            AttentionProtocol.frontField(front),
+            pid > 0 ? String(pid) : "",
+            transcript,
+            landing,
+        ].joined(separator: "\t")
+    }
+
+    /// A complete v4 record, or nil for anything else (a comment, a blank
+    /// line, a v3 line with eight columns).
+    public init?<S: StringProtocol>(line: S) {
+        guard let cols = AttentionProtocol.columns(of: line) else { return nil }
+        self.init(
+            agent: cols[0],
+            kind: cols[1],
+            ms: Int64(cols[2]) ?? 0,
+            message: cols[3],
+            session: cols[4],
+            cwd: cols[5],
+            front: AttentionProtocol.parseFront(cols[6]),
+            pid: Int32(cols[7]) ?? 0,
+            transcript: cols[8],
+            landing: cols[9]
+        )
+    }
+}
+
+/// Frozen Attention bridge contract (v4) — the Waiting path for every
+/// supported agent's hook, and for anything else that can invoke
+/// `pulse-hook` / `PulseBar --hook`.
 ///
 /// Writers: `PulseHookReceiver`, `AttentionIO`, and external integrators
-/// appending lines directly. Reader: `AttentionReader`. Spec:
+/// appending lines directly. Reader: `SessionBook` (the app). Spec:
 /// `docs/attention-protocol.md`.
 public enum AttentionProtocol {
-    public static let version = 3
+    public static let version = 4
 
-    /// Comment header written at the top of `attention.tsv`.
-    ///
-    /// `host` (column 7) is written empty and ignored: every line in
-    /// `attention.tsv` is this Mac's. `front` (column 8) is `1` when the
-    /// prompt's own window was the frontmost application as the event was
-    /// raised, `0` when it was not, empty when that could not be established.
-    /// Since 23.0 every record has all eight columns; a shorter line (v1/v2)
-    /// is not read.
+    /// Comment header written at the top of `attention.tsv`. Since 24.0 only
+    /// complete v4 records (ten columns) are read; a v3 line is ignored.
     public static let header =
-        "# pulse-attention v3 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\thost\\tfront)\n"
+        "# pulse-attention v4 (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\ttranscript\\tlanding)\n"
 
-    /// Column count of a complete v3 record.
-    public static let columnCount = 8
+    /// Column count of a complete v4 record.
+    public static let columnCount = 10
 
-    /// The columns of one v3 record, or nil for a blank line, a comment or
+    /// The columns of one v4 record, or nil for a blank line, a comment or
     /// header, or a line without exactly `columnCount` columns. Only line
-    /// breaks are trimmed: a v3 line's trailing columns are often empty, so
-    /// trailing tabs are part of the record.
+    /// breaks are trimmed: a record's trailing columns are often empty, so
+    /// trailing tabs are part of it.
     public static func columns<S: StringProtocol>(of line: S) -> [String]? {
         let raw = String(line).trimmingCharacters(in: .newlines)
         if raw.isEmpty || raw.hasPrefix("#") { return nil }
@@ -71,14 +156,14 @@ public enum AttentionProtocol {
         Set(AttentionKind.allCases.map(\.rawValue))
     }
 
-    /// Vendor event names onto the v3 kinds. Unknown tokens stay as-is — and
-    /// an empty one stays empty — so `acceptsWrite(kind:)` rejects them: a
-    /// line that does not say what it is about is never Waiting.
+    /// Protocol spellings onto the v4 kinds, for bridges that write a kind
+    /// word rather than a vendor event. Unknown tokens stay as-is — and an
+    /// empty one stays empty — so `acceptsWrite(kind:)` rejects them: a line
+    /// that does not say what it is about is never Waiting.
     ///
-    /// v3 changes three meanings on purpose (docs/attention-protocol.md):
-    /// `idle_prompt` / `idle` and `stop` are **your turn**, not blocked and
-    /// not cleared; Codex's `agent-turn-complete` is your turn, not cleared;
-    /// the question family has its own kind instead of borrowing `idle_prompt`.
+    /// `stop` is **your turn**, not blocked and not cleared; `idle_prompt` /
+    /// `idle` is **idle** (your turn only if the turn's end was not seen);
+    /// the question family has its own kind.
     public static func normalizeKind(_ kind: String) -> String {
         let k = kind.trimmingCharacters(in: .whitespacesAndNewlines)
         let low = k.lowercased().replacingOccurrences(of: "-", with: "_")
@@ -86,50 +171,44 @@ public enum AttentionProtocol {
             // Your turn: the agent finished and is idle at its prompt.
             "turn": .turn,
             "stop": .turn,
-            "idle_prompt": .turn,
-            "idle": .turn,
+            // Sat at its prompt a while: your turn only if nobody saw it end.
+            "idle_prompt": .idle,
+            "idle": .idle,
             "agent_turn_complete": .turn,
-            "agent_completed": .turn,
             "turn_complete": .turn,
             "task_complete": .turn,
-            // 18.0: Claude's StopFailure — the turn ended on an API error
-            // (rate limit, auth, overload). Over to the user; never red.
+            // Claude's StopFailure — the turn ended on an API error (rate
+            // limit, auth, overload). Over to the user; never red.
             "stop_failure": .turn,
             // Blocked on a permission.
             "permission": .permission,
             "permission_prompt": .permission,
-            "exec_approval_request": .permission,
-            "apply_patch_approval_request": .permission,
             "approval_request": .permission,
-            "pending_approval": .permission,
             // Blocked on a question.
             "question": .question,
-            "request_user_input": .question,
-            "user_input_request": .question,
             "elicitation_dialog": .question,
             "elicitation_url_dialog": .question,
             "agent_needs_input": .question,
-            "needs_input": .question,
             // Blocked, reason unknown.
             "waiting": .waiting,
             // Resolved.
             "done": .done,
-            // 18.0: the elicitation was answered or closed.
+            // The elicitation was answered or closed.
             "elicitation_complete": .done,
             "elicitation_response": .done,
+            // 24.0 lifecycle.
+            "start": .start,
+            "session_start": .start,
+            "working": .working,
+            "prompt": .working,
+            "end": .end,
+            "session_end": .end,
             // Lifecycle, stored for diagnostics only.
             "subagent_start": .subagentStart,
-            "subagent": .subagentStart,
             "subagent_stop": .subagentStop,
         ]
         if let mapped = mapping[low] { return mapped.rawValue }
-        // Narrow aliases only — never invent Waiting from free text.
-        if low.contains("approval"), !low.contains("response"), !low.contains("decision") {
-            return AttentionKind.permission.rawValue
-        }
-        if low.contains("user_input"), !low.contains("response") {
-            return AttentionKind.question.rawValue
-        }
+        // Never invent Waiting from free text: an unknown word stays unknown.
         return low
     }
 
@@ -142,7 +221,7 @@ public enum AttentionProtocol {
         acceptedWriteKinds.contains(normalizeKind(kind))
     }
 
-    /// Column 8 as written: `1` in front, `0` not, empty unknown.
+    /// The `front` column as written: `1` in front, `0` not, empty unknown.
     public static func frontField(_ front: Bool?) -> String {
         switch front {
         case .some(true): return "1"

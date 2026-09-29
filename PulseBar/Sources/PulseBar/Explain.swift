@@ -11,7 +11,8 @@ import Foundation
 /// - `headline` — what it is doing or asking: the tray hero;
 /// - `why` — one sentence: which evidence put the row in its state, and
 ///   since when ("Claude's hook reported a permission request 4m ago",
-///   "No new output for 23m", "Seen only as a process — no session data");
+///   "No new output for 23m", "Seen only as a process — no hook event
+///   since Pulse started", "No event for 40m and no process Pulse can see");
 /// - `source` — where the facts came from, in plain words.
 ///
 /// Pure: the row, the language and the clock in; the same inputs always
@@ -75,16 +76,9 @@ struct Explain: Equatable {
         switch row.state {
         case .blocked(let wait):
             let kind = kindNoun(wait.kind, lang: lang)
-            switch wait.signal {
-            case .hooks:
-                var text = String(format: t(.explainHook), name, kind, since(wait.sinceMs))
-                if wait.inFront { text += t(.explainHookFront) }
-                return text
-            case .pending:
-                return String(format: t(.explainPending), name, kind, since(wait.sinceMs))
-            case .vendor:
-                return String(format: t(.explainVendor), kind, since(wait.sinceMs))
-            }
+            var text = String(format: t(.explainHook), name, kind, since(wait.sinceMs))
+            if wait.inFront { text += t(.explainHookFront) }
+            return text
         case .yourTurn(let sinceMs):
             return String(format: t(.explainTurn), name, since(sinceMs))
         case .processOnly:
@@ -95,13 +89,19 @@ struct Explain: Equatable {
                 let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
                 return String(format: t(.explainStalled), quiet)
             }
-            if row.errors > 0 { return String(format: t(.explainErrors), row.errors) }
             guard row.lastActivityMs > 0 else { return t(.explainRunningNoClock) }
-            return String(format: t(.explainRunning), sourceText(row.source, lang: lang), ago(row.lastActivityMs, nowMs: nowMs, lang: lang))
+            return String(format: t(.explainRunning), name, ago(row.lastActivityMs, nowMs: nowMs, lang: lang))
         case .recent:
-            if row.errors > 0 { return String(format: t(.explainErrors), row.errors) }
-            guard row.lastActivityMs > 0 else { return t(.explainRecentNoClock) }
-            return String(format: t(.explainRecent), ago(row.lastActivityMs, nowMs: nowMs, lang: lang))
+            // 24.0: which rule made it recent — never a guess that it runs.
+            switch row.recentReason {
+            case .atPrompt:
+                return String(format: t(.explainIdle), since(row.lastActivityMs))
+            case .ended:
+                return String(format: t(.explainEnded), since(row.stateSinceMs > 0 ? row.stateSinceMs : row.lastActivityMs))
+            case .quiet:
+                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
+                return String(format: t(.explainQuiet), quiet)
+            }
         }
     }
 
@@ -119,8 +119,6 @@ struct Explain: Equatable {
 
     static func sourceText(_ source: RowSource, lang: ResolvedLanguage) -> String {
         switch source {
-        case .session: return L10n.t(.sourceSession, lang)
-        case .cache: return L10n.t(.sourceCache, lang)
         case .hooks: return L10n.t(.sourceHooks, lang)
         case .process: return L10n.t(.sourceProcess, lang)
         }
@@ -164,16 +162,14 @@ struct Explain: Equatable {
 
     // MARK: - Focus
 
-    /// The focus verb, as honest as the handle: never "Focus terminal" for a
-    /// row that can only activate an app.
+    /// The focus verb, as honest as the plan: "Go to terminal" only when a
+    /// click can land on the exact pane, session or tab; "Open app" when it
+    /// can only bring the app (or its folder) forward.
     static func focusTitle(_ row: AgentRow, lang: ResolvedLanguage) -> String {
-        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        switch row.focusTier {
-        case .tty: return t(.focusTTY)
-        case .warp: return t(.focusWarp)
-        case .hostWorkspace(let kind): return String(format: t(.focusHostWorkspace), kind.displayName)
-        case .hostApp(let kind): return String(format: t(.focusHostApp), kind.displayName)
-        case .none: return t(.focusOpenTray)
+        switch row.landingPlan.precision {
+        case .exact: return L10n.t(.focusExact, lang)
+        case .app: return L10n.t(.focusApp, lang)
+        case nil: return L10n.t(.focusOpenTray, lang)
         }
     }
 

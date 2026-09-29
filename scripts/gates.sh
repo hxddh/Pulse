@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 python3 scripts/version_check.py            # PulseVersion.semver == CHANGELOG == README
-python3 scripts/catalog_check.py            # roster, harvest, probe, privacy, README matrix, vendor formats
+python3 scripts/catalog_check.py            # roster, processes, privacy, README matrix, hook sources
 python3 scripts/make_agent_icons.py --check # every agent has its icon
 python3 scripts/appearance_check.py         # no colour frozen into a constant
 python3 scripts/surface_check.py            # surfaces render values, not the store

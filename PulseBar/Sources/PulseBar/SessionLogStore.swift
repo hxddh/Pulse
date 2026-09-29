@@ -150,8 +150,8 @@ extension StatusStore {
         sessionLogStore.write(next, immediately: immediately)
     }
 
-    /// One scan's worth of history: state edges and the waits. Row keys never
-    /// change (`RowIdentity`), so nothing has to follow one.
+    /// One projection's worth of history: state edges and the waits. Row
+    /// keys never change (`RowIdentity`), so nothing has to follow one.
     func recordScan(previous: [AgentRow], result: SnapshotBuilder.Result, nowMs: Int64) {
         // The first scan after launch closes everything the last run left
         // open — present sessions too — at the moment that run last wrote,
@@ -165,7 +165,7 @@ extension StatusStore {
             let applied = firstScan ? log.resumeAfterLaunch(transitions, nowMs: nowMs) : transitions
             log.applyTimeline(applied)
             log.closeAbsent(liveKeys: live, atMs: nowMs)
-            log.reconcileWaits(rows: result.rows, released: result.clearedPendingKeys, nowMs: nowMs)
+            log.reconcileWaits(rows: result.rows, nowMs: nowMs)
             log.markBaseline()
             log.prune(nowMs: nowMs)
         }
