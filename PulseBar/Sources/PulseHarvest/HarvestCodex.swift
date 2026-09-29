@@ -131,23 +131,6 @@ extension NativeActivityHarvest {
                                 "output_tokens", "outputTokens", "completion_tokens",
                             ]))
                         }
-                        // 8.3: context % from two measured numbers Codex writes
-                        // side by side — the model's window and the tokens the
-                        // latest turn put in it. A ratio of measurements is a
-                        // fact; a guess at either side would not be.
-                        let window = firstNumber(info, keys: [
-                            "model_context_window", "modelContextWindow", "context_window",
-                        ])
-                        let used = firstNumber(
-                            (info["last_token_usage"] as? [String: Any]) ?? [:],
-                            keys: ["total_tokens", "totalTokens"]
-                        )
-                        if window > 0, used > 0, used <= window {
-                            f.contextPercent = max(
-                                f.contextPercent,
-                                Int((Double(used) / Double(window) * 100).rounded())
-                            )
-                        }
                     }
                 default:
                     break

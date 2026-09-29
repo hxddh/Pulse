@@ -79,8 +79,9 @@ Prefs 只改开关与连接。
 - Tooltip 一句状态，可略长于标题；停滞主导时尽量带无活动时长。
 - **灯为什么是这个颜色（22.0）**：Tooltip 在状态句下面写出决定颜色的那条规则（有人在等 /
   停滞 / 只有进程或数据太少 / 在跑 / 轮到你 / 最近 / 空闲）、最多三个
-  驱动它的会话（Agent · 项目 · 状态），以及没算进去的（较早隐藏的）。取值是纯函数
-  `LampExplanation`，经 `snapshot.lampLines` 交给状态栏；说不出依据就不写那一行。
+  驱动它的会话（Agent · 项目 — 这一行的「为什么」，与托盘行、详情页同一句），以及没算进去的
+  （较早隐藏的）。取值是纯函数 `LampExplanation`（原因来自 `Explain.why`），经
+  `snapshot.lampLines` 交给状态栏。
 
 ---
 
@@ -136,7 +137,8 @@ Prefs 只改开关与连接。
 - **停滞 / 失败 / 仅进程**的行多一行橙色原因（停滞说出阈值），不点开就知道为什么。
 - 其余动作都在**右键菜单**（详情、聚焦、忽略、静音该 Agent）与 VoiceOver 动作里，
   每个动作只出现一次。悬停或选中时相对时间换成「›」，提示「→ 看详情」。
-- 主行（任务）按 `TrayRowLead` 的价值序取（场景 BL，规则不变）；截断走尾部省略，
+- 主行是 `Explain.headline`（场景 BL）：等待行 任务→项目→「需要你」，进程行说诚实短语，会话行
+  任务→新鲜原话→项目→会话短语；截断走尾部省略，
   完整原话在详情页。禁止 `update_plan` / `Bash` / 文件名 / `Agent session` 当主行，
   禁止把 Agent 产品名再当主行。
 
@@ -186,13 +188,15 @@ Prefs 只改开关与连接。
 
 1. 头部：灯形、Agent、项目、返回
 2. 任务全文
-3. 为什么是这个状态（`RowNarrator.whyLine`，说不出证据就不说）
+3. 为什么是这个状态（`Explain.why`：哪条证据、从什么时候起；说不出就说没有时钟，从不猜），
+   等待行接着是完整的提问
 4. **最近一小时的时间条**（`TimelineStripView`）：按状态着色的分段，下方写出每种状态各几分钟；
    数据来自会话时间线（见 §7 数据诚实）
 6. 等待行的动作（聚焦 / 忽略）
-7. Agent 最后说的话、错误原文、计划清单、工作事实（**没测到不渲染**）
+7. Agent 最后说的话、错误原文、计划清单（**没测到不渲染**；过了 30 分钟的新鲜窗口也不渲染）
 8. **这条通知发生了什么**（通知去向，见 §7 通知）
-9. 「这个会话的经过」（`WhyDetailSection`）与读取诊断（`SessionDiagnosticsCard`）
+9. 几条事实：模型、来源（会话文件 / 应用数据 / 仅 hook / 仅进程）、目录、开始于
+（23.0：整页是纯值 `DetailModel`，由 `SessionDetailFace` 渲染；Why 卡与读取诊断卡已删除）
 
 通知 / 全局快捷键带着某行打开托盘时，该行被选中。
 
@@ -337,8 +341,8 @@ rounded),每个调用点声明这行**是什么角色**而不是它喜欢哪个�
 落地仓库都让 Pulse 从观察者变成行动者，而产品的价值恰恰在于它只说真话、不动手。
 
 删除后仍然成立的：托盘三层分工。
-指挥台的检视器、摘要与展开卡在 22.0 合并成托盘里的**详情页**（§4），Why 卡与会话诊断卡
-（`InspectorDiagnostics.swift`）在详情页底部。23.0 起 Pulse 不再清理旧版本留下的目录，
+指挥台的检视器、摘要与展开卡在 22.0 合并成托盘里的**详情页**（§4）；23.0 删除了其底部的
+Why 卡与会话诊断卡。23.0 起 Pulse 不再清理旧版本留下的目录，
 也不迁移旧设置：认不出的设置键被忽略，缺的取默认值。
 
 ## 6. Preferences（设置窗）
@@ -592,19 +596,19 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | Tray 结构 | `PulseBar/TrayPanelViews.swift` → `TrayPanel` |
 | Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（19.0 Observation：不读快照与行，扫描不重绘） |
 | 状态合并 / 编码 | `PulseBar/SnapshotBuilder.swift` |
-| 行的每一句话 | `PulseBar/RowNarrator.swift`（纯值：语言、时刻、拥挤、停滞阈值都是输入；store 只转发） |
+| 行的每一句话 | `PulseBar/Explain.swift`（纯值：headline / why / source；语言、时刻、停滞阈值都是输入） |
+| 行的身份 | `PulseHarvest/RowIdentity.swift`（键一次定下、从不改变） |
 | 扫描静默 | `PulseBar/StatusStore.swift` → `StatusStore.land` / `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |
 | 等待通知决定 | `PulseBar/WaitingDelivery.swift`（纯规划）· `WaitNotifier.swift`（执行） |
 | Agent 目录（一处加 agent） | `PulseCore/AgentCatalog.swift` |
 | 采集 / 主行来源 / explain | `PulseHarvest/NativeActivityHarvest.swift` · 厂商方言 `TranscriptDialect.swift` + `HarvestCodex/Pi/Claude/SmallDialects.swift` |
 | 进程探测 | `PulseHarvest/ProcessProbe.swift`（跨扫描状态在 `ScanEngine.swift`） |
 | 状态与设置面 | `PulseBar/StatusStore.swift`（模型与 intent）+ `StatusStore{Views,Health,Fixture}.swift` · `ScanEngine.swift`（扫描）· `WaitNotifier.swift`（横幅）· `PulseSettings.swift`（`settings.json`） |
-| 会话事实簇 | `PulseBar/SessionFacts.swift` |
-| 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
-| 价值引擎 / 主题 | `RowValueEngine.swift` · `PulseTheme.swift` |
-| 托盘行的脸（17.0） | `TrayRowModel.swift`（纯值：灯、身份、标记、主行、元信息、提问、为什么、动作条、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace` 只渲染值、只发动作；行下方的卡片是 `RowCardModel` |
-| 为什么 / 会话记录（17.0；23.0 合为一处） | `SessionLog.swift` · `SessionLogStore.swift` · `RowNarrator.whyLine` · `WhyViews.swift` · `StatusStoreViews.swift`（`whyCard`） |
-| 值化的表面 | `SurfaceModels.swift`（`WhyCardModel`）· `TrayRowModel.swift` · `RowCardModel.swift`；夹具 `SurfaceFixtures.swift`，CI 截图 `SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
+| 行的数据与状态 | `PulseBar/Models.swift` → `AgentRow` · `RowState` · `RowWait` · `RowSource` |
+| 主题 | `PulseTheme.swift` |
+| 托盘行的脸（17.0） | `TrayRowModel.swift`（纯值：灯、身份、标记、主行、元信息、提问、为什么、动作条、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace` 只渲染值、只发动作；详情页是 `DetailModel` → `SessionDetailFace` |
+| 为什么 / 会话记录（17.0；23.0 合为一处） | `Explain.why` · `SessionLog.swift` · `SessionLogStore.swift` · `StatusStoreViews.swift`（`detailModel`） |
+| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `Explain.swift` · `LampExplanation.swift`；夹具 `SurfaceFixtures.swift`，CI 截图 `SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
 | 探测节奏 | `PulseCore/ProbeSchedule.swift` + `PulseBar/PowerMonitor.swift` |
 | 设置 | `PulseSettings.swift`（23.0 起无迁移） |
 | 文案 | `L10n.swift` |

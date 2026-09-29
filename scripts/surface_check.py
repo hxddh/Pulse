@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """15.0 Witness: surfaces render values, not the store.
 
-17.0 added the tray row's face, 19.0 the cards under a row (every struct in
-SessionCards.swift) and the Observation rules below. 22.0 removed the
-Workbench's Mission board and working-copy card with the orchestrator.
+17.0 added the tray row's face and the Observation rules below. 22.0
+removed the Workbench's Mission board and working-copy card with the
+orchestrator. 23.0 replaced the cards under a row and the Why card with one
+detail page (`DetailModel`) and one explanation (`Explain`).
 
 A view that reaches into StatusStore can only be seen by running the whole
 app against real sessions, which is how 13.0 and 14.0 shipped surfaces
 nobody had looked at. The rendering views listed here take a value
-(`TrayRowModel`, `RowCardModel`, `WhyCardModel`) and send intents; the
-models they render are pure. This gate fails if either grows a store
-reference back, and if a surface fixture is missing from the capture list.
+(`TrayRowModel`, `DetailModel`) and send intents; the models they render
+are pure. This gate fails if either grows a store reference back, and if a
+surface fixture is missing from the capture list.
 """
 import re
 import sys
@@ -21,19 +22,21 @@ APP = ROOT / "PulseBar/Sources/PulseBar"
 
 # (file, struct) pairs that must never see the store.
 VIEWS = [
-    # 17.0: the tray row's face and the Why card.
+    # 17.0: the tray row's face.
     ("TrayPanelViews.swift", "TrayRowFace"),
-    ("WhyViews.swift", "WhyCardView"),
+    # 23.0: one session in full, and its plan.
+    ("SessionDetailView.swift", "SessionDetailFace"),
+    ("SessionDetailView.swift", "PlanFace"),
     # 22.0: the session's last hour.
     ("SessionDetailView.swift", "TimelineStripView"),
     ("SessionDetailView.swift", "LampShapeView"),
-    # 19.0: the cards under a row.
-    ("SessionCards.swift", "PlanCompactFace"),
-    ("SessionCards.swift", "FactLinesFace"),
     # 19.0: the self-check.
     ("DoctorViews.swift", "DoctorReportView"),
 ]
-PURE_FILES = ["SurfaceModels.swift", "SurfaceFixtures.swift", "TrayRowModel.swift", "RowCardModel.swift", "DoctorModel.swift"]
+PURE_FILES = [
+    "SurfaceFixtures.swift", "TrayRowModel.swift", "DetailModel.swift", "Explain.swift",
+    "LampExplanation.swift", "DoctorModel.swift",
+]
 STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 # 19.0: the store is @Observable. A Combine-era wrapper coming back would
 # silently restore whole-store invalidation for whatever view used it.

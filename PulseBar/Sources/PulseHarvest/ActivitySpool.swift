@@ -16,8 +16,9 @@ import PulseCore
 /// - **An activity event is not a wait and must never become one.** Nothing
 ///   here touches attention.tsv, and the builder never derives Waiting from
 ///   a spool entry.
-/// - **Present tense only for second-grade evidence**: display gates on
-///   `liveWindowMs`; past it, the row falls back to the polled story.
+/// - **An event moves a session's live clock and nothing else** (23.0):
+///   it keeps a working session from reading as stalled and ends a "your
+///   turn"; the row no longer quotes the tool in the present tense.
 /// - **The filename decides identity** (agent + sanitized session); a body
 ///   that disagrees is refused — the respond spool's rule.
 /// - Bounded everything: file count, bytes per file, age; unknown agents are
@@ -27,8 +28,6 @@ package enum ActivitySpool {
     package static let maxFiles = 64
     package static let maxBytesPerFile = 4 * 1024
     package static let maxAgeMs: Int64 = 24 * 60 * 60 * 1000
-    /// How long an event may be spoken about in the present tense.
-    package static let liveWindowMs: Int64 = 120_000
 
     package struct Event: Equatable {
         package var agent: String

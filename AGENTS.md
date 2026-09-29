@@ -195,8 +195,8 @@ an observed property only when it changed. `WaitNotifier` (`@MainActor`, not
 observed) owns the "needs you" banner: `WaitingDelivery` planning, posting,
 rate limiting, outcomes and clicks on the `SessionLog`, and banner-click
 routing. Tests drive a scan with `store.engine.applyScan(...)`. The files are
-`StatusStore.swift` (model and intents), `StatusStoreViews.swift` (narrator,
-row models, the tray notice), `StatusStoreHealth.swift` (Health and
+`StatusStore.swift` (model and intents), `StatusStoreViews.swift` (the row
+and detail values, the tray notice), `StatusStoreHealth.swift` (Health and
 reports), `StatusStoreFixture.swift` (CLI fixtures), `ScanEngine.swift` and
 `WaitNotifier.swift`; the harvest's own between-scan memory is
 `HarvestMemory` in PulseHarvest. Settings are a `Codable` `PulseSettings`
@@ -215,9 +215,10 @@ a stalled/failed row. The lamp has a shape as well as a tone
 (`TrayRowModel.Shape`: waiting/running `filled`, error `half`, process-only
 `dotted`, idle `hollow`, drawn by `LampShapeView`); every other verb lives in
 the row `menu` (details, focus, dismiss, mute) and VoiceOver actions.
-`SessionDetailView` (→ or the menu's Details; ← / Esc back) shows the task,
-the why line, a `TimelineStripView` of the last hour, last words, plan, facts, the notification audit, then
-`WhyDetailSection` / `SessionDiagnosticsCard`. The tray is keyboard-first:
+`SessionDetailView` (→ or the menu's Details; ← / Esc back) renders a
+`DetailModel` through `SessionDetailFace`: the task, the why, the full ask,
+a `TimelineStripView` of the last hour, last words, plan, the last error,
+the notification audit and a few facts (model, source, folder, start). The tray is keyboard-first:
 typing filters (over every retained session), ↑↓ select, ↩ primary, → details,
 ⌫ dismiss a wait, Esc clears the filter, then closes the panel —
 `StatusStore.trayEscapeConsumed` (unobserved) tells the panel's key monitor
@@ -245,8 +246,8 @@ save. Every change goes through `StatusStore.updateLog`, which bumps the
 observed `logRevision` and writes only when content changed — a quiet scan
 writes nothing. `logRevision` and `settingsFocus` are observed store
 properties listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
-lamp, up to three driving sessions and what was left out (older
-hidden); `SnapshotBuilder` stores it as `snapshot.lampLines`, which the status
+lamp, up to three driving sessions (each with `Explain.why`) and what was
+left out (older hidden); `SnapshotBuilder` stores it as `snapshot.lampLines`, which the status
 item appends to its tooltip. `NotificationAuditModel` renders a wait's
 banner fate in the detail view; `ActivityLogModel` merges spans and banner
 fates across sessions into the Health window's Activity section,
@@ -256,14 +257,47 @@ is not today).
 (`SnapshotBuilder.staleHiddenWindowMs`), and the scan's `apply` debug-log
 line is written only when it changed.
 
+Rows (23.0, P2c). **A row's key is decided once and never changes**
+(`RowIdentity`, PulseHarvest): a session row is `agent|<vendor session id>`
+(else `agent|file:<hash of the transcript path>`, else `agent|at:<hash of
+cwd + start>`); a hook wait the harvest has not met is keyed like the session
+it names (`agent|<session>`, or `agent|hook:<hash of cwd>` when it names
+none), so the transcript turning up later finds the same row; a process with
+no session row is its own ephemeral `agent|pid:<pid>` row that is simply not
+built once the agent has a session (or hook) row — the process attaches to
+that row instead. Hooks attach by session id, then by folder (never onto a
+row that owns a different session, never onto a process row). The remap
+machinery (`remappedRowKeys`, `SessionLog.remap`, timeline `remapped`,
+`WaitNotifier.followRemap`) is gone; `session-log.json` is schema 2 and a
+version-1 file is not read. `AgentRow` is slim: identity (key, agent,
+session, `attentionSession`, cwd, project), the process handle (pid, tty,
+Warp, host app, `focusTier`), what it is doing (task, model, `lastWord`,
+`planSteps`, errors, `lastErrorText`), and one `RowState` — `.blocked(RowWait)`
+(kind, ask, since, signal, inFront), `.running`, `.yourTurn(sinceMs:)`,
+`.recent`, `.processOnly` — plus `isStalled`, `harvestMs` / `activityMs`,
+`startedMs` and `source` (`RowSource`: session / cache / hooks / process).
+Process evidence, start and count live on `ScanEngine.processesByAgent`
+(`ProcessFacts`) for Health. **One Explain**: `Explain` (pure) gives a row's
+`headline` (the tray hero), `why` (which evidence put it in this state and
+since when), `source`, `state` and `ask`; `TrayRowModel`, `DetailModel` and
+`LampExplanation` all say its words. `RowNarrator`, `RowCardModel`, the Why
+card, the diagnostics card, `ObservationQuality`, `TrayRowLead` and
+`RowValueEngine` are gone, with tokens, CPU/memory, context %, files, tool,
+phase/outcome, subagent counts and the activity-change diff on the row
+(the harvest still reads tool, tokens, phase and subagents for waits,
+freshness, state and Health's fact classes; files and context % are no
+longer read). User copy is L10n only — `DoctorModel`'s inline pairs became
+keys.
+
 21.0.0 (Clarity — bug fixes, one visual
 system, rows that explain themselves, fewer surfaces). `PulseTheme` owns
 spacing, radii, fills, semantic type and one `Tone` per state (system dynamic
 colours); views use `.pulseCard()` / `.pulseInner()` / `PulseChip` /
 `PulseLamp` instead of hand-written numbers. A tray row shows at most two
 verbs and only for a wait (`TrayRowModel.strip`); every verb is in `menu`
-once and in VoiceOver actions. `RowNarrator.whyLine` covers stalled, failed
-and process-only rows (`whyInline` shows it without a click). The snapshot
+once and in VoiceOver actions. The why line (since 23.0 `Explain.why`)
+covers stalled, failed and process-only rows (`whyInline` shows it without a
+click). The snapshot
 counts sessions dropped for age (`staleHidden`). 21.0 split Settings into
 five panes (one page since 22.0); the global shortcut is one `HotkeyChoice` with `.off`
 (`hotkeyEnabled` is derived; older files migrate). The self-check, per-agent
@@ -295,9 +329,8 @@ is added without being listed); AppKit follows the store with
 `surface_check.py` rejects any Combine-era wrapper (`ObservableObject`,
 `@Published`, `@ObservedObject`, `@StateObject`, `objectWillChange`). The
 cards under a tray row — the expanded inspector, the digest (in
-22.0 the detail view) —
-render `RowCardModel` and send
-`RowCardModel.Action`. The self-check (`DoctorModel` pure, `DoctorProbe`
+22.0 the detail view; 23.0 `DetailModel`) — render a value and send
+intents. The self-check (`DoctorModel` pure, `DoctorProbe`
 read-only IO, Settings → About) turns the real-machine confirmations into
 one click and a redacted report: Claude/Codex hooks installed and actually
 firing, `claude agents --json`, Codex rollout format. The test target is in the Swift 6 mode too: XCTest suites isolate
@@ -316,9 +349,8 @@ elicitation, adds `StopFailure`, and treats a PermissionRequest for
 (`item_completed`) are parsed, `.jsonl.zst` is left alone, and
 `~/.codex/hooks.json` gets `Stop` + `UserPromptSubmit` only — never
 `PermissionRequest`, which fires before Codex's own auto-review. Since 17.0
-`RowNarrator.whyLine` says which evidence put a row in its state and never
-guesses (23.0: the Why card under it lists the session's spans from
-`SessionLog`; the hook-history copy and its TSV export are gone —
+the why line (23.0: `Explain.why`) says which evidence put a row in its
+state and never guesses (the hook-history copy and its TSV export are gone —
 `TurnTruthTests` replays static fixtures through `AttentionReader`). The tray row's face is a value
 (`TrayRowModel` → `TrayRowFace`, gated by `surface_check.py`). Since 16.0 red means blocked: Attention
 Protocol v3 (`AttentionKind`) separates blocked, your turn (a quiet count) and

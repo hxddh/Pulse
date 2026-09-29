@@ -155,65 +155,24 @@ final class QualityTests: XCTestCase {
         )
     }
 
-    func testAFreshEventPutsThePresentTenseOnTheRow() throws {
+    func testAFreshEventMovesTheLiveClock() throws {
         let rows = build(harvest: [harvestRow()], activity: [toolEvent()])
         let row = try XCTUnwrap(rows.first { $0.sessionID == "sess-a" })
-        XCTAssertEqual(row.liveTool, "Edit")
-        XCTAssertEqual(row.liveTarget, "/work/repo/src/Main.swift")
-        XCTAssertEqual(row.liveAtMs, now - 5_000)
-        XCTAssertGreaterThanOrEqual(row.activityChangedMs, now - 5_000,
-                                    "the event is live-signal evidence, on the live-signal clock")
-    }
-
-    func testAPromptEventClearsTheToolBecauseTheTurnEnded() throws {
-        var prompt = toolEvent()
-        prompt.event = "prompt"
-        prompt.tsMs = now - 1_000
-        let rows = build(harvest: [harvestRow()], activity: [prompt])
-        let row = try XCTUnwrap(rows.first { $0.sessionID == "sess-a" })
-        XCTAssertEqual(row.liveTool, "")
-        XCTAssertEqual(row.liveAtMs, now - 1_000)
+        XCTAssertEqual(row.activityMs, now - 5_000, "the event is live-signal evidence, on the live-signal clock")
+        XCTAssertEqual(row.harvestMs, now - 60_000, "the harvested facts are still as old as their harvest")
     }
 
     func testAnEventNeverCreatesARowAndNeverAWait() {
         let alone = build(activity: [toolEvent(session: "nobody-home")])
         XCTAssertTrue(alone.isEmpty, "an event without a row has no other evidence — no row")
         let rows = build(harvest: [harvestRow()], activity: [toolEvent()])
-        XCTAssertFalse(rows.contains(where: \.waiting), "activity must never become Waiting")
+        XCTAssertFalse(rows.contains(where: \.isBlocked), "activity must never become Waiting")
     }
 
     func testAFutureEventStampIsClampedByTheBuilderToo() throws {
         let rows = build(harvest: [harvestRow()], activity: [toolEvent(tsMs: now + 600_000)])
         let row = try XCTUnwrap(rows.first { $0.sessionID == "sess-a" })
-        XCTAssertLessThanOrEqual(row.liveAtMs, now)
-    }
-
-    // MARK: - The story: present tense only for second-grade evidence
-
-    @MainActor
-    private func liveRow(ageMs: Int64) -> AgentRow {
-        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
-        row.task = "Fix the auth module"
-        row.liveProcess = true
-        row.harvestMs = wallNow
-        row.liveTool = "Edit"
-        row.liveTarget = "/work/repo/src/Main.swift"
-        row.liveAtMs = wallNow - ageMs
-        return row
-    }
-
-    @MainActor
-    func testTheStorySpeaksPresentTenseOnlyInsideTheLiveWindow() {
-        let store = StatusStore()
-        store.language = .en
-        let fresh = store.rowStoryLine(liveRow(ageMs: 10_000))
-        XCTAssertTrue(fresh.contains("Edit"), fresh)
-        XCTAssertTrue(fresh.contains("Main.swift"), "a path shows as its leaf: \(fresh)")
-        XCTAssertFalse(fresh.contains("/work/repo"), "never the whole path on a row: \(fresh)")
-
-        let stale = store.rowStoryLine(liveRow(ageMs: ActivitySpool.liveWindowMs + 30_000))
-        XCTAssertFalse(stale.contains("Main.swift"),
-                       "past the window the polled story takes back over: \(stale)")
+        XCTAssertLessThanOrEqual(row.activityMs, now)
     }
 
     // MARK: - Yield: the measurement measuring itself

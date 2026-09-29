@@ -118,8 +118,6 @@ final class SnapshotBuilderTests: XCTestCase {
         source.model = "grok-4.5"
         source.mode = "build-plan"
         source.errors = 1
-        source.files = 3
-        source.contextPercent = 27
         source.progressDone = 4
 
         source.lastWord = "Uploaded in 4 parts."

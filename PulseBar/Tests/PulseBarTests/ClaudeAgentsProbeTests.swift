@@ -93,28 +93,31 @@ struct ClaudeAgentsProbeTests {
     @Test func aVendorReportedWaitLightsTheLampAndSaysSo() throws {
         let r = build([permissionWait])
         let row = try #require(r.rows.first)
-        #expect(row.waiting)
-        #expect(row.waitKind == "Permission")
-        #expect(row.waitSignal == .vendor)
-        #expect(row.waitSinceMs == now - 90_000)
+        #expect(row.isBlocked)
+        #expect(row.wait?.kind == "Permission")
+        #expect(row.wait?.signal == .vendor)
+        #expect(row.wait?.sinceMs == now - 90_000)
         #expect(r.snapshot.glance == .waiting)
-        let why = try #require(RowNarrator(lang: .en, nowMs: now).whyLine(row))
-        #expect(why.contains("permission prompt"))
+        let explain = Explain.make(row, lang: .en, nowMs: now)
+        #expect(explain.why.hasPrefix("Claude itself"))
+        #expect(explain.ask == "permission prompt", "Claude's own words are the ask")
     }
 
     @Test func aHookRaiseForTheSameSessionWins() throws {
         let hook = AttentionReader.Entry(id: .claude, kind: "Input", message: "Which DB?", tsMs: now - 1_000, session: "s1", cwd: "/p")
         let row = try #require(build([permissionWait], attention: [hook]).rows.first)
-        #expect(row.waitSignal == .hooks)
-        #expect(row.waitKind == "Input")
+        #expect(row.wait?.signal == .hooks)
+        #expect(row.wait?.kind == "Input")
     }
 
     @Test func aDismissedVendorWaitStaysQuietAndNoRowIsInvented() throws {
         let key = try #require(build([]).rows.first).rowKey
-        #expect(try #require(build([permissionWait], dismissed: [key]).rows.first).waiting == false)
+        let dismissed = try #require(build([permissionWait], dismissed: [key]).rows.first)
+        #expect(!dismissed.isBlocked)
         var stranger = permissionWait
         stranger.sessionID = "someone-else"
         #expect(build([stranger]).rows.count == 1, "a report with no row has no other evidence")
-        #expect(try #require(build([stranger]).rows.first).waiting == false)
+        let strangerRow = try #require(build([stranger]).rows.first)
+        #expect(!strangerRow.isBlocked)
     }
 }

@@ -16,7 +16,7 @@ final class GoLookClosureTests: XCTestCase {
     @MainActor
     func testFocusAgentSeedsPendingRevealForWaitingRow() {
         let store = makeStore()
-        let row = try! XCTUnwrap(store.snapshot.rows.first(where: \.waiting) ?? store.allRowsForDisplay.first(where: \.waiting))
+        let row = try! XCTUnwrap(store.snapshot.rows.first(where: \.isBlocked) ?? store.allRowsForDisplay.first(where: \.isBlocked))
         store.clearPendingRevealRowKey()
         store.focusAgent(idRaw: row.agent.rawValue, session: row.sessionID, rowKey: row.rowKey)
         XCTAssertEqual(store.pendingRevealRowKey, row.rowKey)
@@ -26,7 +26,7 @@ final class GoLookClosureTests: XCTestCase {
     func testFocusAgentPrefersExactRowKey() {
         let store = makeStore()
         store.installPreviewFixture("waiting")
-        let rows = store.allRowsForDisplay.filter(\.waiting)
+        let rows = store.allRowsForDisplay.filter(\.isBlocked)
         guard rows.count >= 2 else {
             // Fixture may be single-wait; still prove exact key wins.
             let row = try! XCTUnwrap(rows.first ?? store.allRowsForDisplay.first)
@@ -44,7 +44,7 @@ final class GoLookClosureTests: XCTestCase {
         let store = makeStore()
         store.clearPendingRevealRowKey()
         store.focusFirstWaiting()
-        let expected = store.allRowsForDisplay.first(where: \.waiting)?.rowKey
+        let expected = store.allRowsForDisplay.first(where: \.isBlocked)?.rowKey
         XCTAssertEqual(store.pendingRevealRowKey, expected)
     }
 

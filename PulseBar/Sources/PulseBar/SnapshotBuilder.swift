@@ -730,9 +730,7 @@ enum SnapshotBuilder {
             || act.tokensIn > 0
             || act.tokensOut > 0
             || act.records > 0
-            || act.files > 0
             || act.errors > 0
-            || act.contextPercent > 0
             || act.progressDone > 0
             || act.progressTotal > 0
     }

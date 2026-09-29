@@ -106,13 +106,6 @@ extension NativeActivityHarvest {
         return path.hasPrefix("/") ? path : ""
     }
 
-    package static func contextPercent(_ value: Any?) -> Int {
-        let raw = stringValue(value).trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "%", with: "")
-        guard var number = Double(raw), number.isFinite, number > 0 else { return 0 }
-        if number <= 1 { number *= 100 }
-        return max(1, min(100, Int(number.rounded())))
-    }
-
     package static func contextLooksSession(_ context: String) -> Bool {
         let lower = context.lowercased()
         return sessionNeedles.contains(where: { lower.contains($0) })

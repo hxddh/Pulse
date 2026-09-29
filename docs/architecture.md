@@ -37,7 +37,7 @@ PulseBar/Sources/
                  （TranscriptDialect + HarvestCodex / Pi / Claude / SmallDialects）· HarvestDatabases
                  · ActivityHarvest · ProcessProbe · HarvestSupervisor · HarvestMemory（ScanMemory）
                  · AttentionIO · ActivitySpool · TitleHeuristics · HarvestVocabulary
-  PulseBar/      可执行。builder、ScanEngine、StatusStore、WaitNotifier、RowNarrator、
+  PulseBar/      可执行。builder、ScanEngine、StatusStore、WaitNotifier、Explain、
                  WaitingDelivery、视图、hook 入口。
                  15.0 起表面是纯值：视图只渲染值、发 intent，由 StatusStore 执行；
                  SurfaceFixtures 的每个夹具在 CI 里经 SurfaceCapture 渲染成 PNG
@@ -178,20 +178,36 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 它做的事：
 
 1. 进程按 agent 收敛，`cursor_agent` 并进 `cursor`
-2. harvest 行建会话行；key 冲突时唯一化；每 Agent 的 500 条采集输入保留 500 条，
+2. harvest 行建会话行；键由 `RowIdentity` 一次定下、之后不再改变（`agent|<会话 id>`，没有 id
+   时是会话文件路径或「目录 + 开始时间」的哈希，键里不带路径）；同一会话的多个文件合并成一行，
+   无法区分的两个会话加 `~2` 后缀；每 Agent 的 500 条采集输入保留 500 条，
    超出部分精确计入未显示数量；面板 glance 默认全局前 12 行
 3. 陈旧 harvest 丢弃；同 Agent 没有任何新鲜记录且进程仍在时，只允许一个未完成记录
    按工作区匹配 / 最近活动降级为上下文；subagent 仍在运行的记录不视为陈旧
 4. `skill=pending` → Waiting，除非用户软忽略过
-5. live 进程**只挂到一行**，不在同 agent 的兄弟会话间涂抹
-6. attention 三级匹配：session id → cwd → 该 agent 最合适的行；都不中就新建一行
-7. 解析 focus 分级；进程探测补充可验证的工作目录（每轮一次，不在视图里）
-8. 排序：Waiting → 有会话标题 → live → recent → agent 优先级
-9. 编码 glance 状态、标题、tooltip、header；22.0 起还有**灯的解释**：`LampExplanation.make`
-   给出决定颜色的规则、至多三个驱动会话和没算进去的部分，存为 `snapshot.lampLines`，
-   状态栏把它接在 tooltip 后面
-10. 算边沿：哪些是**新**的 Waiting、哪些等待结束了、灯是否刚变灰
-11. 计数未显示的会话：`staleHidden` 只算最近 24 小时里停下的（`staleHiddenWindowMs`）
+5. attention 两级匹配：session id（精确，或唯一前缀；多个前缀视为歧义、不点灯）→ cwd（点名了
+   别的会话时只落到没有会话 id 的行上）；从不落到进程行上；都不中时阻塞事件建一个 hook 行，键同它
+   点名的会话（`agent|<会话 id>`，所以会话文件出现后还是同一行），没点名会话时是
+   `agent|hook:<cwd 哈希>`；「回合结束」不建行
+6. live 进程**只挂到一行**（等待优先、未完成优先、同目录优先、最新优先），不在兄弟会话间涂抹；
+   该 Agent 没有任何会话 / hook 行时才建一个短命的进程行 `agent|pid:<pid>` —— 它不「升级」，
+   会话行出现时它就不再被建出来
+7. 每行只有一个状态（`RowState`）：`.blocked(RowWait)`（hook / pending / `claude agents`）、
+   `.processOnly`、`.yourTurn(sinceMs:)`（hook 报告回合结束且会话此后没动）、`.running`（进程在、
+   显式运行阶段或子代理在跑，且回合未完成）、`.recent`；停滞只对 `.running` 按扫描时钟判定
+8. 解析 focus 分级；进程探测补充可验证的工作目录（每轮一次，不在视图里）
+9. 排序：Waiting（最久的在前）→ 分区 → 有会话标题 → live → agent 优先级 → 键（全序，同一个世界
+   总是同一个顺序）
+10. 编码 glance 状态、标题、tooltip、header；22.0 起还有**灯的解释**：`LampExplanation.make`
+   给出决定颜色的规则、至多三个驱动会话（各带 `Explain.why`）和没算进去的部分，存为
+   `snapshot.lampLines`，状态栏把它接在 tooltip 后面
+11. 算边沿：键不会变，所以新的 Waiting 就是等待键集合之差，不需要跟随改名
+12. 计数未显示的会话：`staleHidden` 只算最近 24 小时里停下的（`staleHiddenWindowMs`）
+
+一行说什么只由 `Explain`（纯值）决定：`headline`（托盘主行：等待行 任务→项目→「需要你」；进程行
+诚实短语；会话行 任务→新鲜原话→项目→会话短语）、`why`（哪条证据让它处在这个状态、从何时起）、
+`source`（会话文件 / 应用数据 / 仅 hook / 仅进程）、`state` 与 `ask`。`TrayRowModel`、详情页的
+`DetailModel` 与 `LampExplanation` 都用它的话，所以三处永远一致。
 
 **它不做任何有副作用的事。** 时钟、终端环境、路径存在性判断都从 `Context` 注入；
 想让外界做的事——发通知、写日志、清除某个 key——全部作为数据返回。
@@ -211,7 +227,7 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
 
 - **状态段**（`TimelineSpan`）：running / thin / stalled / blocked / turn / recent，依据
   hook / pending / vendor / harvest / process，起止时间（没有证据时钟时记扫描时刻、标
-  `exact = false`），等待段另存 agent 发来的那句请求（`note`，脱敏，≤ 200 字）。
+  `exact = false`）。
 - **等待记录**（`SessionLog.Wait`）：`id`（`rowKey|扫描时刻`，通知带着它）、kind、标题
   （`usefulTask`，脱敏，≤ 160 字）、`raisedMs`、`queuedMs`（欠一条横幅）、`notifiedMs`、
   `outcome` / `outcomeMs`（`posted` / `summary`，或 `WaitingDelivery.SkipReason` 的原始值）、
@@ -223,8 +239,8 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
 
 边界：至多 128 个会话、每个 48 段、每个 16 条已解决等待；关上的段与已解决的等待 24 小时后清掉；
 开着的段与未解决的等待是「现在」，从不被上限挤掉。退出时开着的段在重启后第一轮扫描按上次写盘
-时刻（`savedAtMs`）关上；此后任何不在当前行里的会话都没有开着的段。进程行换成更好的键时两边的
-历史合并（`SessionLog.remap`）。
+时刻（`savedAtMs`）关上；此后任何不在当前行里的会话都没有开着的段。行的键从不改变
+（`RowIdentity`），所以没有历史需要合并；23.0 的 schema 2 不读键规则不同的旧文件。
 
 **扫描静默**：每次修改都经 `StatusStore.updateLog`：只有持久内容真的变了，被观察的
 `logRevision`（登记在 `ScanQuietTests`）才前进、`SessionLogStore` 才写盘（1.5 秒防抖；发横幅前的
@@ -232,7 +248,7 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
 「这条通知」会跟着更新。点击按横幅携带的等待 `id` 记账，不按 row key 记到最新的那条。
 
 读它的视图只经 `logRevision` 订阅：详情页的 `TimelineStripView`、`NotificationAuditModel`
-（「这条通知发生了什么」）与 Why 卡片（`WhyCardModel`，该会话的状态段，新的在上），健康检查的
+（「这条通知发生了什么」），都经 `DetailModel` 交给 `SessionDetailFace`；健康检查的
 `ActivityLogModel`（状态段与通知去向合成一条倒序记录，按 Agent 过滤）。时间一律经
 `LogClock`：今天 `HH:mm`，一周内 `周一 HH:mm` / `Mon HH:mm`，更早 `M/d HH:mm`。自检的「hook
 真的触发过」直接读 attention.tsv 每个 Agent 最新的一行（`AttentionIO.latestEvents`）。

@@ -133,9 +133,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     @MainActor
     func testDismissedKeyClearsWhenHarvestAbsentOnReliableScan() {
-        let key = ActivityHarvest.sessionKey(
-            id: .cline, sessionID: "cl-gone", project: "", cwd: "/Users/me/Pulse"
-        )
+        let key = RowIdentity.session(agent: .cline, sessionID: "cl-gone")
         let gone = build(harvest: [], dismissed: [key])
         XCTAssertTrue(gone.clearedPendingKeys.contains(key))
     }
@@ -143,13 +141,11 @@ final class ExtinguishHonestyTests: XCTestCase {
     @MainActor
     func testAbsentThenPendingCanReraiseAfterTombstoneCleared() {
         let pending = harvest(.cline, session: "cl-reraise", skill: "pending")
-        let key = ActivityHarvest.sessionKey(
-            id: .cline, sessionID: "cl-reraise", project: "", cwd: "/Users/me/Pulse"
-        )
+        let key = RowIdentity.session(agent: .cline, sessionID: "cl-reraise")
         let absent = build(harvest: [], dismissed: [key])
         XCTAssertTrue(absent.clearedPendingKeys.contains(key))
         let again = build(harvest: [pending], dismissed: [])
-        XCTAssertTrue(again.rows[0].waiting)
+        XCTAssertTrue(again.rows[0].isBlocked)
     }
 
     // MARK: Attention match uniqueness
@@ -168,7 +164,7 @@ final class ExtinguishHonestyTests: XCTestCase {
                 )
             ]
         )
-        XCTAssertFalse(lit.rows.contains(where: \.waiting), "ambiguous prefix must not smear")
+        XCTAssertFalse(lit.rows.contains(where: \.isBlocked), "ambiguous prefix must not smear")
     }
 
     @MainActor
@@ -185,7 +181,7 @@ final class ExtinguishHonestyTests: XCTestCase {
                 )
             ]
         )
-        let waiting = lit.rows.filter(\.waiting)
+        let waiting = lit.rows.filter(\.isBlocked)
         XCTAssertEqual(waiting.count, 1)
         XCTAssertEqual(waiting[0].sessionID, "sess-bbb")
     }
@@ -212,7 +208,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         let store = StatusStore()
         var row = AgentRow(rowKey: "zcode|live", agent: .zcode)
         row.liveProcess = true
-        row.waiting = false
+        row.state = .running
         XCTAssertTrue(store.isWaitingNoneNeedsReach(row))
     }
 }

@@ -35,7 +35,8 @@ def main() -> int:
     # broadcast and the remote inbox) — the floor follows the spec down.
     # 23.0 removed three more with Respond (AR, AU, AV), and four with the
     # look-continuity notice, the session digest and adaptive depth (AF, AP,
-    # AQ, BV).
+    # AQ, BV). The row-narration scenarios went with `RowNarrator` (AD, AE,
+    # AS, BM, BN, BS) and stable identity came in (CN): still 60.
     if len(ids) < MIN_SCENARIOS:
         problems.append(f"docs/scenarios.md lists {len(ids)} scenarios; the spec has {MIN_SCENARIOS}")
     existing = {p.stem for p in TESTS.glob("*.swift")}

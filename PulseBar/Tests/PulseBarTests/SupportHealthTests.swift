@@ -219,7 +219,7 @@ final class SupportHealthTests: XCTestCase {
         }
         let observed = store.supportObservedDetail(item)
         XCTAssertTrue(observed.contains("Refine adapter coverage"), observed)
-        XCTAssertTrue(observed.contains("Turn complete"), observed)
+        XCTAssertTrue(observed.contains("Client"), observed)
         XCTAssertFalse(observed.localizedCaseInsensitiveContains("events"), observed)
     }
 
@@ -249,15 +249,14 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(store.snapshot.glance, .waiting)
         XCTAssertEqual(store.snapshot.rows.count, 1)
         XCTAssertEqual(store.snapshot.totalCount, 1)
-        XCTAssertTrue(store.snapshot.rows[0].waiting)
-        XCTAssertEqual(store.snapshot.rows[0].waitSignal, .hooks)
-        XCTAssertFalse(store.snapshot.rows[0].quality.facts.isEmpty)
+        XCTAssertTrue(store.snapshot.rows[0].isBlocked)
+        XCTAssertEqual(store.snapshot.rows[0].wait?.signal, .hooks)
 
         store.installPreviewFixture("status-running")
         XCTAssertEqual(store.snapshot.glance, .running)
         XCTAssertEqual(store.snapshot.rows.count, 1)
-        XCTAssertFalse(store.snapshot.rows[0].waiting)
-        XCTAssertEqual(store.snapshot.rows[0].progressDone, 12)
+        XCTAssertFalse(store.snapshot.rows[0].isBlocked)
+        XCTAssertEqual(store.snapshot.rows[0].planSteps.count, 2)
 
         store.installPreviewFixture("status-stalled")
         XCTAssertEqual(store.snapshot.glance, .stalled)
@@ -282,19 +281,6 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertFalse(store.settings.isPrivacyLimited(.cursor))
         XCTAssertEqual(store.privacyLimitedCount, 0)
         XCTAssertNil(store.privacyBannerText)
-    }
-
-    @MainActor
-    func testObservationGapNextStepsAreExplicit() {
-        let store = StatusStore()
-        store.language = .en
-        let open = ObservationGap(key: .task, reason: "process_only", nextStep: "open_agent_for_session")
-        let retry = ObservationGap(key: .task, reason: "scan_timeout", nextStep: "retry_scan")
-        let enable = ObservationGap(key: .task, reason: "privacy_limited", nextStep: "enable_app_data")
-        XCTAssertEqual(store.observationGapNextStep(open), store.tr(.qualityNextOpenAgent))
-        XCTAssertEqual(store.observationGapNextStep(retry), store.tr(.qualityNextRetryScan))
-        XCTAssertEqual(store.observationGapNextStep(enable), store.tr(.supportEnableData))
-        XCTAssertEqual(store.observationGapReason(retry), store.tr(.qualityReasonScanTimeout))
     }
 
     @MainActor
@@ -407,16 +393,9 @@ final class SupportHealthTests: XCTestCase {
     }
 
     @MainActor
-    func testObservationGapAttentionBridgeIsActionable() {
+    func testWaitingSignalsAreOneDeepLinkAway() {
         let store = StatusStore()
         store.language = .en
-        let gap = ObservationGap(
-            key: .waitingReason,
-            reason: "waiting_unsupported",
-            nextStep: "use_attention_bridge"
-        )
-        XCTAssertEqual(store.observationGapNextStep(gap), store.tr(.qualityNextAttentionBridge))
-        XCTAssertEqual(store.observationGapReason(gap), store.tr(.supportWaitingNoneDetail))
         store.openSettings(focus: .waitingSignals)
         XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
@@ -436,35 +415,6 @@ final class SupportHealthTests: XCTestCase {
         }
         store.performMaintenanceNoticeAction()
         XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
-    }
-
-    @MainActor
-    func testCachePrivacyGapDeepLinksToAppData() {
-        let store = StatusStore()
-        store.language = .en
-        let quality = ObservationQuality.derive(
-            task: "",
-            workspace: "",
-            action: "",
-            phase: "",
-            model: "",
-            progressDone: 0,
-            progressTotal: 0,
-            errors: 0,
-            waiting: false,
-            waitMessage: "",
-            evidence: .cache,
-            harvestMs: 1,
-            processStartedMs: 0,
-            privacyLimited: true,
-            agentHarvestSource: .bestEffortCache,
-            waitingSource: .harvestPending
-        )
-        XCTAssertTrue(quality.missing.contains(where: {
-            $0.reason == "privacy_limited" && $0.nextStep == "enable_app_data"
-        }))
-        let gap = quality.missing.first { $0.nextStep == "enable_app_data" }!
-        XCTAssertEqual(store.observationGapNextStep(gap), store.tr(.supportEnableData))
     }
 
     // MARK: collector explain on screen (M-4)

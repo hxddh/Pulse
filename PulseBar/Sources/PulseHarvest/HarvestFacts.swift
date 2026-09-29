@@ -586,14 +586,6 @@ extension NativeActivityHarvest {
             applyTokenUsage(&f, response["usageMetadata"] as? [String: Any])
         }
         f.errors = firstNumber(dict, keys: ["errorCount", "errors", "toolFailureCount", "tool_failures"])
-        f.files = firstNumber(dict, keys: [
-            "filesChanged", "filesChangedCount", "totalFilesTouched",
-            "filesTouched", "fileCount",
-        ])
-        f.contextPercent = contextPercent(firstValue(dict, keys: [
-            "contextWindowUsage", "contextUsagePercent", "contextPercent", "context_percent",
-            "contextUsage",
-        ]))
         f.progressDone = firstNumber(dict, keys: ["completedTasks", "completed", "doneCount", "progressDone"])
         f.progressTotal = firstNumber(dict, keys: ["totalTasks", "total", "taskCount", "progressTotal"])
         f.subRunning = firstNumber(dict, keys: ["subagentsRunning", "subRunning", "activeSubagents"])
@@ -780,8 +772,7 @@ extension NativeActivityHarvest {
         // last_token_usage semantics). Never sum every turn into the tray.
         if source.tokensIn > 0, target.tokensIn == 0 || sourceIsNewer { target.tokensIn = source.tokensIn }
         if source.tokensOut > 0, target.tokensOut == 0 || sourceIsNewer { target.tokensOut = source.tokensOut }
-        target.errors = max(target.errors, source.errors); target.files = max(target.files, source.files)
-        target.contextPercent = max(target.contextPercent, source.contextPercent)
+        target.errors = max(target.errors, source.errors)
         // A plan is one state: its current step, its checklist and its counts
         // travel together from the newer fragment. Taking each field's max
         // separately could pair one list's count with another list's step.
@@ -951,8 +942,7 @@ extension NativeActivityHarvest {
             let placeholder = isChromeTask(task)
             if placeholder, cwd.isEmpty, fact.tool.isEmpty, fact.phase.isEmpty,
                fact.outcome.isEmpty, fact.model.isEmpty, fact.tokensIn == 0,
-               fact.tokensOut == 0, fact.errors == 0, fact.files == 0,
-               fact.contextPercent == 0, fact.progressTotal == 0 {
+               fact.tokensOut == 0, fact.errors == 0, fact.progressTotal == 0 {
                 return nil
             }
             var sid = clean(fact.sessionID, limit: 80)
@@ -987,8 +977,6 @@ extension NativeActivityHarvest {
                 model: ContentSanitizer.redact(fact.model),
                 mode: ContentSanitizer.redact(fact.mode),
                 errors: max(0, fact.errors),
-                files: max(0, fact.files),
-                contextPercent: max(0, min(100, fact.contextPercent)),
                 progressDone: max(0, fact.progressDone),
                 progressTotal: max(0, fact.progressTotal)
             )

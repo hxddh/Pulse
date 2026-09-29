@@ -53,7 +53,7 @@ enum PulseBarMain {
                 }
                 if ProcessInfo.processInfo.arguments.contains("--harvest-dump-all") {
                     for row in result.rows {
-                        print("    row \(row.id.rawValue) sid=\(row.sessionID) task=\(row.task) cwd=\(row.cwd) tool=\(row.tool) model=\(row.model) phase=\(row.phase) outcome=\(row.outcome) tokens=\(row.tokensIn)/\(row.tokensOut) files=\(row.files) errors=\(row.errors) context=\(row.contextPercent) progress=\(row.progressDone)/\(row.progressTotal) records=\(row.records) evidence=\(row.evidence.rawValue)")
+                        print("    row \(row.id.rawValue) sid=\(row.sessionID) task=\(row.task) cwd=\(row.cwd) tool=\(row.tool) model=\(row.model) phase=\(row.phase) outcome=\(row.outcome) tokens=\(row.tokensIn)/\(row.tokensOut) errors=\(row.errors) progress=\(row.progressDone)/\(row.progressTotal) records=\(row.records) evidence=\(row.evidence.rawValue)")
                     }
                 }
             }

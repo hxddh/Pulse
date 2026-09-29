@@ -1,9 +1,10 @@
 # Agent observability contract
 
-> **0.50 Signal Quality** — runtime rows carry a named
-> `ObservationQuality` envelope (`facts` / `missing` / `freshness` /
-> `confidence`). A missing field must explain why and what to do next. Process-only fallbacks are never
-> presented as equivalent to session/cache rows.
+> **23.0** — every row says where its facts came from (`RowSource`: session
+> file / app data / hooks only / process only) and one sentence of why it is
+> in its state (`Explain.why`). Process-only fallbacks are never presented as
+> equivalent to session/cache rows. (The 0.50 `ObservationQuality` envelope
+> went with the narration that rendered it.)
 
 Pulse does not count a detected process as “Agent support”. A useful row needs
 four baseline facts whenever that Agent has written them locally:
@@ -113,7 +114,7 @@ separation lets Pulse observe more than it shows without allowing unbounded
 vendor stores to consume menu-bar memory.
 
 `bestEffortCache` Agents may still miss goal / workspace / activity; that shows
-up as Limited / ObservationQuality gaps — never as a silent “full session”
+up in Health's per-agent facts and as a cache source on the row — never as a silent “full session”
 claim. Agents with `waitingSource=none` stay Running-only unless the Attention
 bridge writes a real Waiting line.
 

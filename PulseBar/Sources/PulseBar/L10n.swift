@@ -142,53 +142,11 @@ enum L10n {
         case .processDetected: return "Process detected"
         case .processCount: return "%d processes"
         case .limitedData: return "Process only"
-        case .sessionEvidence: return "Session"
-        case .cacheEvidence: return "Local cache"
         case .terminalSession: return "Terminal session running"
         case .appSession: return "Agent app running"
         case .processAge: return "Process started %@ ago"
-        case .activityChanged: return "Changed · %@"
-        case .newErrors: return "%d new errors"
-        case .newFiles: return "%d more files"
-        case .progressAdvanced: return "Progress moved to %d/%d"
-        case .modelCallChanged: return "New model call"
-        case .toolChanged: return "Tool changed"
-        case .phaseChanged: return "Phase changed"
-        case .taskChanged: return "Goal changed"
-        case .signalProgress: return "Progress %d/%d"
-        case .signalErrors: return "+%d errors"
-        case .signalFiles: return "+%d files"
-        case .signalModel: return "Model call"
-        case .signalTool: return "Tool"
-        case .signalPhase: return "Phase"
-        case .signalTask: return "Goal"
-        case .signalCompleted: return "Complete"
-        case .signalFailed: return "Failed"
-        case .signalCancelled: return "Cancelled"
         case .terminalDetectedNoDetails: return "Terminal session running · activity feed unavailable"
         case .appDetectedNoDetails: return "Agent app running · session feed unavailable"
-        case .lastAction: return "Last action: %@"
-        case .lastActive: return "Last active %@"
-        case .latestCallTokens: return "Latest model call · %@ input · %@ output"
-        case .reportedTokens: return "Agent reported · %@ input · %@ output"
-        case .latestCallTokensIn: return "Latest model call · %@ input"
-        case .latestCallTokensOut: return "Latest model call · %@ output"
-        case .reportedTokensIn: return "Agent reported · %@ input"
-        case .reportedTokensOut: return "Agent reported · %@ output"
-        case .compactTokensIn: return "↑%@"
-        case .compactTokensOut: return "↓%@"
-        case .compactTokens: return "↑%@ ↓%@"
-        case .subagentsActive: return "%d of %d subagents active"
-        case .subagentsObserved: return "%d subagents observed"
-        case .subChipActive: return "sub %d↑"
-        case .subChipObserved: return "sub %d"
-        case .actionPlanning: return "Planning"
-        case .actionCommand: return "Terminal command"
-        case .actionEditing: return "Editing files"
-        case .actionImage: return "Reviewing image"
-        case .actionResearch: return "Research"
-        case .actionReading: return "Reading files"
-        case .actionAutomation: return "Automation"
         case .setupWaitingSignals: return "Connect “needs you”…"
         case .about: return "About"
         case .tagline: return "Status lamp for coding agents"
@@ -268,18 +226,10 @@ enum L10n {
         case .supportProgress: return "execution signal"
         case .supportAction: return "last action"
         case .supportModel: return "model"
-        case .supportEvidence: return "evidence"
         case .session: return "session"
-        case .detailTool: return "tool"
-        case .detailSkill: return "skill"
-        case .detailPhase: return "phase"
-        case .detailOutcome: return "outcome"
-        case .detailEvidence: return "evidence"
-        case .detailErrors: return "errors"
         case .supportResources: return "resources"
         case .supportObservedSignals: return "Observed: %@"
         case .supportNoObservedSignals: return "No usable session signals yet"
-        case .skillFact: return "Workflow %@"
         case .supportLastRead: return "read %@ ago"
         case .supportMissing: return "missing: %@"
         case .supportMissingFeed: return "activity feed"
@@ -288,7 +238,6 @@ enum L10n {
         case .supportMissingWaiting: return "Waiting hook not ready"
         case .supportWaitingHooks: return "Waiting route: hooks"
         case .supportWaitingHarvest: return "Waiting route: session data"
-        case .supportWaitingNone: return "Waiting unavailable"
         case .supportWaitingNoneDetail:
             return "No native Waiting path — use the Attention bridge"
         case .supportDepthSession: return "Depth: session transcript"
@@ -362,12 +311,6 @@ enum L10n {
         case .supportCopySafeReport: return "Copy safe report"
         case .exportSafeReport: return "Export safe report…"
         case .supportCopyShapeReport: return "Copy vendor shape"
-        case .cpuFact: return "CPU %d%%"
-        case .stalledButComputing: return "Quiet transcript, busy process — computing"
-        case .evidenceCPU: return "Compute"
-        case .evidenceCPUUnknown: return "Not sampled yet — two ticks are needed before this is an answer."
-        case .evidenceCPUHint: return "Busy with a quiet transcript is thinking, not stuck."
-        case .evidenceMemory: return "Resident memory"
         case .supportShapeReading: return "Reading sessions…"
         case .supportShapeHint: return "Key names and value kinds only — never your text. Share it to get a parsing bug fixed."
         case .notifFocus: return "Go look"
@@ -375,54 +318,18 @@ enum L10n {
         case .searchNoResults: return "No sessions match this search"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
-        case .qualityReasonProcessOnly: return "Only process evidence is available"
-        case .qualityReasonCache: return "Vendor cache did not emit this field"
-        case .qualityReasonCacheThin: return "Thin cache index — only partial facts available"
-        case .qualityReasonNotEmitted: return "Not present in the local session record"
-        case .qualityReasonWaitingNoDetail: return "Waiting without a detailed reason"
         case .qualityReasonScanTimeout: return "Adapter timed out while reading local data"
-        case .qualityNextOpenAgent: return "Open the agent to see full session detail"
         case .qualityNextWaitCache: return "Keep using the agent so its local cache fills in"
-        case .qualityNextAttentionBridge: return "Set up the Attention bridge for Waiting"
-        case .qualityNextRetryScan: return "Retry the scan from Support Health"
         case .supportFailureTimelineEntry: return "Last failure · %@ · %@ ago"
-        case .qualityConfidenceHigh: return "High confidence"
-        case .qualityConfidenceMedium: return "Medium confidence"
-        case .qualityConfidenceLow: return "Low confidence"
         case .trayScanIncomplete: return "The last read did not finish · open Health"
-        case .recordsSuffix: return " events"
-        case .sessionAge: return "Started %@ ago"
-        case .phaseResponding: return "Responding"
-        case .phaseTurnComplete: return "Turn complete"
-        case .phaseWaitingPermission: return "Waiting for permission"
-        case .phasePlanning: return "Planning"
-        case .phaseWorking: return "Working"
-        case .phaseTesting: return "Testing"
-        case .phaseBuilding: return "Building"
-        case .phasePublishing: return "Publishing"
-        case .nowActivity: return "Now · %@"
-        case .outcomeActivity: return "Outcome · %@"
         case .modelFact: return "Model %@"
         case .errorFactOne: return "1 failure"
         case .errorsFact: return "%d failures"
-        case .outcomeFailed: return "Failed"
-        case .outcomeCancelled: return "Cancelled"
-        case .filesFact: return "%d files touched"
-        case .contextFact: return "Context %d%%"
         case .progressFact: return "%d/%d complete"
-        case .turnsFact: return "%d turns"
-        case .currentStepFact: return "Step · %@"
         case .supportYield: return "Measured facts: %@"
         case .supportYieldDrifted:
             return "Structured adapter yielded rows but no core facts — the vendor format may have drifted"
         case .signalVendor: return "Claude reports"
-        case .whyVendor: return "Red: Claude itself reports this session is waiting for %@"
-        case .whyHook: return "Red: %@'s hook reported %@, %@"
-        case .whyHookFront: return " — its window was in front, so no banner"
-        case .whyPending: return "Red: %@'s session log shows it stopped at %@"
-        case .whyTurn: return "Your turn: %@'s hook reported the turn ended, %@ — focus it or reply to clear"
-        case .whyTimeline: return "What this session did"
-        case .whyNoHistory: return "Nothing recorded for this session yet"
         case .doctorRun: return "Run self-check"
         case .doctorHint: return "Reads the Claude and Codex hook files and logs on this Mac, runs claude agents --json once, and says which contracts are proven here. Writes nothing; the copied report has no paths, prompts or session ids."
         case .yourTurn: return "Your turn"
@@ -455,13 +362,6 @@ enum L10n {
         case .setupAppDataDetail: return "Optional. Cursor, VS Code and other editor agents keep their sessions in data macOS protects."
         case .setupReview: return "Review…"
         case .setupOtherAgents: return "Using another agent? See how it can tell Pulse it needs you…"
-        case .whyProcessOnly: return "Only %@'s process is visible; there is no session file Pulse can read. Health shows why."
-        case .whyStalled: return "No new activity for %@ — past your %d-minute stall threshold."
-        case .whyStalledNoRule: return "No new activity for %@."
-        case .whyStalledUnknown: return "Running, but Pulse has no clock for its activity."
-        case .whyOutcome: return "The session's last run ended: %@."
-        case .whyErrors: return "The agent reported %d error(s) in this session."
-        case .inspectorHowPulseSees: return "How Pulse reads this session"
         case .updateFailedBadFeed: return "Update feed address is invalid"
         case .updateFailedNetwork: return "Could not reach GitHub"
         case .updateFailedHTTP: return "GitHub answered %d"
@@ -666,53 +566,11 @@ enum L10n {
         case .processDetected: return "检测到进程"
         case .processCount: return "%d 个进程"
         case .limitedData: return "仅进程"
-        case .sessionEvidence: return "结构化会话"
-        case .cacheEvidence: return "本地缓存"
         case .terminalSession: return "终端会话正在运行"
         case .appSession: return "Agent 应用正在运行"
         case .processAge: return "进程始于%@前"
-        case .activityChanged: return "刚刚变化 · %@"
-        case .newErrors: return "新增 %d 个错误"
-        case .newFiles: return "新增 %d 个文件"
-        case .progressAdvanced: return "进度推进至 %d/%d"
-        case .modelCallChanged: return "新的模型调用"
-        case .toolChanged: return "工具已切换"
-        case .phaseChanged: return "阶段已变化"
-        case .taskChanged: return "目标已更新"
-        case .signalProgress: return "进度 %d/%d"
-        case .signalErrors: return "+%d 个错误"
-        case .signalFiles: return "+%d 个文件"
-        case .signalModel: return "模型调用"
-        case .signalTool: return "工具"
-        case .signalPhase: return "阶段"
-        case .signalTask: return "目标"
-        case .signalCompleted: return "已完成"
-        case .signalFailed: return "失败"
-        case .signalCancelled: return "已取消"
         case .terminalDetectedNoDetails: return "终端会话正在运行 · 暂无活动数据"
         case .appDetectedNoDetails: return "Agent 应用正在运行 · 暂无会话数据"
-        case .lastAction: return "最近动作：%@"
-        case .lastActive: return "最近活动：%@"
-        case .latestCallTokens: return "最近一次模型调用 · 输入 %@ · 输出 %@"
-        case .reportedTokens: return "Agent 上报 · 输入 %@ · 输出 %@"
-        case .latestCallTokensIn: return "最近一次模型调用 · 输入 %@"
-        case .latestCallTokensOut: return "最近一次模型调用 · 输出 %@"
-        case .reportedTokensIn: return "Agent 上报 · 输入 %@"
-        case .reportedTokensOut: return "Agent 上报 · 输出 %@"
-        case .compactTokensIn: return "↑%@"
-        case .compactTokensOut: return "↓%@"
-        case .compactTokens: return "↑%@ ↓%@"
-        case .subagentsActive: return "%d / %d 个 subagent 活跃"
-        case .subagentsObserved: return "已观测 %d 个 subagent"
-        case .subChipActive: return "子任务 %d↑"
-        case .subChipObserved: return "子任务 %d"
-        case .actionPlanning: return "规划"
-        case .actionCommand: return "执行命令"
-        case .actionEditing: return "编辑文件"
-        case .actionImage: return "查看图片"
-        case .actionResearch: return "检索资料"
-        case .actionReading: return "读取文件"
-        case .actionAutomation: return "自动化操作"
         case .setupWaitingSignals: return "接入「需要你」…"
         case .about: return "关于"
         case .tagline: return "编码 Agent 状态灯"
@@ -787,18 +645,10 @@ enum L10n {
         case .supportProgress: return "执行信号"
         case .supportAction: return "最近动作"
         case .supportModel: return "模型"
-        case .supportEvidence: return "证据"
         case .session: return "会话"
-        case .detailTool: return "工具"
-        case .detailSkill: return "技能"
-        case .detailPhase: return "阶段"
-        case .detailOutcome: return "结果"
-        case .detailEvidence: return "证据"
-        case .detailErrors: return "错误"
         case .supportResources: return "资源"
         case .supportObservedSignals: return "已观测：%@"
         case .supportNoObservedSignals: return "尚未观测到可用会话信号"
-        case .skillFact: return "工作流 %@"
         case .supportLastRead: return "%@前读取"
         case .supportMissing: return "缺少：%@"
         case .supportMissingFeed: return "活动数据"
@@ -807,7 +657,6 @@ enum L10n {
         case .supportMissingWaiting: return "等待 hook 尚未就绪"
         case .supportWaitingHooks: return "等待通路：hooks"
         case .supportWaitingHarvest: return "等待通路：会话数据"
-        case .supportWaitingNone: return "等待：不可用"
         case .supportWaitingNoneDetail: return "不能主动报告「需要你」—— 可以通过 Attention 桥接入"
         case .supportDepthSession: return "深度：会话记录"
         case .supportDepthCacheThin: return "只读到部分缓存"
@@ -878,12 +727,6 @@ enum L10n {
         case .supportCopySafeReport: return "复制安全报告"
         case .exportSafeReport: return "导出安全报告…"
         case .supportCopyShapeReport: return "复制厂商格式"
-        case .cpuFact: return "CPU %d%%"
-        case .stalledButComputing: return "记录不动，进程在跑 —— 它在算"
-        case .evidenceCPU: return "计算量"
-        case .evidenceCPUUnknown: return "还没采到 —— 要两拍才能得出答案，不是 0。"
-        case .evidenceCPUHint: return "在算但记录不动 = 在想，不是卡住。"
-        case .evidenceMemory: return "常驻内存"
         case .supportShapeReading: return "正在读会话…"
         case .supportShapeHint: return "只有键名与值的类型，不含你的任何文字。发它就能修解析。"
         case .notifFocus: return "去看看"
@@ -891,54 +734,18 @@ enum L10n {
         case .searchNoResults: return "没有匹配的会话"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
         case .updateSignedUnnotarized: return "已用 Developer ID 签名 · 未公证 · Gatekeeper 可能拦截"
-        case .qualityReasonProcessOnly: return "目前只有进程证据"
-        case .qualityReasonCache: return "厂商缓存未写出该字段"
-        case .qualityReasonCacheThin: return "只读到部分缓存 —— 事实不全"
-        case .qualityReasonNotEmitted: return "本地会话记录中没有该字段"
-        case .qualityReasonWaitingNoDetail: return "正在等待，但没有详细原因"
         case .qualityReasonScanTimeout: return "读取本地数据超时"
-        case .qualityNextOpenAgent: return "打开该 Agent 查看完整会话"
         case .qualityNextWaitCache: return "继续使用该 Agent，等待本地缓存补齐"
-        case .qualityNextAttentionBridge: return "接入 Attention 桥，才能报告「需要你」"
-        case .qualityNextRetryScan: return "在支持健康度中重试扫描"
         case .supportFailureTimelineEntry: return "最近失败 · %@ · %@前"
-        case .qualityConfidenceHigh: return "高可信"
-        case .qualityConfidenceMedium: return "中等可信"
-        case .qualityConfidenceLow: return "低可信"
         case .trayScanIncomplete: return "上次读取没有完成 · 打开健康检查"
-        case .recordsSuffix: return " 条事件"
-        case .sessionAge: return "始于%@前"
-        case .phaseResponding: return "正在响应"
-        case .phaseTurnComplete: return "本轮已完成"
-        case .phaseWaitingPermission: return "等待权限"
-        case .phasePlanning: return "正在规划"
-        case .phaseWorking: return "正在执行"
-        case .phaseTesting: return "正在测试"
-        case .phaseBuilding: return "正在构建"
-        case .phasePublishing: return "正在发布"
-        case .nowActivity: return "当前 · %@"
-        case .outcomeActivity: return "结果 · %@"
         case .modelFact: return "模型 %@"
         case .errorFactOne: return "1 项失败"
         case .errorsFact: return "%d 项失败"
-        case .outcomeFailed: return "执行失败"
-        case .outcomeCancelled: return "已取消"
-        case .filesFact: return "涉及 %d 个文件"
-        case .contextFact: return "上下文 %d%%"
         case .progressFact: return "完成 %d/%d"
-        case .turnsFact: return "%d 轮"
-        case .currentStepFact: return "当前步骤 · %@"
         case .supportYield: return "实测事实：%@"
         case .supportYieldDrifted:
             return "声明结构化、本拍有行却零核心事实 —— 厂商格式可能已漂移"
         case .signalVendor: return "Claude 自报"
-        case .whyVendor: return "红灯：Claude 自己报告这个会话在等「%@」"
-        case .whyHook: return "红灯：%@ 的 hook 报告了「%@」· %@"
-        case .whyHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
-        case .whyPending: return "红灯：%@ 的会话记录显示它停在「%@」上"
-        case .whyTurn: return "轮到你：%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
-        case .whyTimeline: return "这个会话的经过"
-        case .whyNoHistory: return "这个会话还没有记录"
         case .doctorRun: return "运行自检"
         case .doctorHint: return "读取这台 Mac 上 Claude 与 Codex 的 hook 文件和记录，运行一次 claude agents --json，说明哪些约定在这里已被证实。不写任何东西；复制出的报告不含路径、提示词或会话 id。"
         case .yourTurn: return "轮到你"
@@ -971,13 +778,6 @@ enum L10n {
         case .setupAppDataDetail: return "可选。Cursor、VS Code 等编辑器里的 Agent 把会话存在 macOS 保护的数据里。"
         case .setupReview: return "查看…"
         case .setupOtherAgents: return "用的是其他 Agent？看看它如何告诉 Pulse「需要你」…"
-        case .whyProcessOnly: return "只能看到 %@ 的进程，没有 Pulse 能读的会话文件。「健康检查」里有原因。"
-        case .whyStalled: return "已经 %@ 没有新动静 —— 超过你设的 %d 分钟停滞阈值。"
-        case .whyStalledNoRule: return "已经 %@ 没有新动静。"
-        case .whyStalledUnknown: return "在运行，但 Pulse 读不到它的活动时间。"
-        case .whyOutcome: return "这个会话上一次运行的结果：%@。"
-        case .whyErrors: return "Agent 在这个会话里报告了 %d 个错误。"
-        case .inspectorHowPulseSees: return "Pulse 如何读取这个会话"
         case .updateFailedBadFeed: return "更新源地址无效"
         case .updateFailedNetwork: return "无法连接 GitHub"
         case .updateFailedHTTP: return "GitHub 返回 %d"
@@ -1129,19 +929,9 @@ enum L10n {
         case kindPermission, kindInput, kindWaiting
         case signalHooks, signalPending
         case processDetected, processCount
-        case limitedData, sessionEvidence, cacheEvidence, terminalSession, appSession, processAge
-        case activityChanged, newErrors, newFiles, progressAdvanced, modelCallChanged
-        case toolChanged, phaseChanged, taskChanged
-        case signalProgress, signalErrors, signalFiles, signalModel, signalTool, signalPhase, signalTask
-        case signalCompleted, signalFailed, signalCancelled
+        case limitedData, terminalSession, appSession, processAge
         case terminalDetectedNoDetails, appDetectedNoDetails
-        case lastAction, lastActive, latestCallTokens, reportedTokens, compactTokens
-        case latestCallTokensIn, latestCallTokensOut
-        case reportedTokensIn, reportedTokensOut
-        case compactTokensIn, compactTokensOut
-        case subagentsActive, subagentsObserved, subChipActive, subChipObserved
-        case actionPlanning, actionCommand, actionEditing, actionImage
-        case actionResearch, actionReading, actionAutomation, setupWaitingSignals
+        case setupWaitingSignals
         case about, tagline, build, runningFrom, devBuild, copyDiagnostics, copied
         case versionStale, versionMismatchHint
         case cancel
@@ -1165,12 +955,11 @@ enum L10n {
         case stalled, stalledFor
         case supportHealth, supportScanIncomplete, supportScanIncompleteTimeout
         case supportNotDetected, supportStructured, supportCache, supportProcess, supportDetected
-        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, supportEvidence, session
-        case detailTool, detailSkill, detailPhase, detailOutcome, detailEvidence, detailErrors
-        case supportResources, supportObservedSignals, supportNoObservedSignals, skillFact, supportLastRead, supportMissing
+        case supportGoal, supportWorkspace, supportActivity, supportProgress, supportAction, supportModel, session
+        case supportResources, supportObservedSignals, supportNoObservedSignals, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingWaiting
-        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNone, supportWaitingNoneDetail, supportSharedCursor
+        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNoneDetail, supportSharedCursor
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved
         case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
@@ -1193,27 +982,18 @@ enum L10n {
         case supportOriginChrome, supportOriginFallbackText, supportOriginCacheTitle
         case supportOriginToolTitle, supportOriginUserPrompt, supportOriginSessionName
         case supportCopyShapeReport, supportShapeReading, supportShapeHint
-        case cpuFact, evidenceCPU, evidenceCPUUnknown, evidenceCPUHint, evidenceMemory
-        case stalledButComputing
         case notifFocus
-        case recordsSuffix, sessionAge, waitingSummaryTitle, searchNoResults
+        case waitingSummaryTitle, searchNoResults
         case updatePreview, updateSignedUnnotarized
-        case qualityReasonProcessOnly, qualityReasonCache, qualityReasonCacheThin, qualityReasonNotEmitted, qualityReasonWaitingNoDetail
         case qualityReasonScanTimeout
-        case qualityNextOpenAgent, qualityNextWaitCache, qualityNextAttentionBridge, qualityNextRetryScan
+        case qualityNextWaitCache
         case supportFailureTimelineEntry
-        case qualityConfidenceHigh, qualityConfidenceMedium, qualityConfidenceLow
-        case phaseResponding, phaseTurnComplete, phaseWaitingPermission, phasePlanning, phaseWorking, phaseTesting
-        case phaseBuilding, phasePublishing
-        case nowActivity, outcomeActivity
-        case modelFact, errorFactOne, errorsFact, outcomeFailed, outcomeCancelled
-        case filesFact, contextFact, progressFact, turnsFact
-        case currentStepFact
+        case modelFact, errorFactOne, errorsFact
+        case progressFact
         case supportYield, supportYieldDrifted
         case trayScanIncomplete
         case yourTurn, turnCount, jumpToTurn
-        case whyHook, whyHookFront, whyPending, whyTurn, whyVendor, signalVendor
-        case whyTimeline, whyNoHistory
+        case signalVendor
         case doctorRun, doctorHint
         case shortcutOff
         case settingsHooksTitle
@@ -1242,13 +1022,6 @@ enum L10n {
         case setupAppDataDetail
         case setupReview
         case setupOtherAgents
-        case whyProcessOnly
-        case whyStalled
-        case whyStalledNoRule
-        case whyStalledUnknown
-        case whyOutcome
-        case whyErrors
-        case inspectorHowPulseSees
         case updateFailedBadFeed
         case updateFailedNetwork
         case updateFailedHTTP

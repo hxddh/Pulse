@@ -41,31 +41,17 @@ final class HarvestParsingTests: XCTestCase {
     }
 
 
-    func testSessionKeyIsStableAndElidesLongIds() {
+    /// 23.0: a row key is the vendor's session id, whole — or, without one,
+    /// a hash of the transcript path or of where and when the session began.
+    func testRowKeysAreStableAndNeverCarryAPath() {
         let long = String(repeating: "a", count: 40)
-        let key = ActivityHarvest.sessionKey(id: .claude, sessionID: long, project: "", cwd: "")
-        XCTAssertTrue(key.hasPrefix("claude|"))
-        XCTAssertTrue(key.contains("…"), "long ids should elide")
-        XCTAssertEqual(
-            key,
-            ActivityHarvest.sessionKey(id: .claude, sessionID: long, project: "", cwd: ""),
-            "same input must produce the same key"
-        )
-    }
-
-    func testSessionKeyFallsBackToProjectThenCwd() {
-        XCTAssertEqual(
-            ActivityHarvest.sessionKey(id: .codex, sessionID: "", project: "/a/b/Pulse", cwd: ""),
-            "codex|Pulse"
-        )
-        XCTAssertEqual(
-            ActivityHarvest.sessionKey(id: .codex, sessionID: "", project: "", cwd: "/a/b/Repo"),
-            "codex|Repo"
-        )
-        XCTAssertEqual(
-            ActivityHarvest.sessionKey(id: .codex, sessionID: "", project: "", cwd: ""),
-            "codex"
-        )
+        let key = RowIdentity.session(agent: .claude, sessionID: long)
+        XCTAssertEqual(key, "claude|" + long)
+        XCTAssertEqual(key, RowIdentity.session(agent: .claude, sessionID: long), "same input, same key")
+        let placed = RowIdentity.session(agent: .codex, sessionID: "", cwd: "/a/b/Repo", startedMs: 5)
+        XCTAssertTrue(placed.hasPrefix("codex|at:"))
+        XCTAssertFalse(placed.contains("Repo"), "a key never carries a path")
+        XCTAssertEqual(RowIdentity.session(agent: .codex, sessionID: ""), "codex|anon")
     }
 
     func testFreshnessRequiresAMtimeUnlessSubagentsAreRunning() {

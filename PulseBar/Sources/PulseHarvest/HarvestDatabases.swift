@@ -250,7 +250,6 @@ extension NativeActivityHarvest {
             let tout = sqlite3_column_int64(statement, 6)
             let created = sqlite3_column_int64(statement, 7)
             let updated = sqlite3_column_int64(statement, 8)
-            let files = sqlite3_column_int64(statement, 9)
             guard !title.isEmpty || !cwd.isEmpty || tin > 0 || tout > 0 else { continue }
 
             var values: [String: Any] = [
@@ -261,7 +260,6 @@ extension NativeActivityHarvest {
                 "model": model,
                 "inputTokens": tin,
                 "outputTokens": tout,
-                "filesChanged": files,
             ]
             var fact = fact(from: values, context: "opencode.session", structured: true, path: url.path)
             fact.sessionID = sid
@@ -501,8 +499,6 @@ extension NativeActivityHarvest {
             }
             // Warp is waitingSource.none — never stamp skill=pending from status.
             if fact.tool.isEmpty { fact.tool = jsonFirstTool(query?.input ?? "") }
-            let usage = firstValue(conversation, keys: ["context_window_usage"])
-            if let usage { fact.contextPercent = contextPercent(usage) }
             if fact.hasUsefulSignal { facts.append(fact) }
             if facts.count >= maxFactsPerAgent { break }
             values.removeAll(keepingCapacity: false)
@@ -602,7 +598,7 @@ extension NativeActivityHarvest {
                 fact.phase = fact.phase.isEmpty ? "working" : fact.phase
             }
             if type.contains("error") { fact.errors += 1 }
-            if type == "file_read" { fact.files += 1; if fact.phase.isEmpty { fact.phase = "reading" } }
+            if type == "file_read", fact.phase.isEmpty { fact.phase = "reading" }
             if type.contains("sandbox") { fact.phase = "running" }
             // 0.95: never stamp pending from free-text event payloads.
             if type == "agent_usage" {

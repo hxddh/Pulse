@@ -209,8 +209,6 @@ package enum ActivityHarvest {
         package var model: String = ""
         package var mode: String = ""
         package var errors: Int = 0
-        package var files: Int = 0
-        package var contextPercent: Int = 0
         package var progressDone: Int = 0
         package var progressTotal: Int = 0
         /// 2.8 · the agent's own plan, read from the structure it writes for

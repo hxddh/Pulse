@@ -84,8 +84,6 @@ package enum NativeActivityHarvest {
         package var tokensIn = 0
         package var tokensOut = 0
         package var errors = 0
-        package var files = 0
-        package var contextPercent = 0
         package var progressDone = 0
         package var progressTotal = 0
         /// 2.8 · the agent's own plan and words, self-report tier. See
@@ -133,7 +131,7 @@ package enum NativeActivityHarvest {
             return !task.isEmpty || !cwd.isEmpty || !sessionID.isEmpty || !tool.isEmpty
                 || !skill.isEmpty || !phase.isEmpty || !outcome.isEmpty
                 || !model.isEmpty || tokensIn > 0 || tokensOut > 0
-                || errors > 0 || files > 0 || contextPercent > 0
+                || errors > 0
                 || progressDone > 0 || progressTotal > 0 || subTotal > 0
         }
 
@@ -144,8 +142,8 @@ package enum NativeActivityHarvest {
         package var hasDisplaySignal: Bool {
             !task.isEmpty || !cwd.isEmpty || !skill.isEmpty || !tool.isEmpty
                 || !phase.isEmpty || !outcome.isEmpty || !model.isEmpty
-                || tokensIn > 0 || tokensOut > 0 || errors > 0 || files > 0
-                || contextPercent > 0 || progressTotal > 0 || subTotal > 0
+                || tokensIn > 0 || tokensOut > 0 || errors > 0
+                || progressTotal > 0 || subTotal > 0
         }
     }
 

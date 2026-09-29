@@ -97,8 +97,6 @@ final class NativeActivityHarvestTests: XCTestCase {
         let row = try XCTUnwrap(result.rows.first { $0.id == .cursor })
         XCTAssertEqual(row.task, "Refine Cursor adapter")
         XCTAssertEqual(row.cwd, "/Users/me/Client")
-        XCTAssertEqual(row.contextPercent, 42)
-        XCTAssertEqual(row.files, 3)
         // 23.0: Cursor's format is unverified, so `hasBlockingPendingActions`
         // is not a Waiting signal.
         XCTAssertNotEqual(row.skill, "pending")
@@ -173,8 +171,6 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.task, "Count the tokens")
         XCTAssertEqual(row.tokensIn, 220)
         XCTAssertEqual(row.tokensOut, 55)
-        // 8.3: window and used are two measured numbers — their ratio is a fact.
-        XCTAssertEqual(row.contextPercent, 25)
     }
 
     func testGrokLastWordReadsTheTaggedAssistantParagraph() {
@@ -475,18 +471,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         let clineRow = try XCTUnwrap(result.rows.first { $0.id == .cline })
         XCTAssertEqual(clineRow.evidence, .cache)
         XCTAssertEqual(clineRow.cwd, "/tmp/cline")
-
-        var agentRow = AgentRow(rowKey: "windsurf|ws-1", agent: .windsurf)
-        agentRow.task = wind.task
-        agentRow.cwd = wind.cwd
-        agentRow.tool = wind.tool
-        agentRow.model = wind.model
-        agentRow.observationSource = wind.evidence
-        agentRow.harvestMs = wind.harvestMs
-        agentRow.refreshObservationQuality()
-        XCTAssertTrue(agentRow.quality.isLimited, "thin cache must stay Limited")
-        XCTAssertEqual(agentRow.quality.confidence, .low)
-        XCTAssertTrue(agentRow.quality.missing.contains(where: { $0.reason == "cache_thin" }))
+        XCTAssertEqual(RowSource(wind.evidence), .cache, "a cache row says where its facts came from")
     }
 
     func testRichWindsurfCacheExtractsGoalWorkspaceToolStillCacheEvidence() throws {
@@ -536,18 +521,7 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(wind.cwd, "/Users/me/Pulse")
         XCTAssertEqual(wind.tool, "edit_file")
         XCTAssertEqual(wind.harvestMs, 1_700_000_000_000)
-
-        var agentRow = AgentRow(rowKey: "windsurf|ws-rich", agent: .windsurf)
-        agentRow.task = wind.task
-        agentRow.cwd = wind.cwd
-        agentRow.tool = wind.tool
-        agentRow.model = wind.model
-        agentRow.observationSource = wind.evidence
-        agentRow.harvestMs = wind.harvestMs
-        agentRow.refreshObservationQuality()
-        XCTAssertTrue(agentRow.quality.isLimited)
-        XCTAssertEqual(agentRow.quality.confidence, .medium)
-        XCTAssertTrue(agentRow.quality.missing.contains(where: { $0.reason == "cache_conditional" }))
+        XCTAssertEqual(RowSource(wind.evidence), .cache, "rich facts do not upgrade a cache to a session")
 
         let rooRow = try XCTUnwrap(result.rows.first { $0.id == .roo })
         XCTAssertEqual(rooRow.evidence, .cache)

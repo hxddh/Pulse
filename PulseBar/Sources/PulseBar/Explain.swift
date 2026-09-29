@@ -33,10 +33,10 @@ struct Explain: Equatable {
     static func make(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64, stallMinutes: Int = 0) -> Explain {
         let ask = row.wait.map { $0.ask.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
         return Explain(
-            headline: truncate(headline(row, lang: lang, nowMs: nowMs), headlineLimit),
-            why: why(row, lang: lang, nowMs: nowMs, stallMinutes: stallMinutes),
-            source: sourceText(row.source, lang: lang),
-            state: stateText(row, lang: lang),
+            headline: Self.truncate(Self.headline(row, lang: lang, nowMs: nowMs), Self.headlineLimit),
+            why: Self.why(row, lang: lang, nowMs: nowMs, stallMinutes: stallMinutes),
+            source: Self.sourceText(row.source, lang: lang),
+            state: Self.stateText(row, lang: lang),
             ask: ask
         )
     }
