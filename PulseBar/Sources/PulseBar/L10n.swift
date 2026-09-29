@@ -89,11 +89,7 @@ enum L10n {
         case .agentDataAccess: return "Read app data for richer details"
         case .agentDataAccessHint:
             return "Off by default. Enables deeper Cursor/VS Code/Warp scans and may ask macOS for cross-app data access."
-        case .agentDataAccessScopes: return "Choose data sources"
-        case .agentDataAccessScopeHint: return "Only selected agents receive deeper app-data reads. Pulse never asks on launch."
-        case .agentDataAccessAgentDetail: return "%@ reads %@ for task, model, workspace, progress and Waiting details."
         case .agentDataAccessSkipHint: return "If skipped, Pulse still reads process and unprotected session evidence; no prompt is shown."
-        case .notifications: return "Notify when idle"
         case .notifyWaiting: return "Notify on new Waiting"
         case .focusTTY: return "Focus Terminal tab"
         case .focusWarp: return "Focus Warp (app)"
@@ -126,7 +122,6 @@ enum L10n {
         case .globalShortcutHint: return "Off by default. Enabling it registers a system-wide key and may require macOS Automation access on unsigned builds."
         case .agents: return "Agent"
         case .running: return "Running"
-        case .idleNotify: return "All coding agents idle"
         case .settingsTitle: return "Pulse Settings"
         case .recent: return "Recent"
         case .dismissWait: return "Dismiss"
@@ -311,8 +306,6 @@ enum L10n {
         case .supportCollectorPrivacyLimited: return "Privacy-limited"
         case .supportCollectorPrivacyLimitedDetail:
             return "deep app-data scan is off; enable it in Settings for richer details"
-        case .supportCollectorPrivacyLimitedScoped:
-            return "%d agent data source(s) enabled · %d still privacy-limited"
         case .supportCollectorNoSessions: return "No usable session"
         case .supportCollectorNoSessionsDetail: return "source present · no usable session · %d ms"
         case .supportCollectorPermission: return "Permission denied"
@@ -347,7 +340,7 @@ enum L10n {
         case .supportUsefulCoverage: return "%d/%d useful signals"
         case .supportRetry: return "Retry scan"
         case .supportRunAgent: return "Run this agent once"
-        case .supportEnableData: return "Choose its data source"
+        case .supportEnableData: return "Turn on app data reading"
         case .supportAdapterDiagnostics: return "Reading diagnostics"
         case .supportExplainFiles: return "read %d files"
         case .supportExplainFacts: return "%d facts"
@@ -460,7 +453,7 @@ enum L10n {
         case .setupNotificationsDetail: return "So an agent that needs you can reach you while the tray is closed."
         case .setupHooksDetail: return "Optional. Adds the exact permission text and \"your turn\" for Claude Code and Codex."
         case .setupAppDataDetail: return "Optional. Cursor, VS Code and other editor agents keep their sessions in data macOS protects."
-        case .setupChoose: return "Choose…"
+        case .setupReview: return "Review…"
         case .setupOtherAgents: return "Using another agent? See how it can tell Pulse it needs you…"
         case .whyProcessOnly: return "Only %@'s process is visible; there is no session file Pulse can read. Health shows why."
         case .whyStalled: return "No new activity for %@ — past your %d-minute stall threshold."
@@ -546,11 +539,7 @@ enum L10n {
         case .general: return "通用"
         case .agentDataAccess: return "读取应用数据以展示更多详情"
         case .agentDataAccessHint: return "默认关闭。开启后会深入扫描 Cursor / VS Code / Warp，macOS 可能会请求访问其他应用的数据。"
-        case .agentDataAccessScopes: return "选择数据来源"
-        case .agentDataAccessScopeHint: return "只有选中的 Agent 会读取更深层的应用数据。Pulse 不会在启动时索要权限。"
-        case .agentDataAccessAgentDetail: return "%@ 会读取 %@，用于展示任务、模型、工作区、进度和「需要你」的详情。"
         case .agentDataAccessSkipHint: return "跳过后仍会读取进程和未受保护的会话证据；不会弹出权限请求。"
-        case .notifications: return "全部空闲时通知"
         case .notifyWaiting: return "新的「需要你」时通知"
         case .focusTTY: return "聚焦终端标签"
         case .focusWarp: return "聚焦 Warp（应用）"
@@ -582,7 +571,6 @@ enum L10n {
         case .globalShortcutHint: return "默认关闭。启用后会注册系统级快捷键，未签名版本可能触发 macOS 自动化权限请求。"
         case .agents: return "Agent"
         case .running: return "运行中"
-        case .idleNotify: return "所有编码 Agent 已空闲"
         case .settingsTitle: return "Pulse 偏好设置"
         case .recent: return "最近"
         case .dismissWait: return "忽略等待"
@@ -761,8 +749,6 @@ enum L10n {
         case .supportCollectorPrivacyLimited: return "隐私受限"
         case .supportCollectorPrivacyLimitedDetail:
             return "深度应用数据扫描已关闭；可在设置中开启以获取更多详情"
-        case .supportCollectorPrivacyLimitedScoped:
-            return "已开启 %d 个数据源 · 仍有 %d 个隐私受限"
         case .supportCollectorNoSessions: return "暂无可用会话"
         case .supportCollectorNoSessionsDetail: return "数据源存在 · 暂无可用会话 · %d 毫秒"
         case .supportCollectorPermission: return "无读取权限"
@@ -795,7 +781,7 @@ enum L10n {
         case .supportUsefulCoverage: return "有效信号 %d/%d"
         case .supportRetry: return "重新扫描"
         case .supportRunAgent: return "先运行一次这个 Agent"
-        case .supportEnableData: return "选择它的数据来源"
+        case .supportEnableData: return "开启应用数据读取"
         case .supportAdapterDiagnostics: return "读取诊断"
         case .supportExplainFiles: return "读了 %d 个文件"
         case .supportExplainFacts: return "解析出 %d 条事实"
@@ -908,7 +894,7 @@ enum L10n {
         case .setupNotificationsDetail: return "面板关着的时候，需要你的 Agent 也能提醒到你。"
         case .setupHooksDetail: return "可选。为 Claude Code 和 Codex 增加确切的权限请求内容和「轮到你」。"
         case .setupAppDataDetail: return "可选。Cursor、VS Code 等编辑器里的 Agent 把会话存在 macOS 保护的数据里。"
-        case .setupChoose: return "选择…"
+        case .setupReview: return "查看…"
         case .setupOtherAgents: return "用的是其他 Agent？看看它如何告诉 Pulse「需要你」…"
         case .whyProcessOnly: return "只能看到 %@ 的进程，没有 Pulse 能读的会话文件。「健康检查」里有原因。"
         case .whyStalled: return "已经 %@ 没有新动静 —— 超过你设的 %d 分钟停滞阈值。"
@@ -983,11 +969,11 @@ enum L10n {
         case allowTerminalAutomation, allowTerminalAutomationHint
         case supportFocusNone, supportFocusWarp, supportFocusHostWorkspace, supportFocusHost, supportFocusTTY, supportFocusTTYNeedsOptIn
         case supportDepthSession, supportDepthCacheThin, supportDepthCachePartial, supportDepthWaitingNone
-        case general, agentDataAccess, agentDataAccessHint, agentDataAccessScopes, agentDataAccessScopeHint, agentDataAccessAgentDetail, agentDataAccessSkipHint, notifications, notifyWaiting, launchAtLogin, language
+        case general, agentDataAccess, agentDataAccessHint, agentDataAccessSkipHint, notifyWaiting, launchAtLogin, language
         case waitingSignals, hooksHint, installHooks, testWaitingSignal
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
         case shortcuts, globalShortcutHint
-        case agents, running, idleNotify, settingsTitle
+        case agents, running, settingsTitle
         case hooksNudge, waitingSignalNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
         case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
         case kindPermission, kindInput, kindWaiting
@@ -1038,7 +1024,7 @@ enum L10n {
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved
         case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
-        case supportCollectorPrivacyLimited, supportCollectorPrivacyLimitedDetail, supportCollectorPrivacyLimitedScoped
+        case supportCollectorPrivacyLimited, supportCollectorPrivacyLimitedDetail
         case supportCollectorNoSessions, supportCollectorNoSessionsDetail
         case supportCollectorPermission, supportCollectorPermissionDetail
         case supportCollectorSchema, supportCollectorSchemaDetail
@@ -1104,7 +1090,7 @@ enum L10n {
         case setupNotificationsDetail
         case setupHooksDetail
         case setupAppDataDetail
-        case setupChoose
+        case setupReview
         case setupOtherAgents
         case whyProcessOnly
         case whyStalled

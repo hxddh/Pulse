@@ -215,7 +215,7 @@ final class WaitingProofTests: XCTestCase {
         row.waiting = false
         XCTAssertTrue(store.isWaitingNoneNeedsReach(row))
         store.openWaitingReach(for: row)
-        XCTAssertTrue(store.settingsFocusWaitingSignals)
+        XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
 
     @MainActor

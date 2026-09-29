@@ -89,7 +89,7 @@ final class OperationalClosureTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            StatusStore.isIntentionalSupervisorPartial(
+            ScanEngine.isIntentionalSupervisorPartial(
                 health: [healthyCodex],
                 plan: plan
             )
@@ -100,16 +100,16 @@ final class OperationalClosureTests: XCTestCase {
             sourcePresent: true, errorKind: "timeout"
         )
         XCTAssertFalse(
-            StatusStore.isIntentionalSupervisorPartial(
+            ScanEngine.isIntentionalSupervisorPartial(
                 health: [failedCodex],
                 plan: plan
             )
         )
 
         let store = StatusStore()
-        store.recordCollectorHealth([healthyCodex], complete: false, intentionalPartial: true)
+        store.engine.recordCollectorHealth([healthyCodex], complete: false, intentionalPartial: true)
         XCTAssertFalse(store.collectorScanIncomplete)
-        store.recordCollectorHealth([failedCodex], complete: false, intentionalPartial: false)
+        store.engine.recordCollectorHealth([failedCodex], complete: false, intentionalPartial: false)
         XCTAssertTrue(store.collectorScanIncomplete)
     }
 

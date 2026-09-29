@@ -96,9 +96,9 @@ final class UpdateCheck {
     /// and wake path — so a Mac that stays up for weeks still hears about a
     /// release. Cheap when not due: one date comparison, no store write.
     func startIfEnabled(store: StatusStore) {
-        guard store.updateCheckEnabled else {
+        guard store.settings.updateCheckEnabled else {
             // Scan-quiet: Observation announces every assignment, equal or not.
-            if store.updateStatus != .idle { store.updateStatus = .idle }
+            store.landUpdateStatus(.idle)
             return
         }
         guard Self.isDue(now: Date(), lastSuccess: lastCheck, lastAttempt: lastAttempt) else { return }
@@ -123,17 +123,17 @@ final class UpdateCheck {
     /// answer is worth showing (`resolve`).
     func check(store: StatusStore, force: Bool) {
         guard !inFlight else { return }
-        guard force || store.updateCheckEnabled else { return }
+        guard force || store.settings.updateCheckEnabled else { return }
         guard let url = feedURL else {
             let next = Self.resolve(previous: store.updateStatus, result: .failed(.badFeed), manual: force)
-            if store.updateStatus != next { store.updateStatus = next }
+            store.landUpdateStatus(next)
             return
         }
         inFlight = true
         lastAttempt = Date()
         // Only a manual check shows `.checking`; a background one leaves the
         // known answer on screen and resolves against it.
-        if force { store.updateStatus = .checking }
+        if force { store.landUpdateStatus(.checking) }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
@@ -155,7 +155,7 @@ final class UpdateCheck {
                 // straight to its result; `resolve` is pure either way.
                 let next = Self.resolve(previous: store.updateStatus, result: result, manual: force)
                 // Scan-quiet: Observation announces every assignment, equal or not.
-                if store.updateStatus != next { store.updateStatus = next }
+                store.landUpdateStatus(next)
                 DebugLog.write("updateCheck \(result)")
             }
         }.resume()

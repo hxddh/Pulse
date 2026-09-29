@@ -42,10 +42,10 @@ extension NativeActivityHarvest {
     /// the answer cannot change mid-pass, so without this the same name is
     /// re-probed once per transcript. `scan()` clears it, so a resolution
     /// never outlives the pass that made it.
-    /// Lives in `ScanEngine.memory` since 12.3.
+    /// Lives in `HarvestMemory.memory` since 12.3.
     package static var dashPathCache: [String: (path: String, verified: Bool)] {
-        get { ScanEngine.memory.withValue { $0.dashPaths } }
-        set { ScanEngine.memory.withValue { $0.dashPaths = newValue } }
+        get { HarvestMemory.memory.withValue { $0.dashPaths } }
+        set { HarvestMemory.memory.withValue { $0.dashPaths = newValue } }
     }
 
     /// Turn `["Users", "me", "my", "project"]` back into a real directory.

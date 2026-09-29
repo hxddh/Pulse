@@ -62,7 +62,7 @@
 | BU | Disclosure(披露纪律) | 三层各归其位:收起=扫视(两行),展开=理解与行动(8.x 全部深度原样),阻塞照旧免点击 | 人工 / QA 脚本 |
 | BW | Theme(产品一体) | `PulseTheme` 统一产品自有卡片的共享 chrome:窗口卡片半径族(卡 10/内 6)、padding 节奏、发丝描边、**唯一动效曲线**(easeOut 0.16)——托盘 `TrayChrome` 保留紧凑网格、同一节奏派生;设置保留 macOS 原生 grouped Form chrome,共享同一动效 token | 人工 / QA 脚本 |
 | BX | Grace(收笔) | 折叠/展开/重排共用同一条动效曲线;两条曲线在一个产品里读起来是两个产品 | 人工 / QA 脚本 |
-| BY | Surface（扫描静默） | 一轮扫描若发现的世界与上一轮相同，store 不发布任何变更：托盘、会话卡、设置都不被唤醒；只有内容变化、或屏上有秒级相对时间（一分钟以内的等待 / 活动）、或分钟级时间到点时才重绘 | `ScanQuietTests`（19.0：Observation，逐属性跟踪；设置窗口只读 `snapshotAgents`） |
+| BY | Surface（扫描静默） | 一轮扫描若发现的世界与上一轮相同，store 不发布任何变更：托盘、会话卡、设置都不被唤醒；只有内容变化、或屏上有秒级相对时间（一分钟以内的等待 / 活动）、或分钟级时间到点时才重绘 | `ScanQuietTests`（19.0：Observation，逐属性跟踪；设置窗口不读快照与行） |
 | CC | Turn（轮到你） | 做完的回合（Claude Stop / idle_prompt、Codex agent-turn-complete）不点红灯、不发通知，只在托盘计数「轮到你」；权限、提问仍是红灯；回合结束 20 秒内不清掉刚发生的阻塞；提示窗口在最前时做完的回合不算欠你、在最前时发生的阻塞只亮灯不发横幅，不知道在不在场就照常通知；提交 prompt、会话再次动起来都结束「轮到你」；「轮到你」从不单独造行；旧 hook 写的 `idle_prompt` 按轮到你读 | `TurnTruthTests` · `HarvestParsingTests` |
 | CD | Why（为什么） | 每个红灯 / 轮到你都给出证据句（hook 的 kind 与时间、在最前时补「所以没有通知」、pending 的步骤、`claude agents` 的自报），说不出就不说；Why 卡片列出该会话的状态段（23.0 起来自 `SessionLog`，新的在上、至多 12 条，等待段带 agent 发来的请求、已脱敏且 ≤ 200 字；hook 事件副本与 TSV 导出已删除）；托盘行的脸是纯值：权限行有灯、标记、槽与动作，轮到你安静无槽，稍后可撤销，仅进程指向支持健康度 | `WhyTests` |
 | CE | Current（跟上厂商） | `claude agents --json` 的 `status: waiting` 点红灯并标「Claude 自报」，只在有 Claude 进程且未装 hooks 时、至少隔 15 秒运行，失败退避且不当作「仍在等」，同会话 hook 优先，不造行，可软忽略；Claude 的 elicitation 与 URL elicitation 是提问、StopFailure 是轮到你、AskUserQuestion 不走扣留；Codex 分页格式（`item_completed`）读出任务与最后一句话，`.jsonl.zst` 不读；Codex hooks 只装 Stop / UserPromptSubmit，永不装 PermissionRequest | `ClaudeAgentsProbeTests` · `CodexPaginatedRolloutTests` · `TurnTruthTests` · `PulseHookReceiverTests` |

@@ -100,8 +100,6 @@ enum SnapshotBuilder {
         var newlyWaiting: [AgentRow] = []
         /// Rows that were Waiting and no longer are.
         var resolvedWaits: [AgentRow] = []
-        /// The lamp went from busy to fully idle.
-        var wentIdle: Bool = false
         /// Soft-dismissed keys whose `pending` cleared — the store may forget them.
         var clearedPendingKeys: Set<String> = []
         /// Process-only / Attention adoption that changed row identity (old → new).
@@ -974,15 +972,8 @@ enum SnapshotBuilder {
         ).lines(lang)
         result.snapshot = snap
 
-        // Edges — reported, not acted on. The store owns notification policy.
-        let previousLampBusy = previous.rows.contains {
-            $0.waiting || $0.section == .running || $0.section == .stalled
-        }
-        let nowLampBusy = all.contains {
-            $0.waiting || $0.section == .running || $0.section == .stalled
-        }
-        result.wentIdle = previousLampBusy && !nowLampBusy
-
+        // Edges — reported, not acted on. `WaitNotifier` owns notification
+        // policy.
         var previousWaiting = previous.waitingKeys
         for (oldKey, newKey) in result.remappedRowKeys {
             if previousWaiting.contains(oldKey) {

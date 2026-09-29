@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mac-only A/B: Cursor process-only vs App Data session detail.
+# Mac-only A/B: Cursor process-only vs protected app data session detail.
 #
 # Decision (0.54): stays **manual Darwin** — not CI. It needs a live Cursor
 # install, real App Support trees, and interactive TCC grants that runners do
@@ -11,13 +11,14 @@
 #   ./scripts/qa_mac_cursor_appdata_ab.sh
 #
 # Writes PNGs under zig-out/qa-cursor-appdata-ab/ and prints harvest summaries.
-# Does not enable global App Data — only the Cursor agent scope.
+# 23.0: app data is one switch (`readProtectedAppData` in settings.json), so
+# the B round reads every protected agent, Cursor included.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${PULSE_APP:-/Applications/Pulse.app/Contents/MacOS/PulseBar}"
 OUT="${PULSE_QA_OUT:-$ROOT/zig-out/qa-cursor-appdata-ab}"
-SETTINGS="${HOME}/Library/Application Support/Pulse/settings.txt"
+SETTINGS="${HOME}/Library/Application Support/Pulse/settings.json"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this script must run on the Mac that hosts Pulse" >&2
@@ -42,50 +43,21 @@ quit_pulse() {
   fi
 }
 
-ensure_settings() {
-  mkdir -p "$(dirname "$SETTINGS")"
-  if [[ ! -f "$SETTINGS" ]]; then
-    cat >"$SETTINGS" <<EOF
-notify=0
-notifyWaiting=1
-lang=auto
-login=0
-updates=1
-appData=0
-appDataAgents=
-hotkey=off
-mute=
-EOF
-  fi
-}
-
-set_cursor_appdata() {
+set_app_data() {
   local enabled="$1"
-  ensure_settings
+  mkdir -p "$(dirname "$SETTINGS")"
   python3 - "$SETTINGS" "$enabled" <<'PY'
-import pathlib, sys
+import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 enabled = sys.argv[2] == "1"
-text = path.read_text(encoding="utf-8")
-lines = []
-seen_agents = False
-seen_all = False
-for raw in text.splitlines():
-    if raw.startswith("appDataAgents="):
-        lines.append("appDataAgents=cursor" if enabled else "appDataAgents=")
-        seen_agents = True
-    elif raw.startswith("appData="):
-        # Keep global off — scoped Cursor grant is the A/B under test.
-        lines.append("appData=0")
-        seen_all = True
-    else:
-        lines.append(raw)
-if not seen_agents:
-    lines.append("appDataAgents=cursor" if enabled else "appDataAgents=")
-if not seen_all:
-    lines.append("appData=0")
-path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-print(f"settings: Cursor App Data {'ON' if enabled else 'OFF'}")
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    data = {}
+data["readProtectedAppData"] = enabled
+path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+path.chmod(0o600)
+print(f"settings: protected app data {'ON' if enabled else 'OFF'}")
 PY
 }
 
@@ -111,11 +83,11 @@ capture_round() {
 assert_harvest_differs() {
   local off="$OUT/A-off-harvest.txt"
   local on="$OUT/B-on-harvest.txt"
-  if ! grep -q 'appData=0 agents=none' "$off" && ! grep -q 'agents=none' "$off"; then
-    echo "warn: A-off harvest missing agents=none marker" >&2
+  if ! grep -q 'appData=0' "$off"; then
+    echo "warn: A-off harvest missing appData=0 marker" >&2
   fi
-  if ! grep -Eq 'appData=0 agents=cursor|agents=cursor' "$on"; then
-    echo "error: B-on harvest did not report scoped Cursor App Data grant" >&2
+  if ! grep -q 'appData=1' "$on"; then
+    echo "error: B-on harvest did not report the app-data switch on" >&2
     exit 1
   fi
   local a_cursor b_cursor
@@ -128,17 +100,17 @@ assert_harvest_differs() {
   fi
 }
 
-echo "== A: Cursor App Data OFF (process-only baseline) =="
-set_cursor_appdata 0
+echo "== A: app data OFF (process-only baseline) =="
+set_app_data 0
 capture_round "A-off"
 
-echo "== B: Cursor App Data ON (scoped) =="
-set_cursor_appdata 1
+echo "== B: app data ON =="
+set_app_data 1
 capture_round "B-on"
 assert_harvest_differs
 
-echo "== restore App Data OFF and relaunch user copy =="
-set_cursor_appdata 0
+echo "== restore app data OFF and relaunch user copy =="
+set_app_data 0
 quit_pulse
 open -a /Applications/Pulse.app
 sleep 2

@@ -27,44 +27,23 @@ struct ScanQuietTests {
     /// until it is.
     static var observed: [(String, PartialKeyPath<StatusStore>)] {
         [
-            ("allowAppData", \StatusStore.allowAppData),
-            ("allowTerminalAutomation", \StatusStore.allowTerminalAutomation),
-            ("appDataAgents", \StatusStore.appDataAgents),
             ("cachedAll", \StatusStore.cachedAll),
             ("collectorScanIncomplete", \StatusStore.collectorScanIncomplete),
-            ("didCopyDiagnostics", \StatusStore.didCopyDiagnostics),
-            ("didCopyDoctorReport", \StatusStore.didCopyDoctorReport),
-            ("doctorReport", \StatusStore.doctorReport),
-            ("didCopyShapeReport", \StatusStore.didCopyShapeReport),
+            ("diagnostics", \StatusStore.diagnostics),
             ("hookSelfTestResult", \StatusStore.hookSelfTestResult),
-            ("hooksNudgeOff", \StatusStore.hooksNudgeOff),
             ("hooksStatus", \StatusStore.hooksStatus),
-            ("hotkey", \StatusStore.hotkey),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
-            ("isCopyingShapeReport", \StatusStore.isCopyingShapeReport),
             ("isRefreshing", \StatusStore.isRefreshing),
-            ("isRunningDoctor", \StatusStore.isRunningDoctor),
-            ("language", \StatusStore.language),
-            ("launchAtLogin", \StatusStore.launchAtLogin),
-            ("loginItemApplied", \StatusStore.loginItemApplied),
             ("logRevision", \StatusStore.logRevision),
-            ("mutedAgents", \StatusStore.mutedAgents),
+            ("loginItemApplied", \StatusStore.loginItemApplied),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
-            ("notifyOnIdle", \StatusStore.notifyOnIdle),
-            ("notifyOnWaiting", \StatusStore.notifyOnWaiting),
             ("pendingRevealRowKey", \StatusStore.pendingRevealRowKey),
-            ("previewFixtureActive", \StatusStore.previewFixtureActive),
-            ("previewWaitingEventTimes", \StatusStore.previewWaitingEventTimes),
             ("rowActionNotices", \StatusStore.rowActionNotices),
-            ("settingsExpandAppDataScopes", \StatusStore.settingsExpandAppDataScopes),
-            ("settingsFocusAppDataAgent", \StatusStore.settingsFocusAppDataAgent),
-            ("settingsFocusWaitingSignals", \StatusStore.settingsFocusWaitingSignals),
-            ("settingsFocusToken", \StatusStore.settingsFocusToken),
+            ("settings", \StatusStore.settings),
+            ("settingsFocus", \StatusStore.settingsFocus),
             ("showAllAgents", \StatusStore.showAllAgents),
             ("snapshot", \StatusStore.snapshot),
-            ("snapshotAgents", \StatusStore.snapshotAgents),
             ("traySessionToken", \StatusStore.traySessionToken),
-            ("updateCheckEnabled", \StatusStore.updateCheckEnabled),
             ("updateStatus", \StatusStore.updateStatus),
             ("waitingBannerFailed", \StatusStore.waitingBannerFailed),
         ]
@@ -76,7 +55,7 @@ struct ScanQuietTests {
     }
 
     private func scan(_ store: StatusStore, ticket: UInt64) {
-        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: ticket)
+        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: ticket)
     }
 
     private func watch(_ store: StatusStore, _ properties: [(String, PartialKeyPath<StatusStore>)]) -> Fired {
@@ -115,12 +94,12 @@ struct ScanQuietTests {
             id: .claude, kind: "Permission", message: "Bash: npm test",
             tsMs: nowMs - 1_000, session: "s-owed", cwd: "/w/app"
         )
-        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 2)
+        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 2)
         let owed = store.sessionLog.queuedKeys
         #expect(owed.count == 1, "the edge is owed its banner")
         let fired = watch(store, [("logRevision", \StatusStore.logRevision)])
-        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 3)
-        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 4)
+        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 3)
+        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [raised], ticket: 4)
         #expect(fired.names == [], "the same owed wait is not news")
     }
 
@@ -139,6 +118,10 @@ struct ScanQuietTests {
     /// observed but missing from `observed`, so the wall above cannot go
     /// quietly partial.
     @Test func everyObservedPropertyIsListed() throws {
+        // 23.0: the model stays small — engine and banner bookkeeping live in
+        // `ScanEngine` and `WaitNotifier`, which nothing observes.
+        let count = Self.observed.count
+        #expect(count <= 25, "the observed model grew to \(count) properties")
         let listed = Set(Self.observed.map(\.0))
         let stored = Mirror(reflecting: quietStore()).children.compactMap(\.label)
         // `@Observable` stores a tracked property as `_name`; an ignored one
@@ -148,24 +131,24 @@ struct ScanQuietTests {
         #expect(listed.subtracting(tracked).sorted() == [], "listed but no longer observed")
     }
 
-    // MARK: - Settings (formerly StoreObservation)
+    // MARK: - Settings
 
-    /// Settings reads `snapshotAgents`, not `snapshot`: a scan that only
-    /// moved a row does not redraw the form; a new agent does.
-    @Test func settingsIsNotWokenByAScanThatOnlyMovedARow() {
+    /// A settings change is one observed write, and it does not touch the
+    /// snapshot the lamp follows.
+    @Test func aSettingChangeWakesOnlySettings() {
         let store = quietStore()
-        var snap = PulseSnapshot()
-        snap.rows = [AgentRow(rowKey: "claude|s1", agent: .claude)]
-        store.snapshot = snap
-        let fired = watch(store, [("snapshotAgents", \StatusStore.snapshotAgents), ("notifyOnIdle", \StatusStore.notifyOnIdle)])
+        let fired = watch(store, Self.observed)
+        store.settings.notifyOnWaiting = false
+        #expect(fired.names == ["settings"], "\(fired.names)")
+    }
 
-        snap.rows[0].task = "moved"
-        store.snapshot = snap
+    /// Setting a value to what it already is writes nothing.
+    @Test func anUnchangedSettingWritesNothing() {
+        let store = quietStore()
+        let fired = watch(store, Self.observed)
+        store.set(\.notifyOnWaiting, true)
+        store.setReadProtectedAppData(false)
         #expect(fired.names == [])
-
-        snap.rows.append(AgentRow(rowKey: "codex|s2", agent: .codex))
-        store.snapshot = snap
-        #expect(fired.names == ["snapshotAgents"])
     }
 
     // MARK: - The status item
@@ -175,7 +158,7 @@ struct ScanQuietTests {
         let loop = ObservationLoop(track: { _ = store.snapshot }, onChange: {})
         defer { loop.cancel() }
 
-        store.notifyOnIdle.toggle()
+        store.settings.notifyOnWaiting.toggle()
         store.showAllAgents.toggle()
         for _ in 0..<10 { await Task.yield() }
         #expect(loop.deliveries == 0, "a settings write does not touch the lamp")

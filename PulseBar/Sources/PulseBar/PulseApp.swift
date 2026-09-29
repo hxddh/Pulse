@@ -31,23 +31,15 @@ enum PulseBarMain {
         }
         if ProcessInfo.processInfo.arguments.contains("--harvest-test") {
             let started = Date()
-            // Match the menu-bar store: App Data grants live in settings.txt.
-            // Ignoring that file made A/B harvest dumps always look process-only.
-            let settings = PulseSettings.loadFromDisk()
-            let agentsLabel = settings.allowAppData
-                ? "all"
-                : (settings.appDataAgents.isEmpty
-                    ? "none"
-                    : settings.appDataAgents.map(\.rawValue).sorted().joined(separator: ","))
-            let result = ActivityHarvest.scan(
-                allowAppData: settings.allowAppData,
-                appDataAgents: settings.appDataAgents
-            )
+            // Match the menu-bar store: the app-data switch lives in
+            // settings.json. Ignoring it made A/B harvest dumps always look
+            // process-only.
+            let settings = PulseSettings.load()
+            let result = ActivityHarvest.scan(allowAppData: settings.readProtectedAppData)
             print(
                 "harvest rows=\(result.rows.count) adapters=\(result.health.count) "
                     + "complete=\(result.complete) "
-                    + "appData=\(settings.allowAppData ? 1 : 0) "
-                    + "agents=\(agentsLabel) "
+                    + "appData=\(settings.readProtectedAppData ? 1 : 0) "
                     + "elapsed=\(String(format: "%.3f", Date().timeIntervalSince(started)))s"
             )
             if ProcessInfo.processInfo.arguments.contains("--harvest-dump") {
@@ -76,22 +68,16 @@ enum PulseBarMain {
         // instead of against a format someone inferred. Opt-in, off by
         // default, and short enough to read before sharing.
         if ProcessInfo.processInfo.arguments.contains("--harvest-shape") {
-            let settings = PulseSettings.loadFromDisk()
-            print(NativeActivityHarvest.shapeReport(
-                allowAppData: settings.allowAppData,
-                appDataAgents: settings.appDataAgents
-            ))
+            let settings = PulseSettings.load()
+            print(NativeActivityHarvest.shapeReport(allowAppData: settings.readProtectedAppData))
             exit(0)
         }
         // Per-adapter account of the last scan: files, bytes, truncation,
         // facts, which record kind produced the hero, and which layer lost it
         // when there is none.
         if ProcessInfo.processInfo.arguments.contains("--harvest-explain") {
-            let settings = PulseSettings.loadFromDisk()
-            let result = ActivityHarvest.scan(
-                allowAppData: settings.allowAppData,
-                appDataAgents: settings.appDataAgents
-            )
+            let settings = PulseSettings.load()
+            let result = ActivityHarvest.scan(allowAppData: settings.readProtectedAppData)
             for health in result.health.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
                 print("\(health.id.rawValue) \(health.state.rawValue) \(health.explain.summary)")
             }
@@ -163,9 +149,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.appearance = NSAppearance(named: .aqua)
         }
         if ProcessInfo.processInfo.arguments.contains("--language=zh") {
-            AppServices.store.language = .zh
+            AppServices.store.settings.language = .zh
         } else if ProcessInfo.processInfo.arguments.contains("--language=en") {
-            AppServices.store.language = .en
+            AppServices.store.settings.language = .en
         }
         // 15.0 · Witness: render the surface fixtures and quit — no scan,
         // no tray, nothing read from this Mac.
@@ -194,10 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AppServices.store.openSettings()
             }
         }
-        if let focus = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--open-settings-agent=") }) {
-            let raw = String(focus.dropFirst("--open-settings-agent=".count))
+        if ProcessInfo.processInfo.arguments.contains("--open-settings-data") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                AppServices.store.openSettings(focusAppDataFor: AgentID(rawValue: raw))
+                AppServices.store.openSettings(focus: .appData)
             }
         }
         if ProcessInfo.processInfo.arguments.contains("--open-support-health") {

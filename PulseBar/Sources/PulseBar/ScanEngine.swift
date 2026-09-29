@@ -1,29 +1,120 @@
 import Foundation
 import AppKit
 
-/// 4.0-γ file split — The scan engine — start, refresh, harvest application, activity light path.
-/// Behavior-frozen: every member moved verbatim from StatusStore.swift;
-/// the full test suite is the contract that nothing changed.
-extension StatusStore {
-    func start() {
-        DebugLog.write("start begin \(PulseVersion.fingerprint)")
-        // Restore only Pulse-owned attention state. Agent-owned hooks remain
-        // the source of truth for the current row; the session log supplies
-        // the cross-launch baseline, delivery dedupe and dismissals.
-        loadSessionLog()
-        waitingNotifySeeded = sessionLog.baselineEstablished
-        HooksSupport.seedAssets()
-        hooksStatus = HooksSupport.probeStatus()
-        loadSettings()
-        applyHotkey()
-        PulseNotify.registerCategories(lang: lang)
-        PulseNotify.configure { [weak self] granted in
-            Task { @MainActor in
-                self?.notifyAuthorized = granted
-                self?.deliverPendingWaitingNotificationsIfPossible()
-                DebugLog.write("notify authorization granted=\(String(describing: granted))")
+/// The scan engine (23.0): cadence, the background scan, and everything it
+/// remembers between passes. Not observed — no view reads it.
+///
+/// It owns the probe timer (`ProbeSchedule`), runs `ProcessProbe`,
+/// `ActivityHarvest`, `AttentionReader`, `ClaudeAgentsProbe` and
+/// `ActivitySpool` off the main thread, merges partial harvests, keeps the
+/// collector health, the harvest supervisor and the probe counters, and
+/// calls the pure `SnapshotBuilder`. What a scan found is handed to the
+/// model (`StatusStore.land`), which assigns an observed property only when
+/// its value changed. The engine holds no UI state and writes none.
+@MainActor
+final class ScanEngine {
+    /// The model this engine feeds. Weak: the model owns the engine.
+    weak var model: StatusStore?
+
+    /// Tests exercising store behaviour must not start a real background scan.
+    ///
+    /// A scan is not read-only: it writes attention files and, once
+    /// `start()` has loaded it, the session log — so an unguarded `refresh()`
+    /// inside a unit test would touch the developer's own files. Same shape
+    /// as `AttentionIO.pathOverride` and `HooksInstaller.homeOverride`.
+    static var suppressBackgroundScansForTesting = false
+
+    let powerMonitor = PowerMonitor()
+    let attentionWatcher = AttentionWatcher()
+    let scanQueue = DispatchQueue(label: "com.pulse.scan", qos: .userInitiated)
+
+    // MARK: Cadence
+
+    private var timer: Timer?
+    /// Tray panel is on screen — worth probing faster while the user reads it.
+    private(set) var trayOpen = false
+    private(set) var activity: ProbeSchedule.Activity = .empty
+    private(set) var currentInterval: TimeInterval?
+    /// When the timer parked, for the parked-duration counter.
+    private var parkedSince: Date?
+    /// Rolling scan counters, so the energy claim can be checked, not believed.
+    private(set) var probeStats = ProbeStats()
+    /// When the last scan was applied — advances on every scan, published or
+    /// not, unlike `snapshot.updatedAt` which moves only when the snapshot
+    /// changes. Read by the self-check; never drives a view.
+    private(set) var lastScanAt: Date?
+
+    // MARK: Harvest bookkeeping
+
+    private var lastGoodHarvest: [ActivityHarvest.Row] = []
+    /// Result of the latest attempted adapter scan, including adapters that
+    /// ran successfully but had no recent local session. This is deliberately
+    /// separate from row evidence: zero rows is a useful result, not silence.
+    var collectorHealthByAgent: [AgentID: ActivityHarvest.CollectorHealth] = [:]
+    /// Latest successful collector read by Agent, retained even after its
+    /// session row ages out so Health can distinguish "not running" from
+    /// "collector has never produced evidence".
+    var lastSuccessfulReadByAgent: [AgentID: Int64] = [:]
+    /// Per-Agent retry/backoff/circuit policy. A bad store must not consume the
+    /// next scan budget for every other adapter.
+    private(set) var harvestSupervisor = HarvestSupervisor()
+    /// Where the next native harvest should start.
+    ///
+    /// The collector walks its adapters in a fixed order, so before 0.98 a
+    /// global budget cutoff always fell in the same place and the same tail
+    /// adapters were reported `unscanned` on every refresh. The scan returns
+    /// the first adapter it could not reach; the next one begins there.
+    private var harvestScanCursor = 0
+    /// Live-process fingerprint; a change forces a harvest even off-cadence.
+    private var lastProcessSignature = ""
+    private var ticksSinceHarvest = Int.max
+    private var lastApplyLogSignature = ""
+
+    // MARK: Flight
+
+    private var scanTicket: UInt64 = 0
+    private var lastAppliedTicket: UInt64 = 0
+    private var scanInFlight = false
+
+    /// A refresh that arrived while one was already in flight.
+    ///
+    /// Only the reason used to survive the wait, so a scoped rescan replayed
+    /// as a full scan — and a full scan is precisely what a scoped rescan is
+    /// not. The scope exists to force an agent the supervisor would otherwise
+    /// defer, so toggling that agent's data source during an in-flight scan
+    /// could leave it unread until its backoff expired: "I enabled it and
+    /// nothing happened."
+    struct PendingRefresh {
+        var reason: String
+        /// nil means a full scan, which absorbs any scoped request merged in.
+        var agentFilter: Set<AgentID>?
+
+        mutating func absorb(reason: String, agentFilter: Set<AgentID>?) {
+            self.reason = reason
+            guard let agentFilter, let existing = self.agentFilter else {
+                self.agentFilter = nil
+                return
             }
+            self.agentFilter = existing.union(agentFilter)
         }
+    }
+
+    private var pendingRefresh: PendingRefresh?
+
+    /// What the background scan managed to get from the native collector.
+    enum HarvestOutcome {
+        /// Ran and produced rows (possibly partial after a timeout).
+        case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth], Bool, Bool)
+        /// Deliberately not run this tick — cached rows are still current.
+        case skipped
+    }
+
+    // MARK: - Lifecycle
+
+    /// Arm the scan: the first refresh, the timer, the attention watcher and
+    /// the power monitor. `StatusStore.start()` calls it once settings and
+    /// the session log are loaded.
+    func start() {
         refresh(reason: "start")
         rescheduleTimer()
         attentionWatcher.start(
@@ -51,21 +142,78 @@ extension StatusStore {
                     // Rationed inside (a day after success, an hour after a
                     // failure); waking is when a long-lived Mac is most
                     // likely to have missed a release.
-                    UpdateCheck.shared.startIfEnabled(store: self)
+                    if let model = self.model { UpdateCheck.shared.startIfEnabled(store: model) }
                 }
             }
         }
-        UpdateCheck.shared.startIfEnabled(store: self)
-        DebugLog.write("start armed")
     }
 
-
-    func refresh() {
-        refresh(reason: "manual")
+    func stop() {
+        attentionWatcher.stop()
+        timer?.invalidate()
+        timer = nil
     }
+
+    /// The tray panel came on screen or left it — probe faster while the
+    /// person is reading.
+    func setTrayOpen(_ open: Bool) {
+        trayOpen = open
+        rescheduleTimer()
+    }
+
+    // MARK: - Cadence
+
+    /// Current cadence, for Health ("probing every 5s").
+    func probeIntervalDescription(lang: ResolvedLanguage) -> String {
+        guard let interval = currentInterval else { return L10n.t(.probeParked, lang) }
+        return String(format: L10n.t(.probeEvery, lang), Int(interval.rounded()))
+    }
+
+    /// Close an open parked span.
+    private func settleParked() {
+        guard let since = parkedSince else { return }
+        probeStats.addParked(Date().timeIntervalSince(since))
+        parkedSince = nil
+    }
+
+    func rescheduleTimer() {
+        timer?.invalidate()
+        timer = nil
+        let interval = ProbeSchedule.interval(
+            activity: activity,
+            power: powerMonitor.state,
+            trayOpen: trayOpen
+        )
+        currentInterval = interval
+        guard let interval else {
+            if parkedSince == nil { parkedSince = Date() }
+            DebugLog.write("probe parked (display asleep / locked)")
+            return
+        }
+        settleParked()
+        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            // Bind before the Task: the timer block is @Sendable, and referencing
+            // the captured `weak self` var from inside a Task is not allowed.
+            guard let engine = self else { return }
+            Task { @MainActor in
+                engine.refresh(reason: "timer")
+                // One date comparison unless a day has passed since the last
+                // answer — how a Mac that never sleeps still re-checks.
+                if let model = engine.model { UpdateCheck.shared.startIfEnabled(store: model) }
+            }
+        }
+        // Let the system coalesce wakeups — meaningful battery win for a
+        // background poller that does not need millisecond precision.
+        t.tolerance = interval * 0.2
+        timer = t
+        RunLoop.main.add(t, forMode: .common)
+    }
+
+    // MARK: - The scan
 
     func refresh(reason: String, agentFilter: Set<AgentID>? = nil) {
         if Self.suppressBackgroundScansForTesting { return }
+        guard let model else { return }
         if scanInFlight {
             if var pending = pendingRefresh {
                 pending.absorb(reason: reason, agentFilter: agentFilter)
@@ -83,7 +231,7 @@ extension StatusStore {
         let ticket = scanTicket
         let showSpinner = reason == "manual" || reason == "start"
         if showSpinner {
-            isRefreshing = true
+            model.setRefreshing(true)
         }
         DebugLog.write("refresh enqueue #\(ticket) reason=\(reason)")
 
@@ -93,8 +241,7 @@ extension StatusStore {
         let priorSignature = lastProcessSignature
         let ticks = ticksSinceHarvest
         let everyN = ProbeSchedule.harvestEveryNTicks(activity: activity, trayOpen: trayOpen)
-        let allowAllAppData = allowAppData
-        let appDataAgentPolicy = harvestAppDataAgents
+        let readAppData = model.settings.readProtectedAppData
         let supervisorNowMs = Int64(Date().timeIntervalSince1970 * 1000)
         let supervisorPlan = harvestSupervisor.plan(nowMs: supervisorNowMs)
         if !supervisorPlan.deferred.isEmpty {
@@ -110,14 +257,11 @@ extension StatusStore {
         let startCursor = harvestScanCursor
         // 18.0: Claude's hooks already say who is waiting, sooner; the
         // agents probe only runs where they are not installed.
-        let claudeHooked = hooksStatus == .installedClaude || hooksStatus == .installedBoth
+        let claudeHooked = model.hooksStatus == .installedClaude || model.hooksStatus == .installedBoth
 
         scanQueue.async { [weak self] in
             let t0 = Date()
-            let procs = ProcessProbe.scan(
-                allowAppData: allowAllAppData,
-                appDataAgents: appDataAgentPolicy
-            )
+            let procs = ProcessProbe.scan(allowAppData: readAppData)
             let signature = ProcessProbe.signature(procs)
 
             let why: String
@@ -139,8 +283,7 @@ extension StatusStore {
             } else {
                 let h0 = Date()
                 let result = ActivityHarvest.scan(
-                    allowAppData: allowAllAppData,
-                    appDataAgents: appDataAgentPolicy,
+                    allowAppData: readAppData,
                     agentFilter: harvestFilter,
                     startCursor: startCursor
                 )
@@ -176,15 +319,12 @@ extension StatusStore {
             )
             let completedHarvestMs = harvestMs
             let completedCursor = nextCursor
-            // Land results on the store that started the flight, not the
+            // Land results on the engine that started the flight, not the
             // AppServices singleton: a hardwired singleton sent every other
             // instance's results to the wrong store and left its
-            // `scanInFlight` stuck forever — which is also why the scan
-            // pipeline could never be exercised from a test.
+            // `scanInFlight` stuck forever.
             DispatchQueue.main.async { [weak self, completedHarvestMs, completedCursor] in
                 guard let self else { return }
-                self.isApplyingScan = true
-                defer { self.isApplyingScan = false }
                 self.harvestScanCursor = completedCursor
                 switch outcome {
                 case .fresh(_, let health, _, _):
@@ -211,20 +351,12 @@ extension StatusStore {
         }
     }
 
-    fileprivate func finishScanFlight() {
+    private func finishScanFlight() {
         scanInFlight = false
         if let pending = pendingRefresh {
             pendingRefresh = nil
             refresh(reason: pending.reason, agentFilter: pending.agentFilter)
         }
-    }
-
-    /// What the background scan managed to get from the native collector.
-    enum HarvestOutcome {
-        /// Ran and produced rows (possibly partial after a timeout).
-        case fresh([ActivityHarvest.Row], [ActivityHarvest.CollectorHealth], Bool, Bool)
-        /// Deliberately not run this tick — cached rows are still current.
-        case skipped
     }
 
     /// A supervisor plan can intentionally omit adapters that are backing off
@@ -255,6 +387,8 @@ extension StatusStore {
             }
     }
 
+    /// Record a collector health report and hand the model whether the scan
+    /// was incomplete.
     func recordCollectorHealth(
         _ health: [ActivityHarvest.CollectorHealth],
         complete: Bool = true,
@@ -263,19 +397,14 @@ extension StatusStore {
         // A partial stream must not erase the last known result for adapters
         // that have not been reached yet. Only a complete health report resets
         // the map to the explicit unscanned baseline before applying results.
+        let baseline = Dictionary(
+            uniqueKeysWithValues: AgentID.allCases.map {
+                ($0, ActivityHarvest.CollectorHealth.unscanned($0))
+            }
+        )
         var next = complete && !health.isEmpty
-            ? Dictionary(
-                uniqueKeysWithValues: AgentID.allCases.map {
-                    ($0, ActivityHarvest.CollectorHealth.unscanned($0))
-                }
-            )
-            : (collectorHealthByAgent.isEmpty
-                ? Dictionary(
-                    uniqueKeysWithValues: AgentID.allCases.map {
-                        ($0, ActivityHarvest.CollectorHealth.unscanned($0))
-                    }
-                )
-                : collectorHealthByAgent)
+            ? baseline
+            : (collectorHealthByAgent.isEmpty ? baseline : collectorHealthByAgent)
         for item in health {
             var normalized = item
             normalized.id = item.id.surfaceID
@@ -299,8 +428,7 @@ extension StatusStore {
         // Supervisor-deferred adapters are a policy partial, not a failed scan.
         // Lighting the incomplete banner for intentional deferral made healthy
         // ticks look broken every time one agent was in backoff.
-        let incomplete = !complete && !intentionalPartial
-        if collectorScanIncomplete != incomplete { collectorScanIncomplete = incomplete }
+        model?.landCollectorScanIncomplete(!complete && !intentionalPartial)
     }
 
     // MARK: - 2.9 activity light path
@@ -315,41 +443,12 @@ extension StatusStore {
             let events = ActivitySpool.readEvents(nowMs: nowMs)
             guard !events.isEmpty else { return }
             DispatchQueue.main.async { [weak self] in
-                self?.applyActivityEvents(events, nowMs: nowMs)
+                self?.model?.landActivityEvents(events, nowMs: nowMs)
             }
         }
     }
 
-    func applyActivityEvents(_ events: [ActivitySpool.Event], nowMs: Int64) {
-        var byKey: [String: ActivitySpool.Event] = [:]
-        for event in events {
-            guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
-            byKey[agent.rawValue + "|" + event.session] = event
-        }
-        guard !byKey.isEmpty else { return }
-        func patch(_ rows: inout [AgentRow]) -> Bool {
-            var changed = false
-            for index in rows.indices where !rows[index].sessionID.isEmpty {
-                let key = rows[index].agent.rawValue + "|" + rows[index].sessionID
-                guard let event = byKey[key] else { continue }
-                var row = rows[index]
-                row.applyActivity(event, nowMs: nowMs)
-                if row != rows[index] {
-                    rows[index] = row
-                    changed = true
-                }
-            }
-            return changed
-        }
-        var rows = cachedAll
-        if patch(&rows) {
-            setCachedAll(rows)
-        }
-        var next = snapshot
-        if patch(&next.rows) {
-            snapshot = next
-        }
-    }
+    // MARK: - Applying a finished scan
 
     func applyScan(
         procs: [ProcessProbe.Hit],
@@ -364,10 +463,11 @@ extension StatusStore {
         vendorWaits: [ClaudeAgentsProbe.Wait] = []
     ) {
         defer { finishScanFlight() }
+        guard let model else { return }
 
         if ticket < lastAppliedTicket {
             DebugLog.write("apply skip stale #\(ticket) lastApplied=\(lastAppliedTicket)")
-            if clearRefreshing, isRefreshing { isRefreshing = false }
+            if clearRefreshing { model.setRefreshing(false) }
             return
         }
         lastAppliedTicket = ticket
@@ -395,11 +495,9 @@ extension StatusStore {
                 intentionalPartial: intentionalPartial
             )
             // `row.harvestMs` is the vendor session's last activity time, not
-            // when Pulse successfully read that adapter. Using it as "last
-            // read" made a healthy but idle collector look months stale, and
-            // made a newly-read old session look like a failed adapter. Keep
-            // the two clocks separate: this timestamp records the completed
-            // collector read, while row.harvestMs remains session activity.
+            // when Pulse successfully read that adapter. Keep the two clocks
+            // separate: this timestamp records the completed collector read,
+            // while row.harvestMs remains session activity.
             let collectorReadAtMs = Int64(Date().timeIntervalSince1970 * 1000)
             for item in health where !item.state.isIssue {
                 let agent = item.id.surfaceID
@@ -417,11 +515,13 @@ extension StatusStore {
         }
 
         let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         lastScanAt = now
         probeStats.record(
             ProbeStats.Sample(at: now, harvested: harvestMs != nil, harvestMs: harvestMs)
         )
 
+        let settings = model.settings
         let result = SnapshotBuilder.build(
             SnapshotBuilder.Input(
                 procs: procs,
@@ -430,100 +530,24 @@ extension StatusStore {
                 activity: activityEvents,
                 vendorWaits: vendorWaits
             ),
-            previous: SnapshotBuilder.Previous(rows: cachedAll, waitingKeys: sessionLog.waitingKeys),
+            previous: SnapshotBuilder.Previous(rows: model.cachedAll, waitingKeys: model.sessionLog.waitingKeys),
             context: SnapshotBuilder.Context(
-                nowMs: Int64(now.timeIntervalSince1970 * 1000),
+                nowMs: nowMs,
                 terminal: TerminalFocus.Environment.current(
-                    allowTTYAutomation: allowTerminalAutomation
+                    allowTTYAutomation: settings.allowTerminalAutomation
                 ),
-                lang: lang,
-                dismissedPendingKeys: sessionLog.suppressedKeys,
-                showAllAgents: showAllAgents,
-                privacyLimitedAgents: Set(
-                    AgentID.allCases.filter {
-                        $0.requiresAppDataOptIn && !isAppDataAllowed(for: $0)
-                    }
-                )
+                lang: model.lang,
+                dismissedPendingKeys: model.sessionLog.suppressedKeys,
+                showAllAgents: model.showAllAgents,
+                privacyLimitedAgents: Set(AgentID.allCases.filter { settings.isPrivacyLimited($0) })
             )
         )
 
         for note in result.debugNotes { DebugLog.write(note) }
-        for (oldKey, newKey) in result.remappedRowKeys {
-            migrateRowIdentity(from: oldKey, to: newKey)
-        }
-        let previousRows = cachedAll
-        setCachedAll(result.rows)
-        if showAllAgents != result.showAllAgents { showAllAgents = result.showAllAgents }
-
-        // Reconcile before delivery so a restart can distinguish an already
-        // known wait from a newly crossed edge. Spans, waits, released soft
-        // dismissals and the baseline move in one change; a scan that finds
-        // the same world changes nothing and writes nothing (scan-quiet
-        // applies to the disk too).
-        recordScan(previous: previousRows, result: result, nowMs: Int64(now.timeIntervalSince1970 * 1000))
-
         var snap = result.snapshot
         snap.updatedAt = now
-
-        // Notification policy lives here; the builder only reports the edges.
-        // 22.0: quiet hours are macOS Focus's job now; Focus already filters
-        // Pulse's banners, and a second clock inside Pulse disagreed with it.
-        if notifyAuthorized == true, notifyOnIdle, result.wentIdle {
-            PulseNotify.postIdle(title: "Pulse", body: tr(.idleNotify))
-        }
-        // Waiting edges stay available even during quiet hours (when enabled).
-        // Skip the first scan so launch doesn't flood for already-waiting rows.
-        let edgeNowMs = Int64(now.timeIntervalSince1970 * 1000)
-        // 22.0: an edge that will get no banner says why on its event.
-        if !result.newlyWaiting.isEmpty {
-            var reasons: [String: String] = [:]
-            for row in result.newlyWaiting {
-                if !waitingNotifySeeded {
-                    reasons[row.rowKey] = WaitingDelivery.SkipReason.atLaunch.rawValue
-                } else if !notifyOnWaiting {
-                    reasons[row.rowKey] = WaitingDelivery.SkipReason.notifyOff.rawValue
-                } else if mutedAgents.contains(row.agent) {
-                    reasons[row.rowKey] = WaitingDelivery.SkipReason.muted.rawValue
-                } else if notifyAuthorized != true {
-                    reasons[row.rowKey] = WaitingDelivery.SkipReason.notAuthorized.rawValue
-                }
-            }
-            recordDelivery(reasons, nowMs: edgeNowMs)
-        }
-        if notifyOnWaiting, waitingNotifySeeded {
-            let waitingEdges = result.newlyWaiting.filter { !mutedAgents.contains($0.agent) }
-            // Owed banners come from the log, rebuilt from this scan's rows:
-            // a wait that resolved has no open record, so it can neither
-            // linger in a queue nor bring back a banner for a prompt that is
-            // gone.
-            let queuedRows = Self.queuedDeliveryRows(
-                queued: sessionLog.queuedKeys, rows: result.rows, muted: mutedAgents
-            )
-            let deliveryRows = Self.waitingDeliveryRows(edges: waitingEdges, queued: queuedRows)
-            if notifyAuthorized == true {
-                postWaitingNotifications(deliveryRows)
-            } else {
-                // Permission resolution is asynchronous, and a previously
-                // denied permission may be enabled later in System Settings.
-                // Keep every edge owed until the callback arrives instead of
-                // dropping the only interruption for a just-started session —
-                // written once, not on every scan while it waits.
-                updateLog { log in
-                    for waiting in waitingEdges { log.markQueued(waiting.rowKey, nowMs: edgeNowMs) }
-                }
-            }
-        }
-        if !waitingNotifySeeded {
-            waitingNotifySeeded = true
-        }
-
-        // 12.4 Surface: a scan that found the same world leaves `snapshot`
-        // alone, so no surface observing the store is woken for it — except
-        // when a relative-time label on screen is due to move.
-        if PulseSnapshot.needsPublish(next: snap, current: snapshot) {
-            snapshot = snap
-        }
-        if clearRefreshing, isRefreshing { isRefreshing = false }
+        model.land(result, snapshot: snap, nowMs: nowMs)
+        if clearRefreshing { model.setRefreshing(false) }
 
         let previousActivity = activity
         activity = result.activity
@@ -542,57 +566,5 @@ extension StatusStore {
             lastApplyLogSignature = applySignature
             DebugLog.write("apply #\(ticket) " + applySignature)
         }
-    }
-
-    /// Deliver one actionable notification per Waiting session. A previous
-    /// implementation used `first(where:)`, so a scan that found Codex and
-    /// Cursor approvals notified only whichever row happened to sort first.
-}
-
-// MARK: - 12.4 Surface: publish only what changed
-//
-// Observation (19.0), like `@Published` before it, announces every
-// assignment, equal or not, and every view that read the property
-// re-evaluates on each announcement. The scan path therefore writes a
-// tracked property only when the value differs; `ScanQuietTests` holds it
-// to that.
-
-extension StatusStore {
-    /// The merged rows every surface reads. Re-merged on every scan, so the
-    /// write is guarded: an identical merge must not wake the tray.
-    func setCachedAll(_ rows: [AgentRow]) {
-        if rows != cachedAll { cachedAll = rows }
-    }
-}
-
-extension PulseSnapshot {
-    /// Equal in everything a surface draws — `updatedAt` aside.
-    func sameContent(as other: PulseSnapshot) -> Bool {
-        var mine = self
-        mine.updatedAt = other.updatedAt
-        return mine == other
-    }
-
-    /// Below a minute, durations are drawn in seconds (`DurationFormat`).
-    static let secondsLabelWindowMs: Int64 = 60_000
-    /// Minute labels need a redraw at most this often when nothing else moved.
-    static let minuteLabelRefresh: TimeInterval = 60
-
-    /// Whether `next` must replace `current` for the surfaces to stay true.
-    ///
-    /// Content changed → yes. Otherwise only the clock can make a drawn fact
-    /// stale: a row whose wait or activity is younger than a minute shows a
-    /// seconds count that moves every scan, and minute labels move once a
-    /// minute. Nothing else about an unchanged world is worth a redraw.
-    static func needsPublish(next: PulseSnapshot, current: PulseSnapshot) -> Bool {
-        if current.updatedAt == .distantPast { return true }
-        if !next.sameContent(as: current) { return true }
-        let nowMs = Int64(next.updatedAt.timeIntervalSince1970 * 1000)
-        let secondsOnScreen = next.rows.contains { row in
-            let newest = max(row.waitSinceMs, row.activityChangedMs, row.harvestMs)
-            return newest > 0 && nowMs - newest < secondsLabelWindowMs
-        }
-        if secondsOnScreen { return true }
-        return next.updatedAt.timeIntervalSince(current.updatedAt) >= minuteLabelRefresh
     }
 }

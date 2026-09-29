@@ -6,7 +6,7 @@ import Foundation
 /// which rows qualify, whether the rate limit allows a banner now, whether
 /// several sessions collapse into one summary — interleaved with log
 /// writes, Notification Center calls and a sound. The decision is now this
-/// planner, fed only facts; `StatusStore` carries out the plan it returns.
+/// planner, fed only facts; `WaitNotifier` carries out the plan it returns.
 /// Behaviour is unchanged; the rules are testable without a store.
 struct WaitingDelivery: Equatable {
     enum Plan: Equatable {

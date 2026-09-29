@@ -32,7 +32,7 @@ final class RowMetaLineTests: XCTestCase {
         var row = liveRow()
         row.waiting = true
         row.errors = 3
-        XCTAssertEqual(store().rowMetaLine(row), "")
+        XCTAssertEqual(store().narrator.rowMetaLine(row), "")
     }
 
     @MainActor
@@ -43,7 +43,7 @@ final class RowMetaLineTests: XCTestCase {
         row.liveTarget = "/Users/me/Pulse/Sources/Main.swift"
         row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
         row.errors = 2
-        let line = store().rowMetaLine(row)
+        let line = store().narrator.rowMetaLine(row)
         let segments = line.components(separatedBy: " · ")
         XCTAssertTrue(line.contains("Edit"), line)
         XCTAssertTrue(line.contains("Main.swift"), line)
@@ -62,7 +62,7 @@ final class RowMetaLineTests: XCTestCase {
         row.tokensOut = 3_000
         row.model = "claude-opus"
         row.contextPercent = 40
-        let line = store().rowMetaLine(row)
+        let line = store().narrator.rowMetaLine(row)
         // The now slot itself may carry a "Now · tool · target" phrase, so
         // count slots by the facts they lead with, bounded by construction.
         XCTAssertFalse(line.isEmpty)
@@ -75,7 +75,7 @@ final class RowMetaLineTests: XCTestCase {
     @MainActor
     func testASparseRowFallsBackToTheProject() {
         let row = liveRow()
-        let line = store().rowMetaLine(row)
+        let line = store().narrator.rowMetaLine(row)
         XCTAssertTrue(line.contains("Pulse"), "place is the honest filler: \(line)")
     }
 
@@ -87,8 +87,8 @@ final class RowMetaLineTests: XCTestCase {
         row.observationSource = .process
         row.refreshObservationQuality()
         XCTAssertTrue(row.isProcessOnly, "fixture must be a process-only row")
-        let line = store().rowMetaLine(row)
-        XCTAssertEqual(line, store().rowContextLine(row))
+        let line = store().narrator.rowMetaLine(row)
+        XCTAssertEqual(line, store().narrator.rowContextLine(row))
     }
 
     @MainActor
@@ -98,12 +98,12 @@ final class RowMetaLineTests: XCTestCase {
         row.lastWord = "Implementing the fix"
         let subject = store()
 
-        XCTAssertTrue(subject.rowMetaOwnsPlanStep(row))
-        XCTAssertTrue(subject.rowMetaLine(row).contains("Run the focused tests"))
+        XCTAssertTrue(subject.narrator.rowMetaOwnsPlanStep(row))
+        XCTAssertTrue(subject.narrator.rowMetaLine(row).contains("Run the focused tests"))
 
         row.liveTool = "Edit"
         row.liveAtMs = Int64(Date().timeIntervalSince1970 * 1000)
-        XCTAssertFalse(subject.rowMetaOwnsPlanStep(row))
-        XCTAssertFalse(subject.rowMetaLine(row).contains("Run the focused tests"))
+        XCTAssertFalse(subject.narrator.rowMetaOwnsPlanStep(row))
+        XCTAssertFalse(subject.narrator.rowMetaLine(row).contains("Run the focused tests"))
     }
 }

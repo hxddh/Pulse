@@ -5,7 +5,7 @@ import PulseCore
 ///
 /// 12.3 γ. Before this, five `static var`s across `NativeActivityHarvest` and
 /// `ProcessProbe` carried state between scans, each documented as safe
-/// because scans run on `StatusStore.scanQueue`. They are now fields of one
+/// because scans run on `ScanEngine.scanQueue`. They are now fields of one
 /// value behind one lock (`Guarded`), so an off-queue caller — the CLI, the
 /// self-test, a future second queue — cannot race them, and the app target's
 /// concurrency checking sees a `Sendable` owner instead of global mutation.
@@ -24,6 +24,6 @@ package struct ScanMemory {
     package var psRejectsCPUFields = false
 }
 
-package enum ScanEngine {
+package enum HarvestMemory {
     package static let memory = Guarded(ScanMemory())
 }

@@ -39,12 +39,14 @@ struct LampFixTests {
 
     // MARK: - "Don't suggest hooks" persists
 
-    @Test func hooksNudgeOffRoundTrips() {
+    @Test func hooksNudgeOffRoundTrips() throws {
         var settings = PulseSettings()
         settings.hooksNudgeOff = true
-        let reparsed = PulseSettings.parse(settings.serialized())
+        let data = try JSONEncoder().encode(settings)
+        let reparsed = try JSONDecoder().decode(PulseSettings.self, from: data)
         #expect(reparsed.hooksNudgeOff)
-        #expect(!PulseSettings.parse("auto=1\n").hooksNudgeOff)
+        let absent = try JSONDecoder().decode(PulseSettings.self, from: Data("{}".utf8))
+        #expect(!absent.hooksNudgeOff)
     }
 
     @MainActor
@@ -53,7 +55,7 @@ struct LampFixTests {
         store.installPreviewFixture("waiting")
         store.notifyAuthorized = true
         #expect(store.needsHooksNudge)
-        store.hooksNudgeOff = true
+        store.settings.hooksNudgeOff = true
         #expect(!store.needsHooksNudge)
     }
 

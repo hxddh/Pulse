@@ -33,9 +33,9 @@ final class TranscriptDialectTests: XCTestCase {
     }
 
     func testTheScanMemoryHasOneLockedOwner() {
-        ScanEngine.memory.withValue { $0.dashPaths["x-y"] = (path: "/x/y", verified: true) }
+        HarvestMemory.memory.withValue { $0.dashPaths["x-y"] = (path: "/x/y", verified: true) }
         XCTAssertEqual(NativeActivityHarvest.dashPathCache["x-y"]?.path, "/x/y")
         NativeActivityHarvest.dashPathCache.removeAll()
-        XCTAssertTrue(ScanEngine.memory.snapshot.dashPaths.isEmpty)
+        XCTAssertTrue(HarvestMemory.memory.snapshot.dashPaths.isEmpty)
     }
 }

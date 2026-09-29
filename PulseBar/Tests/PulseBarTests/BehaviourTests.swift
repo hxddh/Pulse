@@ -551,10 +551,10 @@ final class NotificationCopyTests: XCTestCase {
         row.waitMessage = "Approve shell command"
         row.project = "/Users/me/code/Pulse"
 
-        let body = store.notificationBody(row)
+        let body = store.notifier.notificationBody(row)
         XCTAssertTrue(body.contains("Approve shell command"))
-        XCTAssertTrue(store.notificationTitle(row).contains("Claude"))
-        XCTAssertTrue(store.notificationTitle(row).contains("Pulse"), "title should locate the work")
+        XCTAssertTrue(store.notifier.notificationTitle(row).contains("Claude"))
+        XCTAssertTrue(store.notifier.notificationTitle(row).contains("Pulse"), "title should locate the work")
     }
 
     @MainActor
@@ -563,7 +563,7 @@ final class NotificationCopyTests: XCTestCase {
         var row = AgentRow(rowKey: "k", agent: .codex)
         row.waiting = true
         row.waitMessage = String(repeating: "x", count: 400)
-        XCTAssertLessThanOrEqual(store.notificationBody(row).count, 160)
+        XCTAssertLessThanOrEqual(store.notifier.notificationBody(row).count, 160)
     }
 
     @MainActor
@@ -571,7 +571,7 @@ final class NotificationCopyTests: XCTestCase {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .codex)
         row.waiting = true
-        XCTAssertEqual(store.notificationTitle(row), "Codex")
+        XCTAssertEqual(store.notifier.notificationTitle(row), "Codex")
     }
 }
 
@@ -657,12 +657,12 @@ final class ClearWaitingDeliveryTests: XCTestCase {
 
         // clearWaiting() ends in refresh(); a real scan here would fold and
         // flush digests into the developer's own store.
-        StatusStore.suppressBackgroundScansForTesting = true
-        defer { StatusStore.suppressBackgroundScansForTesting = false }
+        ScanEngine.suppressBackgroundScansForTesting = true
+        defer { ScanEngine.suppressBackgroundScansForTesting = false }
 
         let store = StatusStore()
         var withdrawals = 0
-        store.withdrawWaitingBanners = { withdrawals += 1 }
+        store.notifier.withdrawBanners = { withdrawals += 1 }
         store.clearWaiting()
         XCTAssertEqual(
             withdrawals, 1,

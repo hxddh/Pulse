@@ -1,9 +1,8 @@
 import Foundation
 import AppKit
 
-/// 4.0-γ file split — Preview fixtures — CLI-only visual contract, never reachable from UI.
-/// Behavior-frozen: every member moved verbatim from StatusStore.swift;
-/// the full test suite is the contract that nothing changed.
+/// Preview fixtures — the CLI-only visual contract, never reachable from UI.
+@MainActor
 extension StatusStore {
     /// Deterministic visual contract for compact/crowded tray QA.
     ///
@@ -199,9 +198,9 @@ extension StatusStore {
                     sourcePresent: true,
                     errorKind: "PermissionError"
                 )
-            recordCollectorHealth(Array(health.values))
-            lastSuccessfulReadByAgent[.codex] = codex.harvestMs
-            lastSuccessfulReadByAgent[.cursor] = cursor.harvestMs
+            engine.recordCollectorHealth(Array(health.values))
+            engine.lastSuccessfulReadByAgent[.codex] = codex.harvestMs
+            engine.lastSuccessfulReadByAgent[.cursor] = cursor.harvestMs
             snapshot = PulseSnapshot(
                 glance: .running,
                 title: "2",
@@ -323,6 +322,4 @@ extension StatusStore {
         snap.updatedAt = Date()
         snapshot = snap
     }
-
-    /// launchctl unload+load are two blocking subprocesses; never run them on
 }

@@ -265,40 +265,23 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(store.snapshot.rows[0].isStalled)
     }
 
+    /// 23.0: one app-data switch. With it off, a fixture that has
+    /// protected agents shows the privacy banner; with it on, nothing is
+    /// privacy-limited and the banner is gone.
     @MainActor
-    func testScopedAppDataPrivacyBannerIsNotGlobalOffCopy() {
+    func testOneAppDataSwitchDrivesThePrivacyBanner() {
         let store = StatusStore()
-        store.allowAppData = false
-        store.appDataAgents = [.cursor]
         store.language = .en
-
-        var limited = health(agent: .warpAgent, evidence: nil, goal: false, workspace: false, activity: false)
-        limited.privacyLimited = true
-        limited.collectorState = .sourceAbsent
-
-        var cursor = health(agent: .cursor, evidence: .session, processDetected: true, goal: true, workspace: true, activity: true, progress: true)
-        cursor.privacyLimited = false
-        cursor.collectorState = .observed
-
-        // Inject via published support path: rebuild from install fixture then override policy.
         store.installPreviewFixture("coverage")
-        store.allowAppData = false
-        store.appDataAgents = [.cursor]
-        // Force a privacy-limited peer while Cursor remains granted.
-        XCTAssertTrue(store.isAppDataAllowed(for: .cursor))
-        XCTAssertFalse(store.isAppDataAllowed(for: .warpAgent))
-        XCTAssertEqual(store.appDataGrantMode, .scoped(1))
+        store.settings.readProtectedAppData = false
+        XCTAssertTrue(store.settings.isPrivacyLimited(.cursor))
+        XCTAssertGreaterThan(store.privacyLimitedCount, 0)
+        XCTAssertEqual(store.privacyBannerText, store.tr(.supportCollectorPrivacyLimitedDetail))
 
-        // Banner text for scoped grants must not claim the scan is fully off.
-        let noneBanner = store.tr(.supportCollectorPrivacyLimitedDetail)
-        // Simulate privacyLimitedCount > 0 with scoped mode by temporarily
-        // clearing cursor grant on a synthetic health list is hard without
-        // private setters — assert the localized scoped format instead.
-        let scoped = String(format: store.tr(.supportCollectorPrivacyLimitedScoped), 1, 2)
-        XCTAssertTrue(scoped.contains("1"))
-        XCTAssertTrue(scoped.contains("2"))
-        XCTAssertNotEqual(scoped, noneBanner)
-        XCTAssertFalse(scoped.localizedCaseInsensitiveContains("scan is off"))
+        store.settings.readProtectedAppData = true
+        XCTAssertFalse(store.settings.isPrivacyLimited(.cursor))
+        XCTAssertEqual(store.privacyLimitedCount, 0)
+        XCTAssertNil(store.privacyBannerText)
     }
 
     @MainActor
@@ -315,18 +298,19 @@ final class SupportHealthTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenSettingsFocusesAppDataAgent() {
+    func testOpenSettingsFocusesAppData() {
         let store = StatusStore()
-        store.openSettings(focusAppDataFor: .cursor)
-        XCTAssertEqual(store.settingsFocusAppDataAgent, .cursor)
-        XCTAssertTrue(store.settingsExpandAppDataScopes)
+        let before = store.settingsFocus.token
+        store.openSettings(focus: .appData)
+        XCTAssertEqual(store.settingsFocus.target, .appData)
+        XCTAssertNotEqual(store.settingsFocus.token, before, "a deep link moves the token")
     }
 
     @MainActor
     func testScanIncompleteTimeoutCopyDiffersFromGeneric() {
         let store = StatusStore()
         store.language = .en
-        store.recordCollectorHealth(
+        store.engine.recordCollectorHealth(
             [
                 ActivityHarvest.CollectorHealth(
                     id: .claude,
@@ -340,7 +324,7 @@ final class SupportHealthTests: XCTestCase {
             complete: false
         )
         XCTAssertEqual(store.scanIncompleteBannerText, store.tr(.supportScanIncompleteTimeout))
-        store.recordCollectorHealth(
+        store.engine.recordCollectorHealth(
             [
                 ActivityHarvest.CollectorHealth(
                     id: .claude,
@@ -360,7 +344,7 @@ final class SupportHealthTests: XCTestCase {
     func testIntentionalSupervisorPartialDoesNotLightIncompleteBanner() {
         let store = StatusStore()
         store.language = .en
-        store.recordCollectorHealth(
+        store.engine.recordCollectorHealth(
             [
                 ActivityHarvest.CollectorHealth(
                     id: .codex,
@@ -433,8 +417,8 @@ final class SupportHealthTests: XCTestCase {
         )
         XCTAssertEqual(store.observationGapNextStep(gap), store.tr(.qualityNextAttentionBridge))
         XCTAssertEqual(store.observationGapReason(gap), store.tr(.supportWaitingNoneDetail))
-        store.openSettings(focusWaitingSignals: true)
-        XCTAssertTrue(store.settingsFocusWaitingSignals)
+        store.openSettings(focus: .waitingSignals)
+        XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
 
     @MainActor
@@ -443,15 +427,15 @@ final class SupportHealthTests: XCTestCase {
         store.language = .en
         store.hooksStatus = .installedBoth
         // Prefer opaque Reach over notify setup: disable Waiting notifications.
-        store.notifyOnWaiting = false
+        store.settings.notifyOnWaiting = false
         store.installPreviewFixture("waiting")
         guard store.needsWaitingSignalNudge else {
-            store.openSettings(focusWaitingSignals: true)
-            XCTAssertTrue(store.settingsFocusWaitingSignals)
+            store.openSettings(focus: .waitingSignals)
+            XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
             return
         }
         store.performMaintenanceNoticeAction()
-        XCTAssertTrue(store.settingsFocusWaitingSignals)
+        XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
 
     @MainActor

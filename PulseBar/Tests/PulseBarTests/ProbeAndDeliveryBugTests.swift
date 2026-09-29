@@ -75,7 +75,7 @@ final class ProbeAndDeliveryBugTests: XCTestCase {
         fresh.waitSinceMs = 9_000
         fresh.task = "the newer wait"
 
-        let rows = StatusStore.waitingDeliveryRows(edges: [fresh], queued: [queued])
+        let rows = WaitNotifier.waitingDeliveryRows(edges: [fresh], queued: [queued])
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows.first?.task, "the newer wait", "the fresh edge wins")
     }
@@ -89,12 +89,12 @@ final class ProbeAndDeliveryBugTests: XCTestCase {
         var c = AgentRow(rowKey: "cursor|c", agent: .cursor)
         c.waiting = true
 
-        let rows = StatusStore.waitingDeliveryRows(edges: [a, b], queued: [c])
+        let rows = WaitNotifier.waitingDeliveryRows(edges: [a, b], queued: [c])
         XCTAssertEqual(Set(rows.map(\.rowKey)), ["codex|a", "claude|b", "cursor|c"])
     }
 
     @MainActor
     func testNoEdgesAndNoQueueIsEmpty() {
-        XCTAssertTrue(StatusStore.waitingDeliveryRows(edges: [], queued: []).isEmpty)
+        XCTAssertTrue(WaitNotifier.waitingDeliveryRows(edges: [], queued: []).isEmpty)
     }
 }

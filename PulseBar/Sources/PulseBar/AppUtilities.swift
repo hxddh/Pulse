@@ -6,6 +6,13 @@ import Foundation
 import AppKit
 import CryptoKit
 
+/// Which sentence a token pair belongs to.
+///
+/// The scope is not decoration: "latest model call" and "the agent's own
+/// running total" are different numbers, and a pair printed without saying
+/// which one it is has been a bug report waiting to happen since 2.1. Each
+/// scope carries three phrasings, because a pair with one unmeasured half is
+/// a different sentence — not the same sentence with a zero in it.
 enum TokenScope {
     case compact, reported, latestCall
 

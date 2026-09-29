@@ -366,19 +366,19 @@ final class LiveToolTests: XCTestCase {
 
     @MainActor
     func testALiveRowShowsWhatItIsRunning() {
-        XCTAssertEqual(store().liveTool(row(tool: "Bash", task: "Fix the parser", live: true)), "Bash")
+        XCTAssertEqual(store().narrator.liveTool(row(tool: "Bash", task: "Fix the parser", live: true)), "Bash")
     }
 
     /// On a finished session the last tool is history, not status.
     @MainActor
     func testAFinishedRowDoesNotClaimToBeRunningATool() {
-        XCTAssertNil(store().liveTool(row(tool: "Bash", task: "Fix the parser", live: false)))
+        XCTAssertNil(store().narrator.liveTool(row(tool: "Bash", task: "Fix the parser", live: false)))
     }
 
     /// Waiting rows already spend their third line on the actual question.
     @MainActor
     func testAWaitingRowKeepsItsQuestionInstead() {
-        XCTAssertNil(store().liveTool(row(tool: "Bash", task: "x", live: true, waiting: true)))
+        XCTAssertNil(store().narrator.liveTool(row(tool: "Bash", task: "x", live: true, waiting: true)))
     }
 
     /// With no task the humanized tool is the hero, so repeating it on the
@@ -388,9 +388,9 @@ final class LiveToolTests: XCTestCase {
         let r = row(tool: "Bash", task: "", live: true)
         XCTAssertNil(r.sessionDetail, "raw tool is not a session title")
         XCTAssertTrue(r.hasLiveToolFallback)
-        XCTAssertEqual(store().heroToolTitle(r), "Terminal command")
-        XCTAssertNil(store().liveTool(r))
-        let context = store().rowContextLine(r)
+        XCTAssertEqual(store().narrator.heroToolTitle(r), "Terminal command")
+        XCTAssertNil(store().narrator.liveTool(r))
+        let context = store().narrator.rowContextLine(r)
         XCTAssertFalse(context.contains("Terminal command"), context)
     }
 
@@ -398,13 +398,13 @@ final class LiveToolTests: XCTestCase {
     func testUpdatePlanNeverBecomesTheHeroTitle() {
         var r = row(tool: "update_plan", task: "update_plan", live: true)
         XCTAssertNil(r.usefulTask)
-        XCTAssertEqual(store().heroToolTitle(r), "Planning")
+        XCTAssertEqual(store().narrator.heroToolTitle(r), "Planning")
         r.task = "Improve observability"
         XCTAssertEqual(r.usefulTask, "Improve observability")
         let story = store().rowStoryLine(r)
         XCTAssertTrue(story.contains("Last action: Planning") || story.contains("Planning"), story)
         XCTAssertFalse(story.contains("update_plan"), story)
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertFalse(line.contains("Last action:"), "story owns last-action: \(line)")
         XCTAssertFalse(line.contains("update_plan"), line)
     }
@@ -435,7 +435,7 @@ final class RowMetricsTests: XCTestCase {
 
     @MainActor
     func testTokenSnapshotIsVisibleByDefault() {
-        let line = store().rowMetrics(row(inTok: 12_000, outTok: 3_000))
+        let line = store().narrator.rowMetrics(row(inTok: 12_000, outTok: 3_000))
         XCTAssertTrue(line.contains("Latest model call"), line)
         XCTAssertTrue(line.contains("12k input"), line)
         XCTAssertTrue(line.contains("3.0k output"), line)
@@ -443,7 +443,7 @@ final class RowMetricsTests: XCTestCase {
 
     @MainActor
     func testSubagentProgressIsVisibleByDefault() {
-        XCTAssertTrue(store().rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
+        XCTAssertTrue(store().narrator.rowMetrics(row(subRunning: 2, subTotal: 5)).contains("2"))
     }
 
     @MainActor
@@ -451,7 +451,7 @@ final class RowMetricsTests: XCTestCase {
         var r = AgentRow(rowKey: "amp", agent: .amp)
         r.liveProcess = true
         r.processStartedMs = Int64((Date().timeIntervalSince1970 - 3_600) * 1000)
-        let line = store().rowMetrics(r)
+        let line = store().narrator.rowMetrics(r)
         XCTAssertTrue(line.contains("Process started"), line)
         XCTAssertTrue(line.contains("1h"), line)
         let story = store().rowStoryLine(r)
@@ -471,12 +471,12 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(signal.contains("No activity for"), signal)
         XCTAssertTrue(signal.contains("32m"), signal)
         // 0.80: session start stays on the context trailing edge even when stalled.
-        XCTAssertTrue(store().rowContextLine(r).contains("Started"), store().rowContextLine(r))
+        XCTAssertTrue(store().narrator.rowContextLine(r).contains("Started"), store().narrator.rowContextLine(r))
     }
 
     @MainActor
     func testRecordCountIsVisibleByDefault() {
-        XCTAssertTrue(store().rowMetrics(row(records: 34)).contains("34"))
+        XCTAssertTrue(store().narrator.rowMetrics(row(records: 34)).contains("34"))
     }
 
     /// On a waiting row the question is the point; numbers beside it are noise
@@ -492,7 +492,7 @@ final class RowMetricsTests: XCTestCase {
             inTok: 12_000, outTok: 3_000, subRunning: 2, subTotal: 5,
             waiting: true, records: 34, startedAgo: 3 * 3600
         )
-        XCTAssertEqual(store().rowMetrics(loaded), "", "a waiting row carries no metrics at all")
+        XCTAssertEqual(store().narrator.rowMetrics(loaded), "", "a waiting row carries no metrics at all")
         XCTAssertEqual(store().rowObservationLine(loaded), "", "a waiting row carries no telemetry line")
     }
 
@@ -506,9 +506,9 @@ final class RowMetricsTests: XCTestCase {
             records: 34, startedAgo: 3 * 3600
         )
         loaded.task = "Refactor observability"
-        let metrics = store().rowMetrics(loaded)
+        let metrics = store().narrator.rowMetrics(loaded)
         let observation = store().rowObservationLine(loaded)
-        let context = store().rowContextLine(loaded)
+        let context = store().narrator.rowContextLine(loaded)
         XCTAssertTrue(metrics.contains("2 of 5"), metrics)
         XCTAssertTrue(store().rowWorkLine(loaded).contains("12k"), store().rowWorkLine(loaded))
         XCTAssertTrue(observation.contains("2 of 5") || observation.contains("2"), observation)
@@ -524,7 +524,7 @@ final class RowMetricsTests: XCTestCase {
     /// Nothing to say means no text, not a placeholder.
     @MainActor
     func testARowWithNoNumbersShowsNothing() {
-        XCTAssertEqual(store().rowMetrics(row()), "")
+        XCTAssertEqual(store().narrator.rowMetrics(row()), "")
         XCTAssertEqual(store().rowObservationLine(row()), "")
     }
 
@@ -550,7 +550,7 @@ final class RowMetricsTests: XCTestCase {
         let story = store().rowStoryLine(r)
         XCTAssertTrue(story.contains("Last action: Planning") || story.contains("Planning"), story)
         XCTAssertFalse(story.contains("update_plan"), story)
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertFalse(line.contains("Last action:"), "story owns last-action (0.92): \(line)")
     }
 
@@ -562,7 +562,7 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
         let story = store().rowStoryLine(r)
         XCTAssertTrue(story.contains("Testing") || story.contains("测试"), story)
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertFalse(line.contains("Last action:"), line)
     }
 
@@ -572,7 +572,7 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Run checks"
         r.tool = "swift_test"
         r.liveProcess = true
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         // EXPERIENCE 次行右端: Started stays visible (0.80 Tray Legibility).
         XCTAssertTrue(line.contains("Started"), line)
         // 0.92: last-action lives on story, not context.
@@ -603,7 +603,7 @@ final class RowMetricsTests: XCTestCase {
         let story = store().rowStoryLine(r)
         XCTAssertTrue(story.contains("Last action:") || story.localizedCaseInsensitiveContains("command"), story)
         XCTAssertFalse(story.contains("run_terminal_command"), story)
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertFalse(line.contains("Last action:"), line)
     }
 
@@ -621,9 +621,9 @@ final class RowMetricsTests: XCTestCase {
 
         let story = store().rowStoryLine(r)
         XCTAssertTrue(story.localizedCaseInsensitiveContains("command") || story.contains("Turn"), story)
-        let context = store().rowContextLine(r)
+        let context = store().narrator.rowContextLine(r)
         XCTAssertFalse(context.contains("Last action:"), "story owns tool gist: \(context)")
-        let lifecycle = store().rowNowLine(r)
+        let lifecycle = store().narrator.rowNowLine(r)
         XCTAssertTrue(lifecycle.contains("Outcome"), lifecycle)
         XCTAssertTrue(lifecycle.contains("Turn complete"), lifecycle)
         XCTAssertFalse(lifecycle.contains("Now"), lifecycle)
@@ -631,10 +631,10 @@ final class RowMetricsTests: XCTestCase {
         let work = store().rowWorkLine(r)
         XCTAssertTrue(work.contains("Build Plan"), work)
         XCTAssertTrue(work.contains("Model grok 4.5"), work)
-        XCTAssertTrue(store().rowMetrics(r).contains("1 failure"))
+        XCTAssertTrue(store().narrator.rowMetrics(r).contains("1 failure"))
 
         r.errors = 0
-        XCTAssertTrue(store().rowMetrics(r).contains("Context 27%"))
+        XCTAssertTrue(store().narrator.rowMetrics(r).contains("Context 27%"))
     }
 
     @MainActor
@@ -778,7 +778,7 @@ final class RowMetricsTests: XCTestCase {
         r.processCount = 3
         // Gap lives on the hero (terminalDetectedNoDetails / appDetectedNoDetails);
         // context keeps detection evidence only.
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertFalse(line.contains("3"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("process"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("agent app running"), line)
@@ -789,7 +789,7 @@ final class RowMetricsTests: XCTestCase {
         var r = row()
         r.liveProcess = true
         r.processEvidence = .pathSignature
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertTrue(line.localizedCaseInsensitiveContains("detected by path signature"), line)
         XCTAssertFalse(
             line.localizedCaseInsensitiveContains("activity feed unavailable"),
@@ -807,7 +807,7 @@ final class RowMetricsTests: XCTestCase {
         r.project = ""
         r.tool = ""
         r.harvestMs = 0
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertFalse(line.contains(r.agent.displayName), "agent name is identity chrome, not context: \(line)")
     }
 
@@ -834,7 +834,7 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
         let story = store().rowStoryLine(r)
         XCTAssertTrue(story.contains("Last action:") || story.contains("LS"), story)
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         XCTAssertFalse(line.contains("Last action:"), "story owns last-action: \(line)")
     }
 
@@ -849,7 +849,7 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertTrue(r.hasLiveToolFallback)
         // 8.1: the tool's home is the hero here (fallback title) — the work
         // line must not say it twice, and context keeps where/when only.
-        let line = store().rowContextLine(r, omitPath: true)
+        let line = store().narrator.rowContextLine(r, omitPath: true)
         XCTAssertFalse(line.contains("Last action:"), line)
         XCTAssertFalse(line.isEmpty, line)
         XCTAssertFalse(
@@ -869,7 +869,7 @@ final class RowMetricsTests: XCTestCase {
         let work = store().rowWorkLine(r)
         XCTAssertTrue(work.contains("claude sonnet 4") || work.contains("Model"), work)
         XCTAssertTrue(work.contains("1.5k") || work.contains("1500") || work.contains("1,500") || work.contains("↑"), work)
-        let context = store().rowContextLine(r)
+        let context = store().narrator.rowContextLine(r)
         XCTAssertFalse(context.contains("Last action:"), "story owns last-action (0.92): \(context)")
         let story = store().rowStoryLine(r)
         XCTAssertTrue(story.contains("Last action:") || story.localizedCaseInsensitiveContains("edit"), story)
@@ -889,7 +889,7 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertEqual(r.observationSource, .cache)
         let work = store().rowWorkLine(r)
         XCTAssertTrue(work.contains("cascade") || work.contains("Model"), work)
-        let now = store().rowNowLine(r)
+        let now = store().narrator.rowNowLine(r)
         XCTAssertTrue(now.isEmpty, "cache without phase must not invent Now: \(now)")
     }
 
@@ -902,7 +902,7 @@ final class RowMetricsTests: XCTestCase {
         r.tool = ""
         r.liveProcess = true
         r.activityChange = nil
-        let now = store().rowNowLine(r)
+        let now = store().narrator.rowNowLine(r)
         XCTAssertTrue(now.isEmpty, "no phase → empty Now (never last-tool): \(now)")
         let work = store().rowWorkLine(r)
         XCTAssertTrue(work.contains("gpt 5") || work.contains("Model"), work)
@@ -939,7 +939,7 @@ final class RowMetricsTests: XCTestCase {
             story
         )
         XCTAssertFalse(story.contains("Now"), story)
-        let now = store().rowNowLine(r)
+        let now = store().narrator.rowNowLine(r)
         XCTAssertTrue(now.isEmpty, now)
     }
 
@@ -977,9 +977,9 @@ final class RowMetricsTests: XCTestCase {
         // Chip owns kind·duration; story only carries signal when no message.
         XCTAssertFalse(story.localizedCaseInsensitiveContains("permission"), story)
         XCTAssertTrue(story.contains(store().tr(.signalHooks)), story)
-        let dur = store().waitDurationLabel(r)
+        let dur = store().narrator.waitDurationLabel(r)
         XCTAssertFalse(dur.isEmpty)
-        XCTAssertNil(store().localizedWaitDetail(r))
+        XCTAssertNil(store().narrator.localizedWaitDetail(r))
     }
 
     @MainActor
@@ -991,7 +991,7 @@ final class RowMetricsTests: XCTestCase {
         r.waitMessage = "Allow network access?"
         r.waitSinceMs = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
         XCTAssertEqual(store().rowStoryLine(r), "")
-        let detail = store().localizedWaitDetail(r)
+        let detail = store().narrator.localizedWaitDetail(r)
         XCTAssertNotNil(detail)
         XCTAssertTrue(detail!.hasPrefix("↳ Allow network"), detail!)
         XCTAssertTrue(detail!.contains(store().tr(.signalHooks)), detail!)
@@ -1023,10 +1023,10 @@ final class RowMetricsTests: XCTestCase {
         r.phase = "working"
         r.liveProcess = true
         let story = store().rowStoryLine(r)
-        let context = store().rowContextLine(r)
+        let context = store().narrator.rowContextLine(r)
         XCTAssertFalse(story.isEmpty, story)
         XCTAssertFalse(context.contains("Last action:"), context)
-        XCTAssertTrue(store().storyOwnsLastAction(r))
+        XCTAssertTrue(store().narrator.storyOwnsLastAction(r))
     }
 
     @MainActor
@@ -1073,7 +1073,7 @@ final class RowMetricsTests: XCTestCase {
         r.phase = "depending"
         r.liveProcess = true
         r.waiting = false
-        let now = store().rowNowLine(r)
+        let now = store().narrator.rowNowLine(r)
         XCTAssertTrue(now.contains("Working") || now.contains("正在执行"), now)
         XCTAssertFalse(now.localizedCaseInsensitiveContains("wait"), now)
     }
@@ -1084,7 +1084,7 @@ final class RowMetricsTests: XCTestCase {
         r.task = "Gemini turn"
         r.phase = "in_progress"
         r.liveProcess = true
-        let now = store().rowNowLine(r)
+        let now = store().narrator.rowNowLine(r)
         XCTAssertTrue(now.contains("Working") || now.contains("正在执行"), now)
     }
 
@@ -1095,7 +1095,7 @@ final class RowMetricsTests: XCTestCase {
         r.task = ""
         r.liveProcess = false
         XCTAssertTrue(r.hasLiveToolFallback)
-        XCTAssertEqual(store().heroToolTitle(r), "Terminal command")
+        XCTAssertEqual(store().narrator.heroToolTitle(r), "Terminal command")
     }
 
     @MainActor
@@ -1116,7 +1116,7 @@ final class RowMetricsTests: XCTestCase {
         r.liveProcess = true
         r.processCount = 1
         r.focusTier = .warp
-        let line = store().rowContextLine(r)
+        let line = store().narrator.rowContextLine(r)
         // Context stays quiet when there is no path/evidence; hero owns the gap.
         XCTAssertFalse(line.localizedCaseInsensitiveContains("terminal session running"), line)
         XCTAssertFalse(line.localizedCaseInsensitiveContains("activity feed unavailable"), line)

@@ -47,7 +47,7 @@ struct SessionLogTests {
         var fresh = waiting("claude|a")
         fresh.waitMessage = "Bash: npm test"
         let rows = [fresh, running("codex|b", .codex), waiting("cursor|c", .cursor)]
-        let owed = StatusStore.queuedDeliveryRows(
+        let owed = WaitNotifier.queuedDeliveryRows(
             queued: ["claude|a", "codex|b", "gone|x", "cursor|c"],
             rows: rows,
             muted: [.cursor]
@@ -87,7 +87,7 @@ struct SessionLogTests {
         )])
         log.savedAtMs = wallNow - 30 * minute
         store.sessionLog = log
-        store.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: 1)
+        store.engine.applyScan(procs: [], harvest: .skipped, processSignature: "", attention: [], ticket: 1)
         #expect(store.sessionLog.spans("claude|old").last?.endMs == wallNow - 30 * minute)
     }
 
@@ -130,10 +130,10 @@ struct SessionLogTests {
         store.sessionLog = log
         let id = try #require(log.openWait("claude|a")?.id)
         let before = store.logRevision
-        store.recordBannerClick(waitIDs: [id])
+        store.notifier.recordBannerClick(waitIDs: [id])
         let after = store.logRevision
         #expect(after != before, "the detail view's notification section follows the click")
-        store.recordBannerClick(waitIDs: [id, "unknown|1"])
+        store.notifier.recordBannerClick(waitIDs: [id, "unknown|1"])
         let again = store.logRevision
         #expect(again == after)
     }

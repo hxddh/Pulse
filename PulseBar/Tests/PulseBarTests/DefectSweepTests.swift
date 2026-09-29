@@ -129,14 +129,14 @@ final class DefectSweepTests: XCTestCase {
 
     @MainActor
     func testNoErrorsIsNoFault() {
-        XCTAssertEqual(store().faultFact(liveRow()), "")
+        XCTAssertEqual(store().narrator.faultFact(liveRow()), "")
     }
 
     // MARK: D-3 · a coalesced refresh keeps its scope
 
     @MainActor
     func testMergingTwoScopedRefreshesKeepsBoth() {
-        var pending = StatusStore.PendingRefresh(
+        var pending = ScanEngine.PendingRefresh(
             reason: "permission-cursor",
             agentFilter: [.cursor]
         )
@@ -147,14 +147,14 @@ final class DefectSweepTests: XCTestCase {
 
     @MainActor
     func testAFullScanAbsorbsAScopedOne() {
-        var pending = StatusStore.PendingRefresh(
+        var pending = ScanEngine.PendingRefresh(
             reason: "permission-cursor",
             agentFilter: [.cursor]
         )
         pending.absorb(reason: "timer", agentFilter: nil)
         XCTAssertNil(pending.agentFilter, "a full scan already covers the scoped one")
 
-        var full = StatusStore.PendingRefresh(reason: "timer", agentFilter: nil)
+        var full = ScanEngine.PendingRefresh(reason: "timer", agentFilter: nil)
         full.absorb(reason: "permission-cursor", agentFilter: [.cursor])
         XCTAssertNil(full.agentFilter, "and narrowing it afterwards would drop the rest")
     }

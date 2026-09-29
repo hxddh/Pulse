@@ -1,43 +1,23 @@
 import Foundation
 import AppKit
 
-/// 4.0-γ file split — Support & diagnostics — reports, health detail, observation gaps.
-/// Behavior-frozen: every member moved verbatim from StatusStore.swift;
-/// the full test suite is the contract that nothing changed.
+/// Health (21.0: one window for the self-check, per-agent support and
+/// diagnostics) — the model's side: per-agent health built from the rows
+/// and the engine's collector bookkeeping, the copy each Health row shows,
+/// the reports, and the self-check.
+@MainActor
 extension StatusStore {
-    /// Claude/Codex live but hooks not wired — tray nudge only.
-    var needsHooksNudge: Bool {
-        // The user took the hooks out on purpose; do not keep offering them.
-        if hooksNudgeOff { return false }
-        guard hooksStatus == .missing || hooksStatus == .unknown else { return false }
-        return cachedAll.contains {
-            $0.liveProcess && ($0.agent == .claude || $0.agent == .codex)
+    /// Current cadence, for Health and diagnostics ("probing every 5s").
+    var probeIntervalDescription: String {
+        engine.probeIntervalDescription(lang: lang)
+    }
+
+    private func flashCopiedDiagnostics() {
+        diagnostics.didCopyDiagnostics = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            self?.diagnostics.didCopyDiagnostics = false
         }
-    }
-
-    /// Live agent with no Waiting path (not hooks-dependent) — one-line honesty, not a HUD.
-    var needsWaitingSignalNudge: Bool {
-        if needsHooksNudge { return false }
-        return firstLiveWaitingNoneAgent != nil
-    }
-
-    /// First live Waiting-none agent still without an active wait — Reach funnel focus target.
-    var firstLiveWaitingNoneAgent: AgentID? {
-        cachedAll.first {
-            $0.liveProcess && $0.agent.waitingSource == .none && !$0.waiting
-        }?.agent
-    }
-
-    /// Packaged bundle version disagrees with the compiled semver — usually a
-    /// stale `Pulse.app` next to a fresh build. Worth saying out loud.
-    var isVersionMismatch: Bool {
-        // XCTest and deterministic tray fixtures run from a host bundle whose
-        // version is unrelated to Pulse. Do not let that harness detail hide
-        // the fixture's observable Waiting signal or affect its screenshots;
-        // real packaged launches still keep stale-bundle diagnosis first.
-        if previewFixtureActive { return false }
-        if case .mismatch = PulseVersion.channel { return true }
-        return false
     }
 
     /// Everything a bug report needs, in one paste.
@@ -48,11 +28,11 @@ extension StatusStore {
             "channel: \(isVersionMismatch ? "mismatch" : PulseVersion.distributionChannel)",
             "macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "lang: \(language.rawValue)",
-            "appDataScan: \(appDataScanDescription)",
+            "appDataScan: \(settings.readProtectedAppData ? "all" : "disabled")",
             "harvest: native (no external runtime)",
             "hooks: \(hooksStatus.label(lang: lang))",
             "glance: \(snapshot.glance) · rows: \(snapshot.rows.count)/\(snapshot.totalCount)",
-            "cadence: \(probeIntervalDescription) · \(probeStats.summary(now: Date()))",
+            "cadence: \(probeIntervalDescription) · \(engine.probeStats.summary(now: Date()))",
         ]
         let collector = supportHealth
         let collectorCounts = Dictionary(grouping: collector, by: \.collectorState).mapValues(\.count)
@@ -69,10 +49,10 @@ extension StatusStore {
         let notificationAuthorization = notifyAuthorized.map { String($0) } ?? "unknown"
         lines.append(
             "notifications: authorization=\(notificationAuthorization) "
-                + "notifyWaiting=\(notifyOnWaiting) queued=\(sessionLog.queuedKeys.count) "
-                + "inFlight=\(waitingDeliveryInFlight.count)"
+                + "notifyWaiting=\(settings.notifyOnWaiting) queued=\(sessionLog.queuedKeys.count) "
+                + "inFlight=\(notifier.inFlight.count)"
         )
-        lines.append("harvestSupervisor: \(harvestSupervisor.summary(nowMs: Int64(Date().timeIntervalSince1970 * 1000)))")
+        lines.append("harvestSupervisor: \(engine.harvestSupervisor.summary(nowMs: Int64(Date().timeIntervalSince1970 * 1000)))")
         lines.append(sessionLogDiagnostics)
         let failedCollectors = collector.filter { $0.collectorState.isIssue }
         if !failedCollectors.isEmpty {
@@ -97,12 +77,8 @@ extension StatusStore {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(diagnosticsText(), forType: .string)
-        didCopyDiagnostics = true
+        flashCopiedDiagnostics()
         DebugLog.write("diagnostics copied")
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_600_000_000)
-            self?.didCopyDiagnostics = false
-        }
     }
 
     /// A previewable, deliberately path-free support report. It contains
@@ -117,14 +93,7 @@ extension StatusStore {
             case .none: return "unknown"
             }
         }()
-        let grantLabel: String = {
-            switch appDataGrantMode {
-            case .all: return "all"
-            case .scoped(let n): return "scoped:\(n)"
-            case .none: return "none"
-            }
-        }()
-        let timeoutAgents = collectorHealthByAgent.values
+        let timeoutAgents = engine.collectorHealthByAgent.values
             .filter { $0.errorKind == "native_timeout" }
             .map(\.id.rawValue)
             .sorted()
@@ -134,7 +103,7 @@ extension StatusStore {
         let factPresent = healthItems.reduce(0) { $0 + $1.usefulFactCount }
         let factPossible = healthItems.reduce(0) { $0 + $1.usefulFactTotal }
         let limitedAgents = healthItems.filter { $0.disposition == .limited }.count
-        let failures = harvestSupervisor.failureTimeline(nowMs: nowMs)
+        let failures = engine.harvestSupervisor.failureTimeline(nowMs: nowMs)
         var lines = [
             "Pulse safe support report",
             PulseVersion.fingerprint,
@@ -144,17 +113,17 @@ extension StatusStore {
             "Agents: \(healthItems.count)",
             "waitingNone: \(AgentID.waitingNoneAgents.map(\.rawValue).joined(separator: ","))",
             "gatekeeperReady: \(PulseVersion.isGatekeeperReady)",
-            "appDataScan: \(appDataScanDescription)",
-            "appDataGrant: \(grantLabel)",
-            "notifications: authorization=\(authLabel) notifyWaiting=\(notifyOnWaiting) queued=\(sessionLog.queuedKeys.count)",
+            "appDataScan: \(settings.readProtectedAppData ? "all" : "disabled")",
+            "appDataGrant: \(settings.readProtectedAppData ? "all" : "none")",
+            "notifications: authorization=\(authLabel) notifyWaiting=\(settings.notifyOnWaiting) queued=\(sessionLog.queuedKeys.count)",
             "probeCadence: \(probeIntervalDescription)",
-            "launchAtLogin: \(launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
+            "launchAtLogin: \(settings.launchAtLogin) applied=\(loginItemApplied.map(String.init) ?? "untouched")",
             "harvest: native (no external runtime)",
             "collectorScan: \(collectorScanIncomplete ? "partial" : "complete")",
             "timeoutAgents: \(timeoutAgents.isEmpty ? "-" : timeoutAgents)",
             "factCoverage: present=\(factPresent) possible=\(factPossible) limitedAgents=\(limitedAgents)",
             sessionLogDiagnostics,
-            "harvestSupervisor: \(harvestSupervisor.summary(nowMs: nowMs))",
+            "harvestSupervisor: \(engine.harvestSupervisor.summary(nowMs: nowMs))",
         ]
         if failures.isEmpty {
             lines.append("failureTimeline: -")
@@ -171,7 +140,7 @@ extension StatusStore {
             let waiting = item.agent.waitingSource == .none
                 ? "n/a"
                 : String(item.waitingSignalReady)
-            let health = collectorHealthByAgent[item.agent]
+            let health = engine.collectorHealthByAgent[item.agent]
             let err = health?.errorKind.isEmpty == false ? health!.errorKind : "-"
             let dur = health?.durationMs ?? 0
             let harvest = item.agent.harvestSource == .bestEffortCache ? "cache" : "session"
@@ -199,11 +168,7 @@ extension StatusStore {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(safeSupportReport(), forType: .string)
-        didCopyDiagnostics = true
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_600_000_000)
-            self?.didCopyDiagnostics = false
-        }
+        flashCopiedDiagnostics()
     }
 
     /// The vendor-shape report, on the clipboard, from a button.
@@ -216,27 +181,23 @@ extension StatusStore {
     /// when asked.
     @MainActor
     func copyHarvestShapeReport() {
-        guard !isCopyingShapeReport else { return }
-        isCopyingShapeReport = true
-        let allowAll = allowAppData
-        let agents = harvestAppDataAgents
+        guard !diagnostics.isCopyingShapeReport else { return }
+        diagnostics.isCopyingShapeReport = true
+        let readAppData = settings.readProtectedAppData
         DispatchQueue.global(qos: .userInitiated).async {
             let safe = ContentSanitizer.redact(
-                NativeActivityHarvest.shapeReport(
-                    allowAppData: allowAll,
-                    appDataAgents: agents
-                )
+                NativeActivityHarvest.shapeReport(allowAppData: readAppData)
             )
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let pb = NSPasteboard.general
                 pb.clearContents()
                 pb.setString(safe, forType: .string)
-                self.isCopyingShapeReport = false
-                self.didCopyShapeReport = true
+                self.diagnostics.isCopyingShapeReport = false
+                self.diagnostics.didCopyShapeReport = true
                 DebugLog.write("harvest shape report copied bytes=\(safe.utf8.count)")
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
-                self.didCopyShapeReport = false
+                self.diagnostics.didCopyShapeReport = false
             }
         }
     }
@@ -272,8 +233,8 @@ extension StatusStore {
             let rows = cachedAll.filter {
                 $0.agent == agent || (agent == .cursor && $0.agent == .cursorAgent)
             }
-            let health = collectorHealthByAgent[agent]
-                ?? (agent == .cursor ? collectorHealthByAgent[.cursorAgent] : nil)
+            let health = engine.collectorHealthByAgent[agent]
+                ?? (agent == .cursor ? engine.collectorHealthByAgent[.cursorAgent] : nil)
             let strongest: ObservationSource? = {
                 if rows.contains(where: { $0.observationSource == .session }) { return .session }
                 if rows.contains(where: { $0.observationSource == .cache }) { return .cache }
@@ -299,7 +260,7 @@ extension StatusStore {
                 // This clock is when Pulse successfully read the adapter, not
                 // when the vendor session last changed. Reusing row.harvestMs
                 // here made a healthy idle collector look months stale.
-                lastSuccessfulReadMs: lastSuccessfulReadByAgent[agent] ?? 0,
+                lastSuccessfulReadMs: engine.lastSuccessfulReadByAgent[agent] ?? 0,
                 lastWaitingSignalMs: waitingEvents[agent] ?? 0,
                 hasGoal: rows.contains { $0.usefulTask != nil },
                 hasWorkspace: rows.contains { !$0.displayPath.isEmpty },
@@ -319,7 +280,7 @@ extension StatusStore {
                         || $0.contextPercent > 0 || !$0.model.isEmpty || !$0.mode.isEmpty
                 },
                 waitingSignalReady: waitingSignalReady(for: agent),
-                privacyLimited: agent.requiresAppDataOptIn && !isAppDataAllowed(for: agent),
+                privacyLimited: settings.isPrivacyLimited(agent),
                 hasActionSignal: rows.contains { !$0.tool.isEmpty },
                 hasModelSignal: rows.contains { !$0.model.isEmpty },
                 hasResourceSignal: rows.contains {
@@ -370,7 +331,7 @@ extension StatusStore {
 
     /// Real TTY on a row that still has no advertised focus (Automation off).
     private func supportTTYNeedsOptIn(in rows: [AgentRow]) -> Bool {
-        guard !allowTerminalAutomation else { return false }
+        guard !settings.allowTerminalAutomation else { return false }
         return rows.contains { row in
             guard row.focusTier == nil, !row.viaWarp, row.hostApp == nil else { return false }
             var t = row.tty.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -378,11 +339,6 @@ extension StatusStore {
             return !t.isEmpty && t != "?" && t != "??" && t != "-"
         }
     }
-
-    /// Full session inventory for the tray search surface. The normal glance
-    /// uses `snapshot.rows`; a query must search the bounded 500-row index so a
-    /// session hidden behind the twelve-row viewport is still discoverable.
-    var allRowsForDisplay: [AgentRow] { cachedAll }
 
     /// Details lists actionable gaps first so truncation cannot hide the fix.
     func prioritizedObservationGaps(_ gaps: [ObservationGap]) -> [ObservationGap] {
@@ -395,52 +351,24 @@ extension StatusStore {
         }.map(\.element)
     }
 
-    /// How deep App Data is currently granted — drives Support Health copy so
-    /// a scoped Cursor grant is not described as "scan is off".
-    enum AppDataGrantMode: Equatable {
-        case all
-        case scoped(Int)
-        case none
-    }
-
-    var appDataGrantMode: AppDataGrantMode {
-        if allowAppData { return .all }
-        let count = appDataAgents.filter { $0 != .cursorAgent }.count
-        return count == 0 ? .none : .scoped(count)
-    }
-
     var privacyLimitedAgents: [AgentSupportHealth] {
         supportHealth.filter(\.privacyLimited)
     }
 
     var privacyLimitedCount: Int { privacyLimitedAgents.count }
 
-    /// Banner when some protected agents remain privacy-limited.
+    /// Banner when protected agents are out of reach (the app-data switch
+    /// is off and at least one of them matters here).
     var privacyBannerText: String? {
-        guard privacyLimitedCount > 0 else { return nil }
-        switch appDataGrantMode {
-        case .all:
-            return nil
-        case .none:
-            return tr(.supportCollectorPrivacyLimitedDetail)
-        case .scoped(let granted):
-            return String(
-                format: tr(.supportCollectorPrivacyLimitedScoped),
-                granted,
-                privacyLimitedCount
-            )
-        }
-    }
-
-    var firstPrivacyLimitedAgent: AgentID? {
-        privacyLimitedAgents.first?.agent
+        guard !settings.readProtectedAppData, privacyLimitedCount > 0 else { return nil }
+        return tr(.supportCollectorPrivacyLimitedDetail)
     }
 
     /// Incomplete-scan banner: timeout-with-rows is not the same claim as a
     /// blank failure.
     var scanIncompleteBannerText: String? {
         guard collectorScanIncomplete else { return nil }
-        let timedOutWithRows = collectorHealthByAgent.values.contains {
+        let timedOutWithRows = engine.collectorHealthByAgent.values.contains {
             $0.errorKind == "native_timeout" && $0.rowCount > 0
         }
         if timedOutWithRows {
@@ -490,13 +418,13 @@ extension StatusStore {
             if hooksStatus.isInstalled(for: agent) { return true }
             // Codex also has a harvest-pending Waiting path (README matrix).
             if agent == .codex {
-                let state = collectorHealthByAgent[agent]?.state ?? .unscanned
+                let state = engine.collectorHealthByAgent[agent]?.state ?? .unscanned
                 return state == .observed || state == .noRecentData
             }
             return false
         case .harvestPending:
-            let state = collectorHealthByAgent[agent]?.state
-                ?? (agent == .cursor ? collectorHealthByAgent[.cursorAgent]?.state : nil)
+            let state = engine.collectorHealthByAgent[agent]?.state
+                ?? (agent == .cursor ? engine.collectorHealthByAgent[.cursorAgent]?.state : nil)
                 ?? .unscanned
             // A source that exists but yielded no usable session cannot yet
             // prove a pending signal. Counting `.noSessions` as ready made a
@@ -846,7 +774,7 @@ extension StatusStore {
 
     /// Compact collector failure age for Support diagnostics (empty when clean).
     func supportFailureTimelineDetail(_ health: AgentSupportHealth) -> String? {
-        let state = harvestSupervisor.state(for: health.agent)
+        let state = engine.harvestSupervisor.state(for: health.agent)
         guard state.lastFailureAtMs > 0, !state.lastError.isEmpty else { return nil }
         let seconds = max(0, Date().timeIntervalSince1970 - Double(state.lastFailureAtMs) / 1000.0)
         return String(
@@ -854,5 +782,146 @@ extension StatusStore {
             state.lastError,
             DurationFormat.label(seconds: seconds, lang: lang)
         )
+    }
+
+    /// Support Health Focus fact — observation-only when nothing is clickable.
+    func supportFocusDetail(_ health: AgentSupportHealth) -> String {
+        if let tier = health.focusTier {
+            switch tier {
+            case .warp: return tr(.supportFocusWarp)
+            case .hostWorkspace(let kind):
+                return String(format: tr(.supportFocusHostWorkspace), kind.displayName)
+            case .hostApp(let kind):
+                return String(format: tr(.supportFocusHost), kind.displayName)
+            case .tty: return tr(.supportFocusTTY)
+            }
+        }
+        if health.focusTTYNeedsOptIn {
+            return tr(.supportFocusTTYNeedsOptIn)
+        }
+        return tr(.supportFocusNone)
+    }
+
+    /// Thin vs deep observation — never let a cache/none Agent look session-deep.
+    /// Rich cache (goal + workspace/activity) stays Limited but says so honestly.
+    /// Waiting-none still exposes harvest depth so ZCode/Trae cannot hide behind
+    /// “Waiting unavailable” alone (0.70 Contract Honesty).
+    func supportDepthDetail(_ health: AgentSupportHealth) -> String {
+        let harvest: String
+        switch health.agent.harvestSource {
+        case .bestEffortCache:
+            let rich = health.hasGoal && (health.hasWorkspace || health.hasActivity)
+            harvest = rich ? tr(.supportDepthCachePartial) : tr(.supportDepthCacheThin)
+        case .structuredSession:
+            harvest = tr(.supportDepthSession)
+        }
+        if health.agent.waitingSource == .none {
+            return "\(tr(.supportDepthWaitingNone)) · \(harvest)"
+        }
+        return harvest
+    }
+
+    // MARK: - The self-check (19.0)
+
+    /// 20.0: what the parsers got from each agent's session files this run —
+    /// counts only.
+    var doctorReadCoverage: [String: DoctorModel.Coverage] {
+        var coverage: [String: DoctorModel.Coverage] = [:]
+        for row in cachedAll where row.observationSource == .session {
+            let key = row.agent.rawValue
+            var item = coverage[key] ?? DoctorModel.Coverage(
+                name: row.agent.displayName,
+                expectsLastWord: row.agent.spec.transcripts != .none
+            )
+            item.sessions += 1
+            if row.usefulTask != nil { item.withTask += 1 }
+            if !row.lastWord.isEmpty { item.withLastWord += 1 }
+            coverage[key] = item
+        }
+        return coverage
+    }
+
+    func runDoctor() {
+        guard !diagnostics.isRunningDoctor else { return }
+        diagnostics.isRunningDoctor = true
+        let home = HooksInstaller.homeURL
+        let coverage = doctorReadCoverage
+        let lang = self.lang
+        DebugLog.write("self-check started")
+        Task.detached(priority: .userInitiated) {
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let facts = DoctorProbe.gather(home: home, coverage: coverage, nowMs: nowMs)
+            let report = DoctorModel.evaluate(facts, lang: lang)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.diagnostics.doctorReport = report
+                self.diagnostics.isRunningDoctor = false
+                DebugLog.write("self-check done: \(report.checks.map { "\($0.id)=\($0.verdict.rawValue)" }.joined(separator: " "))")
+            }
+        }
+    }
+
+    /// Only on the user's click, only to their own clipboard.
+    func copyDoctorReport() {
+        guard let report = diagnostics.doctorReport else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(DoctorModel.text(report), forType: .string)
+        diagnostics.didCopyDoctorReport = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            self?.diagnostics.didCopyDoctorReport = false
+        }
+    }
+
+    /// 21.0: the self-check's next step, taken from the self-check.
+    func performDoctorFix(_ fix: DoctorModel.Fix) {
+        switch fix {
+        case .installHooks:
+            installHooks()
+        case .copyShapeReport:
+            copyHarvestShapeReport()
+        case .openConnections:
+            openSettings(focus: .waitingSignals)
+        }
+    }
+
+    /// 21.0: when Pulse last read, how often it reads, and what that has
+    /// cost over the last hour — the facts that were only in the clipboard
+    /// dump. Read by the Health window.
+    var scanHealthLine: String {
+        let now = Date()
+        var parts: [String] = []
+        // `lastScanAt` moves on every applied scan; `snapshot.updatedAt`
+        // only when the snapshot publishes, so it can read a minute stale.
+        let lastRead = Self.lastReadDate(lastScanAt: engine.lastScanAt, snapshotUpdatedAt: snapshot.updatedAt)
+        if let lastRead {
+            let ago = now.timeIntervalSince(lastRead)
+            parts.append(ago < 5
+                ? tr(.lastReadJustNow)
+                : String(format: tr(.lastReadAgo), DurationFormat.label(seconds: ago, lang: lang)))
+        }
+        parts.append(probeIntervalDescription)
+        let reads = engine.probeStats.harvestCount(now: now)
+        if reads > 0 {
+            if let avg = engine.probeStats.averageHarvestMs(now: now) {
+                parts.append(String(format: tr(.readsLastHourAvg), reads, avg))
+            } else {
+                parts.append(String(format: tr(.readsLastHour), reads))
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Pure: when Pulse last read the world — the newer of the last applied
+    /// scan and the last published snapshot; nil before either.
+    nonisolated static func lastReadDate(lastScanAt: Date?, snapshotUpdatedAt: Date) -> Date? {
+        let published: Date? = snapshotUpdatedAt == .distantPast ? nil : snapshotUpdatedAt
+        switch (lastScanAt, published) {
+        case let (scan?, snap?): return max(scan, snap)
+        case let (scan?, nil): return scan
+        case let (nil, snap?): return snap
+        case (nil, nil): return nil
+        }
     }
 }

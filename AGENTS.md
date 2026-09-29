@@ -174,12 +174,39 @@ history retention in Settings (muting moved to the row menu).
 updater only checks GitHub Releases and opens the release page (no download,
 DMG verification, in-place install, rollback, duplicate-install finder or
 crash-after-update banner). `LegacyCleanup` and every settings migration are
-gone (`PulseSettings.parse` ignores keys it does not know), as are the live
+gone, as are the live
 updates switch (the scan always follows `ProbeSchedule`), snooze, look
 continuity / the resolved-wait history, the session digest
 (`session-digests.json`; a transcript past its read window reports its record
 count as unknown) and the `SessionSource` seam. The stall threshold is the
 constant `AgentRow.stalledSeconds`.
+
+23.0 split the app layer's state three ways. `StatusStore` is the one
+`@Observable` model views read — the snapshot and `cachedAll` rows, `settings`,
+`logRevision`, and a few UI flags (`settingsFocus`, `diagnostics`, hook and
+notification status, update status); 19 observed properties, every one listed
+in `ScanQuietTests` (which fails past 25), plus the intents views send.
+`ScanEngine` (`@MainActor`, not observed) owns the probe timer and
+`ProbeSchedule` cadence, runs the probe / harvest / attention / `claude
+agents` / spool reads off the main thread, keeps the harvest supervisor,
+collector health, probe stats and every between-scan cache, calls the pure
+`SnapshotBuilder`, and hands the result to `StatusStore.land`, which assigns
+an observed property only when it changed. `WaitNotifier` (`@MainActor`, not
+observed) owns the "needs you" banner: `WaitingDelivery` planning, posting,
+rate limiting, outcomes and clicks on the `SessionLog`, and banner-click
+routing. Tests drive a scan with `store.engine.applyScan(...)`. The files are
+`StatusStore.swift` (model and intents), `StatusStoreViews.swift` (narrator,
+row models, the tray notice), `StatusStoreHealth.swift` (Health and
+reports), `StatusStoreFixture.swift` (CLI fixtures), `ScanEngine.swift` and
+`WaitNotifier.swift`; the harvest's own between-scan memory is
+`HarvestMemory` in PulseHarvest. Settings are a `Codable` `PulseSettings`
+saved as `settings.json` (0600, `PrivateFile`) and changed through
+`StatusStore.set(_:_:)`, which saves and applies only after `start()`: launch
+at login, language, hotkey, notify on waiting, muted agents, terminal
+automation, `readProtectedAppData` (one switch for every agent with
+`requiresAppDataOptIn` — the per-agent scopes are gone), update check and
+hooks-nudge-off. A `settings.txt` is deleted at load, never read. The "notify
+when idle" banner is gone.
 
 What remains was rebuilt around one line per session. The tray
 (`TrayPanel`) has no groups, folds or depth tiers: a row is one line (lamp,
@@ -200,7 +227,7 @@ scan incomplete); the footer carries "N more", the stale-hidden
 count and the key hints; the empty state is a checklist of what is true on
 this Mac. Settings is a single scrolling page of sections (23.0 removed the
 in-app Attention bridge tools); jumping in from elsewhere bumps
-`settingsFocusToken` and scrolls to the section.
+`settingsFocus.token` and scrolls to the section.
 
 Observability (23.0): one event store, `SessionLog` (pure value) in
 `session-log.json` via `SessionLogStore` (debounced, `PrivateFile`), replaced
@@ -216,7 +243,7 @@ from it. Bounded: 128 sessions, 48 spans, 24 h after end; open spans and
 waits are never evicted, and spans a quit left open close at the last
 save. Every change goes through `StatusStore.updateLog`, which bumps the
 observed `logRevision` and writes only when content changed — a quiet scan
-writes nothing. `logRevision` and `settingsFocusToken` are observed store
+writes nothing. `logRevision` and `settingsFocus` are observed store
 properties listed in `ScanQuietTests`. `LampExplanation` gives the rule that set the
 lamp, up to three driving sessions and what was left out (older
 hidden); `SnapshotBuilder` stores it as `snapshot.lampLines`, which the status
@@ -264,7 +291,7 @@ itself. `StatusStore` is `@Observable` (Observation, macOS 14): a view is
 invalidated only by the properties its body read. Engine bookkeeping is
 `@ObservationIgnored`. `ScanQuietTests` tracks every observed property (and fails when one
 is added without being listed); AppKit follows the store with
-`ObservationLoop`; Settings reads `snapshotAgents`, never `snapshot`.
+`ObservationLoop`; Settings never reads `snapshot` or the rows.
 `surface_check.py` rejects any Combine-era wrapper (`ObservableObject`,
 `@Published`, `@ObservedObject`, `@StateObject`, `objectWillChange`). The
 cards under a tray row — the expanded inspector, the digest (in

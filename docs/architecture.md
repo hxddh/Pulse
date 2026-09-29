@@ -13,7 +13,12 @@
     SnapshotBuilder        纯函数：合并、去重、排序、编码状态、算边沿
            │
            ▼
-      StatusStore          定时器、通知策略、设置、I/O
+      ScanEngine           定时器与节奏、后台扫描、扫描间簿记（23.0）
+           │  land(结果)
+           ▼
+      StatusStore          视图读的唯一 @Observable 模型：快照、行、设置、少量 UI 标志、intent
+           │               ├─ WaitNotifier       「需要你」横幅：规划、发送、限流、去向、点击（23.0）
+           │               ├─ settings.json      设置（Codable，0600，23.0）
            │               └─ session-log.json   每会话状态段 + 等待记录与通知去向（23.0）
            ▼
    StatusItem（StatusPanelController，tooltip = snapshot.lampLines）
@@ -30,9 +35,10 @@ PulseBar/Sources/
                  · ProbeSchedule · ProbeStats · DebugLog · Guarded
   PulseHarvest/  采集库，依赖 Core。NativeActivityHarvest（扫描与遍历）· 厂商方言
                  （TranscriptDialect + HarvestCodex / Pi / Claude / SmallDialects）· HarvestDatabases
-                 · ActivityHarvest · ProcessProbe · HarvestSupervisor · ScanEngine（ScanMemory）
+                 · ActivityHarvest · ProcessProbe · HarvestSupervisor · HarvestMemory（ScanMemory）
                  · AttentionIO · ActivitySpool · TitleHeuristics · HarvestVocabulary
-  PulseBar/      可执行。builder、StatusStore、RowNarrator、WaitingDelivery、视图、hook 入口。
+  PulseBar/      可执行。builder、ScanEngine、StatusStore、WaitNotifier、RowNarrator、
+                 WaitingDelivery、视图、hook 入口。
                  15.0 起表面是纯值：视图只渲染值、发 intent，由 StatusStore 执行；
                  SurfaceFixtures 的每个夹具在 CI 里经 SurfaceCapture 渲染成 PNG
                  （scripts/qa_surfaces.sh）。17.0：托盘行的脸同样是纯值（TrayRowModel →
@@ -59,10 +65,22 @@ PulseBar/Sources/
 防止按 Agent 分支的表在别处重新长出来。
 
 19.0 起 `StatusStore` 是 `@Observable`：视图只因它的 body 实际读到的属性变化而重绘，
-不再因 store 上任何一个 `@Published` 被写而整体失效。引擎的簿记（计时器、票号、没有视图
-画的缓存）标 `@ObservationIgnored`；扫描路径只在值变化时写被观察的属性（`ScanQuietTests`
-逐个跟踪每个被观察属性）。设置窗口只读 `snapshotAgents` 而不读 `snapshot`，所以扫描不重绘
-它（`surface_check.py` 把守）；AppKit 侧（状态栏图标）用 `ObservationLoop` 只跟随 `snapshot`。
+不再因 store 上任何一个 `@Published` 被写而整体失效。23.0 把原来约 100 个属性的 store 拆成三份：
+
+- **`ScanEngine`**（`@MainActor`，不被观察）：探测定时器与 `ProbeSchedule` 节奏；在后台队列跑
+  `ProcessProbe`、`ActivityHarvest`、`AttentionReader`、`ClaudeAgentsProbe`、`ActivitySpool`；
+  合并部分采集、保存采集器健康、`HarvestSupervisor`、`ProbeStats` 与各种扫描间缓存；调用纯函数
+  `SnapshotBuilder`，把结果交给 `StatusStore.land`。它不持有也不写任何 UI 状态。
+- **`WaitNotifier`**（`@MainActor`，不被观察）：横幅的规划（`WaitingDelivery`）、发送
+  （`PulseNotify`）、限流、欠账、去向与点击写进 `SessionLog`，以及点横幅回到对应行。
+- **`StatusStore`**（`@Observable`）：只放视图要读的 —— `snapshot`、`cachedAll`、`settings`、
+  `logRevision`、`settingsFocus`、`diagnostics` 与几个状态标志（共 19 个被观察属性），外加视图
+  发出的 intent（聚焦、忽略、静音、打开设置、安装 hooks……），这些 intent 再委托给引擎、
+  通知器或服务。`land` 与各个 `land…` 方法只在值变化时赋值。
+
+扫描路径因此只在值变化时写被观察的属性（`ScanQuietTests` 逐个跟踪每个被观察属性，超过 25 个
+即失败）。设置窗口不读 `snapshot` 或行，所以扫描不重绘它（`surface_check.py` 把守）；AppKit 侧
+（状态栏图标）用 `ObservationLoop` 只跟随 `snapshot`。测试用 `store.engine.applyScan(...)` 驱动一轮扫描。
 
 ## 三个来源
 
@@ -133,7 +151,7 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 - **pending 词表按整词/短语匹配** —— `depending` 不得因包含 `pending` 子串
   而假抬 Waiting（Goose 历史坑）
 
-`HarvestSupervisor` 在 `StatusStore` 外围为每个 Agent 保存独立的失败次数、下次重试、熔断截止和最后错误；
+`HarvestSupervisor` 在 `ScanEngine` 里为每个 Agent 保存独立的失败次数、下次重试、熔断截止和最后错误；
 一次 partial scan 只更新已到达的 adapter，下一次只探测已到期的 Agent，全部退避时做一个半开探测。
 
 ### AttentionReader（事件驱动）
@@ -219,15 +237,19 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
 `LogClock`：今天 `HH:mm`，一周内 `周一 HH:mm` / `Mon HH:mm`，更早 `M/d HH:mm`。自检的「hook
 真的触发过」直接读 attention.tsv 每个 Agent 最新的一行（`AttentionIO.latestEvents`）。
 
-拥有 builder 刻意不碰的东西：
+`ScanEngine`、`WaitNotifier` 与 `StatusStore` 一起拥有 builder 刻意不碰的东西：
 
 - **定时器与节奏**。`ProbeSchedule` 给出间隔，`PowerMonitor` 提供息屏 / 锁屏 /
   低电量状态。息屏即停表——attention 文件变化仍会唤醒。
-- **通知策略**。builder 报告边沿，store 决定要不要发：按 agent 静音（行菜单）、在最前、
+- **通知策略**。builder 报告边沿，`WaitNotifier` 决定要不要发：按 agent 静音（行菜单）、在最前、
   开关、授权、首扫只播种不通知（否则启动时会为所有已有的等待刷屏）；每个决定都作为去向写进会话记录（`SessionLog`）。
   安静时段与声音 22.0 起交给 macOS 的专注模式与通知设置。
-- **设置**。`PulseSettings` 负责解析和序列化，store 只做桥接和落盘。
-- **权限边界**。受保护的应用数据默认关闭，用户逐 Agent（或全部）打开；23.0 起不再迁移旧版授权。
+- **设置**。`PulseSettings` 是 `Codable` 值，存为 `settings.json`（经 `PrivateFile` 以 `0600` 写入；
+  缺字段取默认、未知值取默认）。改设置只走 `StatusStore.set(_:_:)`：值变了才写盘并应用（登录项、
+  快捷键、横幅按钮语言、重扫），且只在 `start()` 读过设置之后。23.0 不迁移：发现旧的
+  `settings.txt` 直接删掉、用默认值。「全部空闲时通知」已删除。
+- **权限边界**。受保护的应用数据默认关闭，由**一个**开关 `readProtectedAppData` 打开：打开后所有
+  `requiresAppDataOptIn` 的 Agent 都会被读取（23.0 删除了逐 Agent 的范围）。
 - **动作**。可靠 Focus、安装 / 移除 hooks、复制诊断信息、忽略 / 静音。
 
 ## 视图
@@ -235,7 +257,7 @@ AttentionReader 仍读取 agent-owned 的 attention.tsv；Pulse 自己记下的�
 `StatusPanelController` 拥有原生状态项和单表面 `NSPanel`；其中承载
 `TrayPanel`（22.0：一行一个会话的列表 + 彩色计数 Header + 至多一条提示 + 底部按键提示；
 → 进入 `SessionDetailView`，← / Esc 返回），`SettingsView` 是一页偏好（Attention 桥工具在「高级」折叠区；
-深链经 `settingsFocusToken` 滚到对应一节）。托盘键盘优先：打字即过滤、↑↓ / ↩ / → / ⌫；
+深链经 `settingsFocus.token` 滚到对应一节）。托盘键盘优先：打字即过滤、↑↓ / ↩ / → / ⌫；
 详情页打开或有过滤词时 `trayEscapeConsumed` 让面板的按键监视器把 Esc 留给视图（先返回 / 清过滤，
 再关面板）。行的灯形来自 `TrayRowModel.Shape`（`LampShapeView` 绘制）。SwiftUI 视图都标了
 `@MainActor`——SwiftUI 只有 `body` 隐式主 actor 隔离，

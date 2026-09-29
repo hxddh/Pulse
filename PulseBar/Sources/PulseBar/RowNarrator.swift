@@ -13,7 +13,7 @@ import Foundation
 /// story line owns "what is it doing", the signal line owns motion, the
 /// observation line ranks facts by what each one carries, and a fact with
 /// nothing to say does not appear. `StatusStore` keeps one-line forwarders
-/// (`StatusStoreNarration.swift`) so call sites did not change.
+/// (`StatusStoreViews.swift`) for the call sites that use them.
 struct RowNarrator {
     let lang: ResolvedLanguage
     /// The instant every "ago" and age on this narration is measured from.

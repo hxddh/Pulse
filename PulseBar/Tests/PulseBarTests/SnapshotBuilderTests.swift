@@ -743,15 +743,6 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(cleared.newlyWaiting.isEmpty)
     }
 
-    func testWentIdleOnlyFiresOnTheBusyToIdleTransition() {
-        let busy = build(procs: [.init(id: .claude, count: 1, viaWarp: false, pid: 1)])
-        let idle = build(previous: .init(rows: busy.rows, waitingKeys: busy.waitingKeys))
-        XCTAssertTrue(idle.wentIdle)
-
-        let stillIdle = build(previous: .init(rows: idle.rows, waitingKeys: idle.waitingKeys))
-        XCTAssertFalse(stillIdle.wentIdle, "must not repeat every tick")
-    }
-
     // MARK: Row window
 
     func testRowsFoldAtTheVisibleLimit() {

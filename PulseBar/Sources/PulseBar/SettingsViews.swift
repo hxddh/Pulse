@@ -6,8 +6,8 @@ import AppKit
 @MainActor
 struct SettingsView: View {
     /// The store itself (19.0). Under Observation this form is redrawn only
-    /// by the properties it reads, and it reads no per-scan fact:
-    /// `snapshotAgents` rather than `snapshot`. `surface_check.py` keeps it so.
+    /// by the properties it reads, and it reads no per-scan fact
+    /// (`surface_check.py` keeps it so).
     let store: StatusStore
 
     init(store: StatusStore) {
@@ -19,10 +19,11 @@ struct SettingsView: View {
     /// system already owns (quiet hours → Focus, sound → Notifications).
     /// What is left fits on one screen.
 
-    /// A binding into the store, like `$store.x`.
-    private func bind<Value>(_ keyPath: ReferenceWritableKeyPath<StatusStore, Value>) -> Binding<Value> {
+    /// A binding to one setting: reading it reads `store.settings`, and
+    /// writing it goes through `StatusStore.set`, which saves and applies.
+    private func setting<Value: Equatable>(_ keyPath: WritableKeyPath<PulseSettings, Value>) -> Binding<Value> {
         let store = self.store
-        return Binding(get: { store[keyPath: keyPath] }, set: { store[keyPath: keyPath] = $0 })
+        return Binding(get: { store.settings[keyPath: keyPath] }, set: { store.set(keyPath, $0) })
     }
 
     var body: some View {
@@ -42,27 +43,24 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .onAppear {
-                store.hooksStatus = HooksSupport.probeStatus()
+                store.landHooksStatus(HooksSupport.probeStatus())
                 PulseNotify.refreshAuthorization()
                 followFocus(proxy)
             }
             // A token, not the focus values: a second deep link with the same
             // target must still land (the values would not change).
-            .onChange(of: store.settingsFocusToken) { _, _ in followFocus(proxy) }
+            .onChange(of: store.settingsFocus.token) { _, _ in followFocus(proxy) }
         }
     }
 
     /// A deep link from the tray scrolls to what it names.
     private func followFocus(_ proxy: ScrollViewProxy) {
-        let target: String?
-        if store.settingsFocusWaitingSignals {
-            target = "settings-connections"
-        } else if store.settingsFocusAppDataAgent != nil {
-            target = "settings-data"
-        } else {
-            target = nil
+        let target: String
+        switch store.settingsFocus.target {
+        case .waitingSignals: target = "settings-connections"
+        case .appData: target = "settings-data"
+        case nil: return
         }
-        guard let target else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             withAnimation(PulseTheme.motion) { proxy.scrollTo(target, anchor: .top) }
         }
@@ -81,21 +79,19 @@ struct SettingsView: View {
 
     private var generalSection: some View {
         Section {
-            Toggle(store.tr(.launchAtLogin), isOn: bind(\.launchAtLogin))
-                .onChange(of: store.launchAtLogin) { _, _ in store.saveSettings() }
-            Picker(store.tr(.language), selection: bind(\.language)) {
+            Toggle(store.tr(.launchAtLogin), isOn: setting(\.launchAtLogin))
+            Picker(store.tr(.language), selection: setting(\.language)) {
                 ForEach(AppLanguage.allCases) { lang in
                     Text(lang.menuLabel).tag(lang)
                 }
             }
-            .onChange(of: store.language) { _, _ in store.saveSettings() }
         }
     }
 
     /// One control for one bit: the shortcut, or Off.
     private var shortcutSection: some View {
         Section(store.tr(.shortcuts)) {
-            Picker(selection: bind(\.hotkey)) {
+            Picker(selection: setting(\.hotkey)) {
                 Text(store.tr(.shortcutOff)).tag(HotkeyChoice.off)
                 Divider()
                 ForEach(HotkeyChoice.allCases.filter { $0 != .off }) { choice in
@@ -105,8 +101,7 @@ struct SettingsView: View {
                 Text(store.tr(.revealShortcut))
                 Text(store.tr(.globalShortcutHint))
             }
-            .onChange(of: store.hotkey) { _, _ in store.saveSettings() }
-            if store.hotkey != .off, !store.hotkeyRegistered {
+            if store.settings.hotkey != .off, !store.hotkeyRegistered {
                 Label(store.tr(.hotkeyTaken), systemImage: "exclamationmark.triangle")
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.Tone.attention.color)
@@ -139,33 +134,19 @@ struct SettingsView: View {
                     Text(store.tr(.notifyDeniedPersistentHint))
                 }
             }
-            notificationToggle(
-                store.tr(.notifyWaiting),
-                preference: \StatusStore.notifyOnWaiting
-            )
-            notificationToggle(
-                store.tr(.notifications),
-                preference: \StatusStore.notifyOnIdle
-            )
+            // The stored preference can remain enabled while macOS has
+            // denied or not configured notification access. Render the
+            // effective value instead; once permission is granted, the saved
+            // preference comes back.
+            Toggle(store.tr(.notifyWaiting), isOn: Binding(
+                get: { store.notifyAuthorized == true && store.settings.notifyOnWaiting },
+                set: { enabled in
+                    guard store.notifyAuthorized == true else { return }
+                    store.set(\.notifyOnWaiting, enabled)
+                }
+            ))
+            .disabled(store.notifyAuthorized != true)
         }
-    }
-
-    /// The stored preference can remain enabled while macOS has denied or not
-    /// configured notification access. Render the effective value instead;
-    /// once permission is granted, the saved preference comes back.
-    private func notificationToggle(
-        _ title: String,
-        preference: ReferenceWritableKeyPath<StatusStore, Bool>
-    ) -> some View {
-        Toggle(title, isOn: Binding(
-            get: { store.notifyAuthorized == true && store[keyPath: preference] },
-            set: { enabled in
-                guard store.notifyAuthorized == true else { return }
-                store[keyPath: preference] = enabled
-                store.saveSettings()
-            }
-        ))
-        .disabled(store.notifyAuthorized != true)
     }
 
     // MARK: Connections
@@ -214,54 +195,29 @@ struct SettingsView: View {
 
     // MARK: Permissions
 
+    /// One switch for every agent whose sessions live in data macOS
+    /// protects (23.0: the per-agent scopes are gone).
     private var dataAccessSection: some View {
         Section {
             explainedToggle(
                 store.tr(.agentDataAccess),
                 hint: store.tr(.agentDataAccessHint),
                 isOn: Binding(
-                    get: { store.allowAppData },
-                    set: { store.setAllAppDataAccess($0) }
+                    get: { store.settings.readProtectedAppData },
+                    set: { store.setReadProtectedAppData($0) }
                 )
             )
-            DisclosureGroup(
-                isExpanded: Binding(
-                    get: { store.settingsExpandAppDataScopes },
-                    set: { store.settingsExpandAppDataScopes = $0 }
-                ),
-                content: {
-                    Text(store.tr(.agentDataAccessScopeHint) + " " + store.tr(.agentDataAccessSkipHint))
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ForEach(store.protectedAppDataAgents, id: \.self) { agent in
-                        Toggle(isOn: Binding(
-                            get: { store.allowAppData || store.appDataAgents.contains(agent) },
-                            set: { enabled in store.setAppDataAccess(for: agent, enabled: enabled) }
-                        )) {
-                            HStack(spacing: PulseTheme.Space.s) {
-                                AgentIconView(id: agent)
-                                VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-                                    Text(agent.displayName)
-                                    Text(String(format: store.tr(.agentDataAccessAgentDetail), agent.displayName, store.appDataScopeDescription(for: agent)))
-                                        .font(PulseTheme.Font.caption)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-                        .disabled(store.allowAppData)
-                        .listRowBackground(
-                            store.settingsFocusAppDataAgent == agent
-                                ? Color.accentColor.opacity(PulseTheme.Fill.selected)
-                                : Color.clear
-                        )
-                    }
-                },
-                label: { Text(store.tr(.agentDataAccessScopes)) }
+            .listRowBackground(
+                store.settingsFocus.target == .appData
+                    ? Color.accentColor.opacity(PulseTheme.Fill.selected)
+                    : Color.clear
             )
         } header: {
             Text(store.tr(.settingsPaneDataHeader))
+        } footer: {
+            Text(store.tr(.agentDataAccessSkipHint))
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -271,12 +227,8 @@ struct SettingsView: View {
             explainedToggle(
                 store.tr(.allowTerminalAutomation),
                 hint: store.tr(.allowTerminalAutomationHint),
-                isOn: bind(\.allowTerminalAutomation)
+                isOn: setting(\.allowTerminalAutomation)
             )
-            .onChange(of: store.allowTerminalAutomation) { _, _ in
-                store.saveSettings()
-                store.refresh(reason: "terminalAutomation")
-            }
         } header: {
             Text(store.tr(.settingsPaneControlHeader))
         }
@@ -319,8 +271,7 @@ struct SettingsView: View {
 
     private var updatesSection: some View {
         Section(store.tr(.checkForUpdates)) {
-            Toggle(store.tr(.checkForUpdates), isOn: bind(\.updateCheckEnabled))
-                .onChange(of: store.updateCheckEnabled) { _, _ in store.saveSettings() }
+            Toggle(store.tr(.checkForUpdates), isOn: setting(\.updateCheckEnabled))
             LabeledContent {
                 if let url = store.updateAvailableURL {
                     Button(store.tr(.openRelease)) { NSWorkspace.shared.open(url) }
@@ -355,7 +306,7 @@ struct SettingsView: View {
                     .font(PulseTheme.Font.caption)
                     .foregroundStyle(PulseTheme.Tone.attention.color)
             }
-            Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
+            Button(store.diagnostics.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
                 store.copyDiagnostics()
             }
         }

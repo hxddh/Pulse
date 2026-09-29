@@ -485,25 +485,24 @@ struct TrayPanel: View {
                 SetupStep(
                     title: store.tr(.setupTerminalFocus),
                     detail: store.tr(.setupTerminalFocusDetail),
-                    done: store.allowTerminalAutomation,
+                    done: store.settings.allowTerminalAutomation,
                     actionTitle: store.tr(.setupTurnOn)
                 ) {
-                    store.allowTerminalAutomation = true
-                    store.saveSettings()
+                    store.set(\.allowTerminalAutomation, true)
                 }
                 Divider().padding(.leading, 28)
                 SetupStep(
                     title: store.tr(.agentDataAccess),
                     detail: store.tr(.setupAppDataDetail),
-                    done: store.allowAppData || !store.appDataAgents.isEmpty,
-                    actionTitle: store.tr(.setupChoose)
+                    done: store.settings.readProtectedAppData,
+                    actionTitle: store.tr(.setupReview)
                 ) {
-                    store.openSettings(focusAppDataFor: store.protectedAppDataAgents.first)
+                    store.openSettings(focus: .appData)
                 }
             }
             .pulseCard(padding: PulseTheme.Space.s)
             Button(store.tr(.setupOtherAgents)) {
-                store.openSettings(focusWaitingSignals: true)
+                store.openSettings(focus: .waitingSignals)
             }
             .buttonStyle(.link)
             .font(PulseTheme.Font.body)

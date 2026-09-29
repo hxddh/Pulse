@@ -39,7 +39,7 @@ STORE = re.compile(r"\b(StatusStore|store|AppServices)\b")
 # silently restore whole-store invalidation for whatever view used it.
 COMBINE_ERA = re.compile(r"\b(ObservableObject|@Published|@ObservedObject|@EnvironmentObject|@StateObject|objectWillChange)\b|^\s*import\s+Combine\b", re.M)
 # Settings is redrawn by what it reads; a per-scan fact would redraw it
-# every scan. `snapshotAgents` is the one scan fact it may read.
+# every scan. It reads `store.settings` and a few flags, never the rows.
 SCAN_FACT_FREE = [("SettingsViews.swift", re.compile(r"\bstore\.(snapshot|cachedAll)\b"))]
 
 

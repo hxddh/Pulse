@@ -190,13 +190,13 @@ struct SupportCoverageView: View {
             }
             Spacer(minLength: PulseTheme.Space.s)
             Menu {
-                Button(store.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
+                Button(store.diagnostics.didCopyDiagnostics ? store.tr(.copied) : store.tr(.copyDiagnostics)) {
                     store.copyDiagnostics()
                 }
                 Button(store.tr(.supportCopySafeReport)) { store.copySafeSupportReport() }
                 Button(store.tr(.exportSafeReport)) { store.exportSafeSupportReport() }
                 Button(shapeButtonTitle) { store.copyHarvestShapeReport() }
-                    .disabled(store.isCopyingShapeReport)
+                    .disabled(store.diagnostics.isCopyingShapeReport)
                 Divider()
                 Button(showSafeReport ? store.tr(.healthHideReport) : store.tr(.healthShowReport)) {
                     showSafeReport.toggle()
@@ -217,17 +217,17 @@ struct SupportCoverageView: View {
             HStack(spacing: PulseTheme.Space.s) {
                 Text(store.tr(.doctorRun))
                     .font(PulseTheme.Font.heading)
-                if store.isRunningDoctor { ProgressView().controlSize(.small) }
+                if store.diagnostics.isRunningDoctor { ProgressView().controlSize(.small) }
                 Spacer(minLength: PulseTheme.Space.s)
-                Button(store.doctorReport == nil ? store.tr(.healthRunCheck) : store.tr(.healthRunAgain)) {
+                Button(store.diagnostics.doctorReport == nil ? store.tr(.healthRunCheck) : store.tr(.healthRunAgain)) {
                     store.runDoctor()
                 }
-                .disabled(store.isRunningDoctor)
+                .disabled(store.diagnostics.isRunningDoctor)
             }
-            if let report = store.doctorReport {
+            if let report = store.diagnostics.doctorReport {
                 DoctorReportView(
                     report: report,
-                    copied: store.didCopyDoctorReport,
+                    copied: store.diagnostics.didCopyDoctorReport,
                     onCopy: { store.copyDoctorReport() },
                     onFix: { store.performDoctorFix($0) }
                 )
@@ -249,7 +249,7 @@ struct SupportCoverageView: View {
                     .foregroundStyle(PulseTheme.Tone.attention.color)
                 Spacer(minLength: PulseTheme.Space.s)
                 Button(store.tr(.settings)) {
-                    store.openSettings(focusAppDataFor: store.firstPrivacyLimitedAgent)
+                    store.openSettings(focus: .appData)
                 }
             }
             .font(PulseTheme.Font.body)
@@ -285,8 +285,8 @@ struct SupportCoverageView: View {
     }
 
     private var shapeButtonTitle: String {
-        if store.isCopyingShapeReport { return store.tr(.supportShapeReading) }
-        return store.didCopyShapeReport ? store.tr(.copied) : store.tr(.supportCopyShapeReport)
+        if store.diagnostics.isCopyingShapeReport { return store.tr(.supportShapeReading) }
+        return store.diagnostics.didCopyShapeReport ? store.tr(.copied) : store.tr(.supportCopyShapeReport)
     }
 
     private var summaryLine: String {
@@ -442,10 +442,10 @@ struct SupportHealthRow: View {
                         switch item.repair {
                         case .installHooks: store.installHooks()
                         case .retry: store.refresh(reason: "support-retry")
-                        case .openSettings: store.openSettings(focusAppDataFor: item.agent)
+                        case .openSettings: store.openSettings(focus: .appData)
                         case .runAgent: store.focusAgent(idRaw: item.agent.rawValue)
                         case .openAttentionBridge:
-                            store.openSettings(focusWaitingSignals: true)
+                            store.openSettings(focus: .waitingSignals)
                         case .none: break
                         }
                     }
@@ -460,7 +460,7 @@ struct SupportHealthRow: View {
                 // detail/diagnostics disclosure still carries the full reason.
                 if item.repair == .none, let action = nextActionLabel {
                     if item.privacyLimited {
-                        Button(action) { store.openSettings(focusAppDataFor: item.agent) }
+                        Button(action) { store.openSettings(focus: .appData) }
                             .buttonStyle(.link)
                             .font(PulseTheme.Font.caption)
                     } else if [.failed, .permissionDenied, .schemaMismatch, .unscanned].contains(item.collectorState) {

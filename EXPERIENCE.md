@@ -354,12 +354,12 @@ rounded),每个调用点声明这行**是什么角色**而不是它喜欢哪个�
 1. **通用** —— 登录时启动 · 语言（弹出菜单，禁止按钮循环）
 2. **快捷键** —— 一个选择：「关闭」+ 四个组合键（默认关闭）；被占用时明说
    「已被其他应用占用」，不归咎辅助功能权限
-3. **通知** —— 授权状态与动作 · 新「需要你」通知 · 空闲通知
+3. **通知** —— 授权状态与动作 · 新「需要你」通知（23.0 删除了空闲通知）
    - **权限被拒时**：开关置灰 + 常驻说明 + 「打开系统设置」；不循环索取。
      静默失效不可接受 —— 开关显示「开」就必须真的会响。
 4. **hooks** —— Claude 与 Codex 的 hooks：状态、安装 / 移除、测试连接；其他 Agent 一句说明
 5. **控制** —— 终端自动化；每个开关下面一句后果
-6. **数据访问** —— 「Pulse 可以读取的内容」（受保护应用数据，全局或按 Agent）
+6. **数据访问** —— 「Pulse 可以读取的内容」：受保护应用数据，一个开关（23.0 起不再按 Agent）
 7. **更新** —— 检查更新 + 状态；有新版本时一行「vX 可用」和「打开发布页」按钮（在浏览器里下载，Pulse 不下载、不替换自己）
 8. **关于** —— 版本 · 分发通道三态（`preview` / `signed` 未公证 / `stable`）·「健康检查…」入口 ·
    构建行（`sha · 日期`，可选中；无指纹时显示「开发构建」）· 运行路径 · 复制诊断信息
@@ -590,20 +590,20 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
 | --- | --- |
 | Glance 标题 / 灯 | `PulseBar/StatusPanelController.swift` → `updateStatusItem` / `pulseStatusLamp`（图标像素：`PulseBrand.statusBarIcon`） |
 | Tray 结构 | `PulseBar/TrayPanelViews.swift` → `TrayPanel` |
-| Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（19.0 Observation：只读 `snapshotAgents`，扫描不重绘） |
+| Prefs 布局 | `PulseBar/SettingsViews.swift` → `SettingsView`（19.0 Observation：不读快照与行，扫描不重绘） |
 | 状态合并 / 编码 | `PulseBar/SnapshotBuilder.swift` |
 | 行的每一句话 | `PulseBar/RowNarrator.swift`（纯值：语言、时刻、拥挤、停滞阈值都是输入；store 只转发） |
-| 扫描静默 | `PulseBar/StatusStoreEngine.swift` → `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |
-| 等待通知决定 | `PulseBar/WaitingDelivery.swift`（纯规划）· `StatusStoreWaiting.swift`（执行） |
+| 扫描静默 | `PulseBar/StatusStore.swift` → `StatusStore.land` / `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |
+| 等待通知决定 | `PulseBar/WaitingDelivery.swift`（纯规划）· `WaitNotifier.swift`（执行） |
 | Agent 目录（一处加 agent） | `PulseCore/AgentCatalog.swift` |
 | 采集 / 主行来源 / explain | `PulseHarvest/NativeActivityHarvest.swift` · 厂商方言 `TranscriptDialect.swift` + `HarvestCodex/Pi/Claude/SmallDialects.swift` |
 | 进程探测 | `PulseHarvest/ProcessProbe.swift`（跨扫描状态在 `ScanEngine.swift`） |
-| 状态与设置面 | `PulseBar/StatusStore.swift` + `StatusStore{Engine,Waiting,Look,Support,Settings,Maintenance,Fixture,Narration}.swift`（`Look` 在 23.0 只剩托盘开合） |
+| 状态与设置面 | `PulseBar/StatusStore.swift`（模型与 intent）+ `StatusStore{Views,Health,Fixture}.swift` · `ScanEngine.swift`（扫描）· `WaitNotifier.swift`（横幅）· `PulseSettings.swift`（`settings.json`） |
 | 会话事实簇 | `PulseBar/SessionFacts.swift` |
 | 主行价值序 / 行内展开 | `TrayRowLead.swift` · `SessionCards.swift` · `TrayPanelViews.swift` → `AgentRowButton` |
 | 价值引擎 / 主题 | `RowValueEngine.swift` · `PulseTheme.swift` |
 | 托盘行的脸（17.0） | `TrayRowModel.swift`（纯值：灯、身份、标记、主行、元信息、提问、为什么、动作条、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace` 只渲染值、只发动作；行下方的卡片是 `RowCardModel` |
-| 为什么 / 会话记录（17.0；23.0 合为一处） | `SessionLog.swift` · `SessionLogStore.swift` · `RowNarrator.whyLine` · `WhyViews.swift` · `StatusStoreWhy.swift` |
+| 为什么 / 会话记录（17.0；23.0 合为一处） | `SessionLog.swift` · `SessionLogStore.swift` · `RowNarrator.whyLine` · `WhyViews.swift` · `StatusStoreViews.swift`（`whyCard`） |
 | 值化的表面 | `SurfaceModels.swift`（`WhyCardModel`）· `TrayRowModel.swift` · `RowCardModel.swift`；夹具 `SurfaceFixtures.swift`，CI 截图 `SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
 | 探测节奏 | `PulseCore/ProbeSchedule.swift` + `PulseBar/PowerMonitor.swift` |
 | 设置 | `PulseSettings.swift`（23.0 起无迁移） |

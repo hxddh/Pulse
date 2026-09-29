@@ -25,18 +25,13 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         DispatchQueue.main.async {
             // 22.0: the click is part of the wait's audit — 23.0: of the
             // waits this banner was posted for, by id.
-            AppServices.store.recordBannerClick(waitIDs: waitIDs)
-            // Prefer the concrete rowKey (summary posts it as rowKeys.first too).
-            // Never open the tray without an identity when one was carried.
-            if !rowKey.isEmpty {
-                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
-            } else if !summaryRowKeys.isEmpty {
-                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: summaryRowKeys[0])
-            } else if !agent.isEmpty {
-                AppServices.store.focusAgent(idRaw: agent, session: session, rowKey: "")
-            } else {
-                AppServices.store.focusFirstWaiting()
-            }
+            AppServices.store.notifier.handleBannerClick(
+                agent: agent,
+                session: session,
+                rowKey: rowKey,
+                summaryRowKeys: summaryRowKeys,
+                waitIDs: waitIDs
+            )
         }
         completionHandler()
     }
@@ -161,10 +156,6 @@ enum PulseNotify {
         center.removeDeliveredNotifications(withIdentifiers: ids)
     }
 
-    static func postIdle(title: String, body: String) {
-        post(id: "pulse-idle", title: title, body: body, agent: "", session: "", rowKey: "")
-    }
-
     static func postWaiting(
         title: String,
         body: String,
@@ -266,8 +257,7 @@ enum PulseNotify {
         if !rowKey.isEmpty || !agent.isEmpty {
             content.threadIdentifier = "pulse.waiting"
         }
-        // Only waiting banners carry actions; "everything went idle" has
-        // nothing to focus and nothing to defer.
+        // A banner that names a session carries the Focus action.
         if !rowKey.isEmpty || !agent.isEmpty {
             content.categoryIdentifier = waitingCategoryID
         }

@@ -46,12 +46,12 @@ struct SessionDiagnosticsCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                         if gap.nextStep == "enable_app_data" {
                             Button(store.tr(.supportEnableData)) {
-                                store.openSettings(focusAppDataFor: row.agent)
+                                store.openSettings(focus: .appData)
                             }
                             .buttonStyle(.link)
                         } else if gap.nextStep == "use_attention_bridge" {
                             Button(store.tr(.setupWaitingSignals)) {
-                                store.openSettings(focusWaitingSignals: true)
+                                store.openSettings(focus: .waitingSignals)
                             }
                             .buttonStyle(.link)
                         }
