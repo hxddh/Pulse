@@ -6,8 +6,8 @@ import XCTest
 @testable import PulseRespond
 
 /// 0.97 Hero Honesty — tray hero is the user goal; Details/header do not invent.
-@MainActor
 final class HeroHonestyTests: XCTestCase {
+    @MainActor
     func testDetailPhaseDoesNotInventPermissionForInputWait() {
         let store = StatusStore()
         store.language = .en
@@ -20,6 +20,7 @@ final class HeroHonestyTests: XCTestCase {
         XCTAssertFalse(phase.lowercased().contains("permission"))
     }
 
+    @MainActor
     func testDetailPhaseKeepsPermissionWhenWaitKindSaysSo() {
         let store = StatusStore()
         store.language = .en
@@ -30,6 +31,7 @@ final class HeroHonestyTests: XCTestCase {
         XCTAssertEqual(store.detailPhase(row), "Permission")
     }
 
+    @MainActor
     func testReadablePhaseDoesNotSayWaitingPermissionAfterClear() {
         let store = StatusStore()
         store.language = .en

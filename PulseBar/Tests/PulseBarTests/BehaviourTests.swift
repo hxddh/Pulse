@@ -6,8 +6,8 @@ import AppKit
 @testable import PulseManaged
 @testable import PulseRespond
 
-@MainActor
 final class StatusPanelChromeTests: XCTestCase {
+    @MainActor
     func testRoundedMaterialOwnsItsShadowInsideATransparentWindow() {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 444, height: 204),
@@ -543,8 +543,8 @@ final class ProcessProbeTests: XCTestCase {
 }
 
 /// Notification copy — the banner has to say what is wanted.
-@MainActor
 final class NotificationCopyTests: XCTestCase {
+    @MainActor
     func testBodyCarriesReasonAndMessageNotJustNeedsYou() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
@@ -559,6 +559,7 @@ final class NotificationCopyTests: XCTestCase {
         XCTAssertTrue(store.notificationTitle(row).contains("Pulse"), "title should locate the work")
     }
 
+    @MainActor
     func testLongMessagesAreTruncated() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .codex)
@@ -567,6 +568,7 @@ final class NotificationCopyTests: XCTestCase {
         XCTAssertLessThanOrEqual(store.notificationBody(row).count, 160)
     }
 
+    @MainActor
     func testTitleFallsBackToAgentWhenNoProject() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "k", agent: .codex)
@@ -610,8 +612,8 @@ final class L10nTests: XCTestCase {
 /// The tray opens on "who needs me", never on the last visit's rummaging.
 /// EXPERIENCE §4: "展开状态不持久化". The panel is built once and only ordered in
 /// and out, so nothing resets `@State` on its own (U-3).
-@MainActor
 final class TrayGlanceResetTests: XCTestCase {
+    @MainActor
     func testEachOpenGivesTheTrayANewIdentity() {
         let store = StatusStore()
         let atLaunch = store.traySessionToken
@@ -625,6 +627,7 @@ final class TrayGlanceResetTests: XCTestCase {
 
     /// `showAllAgents` lives on the store rather than in `@State`, so the view
     /// identity alone cannot reset it.
+    @MainActor
     func testOpeningTheTrayCollapsesTheExpandedList() {
         let store = StatusStore()
         store.toggleShowAllAgents()
@@ -634,6 +637,7 @@ final class TrayGlanceResetTests: XCTestCase {
     }
 
     /// The host view is what carries the identity into SwiftUI; keep it wired.
+    @MainActor
     func testTheTrayHostIsBuiltFromTheSameStore() {
         let store = StatusStore()
         _ = TrayPanelHost(store: store)
@@ -641,8 +645,8 @@ final class TrayGlanceResetTests: XCTestCase {
 }
 
 /// Scene AH: "Clear waiting" leaves no late notification (U-7).
-@MainActor
 final class ClearWaitingDeliveryTests: XCTestCase {
+    @MainActor
     func testClearWaitingWithdrawsBannersAlreadyHandedToNotificationCenter() {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-clear-waiting-\(UUID().uuidString)")
@@ -670,8 +674,8 @@ final class ClearWaitingDeliveryTests: XCTestCase {
 }
 
 /// Every user-facing string goes through the table (U-9).
-@MainActor
 final class LocalizedCopyTests: XCTestCase {
+    @MainActor
     func testTheSupportSummaryLineIsATableEntry() {
         let en = String(format: L10n.t(.supportSummaryLine, .en), 1, 2, 3, 4, 5, 6, 7)
         let zh = String(format: L10n.t(.supportSummaryLine, .zh), 1, 2, 3, 4, 5, 6, 7)
@@ -680,6 +684,7 @@ final class LocalizedCopyTests: XCTestCase {
         XCTAssertFalse(zh.contains("Available"), "the zh support header was English copy")
     }
 
+    @MainActor
     func testAttentionBridgeHintsAreLocalizedAndStillNameTheAgents() {
         let store = StatusStore()
         let names = StatusStore.attentionSampleAgents.map(\.displayName)
@@ -698,6 +703,7 @@ final class LocalizedCopyTests: XCTestCase {
         XCTAssertTrue(store.attentionBridgeWriteSampleHintText().contains("\(names.count)"))
     }
 
+    @MainActor
     func testFocusedBridgeCopyNamesTheAgentInBothLanguages() {
         let store = StatusStore()
         let agent = StatusStore.attentionSampleAgents[0]
@@ -716,6 +722,7 @@ final class LocalizedCopyTests: XCTestCase {
     }
 
     /// One table for the tooltip, the chip and the banner.
+    @MainActor
     func testWaitKindTranslationIsSharedWithTheBuilder() {
         let store = StatusStore()
         store.language = .zh

@@ -173,12 +173,32 @@ to users.
 
 ## Current state
 
-18.0.0 is the current source version (Current — the dependencies are current
-and used). CI and release build on `macos-26` with Xcode 26 (Swift 6.3 at
+19.0.0 is the current source version (Observe — the store is observed
+field by field, every card under a row is a value, and the Mac can check
+itself). `StatusStore` is `@Observable` (Observation, macOS 14): a view is
+invalidated only by the properties its body read. Engine bookkeeping is
+`@ObservationIgnored`; the managed fleet (a plain class) is read through
+`managedSessions`, which tracks `managedRevision`, bumped on every fleet
+change. `ScanQuietTests` tracks every observed property (and fails when one
+is added without being listed); AppKit follows the store with
+`ObservationLoop`; Settings reads `snapshotAgents`, never `snapshot`.
+`surface_check.py` rejects any Combine-era wrapper (`ObservableObject`,
+`@Published`, `@ObservedObject`, `@StateObject`, `objectWillChange`). The
+cards under a tray row — Respond, managed permission ask, managed reply,
+the expanded inspector, the digest — render `RowCardModel` and send
+`RowCardModel.Action`; a Respond click carries the request id and digest
+that were on screen. The self-check (`DoctorModel` pure, `DoctorProbe`
+read-only IO, Settings → About) turns the real-machine confirmations into
+one click and a redacted report: Claude/Codex hooks installed and actually
+firing, `claude agents --json`, Codex rollout format, Respond verdicts
+claimed. The test target is in the Swift 6 mode too: XCTest suites isolate
+their test methods to the main actor instead of the class; new suites are
+Swift Testing.
+
+Since 18.0 CI and release build on `macos-26` with Xcode 26 (Swift 6.3 at
 the time of writing; tools 6.2), GitHub actions on their node24 majors.
 Every product target is in the Swift 6 language mode with
-`.treatAllWarnings(as: .error)`; the test target stays Swift 5 mode because
-its XCTest suites predate it, and new suites are Swift Testing. Claude:
+`.treatAllWarnings(as: .error)`. Claude:
 `ClaudeAgentsProbe` reads `claude agents --json` (rationed: Claude live,
 hooks absent, ≥15 s apart, 3 s timeout, back-off) as a vendor-reported
 Waiting source (`WaitSignalKind.vendor`); the hook installer matches
@@ -192,8 +212,7 @@ guesses; `AttentionHistory` (PulseHarvest) keeps what the hooks said, bounded
 and sanitized, in `attention-history.json` next to `attention.tsv`, and a
 session's events export on click as a v3 TSV that `AttentionReader` and
 `TurnTruthTests` replay as-is. The tray row's face is a value
-(`TrayRowModel` → `TrayRowFace`, gated by `surface_check.py`); the cards
-under a row still read the store. Since 16.0 red means blocked: Attention
+(`TrayRowModel` → `TrayRowFace`, gated by `surface_check.py`). Since 16.0 red means blocked: Attention
 Protocol v3 (`AttentionKind`) separates blocked, your turn (a quiet count) and
 resolved, and column 8 `front` keeps banners away from a prompt already in
 front. Since 15.0 the Workbench's judgement surfaces are values (`MissionBoard`,
@@ -205,14 +224,16 @@ surface comes with a model, a fixture and a capture.** Since 14.0 evidence belon
 orchestrator identity, and the Workbench stays in the tray's process until one
 of the split triggers listed there occurs. What remains of Outcome
 ([`docs/plan-outcome.md`](docs/plan-outcome.md)) is the second runtime (Codex
-App Server), blocked on real-machine P0 evidence; it ships as an 18.x.
+App Server), blocked on real-machine P0 evidence; the self-check is how that
+evidence is collected. It ships as a 19.x.
 The 12.x structural work is complete ([`docs/plan-12.0.md`](docs/plan-12.0.md)).
 
 Every target builds warning-free under complete concurrency checking with
 `-warnings-as-errors` (12.4). A value that crosses a queue by convention goes
 in `Unchecked` with a comment saying why; prefer `Sendable` types and `Guarded`.
 A scan that finds the same world must publish nothing (`ScanQuietTests`): write
-a `@Published` property on the scan path only when its value changed.
+an observed store property on the scan path only when its value changed —
+Observation announces every assignment, equal or not.
 Respond's P0-0 real-machine confirmation (decision shape honoured) remains the
 one unverified item of 2.0 — a wrong shape is silently ignored and falls open,
 never a wrong approval.

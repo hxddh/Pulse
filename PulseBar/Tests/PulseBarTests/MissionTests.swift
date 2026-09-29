@@ -8,7 +8,6 @@ import XCTest
 /// 13.0 · Missions — the contract, its revisions, per-check standing,
 /// persistence, migration from pre-13.0 sessions, and the fleet's part.
 /// Pure where possible; the fleet part never spawns a process.
-@MainActor
 final class MissionTests: XCTestCase {
     private var missionDir: URL!
     private var stateDir: URL!
@@ -31,10 +30,12 @@ final class MissionTests: XCTestCase {
         if let missionDir { try? FileManager.default.removeItem(at: missionDir.deletingLastPathComponent()) }
     }
 
+    @MainActor
     private func check(_ id: String, _ command: String) -> Mission.Check {
         Mission.Check(id: id, command: command)
     }
 
+    @MainActor
     private func session(_ id: String, group: String = "", command: String = "", at offset: Int64 = 0) -> ManagedSession.Model {
         var m = ManagedSession.Model(id: id, task: "Fix the flaky login test", root: "/tmp/w-\(id)", isWorktree: true, nowMs: t0 + offset)
         m.attemptGroup = group
@@ -42,6 +43,7 @@ final class MissionTests: XCTestCase {
         return m
     }
 
+    @MainActor
     private func evidence(_ outcome: AcceptanceEvidence.Outcome, checkID: String?, exit: Int32 = 0) -> AcceptanceEvidence {
         var e = AcceptanceEvidence.make(
             command: "swift test", cwd: "/tmp/w", startedAtMs: t0, finishedAtMs: t0 + 1,
@@ -55,6 +57,7 @@ final class MissionTests: XCTestCase {
 
     // MARK: - Contract
 
+    @MainActor
     func testTheAgentIsToldTheGoalAndConstraintsButNeverTheChecks() {
         let mission = Mission.Model(
             id: "m1", repoRoot: "/r", goal: "Make login fast",
@@ -67,6 +70,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(mission.title, "Make login fast")
     }
 
+    @MainActor
     func testEditingBeforeAnyCandidateStartedChangesTheContractInPlace() {
         var mission = Mission.Model(id: "m1", repoRoot: "/r", goal: "A", createdMs: t0)
         mission.revise(goal: "B", constraints: "", checks: [], frozen: false)
@@ -75,6 +79,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(mission.contract.goal, "B")
     }
 
+    @MainActor
     func testEditingAfterACandidateStartedMakesANewRevisionAndKeepsTheOld() {
         var mission = Mission.Model(id: "m1", repoRoot: "/r", goal: "A", checks: [check("c1", "make")], createdMs: t0)
         mission.revise(goal: "A", constraints: "", checks: [check("c1", "make"), check("c2", "lint")], frozen: true)
@@ -86,6 +91,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(mission.contract.revision, 2)
     }
 
+    @MainActor
     func testChecksFromLinesDropBlanksAndDuplicatesAndKeepOrder() {
         var n = 0
         let checks = Mission.checks(fromLines: "swift test\n\n  make lint \nswift test\n", newID: { n += 1; return "c\(n)" })
@@ -93,6 +99,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(checks.map(\.id), ["c1", "c2"])
     }
 
+    @MainActor
     func testAnUnchangedCommandKeepsItsIdAcrossAnEdit() {
         let previous = [check("keep", "swift test"), check("gone", "make lint")]
         let revised = Mission.revisedChecks(fromLines: "swift test\nnpm test", previous: previous, newID: { "new" })
@@ -101,6 +108,7 @@ final class MissionTests: XCTestCase {
 
     // MARK: - Lifecycle
 
+    @MainActor
     func testReadyMeansNothingIsRunningNotThatItIsRight() {
         let mission = Mission.Model(id: "m1", repoRoot: "/r", goal: "A", createdMs: t0)
         XCTAssertEqual(mission.lifecycle(candidateStatuses: []), .draft)
@@ -113,6 +121,7 @@ final class MissionTests: XCTestCase {
 
     // MARK: - Per-check standing
 
+    @MainActor
     func testEachCellSaysExactlyWhatIsKnown() {
         let mission = Mission.Model(
             id: "m1", repoRoot: "/r", goal: "A",
@@ -141,6 +150,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(cell(1), .notRun)
     }
 
+    @MainActor
     func testANewRulerIsNeverLaidOverAnOldCandidate() {
         var mission = Mission.Model(id: "m1", repoRoot: "/r", goal: "A", checks: [check("c1", "swift test")], createdMs: t0)
         mission.revise(goal: "A", constraints: "", checks: [check("c1", "swift test"), check("c2", "make lint")], frozen: true)
@@ -149,6 +159,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(Mission.standing(of: check("c1", "swift test"), revision: 1, evidence: [], running: nil, mission: mission, judge: judge), .notRun)
     }
 
+    @MainActor
     func testTheNewestEvidenceForEachCheckSurvivesTrimming() {
         var list = [evidence(.passed, checkID: "c1")]
         for _ in 0..<(ManagedSession.maxAcceptanceEvidence + 5) {
@@ -161,6 +172,7 @@ final class MissionTests: XCTestCase {
 
     // MARK: - Persistence
 
+    @MainActor
     func testAMissionRoundTripsAndABadFileIsRefused() throws {
         var mission = Mission.Model(id: "m-1", repoRoot: "/r", goal: "A", checks: [check("c1", "make")], createdMs: t0)
         mission.candidateIDs = ["s1", "s2"]
@@ -179,11 +191,13 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(Mission.loadAll().map(\.id), ["m-1"])
     }
 
+    @MainActor
     func testAnUnsafeIdIsNeverWritten() {
         let mission = Mission.Model(id: "../escape", repoRoot: "/r", goal: "A", createdMs: t0)
         XCTAssertFalse(Mission.persist(mission))
     }
 
+    @MainActor
     func testTheSessionStateCarriesItsMissionAndOldStatesStillLoad() throws {
         var m = session("s1")
         m.missionID = "m1"
@@ -206,6 +220,7 @@ final class MissionTests: XCTestCase {
 
     // MARK: - Migration
 
+    @MainActor
     func testAttemptGroupsBecomeOneMissionAndStandaloneSessionsTheirOwn() {
         let sessions = [
             session("a1", group: "g", command: "swift test"),
@@ -223,6 +238,7 @@ final class MissionTests: XCTestCase {
         XCTAssertTrue(result.sessions.allSatisfy { $0.contractRevision == 1 })
     }
 
+    @MainActor
     func testMigrationNeverManufacturesEvidence() {
         let old = session("a1", command: "swift test")
         let history = [evidence(.passed, checkID: nil)]
@@ -239,6 +255,7 @@ final class MissionTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testMigrationIsIdempotent() {
         let first = Mission.migrate(sessions: [session("a1", group: "g"), session("a2", group: "g", at: 1)], existing: [])
         let second = Mission.migrate(sessions: first.sessions, existing: first.missions)
@@ -246,6 +263,7 @@ final class MissionTests: XCTestCase {
         XCTAssertTrue(second.sessions.isEmpty, "nothing left to assign")
     }
 
+    @MainActor
     func testACandidateWhoseMissionFileIsGoneGetsItBack() {
         var orphan = session("s1")
         orphan.missionID = "m-lost"
@@ -258,6 +276,7 @@ final class MissionTests: XCTestCase {
 
     // MARK: - The fleet's part
 
+    @MainActor
     func testDispatchingACandidateBindsItToTheCurrentContract() {
         let fleet = ManagedFleet()
         fleet.startAction = { _ in }
@@ -277,6 +296,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(Mission.loadAll().first?.candidateIDs, ["s1"], "the Mission is on disk")
     }
 
+    @MainActor
     func testChoosingMarksOnlyAndChoosingAgainClears() {
         let fleet = ManagedFleet()
         fleet.startAction = { _ in }
@@ -291,6 +311,7 @@ final class MissionTests: XCTestCase {
         XCTAssertNil(fleet.mission(id: "m1")?.chosenCandidateID)
     }
 
+    @MainActor
     func testRemovingTheLastCandidateRemovesTheMission() {
         let fleet = ManagedFleet()
         fleet.startAction = { _ in }
@@ -301,6 +322,7 @@ final class MissionTests: XCTestCase {
         XCTAssertTrue(Mission.loadAll().isEmpty)
     }
 
+    @MainActor
     func testAFailedFirstDispatchLeavesNoEmptyMission() {
         let fleet = ManagedFleet()
         fleet.create(Mission.Model(id: "m1", repoRoot: "/r", goal: "A", createdMs: t0))
@@ -309,6 +331,7 @@ final class MissionTests: XCTestCase {
         XCTAssertTrue(Mission.loadAll().isEmpty)
     }
 
+    @MainActor
     func testReattachMigratesPreMissionSessionsOnce() {
         XCTAssertTrue(ManagedSession.persist(session("a1", group: "g", command: "swift test")))
         XCTAssertTrue(ManagedSession.persist(session("a2", group: "g", at: 1)))
@@ -326,6 +349,7 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(again.missions, fleet.missions)
     }
 
+    @MainActor
     func testAMissionThatNeverGotACandidateIsDroppedOnReattach() {
         XCTAssertTrue(Mission.persist(Mission.Model(id: "m-empty", repoRoot: "/r", goal: "A", createdMs: t0)))
         let fleet = ManagedFleet()

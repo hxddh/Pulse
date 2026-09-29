@@ -412,8 +412,8 @@ final class EvidenceSurfaceTests: XCTestCase {
 }
 
 /// 2.2 Momentum — compute is the fact that separates thinking from stopped.
-@MainActor
 final class ComputeSurfaceTests: XCTestCase {
+    @MainActor
     private func liveRow() -> AgentRow {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.liveProcess = true
@@ -422,6 +422,7 @@ final class ComputeSurfaceTests: XCTestCase {
         return row
     }
 
+    @MainActor
     func testUnknownComputeIsNeverRenderedAsZero() {
         let store = StatusStore()
         var row = liveRow()
@@ -434,6 +435,7 @@ final class ComputeSurfaceTests: XCTestCase {
         XCTAssertNotEqual(store.evidenceCPU(row), "—")
     }
 
+    @MainActor
     func testTheNoteSaysWhyComputeIsMissing() {
         let store = StatusStore()
         var row = liveRow()
@@ -443,6 +445,7 @@ final class ComputeSurfaceTests: XCTestCase {
         XCTAssertFalse(unknown.isEmpty)
     }
 
+    @MainActor
     func testComputeLeadsTheMotionTierAheadOfGrowth() {
         let store = StatusStore()
         var row = liveRow()
@@ -458,6 +461,7 @@ final class ComputeSurfaceTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testAnIdleOrUnsampledProcessSpendsNoSlotOnCPU() {
         let store = StatusStore()
         var row = liveRow()
@@ -466,6 +470,7 @@ final class ComputeSurfaceTests: XCTestCase {
         XCTAssertFalse(store.rowObservationLine(row).contains("CPU"), "idle is not worth a slot")
     }
 
+    @MainActor
     func testMemoryDisappearsRatherThanShowingZero() {
         let store = StatusStore()
         var row = liveRow()
@@ -474,6 +479,7 @@ final class ComputeSurfaceTests: XCTestCase {
         XCTAssertNotNil(store.evidenceMemory(row))
     }
 
+    @MainActor
     func testAStalledSessionThatIsBusySaysSo() {
         let store = StatusStore()
         var row = liveRow()
@@ -487,8 +493,8 @@ final class ComputeSurfaceTests: XCTestCase {
 }
 
 /// A workspace the disk could not confirm must not be offered as a landing.
-@MainActor
 final class BestEffortWorkspaceTests: XCTestCase {
+    @MainActor
     func testAnUnverifiedWorkspaceDropsToAppPrecision() {
         let env = TerminalFocus.Environment(
             warpRunning: true,

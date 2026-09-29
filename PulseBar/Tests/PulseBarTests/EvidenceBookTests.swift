@@ -9,7 +9,6 @@ import XCTest
 /// per-directory ruler, the tray counts (never a pass for what did not run),
 /// persistence identity, interrupted-at-quit, and external Candidates.
 /// No test here starts a check process.
-@MainActor
 final class EvidenceBookTests: XCTestCase {
     private var base: URL!
     private let t0: Int64 = 1_800_000_000_000
@@ -29,6 +28,7 @@ final class EvidenceBookTests: XCTestCase {
         if let base { try? FileManager.default.removeItem(at: base) }
     }
 
+    @MainActor
     private func evidence(_ outcome: AcceptanceEvidence.Outcome, checkID: String?, root: String = "/tmp/proj") -> AcceptanceEvidence {
         var e = AcceptanceEvidence.make(
             command: "swift test", cwd: root, startedAtMs: t0, finishedAtMs: t0 + 1,
@@ -42,6 +42,7 @@ final class EvidenceBookTests: XCTestCase {
 
     // MARK: - Identity
 
+    @MainActor
     func testOneWorkingCopyHasOneKeyHoweverItIsSpelled() {
         XCTAssertEqual(EvidenceBook.key("/tmp/proj/"), EvidenceBook.key("/tmp/proj"))
         XCTAssertEqual(EvidenceBook.key("/tmp/proj/sub/.."), EvidenceBook.key("/tmp/proj"))
@@ -50,6 +51,7 @@ final class EvidenceBookTests: XCTestCase {
 
     // MARK: - The ruler is the opt-in
 
+    @MainActor
     func testSettingChecksIsTheOptInAndClearingThemRemovesThePage() {
         let book = EvidenceBook()
         XCTAssertTrue(book.checks(for: "/tmp/proj").isEmpty)
@@ -63,6 +65,7 @@ final class EvidenceBookTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "an empty page leaves no file")
     }
 
+    @MainActor
     func testAPathWithNoRootIsNeverChecked() {
         let book = EvidenceBook(persists: false)
         book.setChecks([Mission.Check(id: "c1", command: "true")], for: "")
@@ -73,6 +76,7 @@ final class EvidenceBookTests: XCTestCase {
 
     // MARK: - Counts, never a verdict
 
+    @MainActor
     func testTheSummaryNeverCountsWhatDidNotRunOrCouldNotBeConfirmed() {
         let book = EvidenceBook(persists: false)
         let checks = [
@@ -91,6 +95,7 @@ final class EvidenceBookTests: XCTestCase {
         XCTAssertEqual(summary.passing, 0, "a pass the code was not re-measured against is not yet a pass")
     }
 
+    @MainActor
     func testEvidenceWithoutACheckIDAnswersNoCheck() {
         let book = EvidenceBook(persists: false)
         let checks = [Mission.Check(id: "c1", command: "swift test")]
@@ -100,6 +105,7 @@ final class EvidenceBookTests: XCTestCase {
 
     // MARK: - Persistence
 
+    @MainActor
     func testAPageSurvivesARestartAndAnInterruptedCheckIsNotForgotten() throws {
         let book = EvidenceBook()
         book.setChecks([Mission.Check(id: "c1", command: "swift test")], for: "/tmp/proj")
@@ -120,6 +126,7 @@ final class EvidenceBookTests: XCTestCase {
         XCTAssertEqual(again.evidence(for: "/tmp/proj").last?.checkID, "c2")
     }
 
+    @MainActor
     func testARenamedPageIsRefused() throws {
         let book = EvidenceBook()
         book.setChecks([Mission.Check(id: "c1", command: "swift test")], for: "/tmp/proj")
@@ -133,6 +140,7 @@ final class EvidenceBookTests: XCTestCase {
         XCTAssertTrue(again.records.isEmpty, "a page whose root does not hash to its name is not trusted")
     }
 
+    @MainActor
     func testAPageFromANewerSchemaIsRefused() throws {
         var record = EvidenceBook.Record(root: EvidenceBook.key("/tmp/proj"))
         record.schemaVersion = EvidenceBook.Record.currentSchemaVersion + 1
@@ -145,6 +153,7 @@ final class EvidenceBookTests: XCTestCase {
         XCTAssertTrue(book.records.isEmpty)
     }
 
+    @MainActor
     func testAdoptionKeepsTheBound() {
         let book = EvidenceBook(persists: false)
         let many = (0..<(ManagedSession.maxAcceptanceEvidence + 5)).map { _ in evidence(.failed, checkID: nil) }
@@ -154,6 +163,7 @@ final class EvidenceBookTests: XCTestCase {
 
     // MARK: - External Candidates
 
+    @MainActor
     func testAnObservedWorkingCopyJoinsAndLeavesAMission() throws {
         let fleet = ManagedFleet()
         fleet.startAction = { _ in }
@@ -178,6 +188,7 @@ final class EvidenceBookTests: XCTestCase {
         XCTAssertNil(fleet.mission(id: "m1")?.chosenCandidateID, "leaving clears the choice")
     }
 
+    @MainActor
     func testAMissionHeldOnlyByAnExternalSurvivesAndGoesWhenItLeaves() throws {
         let fleet = ManagedFleet()
         fleet.startAction = { _ in }
@@ -197,6 +208,7 @@ final class EvidenceBookTests: XCTestCase {
 
     // MARK: - The tray fact
 
+    @MainActor
     func testTheTrayFactIsCountsOnlyAndSilentWithoutAResult() {
         var row = AgentRow(rowKey: "codex|s1", agent: .codex)
         row.workspaceRoot = "/tmp/proj"

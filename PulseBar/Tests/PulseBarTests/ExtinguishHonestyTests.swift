@@ -7,14 +7,15 @@ import XCTest
 
 /// 0.95 Extinguish Honesty — false Waiting must not light; clear stays clear
 /// until genuine new evidence.
-@MainActor
 final class ExtinguishHonestyTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
+    @MainActor
     private var bareTerminal: TerminalFocus.Environment {
         TerminalFocus.Environment(warpRunning: false, ttyHostRunning: false)
     }
 
+    @MainActor
     private func context(dismissed: Set<String> = []) -> SnapshotBuilder.Context {
         SnapshotBuilder.Context(
             nowMs: now,
@@ -24,6 +25,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func harvest(
         _ id: AgentID,
         task: String = "Ask",
@@ -42,6 +44,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func build(
         harvest rows: [ActivityHarvest.Row] = [],
         attention entries: [AttentionReader.Entry] = [],
@@ -59,6 +62,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     // MARK: Answered ask / terminal veto
 
+    @MainActor
     func testAnsweredAskWithStaleAskToolDoesNotStampPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-answered-\(UUID().uuidString)")
@@ -74,6 +78,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         XCTAssertNotEqual(row.skill, "pending", "askResponse must veto ask-tool pending")
     }
 
+    @MainActor
     func testCompletedStatusWithAskToolDoesNotStampPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-done-\(UUID().uuidString)")
@@ -89,6 +94,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         XCTAssertNotEqual(row.skill, "pending")
     }
 
+    @MainActor
     func testConflictingBoolFlagsAnyTrueWins() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-flags-\(UUID().uuidString)")
@@ -106,6 +112,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     // MARK: Cascade / Windsurf arbitration
 
+    @MainActor
     func testSharedWindsurfRootDoesNotDoubleRaiseCascadeAndWindsurf() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-cascade-\(UUID().uuidString)")
@@ -126,6 +133,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     // MARK: Soft-dismiss absence / unreliable
 
+    @MainActor
     func testDismissedKeyClearsWhenHarvestAbsentOnReliableScan() {
         let key = ActivityHarvest.sessionKey(
             id: .cline, sessionID: "cl-gone", project: "", cwd: "/Users/me/Pulse"
@@ -134,6 +142,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         XCTAssertTrue(gone.clearedPendingKeys.contains(key))
     }
 
+    @MainActor
     func testDismissedKeySurvivesUnreliableHarvestAbsence() {
         let key = ActivityHarvest.sessionKey(
             id: .cline, sessionID: "cl-keep", project: "", cwd: "/Users/me/Pulse"
@@ -142,6 +151,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         XCTAssertFalse(kept.clearedPendingKeys.contains(key))
     }
 
+    @MainActor
     func testAbsentThenPendingCanReraiseAfterTombstoneCleared() {
         let pending = harvest(.cline, session: "cl-reraise", skill: "pending")
         let key = ActivityHarvest.sessionKey(
@@ -155,6 +165,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     // MARK: Attention match uniqueness
 
+    @MainActor
     func testAmbiguousSessionPrefixDoesNotSmearAttention() {
         let lit = build(
             harvest: [
@@ -171,6 +182,7 @@ final class ExtinguishHonestyTests: XCTestCase {
         XCTAssertFalse(lit.rows.contains(where: \.waiting), "ambiguous prefix must not smear")
     }
 
+    @MainActor
     func testExactSessionAttentionStillLights() {
         let lit = build(
             harvest: [
@@ -191,6 +203,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     // MARK: Stop grace for Waiting kind
 
+    @MainActor
     func testGenericWaitingSurvivesImmediateStopWithinGrace() {
         let nowMs = now
         let text = [
@@ -205,6 +218,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     // MARK: Waiting-none Reach hover honesty
 
+    @MainActor
     func testWaitingNoneNeedsReachHelperStillTrue() {
         let store = StatusStore()
         var row = AgentRow(rowKey: "zcode|live", agent: .zcode)
@@ -215,6 +229,7 @@ final class ExtinguishHonestyTests: XCTestCase {
 
     // MARK: Look Closure EN copy
 
+    @MainActor
     func testLookClosureEnglishSaysChangedNotMoved() {
         XCTAssertEqual(L10n.t(.whileAwayNamedMoved, .en), "%@ changed")
         XCTAssertEqual(L10n.t(.lookMovedMark, .en), "Changed while away")

@@ -85,11 +85,10 @@ let package = Package(
             name: "PulseBarTests",
             dependencies: ["PulseBar", "PulseCore", "PulseRespond", "PulseHarvest", "PulseManaged"],
             path: "Tests/PulseBarTests",
-            // The XCTest suites predate Swift 6: twenty `@MainActor`
-            // XCTestCase subclasses are an error in the Swift 6 mode. New
-            // suites are Swift Testing (`import Testing`), which has no such
-            // superclass; the XCTest suites move over as they are touched.
-            swiftSettings: [.swiftLanguageMode(.v5)],
+            // 19.0: the tests are in the Swift 6 mode too. An XCTestCase
+            // subclass cannot be `@MainActor` (its superclass is not), so
+            // the main-actor suites isolate their test methods instead; new
+            // suites are Swift Testing (`import Testing`).
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]

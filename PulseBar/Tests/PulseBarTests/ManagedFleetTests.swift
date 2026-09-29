@@ -9,7 +9,6 @@ import XCTest
 /// honest interrupted mapping), filename identity, the queue under its cap,
 /// bounded persistence, and removal. The start action is injected so the
 /// queue is pinned without spawning a process.
-@MainActor
 final class ManagedFleetTests: XCTestCase {
 
     private final class FakeRuntimeSession: ManagedRuntimeSession {
@@ -68,6 +67,7 @@ final class ManagedFleetTests: XCTestCase {
         if let stateDir { try? FileManager.default.removeItem(at: stateDir) }
     }
 
+    @MainActor
     private func model(_ id: String, task: String = "do the thing") -> ManagedSession.Model {
         var m = ManagedSession.Model(id: id, task: task, root: "/tmp/w", isWorktree: true, nowMs: 1_800_000_000_000)
         m.pendingPrompt = task
@@ -76,6 +76,7 @@ final class ManagedFleetTests: XCTestCase {
 
     // MARK: - The state round-trip
 
+    @MainActor
     func testAStateSurvivesTheRoundTripFieldForField() {
         var m = model("s1")
         m.continuationID = "abc"
@@ -93,6 +94,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(loaded[0], m)
     }
 
+    @MainActor
     func testARunningTurnComesBackInterruptedNeverInvented() {
         var m = model("s1")
         m.status = .running
@@ -101,6 +103,7 @@ final class ManagedFleetTests: XCTestCase {
                        "nobody witnessed how that turn ended")
     }
 
+    @MainActor
     func testAQueuedSessionComesBackQueuedWithItsPromptIntact() {
         var m = model("s1", task: "the held task")
         m.status = .queued
@@ -110,6 +113,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(loaded?.pendingPrompt, "the held task")
     }
 
+    @MainActor
     func testAFailureKeepsItsReasonAcrossTheRestart() {
         var m = model("s1")
         m.status = .failed("error_max_turns")
@@ -121,6 +125,7 @@ final class ManagedFleetTests: XCTestCase {
     /// still carries it hands it over once — bounded, with a check that was
     /// in flight at quit coming back as interrupted — and the rewritten
     /// file no longer holds it.
+    @MainActor
     func testLegacyEvidenceIsCarriedOutOfTheSessionState() throws {
         let m = model("carrier")
         XCTAssertTrue(ManagedSession.persist(m))
@@ -160,6 +165,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(ManagedSession.loadAll().first).carriedEvidence.isEmpty)
     }
 
+    @MainActor
     func testReattachMovesCarriedEvidenceIntoTheBook() throws {
         let m = model("carrier")
         XCTAssertTrue(ManagedSession.persist(m))
@@ -192,6 +198,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(again.evidence.evidence(for: m.root).count, 1)
     }
 
+    @MainActor
     func testFilenameDecidesIdentityHereToo() throws {
         ManagedSession.persist(model("honest"))
         // A renamed state file claims an identity its body does not carry.
@@ -202,6 +209,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertTrue(ManagedSession.loadAll().isEmpty, "body/filename mismatch is refused")
     }
 
+    @MainActor
     func testLegacyClaudeStateMigratesToTheVersionedRuntimeShape() throws {
         var original = model("legacy")
         original.continuationID = "old-session"
@@ -231,6 +239,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertNil(migrated["claudeSessionID"])
     }
 
+    @MainActor
     func testInvalidSchemasAndUnsupportedRuntimesAreRefused() throws {
         XCTAssertTrue(ManagedSession.persist(model("future")))
         let url = ManagedSession.stateURL(id: "future")
@@ -254,6 +263,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertTrue(ManagedSession.loadAll().isEmpty)
     }
 
+    @MainActor
     func testRunnerSeesOnlyNormalizedRuntimeSessionEvents() {
         var m = model("runtime")
         m.runtimeID = "fake"
@@ -271,6 +281,7 @@ final class ManagedFleetTests: XCTestCase {
 
     // MARK: - The session-shaped boundary (12.2)
 
+    @MainActor
     func testASessionIsBoundOnceAndEachTurnIsASend() {
         var m = model("bound")
         m.runtimeID = "fake"
@@ -285,6 +296,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(runtime.session.prompts, ["first", "second"])
     }
 
+    @MainActor
     func testAnApprovalReachesTheRuntimeThatAskedForIt() {
         var m = model("asker")
         m.runtimeID = "fake"
@@ -295,12 +307,14 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(runtime.session.approvals.first?.decision, .deny(message: "no"))
     }
 
+    @MainActor
     func testATurnEndWithoutAResultSaysHowItEnded() {
         XCTAssertEqual(ManagedTurnEnd(exitStatus: 0).failureText, "exit 0")
         XCTAssertEqual(ManagedTurnEnd(exitStatus: 1, diagnostic: "auth expired").failureText, "auth expired")
         XCTAssertEqual(ManagedTurnEnd(exitStatus: nil).failureText, "turn ended without a result")
     }
 
+    @MainActor
     func testAManagedRowIsTheRuntimesAgent() {
         var m = model("row")
         m.runtimeID = "claude"
@@ -309,12 +323,14 @@ final class ManagedFleetTests: XCTestCase {
 
     // MARK: - The queue under its cap
 
+    @MainActor
     private func testFleet() -> ManagedFleet {
         let fleet = ManagedFleet()
         fleet.startAction = { $0.adoptStatusForTesting(.running) }
         return fleet
     }
 
+    @MainActor
     func testTheCapHoldsAndAFreedSlotPumpsTheQueue() {
         let fleet = testFleet()
         for index in 0..<5 { fleet.dispatch(model: model("s\(index)")) }
@@ -327,6 +343,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertEqual(fleet.runners.filter { $0.model.status == .queued }.count, 1)
     }
 
+    @MainActor
     func testReattachRepumpsAPersistedQueue() {
         var m = model("s1")
         m.status = .queued
@@ -340,6 +357,7 @@ final class ManagedFleetTests: XCTestCase {
 
     // MARK: - Bounded persistence and removal
 
+    @MainActor
     func testPersistenceWritesOnlyOnDurableMoves() throws {
         let fleet = testFleet()
         fleet.dispatch(model: model("s1"))
@@ -360,6 +378,7 @@ final class ManagedFleetTests: XCTestCase {
         XCTAssertNotEqual(try Data(contentsOf: url), afterCommand)
     }
 
+    @MainActor
     func testRemoveDeletesTheRecordButRefusesARunningSession() {
         let fleet = testFleet()
         fleet.dispatch(model: model("s1"))

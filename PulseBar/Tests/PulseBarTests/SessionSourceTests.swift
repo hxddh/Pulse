@@ -9,7 +9,6 @@ import XCTest
 /// keeps its behavior by construction (single source = verbatim passthrough,
 /// held by the whole existing suite); what needs its own tests is the
 /// contract a second producer will rely on in 5.0-β.
-@MainActor
 final class SessionSourceTests: XCTestCase {
 
     private final class StubSource: SessionSource {
@@ -21,10 +20,12 @@ final class SessionSourceTests: XCTestCase {
         }
     }
 
+    @MainActor
     private func row(_ key: String, agent: AgentID = .claude) -> AgentRow {
         AgentRow(rowKey: key, agent: agent)
     }
 
+    @MainActor
     func testASingleSourceIsAVerbatimPassthrough() {
         let observed = ObservedSessionSource()
         let rows = [row("claude|b"), row("claude|a"), row("codex|c", agent: .codex)]
@@ -35,6 +36,7 @@ final class SessionSourceTests: XCTestCase {
         XCTAssertEqual(merged, rows)
     }
 
+    @MainActor
     func testRegistrationOrderRanksSourcesAndOrderWithinEachSurvives() {
         let observed = StubSource("observed", [row("o1"), row("o2")])
         let managed = StubSource("managed", [row("m1"), row("m2")])
@@ -43,6 +45,7 @@ final class SessionSourceTests: XCTestCase {
         XCTAssertEqual(coordinator.merged().map(\.rowKey), ["o1", "o2", "m1", "m2"])
     }
 
+    @MainActor
     func testARowKeyCollisionGoesToTheFirstRegisteredSource() {
         var observedRow = row("claude|same")
         observedRow.task = "the observed truth"
@@ -58,6 +61,7 @@ final class SessionSourceTests: XCTestCase {
                        "the observed pipeline stays ground truth for a key it also produces")
     }
 
+    @MainActor
     func testRegisteringTheSameSourceTwiceIsIdempotent() {
         let source = StubSource("managed", [row("m1")])
         let coordinator = SessionSourceCoordinator()
@@ -67,6 +71,7 @@ final class SessionSourceTests: XCTestCase {
         XCTAssertEqual(coordinator.merged().count, 1)
     }
 
+    @MainActor
     func testThePatchPathMutatesAndReportsTheMutatorsOwnAnswer() {
         let observed = ObservedSessionSource()
         observed.replaceSessions([row("claude|s1")])

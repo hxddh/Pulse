@@ -5,15 +5,17 @@ import XCTest
 @testable import PulseManaged
 @testable import PulseRespond
 
-@MainActor
 final class GoLookClosureTests: XCTestCase {
     private var store: StatusStore!
 
     override func setUp() {
-        store = StatusStore()
-        store.installPreviewFixture("status-waiting")
+        MainActor.assumeIsolated {
+            store = StatusStore()
+            store.installPreviewFixture("status-waiting")
+        }
     }
 
+    @MainActor
     func testFocusAgentSeedsPendingRevealForWaitingRow() {
         let row = try! XCTUnwrap(store.snapshot.rows.first(where: \.waiting) ?? store.allRowsForDisplay.first(where: \.waiting))
         store.clearPendingRevealRowKey()
@@ -21,6 +23,7 @@ final class GoLookClosureTests: XCTestCase {
         XCTAssertEqual(store.pendingRevealRowKey, row.rowKey)
     }
 
+    @MainActor
     func testFocusAgentPrefersExactRowKey() {
         store.installPreviewFixture("waiting")
         let rows = store.allRowsForDisplay.filter(\.waiting)
@@ -36,6 +39,7 @@ final class GoLookClosureTests: XCTestCase {
         XCTAssertEqual(store.pendingRevealRowKey, target.rowKey, "exact rowKey must not smear onto another wait")
     }
 
+    @MainActor
     func testFocusFirstWaitingSeedsReveal() {
         store.clearPendingRevealRowKey()
         store.focusFirstWaiting()
@@ -43,6 +47,7 @@ final class GoLookClosureTests: XCTestCase {
         XCTAssertEqual(store.pendingRevealRowKey, expected)
     }
 
+    @MainActor
     func testFocusOldestWaitUsesRevealPath() {
         store.clearPendingRevealRowKey()
         store.focusOldestWait()
@@ -50,6 +55,7 @@ final class GoLookClosureTests: XCTestCase {
         XCTAssertEqual(store.pendingRevealRowKey, store.oldestWait?.rowKey)
     }
 
+    @MainActor
     func testClearPendingReveal() {
         store.requestTrayReveal(rowKey: "demo-key")
         XCTAssertEqual(store.pendingRevealRowKey, "demo-key")
@@ -57,6 +63,7 @@ final class GoLookClosureTests: XCTestCase {
         XCTAssertNil(store.pendingRevealRowKey)
     }
 
+    @MainActor
     func testStaleRowKeyStillOpensTrayIdentity() {
         store.clearPendingRevealRowKey()
         store.focusAgent(idRaw: "claude", session: "", rowKey: "missing|session")
@@ -64,6 +71,7 @@ final class GoLookClosureTests: XCTestCase {
         XCTAssertNotNil(store.pendingRevealRowKey)
     }
 
+    @MainActor
     func testLookClosureActivateReusesGoLookReveal() {
         store.installPreviewFixture("status-running")
         let prior = store.captureLookFingerprint()

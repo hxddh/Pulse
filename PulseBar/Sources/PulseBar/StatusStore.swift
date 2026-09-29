@@ -240,7 +240,7 @@ final class StatusStore {
     /// reading the fleet through `managedSessions` reads it too, so a card
     /// that shows a permission ask is invalidated when the ask arrives even
     /// if no merged row changed.
-    private(set) var managedRevision = 0
+    var managedRevision = 0
     var managedSessions: ManagedSessionSource {
         _ = managedRevision
         return managedSessionSource
