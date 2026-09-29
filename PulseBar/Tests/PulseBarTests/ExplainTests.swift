@@ -174,7 +174,7 @@ struct ExplainTests {
     }
 
     @Test func aProcessOnlyRowSaysWhatLittleIsTrue() {
-        var row = AgentRow(rowKey: RowIdentity.process(agent: .amp, pid: 9), agent: .amp)
+        var row = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 9), agent: .codex)
         row.task = "never shown"
         row.state = .processOnly
         #expect(Explain.make(row, lang: .en, nowMs: now).headline == L10n.t(.appDetectedNoDetails, .en))
@@ -223,7 +223,7 @@ struct ExplainTests {
     @Test func aGreyLampWithATurnSaysWhoseTurn() {
         var turn = session(.codex)
         turn.state = .yourTurn(sinceMs: now - minute)
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .amp, pid: 4), agent: .amp)
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 4), agent: .codex)
         process.state = .processOnly
         let explanation = LampExplanation.make(rows: [process, turn], glance: .idle)
         #expect(explanation.rule == .yourTurn, "a finished turn outranks a bare process")
@@ -243,7 +243,7 @@ struct ExplainTests {
         turn.state = .yourTurn(sinceMs: now)
         var recent = session()
         recent.state = .recent
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .amp, pid: 5), agent: .amp)
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 5), agent: .codex)
         process.state = .processOnly
 
         #expect(LampFace.row(blockedRow) == LampFace(shape: .filled, tone: .waiting))

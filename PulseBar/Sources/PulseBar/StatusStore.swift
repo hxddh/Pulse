@@ -181,7 +181,7 @@ final class StatusStore {
     func landActivityEvents(_ events: [ActivitySpool.Event], nowMs: Int64) {
         var byKey: [String: ActivitySpool.Event] = [:]
         for event in events {
-            guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
+            guard let agent = AgentID(rawValue: event.agent) else { continue }
             byKey[agent.rawValue + "|" + event.session] = event
         }
         guard !byKey.isEmpty else { return }
@@ -507,7 +507,7 @@ final class StatusStore {
         if !rowKey.isEmpty, let row = rows.first(where: { $0.rowKey == rowKey }) {
             return row
         }
-        let agent = ActivityHarvest.mapAgent(idRaw)?.surfaceID
+        let agent = ActivityHarvest.mapAgent(idRaw)
         if !session.isEmpty {
             let sameAgent = rows.filter { !$0.sessionID.isEmpty && (agent == nil || $0.agent == agent) }
             if let exact = sameAgent.first(where: { $0.sessionID == session }) { return exact }
@@ -567,10 +567,7 @@ final class StatusStore {
     }
 
     var hooksInstalled: Bool {
-        switch hooksStatus {
-        case .installedBoth, .installedClaude, .installedCodex: return true
-        case .unknown, .missing, .failed: return false
-        }
+        !hooksStatus.installedAgents.isEmpty
     }
 
     // MARK: - Notifications and updates

@@ -23,34 +23,18 @@ enum DoctorProbe {
         facts.macOS = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
         facts.nowMs = nowMs
 
-        // Claude
         let fm = FileManager.default
-        let claudeDir = home.appendingPathComponent(".claude", isDirectory: true)
-        let claudeCLI = ClaudeCLI.executable()
-        facts.claudeInstalled = fm.fileExists(atPath: claudeDir.path) || claudeCLI != nil
-        for name in ["settings.json", "settings.local.json"] {
-            let url = claudeDir.appendingPathComponent(name)
-            guard let data = try? Data(contentsOf: url) else { continue }
-            guard let hooks = hookTable(data) else {
-                facts.claudeSettingsUnreadable = true
-                continue
-            }
-            let found = pulseEvents(hooks)
-            facts.claudeHookEvents.formUnion(found.events)
-            if let matcher = found.notificationMatcher { facts.claudeNotificationMatcher = matcher }
+        // 24.0: every agent's hook, by its own contract.
+        for agent in AgentID.priority {
+            facts.hooks[agent.rawValue] = hookFacts(agent, home: home)
         }
-        if !facts.claudeHookEvents.isEmpty { facts.claudeSettingsUnreadable = false }
+        let claudeCLI = ClaudeCLI.executable()
+        facts.claudeInstalled = facts.hooks[AgentID.claude.rawValue]?.present == true || claudeCLI != nil
         facts.claudeAgents = agentsAnswer(executable: claudeCLI)
 
-        // Codex
+        // Codex: its legacy notify line and the rollout format.
         let codexDir = home.appendingPathComponent(".codex", isDirectory: true)
         facts.codexInstalled = fm.fileExists(atPath: codexDir.path)
-        if let data = try? Data(contentsOf: codexDir.appendingPathComponent("hooks.json")),
-           let hooks = hookTable(data) {
-            let found = pulseEvents(hooks)
-            facts.codexHookEvents = found.events
-            facts.codexPermissionHook = found.events.contains("PermissionRequest")
-        }
         if let config = try? String(contentsOf: codexDir.appendingPathComponent("config.toml"), encoding: .utf8) {
             facts.codexNotifyInstalled = config.split(separator: "\n").contains { line in
                 line.trimmingCharacters(in: .whitespaces).hasPrefix("notify")
@@ -68,6 +52,29 @@ enum DoctorProbe {
             facts.lastFire[agent.rawValue] = DoctorModel.HookFire(kind: event.kind, tsMs: event.tsMs)
         }
         return facts
+    }
+
+    /// One agent's hook as installed under `home`: whether the vendor is
+    /// there, which contract events carry Pulse's command, and any Pulse
+    /// entry on an event Pulse must never use.
+    static func hookFacts(_ agent: AgentID, home: URL) -> DoctorModel.AgentHooks {
+        var item = DoctorModel.AgentHooks()
+        let contract = agent.spec.hooks
+        var isDirectory: ObjCBool = false
+        item.present = FileManager.default.fileExists(
+            atPath: home.appendingPathComponent(contract.home).path, isDirectory: &isDirectory
+        ) && isDirectory.boolValue
+        guard let text = try? String(contentsOf: home.appendingPathComponent(contract.path), encoding: .utf8) else {
+            return item
+        }
+        guard let found = HooksInstaller.installedEvents(agent, text: text) else {
+            item.unreadable = true
+            return item
+        }
+        let wanted = Set(contract.events.map(\.name))
+        item.events = found.intersection(wanted)
+        item.forbidden = found.intersection(DoctorModel.forbiddenEvents(agent))
+        return item
     }
 
     // MARK: - Pure pieces (tested)

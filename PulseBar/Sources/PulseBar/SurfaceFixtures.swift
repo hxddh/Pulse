@@ -131,7 +131,7 @@ enum SurfaceFixtures {
     }
 
     static func rowPending() -> AgentRow {
-        var row = baseRow(.cline, key: "fx-pending", task: "Refactor the settings screen")
+        var row = baseRow(.opencode, key: "fx-pending", task: "Refactor the settings screen")
         row.state = .blocked(RowWait(kind: "Permission", sinceMs: nowMs - 2 * minute, signal: .pending))
         return row
     }
@@ -150,7 +150,7 @@ enum SurfaceFixtures {
     }
 
     static func rowProcessOnly() -> AgentRow {
-        var row = AgentRow(rowKey: "amp|pid:4242", agent: .amp)
+        var row = AgentRow(rowKey: "cursor|pid:4242", agent: .cursor)
         row.source = .process
         row.liveProcess = true
         row.pid = 4242
@@ -220,9 +220,16 @@ enum SurfaceFixtures {
             hotkeyTaken: false,
             notifications: .allowed,
             notifyOnWaiting: true,
-            mutedAgents: SettingsModel.sortedMuted([.gemini, .aider]),
-            hooksStatus: HooksSupport.Status.installedBoth.label(lang: lang),
+            mutedAgents: SettingsModel.sortedMuted([.gemini, .pi]),
+            hooksStatus: HooksSupport.Status.all.label(lang: lang),
             hooksInstalled: true,
+            hookAgents: SettingsModel.hookAgents(
+                installed: Set(AgentID.allCases),
+                present: Set(AgentID.allCases),
+                lastEventMs: [.claude: nowMs - 12_000, .codex: nowMs - 3 * minute],
+                nowMs: nowMs,
+                lang: lang
+            ),
             hookTest: L10n.t(.hookTestPassed, lang),
             hookTestTone: .running,
             hookTestRunning: false,
@@ -263,7 +270,7 @@ enum SurfaceFixtures {
                 details: [t(.supportStructured)]
             ),
             .init(
-                agent: .aider, name: AgentID.aider.displayName,
+                agent: .pi, name: AgentID.pi.displayName,
                 state: DiagnosticsModel.stateWord(.notInstalled, lang: lang),
                 tone: DiagnosticsModel.tone(.notInstalled), severity: DiagnosticsModel.severity(.notInstalled),
                 details: [t(.supportCollectorSourceAbsentDetail)]
@@ -300,7 +307,8 @@ enum SurfaceFixtures {
     // MARK: - 19.0 · The self-check
 
     /// A Mac with a realistic mix: Claude proven, an old Claude without
-    /// `agents`, Codex installed but not yet trusted.
+    /// `agents`, Codex installed but not yet trusted, Gemini without Pulse's
+    /// hook.
     static func doctorReport(lang: ResolvedLanguage) -> DoctorModel.Report {
         var f = DoctorModel.Facts()
         f.version = PulseVersion.semver
@@ -308,12 +316,14 @@ enum SurfaceFixtures {
         f.macOS = "26.0.0"
         f.nowMs = t0
         f.claudeInstalled = true
-        f.claudeHookEvents = Set(DoctorModel.claudeEvents)
-        f.claudeNotificationMatcher = "permission_prompt|idle_prompt|elicitation_dialog"
+        f.hooks = [
+            "claude": .init(present: true, events: Set(AgentID.claude.spec.hooks.events.map(\.name))),
+            "codex": .init(present: true, events: Set(AgentID.codex.spec.hooks.events.map(\.name))),
+            "gemini": .init(present: true, events: []),
+        ]
         f.lastFire = ["claude": .init(kind: "turn", tsMs: t0 - 12 * 60_000)]
         f.claudeAgents = .failed(exitStatus: 1, timedOut: false)
         f.codexInstalled = true
-        f.codexHookEvents = Set(DoctorModel.codexEvents)
         f.codexRollout = .paginated
         f.codexCompressedRollouts = 3
         return DoctorModel.evaluate(f, lang: lang)

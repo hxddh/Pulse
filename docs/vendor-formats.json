@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "Where each agent's on-disk format was checked. Gate: scripts/catalog_check.py. Weekly sentinel: scripts/vendor_drift.py.",
+  "about": "Where each agent's on-disk format and hook contract were checked. Gate: scripts/catalog_check.py. Weekly sentinel: scripts/vendor_drift.py.",
   "agents": {
     "claude": {
       "source": "docs",
@@ -13,7 +13,25 @@
         "AttentionTests.swift",
         "NativeHarvestSelfTest.swift"
       ],
-      "note": "Closed source; transcripts are the documented JSONL and hooks are the documented events."
+      "note": "Closed source; transcripts are the documented JSONL and hooks are the documented events.",
+      "hooks": {
+        "source": "docs",
+        "urls": [
+          "https://code.claude.com/docs/en/hooks"
+        ],
+        "checked": "2026-09-29",
+        "note": "Every Pulse entry runs async: true — an async hook cannot block or decide (\"Run hooks in the background\"). PostToolUse replaces PreToolUse for activity.",
+        "events": [
+          "SessionStart",
+          "SessionEnd",
+          "UserPromptSubmit",
+          "PostToolUse",
+          "PermissionRequest",
+          "Notification",
+          "Stop",
+          "StopFailure"
+        ]
+      }
     },
     "codex": {
       "source": "repo",
@@ -27,30 +45,43 @@
       "tests": [
         "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
-      ]
+      ],
+      "hooks": {
+        "source": "repo",
+        "repo": "https://github.com/openai/codex",
+        "commit": "193632d2448f6b0e9860faab8d6495124e266772",
+        "checked": "2026-09-29",
+        "watch": [
+          "codex-rs/hooks/src/engine/discovery.rs",
+          "codex-rs/hooks/src/schema.rs",
+          "codex-rs/hooks/src/legacy_notify.rs"
+        ],
+        "note": "hooks.json shares Claude's nested shape and honours async (SessionEnd always runs synchronously, capped at 3 s). PermissionRequest is never installed: it fires before Codex's own auto-review. The legacy notify argv (agent-turn-complete) stays.",
+        "events": [
+          "SessionStart",
+          "SessionEnd",
+          "UserPromptSubmit",
+          "Stop"
+        ]
+      }
     },
     "cursor": {
       "source": "unverified",
-      "why": "Closed source; the composer store in state.vscdb is undocumented and read as found."
-    },
-    "cursor_agent": {
-      "source": "unverified",
-      "why": "Closed source; folded into Cursor. Third-party notes place CLI chats under ~/.cursor (chats/*/store.db, projects/*/agent-transcripts) — not read until a real sample exists."
-    },
-    "grok": {
-      "source": "repo",
-      "repo": "https://github.com/xai-org/grok-build",
-      "commit": "f0e3be1100ef5252488e3be8bb0e91cf68d8c305",
-      "checked": "2026-09-29",
-      "watch": [
-        "crates/codegen/xai-grok-session-search/src/fts.rs",
-        "crates/codegen/xai-grok-shell/src/session/storage/search_content.rs",
-        "crates/codegen/xai-grok-hooks/src/discovery.rs"
-      ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ]
+      "why": "Closed source; the composer store in state.vscdb is undocumented and read as found.",
+      "hooks": {
+        "source": "docs",
+        "urls": [
+          "https://cursor.com/docs/hooks"
+        ],
+        "checked": "2026-09-29",
+        "note": "cursor.com was unreachable from the build environment on 2026-09-29; event names and payload fields (conversation_id, workspace_roots, transcript_path, status) were cross-checked against third-party typed bindings (pkg.go.dev/github.com/Checkmarx/ast-cx-hooks/cursor, github.com/speakeasy-api/gram server/design/hooks). beforeSubmitPrompt can stop a prompt and is not installed. Re-read the docs on a machine that can reach them.",
+        "events": [
+          "sessionStart",
+          "sessionEnd",
+          "afterAgentResponse",
+          "stop"
+        ]
+      }
     },
     "pi": {
       "source": "repo",
@@ -64,25 +95,27 @@
       "tests": [
         "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
-      ]
-    },
-    "amp": {
-      "source": "unverified",
-      "why": "Vendor docs unreachable from here; third-party notes describe threads/T-*.json under ~/.local/share/amp — needs a real sample."
-    },
-    "aider": {
-      "source": "repo",
-      "repo": "https://github.com/Aider-AI/aider",
-      "commit": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
-      "checked": "2026-09-29",
-      "watch": [
-        "aider/io.py",
-        "aider/args.py"
       ],
-      "tests": [
-        "HarvestTests.swift"
-      ],
-      "note": "History is written in each project directory, not ~/.aider; no waiting state is persisted (waiting: none)."
+      "hooks": {
+        "source": "repo",
+        "repo": "https://github.com/badlogic/pi-mono",
+        "commit": "312184edb68c38248e1acfc3eec68500ba49d9cb",
+        "checked": "2026-09-29",
+        "watch": [
+          "packages/coding-agent/docs/extensions.md",
+          "packages/coding-agent/src/core/extensions/types.ts"
+        ],
+        "note": "Extension events are notifications when the handler returns nothing; ui_prompt_start/ui_prompt_end are Pi's own report of a blocking user-facing prompt.",
+        "events": [
+          "session_start",
+          "session_shutdown",
+          "agent_start",
+          "tool_execution_end",
+          "ui_prompt_start",
+          "ui_prompt_end",
+          "agent_settled"
+        ]
+      }
     },
     "gemini": {
       "source": "repo",
@@ -99,7 +132,25 @@
         "VendorFormatTests.swift",
         "HarvestTests.swift",
         "NativeHarvestSelfTest.swift"
-      ]
+      ],
+      "hooks": {
+        "source": "repo",
+        "repo": "https://github.com/google-gemini/gemini-cli",
+        "commit": "d75234cae935d58f896f4dbf305e0c51602fa385",
+        "checked": "2026-09-29",
+        "watch": [
+          "docs/hooks/reference.md",
+          "docs/hooks/index.md"
+        ],
+        "note": "Exit 0 with empty stdout passes every event; only exit 2 or a decision in stdout blocks. Notification is observability only. Hooks run with a sanitized environment, so terminal handles may be missing.",
+        "events": [
+          "SessionStart",
+          "SessionEnd",
+          "BeforeAgent",
+          "AfterAgent",
+          "Notification"
+        ]
+      }
     },
     "copilot": {
       "source": "repo",
@@ -112,7 +163,25 @@
       "tests": [
         "VendorFormatTests.swift"
       ],
-      "note": "Storage layout from github/docs copilot-cli config-dir reference."
+      "note": "Storage layout from github/docs copilot-cli config-dir reference.",
+      "hooks": {
+        "source": "repo",
+        "repo": "https://github.com/github/docs",
+        "commit": "394068dacf2ea33d383fee605dc87aa48441305e",
+        "checked": "2026-09-29",
+        "watch": [
+          "content/copilot/reference/hooks-reference.md"
+        ],
+        "note": "camelCase event names select the camelCase payload. notification is fire-and-forget; agentStop/sessionStart outputs are ignored when stdout is empty. agent_idle/agent_completed describe background subagents and are not read as the session's turn.",
+        "events": [
+          "sessionStart",
+          "sessionEnd",
+          "userPromptSubmitted",
+          "agentStop",
+          "notification",
+          "errorOccurred"
+        ]
+      }
     },
     "opencode": {
       "source": "repo",
@@ -128,173 +197,32 @@
       "tests": [
         "VendorFormatTests.swift",
         "NativeHarvestSelfTest.swift"
-      ]
-    },
-    "goose": {
-      "source": "repo",
-      "repo": "https://github.com/block/goose",
-      "commit": "a701bb1756f0c6a49a7dbc10ac8a90f94dd24bd1",
-      "checked": "2026-09-29",
-      "watch": [
-        "crates/goose/src/session/session_manager.rs",
-        "crates/goose-provider-types/src/conversation/message.rs",
-        "crates/goose/src/config/paths.rs"
       ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ]
-    },
-    "openhands": {
-      "source": "repo",
-      "repo": "https://github.com/OpenHands/software-agent-sdk",
-      "commit": "af3ed3ed99715fabd385058bec31d538336c9740",
-      "checked": "2026-09-29",
-      "watch": [
-        "openhands-sdk/openhands/sdk/conversation/state.py",
-        "openhands-sdk/openhands/sdk/conversation/persistence_const.py",
-        "openhands-sdk/openhands/sdk/conversation/event_store.py",
-        "openhands-sdk/openhands/sdk/event/llm_convertible/message.py"
-      ],
-      "tests": [
-        "VendorFormatTests.swift"
-      ]
-    },
-    "cline": {
-      "source": "repo",
-      "repo": "https://github.com/cline/cline",
-      "commit": "d7250ad39400d1485fc11011a80fdab26aeeff83",
-      "checked": "2026-09-29",
-      "watch": [
-        "apps/vscode/src/sdk/sdk-task-history.ts",
-        "sdk/packages/shared/src/storage/paths.ts",
-        "sdk/packages/core/src/session/models/session-manifest.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ],
-      "note": "Legacy bundle types read on branch legacy-extension at 7761370240ffce9e3890cb56f6c51655f3f5b0a7."
-    },
-    "roo": {
-      "source": "repo",
-      "repo": "https://github.com/RooCodeInc/Roo-Code",
-      "commit": "b867ec9145750d0ae1ff7f02d35406e9bf2a0b16",
-      "checked": "2026-09-29",
-      "watch": [
-        "packages/types/src/message.ts",
-        "packages/types/src/history.ts",
-        "src/shared/globalFileNames.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift"
-      ]
-    },
-    "continue": {
-      "source": "repo",
-      "repo": "https://github.com/continuedev/continue",
-      "commit": "5522c6f44ca0ac3528b37244818fbfa39b5af470",
-      "checked": "2026-09-29",
-      "watch": [
-        "core/util/history.ts",
-        "core/util/paths.ts",
-        "core/index.d.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift",
-        "HarvestTests.swift"
-      ]
-    },
-    "amazon_q": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "cascade": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "windsurf": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "augment": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "zed_agent": {
-      "source": "unverified",
-      "why": "Not yet audited against zed-industries/zed; read as a best-effort cache."
-    },
-    "trae": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "warp_agent": {
-      "source": "unverified",
-      "why": "Closed source; the warp.sqlite tables are read as found."
-    },
-    "devin": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "kiro": {
-      "source": "unverified",
-      "why": "Docs mirror describes ~/.kiro/sessions/cli/*.jsonl (v3) and kiro-cli/data.sqlite3 (v2); neither is read until a real sample exists."
-    },
-    "junie": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "kilo": {
-      "source": "repo",
-      "repo": "https://github.com/Kilo-Org/kilocode",
-      "commit": "2dfe6fc876fd7c99132c0dc7565d4edd1ce2b8c0",
-      "checked": "2026-09-29",
-      "watch": [
-        "packages/core/src/session/sql.ts",
-        "packages/core/src/global.ts"
-      ],
-      "tests": [
-        "VendorFormatTests.swift"
-      ],
-      "note": "7.x uses the OpenCode schema in ~/.local/share/kilo/kilo.db; legacy task files per Kilo-Org/kilocode-legacy."
-    },
-    "replit": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "droid": {
-      "source": "unverified",
-      "why": "The transcript line format is undocumented and the docs and the shipped CLI disagree on the directory; hooks are documented (see docs/attention-bridge.md)."
-    },
-    "command_code": {
-      "source": "unverified",
-      "why": "Not audited in 20.0."
-    },
-    "antigravity": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
-    },
-    "kimi": {
-      "source": "repo",
-      "repo": "https://github.com/MoonshotAI/kimi-code",
-      "commit": "a940f2ff049ed57abce68c59526de7a6628a4112",
-      "checked": "2026-09-29",
-      "watch": [
-        "packages/agent-core-v2/src/wire/record.ts",
-        "packages/agent-core-v2/src/app/event/event2.ts",
-        "packages/agent-core-v2/src/agent/contextMemory/contextEvents.ts",
-        "packages/agent-core-v2/src/agent/interaction/interactionOps.ts",
-        "packages/agent-core-v2/src/session/sessionMetadata/sessionMetadata.ts"
-      ],
-      "tests": [
-        "HarvestTests.swift",
-        "NativeHarvestSelfTest.swift"
-      ]
-    },
-    "zcode": {
-      "source": "unverified",
-      "why": "Closed source; no public description of the local cache format."
+      "hooks": {
+        "source": "repo",
+        "repo": "https://github.com/anomalyco/opencode",
+        "commit": "7945de208964a49300d7f770d1a71d078db9a4c4",
+        "checked": "2026-09-29",
+        "watch": [
+          "packages/web/src/content/docs/plugins.mdx",
+          "packages/sdk/js/src/v2/gen/types.gen.ts",
+          "packages/plugin/src/index.ts",
+          "packages/opencode/src/plugin/index.ts"
+        ],
+        "note": "A legacy plugin module: every named export is a plugin function. Only the event hook is used; it never throws and never awaits the child it spawns.",
+        "events": [
+          "session.created",
+          "session.status",
+          "session.idle",
+          "session.error",
+          "session.deleted",
+          "permission.asked",
+          "permission.replied",
+          "question.asked",
+          "question.replied",
+          "question.rejected"
+        ]
+      }
     }
   }
 }

@@ -260,14 +260,14 @@ final class ScanEngine {
         // Permission toggles force the affected Agent(s) even if the supervisor
         // would otherwise defer them. Full scans keep the supervisor plan.
         let harvestFilter: Set<AgentID>? = {
-            if let agentFilter { return Set(agentFilter.map(\.surfaceID)) }
+            if let agentFilter { return Set(agentFilter) }
             return supervisorPlan.attempted
         }()
         let scopedHarvest = agentFilter != nil
         let startCursor = harvestScanCursor
         // 18.0: Claude's hooks already say who is waiting, sooner; the
         // agents probe only runs where they are not installed.
-        let claudeHooked = model.hooksStatus == .installedClaude || model.hooksStatus == .installedBoth
+        let claudeHooked = model.hooksStatus.isInstalled(for: .claude)
 
         scanQueue.async { [weak self] in
             let t0 = Date()
@@ -322,7 +322,7 @@ final class ScanEngine {
             let activityEvents = ActivitySpool.readEvents(nowMs: scanNowMs)
             let vendorWaits = ClaudeAgentsProbe.sample(
                 nowMs: scanNowMs,
-                claudeLive: procs.contains { $0.id.surfaceID == .claude },
+                claudeLive: procs.contains { $0.id == .claude },
                 hooksInstalled: claudeHooked
             )
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
@@ -384,12 +384,12 @@ final class ScanEngine {
         plan: HarvestSupervisor.Plan
     ) -> Bool {
         guard !plan.deferred.isEmpty else { return false }
-        let attempted = Set(plan.attempted.map(\.surfaceID))
+        let attempted = Set(plan.attempted)
         guard !attempted.isEmpty else { return false }
-        let reported = Set(health.map { $0.id.surfaceID })
+        let reported = Set(health.map { $0.id })
         guard attempted.isSubset(of: reported) else { return false }
         return health
-            .filter { attempted.contains($0.id.surfaceID) }
+            .filter { attempted.contains($0.id) }
             .allSatisfy { item in
                 switch item.state {
                 case .failed, .schemaMismatch, .unscanned:
@@ -419,23 +419,7 @@ final class ScanEngine {
             ? baseline
             : (collectorHealthByAgent.isEmpty ? baseline : collectorHealthByAgent)
         for item in health {
-            var normalized = item
-            normalized.id = item.id.surfaceID
-            next[normalized.id] = normalized
-        }
-        // Cursor Agent sessions are merged into Cursor rows by SnapshotBuilder
-        // to avoid duplicate IDE/CLI entries. They share Cursor's local-store
-        // collector, so the runtime health must share that result too.
-        if let cursor = next[.cursor] {
-            next[.cursorAgent] = ActivityHarvest.CollectorHealth(
-                id: .cursorAgent,
-                state: cursor.state,
-                durationMs: cursor.durationMs,
-                rowCount: cursor.rowCount,
-                sourcePresent: cursor.sourcePresent,
-                errorKind: cursor.errorKind,
-                explain: cursor.explain
-            )
+            next[item.id] = item
         }
         collectorHealthByAgent = next
         // Supervisor-deferred adapters are a policy partial, not a failed scan.
@@ -512,7 +496,7 @@ final class ScanEngine {
             // while row.harvestMs remains session activity.
             let collectorReadAtMs = Int64(Date().timeIntervalSince1970 * 1000)
             for item in health where !item.state.isIssue {
-                let agent = item.id.surfaceID
+                let agent = item.id
                 lastSuccessfulReadByAgent[agent] = max(
                     lastSuccessfulReadByAgent[agent] ?? 0,
                     collectorReadAtMs
@@ -596,7 +580,7 @@ struct ProcessFacts: Equatable {
     static func byAgent(_ hits: [ProcessProbe.Hit], nowMs: Int64) -> [AgentID: ProcessFacts] {
         var out: [AgentID: ProcessFacts] = [:]
         for hit in hits {
-            let agent = hit.id.surfaceID
+            let agent = hit.id
             let started = hit.elapsedSeconds > 0 ? nowMs - Int64(hit.elapsedSeconds * 1000) : 0
             if var existing = out[agent] {
                 existing.count = max(existing.count, hit.count)

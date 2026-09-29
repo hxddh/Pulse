@@ -13,7 +13,7 @@ real fact; prose checks ("EXPERIENCE.md must say 32 visible Agents") went.
    `case` line or list names more than MAX_PER_CASE agents and no file's
    `case` lines name more than MAX_PER_FILE.
 2. Harvest — the native descriptors are built from the catalog and every
-   agent but the `cursor_agent` transport alias has harvest roots.
+   agent has harvest roots (until the harvest layer goes).
 3. Process probe — Cursor's private worker daemon is denied, and `lsof`
    output is read independently of its exit status (0.99.2: status 1 still
    carries every resolved process).
@@ -26,6 +26,10 @@ real fact; prose checks ("EXPERIENCE.md must say 32 visible Agents") went.
    `unverified` with a reason); a named test file exists and mentions the
    agent; and an `unverified` format has `waiting: .none` (23.0 — pending
    read from a format nobody checked is not evidence).
+7. Hook contracts (24.0) — the roster is exactly the seven supported agents;
+   each has a `HookContract` whose events are never a gating event, and its
+   manifest entry has a `hooks` block naming the source it was read from
+   (repo + full commit, or docs URLs), the date, and the same event list.
 
 Run: python3 scripts/catalog_check.py
 """
@@ -46,7 +50,8 @@ TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 SELF_TEST = SOURCES / "PulseBar" / "NativeHarvestSelfTest.swift"
 MAX_PER_CASE = 6
 MAX_PER_FILE = 8
-ALIAS = "cursor_agent"  # a transport alias of cursor: no roots, no README row
+# 24.0 (Exact): the owner's roster. Adding an agent is a product decision.
+ROSTER = ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
 
 
 @dataclass
@@ -54,9 +59,11 @@ class Agent:
     case: str          # Swift case name, e.g. commandCode
     raw: str           # raw value, e.g. command_code
     display: str
-    waiting: str       # hooks | harvestPending | none
+    waiting: str       # hooks | none
     harvest: str       # structuredSession | bestEffortCache
     has_collector: bool
+    hook_format: str   # HookFormat case
+    hook_events: list[str]
 
 
 def swift_file(name: str) -> Path:
@@ -100,6 +107,7 @@ def agents(text: str) -> list[Agent]:
             return m.group(1).rstrip(",").strip()
 
         case = field("id").lstrip(".")
+        fmt = re.search(r"hooks: HookContract\(format: \.(\w+)", chunk)
         out.append(Agent(
             case=case,
             raw=raw_of[case],
@@ -107,6 +115,8 @@ def agents(text: str) -> list[Agent]:
             waiting=field("waiting").lstrip("."),
             harvest=field("harvest").lstrip("."),
             has_collector=not field("harvestRoots").startswith("[]"),
+            hook_format=fmt.group(1) if fmt else "",
+            hook_events=re.findall(r'HookEvent\("([^"]+)"', chunk),
         ))
     return out
 
@@ -161,7 +171,7 @@ def check_harvest(roster: list[Agent], problems: list[str]) -> None:
     native = swift_file("NativeActivityHarvest.swift").read_text(encoding="utf-8")
     if "AgentCatalog.all" not in native or "harvestRoots" not in native:
         problems.append("NativeActivityHarvest.descriptors() must be built from AgentCatalog")
-    missing = sorted(a.raw for a in roster if a.raw != ALIAS and not a.has_collector)
+    missing = sorted(a.raw for a in roster if not a.has_collector)
     if missing:
         problems.append(f"no native harvest roots: {', '.join(missing)}")
 
@@ -221,10 +231,8 @@ def waiting_kind(cell: str) -> str:
     low = cell.lower()
     if "none" in low:
         return "none"
-    if "hooks" in low:
+    if "hooks" in low or "plugin" in low or "extension" in low:
         return "hooks"
-    if "pending" in low:
-        return "harvestPending"
     return "?"
 
 
@@ -240,8 +248,6 @@ def harvest_kind(cell: str) -> str:
 def check_matrix(roster: list[Agent], problems: list[str]) -> int:
     by_case = {a.case: a for a in roster}
     by_display = {a.display: a for a in roster}
-    # The short forms the README table uses.
-    by_display.update({"Zed": by_case["zedAgent"], "Warp": by_case["warpAgent"]})
     rows = readme_rows()
     if not rows:
         problems.append("README has no support matrix (expected a '| Agent |' table)")
@@ -266,7 +272,7 @@ def check_matrix(roster: list[Agent], problems: list[str]) -> int:
             if agent.harvest != want_harvest:
                 problems.append(f"README:{lineno} {name}: harvest says {want_harvest}, catalog says {agent.harvest}")
     for case, agent in by_case.items():
-        if agent.raw != ALIAS and case not in covered:
+        if case not in covered:
             problems.append(f"{agent.display}: absent from the README support matrix")
     return len(covered)
 
@@ -330,6 +336,53 @@ def check_vendor_formats(roster: list[Agent], problems: list[str]) -> dict[str, 
     return counts
 
 
+# 7 · hook contracts ---------------------------------------------------------
+
+def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
+    raws = [a.raw for a in roster]
+    if sorted(raws) != sorted(ROSTER):
+        problems.append(f"roster must be exactly {ROSTER} (24.0), found {raws}")
+    gating = re.search(r"gatingEvents: Set<String> = \[(.*?)\]", text, re.S)
+    listed = set(re.findall(r'"([^"]+)"', gating.group(1))) if gating else set()
+    for must in ("PreToolUse", "preToolUse", "beforeShellExecution", "beforeSubmitPrompt", "BeforeTool", "tool.execute.before"):
+        if must not in listed:
+            problems.append(f"HookContract.gatingEvents must list {must}")
+    try:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8")).get("agents", {})
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    for agent in roster:
+        if not agent.hook_format or not agent.hook_events:
+            problems.append(f"hooks — {agent.raw}: no HookContract with events in the catalog")
+            continue
+        for event in agent.hook_events:
+            if event in listed:
+                problems.append(f"hooks — {agent.raw}: {event} is a gating event and is never installed")
+        if agent.raw == "codex" and "PermissionRequest" in agent.hook_events:
+            problems.append("hooks — codex: PermissionRequest fires before Codex's own auto-review (fake Waiting)")
+        hooks = (manifest.get(agent.raw) or {}).get("hooks")
+        if not isinstance(hooks, dict):
+            problems.append(f"hooks — {agent.raw}: vendor-formats.json needs a hooks block (source, events)")
+            continue
+        source = hooks.get("source")
+        if source == "repo":
+            if not str(hooks.get("repo", "")).startswith("https://github.com/"):
+                problems.append(f"hooks — {agent.raw}: repo must be a https://github.com/ URL")
+            if not SHA.match(str(hooks.get("commit", ""))):
+                problems.append(f"hooks — {agent.raw}: commit must be the full 40-hex SHA that was read")
+            if not hooks.get("watch"):
+                problems.append(f"hooks — {agent.raw}: watch must list the vendor files that define the hooks")
+        elif source == "docs":
+            if not hooks.get("urls"):
+                problems.append(f"hooks — {agent.raw}: docs hooks list the URLs read")
+        else:
+            problems.append(f"hooks — {agent.raw}: hooks source must be repo or docs")
+        if not DATE.match(str(hooks.get("checked", ""))):
+            problems.append(f"hooks — {agent.raw}: checked must be the YYYY-MM-DD the source was read")
+        if sorted(hooks.get("events", [])) != sorted(agent.hook_events):
+            problems.append(f"hooks — {agent.raw}: manifest events {hooks.get('events')} ≠ catalog {agent.hook_events}")
+
+
 def main() -> int:
     text = CATALOG.read_text(encoding="utf-8")
     roster = agents(text)
@@ -340,13 +393,14 @@ def main() -> int:
     check_privacy(problems)
     in_matrix = check_matrix(roster, problems)
     counts = check_vendor_formats(roster, problems)
+    check_hooks(text, roster, problems)
     if problems:
         for problem in problems:
             print(f"::error::{problem}")
         return 1
     sources = ", ".join(f"{counts.get(s, 0)} {s}" for s in ("repo", "docs", "unverified"))
-    print(f"catalog OK — {len(roster)} agents, one spec each; {in_matrix} in the README matrix; "
-          f"vendor formats {sources}")
+    print(f"catalog OK — {len(roster)} agents, one spec and one hook contract each; "
+          f"{in_matrix} in the README matrix; vendor formats {sources}")
     return 0
 
 

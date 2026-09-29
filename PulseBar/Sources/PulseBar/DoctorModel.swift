@@ -97,21 +97,15 @@ enum DoctorModel {
         var channel: String = ""
         var macOS: String = ""
 
-        var claudeInstalled = false
-        var claudeAgents: AgentsAnswer = .noCLI
-        /// Events whose hook list carries a Pulse command.
-        var claudeHookEvents: Set<String> = []
-        /// The matcher on Pulse's Notification entry, when there is one.
-        var claudeNotificationMatcher: String?
-        var claudeSettingsUnreadable = false
+        /// 24.0: each agent's hook as installed, keyed by agent raw value.
+        var hooks: [String: AgentHooks] = [:]
         /// Newest hook event per agent, from `attention.tsv`.
         var lastFire: [String: HookFire] = [:]
 
+        var claudeInstalled = false
+        var claudeAgents: AgentsAnswer = .noCLI
+
         var codexInstalled = false
-        var codexHookEvents: Set<String> = []
-        /// Pulse must never install this one (it fires before Codex's own
-        /// auto-review) — seeing it means an old or foreign install.
-        var codexPermissionHook = false
         var codexNotifyInstalled = false
         var codexRollout: RolloutShape = .none
         var codexCompressedRollouts = 0
@@ -124,6 +118,26 @@ enum DoctorModel {
         var nowMs: Int64 = 0
     }
 
+    /// One agent's hook as installed (24.0).
+    struct AgentHooks: Equatable, Sendable {
+        /// The vendor's own directory exists on this Mac.
+        var present = false
+        /// Contract events whose entry carries Pulse's command.
+        var events: Set<String> = []
+        /// The config is not its format (invalid JSON); Pulse leaves it.
+        var unreadable = false
+        /// Pulse entries on events Pulse must never use — an old or foreign
+        /// install (23.0's PreToolUse, Codex's PermissionRequest).
+        var forbidden: Set<String> = []
+    }
+
+    /// Events a Pulse entry must never sit on for this agent: every gating
+    /// event, and Codex's PermissionRequest, which fires before its own
+    /// auto-review.
+    static func forbiddenEvents(_ agent: AgentID) -> Set<String> {
+        agent == .codex ? HookContract.gatingEvents.union(["PermissionRequest"]) : HookContract.gatingEvents
+    }
+
     struct Coverage: Equatable, Sendable {
         var name: String
         var sessions = 0
@@ -133,14 +147,6 @@ enum DoctorModel {
         var expectsLastWord = true
     }
 
-    /// What Pulse installs; a missing one is named.
-    static let claudeEvents = [
-        "Notification", "Stop", "StopFailure", "SubagentStart", "SubagentStop",
-        "PermissionRequest", "PreToolUse", "UserPromptSubmit",
-    ]
-    static let codexEvents = ["Stop", "UserPromptSubmit"]
-    /// Tokens the Notification matcher needs for questions to reach Pulse.
-    static let matcherTokens = ["permission_prompt", "idle_prompt", "elicitation_dialog"]
     /// A hook that has not fired for this long proves little about today.
     static let staleFireMs: Int64 = 7 * 24 * 60 * 60 * 1000
 
@@ -150,91 +156,11 @@ enum DoctorModel {
         let c = Copy(lang: lang)
         var checks: [Check] = []
 
-        // Claude · hooks installed
-        if !facts.claudeInstalled {
-            checks.append(Check(id: "claude-hooks", title: c.claudeHooks, verdict: .absent, detail: c.notInstalled("Claude Code")))
-        } else if facts.claudeSettingsUnreadable {
-            checks.append(Check(id: "claude-hooks", title: c.claudeHooks, verdict: .attention, detail: c.settingsUnreadable, next: c.fixSettings))
-        } else {
-            let missing = claudeEvents.filter { !facts.claudeHookEvents.contains($0) }
-            let matcher = facts.claudeNotificationMatcher ?? ""
-            let matcherGaps = matcherTokens.filter { !matcher.contains($0) }
-            if facts.claudeHookEvents.isEmpty {
-                checks.append(Check(id: "claude-hooks", title: c.claudeHooks, verdict: .attention, detail: c.noHooks, next: c.installHooks))
-            } else if !missing.isEmpty || !matcherGaps.isEmpty {
-                let gaps = missing + matcherGaps.map { "Notification:\($0)" }
-                checks.append(Check(id: "claude-hooks", title: c.claudeHooks, verdict: .attention, detail: c.missing(gaps), next: c.reinstallHooks))
-            } else {
-                checks.append(Check(id: "claude-hooks", title: c.claudeHooks, verdict: .works, detail: c.allEvents(claudeEvents.count)))
-            }
-        }
-
-        // Claude · hooks actually fire
-        if facts.claudeInstalled, !facts.claudeHookEvents.isEmpty {
-            checks.append(fireCheck(id: "claude-fired", agent: "claude", title: c.claudeFired, facts: facts, c: c))
-        }
-
-        // Claude · its own report of waiting sessions
-        switch facts.claudeAgents {
-        case .noCLI:
-            checks.append(Check(
-                id: "claude-agents", title: c.claudeAgents,
-                verdict: facts.claudeInstalled ? .attention : .absent,
-                detail: facts.claudeInstalled ? c.noCLI : c.notInstalled("Claude Code"),
-                next: facts.claudeInstalled ? c.cliOnPath : ""
-            ))
-        case .failed(let status, let timedOut):
-            checks.append(Check(
-                id: "claude-agents", title: c.claudeAgents, verdict: .attention,
-                detail: timedOut ? c.agentsTimedOut : c.agentsFailed(status),
-                next: c.updateClaude
-            ))
-        case .unreadable(let bytes):
-            checks.append(Check(
-                id: "claude-agents", title: c.claudeAgents, verdict: .attention,
-                detail: c.agentsUnreadable(bytes), next: c.reportShape
-            ))
-        case .parsed(let sessions, let waiting):
-            checks.append(Check(id: "claude-agents", title: c.claudeAgents, verdict: .works, detail: c.agentsParsed(sessions, waiting)))
-        }
-
-        // Codex · hooks
-        if !facts.codexInstalled {
-            checks.append(Check(id: "codex-hooks", title: c.codexHooks, verdict: .absent, detail: c.notInstalled("Codex")))
-        } else {
-            let missing = codexEvents.filter { !facts.codexHookEvents.contains($0) }
-            if facts.codexPermissionHook {
-                checks.append(Check(id: "codex-hooks", title: c.codexHooks, verdict: .attention, detail: c.codexPermissionHook, next: c.reinstallHooks))
-            } else if facts.codexHookEvents.isEmpty, !facts.codexNotifyInstalled {
-                checks.append(Check(id: "codex-hooks", title: c.codexHooks, verdict: .attention, detail: c.noHooks, next: c.installHooks))
-            } else if !missing.isEmpty {
-                checks.append(Check(
-                    id: "codex-hooks", title: c.codexHooks,
-                    verdict: facts.codexNotifyInstalled ? .unproven : .attention,
-                    detail: c.missing(missing) + (facts.codexNotifyInstalled ? c.notifyOnly : ""),
-                    next: c.reinstallHooks
-                ))
-            } else {
-                // The file cannot say whether Codex trusts it; only a fired
-                // event can. So the install alone is "unproven".
-                checks.append(Check(id: "codex-hooks", title: c.codexHooks, verdict: .unproven, detail: c.codexInstalledNeedsTrust, next: c.codexTrust))
-            }
-            if !facts.codexHookEvents.isEmpty || facts.codexNotifyInstalled {
-                checks.append(fireCheck(id: "codex-fired", agent: "codex", title: c.codexFired, facts: facts, c: c))
-            }
-        }
-
-        // Codex · the rollout format Pulse parses
-        if facts.codexInstalled {
-            let compressed = facts.codexCompressedRollouts > 0 ? c.compressed(facts.codexCompressedRollouts) : ""
-            switch facts.codexRollout {
-            case .none:
-                checks.append(Check(id: "codex-rollout", title: c.codexRollout, verdict: .unproven, detail: c.noRollout + compressed))
-            case .legacy, .paginated, .mixed:
-                checks.append(Check(id: "codex-rollout", title: c.codexRollout, verdict: .works, detail: c.rollout(facts.codexRollout) + compressed))
-            case .unknown:
-                checks.append(Check(id: "codex-rollout", title: c.codexRollout, verdict: .attention, detail: c.rolloutUnknown + compressed, next: c.reportShape))
-            }
+        // 24.0: each agent's hook, then that it actually fires.
+        for agent in AgentID.priority {
+            checks += hookChecks(agent, facts: facts, c: c)
+            if agent == .claude { checks.append(claudeAgentsCheck(facts, c: c)) }
+            if agent == .codex, facts.codexInstalled { checks.append(rolloutCheck(facts, c: c)) }
         }
 
         // Reading · did the parsers get what the formats carry (20.0)
@@ -246,6 +172,84 @@ enum DoctorModel {
             checks: checks,
             ranAtMs: facts.nowMs
         )
+    }
+
+    private static func hookChecks(_ agent: AgentID, facts: Facts, c: Copy) -> [Check] {
+        let raw = agent.rawValue
+        let name = agent.displayName
+        let id = "\(raw)-hooks"
+        let title = c.agentHooks(name)
+        let hooks = facts.hooks[raw] ?? AgentHooks()
+        let notify = agent == .codex && facts.codexNotifyInstalled
+        guard hooks.present || notify else {
+            return [Check(id: id, title: title, verdict: .absent, detail: c.notInstalled(name))]
+        }
+        if hooks.unreadable {
+            return [Check(id: id, title: title, verdict: .attention, detail: c.settingsUnreadable, next: c.fixSettings)]
+        }
+        if hooks.events.isEmpty, !notify {
+            return [Check(id: id, title: title, verdict: .attention, detail: c.noHooks, next: c.installHooks)]
+        }
+        let wanted = agent.spec.hooks.events.map(\.name)
+        let missing = wanted.filter { !hooks.events.contains($0) }
+        let installed: Check
+        if !hooks.forbidden.isEmpty {
+            installed = Check(id: id, title: title, verdict: .attention, detail: c.gatingHook(hooks.forbidden.sorted()), next: c.reinstallHooks)
+        } else if !missing.isEmpty {
+            installed = Check(
+                id: id, title: title,
+                verdict: notify ? .unproven : .attention,
+                detail: c.missing(missing) + (notify ? c.notifyOnly : ""),
+                next: c.reinstallHooks
+            )
+        } else if agent == .codex {
+            // The file cannot say whether Codex trusts it; only a fired
+            // event can. So the install alone is "unproven".
+            installed = Check(id: id, title: title, verdict: .unproven, detail: c.codexInstalledNeedsTrust, next: c.codexTrust)
+        } else {
+            let note = agent.waitingSource == .none ? c.noWaitNote : ""
+            installed = Check(id: id, title: title, verdict: .works, detail: c.allEvents(wanted.count) + note)
+        }
+        return [installed, fireCheck(id: "\(raw)-fired", agent: agent, title: c.agentFired(name), facts: facts, c: c)]
+    }
+
+    /// Claude · its own report of waiting sessions.
+    private static func claudeAgentsCheck(_ facts: Facts, c: Copy) -> Check {
+        switch facts.claudeAgents {
+        case .noCLI:
+            return Check(
+                id: "claude-agents", title: c.claudeAgents,
+                verdict: facts.claudeInstalled ? .attention : .absent,
+                detail: facts.claudeInstalled ? c.noCLI : c.notInstalled("Claude Code"),
+                next: facts.claudeInstalled ? c.cliOnPath : ""
+            )
+        case .failed(let status, let timedOut):
+            return Check(
+                id: "claude-agents", title: c.claudeAgents, verdict: .attention,
+                detail: timedOut ? c.agentsTimedOut : c.agentsFailed(status),
+                next: c.updateClaude
+            )
+        case .unreadable(let bytes):
+            return Check(
+                id: "claude-agents", title: c.claudeAgents, verdict: .attention,
+                detail: c.agentsUnreadable(bytes), next: c.reportShape
+            )
+        case .parsed(let sessions, let waiting):
+            return Check(id: "claude-agents", title: c.claudeAgents, verdict: .works, detail: c.agentsParsed(sessions, waiting))
+        }
+    }
+
+    /// Codex · the rollout format Pulse parses.
+    private static func rolloutCheck(_ facts: Facts, c: Copy) -> Check {
+        let compressed = facts.codexCompressedRollouts > 0 ? c.compressed(facts.codexCompressedRollouts) : ""
+        switch facts.codexRollout {
+        case .none:
+            return Check(id: "codex-rollout", title: c.codexRollout, verdict: .unproven, detail: c.noRollout + compressed)
+        case .legacy, .paginated, .mixed:
+            return Check(id: "codex-rollout", title: c.codexRollout, verdict: .works, detail: c.rollout(facts.codexRollout) + compressed)
+        case .unknown:
+            return Check(id: "codex-rollout", title: c.codexRollout, verdict: .attention, detail: c.rolloutUnknown + compressed, next: c.reportShape)
+        }
     }
 
     /// Two or more sessions of an agent and not one title (or, where the
@@ -279,8 +283,8 @@ enum DoctorModel {
         return Check(id: "reading", title: c.reading, verdict: .works, detail: c.coverageFine(total, read.count))
     }
 
-    private static func fireCheck(id: String, agent: String, title: String, facts: Facts, c: Copy) -> Check {
-        guard let fire = facts.lastFire[agent] else {
+    private static func fireCheck(id: String, agent: AgentID, title: String, facts: Facts, c: Copy) -> Check {
+        guard let fire = facts.lastFire[agent.rawValue] else {
             return Check(id: id, title: title, verdict: .unproven, detail: c.neverFired, next: c.useOnce(agent))
         }
         let age = max(0, facts.nowMs - fire.tsMs)
@@ -340,12 +344,10 @@ enum DoctorModel {
             f(.doctorHeader, version, channel, macOS)
         }
 
-        var claudeHooks: String { t(.doctorClaudeHooks) }
-        var claudeFired: String { t(.doctorClaudeFired) }
+        func agentHooks(_ name: String) -> String { f(.doctorAgentHooks, name) }
+        func agentFired(_ name: String) -> String { f(.doctorAgentFired, name) }
         /// A command's name, the same in every language.
         var claudeAgents: String { "claude agents --json" }
-        var codexHooks: String { t(.doctorCodexHooks) }
-        var codexFired: String { t(.doctorCodexFired) }
         var codexRollout: String { t(.doctorCodexRollout) }
         var reading: String { t(.doctorReading) }
         var noSessions: String { t(.doctorNoSessions) }
@@ -367,9 +369,10 @@ enum DoctorModel {
         func allEvents(_ n: Int) -> String { f(.doctorAllEvents, n) }
 
         var neverFired: String { t(.doctorNeverFired) }
-        func useOnce(_ agent: String) -> String {
-            agent == "codex" ? t(.doctorUseOnceCodex) : t(.doctorUseOnceClaude)
+        func useOnce(_ agent: AgentID) -> String {
+            agent == .codex ? t(.doctorUseOnceCodex) : f(.doctorUseOnce, agent.displayName)
         }
+        var noWaitNote: String { t(.doctorNoWaitNote) }
         func fired(_ kind: String, _ ageMs: Int64) -> String { f(.doctorFired, kind, ago(ageMs)) }
         func firedLongAgo(_ kind: String, _ ageMs: Int64) -> String { f(.doctorFiredLongAgo, kind, ago(ageMs)) }
 
@@ -382,7 +385,7 @@ enum DoctorModel {
         var reportShape: String { t(.doctorReportShape) }
         func agentsParsed(_ n: Int, _ w: Int) -> String { f(.doctorAgentsParsed, n, w) }
 
-        var codexPermissionHook: String { t(.doctorCodexPermissionHook) }
+        func gatingHook(_ events: [String]) -> String { f(.doctorGatingHook, L10n.joinNames(events, lang)) }
         var notifyOnly: String { t(.doctorNotifyOnly) }
         var codexInstalledNeedsTrust: String { t(.doctorCodexNeedsTrust) }
         var codexTrust: String { t(.doctorCodexTrust) }

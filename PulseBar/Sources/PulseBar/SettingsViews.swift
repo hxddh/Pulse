@@ -63,6 +63,13 @@ extension StatusStore {
             mutedAgents: SettingsModel.sortedMuted(settings.mutedAgents),
             hooksStatus: hooksStatus.label(lang: lang),
             hooksInstalled: hooksInstalled,
+            hookAgents: SettingsModel.hookAgents(
+                installed: hooksStatus.installedAgents,
+                present: Set(AgentID.priority.filter(HooksInstaller.vendorPresent)),
+                lastEventMs: engine.latestHookEventMs,
+                nowMs: Int64(Date().timeIntervalSince1970 * 1000),
+                lang: lang
+            ),
             hookTest: hookSelfTestText,
             hookTestTone: hookTone,
             hookTestRunning: hookSelfTestResult == .running,
@@ -236,6 +243,24 @@ struct SettingsFace: View {
                 Text(t(.settingsHooksTitle))
                 Text(model.hooksStatus)
                     .foregroundStyle(model.hooksInstalled ? AnyShapeStyle(.secondary) : AnyShapeStyle(PulseTheme.Tone.attention.color))
+            }
+            ForEach(model.hookAgents) { line in
+                LabeledContent {
+                    Text(line.state)
+                        .foregroundStyle(line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                } label: {
+                    Label {
+                        Text(line.agent.displayName)
+                        if !line.lastEvent.isEmpty {
+                            Text(line.lastEvent)
+                        }
+                        if let note = line.note {
+                            Text(note)
+                        }
+                    } icon: {
+                        AgentIconView(id: line.agent)
+                    }
+                }
             }
             LabeledContent {
                 Button(t(.testWaitingSignal)) { send(.testHooks) }

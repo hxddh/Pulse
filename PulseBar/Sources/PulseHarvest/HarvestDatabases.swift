@@ -2,14 +2,13 @@ import Foundation
 import PulseCore
 import SQLite3
 
-// The native collector's SQLite readers — Cursor, OpenCode, Warp, Pi and
-// Grok keep their authoritative session metadata in databases. Which agent
+// The native collector's SQLite readers — Cursor, OpenCode and Pi keep their authoritative session metadata in databases. Which agent
 // uses which reader is its `HarvestWalk.database` in AgentCatalog.
 
 extension NativeActivityHarvest {
     // MARK: - Native SQLite adapters
 
-    /// OpenCode, Warp Agent and Pi store their authoritative session metadata
+    /// OpenCode and Pi store their authoritative session metadata
     /// in SQLite. Falling back to a generic file walk makes those agents look
     /// absent even while they have many sessions. These readers only prepare
     /// read-only statements, cap rows, and share the same global byte budget.
@@ -54,154 +53,16 @@ extension NativeActivityHarvest {
             return  // handled above
         case .openCode:
             collectOpenCodeDatabase(database, url: url, into: &facts, error: &error)
-        case .warp:
-            collectWarpDatabase(database, url: url, into: &facts, error: &error)
         case .pi:
             collectPiDatabase(database, url: url, home: home, into: &facts, error: &error)
             // A non-session_meta sibling must not fail the JSONL adapter.
             return
-        case .grok:
-            collectGrokDatabase(database, url: url, home: home, into: &facts, error: &error)
-        case .goose:
-            collectGooseDatabase(database, url: url, into: &facts, error: &error)
         }
         // A locked, corrupt, or non-SQLite file can successfully open and only
         // fail on the first prepared statement/step. Do not turn that into a
         // healthy zero-session result: the caller must retain the previous
         // adapter rows and expose a retryable Support Health state.
         if sqliteReadFailed(database) { error = true }
-    }
-
-    package static func collectGrokDatabase(
-        _ database: OpaquePointer,
-        url: URL,
-        home: URL,
-        into facts: inout [Fact],
-        error: inout Bool
-    ) {
-        let sql = "SELECT session_id, cwd, updated_at, title, content FROM session_docs ORDER BY updated_at DESC LIMIT \(maxRowsPerAgent)"
-        guard let statement = sqlitePrepare(database, sql) else {
-            error = true
-            return
-        }
-        defer { sqlite3_finalize(statement) }
-        while sqlite3_step(statement) == SQLITE_ROW {
-            let sid = sqliteString(statement, column: 0)
-            let cwd = normalizedPath(sqliteString(statement, column: 1))
-            let title = sqliteString(statement, column: 3)
-            let content = sqliteString(statement, column: 4)
-            let displayTitle = title.isEmpty ? grokTitle(from: content) : title
-            let homePath = home.standardizedFileURL.path
-            // The index creates a placeholder document as soon as a session is
-            // opened. A home-only placeholder has no observable task and must
-            // not become a blank tray row.
-            guard !sid.isEmpty,
-                  !displayTitle.isEmpty || !content.isEmpty || (cwd != homePath && !cwd.isEmpty)
-            else { continue }
-            var values: [String: Any] = [
-                "sessionId": sid,
-                "title": displayTitle,
-                "cwd": cwd,
-                "agentMode": "Grok",
-                "records": content.split(whereSeparator: \.isNewline).count,
-            ]
-            var fact = fact(from: values, context: "grok.session_search", structured: true, path: url.path)
-            fact.sessionID = sid
-            fact.records = content.split(whereSeparator: \.isNewline).count
-            fact.activityMs = normalizeTimestamp(sqlite3_column_int64(statement, 2))
-            if fact.activityMs == 0 { fact.activityMs = fileMTime(url) }
-            // 20.0 Drift (xai-org/grok-build session/storage/search_content.rs):
-            // `content` is plain text — every prompt, then every reply, then
-            // every tool title, kept for the life of the session. A "tool" or
-            // "command" substring therefore said nothing about now, and made
-            // finished sessions read as running forever; there are no
-            // `<assistant` markers to find a last word by. The session's own
-            // `updates.jsonl` carries the words (GrokDialect).
-            if fact.lastWord.isEmpty { fact.lastWord = grokLastWord(from: content) }
-            if fact.hasUsefulSignal { facts.append(fact) }
-            if facts.count >= maxFactsPerAgent { break }
-            values.removeAll(keepingCapacity: false)
-        }
-    }
-
-    /// The latest assistant paragraph in Grok's tagged session document —
-    /// the first plain line after the last `<assistant` marker. Tag lines
-    /// and code fences reset the marker; a layout this does not recognise
-    /// yields "", never an invented word. Internal for the unit test.
-    package static func grokLastWord(from content: String) -> String {
-        var pendingAssistant = false
-        var word = ""
-        for line in content.split(whereSeparator: \.isNewline) {
-            let value = String(line).trimmingCharacters(in: .whitespaces)
-            guard !value.isEmpty else { continue }
-            let lower = value.lowercased()
-            if lower.hasPrefix("<assistant") { pendingAssistant = true; continue }
-            if lower.hasPrefix("<") || lower.hasPrefix("```") { pendingAssistant = false; continue }
-            if pendingAssistant {
-                word = value
-                pendingAssistant = false
-            }
-        }
-        return selfReportLine(word)
-    }
-
-    package static func grokTitle(from content: String) -> String {
-        for line in content.split(whereSeparator: \.isNewline) {
-            let value = clean(String(line), limit: 160)
-            guard !value.isEmpty else { continue }
-            let lower = value.lowercased()
-            if lower.hasPrefix("<system") || lower.hasPrefix("<user_query")
-                || lower.hasPrefix("<assistant") || lower.hasPrefix("```") { continue }
-            return value
-        }
-        return ""
-    }
-
-    /// Grok Build `updates.jsonl` (see `GrokDialect`).
-    package static func parseGrokUpdates(_ text: String, path: String) -> [Fact] {
-        var fact = Fact()
-        fact.structured = true
-        fact.sourcePath = path
-        var latest: Int64 = 0
-        var prompt = ""
-        var words = ""
-        var lastKind = ""
-        for line in text.split(whereSeparator: \.isNewline) {
-            guard line.hasPrefix("{"),
-                  let data = line.data(using: .utf8),
-                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let params = record["params"] as? [String: Any]
-            else { continue }
-            latest = max(latest, normalizeTimestamp(record["timestamp"]))
-            let sid = firstString(params, keys: ["sessionId"])
-            if !sid.isEmpty { fact.sessionID = sid }
-            guard let update = params["update"] as? [String: Any] else { continue }
-            let kind = firstString(update, keys: ["sessionUpdate"])
-            let content = update["content"] as? [String: Any] ?? [:]
-            // Raw: a streamed chunk's edge spaces are part of the words.
-            let text = content["text"] as? String ?? ""
-            fact.records += 1
-            switch kind {
-            case "user_message_chunk":
-                if lastKind != kind { prompt = "" }
-                prompt += text
-            case "agent_message_chunk":
-                if lastKind != kind { words = "" }
-                words += text
-            default:
-                continue
-            }
-            lastKind = kind
-        }
-        guard fact.records > 0 else { return [] }
-        let task = cleanPiSessionTitle(prompt)
-        if !task.isEmpty {
-            fact.task = task
-            fact.taskOrigin = .userPrompt
-        }
-        fact.lastWord = selfReportLine(words)
-        fact.activityMs = latest
-        return [fact]
     }
 
     package static func collectOpenCodeDatabase(
@@ -415,92 +276,6 @@ extension NativeActivityHarvest {
                 let reason = firstString(dict, keys: ["reason"]).lowercased()
                 if ["stop", "complete", "completed"].contains(reason) { fact.outcome = "completed" }
             }
-        }
-    }
-
-    package struct WarpQuery {
-        package var timestamp: Int64 = 0
-        package var cwd = ""
-        package var status = ""
-        package var model = ""
-        package var input = ""
-    }
-
-    package static func collectWarpDatabase(
-        _ database: OpaquePointer,
-        url: URL,
-        into facts: inout [Fact],
-        error: inout Bool
-    ) {
-        var queries: [String: WarpQuery] = [:]
-        var queryCounts: [String: Int] = [:]
-        if let statement = sqlitePrepare(database, "SELECT conversation_id, start_ts, working_directory, output_status, model_id, input FROM ai_queries ORDER BY start_ts DESC LIMIT 512") {
-            defer { sqlite3_finalize(statement) }
-            while sqlite3_step(statement) == SQLITE_ROW {
-                let id = sqliteString(statement, column: 0)
-                guard !id.isEmpty else { continue }
-                queryCounts[id, default: 0] += 1
-                if queries[id] == nil {
-                    queries[id] = WarpQuery(
-                        timestamp: normalizeTimestamp(sqliteString(statement, column: 1)),
-                        cwd: normalizedPath(sqliteString(statement, column: 2)),
-                        status: sqliteString(statement, column: 3),
-                        model: sqliteString(statement, column: 4),
-                        input: sqliteString(statement, column: 5)
-                    )
-                }
-            }
-        }
-        var taskCounts: [String: Int] = [:]
-        if let statement = sqlitePrepare(database, "SELECT conversation_id, COUNT(*) FROM agent_tasks GROUP BY conversation_id") {
-            defer { sqlite3_finalize(statement) }
-            while sqlite3_step(statement) == SQLITE_ROW {
-                taskCounts[sqliteString(statement, column: 0)] = max(0, Int(sqlite3_column_int64(statement, 1)))
-            }
-        }
-        guard let statement = sqlitePrepare(database, "SELECT conversation_id, last_modified_at, summary, conversation_data FROM agent_conversations ORDER BY last_modified_at DESC LIMIT \(maxRowsPerAgent)") else {
-            error = true
-            return
-        }
-        defer { sqlite3_finalize(statement) }
-        while sqlite3_step(statement) == SQLITE_ROW {
-            let sid = sqliteString(statement, column: 0)
-            guard !sid.isEmpty else { continue }
-            let modified = normalizeTimestamp(sqliteString(statement, column: 1))
-            let summary = jsonObject(sqliteString(statement, column: 2)) ?? [:]
-            let query = queries[sid]
-            let title = firstString(summary, keys: ["title", "initial_query"])
-            let cwd = normalizedPath(firstString(summary, keys: ["initial_working_directory"]))
-                .isEmpty ? (query?.cwd ?? "") : normalizedPath(firstString(summary, keys: ["initial_working_directory"]))
-            let queryText = jsonFirstText(query?.input ?? "")
-            var values: [String: Any] = [
-                "sessionId": sid,
-                "title": title.isEmpty ? queryText : title,
-                "cwd": cwd,
-                "model": query?.model ?? "",
-                "agentMode": "Warp Agent",
-                "progressTotal": taskCounts[sid] ?? 0,
-                "records": queryCounts[sid] ?? 0,
-            ]
-            var fact = fact(from: values, context: "warp.agent_conversation", structured: true, path: url.path)
-            fact.sessionID = sid
-            fact.records = queryCounts[sid] ?? 0
-            fact.activityMs = query?.timestamp ?? modified
-            if fact.activityMs == 0 { fact.activityMs = fileMTime(url) }
-            let status = (query?.status ?? "").lowercased()
-            if status.contains("progress") || status.contains("running") { fact.phase = "working" }
-            if status.contains("complete") || status.contains("success") || status.contains("done") {
-                fact.phase = "turn_complete"; fact.outcome = "completed"
-            } else if status.contains("fail") || status.contains("error") {
-                fact.phase = "turn_complete"; fact.outcome = "failed"
-            } else if status.contains("cancel") || status.contains("abort") {
-                fact.phase = "turn_complete"; fact.outcome = "cancelled"
-            }
-            // Warp is waitingSource.none — never stamp skill=pending from status.
-            if fact.tool.isEmpty { fact.tool = jsonFirstTool(query?.input ?? "") }
-            if fact.hasUsefulSignal { facts.append(fact) }
-            if facts.count >= maxFactsPerAgent { break }
-            values.removeAll(keepingCapacity: false)
         }
     }
 

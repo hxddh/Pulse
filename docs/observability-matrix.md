@@ -1,5 +1,8 @@
 # Agent observability contract
 
+> **24.0** — seven agents (Claude, Codex, Cursor, Pi, Gemini, Copilot,
+> OpenCode); the others were removed with their readers.
+>
 > **23.0** — every row says where its facts came from (`RowSource`: session
 > file / app data / hooks only / process only) and one sentence of why it is
 > in its state (`Explain.why`). Process-only fallbacks are never presented as
@@ -72,36 +75,11 @@ may not have it.
 | --- | --- | --- | --- |
 | Claude Code | transcript | direct | latest model call, last meaningful action, records, session age, subagents, wait |
 | Codex | rollout | direct | latest model call, last meaningful action, session age, subagents, wait |
-| Cursor | composer database | direct | composer mode (23.0: no Waiting — format unverified) |
-| Grok | summary + signals + lifecycle events | direct | phase, outcome, model, agent mode, turns, failures, files, context usage, wait |
-| Pi | session JSONL | direct | tokens, last meaningful action, wait |
-| Amp | thread/session/history | direct | mode, session age, records (23.0: no Waiting — format unverified); continuation prompts are skipped |
-| Aider | chat history | direct | last meaningful action, session age, records, wait |
+| Cursor | composer database | direct | composer mode (no Waiting: format unverified, and its hooks report none) |
+| Pi | session JSONL | direct | tokens, last meaningful action, wait (24.0: from its extension events) |
 | Gemini CLI | session JSON | direct | tokens, last meaningful action, session age, records, wait |
 | GitHub Copilot | session store | direct | last meaningful action, session age, records, wait |
 | OpenCode | session database | direct | tokens, pending/wait |
-| Goose | session store | direct | last meaningful action, session age, records, wait |
-| OpenHands | session store | direct | last meaningful action, session age, records, wait |
-| Continue | session store | direct | last meaningful action, session age, records, wait |
-| Droid | session JSONL | direct | last meaningful action, session age, records (23.0: no Waiting — format unverified) |
-| Command Code | session JSONL | direct | last meaningful action, session age, records (23.0: no Waiting — format unverified) |
-| Kimi | session JSONL | direct | last meaningful action, session age, records, wait |
-| Amazon Q | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
-| Cline | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
-| Roo Code | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
-| Cascade | verified cache | conditional | phase, model, mode, progress, outcome, records, session age (23.0: no Waiting — format unverified) |
-| Windsurf | verified cache | conditional | phase, model, mode, progress, outcome, records, session age (23.0: no Waiting — format unverified) |
-| Augment | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
-| Zed Agent | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
-| Trae | verified cache | conditional | phase, model, mode, progress, outcome |
-| Warp Agent | verified cache | conditional | phase, model, mode, progress, outcome |
-| Kilo Code | verified cache | conditional | phase, model, mode, progress, outcome, pending/wait |
-| Devin | verified cache | conditional | phase, model, mode, progress, outcome |
-| Kiro | verified cache | conditional | phase, model, mode, progress, outcome (23.0: no Waiting — format unverified) |
-| Junie | verified cache | conditional | phase, model, mode, progress, outcome |
-| Replit Agent | verified cache | conditional | phase, model, mode, progress, outcome |
-| Antigravity | verified cache | conditional | phase, model, mode, progress, outcome |
-| ZCode | verified cache | conditional | phase, model, mode, progress, outcome |
 
 Every Agent still has a process fallback: real working directory, process age,
 TTY/focus capability, and an explicit “activity unavailable” statement. That
@@ -178,17 +156,13 @@ without exposing namespaces, paths, URLs, or arbitrary implementation text.
 | Agent | 通路 | 工具(→目标) | token | 模型 | 上下文% | skill | 子agent | 原话/计划/错误 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Claude 家族 | 通用 JSONL 形状 | ✓(tool_use;目标走 hooks 活动事件) | ✓ message.usage | ✓ | −(transcript 不写百分比) | ✓ 8.2(`Skill` 调用的 input.skill) | ✓(subagents 目录计数) | ✓/✓/✓ |
-| Command Code | 通用 JSONL(Claude 同形) | ✓ | ✓ | ✓ | − | ✓(同形自动生效) | −(无子 agent 目录约定) | ✓/✓/✓ |
 | Codex | 专用解析器 | ✓ function_call | ✓ token_count(latest 优先) | ✓ 8.2(turn_context) | ✓ 8.3(window×used 两实测数之比) | −(rollout 无 skill 概念) | − | ✓/✓(update_plan)/✓ |
 | Pi(JSONL) | 专用解析器 | ✓ 8.2(toolCall;>8KB 行正则打捞) | ✓ 8.2(usage {input,output}) | ✓ | −(JSONL 无上下文字段) | −(无 skill 记录) | − | ✓ 8.2/−(无 todos)/✓ 8.2(isError 方言) |
 | Pi(context-mode DB) | SQLite events | ✓ tool_call 事件 | ✓ agent_usage | ✓ | −(events 无窗口字段) | − | − | −/−/✓(error 事件计数,无原文) |
 | Cursor(composer) | SQLite headers + bubbles KV | →(headers 无工具;bubbles 未提取工具) | ✓(header 若带 usage 键) | ✓ | − | − | − | ✓ 9.0(cursorDiskKV 最新 assistant bubble;版式不符则缺席)/−/− |
-| Grok | SQLite session_docs(+ 若有 JSONL 走形状) | −(docs 无结构化工具) | −(docs 无 usage) | −(docs 无模型字段) | − | − | − | ✓ 8.3(`<assistant` 标签后段落)/−/− |
 | OpenCode | SQLite session+message+parts | ✓ parts | ✓ session 列 | ✓ session 列 | −(无窗口列) | − | − | ✓ 9.0(role 经 message 表联查;缺表则缺席)/−/− |
 | Gemini | 通用(chats 整文件 JSON) | ✓ functionCall | ✓ usageMetadata | ✓ | − | − | − | ✓ 9.0(整文档遍历,最后一个 `model` 回合)/−/− |
-| Amp | 通用 JSONL 形状 | ✓* | ✓* | ✓* | −* | −* | −* | ✓* |
-| Aider | 文本(markdown 历史) | −(无结构化记录) | −(历史无 usage) | ✓(正则) | − | − | − | ✓ 9.0(最新 `#### ` 用户回合后的散文段)/−/− |
-| Copilot / Goose / OpenHands / Continue / Droid / Kimi | 通用 JSONL/JSON 形状 | ✓* | ✓* | ✓* | −* | −* | −* | ✓* |
+| Copilot | 通用 JSONL/JSON 形状 | ✓* | ✓* | ✓* | −* | −* | −* | ✓* |
 
 \* 形状通路:采到什么取决于该家本机文件实际携带什么——形状匹配则得,
 不匹配则诚实缺席。某家某类长期为空 = 该家记录不写它(−);若你在原始文件里

@@ -68,11 +68,12 @@ always-allow / 自动批准、对着截断摘要的盲批，以及替你派活�
 > Gatekeeper；配置 Developer ID + 公证之后这一步才不需要，见[发布](#发布)。DMG
 > 内也附有中英文首次启动说明。
 
-装好后可直接使用，不需要安装 hooks。Pulse 默认读取本地会话与进程证据；Claude/Codex
-的 hooks 只是额外增强权限/输入等待和 subagent 生命周期的 Waiting 信号，按需在设置里
-启用即可（**原生通路，无需 Python**）。没有 hooks 时，能从会话数据确认的 `pending`
-仍会点亮红灯；无法确认的路径
-会诚实标为仅运行中，不伪造 Waiting。
+**24.0 起只支持七个主流 Agent**：Claude Code、Codex、Gemini CLI、Copilot CLI、OpenCode、
+Cursor（编辑器与 `cursor-agent` 命令行算同一个）和 Pi。每个都走厂商自己文档里的
+hook / 插件 / 扩展：设置 → Hooks 一键安装，**只装不能改变 Agent 决定的观察型事件**
+（从不装 PreToolUse / beforeShellExecution 这类能拦截的 hook，也从不返回任何决定），
+移除时每个文件**逐字节**还原。原生通路，无需 Python。Codex 与 Cursor 的 hook 只报
+「运行中」与「轮到你」，不会报告它在等你——Pulse 如实这样写，不伪造 Waiting。
 
 0.49.0 起采集器使用 Swift 原生 bounded reader 直接生成会话和健康事实；每个 adapter 都会报告
 observed、no_sessions、source_absent、permission_denied、schema_mismatch 或 failed，
@@ -82,7 +83,7 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 需要读取受 macOS 保护的 App Support / App Group 时，在设置页打开「读取应用数据」这一个开关；默认不
 访问这些目录、不制造跨应用权限弹窗。按 → 或行菜单「详情」进入详情页，可查看任务、为什么是这个状态、
 时间条、最后的消息、计划、通知去向和读取诊断；诊断窗口（托盘「⋯」→「诊断…」）默认展示
-全部 32 个用户可见 Agent，逐项给出证据、缺口和下一步动作。
+全部 7 个 Agent，逐项给出证据、缺口和下一步动作。
 
 23.0 起设置存为 `settings.json`，不迁移旧的 `settings.txt`（升级后恢复默认值，应用数据读取默认关闭），
 这样不会因 ad-hoc 签名变化在后台反复触发 macOS 权限弹窗。
@@ -101,13 +102,14 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 | --- | --- | --- |
 | **A · Probe** | `ps` 扫进程 | 有没有人在跑 |
 | **B · Harvest** | Swift 原生读取各 Agent 会话文件 / 可验证缓存（受限目录按 Agent 授权） | 有结构化数据时回答任务、项目、会话与最近活动 |
-| **C · Waiting** | hooks，或 harvest 里的 `pending` 标记 | 是不是在等你 |
+| **C · Waiting** | 厂商自己的 hook / 插件 / 扩展事件 | 是不是在等你 |
 
 **诚实规则**（写死的产品约束，见 [`AGENTS.md`](AGENTS.md)）：
 
 - 进程在 ≠ 会话在干活。没有任务标题的 live 行只显示「检测到进程」，排在有标题的会话之后。
-- Waiting 只来自 hooks 或 `skill=pending`，**绝不推断**。没有 Waiting 通路的 Agent，
-  托盘明说「暂无 Waiting 信号」，不假装。
+- Waiting 只来自厂商 hook 报告的阻塞事件（下一阶段删除 harvest 之前，报告阻塞的 Agent
+  仍兼看会话里的 `skill=pending`），**绝不推断**。Codex 与 Cursor 的 hook 不报等待，
+  它们明说「不会报告它在等你」，不假装。
 - 每条 Waiting 行标注来源是 `hooks` 还是 `pending`，你自己判断可信度。
 - Focus 不吹牛：落地精度分 TTY 标签、宿主工作区、`Warp/宿主 (app)`；Terminal/iTerm
   的 TTY 选择默认关闭（Shortcuts opt-in）。没有可验证句柄时，行保持为观测内容，
@@ -117,22 +119,18 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 
 | Agent | Probe | Harvest | Waiting |
 | --- | --- | --- | --- |
-| Claude / Codex | A | Structured session | hooks（+ Codex pending） |
-| Grok / Pi / Gemini / Copilot / OpenCode / Goose / OpenHands / Kimi | A | Structured session | pending |
-| Cursor / Amp / Droid / Command Code | A* | Structured session | **none**（格式未核实，23.0 起不从 harvest 推断） |
-| Aider / Continue | A | Structured session | **none**（格式里没有等待信号，20.0 核对源码） |
-| Cline / Roo / Kilo | A | Best effort cache | pending（尽力） |
-| Amazon Q / Cascade / Windsurf / Augment / Zed / Kiro | A | Best effort cache | **none**（格式未核实，23.0 起不从 harvest 推断） |
-| Trae / Warp / Antigravity / Devin / Junie / Replit / ZCode | A | Best effort cache | **none**（本机无可靠信号） |
+| Claude | A | Structured session | hooks（PermissionRequest、Notification 权限 / 提问；全部 `async`） |
+| Gemini | A | Structured session | hooks（Notification `ToolPermission`） |
+| Copilot | A | Structured session | hooks（notification `permission_prompt` / `elicitation_dialog`） |
+| OpenCode | A | Structured session | plugin（`permission.asked` / `question.asked`） |
+| Pi | A | Structured session | extension（`ui_prompt_start` / `ui_prompt_end`） |
+| Codex | A | Structured session | **none**（hooks 只报运行中与轮到你；它的 PermissionRequest 在自己的自动审查之前触发） |
+| Cursor | A* | Structured session | **none**（hooks 只报运行中与轮到你；没有不拦截的等待事件） |
 
-\* Cursor 进程常跳过外壳，靠 harvest 认；其余 Agent 的 Probe 仍为 A。
-`Structured session` 读取真实 transcript / thread / composer / session database；
-`Best effort cache` 只承诺缓存中确实存在的标题、工作区和更新时间。缓存里只有扩展名、
-文件名或 `Agent session` 这类占位词时，Pulse 会直接丢弃该条，不再把“找到一个文件”
-伪装成会话观测。VS Code 系扩展的 session 常被包在多层 state/container 中，Pulse 会
-有界遍历这些结构，只接受同时带会话上下文、标识或绝对工作区的事实；不会把 profile、
-model、theme 的 `name/title` 当成任务。两者若没有当前数据都会明确降级；CLI 进程还能
-补充其真实工作目录与进程时长，但不会用进程数冒充会话信息。
+\* Cursor 编辑器进程常跳过外壳，靠 harvest 认；`cursor-agent` 命令行按进程认，同属 Cursor。
+每个 Agent 装哪些事件、对应 Pulse 的哪种状态、读的是厂商哪份文档或哪个提交，记在
+[`docs/vendor-formats.json`](docs/vendor-formats.json) 与
+[`docs/attention-protocol.md`](docs/attention-protocol.md)。
 
 Harvest 不再只是一条标题：统一行协议还能承载阶段、结果、模型/模式、进度、失败数、
 涉及文件和上下文占用。各 Agent 的本地格式能提供什么、缺什么，逐项记录在
@@ -151,11 +149,13 @@ Waiting 来源校验，
 读取权限不足、供应商格式变化、采集失败和超时未完成。进程命中只展示隐私安全的规则类型，
 不会把完整命令行、参数或私有路径带进 UI。
 
-想让名单外的工具点亮 Waiting，走 [`docs/attention-bridge.md`](docs/attention-bridge.md)。
+24.0 起名单就是这七个；Attention Protocol（[`docs/attention-bridge.md`](docs/attention-bridge.md)）
+只服务于它们自己的 hook 与脚本。
 
-**图标**：23 个来自 [Simple Icons](https://simpleicons.org)（CC0，商标归各自所有者）；
-其余 10 个没有现成品牌图标，由 [`scripts/make_agent_icons.py`](scripts/make_agent_icons.py)
-画成几何标记——**那是 Pulse 自己的图形，不是厂商的商标**。
+**图标**：七个 Agent 都有现成的品牌图标（[Simple Icons](https://simpleicons.org) 等，
+CC0，商标归各自所有者）；没有现成图标的 Agent 由
+[`scripts/make_agent_icons.py`](scripts/make_agent_icons.py) 画成几何标记——**那是 Pulse
+自己的图形，不是厂商的商标**。
 `--check` 是门禁：新增 Agent 若没有图标，CI 就红，不会悄悄退回字母标。
 
 ---
@@ -168,7 +168,9 @@ Waiting 来源校验，
 - **快捷键** —— 唤出面板（关闭 / ⌘⇧P / ⌘⇧U / ⌘⌥P / ⌃⌥P）
 - **通知** —— 授权状态、「Agent 需要我时通知」、静音的 Agent（每个带 ✕）；声音与安静时段交给
   macOS 的通知设置与专注模式，静音某个 Agent 在行菜单里（或按 M）
-- **Hooks** —— Claude 与 Codex 的 hooks（安装 / 移除 / 测试）
+- **Hooks** —— 七个 Agent 各自的官方 hook / 插件 / 扩展（安装 / 移除 / 测试）；每个 Agent
+  一行：已安装、未安装或这台 Mac 上没有，以及「最近事件 12 秒前」；Codex 与 Cursor
+  注明「不会报告它在等你」
 - **终端控制** / **数据访问** —— 可以做的事（终端自动化）与可以读取的内容（受保护的应用数据，
   一个开关），每项默认关闭并写明后果
 - **更新** —— 检查更新（有新版本时打开发布页，在浏览器里下载）
@@ -266,6 +268,6 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。�
 | [`AGENTS.md`](AGENTS.md) | 接手须知：不变量、门禁、发布流程 |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | 体验规格 —— UI 改动的验收依据 |
 | [`docs/architecture.md`](docs/architecture.md) | 数据从进程到菜单栏的完整路径 |
-| [`docs/attention-bridge.md`](docs/attention-bridge.md) | 让名单外的工具上报 Waiting |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v1 契约 |
+| [`docs/attention-bridge.md`](docs/attention-bridge.md) | 用 `pulse-hook` / 追加一行上报状态 |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v4 契约与各 Agent 事件映射 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |

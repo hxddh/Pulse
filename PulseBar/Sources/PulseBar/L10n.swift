@@ -105,8 +105,7 @@ enum L10n {
         case .signalPending: return "session record"
         case .launchAtLogin: return "Launch at login"
         case .language: return "Language"
-        case .hooksHint:
-            return "Install Claude/Codex hooks so Pulse can show permission, input waits, and subagent lifecycle. Native — no Python required."
+        case .hooksHint: return "Installs each agent's own documented hook, plugin or extension — observe-only events, never one that can gate or answer. Remove puts every file back byte for byte."
         case .installHooks: return "Install hooks"
         case .testWaitingSignal: return "Test connection"
         case .hookTestIdle: return "Not tested"
@@ -119,12 +118,10 @@ enum L10n {
         case .recent: return "Recent"
         case .dismissWait: return "Dismiss"
         case .focusFailed: return "Could not open it — that window may be gone. Rescanning."
-        case .hooksNudge: return "Install hooks for Claude and Codex to see their exact requests and \"your turn\""
+        case .hooksNudge: return "Install hooks to see exact requests and \"your turn\" for the agents you run"
         case .hooksUnknown: return "Not checked"
         case .hooksMissing: return "Not installed"
-        case .hooksInstalledBoth: return "Installed · Claude + Codex"
-        case .hooksInstalledClaude: return "Installed · Claude"
-        case .hooksInstalledCodex: return "Installed · Codex"
+        case .hooksInstalledCount: return "Installed · %d of %d agents"
         case .hooksFailed: return "Failed"
         case .kindPermission: return "Permission"
         case .kindInput: return "Input"
@@ -202,14 +199,13 @@ enum L10n {
         case .supportMissingWorkspace: return "workspace"
         case .supportMissingWaiting: return "Waiting hook not ready"
         case .supportWaitingHooks: return "Waiting route: hooks"
-        case .supportWaitingHarvest: return "Waiting route: session data"
         case .supportWaitingNoneDetail:
             return "No native Waiting path — use the Attention bridge"
         case .supportDepthSession: return "Depth: session transcript"
         case .supportDepthCacheThin: return "Only part of a cache could be read"
         case .supportDepthCachePartial: return "Depth: cache facts (Limited)"
         case .supportDepthWaitingNone: return "Waiting unavailable — Attention bridge"
-        case .supportSharedCursor: return "Cursor Agent shares this adapter"
+        case .supportSharedCursor: return "The Cursor IDE and the cursor-agent CLI are one agent"
         case .supportLastSignal: return "signal %@ ago"
         case .supportDetectedExecutable: return "detected by executable"
         case .supportDetectedPath: return "detected by path signature"
@@ -274,10 +270,10 @@ enum L10n {
             return "Structured adapter yielded rows but no core facts — the vendor format may have drifted"
         case .signalVendor: return "Claude reports"
         case .doctorRun: return "Run self-check"
-        case .doctorHint: return "Reads the Claude and Codex hook files and logs on this Mac, runs claude agents --json once, and says which contracts are proven here. Writes nothing; the copied report has no paths, prompts or session ids."
+        case .doctorHint: return "Reads each agent's hook file and the hook log on this Mac, runs claude agents --json once, and says which contracts are proven here. Writes nothing; the copied report has no paths, prompts or session ids."
         case .yourTurn: return "Your turn"
         case .shortcutOff: return "Off"
-        case .settingsHooksTitle: return "Claude & Codex hooks"
+        case .settingsHooksTitle: return "Agent hooks"
         case .settingsHooksTest: return "Test the connection"
         case .healthAgentsHeading: return "Agents"
         case .healthRunCheck: return "Run"
@@ -356,10 +352,8 @@ enum L10n {
         case .doctorVerdictAttention: return "attention"
         case .doctorVerdictAbsent: return "n/a"
         case .doctorHeader: return "Pulse %@ (%@) · macOS %@ · self-check"
-        case .doctorClaudeHooks: return "Claude hooks installed"
-        case .doctorClaudeFired: return "Claude hooks reach Pulse"
-        case .doctorCodexHooks: return "Codex hooks installed"
-        case .doctorCodexFired: return "Codex hooks reach Pulse"
+        case .doctorAgentHooks: return "%@ hooks installed"
+        case .doctorAgentFired: return "%@ hooks reach Pulse"
         case .doctorCodexRollout: return "Codex session log format"
         case .doctorReading: return "Session formats read in full"
         case .doctorNoSessions: return "No session files read this run"
@@ -373,10 +367,10 @@ enum L10n {
         case .doctorInstallHooks: return "Settings → Hooks → Install hooks"
         case .doctorReinstallHooks: return "Reinstall hooks from Settings to pick up this version's events"
         case .doctorMissing: return "Missing: %@"
-        case .doctorAllEvents: return "All %d events, questions included"
+        case .doctorAllEvents: return "All %d events"
         case .doctorNeverFired: return "No hook event recorded in the last day"
         case .doctorUseOnceCodex: return "Finish one Codex turn; if nothing arrives, run /hooks in Codex and trust Pulse's hooks"
-        case .doctorUseOnceClaude: return "Finish one Claude turn, then run the self-check again"
+        case .doctorUseOnce: return "Use %@ once, then run the self-check again"
         case .doctorFired: return "Last event: %@, %@"
         case .doctorFiredLongAgo: return "Last event %@ was %@ — too old to prove today's install"
         case .doctorNoCLI: return "No claude executable found where Pulse looks"
@@ -387,9 +381,9 @@ enum L10n {
         case .doctorAgentsUnreadable: return "Answered %d bytes Pulse cannot read as the documented shape"
         case .doctorReportShape: return "Copy this report into an issue — the shape changed"
         case .doctorAgentsParsed: return "Read %d session(s), %d waiting"
-        case .doctorCodexPermissionHook: return "A PermissionRequest hook is installed; it fires before Codex's own review and would show waits that are not real"
+        case .doctorGatingHook: return "A Pulse entry sits on %@, which can gate the agent or fake a wait; reinstall hooks to remove it"
         case .doctorNotifyOnly: return " (the older notify hook is present)"
-        case .doctorCodexNeedsTrust: return "Stop and UserPromptSubmit are installed; whether Codex trusts them only shows once one fires"
+        case .doctorCodexNeedsTrust: return "Pulse's hooks are installed; whether Codex trusts them only shows once one fires"
         case .doctorCodexTrust: return "Run /hooks in Codex once and trust Pulse's entries"
         case .doctorNoRollout: return "No session log in the last week to look at"
         case .doctorRolloutLegacy: return "Classic event lines — parsed"
@@ -423,6 +417,13 @@ enum L10n {
         case .noticeNotificationsDenied: return "Notifications are off for Pulse — an agent that needs you cannot reach you"
         case .noticeNotificationsOff: return "Turn on notifications so an agent that needs you can reach you"
         case .filterLabel: return "Filter"
+        case .settingsHookInstalled: return "Installed"
+        case .settingsHookNotFound: return "Not on this Mac"
+        case .settingsHookLastEvent: return "last event %@ ago"
+        case .settingsHookLastEventNow: return "last event just now"
+        case .settingsHookNoEvent: return "no event yet"
+        case .settingsHookNoWait: return "Doesn't report when it waits — running and your turn only"
+        case .doctorNoWaitNote: return " · reports running and your turn, never a wait"
         case .settingsHooksSection: return "Hooks"
         case .settingsTerminalSection: return "Terminal control"
         case .settingsDataSection: return "Data access"
@@ -479,7 +480,7 @@ enum L10n {
         case .signalPending: return "会话记录"
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
-        case .hooksHint: return "安装 Claude/Codex hooks 后，Pulse 才能显示权限、输入等待与 subagent 生命周期。原生通路，无需 Python。"
+        case .hooksHint: return "为每个 Agent 安装它自己文档里的 hook、插件或扩展——只用观察型事件，从不用能拦截或代答的事件。移除时每个文件逐字节还原。"
         case .installHooks: return "安装 hooks"
         case .testWaitingSignal: return "测试连接"
         case .hookTestIdle: return "尚未测试"
@@ -492,12 +493,10 @@ enum L10n {
         case .recent: return "最近"
         case .dismissWait: return "忽略"
         case .focusFailed: return "没能打开 —— 那个窗口可能已经不在了，正在重扫"
-        case .hooksNudge: return "为 Claude 和 Codex 安装 hooks，就能看到确切的请求内容和「轮到你」"
+        case .hooksNudge: return "安装 hooks，就能看到你在用的 Agent 的确切请求和「轮到你」"
         case .hooksUnknown: return "未检查"
         case .hooksMissing: return "未安装"
-        case .hooksInstalledBoth: return "已安装 · Claude + Codex"
-        case .hooksInstalledClaude: return "已安装 · Claude"
-        case .hooksInstalledCodex: return "已安装 · Codex"
+        case .hooksInstalledCount: return "已安装 · %d / %d 个 Agent"
         case .hooksFailed: return "失败"
         case .kindPermission: return "需要授权"
         case .kindInput: return "等待输入"
@@ -570,13 +569,12 @@ enum L10n {
         case .supportMissingWorkspace: return "工作区"
         case .supportMissingWaiting: return "等待 hook 尚未就绪"
         case .supportWaitingHooks: return "等待通路：hooks"
-        case .supportWaitingHarvest: return "等待通路：会话数据"
         case .supportWaitingNoneDetail: return "不能主动报告「需要你」—— 可以通过 Attention 桥接入"
         case .supportDepthSession: return "深度：会话记录"
         case .supportDepthCacheThin: return "只读到部分缓存"
         case .supportDepthCachePartial: return "深度：缓存事实（有限）"
         case .supportDepthWaitingNone: return "不能报告「需要你」—— 可通过 Attention 桥接入"
-        case .supportSharedCursor: return "Cursor Agent 与此适配器共用"
+        case .supportSharedCursor: return "Cursor IDE 与 cursor-agent 命令行是同一个 Agent"
         case .supportLastSignal: return "%@前收到信号"
         case .supportDetectedExecutable: return "通过可执行程序检测"
         case .supportDetectedPath: return "通过路径特征检测"
@@ -641,10 +639,10 @@ enum L10n {
             return "声明结构化、本拍有行却零核心事实 —— 厂商格式可能已漂移"
         case .signalVendor: return "Claude 自报"
         case .doctorRun: return "运行自检"
-        case .doctorHint: return "读取这台 Mac 上 Claude 与 Codex 的 hook 文件和记录，运行一次 claude agents --json，说明哪些约定在这里已被证实。不写任何东西；复制出的报告不含路径、提示词或会话 id。"
+        case .doctorHint: return "读取这台 Mac 上每个 Agent 的 hook 文件与 hook 记录，运行一次 claude agents --json，说明哪些约定在这里已被证实。不写任何东西；复制出的报告不含路径、提示词或会话 id。"
         case .yourTurn: return "轮到你"
         case .shortcutOff: return "关闭"
-        case .settingsHooksTitle: return "Claude 与 Codex 的 hooks"
+        case .settingsHooksTitle: return "Agent 的 hooks"
         case .settingsHooksTest: return "测试连接"
         case .healthAgentsHeading: return "Agent"
         case .healthRunCheck: return "运行"
@@ -723,10 +721,8 @@ enum L10n {
         case .doctorVerdictAttention: return "需处理"
         case .doctorVerdictAbsent: return "不适用"
         case .doctorHeader: return "Pulse %@（%@）· macOS %@ · 自检"
-        case .doctorClaudeHooks: return "Claude hooks 已安装"
-        case .doctorClaudeFired: return "Claude hooks 到达 Pulse"
-        case .doctorCodexHooks: return "Codex hooks 已安装"
-        case .doctorCodexFired: return "Codex hooks 到达 Pulse"
+        case .doctorAgentHooks: return "%@ hooks 已安装"
+        case .doctorAgentFired: return "%@ hooks 到达 Pulse"
         case .doctorCodexRollout: return "Codex 会话记录格式"
         case .doctorReading: return "会话格式读全了"
         case .doctorNoSessions: return "本次运行没有读到会话文件"
@@ -740,10 +736,10 @@ enum L10n {
         case .doctorInstallHooks: return "设置 → Hooks → 安装 hooks"
         case .doctorReinstallHooks: return "在设置里重新安装 hooks，以获得这一版的事件"
         case .doctorMissing: return "缺少：%@"
-        case .doctorAllEvents: return "全部 %d 个事件，含提问"
+        case .doctorAllEvents: return "全部 %d 个事件"
         case .doctorNeverFired: return "最近一天没有记录到 hook 事件"
         case .doctorUseOnceCodex: return "在 Codex 里完成一轮；若仍没有，在 Codex 里运行 /hooks 并信任 Pulse 的 hooks"
-        case .doctorUseOnceClaude: return "在 Claude 里完成一轮后再自检一次"
+        case .doctorUseOnce: return "用 %@ 完成一次操作后再自检一次"
         case .doctorFired: return "最近事件：%@，%@"
         case .doctorFiredLongAgo: return "最近事件 %@ 在 %@——太久，证明不了现在的安装"
         case .doctorNoCLI: return "在 Pulse 查找的位置没有 claude 可执行文件"
@@ -754,9 +750,9 @@ enum L10n {
         case .doctorAgentsUnreadable: return "返回了 %d 字节，不是 Pulse 认识的格式"
         case .doctorReportShape: return "把这份报告贴进 issue——格式变了"
         case .doctorAgentsParsed: return "读到 %d 个会话，其中 %d 个在等"
-        case .doctorCodexPermissionHook: return "装了 PermissionRequest hook；它在 Codex 自己审批之前触发，会显示并不存在的等待"
+        case .doctorGatingHook: return "Pulse 的条目挂在 %@ 上，它可能拦住 Agent 或造成假的等待；重新安装 hooks 即可移除"
         case .doctorNotifyOnly: return "（仍有旧的 notify hook）"
-        case .doctorCodexNeedsTrust: return "Stop 与 UserPromptSubmit 已安装；Codex 是否信任它们，要等触发一次才知道"
+        case .doctorCodexNeedsTrust: return "Pulse 的 hooks 已安装；Codex 是否信任它们，要等触发一次才知道"
         case .doctorCodexTrust: return "在 Codex 里运行一次 /hooks 并信任 Pulse 的条目"
         case .doctorNoRollout: return "最近一周没有可查看的会话记录"
         case .doctorRolloutLegacy: return "经典事件行——可解析"
@@ -790,6 +786,13 @@ enum L10n {
         case .noticeNotificationsDenied: return "Pulse 的通知被关闭了 —— 需要你的 Agent 没法提醒你"
         case .noticeNotificationsOff: return "开启通知，需要你的 Agent 才能提醒到你"
         case .filterLabel: return "筛选"
+        case .settingsHookInstalled: return "已安装"
+        case .settingsHookNotFound: return "这台 Mac 上没有"
+        case .settingsHookLastEvent: return "最近事件 %@ 前"
+        case .settingsHookLastEventNow: return "最近事件：刚刚"
+        case .settingsHookNoEvent: return "还没有事件"
+        case .settingsHookNoWait: return "不会报告它在等你——只显示运行中与轮到你"
+        case .doctorNoWaitNote: return " · 只报告运行中与轮到你，从不报告等待"
         case .settingsHooksSection: return "Hooks"
         case .settingsTerminalSection: return "终端控制"
         case .settingsDataSection: return "数据访问"
@@ -824,8 +827,8 @@ enum L10n {
         case hookTestIdle, hookTestRunning, hookTestPassed, hookTestFailed
         case shortcuts
         case running, settingsTitle
-        case hooksNudge, hooksUnknown, hooksMissing, hooksInstalledBoth
-        case hooksInstalledClaude, hooksInstalledCodex, hooksFailed
+        case hooksNudge, hooksUnknown, hooksMissing, hooksInstalledCount
+        case hooksFailed
         case kindPermission, kindInput, kindWaiting
         case signalHooks, signalPending
         case processCount
@@ -856,7 +859,7 @@ enum L10n {
         case supportObservedSignals, supportLastRead, supportMissing
         case supportMissingFeed, supportMissingGoal, supportMissingWorkspace
         case supportMissingWaiting
-        case supportWaitingHooks, supportWaitingHarvest, supportWaitingNoneDetail, supportSharedCursor
+        case supportWaitingHooks, supportWaitingNoneDetail, supportSharedCursor
         case supportLastSignal, supportDetectedExecutable, supportDetectedPath, supportFactCoverage
         case supportCollectorObserved
         case supportCollectorSourceAbsent, supportCollectorSourceAbsentDetail
@@ -890,6 +893,7 @@ enum L10n {
         case shortcutOff
         case settingsHooksTitle
         case settingsHooksTest
+        case settingsHookInstalled, settingsHookNotFound, settingsHookLastEvent, settingsHookLastEventNow, settingsHookNoEvent, settingsHookNoWait, doctorNoWaitNote
         case healthAgentsHeading
         case healthRunCheck
         case healthRunAgain
@@ -967,10 +971,8 @@ enum L10n {
         case doctorVerdictAttention
         case doctorVerdictAbsent
         case doctorHeader
-        case doctorClaudeHooks
-        case doctorClaudeFired
-        case doctorCodexHooks
-        case doctorCodexFired
+        case doctorAgentHooks
+        case doctorAgentFired
         case doctorCodexRollout
         case doctorReading
         case doctorNoSessions
@@ -987,7 +989,7 @@ enum L10n {
         case doctorAllEvents
         case doctorNeverFired
         case doctorUseOnceCodex
-        case doctorUseOnceClaude
+        case doctorUseOnce
         case doctorFired
         case doctorFiredLongAgo
         case doctorNoCLI
@@ -998,7 +1000,7 @@ enum L10n {
         case doctorAgentsUnreadable
         case doctorReportShape
         case doctorAgentsParsed
-        case doctorCodexPermissionHook
+        case doctorGatingHook
         case doctorNotifyOnly
         case doctorCodexNeedsTrust
         case doctorCodexTrust

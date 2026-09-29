@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """20.0 Drift sentinel: has a vendor changed the files its format lives in?
 
-For every ``source: "repo"`` entry in docs/vendor-formats.json this makes a
+For every ``source: "repo"`` entry in docs/vendor-formats.json — an agent's
+format and, since 24.0, its ``hooks`` contract — this makes a
 blob-less clone of the vendor repository (history only, no file contents)
 and lists the commits since the pinned one that touched a ``watch`` path.
 Any such commit fails the run and is printed — vendor, path, commit, date,
@@ -46,8 +47,14 @@ def main() -> int:
     drifted: list[str] = []
     failed: list[str] = []
     clones: dict[str, Path] = {}
+    # 24.0: each agent's hook contract has its own pin beside its format's.
+    pins = []
     for raw, entry in sorted(agents.items()):
-        if entry.get("source") != "repo" or (only and raw not in only):
+        pins.append((raw, entry))
+        if isinstance(entry.get("hooks"), dict):
+            pins.append((f"{raw} hooks", entry["hooks"]))
+    for raw, entry in pins:
+        if entry.get("source") != "repo" or (only and raw.split()[0] not in only):
             continue
         repo, pin, watch = entry["repo"], entry["commit"], entry["watch"]
         try:

@@ -20,13 +20,13 @@ struct DoctorTests {
         f.channel = "preview"
         f.macOS = "26.0.0"
         f.nowMs = now
+        for agent in AgentID.allCases {
+            f.hooks[agent.rawValue] = .init(present: true, events: Set(agent.spec.hooks.events.map { $0.name }))
+            f.lastFire[agent.rawValue] = .init(kind: "turn", tsMs: now - 5 * 60_000)
+        }
         f.claudeInstalled = true
-        f.claudeHookEvents = Set(DoctorModel.claudeEvents)
-        f.claudeNotificationMatcher = "permission_prompt|idle_prompt|agent_needs_input|elicitation_dialog"
         f.claudeAgents = .parsed(sessions: 2, waiting: 1)
-        f.lastFire = ["claude": .init(kind: "turn", tsMs: now - 5 * 60_000), "codex": .init(kind: "turn", tsMs: now - 60 * 60_000)]
         f.codexInstalled = true
-        f.codexHookEvents = Set(DoctorModel.codexEvents)
         f.codexRollout = .paginated
         f.readCoverage = ["claude": .init(name: "Claude", sessions: 3, withTask: 3, withLastWord: 2)]
         return f
@@ -44,37 +44,60 @@ struct DoctorTests {
         // The file cannot say Codex trusts it; the fired event is the proof.
         #expect(verdict(healthy(), "codex-hooks") == .unproven)
         #expect(verdict(healthy(), "codex-fired") == .works)
+        // 24.0: one hook check and one fired check per agent.
+        for agent in AgentID.allCases {
+            #expect(verdict(healthy(), "\(agent.rawValue)-hooks") != nil, "\(agent.rawValue)")
+            #expect(verdict(healthy(), "\(agent.rawValue)-fired") == .works, "\(agent.rawValue)")
+        }
     }
 
     @Test func anAgentThatIsNotInstalledIsNotAFailure() {
         var f = healthy()
         f.claudeInstalled = false
-        f.claudeHookEvents = []
+        f.hooks["claude"] = .init()
         f.claudeAgents = .noCLI
         f.codexInstalled = false
+        f.hooks["codex"] = .init()
+        f.hooks["pi"] = .init()
         #expect(verdict(f, "claude-hooks") == .absent)
         #expect(verdict(f, "claude-agents") == .absent)
         #expect(verdict(f, "codex-hooks") == .absent)
+        #expect(verdict(f, "pi-hooks") == .absent)
         #expect(verdict(f, "claude-fired") == nil)
         #expect(verdict(f, "codex-rollout") == nil)
     }
 
-    @Test func aMissingEventOrMatcherTokenIsNamed() throws {
+    @Test func aMissingEventIsNamed() throws {
         var f = healthy()
-        f.claudeHookEvents.remove("StopFailure")
-        f.claudeNotificationMatcher = "permission_prompt|idle_prompt"
+        f.hooks["claude"]?.events.remove("StopFailure")
         let check = try #require(DoctorModel.evaluate(f, lang: .en).checks.first { $0.id == "claude-hooks" })
         #expect(check.verdict == .attention)
         #expect(check.detail.contains("StopFailure"))
-        #expect(check.detail.contains("elicitation_dialog"))
         #expect(!check.next.isEmpty)
     }
 
-    @Test func aCodexPermissionHookIsFlagged() {
+    @Test func aPresentVendorWithoutPulseAsksForTheInstall() {
         var f = healthy()
-        f.codexHookEvents.insert("PermissionRequest")
-        f.codexPermissionHook = true
+        f.hooks["gemini"] = .init(present: true)
+        #expect(verdict(f, "gemini-hooks") == .attention)
+    }
+
+    @Test func aForbiddenPulseEntryIsFlagged() {
+        var f = healthy()
+        f.hooks["codex"]?.forbidden = ["PermissionRequest"]
+        f.hooks["claude"]?.forbidden = ["PreToolUse"]
         #expect(verdict(f, "codex-hooks") == .attention)
+        #expect(verdict(f, "claude-hooks") == .attention)
+        #expect(DoctorModel.forbiddenEvents(.codex).contains("PermissionRequest"))
+        #expect(!DoctorModel.forbiddenEvents(.claude).contains("PermissionRequest"), "Claude's runs async")
+    }
+
+    @Test func anAgentThatNeverReportsAWaitSaysSo() throws {
+        let report = DoctorModel.evaluate(healthy(), lang: .en)
+        let cursor = try #require(report.checks.first { $0.id == "cursor-hooks" })
+        #expect(cursor.detail.contains(L10n.t(.doctorNoWaitNote, .en)))
+        let gemini = try #require(report.checks.first { $0.id == "gemini-hooks" })
+        #expect(!gemini.detail.contains(L10n.t(.doctorNoWaitNote, .en)))
     }
 
     @Test func silenceIsNotSuccess() {
@@ -112,13 +135,13 @@ struct DoctorTests {
 
     @Test func aFormatWithoutWordsIsNotAskedForThem() {
         var f = healthy()
-        f.readCoverage["cline"] = .init(name: "Cline", sessions: 5, withTask: 5, withLastWord: 0, expectsLastWord: false)
+        f.readCoverage["cursor"] = .init(name: "Cursor", sessions: 5, withTask: 5, withLastWord: 0, expectsLastWord: false)
         #expect(verdict(f, "reading") == .works)
     }
 
     @Test func oneSessionProvesNothingEitherWay() {
         var f = healthy()
-        f.readCoverage["goose"] = .init(name: "Goose", sessions: 1, withTask: 0, withLastWord: 0)
+        f.readCoverage["copilot"] = .init(name: "Copilot", sessions: 1, withTask: 0, withLastWord: 0)
         #expect(verdict(f, "reading") == .works)
         f.readCoverage = [:]
         #expect(verdict(f, "reading") == .absent)
@@ -169,7 +192,7 @@ struct DoctorTests {
 
 final class SupportHealthTests: XCTestCase {
     private func health(
-        agent: AgentID = .codex,
+        agent: AgentID = .gemini,
         evidence: ObservationSource? = .session,
         processDetected: Bool = false,
         goal: Bool = true,
@@ -221,32 +244,18 @@ final class SupportHealthTests: XCTestCase {
         let session = health(agent: .claude)
         XCTAssertEqual(store.supportDepthDetail(session), store.tr(.supportDepthSession))
 
-        let thin = health(agent: .cline, evidence: .cache, goal: false, workspace: false, activity: false)
-        XCTAssertEqual(AgentID.cline.harvestSource, .bestEffortCache)
-        XCTAssertNotEqual(AgentID.cline.waitingSource, .none)
-        XCTAssertEqual(store.supportDepthDetail(thin), store.tr(.supportDepthCacheThin))
-
-        let rich = health(agent: .cline, evidence: .cache, goal: true, workspace: true, activity: true)
-        XCTAssertEqual(store.supportDepthDetail(rich), store.tr(.supportDepthCachePartial))
-
-        let none = health(agent: .devin, evidence: .cache, goal: false, workspace: false, activity: false)
-        XCTAssertEqual(AgentID.devin.waitingSource, .none)
-        XCTAssertEqual(AgentID.devin.harvestSource, .bestEffortCache)
+        // 24.0: every supported agent reads a structured session; one whose
+        // hooks never report a wait says so beside its depth.
+        let none = health(agent: .codex)
+        XCTAssertEqual(AgentID.codex.waitingSource, .none)
         XCTAssertEqual(
             store.supportDepthDetail(none),
-            "\(store.tr(.supportDepthWaitingNone)) · \(store.tr(.supportDepthCacheThin))"
-        )
-
-        let richNone = health(agent: .zcode, evidence: .cache, goal: true, workspace: true, activity: true)
-        XCTAssertEqual(AgentID.zcode.waitingSource, .none)
-        XCTAssertEqual(
-            store.supportDepthDetail(richNone),
-            "\(store.tr(.supportDepthWaitingNone)) · \(store.tr(.supportDepthCachePartial))"
+            "\(store.tr(.supportDepthWaitingNone)) · \(store.tr(.supportDepthSession))"
         )
     }
 
     func testAgentWithoutWaitingContractIsNotPermanentlyIncomplete() {
-        let item = health(agent: .devin, progress: true, waitingReady: false)
+        let item = health(agent: .codex, progress: true, waitingReady: false)
         XCTAssertTrue(item.missingCapabilities.isEmpty)
         XCTAssertEqual(item.usefulFactCount, 4)
         XCTAssertEqual(item.usefulFactTotal, 4)
@@ -291,7 +300,6 @@ final class SupportHealthTests: XCTestCase {
 
     func testOnlyProtectedStoreAdaptersRequireTheOptIn() {
         XCTAssertTrue(AgentID.cursor.requiresAppDataOptIn)
-        XCTAssertTrue(AgentID.warpAgent.requiresAppDataOptIn)
         XCTAssertFalse(AgentID.codex.requiresAppDataOptIn)
         XCTAssertFalse(AgentID.pi.requiresAppDataOptIn)
     }
@@ -309,7 +317,7 @@ final class SupportHealthTests: XCTestCase {
     }
 
     func testMissingHooksIsActionable() {
-        let item = health(agent: .codex, progress: true, waitingReady: false)
+        let item = health(agent: .gemini, progress: true, waitingReady: false)
         XCTAssertEqual(item.disposition, .needsAction)
         XCTAssertEqual(item.repair, .installHooks)
     }
@@ -345,7 +353,7 @@ final class SupportHealthTests: XCTestCase {
     func testAnOpaqueLiveAgentIsNotATrayNotice() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
-        store.hooksStatus = .installedBoth
+        store.hooksStatus = .all
         store.notifyAuthorized = true
 
         XCTAssertFalse(store.needsHooksNudge)
@@ -385,15 +393,6 @@ final class SupportHealthTests: XCTestCase {
     }
 
     @MainActor
-    func testCursorAgentAliasDoesNotCreateDuplicateSupportEntry() {
-        let store = StatusStore()
-        store.installPreviewFixture("coverage")
-        let agents = Set(store.supportHealth.map(\.agent))
-        XCTAssertTrue(agents.contains(.cursor))
-        XCTAssertFalse(agents.contains(.cursorAgent))
-    }
-
-    @MainActor
     func testObservedSupportLinePrioritizesMeaningfulFactsOverRecordCount() {
         let store = StatusStore()
         store.installPreviewFixture("coverage")
@@ -410,7 +409,7 @@ final class SupportHealthTests: XCTestCase {
     func testProcessSupportTimelineIncludesProcessAge() {
         let store = StatusStore()
         var item = health(
-            agent: .amp,
+            agent: .codex,
             evidence: .process,
             processDetected: true,
             goal: false,
@@ -539,7 +538,7 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertTrue(report.contains("notarized:"))
         XCTAssertTrue(report.contains("gatekeeperReady:"))
         XCTAssertTrue(report.contains("waitingNone:"))
-        XCTAssertTrue(report.contains("zcode"))
+        XCTAssertTrue(report.contains("waitingNone: codex,cursor"))
         XCTAssertTrue(report.contains("notifications: authorization="))
         XCTAssertTrue(report.contains("notifyWaiting="))
         XCTAssertTrue(report.contains("queued="))
@@ -555,7 +554,7 @@ final class SupportHealthTests: XCTestCase {
 
     func testOpaqueLiveAgentOffersAttentionBridgeRepair() {
         let item = health(
-            agent: .replit,
+            agent: .codex,
             evidence: .process,
             processDetected: true,
             goal: false,
@@ -567,12 +566,11 @@ final class SupportHealthTests: XCTestCase {
     }
 
     func testWaitingNoneAgentsCoverEveryWaitingNoneContract() {
-        let none = Set(AgentID.allCases.filter { $0.waitingSource == .none && $0 != .cursorAgent })
+        let none = Set(AgentID.allCases.filter { $0.waitingSource == .none })
         let listed = Set(AgentID.waitingNoneAgents)
         XCTAssertEqual(listed, none)
         XCTAssertFalse(listed.contains(.claude))
-        XCTAssertFalse(listed.contains(.codex))
-        XCTAssertTrue(listed.contains(.zcode))
+        XCTAssertEqual(listed, [.codex, .cursor])
     }
 
     @MainActor
@@ -831,11 +829,15 @@ final class PulseVersionTests: XCTestCase {
     }
 
     func testHookStatusIsPerAgentNotGlobal() {
-        XCTAssertTrue(HooksSupport.Status.installedBoth.isInstalled(for: .claude))
-        XCTAssertTrue(HooksSupport.Status.installedBoth.isInstalled(for: .codex))
-        XCTAssertTrue(HooksSupport.Status.installedClaude.isInstalled(for: .claude))
-        XCTAssertFalse(HooksSupport.Status.installedClaude.isInstalled(for: .codex))
+        XCTAssertTrue(HooksSupport.Status.all.isInstalled(for: .claude))
+        XCTAssertTrue(HooksSupport.Status.all.isInstalled(for: .pi))
+        XCTAssertTrue(HooksSupport.Status.installed([.claude]).isInstalled(for: .claude))
+        XCTAssertFalse(HooksSupport.Status.installed([.claude]).isInstalled(for: .codex))
         XCTAssertFalse(HooksSupport.Status.missing.isInstalled(for: .claude))
+        XCTAssertEqual(
+            HooksSupport.Status.installed([.claude, .gemini]).label(lang: .en),
+            String(format: L10n.t(.hooksInstalledCount, .en), 2, AgentID.allCases.count)
+        )
     }
 }
 
@@ -897,7 +899,7 @@ struct DiagnosticsModelTests {
         #expect(first == "scan", "standing problems come before the self-check's findings")
         let order = model.agents.map { $0.agent }
         #expect(order.first == .codex, "what needs action sorts first")
-        #expect(order.last == .aider, "not installed sorts last")
+        #expect(order.last == .pi, "not installed sorts last")
     }
 }
 
@@ -981,10 +983,6 @@ final class FactClassTests: XCTestCase {
         health.factClasses = []
         health.state = .noSessions
         XCTAssertFalse(health.looksDrifted, "no rows is idleness, not drift")
-        var thin = health
-        thin.id = .replit
-        thin.state = .observed
-        XCTAssertFalse(thin.looksDrifted, "a best-effort adapter never promised core facts")
     }
 
     @MainActor

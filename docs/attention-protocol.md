@@ -1,180 +1,165 @@
-# Attention Protocol v3
+# Attention Protocol v4
 
-Public contract for raising a Pulse **Waiting** lamp from any agent, IDE, or
-shell — without expanding the Claude/Codex hook installer.
+The contract between each supported agent's hook and Pulse's lamp (24.0).
 
-**Audience:** bridge authors and Waiting-none agent owners.  
-**Runtime path:** `~/Library/Application Support/Pulse/attention.tsv`  
-**Writers:** `pulse-hook` → `PulseBar --hook` (native), or append a line
-yourself.  
-**Swift source of truth:** `AttentionProtocol` in PulseBar.
+**Audience:** anyone touching `PulseHookReceiver`, the installer, or a script
+that writes `attention.tsv`.
+**Runtime path:** `~/Library/Application Support/Pulse/attention.tsv`
+**Writers:** `pulse-hook <agent> <event>` → `PulseBar --hook` (native), or a
+line appended by hand.
+**Swift source of truth:** `AttentionProtocol` / `AttentionRecord` (PulseCore),
+`PulseHookReceiver` (the per-agent adapters), `HookContract` in
+`AgentCatalog.swift` (what is installed).
 
 Companion:
 
 - Product policy → [`attention-bridge.md`](attention-bridge.md)
+- Where each vendor's hook contract was read → [`vendor-formats.json`](vendor-formats.json) (`hooks` block per agent)
 - Samples → [`samples/attention-bridge/`](samples/attention-bridge/)
-- EXPERIENCE scenario **U** → [`../EXPERIENCE.md`](../EXPERIENCE.md)
 
 ## Wire format
 
-UTF-8 TSV, one event per line. Header must be the first line:
+UTF-8 TSV, one event per line. Header first:
 
 ```text
-# pulse-attention v3 (agent\tkind\tms\tmessage\tsession\tcwd\thost\tfront)
-<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<host>\t<front>
+# pulse-attention v4 (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\ttranscript\tlanding)
+<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<front>\t<pid>\t<transcript>\t<landing>
 ```
 
-**Every line has all eight columns** (since Pulse 23.0). A six-column (v1) or
-seven-column (v2) line is not read. Leave `host` and `front` empty when you
-have nothing to put there — the trailing tabs are part of the record.
+**Every line has all ten columns.** A v3 (eight-column) line is not read — no
+compatibility. Leave a column empty when you have nothing for it; the trailing
+tabs are part of the record.
 
 | Column | Rules |
 | --- | --- |
-| `agent` | Pulse `AgentID.rawValue` (`claude`, `codex`, `replit`, `cursor`, …) |
-| `kind` | Allowlisted token only (below), after alias normalization |
+| `agent` | One of the seven `AgentID` raw values: `claude`, `codex`, `cursor`, `pi`, `gemini`, `copilot`, `opencode` (`cursor-agent` / `cursor_agent` read as `cursor`) |
+| `kind` | An allowlisted kind (below) |
 | `unix_ms` | Integer milliseconds since epoch |
-| `message` | Human-readable; tab/newline stripped; ≤200 chars |
-| `session` | Opaque session key; empty allowed |
-| `cwd` | Absolute project path hint; empty allowed |
-| `host` | Written empty; **the reader ignores it**: every line in `attention.tsv` is this Mac's |
-| `front` | v3. `1` when the prompt's own window was the frontmost application as the event was raised, `0` when it was not, **empty when unknown**. Only the local native receiver fills it (parent-chain walk, no new permission). Unknown is never read as "the user is looking" |
+| `message` | What is asked, or the turn's last words; tab/newline stripped; ≤200 chars; credentials redacted |
+| `session` | The vendor's session id; empty allowed |
+| `cwd` | Absolute project path; empty allowed |
+| `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for open kinds |
+| `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule, else the hook's direct parent. Empty/0 unknown |
+| `transcript` | The vendor's transcript path when its hook names one |
+| `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>` |
 
 Readers skip blank lines, `#` comments, and unknown kinds. Writers rewrite the
-header when truncating the file (keep last 80 data lines).
+header when compacting the file (keep the last 80 data lines, and every open
+one).
 
-## Kind allowlist
+## Kinds
 
-v3 separates what a person can owe an agent: **blocked** (it cannot go on
-without you — the red lamp, a banner, a sound), **your turn** (it finished and
-is idle at its prompt — a quiet count, never red) and **resolved**.
+| Group | Kind | Meaning |
+| --- | --- | --- |
+| Blocked (red) | `permission` | A tool / filesystem / network approval is showing |
+| | `question` | A clarifying question or requested input is showing |
+| | `waiting` | Blocked, reason unknown |
+| Your turn (quiet, never red) | `turn` | The turn ended; the agent is idle at its prompt |
+| Resolved | `done` | Nothing is owed any more |
+| Lifecycle | `start` | The session started or resumed |
+| | `working` | The user submitted a prompt |
+| | `end` | The session ended |
+| Diagnostics | `subagent_start`, `subagent_stop` | Stored, never light anything |
 
-### Blocked (raises / refreshes the red lamp)
+`start`, `working` and `end` clear the session's entry exactly like `done`.
+Tool activity (a tool ran, a reply streamed) is **not** an attention line: it
+goes to the per-session activity spool (`activity.d/`), which keeps a working
+session from reading stalled and ends a hook wait stamped before it.
 
-| Kind | Meaning |
-| --- | --- |
-| `permission` | Tool / filesystem / network approval |
-| `question` | A clarifying question or requested input |
-| `waiting` | Blocked, reason unknown (prefer a more specific kind when known) |
+Anything else — including an empty kind — is **rejected** by `pulse-hook`
+(exit 0, no write) and **ignored** by `AttentionReader`. A blocked kind for an
+agent whose hooks cannot report a block (`waiting: .none` — Codex, Cursor) is
+also rejected. That is the No fake Waiting gate for this channel.
 
-### Your turn (never red)
+Bridge words normalized before the allowlist check
+(`AttentionProtocol.normalizeKind`): `permission_prompt`, `approval_request`
+→ `permission`; `elicitation_dialog`, `elicitation_url_dialog`,
+`agent_needs_input` → `question`; `stop`, `idle`, `idle_prompt`,
+`agent-turn-complete`, `turn_complete`, `task_complete`, `stop_failure` →
+`turn`; `elicitation_complete`, `elicitation_response` → `done`;
+`session_start` → `start`; `prompt` → `working`; `session_end` → `end`.
+There is no free-text guessing: a word containing "approval" is not a
+permission.
 
-| Kind | Meaning |
-| --- | --- |
-| `turn` | The turn ended and the agent is idle at its prompt. Ends a blocked wait for that session (unless the wait was raised inside the 20 s grace) and marks the session "your turn" until someone looks: a later `done`, a submitted prompt, a Focus from Pulse, or the session moving again. A `turn` with `front` = `1` only clears — the user watched it finish |
+## Per-agent mapping (what `pulse-hook <agent> <event>` writes)
 
-### Resolved
+Every installed command is `pulse-hook <agent> <vendor event name>`; the
+payload is the vendor's JSON on stdin (Codex `notify`: the last argument). Only
+observe-only events are installed; `HookContract.gatingEvents` lists the ones
+that never are.
 
-| Kind | Meaning |
-| --- | --- |
-| `done` | Nothing is owed: clears blocked and your-turn for that session (`session` empty → only the agent's session-less entry; since 23.0 it no longer clears the agent's other sessions) |
-
-### Lifecycle (stored for diagnostics; never lights anything)
-
-| Kind | Meaning |
-| --- | --- |
-| `subagent_start` | Subagent began |
-| `subagent_stop` | Subagent ended |
-
-Anything else — including an empty kind (no argv kind, no
-`notification_type`, no event name; before 23.0 that was written as
-`waiting`) — is **rejected** by `pulse-hook` / `PulseBar --hook` (exit 0, no
-write) and **ignored** by `AttentionReader` (never free-text Waiting). That is
-the No fake Waiting gate for this channel.
-
-Vendor aliases are normalized before the allowlist check
-(`AttentionProtocol.normalizeKind`):
-
-| Tokens | v3 kind |
-| --- | --- |
-| `permission_prompt`, `exec_approval_request`, `apply_patch_approval_request`, `approval_request`, `pending_approval`, any `…approval…` that is not a response or decision | `permission` |
-| `request_user_input`, `user_input_request`, `elicitation_dialog`, `agent_needs_input`, `needs_input`, any `…user_input…` that is not a response | `question` |
-| `stop`, `idle_prompt`, `idle`, `agent_turn_complete`, `agent_completed`, `turn_complete`, `task_complete`, `stop_failure` (18.0: Claude's StopFailure) | `turn` |
-| `elicitation_complete`, `elicitation_response` (18.0) | `done` |
-
-18.0 additions: `elicitation_url_dialog` is a `question`; a PermissionRequest whose `tool_name` is `AskUserQuestion` is written as `question` — no allow/deny answers a question.
-
-### What v3 changed, and why
-
-- **`idle_prompt` is your turn, not blocked.** Claude's `idle_prompt`
-  notification is a 60-second timer that fires after every finished turn
-  (anthropics/claude-code #32634, #13922). Until v2 it lit the red lamp, so
-  every Claude session that finished its work went red a minute later and
-  stayed red. A question now has its own kind.
-- **`stop` and Codex's `agent-turn-complete` mark your turn** instead of
-  silently clearing. A bridge that used `stop` to mean "clear" should write
-  `done`.
-- **A line from an older hook that says `idle_prompt` reads as your turn**,
-  even where that hook meant a question. The timer is by far the common case;
-  the native receiver is the app binary, so upgrading Pulse upgrades it.
-
-## Raise (preferred)
-
-```bash
-HOOK="$HOME/Library/Application Support/Pulse/pulse-hook"
-
-# JSON on stdin (kind / message / session / cwd)
-echo '{"notification_type":"permission","message":"Approve deploy?","session_id":"sess-1","cwd":"'"$PWD"'"}' \
-  | "$HOOK" replit
-
-# argv kind
-"$HOOK" junie permission
-```
-
-Generic sample: [`samples/attention-bridge/raise.sh`](samples/attention-bridge/raise.sh).
-
-Your turn / clear:
-
-```bash
-echo '{"session_id":"sess-1"}' | "$HOOK" replit turn   # finished, over to you
-echo '{"session_id":"sess-1"}' | "$HOOK" replit done   # nothing owed
-```
+| Agent | Vendor event | Pulse |
+| --- | --- | --- |
+| **Claude** (`~/.claude/settings.json`, every entry `async: true`) | `SessionStart` | `start` |
+| | `UserPromptSubmit` | `working` (+ spool) |
+| | `PostToolUse` | activity (spool only) |
+| | `PermissionRequest` | `permission` — ask = `tool_name: command/file_path/url`; `AskUserQuestion` → `question` |
+| | `Notification` `permission_prompt` | `permission` |
+| | `Notification` `elicitation_dialog` / `elicitation_url_dialog` / `agent_needs_input` | `question` |
+| | `Notification` `idle_prompt` | `turn` |
+| | `Notification` `elicitation_complete` / `elicitation_response` | `done` |
+| | `Stop`, `StopFailure` | `turn` (message = `last_assistant_message`) |
+| | `SessionEnd` | `end` |
+| **Codex** (`~/.codex/hooks.json` + `notify`) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` / `turn` / `end` |
+| | `notify` `agent-turn-complete` | `turn` (session = `thread-id`) |
+| | `PermissionRequest` | never installed; ignored if seen (fires before Codex's own auto-review) |
+| **Gemini CLI** (`~/.gemini/settings.json` `hooks`) | `SessionStart` / `SessionEnd` | `start` / `end` |
+| | `BeforeAgent` | `working` (exit 0, no output: never blocks) |
+| | `AfterAgent` | `turn` |
+| | `Notification` `notification_type: ToolPermission` | `permission` (ask = `message`) |
+| **Copilot CLI** (`~/.copilot/hooks/pulse.json`) | `sessionStart` / `sessionEnd` | `start` / `end` |
+| | `userPromptSubmitted` | `working` |
+| | `agentStop` | `turn` |
+| | `notification` `permission_prompt` / `elicitation_dialog` | `permission` / `question` |
+| | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
+| | `errorOccurred` | `turn` when `recoverable: false`, else activity |
+| **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`) | `session.created` | `start` |
+| | `session.status` `busy` / `retry` | activity |
+| | `permission.asked` | `permission` (ask = `permission: patterns`) |
+| | `question.asked` | `question` (ask = first question) |
+| | `permission.replied` / `question.replied` / `question.rejected` | `done` |
+| | `session.idle`, `session.error` | `turn` |
+| | `session.deleted` | `end` |
+| **Cursor** (`~/.cursor/hooks.json`) — never blocked | `sessionStart` / `sessionEnd` | `start` / `end` |
+| | `afterAgentResponse` | activity |
+| | `stop` | `turn` (session = `conversation_id`, cwd = `workspace_roots[0]`) |
+| **Pi** (extension `~/.pi/agent/extensions/pulse.js`) | `session_start` / `session_shutdown` (not on `reload`) | `start` / `end` |
+| | `agent_start` | `working` |
+| | `tool_execution_end` | activity |
+| | `ui_prompt_start` `kind: confirm` / other kinds | `permission` / `question` (ask = `title`) |
+| | `ui_prompt_end` | `done` |
+| | `agent_settled` | `turn` |
 
 ## Reader rules
 
 - Same `(agent, session)` — last write wins.
-- `done` clears that session (`session` empty → only the agent's
-  session-less entry — 23.0; before, it cleared every session of the agent,
-  so dismissing one terminal's session-less wait put out the others).
-- A blocked hook entry that names no session never attaches to a session
-  row; it is its own row in its folder, and its `done` names no session.
-- A blocked hook entry goes out when that session's own activity event
-  (PreToolUse / UserPromptSubmit, stamped after the raise) arrives: the ask
-  was answered in the vendor's prompt.
-- `turn` clears a blocked wait, but within **20s** does not wipe a fresh
+- A blocked line for an agent with `waiting: .none` (Codex, Cursor) is
+  ignored, whoever wrote it.
+- `done`, `start`, `working`, `end` clear that session (`session` empty →
+  only the agent's session-less entry).
+- A blocked entry that names no session never attaches to a session row; it
+  is its own row in its folder.
+- A blocked entry goes out when that session's own activity event, stamped
+  after the raise, arrives: the ask was answered in the vendor's prompt.
+- `turn` clears a blocked wait, but within **20 s** does not wipe a fresh
   `permission` / `question` / `waiting` (the order of a vendor's events is not
   ours); then it marks the session your turn. A session-less `turn` only
-  clears. A `turn` never creates a row of its own.
-- A blocked line with `front` = `1` lights the lamp but raises no banner and
-  no sound.
+  clears. A `turn` never creates a row of its own. A `turn` with `front` = `1`
+  only clears — the user watched it finish.
+- A blocked line with `front` = `1` lights the lamp but raises no banner.
 - Entries older than **30 minutes** expire.
-- Named session with no matching sibling → **new** Waiting row (0.60); never
-  smear onto a brother session. Empty-session process rows may adopt.
 
-## Compatibility
+## Raise by hand
 
-| Writer | Status |
-| --- | --- |
-| Native `PulseBar --hook` / `pulse-hook` | Preferred (0.61+); writes and exits at once, never holds |
-| Hand-append matching this header + kinds | Accepted if all eight fields are valid |
-
-Pulse does **not** promise Composer deep links, tray approve/deny, or any path
-that infers Waiting from silence. Waiting-none agents never raise harvest
-`pending`.
+```bash
+HOOK="$HOME/Library/Application Support/Pulse/pulse-hook"
+echo '{"message":"Approve deploy?","session_id":"sess-1","cwd":"'"$PWD"'"}' | "$HOOK" gemini permission
+echo '{"session_id":"sess-1"}' | "$HOOK" gemini done
+```
 
 ## Versioning
 
-- **v1** was additive only for new allowlisted kinds; **v2** added `host`;
-  **v3** added `front` and changed the meaning of `idle_prompt`, `stop` and the
-  turn-complete aliases (above) — Pulse 16.0.
-- 23.0 stopped reading v1/v2 (short) lines: every record has eight columns.
-- Divergent headers historically confused readers — keep this byte-identical
-  across writers.
-
-## Another machine (removed in 22.0)
-
-v2 added a remote inbox, `attention.d/<host>.tsv`, filled by the user's own
-sync tool, and rows for waits raised on other machines ("last heard", "lost
-contact"). 22.0 removed it: Pulse is a lamp for this Mac. The `host` column
-stays in the format, written empty, and is ignored. Files a
-sync tool still drops into `attention.d/` are not read (Pulse leaves the
-directory alone).
+- v1–v3: see git history. v3 (16.0) split blocked / your turn / resolved.
+- **v4 (24.0)**: drops the ignored `host` column; adds `pid`, `transcript`,
+  `landing`; adds `start` / `working` / `end`; removes the free-text approval
+  and user-input heuristics. v3 lines are not read.

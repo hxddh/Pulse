@@ -157,15 +157,17 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 ### AttentionReader（事件驱动）
 
 `~/Library/Application Support/Pulse/attention.tsv`，由原生 `pulse-hook` /
-`PulseBar --hook`（`PulseHookReceiver`）写入，或由桥接作者按 Attention Protocol v3
-（每行八列）直接追加。契约见
+`PulseBar --hook`（`PulseHookReceiver`）写入，或按 Attention Protocol v4
+（每行十列：多了 pid、transcript、落地句柄）直接追加。24.0 起每个 Agent 的 hook 都以
+`pulse-hook <agent> <厂商事件名>` 调用，接收器按 Agent 把厂商事件与载荷映射成
+start / working / 阻塞 / 轮到你 / done / end。契约见
 [`attention-protocol.md`](attention-protocol.md)；产品政策见
 [`attention-bridge.md`](attention-bridge.md)。
 
-规则（v3，16.0）：同一 `(agent, session)` 后写的覆盖先写的；`done` 清除；`turn`
+规则（v3 起，v4 沿用）：同一 `(agent, session)` 后写的覆盖先写的；`done`、`start`、`working`、`end` 清除；`turn`
 （Claude 的 Stop / idle_prompt、Codex 的 agent-turn-complete）清掉阻塞等待并标记「轮到你」，
 但 20 秒宽限内不清掉刚发生的阻塞等待。「轮到你」不点红灯，只进托盘计数（`AgentRow.yourTurn`）；
-第 8 列 `front` 记下提示窗口当时是否在最前，在最前的阻塞等待只亮灯、不发通知。
+`front` 列记下提示窗口当时是否在最前，在最前的阻塞等待只亮灯、不发通知。
 未知 kind 拒绝写入且读者忽略（永不自由文本 Waiting）。超过 30 分钟的条目直接过期。
 
 `AttentionWatcher` 用 `DispatchSource` 盯着这个文件，写入即触发刷新，
@@ -177,7 +179,7 @@ Adapter 在补齐路径派生的 `sessionID` / Claude encoded cwd / subagent 计
 
 它做的事：
 
-1. 进程按 agent 收敛，`cursor_agent` 并进 `cursor`
+1. 进程按 agent 收敛（24.0：`cursor-agent` 命令行本来就按 Cursor 的进程规则认）
 2. harvest 行建会话行；键由 `RowIdentity` 一次定下、之后不再改变（`agent|<会话 id>`，没有 id
    时是会话文件路径或「目录 + 开始时间」的哈希，键里不带路径）；同一会话的多个文件合并成一行，
    无法区分的两个会话加 `~2` 后缀；每 Agent 的 500 条采集输入保留 500 条，
@@ -305,13 +307,13 @@ Pulse 不下载、不校验、不替换自己（23.0 删除了下载、DMG 校�
 
 ## Native 是运行时真源
 
-`NativeActivityHarvest.swift` 是唯一采集器，所有 32 个用户可见 Agent 都有
+`NativeActivityHarvest.swift` 是唯一采集器（下一阶段删除），七个 Agent 都有
 Swift descriptor、权限边界、bounded file walk 和健康结果。0.99 起没有第二个实现，
 也没有任何路径会为了观测会话去 fork 解释器。
 
-hooks 仍可按用户选择安装。Claude / Codex 走原生 `pulse-hook`（无需 Python）；
-Waiting-none / 名单外工具按 Attention Protocol v1 自行 raise。缺少 Python 不影响
-native harvest、hook install，或 self-test。
+hooks 按用户选择安装（24.0）：七个 Agent 各走厂商文档里的 hook / 插件 / 扩展，全部调用原生
+`pulse-hook`（无需 Python），只装观察型事件，移除时逐字节还原（`HooksInstaller` +
+`hook-installs.json`）。缺少 Python 不影响 native harvest、hook install，或 self-test。
 
 ## 门禁
 

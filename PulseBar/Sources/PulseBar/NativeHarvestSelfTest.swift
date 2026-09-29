@@ -25,9 +25,6 @@ enum NativeHarvestSelfTest {
             try writeCursorFixture(home: home)
             try writeOpenCodeFixture(home: home)
             try writePiFixture(home: home)
-            try writeGrokFixture(home: home)
-            try writeWarpFixture(home: home)
-            try writeGooseFixture(home: home)
         } catch {
             print("native fixture FAILED: \(error.localizedDescription)")
             return false
@@ -81,27 +78,16 @@ enum NativeHarvestSelfTest {
         if result.health.contains(where: { $0.state == .unscanned }) {
             failures.append("fixture scan emitted unscanned adapters")
         }
-        for id in expected {
-            // Cascade claims shared ~/.windsurf roots; Windsurf shell rows are
-            // suppressed when Cascade observed anything (legacy cascade_block).
-            if id == .windsurf, result.rows.contains(where: { $0.id == .cascade }) {
-                continue
-            }
-            if !result.rows.contains(where: { $0.id.surfaceID == id }) {
-                failures.append("no native row for \(id.rawValue)")
-            }
-        }
-        if result.rows.contains(where: { $0.id == .cascade }),
-           result.rows.contains(where: { $0.id == .windsurf }) {
-            failures.append("Cascade and Windsurf both raised from shared roots")
+        for id in expected where !result.rows.contains(where: { $0.id == id }) {
+            failures.append("no native row for \(id.rawValue)")
         }
         if result.rows.contains(where: { $0.task.isEmpty && $0.cwd.isEmpty && $0.tool.isEmpty && $0.model.isEmpty && $0.records == 0 }) {
             failures.append("blank structured row escaped admission")
         }
 
         func require(_ id: AgentID, _ predicate: (ActivityHarvest.Row) -> Bool, _ label: String) {
-            guard result.rows.contains(where: { $0.id.surfaceID == id && predicate($0) }) else {
-                if result.rows.contains(where: { $0.id.surfaceID == id }) {
+            guard result.rows.contains(where: { $0.id == id && predicate($0) }) else {
+                if result.rows.contains(where: { $0.id == id }) {
                     failures.append("\(id.rawValue) lost \(label)")
                 } else {
                     failures.append("missing \(id.rawValue) row for \(label)")
@@ -116,22 +102,6 @@ enum NativeHarvestSelfTest {
             { $0.task == "Gemini fixture" && $0.lastWord == "Gemini fixture reply." && $0.cwd == "/tmp/pulse-gemini" },
             "JSONL chat task, last word and project root"
         )
-        require(
-            .kimi,
-            { $0.task == "Kimi fixture" && $0.lastWord == "Kimi fixture reply." && $0.cwd == "/tmp/pulse-kimi" && $0.skill == "pending" },
-            "wire.jsonl words, state.json cwd, the open approval"
-        )
-        require(
-            .cline,
-            { $0.task == "Cline fixture" && $0.lastWord == "Cline fixture reply." && $0.skill == "pending" },
-            "ui_messages.json task, words and the newest interactive ask"
-        )
-        require(
-            .goose,
-            { $0.task == "Goose fixture" && $0.lastWord == "Goose fixture reply." && $0.cwd == "/tmp/pulse-goose" },
-            "sessions.db title, last word and working dir"
-        )
-
         // Flagship hero fidelity. Everything below asserts the *value* of the
         // tray hero against a vendor-shaped file, not merely that a row
         // exists. The generic `{"title": …}` fixtures could not tell a correct
@@ -169,11 +139,8 @@ enum NativeHarvestSelfTest {
         }
         require(.opencode, { $0.model == "fixture-model" && $0.tool == "bash" && $0.tokensIn == 1200 }, "database facts")
         require(.pi, { $0.tool == "bash" && $0.tokensIn == 120 }, "context-mode facts")
-        require(.grok, { $0.task == "Grok fixture" && $0.records > 0 }, "session index facts")
-        require(.warpAgent, { $0.task == "Warp fixture" && $0.model == "warp-model" }, "Warp database facts")
-        require(.amp, { $0.task == "Amp fixture" && $0.records == 0 }, "prompt-log record semantics")
 
-        let openCodeRows = result.rows.filter { $0.id.surfaceID == .opencode }
+        let openCodeRows = result.rows.filter { $0.id == .opencode }
         if openCodeRows.count < 100 {
             failures.append("100-session pressure retained only \(openCodeRows.count) OpenCode rows")
         }
@@ -194,11 +161,10 @@ enum NativeHarvestSelfTest {
             agentDeadlineSeconds: 10,
             totalDeadlineSeconds: 300
         )
-        if denied.rows.contains(where: { $0.id.surfaceID == .cursor || $0.id.surfaceID == .warpAgent }) {
-            failures.append("protected Cursor/Warp rows crossed the denied app-data boundary")
+        if denied.rows.contains(where: { $0.id == .cursor }) {
+            failures.append("protected Cursor rows crossed the denied app-data boundary")
         }
-        if denied.health.first(where: { $0.id == .cursor })?.state != .sourceAbsent
-            || denied.health.first(where: { $0.id == .warpAgent })?.state != .sourceAbsent {
+        if denied.health.first(where: { $0.id == .cursor })?.state != .sourceAbsent {
             failures.append("denied protected stores did not report source_absent")
         }
 
@@ -251,20 +217,13 @@ enum NativeHarvestSelfTest {
         // drift names the agent that drifted.
         //
         //   opencode 100  — the concurrency-pressure fixture
-        //   cascade    2  — .codeium/session.json plus .windsurf/session.json,
-        //                   both inside Cascade's declared roots
         //   claude     2  — the generic fixture plus 0.98's vendor-shaped
         //   codex      2    transcript / rollout / official-JSONL fixtures
         //   pi         2
-        //   windsurf   0  — suppressed while Cascade claims the shared roots
         //   everyone else 1
         let expectedRows: [String: Int] = [
-            "aider": 1, "amazon_q": 1, "amp": 1, "antigravity": 1, "augment": 1,
-            "cascade": 2, "claude": 2, "cline": 1, "codex": 2, "command_code": 1,
-            "continue": 1, "copilot": 1, "cursor": 1, "devin": 1, "droid": 1,
-            "gemini": 1, "goose": 1, "grok": 1, "junie": 1, "kilo": 1, "kimi": 1,
-            "kiro": 1, "opencode": 100, "openhands": 1, "pi": 2, "replit": 1,
-            "roo": 1, "trae": 1, "warp_agent": 1, "zcode": 1, "zed_agent": 1,
+            "claude": 2, "codex": 2, "copilot": 1, "cursor": 1,
+            "gemini": 1, "opencode": 100, "pi": 2,
         ]
         let actualRows = Dictionary(grouping: result.rows, by: { $0.id.rawValue })
             .mapValues(\.count)
@@ -309,13 +268,7 @@ enum NativeHarvestSelfTest {
         for (id, relative) in fixture {
             let url = home.appendingPathComponent(relative)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if id == .amp {
-                let amp = """
-                {"text":"Amp fixture","cwd":"/tmp/pulse-amp"}
-                {"text":"continue","cwd":"/tmp/pulse-amp"}
-                """
-                try amp.write(to: url, atomically: true, encoding: .utf8)
-            } else if id == .codex {
+            if id == .codex {
                 let codex = """
                 {"type":"session_meta","timestamp":"2026-08-03T00:00:00Z","payload":{"id":"fixture-codex","cwd":"/tmp/pulse-codex"}}
                 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Native rollout fixture"}]}}
@@ -339,31 +292,6 @@ enum NativeHarvestSelfTest {
                 let marker = url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".project_root")
                 try fm.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try "/tmp/pulse-gemini\n".write(to: marker, atomically: true, encoding: .utf8)
-            } else if id == .kimi {
-                // 20.0: Kimi Code's session directory — the main agent's
-                // wire stream plus state.json (agent-core-v2).
-                let wire = """
-                {"type":"metadata","protocol_version":"1.5","created_at":1785715200000}
-                {"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"Kimi fixture"}],"turnId":1,"time":1785715201000}
-                {"type":"llm.request","agentId":"main","model":"kimi-fixture","time":1785715201100}
-                {"type":"context.append_loop_event","agentId":"main","event":{"type":"content.part","stepUuid":"s-1","part":{"type":"text","text":"Kimi fixture reply."}},"time":1785715209000}
-                {"type":"interaction.request","agentId":"main","id":"i_1","kind":"approval","toolCallId":"call_1","request":{},"time":1785715209500}
-                """
-                try wire.write(to: url, atomically: true, encoding: .utf8)
-                let state = url.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-                    .appendingPathComponent("state.json")
-                try #"{"id":"session_fixture","version":2,"cwd":"/tmp/pulse-kimi","createdAt":1785715200000,"updatedAt":1785715209500,"title":"Kimi fixture","lastPrompt":"Kimi fixture"}"#
-                    .write(to: state, atomically: true, encoding: .utf8)
-            } else if id == .cline {
-                // 20.0: a Cline task directory, waiting on approval to run a
-                // command (shared/ExtensionMessage.ts); the earlier, long
-                // granted ask must not count.
-                let messages = #"[{"ts":1785715200000,"type":"say","say":"task","text":"Cline fixture"},{"ts":1785715201000,"type":"ask","ask":"tool","text":"{}"},{"ts":1785715202000,"type":"say","say":"text","text":"Cline fixture reply.","partial":false},{"ts":1785715203000,"type":"ask","ask":"command","text":"npm test","partial":false}]"#
-                try messages.write(to: url, atomically: true, encoding: .utf8)
-            } else if id == .claude || id == .commandCode || id == .droid {
-                try (generic.replacingOccurrences(of: "ID", with: id.rawValue)
-                    .replacingOccurrences(of: "TITLE", with: id.displayName))
-                    .write(to: url, atomically: true, encoding: .utf8)
             } else {
                 try (generic.replacingOccurrences(of: "ID", with: id.rawValue)
                     .replacingOccurrences(of: "TITLE", with: id.displayName))
@@ -509,41 +437,6 @@ enum NativeHarvestSelfTest {
         try exec(db, "INSERT INTO session_events VALUES (1, 'pi-fixture', 'intent', '', 'Native Pi fixture', '/tmp/pulse-pi', '2026-08-03 00:00:01.000', 12);")
         try exec(db, "INSERT INTO session_events VALUES (2, 'pi-fixture', 'tool_call', 'bash', '{\"tool\":\"bash\"}', '/tmp/pulse-pi', '2026-08-03 00:01:00.000', 24);")
         try exec(db, "INSERT INTO session_events VALUES (3, 'pi-fixture', 'agent_usage', '', 'tokens_in: 120 tokens_out: 40', '/tmp/pulse-pi', '2026-08-03 00:01:00.000', 24);")
-    }
-
-    private static func writeGrokFixture(home: URL) throws {
-        let url = home.appendingPathComponent(".grok/sessions/session_search.sqlite")
-        let db = try open(url)
-        defer { sqlite3_close(db) }
-        try exec(db, "CREATE TABLE session_docs (session_id TEXT, cwd TEXT, updated_at INTEGER, title TEXT, content TEXT);")
-        try exec(db, "INSERT INTO session_docs VALUES ('grok-fixture', '/tmp/pulse-grok', 1785715200000, 'Grok fixture', 'tool bash completed');")
-    }
-
-    /// 20.0: block/goose session_manager.rs `create_schema` (v16), trimmed to
-    /// the columns the reader uses plus the ones that filter. `updated_at` is
-    /// the moment the fixture is written: the reader reads a session's newest
-    /// messages only while it moved within `gooseRecentMessagesWindowMs`.
-    private static func writeGooseFixture(home: URL) throws {
-        let url = home.appendingPathComponent(".local/share/goose/sessions/sessions.db")
-        let db = try open(url)
-        defer { sqlite3_close(db) }
-        try exec(db, "CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', session_type TEXT NOT NULL DEFAULT 'user', working_dir TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, accumulated_input_tokens INTEGER, accumulated_output_tokens INTEGER, model_config_json TEXT, archived_at TIMESTAMP, parent_session_id TEXT);")
-        try exec(db, "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT, session_id TEXT NOT NULL, role TEXT NOT NULL, content_json TEXT NOT NULL, created_timestamp INTEGER NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, tokens INTEGER, metadata_json TEXT);")
-        try exec(db, "INSERT INTO sessions (id, name, session_type, working_dir, created_at, updated_at, accumulated_input_tokens, accumulated_output_tokens, model_config_json) VALUES ('20260803_1', 'CLI Session', 'user', '/tmp/pulse-goose', '2026-08-03 00:00:00', datetime('now'), 1200, 300, '{\"model_name\":\"goose-fixture-model\"}');")
-        try exec(db, "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m1', '20260803_1', 'user', '[{\"type\":\"text\",\"text\":\"Goose fixture\"}]', 1785715200);")
-        try exec(db, "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m2', '20260803_1', 'assistant', '[{\"type\":\"text\",\"text\":\"Goose fixture reply.\"}]', 1785715242);")
-    }
-
-    private static func writeWarpFixture(home: URL) throws {
-        let url = home.appendingPathComponent("Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp-Stable/warp.sqlite")
-        let db = try open(url)
-        defer { sqlite3_close(db) }
-        try exec(db, "CREATE TABLE agent_conversations (conversation_id TEXT PRIMARY KEY, conversation_data TEXT, last_modified_at TEXT, summary TEXT);")
-        try exec(db, "CREATE TABLE ai_queries (conversation_id TEXT, start_ts TEXT, working_directory TEXT, output_status TEXT, model_id TEXT, input TEXT);")
-        try exec(db, "CREATE TABLE agent_tasks (conversation_id TEXT);")
-        try exec(db, "INSERT INTO agent_conversations VALUES ('warp-fixture', '{}', '2026-08-03 00:01:00', '{\"title\":\"Warp fixture\",\"initial_working_directory\":\"/tmp/pulse-warp\"}');")
-        try exec(db, "INSERT INTO ai_queries VALUES ('warp-fixture', '2026-08-03 00:01:00', '/tmp/pulse-warp', 'completed', 'warp-model', '{\"text\":\"Build Warp fixture\",\"tool\":\"bash\"}');")
-        try exec(db, "INSERT INTO agent_tasks VALUES ('warp-fixture');")
     }
 
     private static func open(_ url: URL) throws -> OpaquePointer {

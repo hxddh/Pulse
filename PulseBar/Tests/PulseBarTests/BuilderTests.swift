@@ -113,14 +113,14 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testStructuredObservabilityFactsSurviveMerge() {
         var source = harvest(
-            .grok,
+            .pi,
             task: "Fix multipart upload",
-            session: "grok-1",
+            session: "pi-1",
             cwd: "/Users/me/Pulse"
         )
         source.phase = "turn_complete"
         source.outcome = "completed"
-        source.model = "grok-4.5"
+        source.model = "pi-4.5"
         source.mode = "build-plan"
         source.errors = 1
         source.progressDone = 4
@@ -128,9 +128,9 @@ final class SnapshotBuilderTests: XCTestCase {
         source.lastWord = "Uploaded in 4 parts."
         source.planStep = "Retry the last part"
 
-        let result = build(procs: [hit(.grok)], harvest: [source])
+        let result = build(procs: [hit(.pi)], harvest: [source])
         let row = try! XCTUnwrap(result.rows.first)
-        XCTAssertEqual(row.model, "grok-4.5")
+        XCTAssertEqual(row.model, "pi-4.5")
         XCTAssertEqual(row.errors, 1)
         XCTAssertEqual(row.lastWord, "Uploaded in 4 parts.")
         XCTAssertEqual(row.planSteps.map(\.text), ["Retry the last part"], "a lone current step is still the plan")
@@ -162,12 +162,12 @@ final class SnapshotBuilderTests: XCTestCase {
     /// 23.0: how a process was matched is Health's fact, kept by the scan
     /// engine — the row no longer carries it.
     func testLiveProcessDetectionEvidenceReachesHealth() {
-        var process = hit(.amp)
+        var process = hit(.codex)
         process.evidence = .pathSignature
         process.elapsedSeconds = 60
         let facts = ProcessFacts.byAgent([process], nowMs: now)
-        XCTAssertEqual(facts[.amp]?.evidence, .pathSignature)
-        XCTAssertEqual(facts[.amp]?.startedMs, now - 60_000)
+        XCTAssertEqual(facts[.codex]?.evidence, .pathSignature)
+        XCTAssertEqual(facts[.codex]?.startedMs, now - 60_000)
     }
 
     func testLiveProcessSuppressesErrorEvenWhenHarvestFailed() {
@@ -182,11 +182,11 @@ final class SnapshotBuilderTests: XCTestCase {
     func testRuntimeEvidenceTierSurvivesTheMerge() {
         let r = build(
             harvest: [
-                harvest(.roo, task: "Refactor auth", evidence: .cache),
+                harvest(.copilot, task: "Refactor auth", evidence: .cache),
                 harvest(.codex, task: "Fix parser", evidence: .session),
             ]
         )
-        XCTAssertEqual(r.rows.first(where: { $0.agent == .roo })?.source, .cache)
+        XCTAssertEqual(r.rows.first(where: { $0.agent == .copilot })?.source, .cache)
         XCTAssertEqual(r.rows.first(where: { $0.agent == .codex })?.source, .session)
     }
 
@@ -339,19 +339,19 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testOnlyNewestStaleUnfinishedSessionCanBackLiveProcess() {
         let older = harvest(
-            .amp,
+            .codex,
             task: "Older known goal",
             session: "older",
             ageMs: ActivityHarvest.freshWindowMs + 120_000
         )
         let newer = harvest(
-            .amp,
+            .codex,
             task: "Newest known goal",
             session: "newer",
             ageMs: ActivityHarvest.freshWindowMs + 60_000
         )
 
-        let r = build(procs: [hit(.amp)], harvest: [older, newer])
+        let r = build(procs: [hit(.codex)], harvest: [older, newer])
         XCTAssertEqual(r.rows.count, 1)
         XCTAssertEqual(r.rows.first?.sessionID, "newer")
         XCTAssertTrue(r.rows.first?.liveProcess ?? false)
@@ -373,7 +373,7 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     func testLiveProcessWithNoHarvestStillProducesARow() {
-        let r = build(procs: [.init(id: .amp, count: 1, viaWarp: true, pid: 9)])
+        let r = build(procs: [.init(id: .codex, count: 1, viaWarp: true, pid: 9)])
         XCTAssertEqual(r.rows.count, 1)
         XCTAssertTrue(r.rows[0].liveProcess)
         XCTAssertTrue(r.rows[0].viaWarp)
@@ -395,21 +395,6 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertTrue(r.rows[0].liveProcess)
         XCTAssertTrue(r.rows[0].isProcessOnly)
         XCTAssertEqual(r.rows[0].rowKey, "cursor|pid:91")
-    }
-
-    func testCursorAgentProcessCountsAsCursor() {
-        let r = build(procs: [.init(id: .cursorAgent, count: 1, viaWarp: false, pid: 5)])
-        XCTAssertEqual(r.rows.map(\.agent), [.cursor], "cursor_agent merges into Cursor")
-    }
-
-    func testCursorAgentHarvestMergesIntoTheCursorRow() {
-        let r = build(
-            procs: [.init(id: .cursorAgent, count: 1, viaWarp: false, pid: 5)],
-            harvest: [harvest(.cursorAgent, task: "Compose", session: "c1")]
-        )
-        XCTAssertEqual(r.rows.count, 1)
-        XCTAssertEqual(r.rows[0].agent, .cursor)
-        XCTAssertEqual(r.rows[0].usefulTask, "Compose")
     }
 
     // MARK: Waiting from harvest pending
@@ -463,18 +448,6 @@ final class SnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(waiting[0].wait?.signal, .hooks)
     }
 
-    func testCursorAgentAttentionUsesTheSingleCursorSurfaceRow() {
-        let r = build(
-            procs: [.init(id: .cursor, count: 1, viaWarp: false, pid: 77)],
-            harvest: [harvest(.cursor, task: "Compose", session: "cursor-session")],
-            attention: [attention(.cursorAgent, message: "approve", session: "cursor-session")]
-        )
-        XCTAssertEqual(r.rows.count, 1, "Cursor Agent is one user-facing Cursor session")
-        XCTAssertEqual(r.rows.first?.agent, .cursor)
-        XCTAssertTrue(r.rows.first?.isBlocked == true)
-        XCTAssertEqual(r.rows.first?.wait?.signal, .hooks)
-    }
-
     /// 23.0: a hook entry that names no session never lands on a row that
     /// owns one — its `done` could not name that row's session — so it
     /// keeps its own `agent|hook:<folder>` row, in its folder.
@@ -494,12 +467,12 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     func testAttentionWithNoMatchingRowCreatesOne() {
-        let r = build(attention: [attention(.droid, message: "approve", session: "d1", cwd: "/work/x")])
+        let r = build(attention: [attention(.gemini, message: "approve", session: "d1", cwd: "/work/x")])
         XCTAssertEqual(r.rows.count, 1)
         XCTAssertTrue(r.rows[0].isBlocked)
-        XCTAssertEqual(r.rows[0].agent, .droid)
+        XCTAssertEqual(r.rows[0].agent, .gemini)
         XCTAssertEqual(r.rows[0].wait?.ask, "approve")
-        XCTAssertEqual(r.rows[0].rowKey, "droid|d1")
+        XCTAssertEqual(r.rows[0].rowKey, "gemini|d1")
         XCTAssertEqual(r.rows[0].source, .hooks)
     }
 
@@ -555,8 +528,8 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testHooksSignalOutranksHarvestPendingOnTheSameRow() {
         let r = build(
-            harvest: [harvest(.codex, task: "A", session: "s1", skill: "pending")],
-            attention: [attention(.codex, kind: "Permission", message: "approve", session: "s1")]
+            harvest: [harvest(.gemini, task: "A", session: "s1", skill: "pending")],
+            attention: [attention(.gemini, kind: "Permission", message: "approve", session: "s1")]
         )
         XCTAssertEqual(r.rows[0].wait?.signal, .hooks, "hooks is the more credible signal")
         XCTAssertEqual(r.rows[0].wait?.kind, "Permission")
@@ -577,12 +550,12 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testActiveRowsSortAboveRecentTitledSessions() {
         let r = build(
-            procs: [.init(id: .aider, count: 1, viaWarp: false, pid: 4)],
-            harvest: [harvest(.goose, task: "Real title", session: "g1")]
+            procs: [.init(id: .codex, count: 1, viaWarp: false, pid: 4)],
+            harvest: [harvest(.copilot, task: "Real title", session: "g1")]
         )
-        XCTAssertEqual(r.rows[0].agent, .aider)
+        XCTAssertEqual(r.rows[0].agent, .codex)
         XCTAssertTrue(r.rows[0].isProcessOnly)
-        XCTAssertEqual(r.rows[1].agent, .goose)
+        XCTAssertEqual(r.rows[1].agent, .copilot)
     }
 
     // MARK: Glance encoding
@@ -618,7 +591,7 @@ final class SnapshotBuilderTests: XCTestCase {
     func testMultipleWaitingCollapsesToACount() {
         let r = build(harvest: [
             harvest(.claude, task: "x", session: "s1", skill: "pending"),
-            harvest(.codex, task: "y", session: "s2", skill: "pending"),
+            harvest(.gemini, task: "y", session: "s2", skill: "pending"),
         ])
         XCTAssertEqual(r.snapshot.title, "2")
         // 23.0: one line — the rule, not a list of who.
@@ -761,7 +734,7 @@ final class SnapshotBuilderTests: XCTestCase {
     func testSectionTotalsCountTheWholeListNotTheWindow() {
         let r = build(
             procs: [hit(.claude), hit(.codex)],
-            harvest: [harvest(.gemini, task: "build"), harvest(.aider, task: "test")],
+            harvest: [harvest(.gemini, task: "build"), harvest(.copilot, task: "test")],
             attention: [attention(.claude)],
             context: context(maxRows: 1)
         )
@@ -886,7 +859,7 @@ final class SnapshotBuilderTests: XCTestCase {
     /// 23.0: process-only liveness is grey and dotted — the menu bar
     /// claims neither healthy green nor an orange problem.
     func testProcessOnlyRunningIsAGreyDottedGlance() {
-        let r = build(procs: [hit(.amp)])
+        let r = build(procs: [hit(.codex)])
         XCTAssertTrue(r.rows.contains { $0.isProcessOnly && $0.section == .running })
         XCTAssertEqual(r.snapshot.glance, .idle)
         XCTAssertEqual(r.snapshot.lamp.shape, .dotted)
@@ -907,7 +880,7 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     func testProcessOnlyAndWaitingRowsLookDifferent() {
-        let r = build(procs: [hit(.amp)], attention: [attention(.claude)])
+        let r = build(procs: [hit(.codex)], attention: [attention(.claude)])
         for row in r.rows {
             let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
             if row.isBlocked {
@@ -936,7 +909,7 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testHarvestApprovalToolIsPermissionWaitKind() {
         let r = build(harvest: [
-            harvest(.cline, task: "Ask", session: "s1", skill: "pending", tool: "request_approval"),
+            harvest(.opencode, task: "Ask", session: "s1", skill: "pending", tool: "request_approval"),
         ])
         XCTAssertTrue(r.rows[0].isBlocked)
         XCTAssertEqual(r.rows[0].wait?.kind, "Permission")
@@ -944,7 +917,7 @@ final class SnapshotBuilderTests: XCTestCase {
 
     func testHarvestFollowupToolStaysInputWaitKind() {
         let r = build(harvest: [
-            harvest(.roo, task: "Ask", session: "s1", skill: "pending", tool: "ask_followup_question"),
+            harvest(.copilot, task: "Ask", session: "s1", skill: "pending", tool: "ask_followup_question"),
         ])
         XCTAssertTrue(r.rows[0].isBlocked)
         XCTAssertEqual(r.rows[0].wait?.kind, "Input")
@@ -1164,10 +1137,6 @@ struct RowIdentityTests {
         #expect(RowIdentity.stableHash("c:/w/Repo/api") != RowIdentity.stableHash("c:/w/Repo/docs"))
     }
 
-    @Test func cursorAgentSessionsAreKeyedAsCursor() {
-        #expect(RowIdentity.session(agent: .cursorAgent, sessionID: "s") == "cursor|s")
-    }
-
     // MARK: - (a) a process and a session of the same agent are one row
 
     @Test func aProcessAndASessionForTheSameAgentAndFolderAreOneRow() throws {
@@ -1362,9 +1331,9 @@ final class RowRedundancyTests: XCTestCase {
         XCTAssertEqual(r.agent.displayName, "Cursor")
     }
 
-    /// A bare process row said "Process detected", "process", and "Amp".
+    /// A bare process row said "Process detected", "process", and the agent's name.
     func testProcessOnlyRowHasNoSessionTitleToShow() {
-        var r = row(agent: .amp)
+        var r = row(agent: .codex)
         r.state = .processOnly
         XCTAssertNil(r.usefulTask)
         // Hero must not fall back to the agent product name (already on identity).
@@ -1615,9 +1584,9 @@ final class WaitingProofTests: XCTestCase {
     // MARK: P0-1 harvest → Waiting → dismiss → re-raise
 
     @MainActor
-    func testClinePendingRaisesWaitingAndSoftDismissSuppresses() {
-        let pending = harvest(.cline, session: "cl-1", skill: "pending")
-        let key = RowIdentity.session(agent: .cline, sessionID: "cl-1")
+    func testOpenCodePendingRaisesWaitingAndSoftDismissSuppresses() {
+        let pending = harvest(.opencode, session: "cl-1", skill: "pending")
+        let key = RowIdentity.session(agent: .opencode, sessionID: "cl-1")
         let lit = build(harvest: [pending])
         XCTAssertTrue(lit.rows[0].isBlocked)
         XCTAssertEqual(lit.rows[0].wait?.signal, .pending)
@@ -1626,7 +1595,7 @@ final class WaitingProofTests: XCTestCase {
         let dismissed = build(harvest: [pending], dismissed: [key])
         XCTAssertFalse(dismissed.rows[0].isBlocked, "soft-dismiss must suppress harvest pending")
 
-        let cleared = harvest(.cline, session: "cl-1", skill: "")
+        let cleared = harvest(.opencode, session: "cl-1", skill: "")
         let afterClear = build(harvest: [cleared], dismissed: [key])
         XCTAssertTrue(afterClear.clearedPendingKeys.contains(key))
 
@@ -1635,8 +1604,8 @@ final class WaitingProofTests: XCTestCase {
     }
 
     @MainActor
-    func testRooAskToolPendingRaisesWaiting() {
-        let row = harvest(.roo, session: "roo-1", skill: "pending", tool: "ask_followup_question")
+    func testCopilotAskToolPendingRaisesWaiting() {
+        let row = harvest(.copilot, session: "cp-1", skill: "pending", tool: "ask_followup_question")
         let lit = build(harvest: [row])
         XCTAssertTrue(lit.rows[0].isBlocked)
         XCTAssertEqual(lit.rows[0].wait?.signal, .pending)
@@ -1644,19 +1613,18 @@ final class WaitingProofTests: XCTestCase {
     }
 
     @MainActor
-    func testUnverifiedCascadePendingDoesNotRaiseWaiting() {
-        // 23.0: Windsurf/Cascade formats are unverified — `waiting: .none`.
+    func testCodexPendingDoesNotRaiseWaiting() {
+        // 24.0: Codex's hooks never report a block — `waiting: .none`.
         let row = harvest(
-            .windsurf, session: "ws-1", skill: "pending", tool: "ask_clarifying_question"
+            .codex, session: "cx-1", skill: "pending", tool: "ask_clarifying_question"
         )
         let lit = build(harvest: [row])
         XCTAssertFalse(lit.rows[0].isBlocked)
-        XCTAssertEqual(lit.rows[0].source, .cache)
     }
 
     @MainActor
     func testUnverifiedCursorBlockingFlagDoesNotRaiseWaiting() {
-        // 23.0: Cursor's format is unverified — `waiting: .none`.
+        // Cursor's format is unverified and its hooks report no block.
         let row = harvest(.cursor, session: "composer-1", skill: "pending", evidence: .session)
         let lit = build(harvest: [row])
         XCTAssertFalse(lit.rows[0].isBlocked)
@@ -1664,7 +1632,7 @@ final class WaitingProofTests: XCTestCase {
 
     @MainActor
     func testDependingNeverRaisesWaiting() {
-        let row = harvest(.goose, session: "g-dep", skill: "", phase: "depending")
+        let row = harvest(.copilot, session: "g-dep", skill: "", phase: "depending")
         let lit = build(harvest: [row])
         XCTAssertFalse(lit.rows[0].isBlocked)
     }
@@ -1675,10 +1643,10 @@ final class WaitingProofTests: XCTestCase {
     func testAttentionRaiseLightsExactSessionThenDoneClears() {
         let lit = build(
             harvest: [
-                harvest(.zcode, task: "A", session: "z-a", skill: ""),
-                harvest(.zcode, task: "B", session: "z-b", skill: ""),
+                harvest(.gemini, task: "A", session: "z-a", skill: ""),
+                harvest(.gemini, task: "B", session: "z-b", skill: ""),
             ],
-            attention: [attention(.zcode, session: "z-b")]
+            attention: [attention(.gemini, session: "z-b")]
         )
         let waiting = lit.rows.filter(\.isBlocked)
         XCTAssertEqual(waiting.count, 1)
@@ -1687,8 +1655,8 @@ final class WaitingProofTests: XCTestCase {
 
         let cleared = build(
             harvest: [
-                harvest(.zcode, task: "A", session: "z-a", skill: ""),
-                harvest(.zcode, task: "B", session: "z-b", skill: ""),
+                harvest(.gemini, task: "A", session: "z-a", skill: ""),
+                harvest(.gemini, task: "B", session: "z-b", skill: ""),
             ],
             attention: []
         )
@@ -1700,7 +1668,7 @@ final class WaitingProofTests: XCTestCase {
     @MainActor
     func testWaitingNoneNeedsReachAndOpenSettings() {
         let store = StatusStore()
-        var row = AgentRow(rowKey: "zcode|live", agent: .zcode)
+        var row = AgentRow(rowKey: "codex|live", agent: .codex)
         row.liveProcess = true
         row.state = .running
         XCTAssertTrue(store.isWaitingNoneNeedsReach(row))
@@ -1711,7 +1679,7 @@ final class WaitingProofTests: XCTestCase {
     @MainActor
     func testHarvestPendingDoesNotNeedWaitingNoneReach() {
         let store = StatusStore()
-        var row = AgentRow(rowKey: "cline|live", agent: .cline)
+        var row = AgentRow(rowKey: "opencode|live", agent: .opencode)
         row.liveProcess = true
         row.state = .running
         XCTAssertFalse(store.isWaitingNoneNeedsReach(row))
@@ -1776,15 +1744,15 @@ final class WaitClearingTests: XCTestCase {
 
     @MainActor
     func testDismissedKeyClearsWhenHarvestAbsentOnReliableScan() {
-        let key = RowIdentity.session(agent: .cline, sessionID: "cl-gone")
+        let key = RowIdentity.session(agent: .opencode, sessionID: "cl-gone")
         let gone = build(harvest: [], dismissed: [key])
         XCTAssertTrue(gone.clearedPendingKeys.contains(key))
     }
 
     @MainActor
     func testAbsentThenPendingCanReraiseAfterTombstoneCleared() {
-        let pending = harvest(.cline, session: "cl-reraise", skill: "pending")
-        let key = RowIdentity.session(agent: .cline, sessionID: "cl-reraise")
+        let pending = harvest(.opencode, session: "cl-reraise", skill: "pending")
+        let key = RowIdentity.session(agent: .opencode, sessionID: "cl-reraise")
         let absent = build(harvest: [], dismissed: [key])
         XCTAssertTrue(absent.clearedPendingKeys.contains(key))
         let again = build(harvest: [pending], dismissed: [])
@@ -1797,12 +1765,12 @@ final class WaitClearingTests: XCTestCase {
     func testAmbiguousSessionPrefixDoesNotSmearAttention() {
         let lit = build(
             harvest: [
-                harvest(.zcode, task: "A", session: "sess-aaa"),
-                harvest(.zcode, task: "B", session: "sess-bbb"),
+                harvest(.gemini, task: "A", session: "sess-aaa"),
+                harvest(.gemini, task: "B", session: "sess-bbb"),
             ],
             attention: [
                 AttentionReader.Entry(
-                    id: .zcode, kind: "Permission", message: "approve",
+                    id: .gemini, kind: "Permission", message: "approve",
                     tsMs: now - 500, session: "sess", cwd: ""
                 )
             ]
@@ -1814,12 +1782,12 @@ final class WaitClearingTests: XCTestCase {
     func testExactSessionAttentionStillLights() {
         let lit = build(
             harvest: [
-                harvest(.zcode, task: "A", session: "sess-aaa"),
-                harvest(.zcode, task: "B", session: "sess-bbb"),
+                harvest(.gemini, task: "A", session: "sess-aaa"),
+                harvest(.gemini, task: "B", session: "sess-bbb"),
             ],
             attention: [
                 AttentionReader.Entry(
-                    id: .zcode, kind: "Permission", message: "approve",
+                    id: .gemini, kind: "Permission", message: "approve",
                     tsMs: now - 500, session: "sess-bbb", cwd: ""
                 )
             ]
@@ -1836,8 +1804,8 @@ final class WaitClearingTests: XCTestCase {
         let nowMs = now
         let text = [
             AttentionProtocol.header.trimmingCharacters(in: .newlines),
-            "zcode\twaiting\t\(nowMs - 1_000)\tNeed you\tz-1\t/tmp\t\t",
-            "zcode\tstop\t\(nowMs)\t\tz-1\t/tmp\t\t",
+            "gemini\twaiting\t\(nowMs - 1_000)\tNeed you\tz-1\t/tmp\t\t\t\t",
+            "gemini\tstop\t\(nowMs)\t\tz-1\t/tmp\t\t\t\t",
         ].joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: nowMs)
         XCTAssertEqual(entries.count, 1, "Waiting + Stop within grace must keep the raise")
@@ -1883,7 +1851,7 @@ struct BuilderFixTests {
     }
 
     func turn(session: String, ago: Int64 = 2_000) -> [AttentionReader.Entry] {
-        let line = ["claude", "turn", "\(now - ago)", "", session, "/p", "", ""].joined(separator: "\t")
+        let line = ["claude", "turn", "\(now - ago)", "", session, "/p", "", "", "", ""].joined(separator: "\t")
         return AttentionReader.parse(AttentionProtocol.header + line + "\n", nowMs: now)
     }
 
@@ -1930,16 +1898,16 @@ struct BuilderFixTests {
     // MARK: - 20 · an old file ask with nothing alive is not red
 
     @Test func aStaleFilePendingWithNoProcessIsNotRed() throws {
-        let stale = build(harvest: [session(.cline, "cl-1", skill: "pending", ageMs: 31 * Self.minute)])
+        let stale = build(harvest: [session(.opencode, "cl-1", skill: "pending", ageMs: 31 * Self.minute)])
         #expect(stale.rows.first?.isBlocked == false)
 
         let alive = build(
-            procs: [ProcessProbe.Hit(id: .cline, count: 1, viaWarp: false, pid: 77)],
-            harvest: [session(.cline, "cl-1", skill: "pending", ageMs: 31 * Self.minute)]
+            procs: [ProcessProbe.Hit(id: .opencode, count: 1, viaWarp: false, pid: 77)],
+            harvest: [session(.opencode, "cl-1", skill: "pending", ageMs: 31 * Self.minute)]
         )
         #expect(alive.rows.first?.isBlocked == true, "a live process keeps the vendor's own ask red")
 
-        let recent = build(harvest: [session(.cline, "cl-1", skill: "pending", ageMs: 5 * Self.minute)])
+        let recent = build(harvest: [session(.opencode, "cl-1", skill: "pending", ageMs: 5 * Self.minute)])
         #expect(recent.rows.first?.isBlocked == true)
     }
 }
@@ -1995,11 +1963,11 @@ final class ProcessOnlyRowTests: XCTestCase {
     /// workspace and project name from the probe. This is the fact 0.99.1's
     /// release notes said had been missing for every such row.
     func testAProcessOnlyRowTakesItsProjectFromTheProbe() throws {
-        var probe = ProcessProbe.Hit(id: .aider, count: 1, viaWarp: false, pid: 4242)
+        var probe = ProcessProbe.Hit(id: .codex, count: 1, viaWarp: false, pid: 4242)
         probe.cwd = "/Users/me/code/Pulse"
 
         let result = build(procs: [probe])
-        let row = try XCTUnwrap(result.rows.first { $0.agent == .aider })
+        let row = try XCTUnwrap(result.rows.first { $0.agent == .codex })
         XCTAssertEqual(row.cwd, "/Users/me/code/Pulse")
         XCTAssertEqual(row.project, AgentRow.shortProject("/Users/me/code/Pulse"))
         XCTAssertFalse(row.project.isEmpty, "a process-only row used to have no project at all")

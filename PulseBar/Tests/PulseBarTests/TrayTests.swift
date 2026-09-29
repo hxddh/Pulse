@@ -418,7 +418,7 @@ struct TrayInteractionTests {
         #expect(none.counts.isEmpty)
         #expect(none.title == L10n.t(.noAgents, .en))
         #expect(none.freshness == L10n.t(.headerUpdating, .en))
-        var process = AgentRow(rowKey: RowIdentity.process(agent: .amp, pid: 1), agent: .amp)
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 1), agent: .codex)
         process.state = .processOnly
         let grey = header(rows: [process], scanAgoMs: 1_000, lang: .zh)
         #expect(grey.title == "1 " + L10n.t(.processOnlyN, .zh))

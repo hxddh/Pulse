@@ -178,16 +178,7 @@ package enum ProcessProbe {
         // the same explicit privacy switch as deep app-data harvest. A scoped
         // grant is filtered by AgentID before any PID reaches lsof — selecting
         // Cursor must never widen the lookup to every matching process.
-        var scopedAgents = appDataAgents
-        if scopedAgents.contains(.cursor) || scopedAgents.contains(.cursorAgent) {
-            scopedAgents.insert(.cursor)
-            scopedAgents.insert(.cursorAgent)
-        }
-        if scopedAgents.contains(.cascade) || scopedAgents.contains(.windsurf) {
-            scopedAgents.insert(.cascade)
-            scopedAgents.insert(.windsurf)
-        }
-        let allowed = allowAppData ? Set(acc.keys) : scopedAgents
+        let allowed = allowAppData ? Set(acc.keys) : appDataAgents
         let workingDirectories = allowed.isEmpty
             ? [:]
             : currentWorkingDirectories(

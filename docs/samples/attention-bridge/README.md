@@ -1,39 +1,23 @@
 # Attention bridge samples
 
-Minimal scripts that raise a real Waiting line for Agents whose
-`waitingSource` is `.none`. They write Attention Protocol v3 (all eight
-columns) — see
+Two minimal scripts that write Attention Protocol v4 (all ten columns) for
+one of Pulse's seven agents — see
 [`docs/attention-protocol.md`](../../attention-protocol.md) and
-[`docs/attention-bridge.md`](../../attention-bridge.md).
+[`docs/attention-bridge.md`](../../attention-bridge.md). The installed hooks
+do this for real; these are for trying the tray by hand.
 
-| Script | Agent id |
+| Script | What it writes |
 | --- | --- |
-| `raise.sh` | **any** (generic protocol raise) |
-| `raise-replit.sh` | `replit` |
-| `raise-devin.sh` | `devin` |
-| `raise-warp-agent.sh` | `warpAgent` |
-| `raise-trae.sh` | `trae` |
-| `raise-antigravity.sh` | `antigravity` |
-| `raise-junie.sh` | `junie` |
-| `raise-zcode.sh` | `zcode` |
-| `clear.sh` | clear one agent (or all listed) |
-
-Usage:
+| `raise.sh <agent> [session] [kind] [message]` | one line of the given kind (default `permission`) |
+| `clear.sh <agent> [session]` | a `done` for that session |
 
 ```bash
-# Generic — preferred entry for bridge authors
-./docs/samples/attention-bridge/raise.sh replit
-./docs/samples/attention-bridge/raise.sh cursor sess-42 question "Need a model choice"
-
-# Agent-specific samples
-./docs/samples/attention-bridge/raise-replit.sh
-./docs/samples/attention-bridge/raise-devin.sh sess-42
-./docs/samples/attention-bridge/clear.sh replit
+./docs/samples/attention-bridge/raise.sh claude
+./docs/samples/attention-bridge/raise.sh gemini sess-42 question "Which database?"
+./docs/samples/attention-bridge/clear.sh gemini sess-42
 ```
 
-All scripts **prefer** `~/Library/Application Support/Pulse/pulse-hook`
-(native) and only fall back to a direct TSV append when the launcher
-is missing.
-
-These are **samples**, not an installer. Do not expand the Claude/Codex hook
-installer to cover these Agents.
+`raise.sh` **prefers** `~/Library/Application Support/Pulse/pulse-hook`
+(native) and only falls back to a direct TSV append when the launcher is
+missing. Codex and Cursor never report a wait: a blocked kind for them is
+refused, by `pulse-hook` and by the script.

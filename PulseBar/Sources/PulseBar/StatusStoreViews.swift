@@ -56,13 +56,14 @@ extension StatusStore {
 
     // MARK: - The tray's one notice
 
-    /// Claude/Codex live but hooks not wired — tray nudge only.
+    /// A live agent whose hook is not wired — tray nudge only (24.0: any of
+    /// the seven, not just Claude and Codex).
     var needsHooksNudge: Bool {
         // The user took the hooks out on purpose; do not keep offering them.
         if settings.hooksNudgeOff { return false }
-        guard hooksStatus == .missing || hooksStatus == .unknown else { return false }
+        if case .failed = hooksStatus { return false }
         return cachedAll.contains {
-            $0.liveProcess && ($0.agent == .claude || $0.agent == .codex)
+            $0.liveProcess && !hooksStatus.isInstalled(for: $0.agent)
         }
     }
 

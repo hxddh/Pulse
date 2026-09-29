@@ -115,15 +115,15 @@ final class NativeActivityHarvestTests: XCTestCase {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-corrupt-\(UUID().uuidString)")
         let codex = home.appendingPathComponent(".codex/sessions/2026/08/03/ok.jsonl")
-        let amp = home.appendingPathComponent(".amp/threads/bad.json")
+        let broken = home.appendingPathComponent(".copilot/threads/bad.json")
         try fm.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.createDirectory(at: amp.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: broken.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"{"session_id":"ok","cwd":"/Users/me/Pulse","title":"Codex survives"}"#.write(to: codex, atomically: true, encoding: .utf8)
-        try "{not-json".write(to: amp, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex, .amp])
+        try "{not-json".write(to: broken, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex, .copilot])
         XCTAssertTrue(result.rows.contains { $0.id == .codex })
-        XCTAssertTrue(result.health.contains { $0.id == .amp })
+        XCTAssertTrue(result.health.contains { $0.id == .copilot })
         XCTAssertTrue(result.health.contains { $0.id == .codex })
     }
 
@@ -175,36 +175,6 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.task, "Count the tokens")
         XCTAssertEqual(row.tokensIn, 220)
         XCTAssertEqual(row.tokensOut, 55)
-    }
-
-    func testGrokLastWordReadsTheTaggedAssistantParagraph() {
-        let content = """
-        <system prompt>
-        setup text
-        </system>
-        <user_query>
-        Fix the lamp
-        </user_query>
-        <assistant model=grok-4>
-        Working on the lamp now.
-        </assistant>
-        <user_query>
-        And the badge
-        </user_query>
-        <assistant model=grok-4>
-        Badge is green — done.
-        </assistant>
-        """
-        XCTAssertEqual(
-            NativeActivityHarvest.grokLastWord(from: content),
-            "Badge is green — done.",
-            "the latest assistant paragraph wins"
-        )
-        XCTAssertEqual(
-            NativeActivityHarvest.grokLastWord(from: "plain text with no tags"),
-            "",
-            "an unrecognised layout yields nothing, never a guess"
-        )
     }
 
     func testPiWorkFactsAreCollected() throws {
@@ -349,30 +319,6 @@ final class NativeActivityHarvestTests: XCTestCase {
         )
     }
 
-    func testAiderLastWordFollowsTheNewestUserTurn() {
-        let history = """
-        #### make the tray denser
-
-        Working on density now.
-
-        ```diff
-        - old
-        + new
-        ```
-
-        #### and align the chips
-
-        > some quote
-
-        Chips aligned across both card faces.
-        """
-        XCTAssertEqual(
-            NativeActivityHarvest.aiderLastWord(from: history),
-            "Chips aligned across both card faces."
-        )
-        XCTAssertEqual(NativeActivityHarvest.aiderLastWord(from: "no headers here"), "")
-    }
-
     func testClaudeSubagentDirectoryCountsAttachToSessionRow() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-claude-sub-\(UUID().uuidString)")
@@ -423,115 +369,6 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.cwd, "/Users/me/Pulse")
         XCTAssertEqual(row.tool, "Bash")
         XCTAssertTrue(row.task.isEmpty, "tool-arg / registry title must not become task")
-    }
-
-    func testAmpHistoryFixtureYieldsGoalAndCwd() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-amp-\(UUID().uuidString)")
-        let history = home.appendingPathComponent(".local/share/amp/history.jsonl")
-        try fm.createDirectory(at: history.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-        let lines = [
-            #"{"text":"Ship fleet continuity","cwd":"/Users/me/Pulse"}"#,
-            #"{"text":"continue","cwd":"/Users/me/Pulse"}"#,
-        ].joined(separator: "\n") + "\n"
-        try lines.write(to: history, atomically: true, encoding: .utf8)
-
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.amp])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .amp })
-        XCTAssertEqual(row.task, "Ship fleet continuity")
-        XCTAssertEqual(row.cwd, "/Users/me/Pulse")
-        XCTAssertEqual(row.evidence, .session)
-    }
-
-    func testBestEffortCacheNeverClaimsSessionEvidence() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cache-\(UUID().uuidString)")
-        let windsurf = home.appendingPathComponent(".windsurf/session.json")
-        let cline = home.appendingPathComponent(
-            "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/session.json"
-        )
-        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.createDirectory(at: cline.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-
-        // Thin index: title + model only — still cache, never structured session.
-        try #"{"sessionId":"ws-1","title":"Windsurf thin","model":"cascade","status":"running"}"#
-            .write(to: windsurf, atomically: true, encoding: .utf8)
-        try #"{"sessionId":"cl-1","title":"Cline thin","cwd":"/tmp/cline","status":"running"}"#
-            .write(to: cline, atomically: true, encoding: .utf8)
-
-        let result = NativeActivityHarvest.scan(
-            allowAppData: false,
-            appDataAgents: [.cline],
-            home: home,
-            agentFilter: [.windsurf, .cline]
-        )
-        let wind = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
-        XCTAssertEqual(AgentID.windsurf.harvestSource, .bestEffortCache)
-        XCTAssertEqual(wind.evidence, .cache, "cache adapters must not stamp session evidence")
-        XCTAssertEqual(wind.task, "Windsurf thin")
-
-        let clineRow = try XCTUnwrap(result.rows.first { $0.id == .cline })
-        XCTAssertEqual(clineRow.evidence, .cache)
-        XCTAssertEqual(clineRow.cwd, "/tmp/cline")
-        XCTAssertEqual(RowSource(wind.evidence), .cache, "a cache row says where its facts came from")
-    }
-
-    func testRichWindsurfCacheExtractsGoalWorkspaceToolStillCacheEvidence() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-rich-cache-\(UUID().uuidString)")
-        let windsurf = home.appendingPathComponent(".windsurf/session.json")
-        let roo = home.appendingPathComponent(
-            "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/session.json"
-        )
-        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.createDirectory(at: roo.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-
-        try #"""
-        {
-          "sessionId": "ws-rich",
-          "title": "Cascade session",
-          "task": "Ship cache continuity",
-          "workspace": "/Users/me/Pulse",
-          "status": "running",
-          "currentTool": "edit_file",
-          "model": "cascade",
-          "lastUpdatedAt": 1700000000000
-        }
-        """#.write(to: windsurf, atomically: true, encoding: .utf8)
-
-        try #"""
-        {
-          "sessionId": "roo-1",
-          "title": "Roo session",
-          "messages": [{"role": "user", "content": "Refactor the tray density"}],
-          "workspacePath": "/Users/me/Pulse",
-          "status": "running",
-          "currentTool": "ask_followup_question"
-        }
-        """#.write(to: roo, atomically: true, encoding: .utf8)
-
-        let result = NativeActivityHarvest.scan(
-            allowAppData: false,
-            appDataAgents: [.roo],
-            home: home,
-            agentFilter: [.windsurf, .roo]
-        )
-        let wind = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
-        XCTAssertEqual(wind.evidence, .cache)
-        XCTAssertEqual(wind.task, "Ship cache continuity")
-        XCTAssertEqual(wind.cwd, "/Users/me/Pulse")
-        XCTAssertEqual(wind.tool, "edit_file")
-        XCTAssertEqual(wind.harvestMs, 1_700_000_000_000)
-        XCTAssertEqual(RowSource(wind.evidence), .cache, "rich facts do not upgrade a cache to a session")
-
-        let rooRow = try XCTUnwrap(result.rows.first { $0.id == .roo })
-        XCTAssertEqual(rooRow.evidence, .cache)
-        XCTAssertEqual(rooRow.task, "Refactor the tray density", "nested user message must beat chrome title")
-        XCTAssertEqual(rooRow.cwd, "/Users/me/Pulse")
-        XCTAssertEqual(rooRow.skill, "pending", "ask_followup_question is an explicit ask tool")
     }
 
     func testGooseAskFollowupIsPendingButDependingIsNot() throws {
@@ -1113,24 +950,24 @@ final class NativeActivityHarvestTests: XCTestCase {
     func testNestedMessagesSkipToolResultEnvelopes() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-messages-tool-\(UUID().uuidString)")
-        let session = home.appendingPathComponent(".continue/sessions/sess-tool.json")
+        let session = home.appendingPathComponent(".copilot/sessions/sess-tool.json")
         try fm.createDirectory(at: session.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"""
         {
           "sessionId": "cont-1",
-          "title": "Continue session",
+          "title": "Copilot session",
           "cwd": "/Users/me/Pulse",
           "messages": [
-            {"role": "user", "content": "Keep the real Continue goal"},
+            {"role": "user", "content": "Keep the real Copilot goal"},
             {"role": "user", "content": {"type": "tool_result", "content": "SEARCH OUTPUT DUMP that used to become the hero"}}
           ]
         }
         """#.write(to: session, atomically: true, encoding: .utf8)
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.continue_])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .continue_ })
-        XCTAssertEqual(row.task, "Keep the real Continue goal")
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
+        XCTAssertEqual(row.task, "Keep the real Copilot goal")
         XCTAssertFalse(row.task.contains("SEARCH OUTPUT"))
     }
 
@@ -1300,23 +1137,6 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.cwd, "/Users/me/Pulse")
     }
 
-    func testThinCacheModelStillSurfacesWithoutSessionUpgrade() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cache-model-\(UUID().uuidString)")
-        let windsurf = home.appendingPathComponent(".windsurf/session.json")
-        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-        try #"{"sessionId":"ws-model","title":"Windsurf model only","model":"cascade","status":"active"}"#
-            .write(to: windsurf, atomically: true, encoding: .utf8)
-
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.windsurf])
-        let wind = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
-        XCTAssertEqual(wind.evidence, .cache)
-        XCTAssertEqual(wind.model, "cascade")
-        XCTAssertEqual(wind.phase, "working", "active → working")
-        XCTAssertNotEqual(wind.evidence, .session)
-    }
-
     func testAwaitingUserStatusIsHarvestPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-await-\(UUID().uuidString)")
@@ -1332,113 +1152,22 @@ final class NativeActivityHarvestTests: XCTestCase {
         XCTAssertEqual(row.skill, "pending")
     }
 
-    func testClineAskFieldIsPendingUntilAskResponse() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cline-ask-\(UUID().uuidString)")
-        let waiting = home.appendingPathComponent(
-            "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/session.json"
-        )
-        try fm.createDirectory(at: waiting.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-
-        try #"""
-        {
-          "sessionId": "cl-ask",
-          "title": "Cline needs input",
-          "workspacePath": "/Users/me/Pulse",
-          "status": "running",
-          "ask": "followup",
-          "text": "Which package manager?"
-        }
-        """#.write(to: waiting, atomically: true, encoding: .utf8)
-
-        let pending = NativeActivityHarvest.scan(
-            allowAppData: false,
-            appDataAgents: [.cline],
-            home: home,
-            agentFilter: [.cline]
-        )
-        let pendingRow = try XCTUnwrap(pending.rows.first { $0.id == .cline })
-        XCTAssertEqual(pendingRow.skill, "pending", "Cline ask=followup is an explicit wait")
-        XCTAssertEqual(pendingRow.evidence, .cache)
-
-        try #"""
-        {
-          "sessionId": "cl-ask",
-          "title": "Cline needs input",
-          "workspacePath": "/Users/me/Pulse",
-          "status": "running",
-          "ask": "followup",
-          "askResponse": "messageResponse",
-          "text": "Which package manager?"
-        }
-        """#.write(to: waiting, atomically: true, encoding: .utf8)
-
-        let answered = NativeActivityHarvest.scan(
-            allowAppData: false,
-            appDataAgents: [.cline],
-            home: home,
-            agentFilter: [.cline]
-        )
-        let answeredRow = try XCTUnwrap(answered.rows.first { $0.id == .cline })
-        XCTAssertNotEqual(answeredRow.skill, "pending", "askResponse means the user already answered")
-    }
-
-    func testCascadeWaitingForResponseFlagIsNotPendingWhileUnverified() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-cascade-wait-\(UUID().uuidString)")
-        let windsurf = home.appendingPathComponent(".windsurf/session.json")
-        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-
-        try #"""
-        {
-          "sessionId": "ws-ask",
-          "title": "Cascade needs you",
-          "workspace": "/Users/me/Pulse",
-          "status": "running",
-          "isWaitingForResponse": true,
-          "currentTool": "ask_clarifying_question"
-        }
-        """#.write(to: windsurf, atomically: true, encoding: .utf8)
-
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.windsurf])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .windsurf })
-        // 23.0: Windsurf's format is unverified — no inferred Waiting.
-        XCTAssertNotEqual(row.skill, "pending")
-        XCTAssertEqual(row.tool, "ask_clarifying_question")
-        XCTAssertEqual(row.evidence, .cache)
-    }
-
     func testWaitingNoneAgentNeverStampsHarvestPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-waiting-none-\(UUID().uuidString)")
-        // Trae is waitingSource.none and bestEffortCache — status words / ask
-        // tools must not invent Waiting; Attention bridge is the only honest path.
-        let trae = home.appendingPathComponent(".trae/session.json")
-        try fm.createDirectory(at: trae.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // 24.0: Codex's hooks never report a block — status words / ask
+        // tools in its files must not invent Waiting either.
+        let codex = home.appendingPathComponent(".codex/sessions/2026/09/29/rollout-none.jsonl")
+        try fm.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
 
-        try #"""
-        {
-          "sessionId": "trae-1",
-          "title": "Trae work",
-          "cwd": "/tmp/trae",
-          "status": "awaiting_user",
-          "currentTool": "ask_followup_question"
-        }
-        """#.write(to: trae, atomically: true, encoding: .utf8)
+        try #"{"session_id":"codex-none","title":"Codex work","cwd":"/tmp/codex","status":"awaiting_user","currentTool":"ask_followup_question"}"#
+            .write(to: codex, atomically: true, encoding: .utf8)
 
-        let result = NativeActivityHarvest.scan(
-            allowAppData: false,
-            appDataAgents: [.trae],
-            home: home,
-            agentFilter: [.trae]
-        )
-        let row = try XCTUnwrap(result.rows.first { $0.id == .trae })
-        XCTAssertEqual(AgentID.trae.waitingSource, .none)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
+        XCTAssertEqual(AgentID.codex.waitingSource, .none)
         XCTAssertNotEqual(row.skill, "pending", "Waiting-none must never stamp harvest pending")
-        XCTAssertEqual(row.evidence, .cache)
     }
 
     func testClaudeToolResultIsNotSessionTitle() throws {
@@ -1542,76 +1271,6 @@ final class NativeActivityHarvestTests: XCTestCase {
         let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.task, "Need input")
         XCTAssertEqual(row.cwd, "/tmp/goose")
-    }
-
-    /// 20.0: Kimi Code's layout (agent-core-v2): `sessions/<workspace>/
-    /// session_<uuid>/state.json` beside `agents/main/wire.jsonl`.
-    func testKimiLastPromptAndWorkDirReachTray() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-kimi-\(UUID().uuidString)")
-        let session = home.appendingPathComponent(".kimi-code/sessions/wd_app_844551840eba/session_k1", isDirectory: true)
-        try fm.createDirectory(at: session.appendingPathComponent("agents/main"), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-        try #"{"id":"session_k1","version":2,"cwd":"/Users/me/app","lastPrompt":"Refactor auth","title":"Refactor auth","titleKind":"replaceable"}"#
-            .write(to: session.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .kimi })
-        XCTAssertEqual(row.task, "Refactor auth")
-        XCTAssertEqual(row.cwd, "/Users/me/app")
-    }
-
-    func testKimiWireCarriesWordsModelAndTheOpenApproval() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-kimi-wire-\(UUID().uuidString)")
-        let session = home.appendingPathComponent(".kimi-code/sessions/wd_app_844551840eba/session_k2", isDirectory: true)
-        let wire = session.appendingPathComponent("agents/main/wire.jsonl")
-        let child = session.appendingPathComponent("agents/sub_1/wire.jsonl")
-        try fm.createDirectory(at: wire.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.createDirectory(at: child.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        func lines(resolved: Bool) -> String {
-            var out = [
-                #"{"type":"metadata","protocol_version":"1.5","created_at":\#(now - 9_000)}"#,
-                #"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"Add an offline queue for login"}],"turnId":1,"time":\#(now - 8_000)}"#,
-                #"{"type":"llm.request","agentId":"main","provider":"kimi","model":"kimi-k2","time":\#(now - 7_900)}"#,
-                #"{"type":"context.append_loop_event","agentId":"main","event":{"type":"content.part","stepUuid":"s-1","part":{"type":"text","text":"The queue drains "}},"time":\#(now - 3_000)}"#,
-                #"{"type":"context.append_loop_event","agentId":"main","event":{"type":"content.part","stepUuid":"s-1","part":{"type":"text","text":"on reconnect; 42 tests pass."}},"time":\#(now - 2_900)}"#,
-                #"{"type":"interaction.request","agentId":"main","id":"i_1","kind":"approval","toolCallId":"call_1","request":{},"time":\#(now - 2_000)}"#,
-            ]
-            if resolved {
-                out.append(#"{"type":"interaction.resolved","agentId":"main","id":"i_1","response":{},"time":\#(now - 1_000)}"#)
-            }
-            return out.joined(separator: "\n") + "\n"
-        }
-        try lines(resolved: false).write(to: wire, atomically: true, encoding: .utf8)
-        try #"{"type":"turn.prompt","agentId":"sub_1","input":[{"type":"text","text":"subagent chore"}],"turnId":1,"time":1}"#
-            .write(to: child, atomically: true, encoding: .utf8)
-
-        var rows = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi]).rows.filter { $0.id == .kimi }
-        XCTAssertEqual(rows.count, 1, "a subagent's stream is not a session of its own")
-        var row = try XCTUnwrap(rows.first)
-        XCTAssertEqual(row.task, "Add an offline queue for login")
-        XCTAssertEqual(row.lastWord, "The queue drains on reconnect; 42 tests pass.")
-        XCTAssertEqual(row.model, "kimi-k2")
-        XCTAssertEqual(row.skill, "pending", "an unanswered approval is the vendor saying it waits")
-
-        try lines(resolved: true).write(to: wire, atomically: true, encoding: .utf8)
-        rows = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi]).rows.filter { $0.id == .kimi }
-        row = try XCTUnwrap(rows.first)
-        XCTAssertNotEqual(row.skill, "pending", "answered is answered")
-    }
-
-    func testKimiCredentialsAreNeverRead() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-native-kimi-cred-\(UUID().uuidString)")
-        let credential = home.appendingPathComponent(".kimi-code/credentials/oauth.json")
-        try fm.createDirectory(at: credential.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-        try #"{"sessionId":"tok","title":"access token holder","cwd":"/Users/me/secret"}"#
-            .write(to: credential, atomically: true, encoding: .utf8)
-        let rows = NativeActivityHarvest.scan(home: home, agentFilter: [.kimi]).rows.filter { $0.id == .kimi }
-        XCTAssertTrue(rows.isEmpty)
     }
 
     // MARK: - 2.2 · a record count is exact or it is not offered
@@ -1727,7 +1386,7 @@ final class HarvestParsingTests: XCTestCase {
         let fakeKey = "sk-proj-ExampleSecret123456789"
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-redact-\(UUID().uuidString)")
-        let url = home.appendingPathComponent(".openhands/session.json")
+        let url = home.appendingPathComponent(".copilot/session.json")
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -1737,8 +1396,8 @@ final class HarvestParsingTests: XCTestCase {
             .replacingOccurrences(of: "KEY", with: fakeKey)
             .write(to: url, atomically: true, encoding: .utf8)
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertFalse(row.task.contains(fakeKey))
         XCTAssertTrue(row.task.contains(ContentSanitizer.replacement))
     }
@@ -1824,10 +1483,6 @@ final class HarvestParsingTests: XCTestCase {
         }
         XCTAssertTrue(ActivityHarvest.isCompleteHealth(complete))
         XCTAssertFalse(ActivityHarvest.isCompleteHealth(Array(complete.dropLast())))
-
-        var cursorAlias = complete.filter { $0.id != .cursor }
-        cursorAlias.append(.unscanned(.cursorAgent))
-        XCTAssertTrue(ActivityHarvest.isCompleteHealth(cursorAlias), "Cursor Agent is the same user-facing collector")
     }
 
     func testPartialHarvestKeepsAdaptersTheChildNeverReached() {
@@ -1919,7 +1574,7 @@ final class HarvestParsingTests: XCTestCase {
 
     func testFailedEmptyAdapterRetainsLastGoodRowsUntilRetry() {
         let previous = ActivityHarvest.Row(
-            id: .commandCode,
+            id: .copilot,
             task: "Keep command session visible",
             project: "Pulse",
             cwd: "/Users/me/Pulse",
@@ -1929,7 +1584,7 @@ final class HarvestParsingTests: XCTestCase {
         )
         let health = [
             ActivityHarvest.CollectorHealth(
-                id: .commandCode,
+                id: .copilot,
                 state: .failed,
                 durationMs: 750,
                 rowCount: 0,
@@ -1985,7 +1640,7 @@ final class HarvestParsingTests: XCTestCase {
 
     func testAttentionFutureEventIsIgnored() {
         let now: Int64 = 1_700_000_000_000
-        let text = "codex\tpermission\t\(now + 6 * 60 * 1000)\tApprove\tsession-1\t/Users/me/Pulse\t\t\n"
+        let text = "codex\tpermission\t\(now + 6 * 60 * 1000)\tApprove\tsession-1\t/Users/me/Pulse\t\t\t\t\n"
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
     }
 
@@ -2000,11 +1655,10 @@ final class HarvestParsingTests: XCTestCase {
     }
 
     func testAgentAliasMapping() {
-        XCTAssertEqual(ActivityHarvest.mapAgent("amazon-q"), .amazonQ)
-        XCTAssertEqual(ActivityHarvest.mapAgent("auggie"), .augment)
-        XCTAssertEqual(ActivityHarvest.mapAgent("factory-droid"), .droid)
-        XCTAssertEqual(ActivityHarvest.mapAgent("cursor_agent"), .cursorAgent)
-        XCTAssertEqual(ActivityHarvest.mapAgent("agy"), .antigravity)
+        XCTAssertEqual(ActivityHarvest.mapAgent("cursor_agent"), .cursor)
+        XCTAssertEqual(ActivityHarvest.mapAgent("cursor-agent"), .cursor)
+        XCTAssertEqual(ActivityHarvest.mapAgent("opencode"), .opencode)
+        XCTAssertNil(ActivityHarvest.mapAgent("goose"), "24.0: an unsupported agent is not mapped")
         XCTAssertNil(ActivityHarvest.mapAgent("definitely-not-an-agent"))
     }
 }
@@ -2047,19 +1701,19 @@ final class HarvestEvidenceTests: XCTestCase {
             #"{"sessionId":"gt-b","title":"Real session","cwd":"/tmp/gt-budget"}"#,
             #"{"sessionId":"gt-b","role":"user","content":"Do the thing"}"#,
         ].joined(separator: "\n") + "\n"
-        try write(lines, to: home, ".openhands/session.jsonl")
+        try write(lines, to: home, ".copilot/session.jsonl")
 
         // Sanity: a normal budget observes the session.
-        let healthy = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        XCTAssertEqual(healthy.health.first { $0.id == .openhands }?.state, .observed)
+        let healthy = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        XCTAssertEqual(healthy.health.first { $0.id == .copilot }?.state, .observed)
 
         // Low-but-not-empty: the budget is alive, the file just does not fit.
         let starved = NativeActivityHarvest.scan(
             home: home,
-            agentFilter: [.openhands],
+            agentFilter: [.copilot],
             totalBudgetBytes: 8
         )
-        let health = try XCTUnwrap(starved.health.first { $0.id == .openhands })
+        let health = try XCTUnwrap(starved.health.first { $0.id == .copilot })
         XCTAssertNotEqual(
             health.state, .noSessions,
             "a refused read says something about resources, not about sessions"
@@ -2078,10 +1732,10 @@ final class HarvestEvidenceTests: XCTestCase {
             #"{"sessionId":"gt-1","title":"Session 4 — automated maintenance sweep across the whole repository","cwd":"/tmp/gt-origin"}"#,
             #"{"sessionId":"gt-1","role":"user","content":"Fix it"}"#,
         ].joined(separator: "\n") + "\n"
-        try write(lines, to: home, ".openhands/session.jsonl")
+        try write(lines, to: home, ".copilot/session.jsonl")
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(
             row.task, "Fix it",
             "a user turn outranks a cache headline regardless of length"
@@ -2096,11 +1750,11 @@ final class HarvestEvidenceTests: XCTestCase {
         try write(
             #"{"sessionId":"gt-2","title":"Automated maintenance sweep","cwd":"/tmp/gt-headline"}"#,
             to: home,
-            ".openhands/session.json"
+            ".copilot/session.json"
         )
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.task, "Automated maintenance sweep")
     }
 
@@ -2122,10 +1776,10 @@ final class HarvestEvidenceTests: XCTestCase {
         try write(
             #"{"sessionId":"gt-3","title":"Cascade session"}"#,
             to: home,
-            ".openhands/session.json"
+            ".copilot/session.json"
         )
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
         XCTAssertFalse(
             result.rows.contains { $0.task.lowercased() == "cascade session" },
             "a vendor placeholder with no other fact is not a session"
@@ -2141,11 +1795,11 @@ final class HarvestEvidenceTests: XCTestCase {
         try write(
             Array(repeating: line, count: 12).joined(separator: "\n") + "\n",
             to: home,
-            ".openhands/session.jsonl"
+            ".copilot/session.jsonl"
         )
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.records, 12, "an untruncated file reports its real record count")
     }
 
@@ -2158,7 +1812,7 @@ final class HarvestEvidenceTests: XCTestCase {
         let home = try makeHome("rotate")
         defer { try? FileManager.default.removeItem(at: home) }
 
-        let filter: Set<AgentID> = [.claude, .codex, .openhands]
+        let filter: Set<AgentID> = [.claude, .codex, .copilot]
         let first = NativeActivityHarvest.scan(home: home, agentFilter: filter, startCursor: 0)
         let rotated = NativeActivityHarvest.scan(home: home, agentFilter: filter, startCursor: 1)
         let firstOrder = first.health.map(\.id)
@@ -2195,7 +1849,7 @@ final class HarvestEvidenceTests: XCTestCase {
     func testCompleteScanRewindsTheCursor() throws {
         let home = try makeHome("cursor")
         defer { try? FileManager.default.removeItem(at: home) }
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
         XCTAssertEqual(
             result.nextCursor, 0,
             "a pass that reached every adapter starts the next one at the head"
@@ -2210,11 +1864,11 @@ final class HarvestEvidenceTests: XCTestCase {
         try write(
             #"{"sessionId":"gt-6","role":"user","content":"Explain the hero","cwd":"/tmp/gt-explain"}"#,
             to: home,
-            ".openhands/session.json"
+            ".copilot/session.json"
         )
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let health = try XCTUnwrap(result.health.first { $0.id == .openhands })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let health = try XCTUnwrap(result.health.first { $0.id == .copilot })
         XCTAssertEqual(health.explain.heroOrigin, "user_prompt")
         XCTAssertEqual(health.explain.emptyReason, "")
         XCTAssertGreaterThan(health.explain.filesRead, 0)
@@ -2226,10 +1880,10 @@ final class HarvestEvidenceTests: XCTestCase {
         let home = try makeHome("explain-empty")
         defer { try? FileManager.default.removeItem(at: home) }
 
-        // Continue has no CLI needle, so an empty home can only be
-        // `source_absent` — the reason stays deterministic on any runner.
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.continue_])
-        let health = try XCTUnwrap(result.health.first { $0.id == .continue_ })
+        // Pi's CLI is not on a CI runner, so an empty home can only be
+        // `source_absent` — the reason stays deterministic there.
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.pi])
+        let health = try XCTUnwrap(result.health.first { $0.id == .pi })
         XCTAssertEqual(health.state, .sourceAbsent)
         XCTAssertEqual(health.explain.emptyReason, "no_source")
         XCTAssertEqual(health.explain.heroOrigin, "")
@@ -2245,10 +1899,10 @@ final class HarvestEvidenceTests: XCTestCase {
         for index in 0..<900 {
             lines.append(#"{"sessionId":"gt-7","type":"note","index":\#(index),"text":"\#(filler)"}"#)
         }
-        try write(lines.joined(separator: "\n") + "\n", to: home, ".openhands/session.jsonl")
+        try write(lines.joined(separator: "\n") + "\n", to: home, ".copilot/session.jsonl")
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let health = try XCTUnwrap(result.health.first { $0.id == .openhands })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let health = try XCTUnwrap(result.health.first { $0.id == .copilot })
         XCTAssertTrue(health.explain.truncated)
         XCTAssertTrue(health.explain.summary.contains("truncated"))
     }
@@ -2273,7 +1927,7 @@ final class HarvestEvidenceTests: XCTestCase {
         let clock = Date()
         for index in 0..<total {
             let id = String(format: "gt-order-%03d", index)
-            let relative = ".openhands/sessions/\(id).jsonl"
+            let relative = ".copilot/sessions/\(id).jsonl"
             try write(
                 #"{"sessionId":"\#(id)","role":"user","content":"Session \#(id)","cwd":"/tmp/gt-order"}"# + "\n",
                 to: home,
@@ -2293,10 +1947,10 @@ final class HarvestEvidenceTests: XCTestCase {
             home: home,
             agentDeadlineSeconds: 60,
             totalDeadlineSeconds: 120,
-            agentFilter: [.openhands]
+            agentFilter: [.copilot]
         )
         let indices = result.rows
-            .filter { $0.id == .openhands }
+            .filter { $0.id == .copilot }
             .compactMap { Int($0.sessionID.dropFirst("gt-order-".count)) }
             .sorted()
 
@@ -2334,10 +1988,10 @@ final class HarvestEvidenceTests: XCTestCase {
         alongside "status": "waiting" — written here as documentation of the
         wire format, not as a statement about this machine.
         """
-        try write(note, to: home, ".openhands/notes.md")
+        try write(note, to: home, ".copilot/notes.md")
 
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.openhands])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .openhands })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.cwd, "/tmp/gt-prose", "display fields still travel")
         XCTAssertNotEqual(
             row.skill, "pending",
@@ -2427,7 +2081,6 @@ struct HarvestFixTests {
 
     @Test func walksNameTheDirectoriesTheyLeaveToTheirReaders() {
         #expect(AgentID.claude.spec.walk.skippedDirectoryNames.contains("subagents"))
-        #expect(AgentID.openhands.spec.walk.skippedDirectoryNames.contains("events"))
     }
 
     // MARK: - 4 · Pi follows the active branch
@@ -2528,29 +2181,6 @@ struct HarvestFixTests {
         #expect(row.progressTotal == 0)
         #expect(row.progressDone == 0)
     }
-
-    // MARK: - 18 · old Goose sessions are not decoded message by message
-
-    @Test func gooseReadsRecentMessagesOnlyForRecentSessions() {
-        #expect(NativeActivityHarvest.gooseReadsRecentMessages(updatedMs: now - Self.minute, nowMs: now))
-        #expect(!NativeActivityHarvest.gooseReadsRecentMessages(updatedMs: now - 73 * 60 * Self.minute, nowMs: now))
-        #expect(NativeActivityHarvest.gooseReadsRecentMessages(updatedMs: 0, nowMs: now), "unknown is read, not assumed old")
-    }
-
-    @Test func anOldGooseSessionKeepsItsTitleWithoutAnOldAsk() throws {
-        let home = Home()
-        let ask = #"[{"type":"actionRequired","data":{"actionType":"elicitation","id":"e1","message":"Which database?","requested_schema":{}}}]"#
-        try home.database(".local/share/goose/sessions/sessions.db", [
-            "CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', session_type TEXT NOT NULL DEFAULT 'user', working_dir TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, accumulated_input_tokens INTEGER, accumulated_output_tokens INTEGER, model_config_json TEXT, archived_at TIMESTAMP, parent_session_id TEXT);",
-            "CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT, session_id TEXT NOT NULL, role TEXT NOT NULL, content_json TEXT NOT NULL, created_timestamp INTEGER NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, tokens INTEGER, metadata_json TEXT);",
-            "INSERT INTO sessions (id, name, working_dir, updated_at) VALUES ('old_1', 'CLI Session', '/Users/me/app', datetime('now', '-10 days'));",
-            "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m1', 'old_1', 'user', '[{\"type\":\"text\",\"text\":\"Migrate the database\"}]', 1700000000);",
-            "INSERT INTO messages (message_id, session_id, role, content_json, created_timestamp) VALUES ('m2', 'old_1', 'assistant', '\(ask)', 1700000001);",
-        ])
-        let row = try #require(home.rows(.goose).first)
-        #expect(row.task == "Migrate the database")
-        #expect(row.skill != "pending")
-    }
 }
 
 /// 0.94 Waiting Proof — harvest ask → tray Waiting → dismiss → clear → re-raise,
@@ -2614,13 +2244,13 @@ final class HarvestPendingTests: XCTestCase {
     func testWaitingNoneStillNeverStampsHarvestPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-none-\(UUID().uuidString)")
-        let zcode = home.appendingPathComponent(".zcode/session.json")
-        try fm.createDirectory(at: zcode.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let codex = home.appendingPathComponent(".codex/sessions/2026/09/29/rollout-z.jsonl")
+        try fm.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
-        try #"{"sessionId":"z-1","title":"ZCode work","status":"awaiting_user","currentTool":"ask_followup_question","isWaitingForResponse":true}"#
-            .write(to: zcode, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.zcode])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .zcode })
+        try #"{"session_id":"z-1","title":"Codex work","cwd":"/tmp/z","status":"awaiting_user","currentTool":"ask_followup_question","isWaitingForResponse":true}"#
+            .write(to: codex, atomically: true, encoding: .utf8)
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.codex])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .codex })
         XCTAssertNotEqual(row.skill, "pending")
     }
 }
@@ -2677,28 +2307,6 @@ final class HarvestAnsweredAskTests: XCTestCase {
         let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.skill, "pending")
     }
-
-    // MARK: Cascade / Windsurf arbitration
-
-    @MainActor
-    func testSharedWindsurfRootDoesNotDoubleRaiseCascadeAndWindsurf() throws {
-        let fm = FileManager.default
-        let home = fm.temporaryDirectory.appendingPathComponent("pulse-extinguish-cascade-\(UUID().uuidString)")
-        let windsurf = home.appendingPathComponent(".windsurf/session.json")
-        try fm.createDirectory(at: windsurf.deletingLastPathComponent(), withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: home) }
-        try #"""
-        {"sessionId":"ws-dup","title":"Need you","cwd":"/tmp/ws","status":"running",
-         "isWaitingForResponse":true,"currentTool":"ask_clarifying_question"}
-        """#.write(to: windsurf, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home)
-        let cascade = result.rows.filter { $0.id == .cascade }
-        let wind = result.rows.filter { $0.id == .windsurf }
-        XCTAssertFalse(cascade.isEmpty, "Cascade should claim the shared root")
-        XCTAssertTrue(wind.isEmpty, "Windsurf shell must not duplicate when Cascade observed")
-        // 23.0: Cascade's format is unverified — no inferred Waiting.
-        XCTAssertNotEqual(cascade.first?.skill, "pending")
-    }
 }
 
 /// 0.99 Quiet Data — what Pulse writes down, and whether it says so.
@@ -2715,7 +2323,7 @@ final class ChromeVocabularyTests: XCTestCase {
     func testChromeTitlesAreRejectedWhateverTheirCase() {
         for title in ["Cascade session", "CASCADE SESSION", "cascade session",
                       "New Chat", "new chat", "Running", "running", "  Untitled  "] {
-            var row = AgentRow(rowKey: "k", agent: .cascade)
+            var row = AgentRow(rowKey: "k", agent: .copilot)
             row.task = title
             XCTAssertNil(row.usefulTask, "\(title) is not a user goal")
         }

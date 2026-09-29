@@ -144,23 +144,6 @@ enum SnapshotBuilder {
                 liveHits[hit.id] = hit
             }
         }
-        // cursor_agent live counts as Cursor live for merge.
-        if let agentHit = liveHits[.cursorAgent] {
-            if var cursor = liveHits[.cursor] {
-                cursor.count = max(cursor.count, agentHit.count)
-                if cursor.tty.isEmpty { cursor.tty = agentHit.tty }
-                if cursor.pid == 0 { cursor.pid = agentHit.pid }
-                cursor.viaWarp = cursor.viaWarp || agentHit.viaWarp
-                if cursor.hostApp == nil { cursor.hostApp = agentHit.hostApp }
-                liveHits[.cursor] = cursor
-            } else {
-                var mapped = agentHit
-                mapped.id = .cursor
-                liveHits[.cursor] = mapped
-            }
-            liveHits.removeValue(forKey: .cursorAgent)
-        }
-
         // A live CLI may preserve one known goal when its session store has
         // stopped updating, but it is not a blanket lease for every unfinished
         // rollout that Agent ever wrote. Only when an Agent has no fresh row
@@ -168,12 +151,12 @@ enum SnapshotBuilder {
         var agentsWithFreshRows = Set<AgentID>()
         for act in input.harvest {
             if ActivityHarvest.isFresh(act, nowMs: nowMs) || act.subRunning > 0 {
-                agentsWithFreshRows.insert(act.id.surfaceID)
+                agentsWithFreshRows.insert(act.id)
             }
         }
         var staleFallbackByAgent: [AgentID: Int] = [:]
         for (index, act) in input.harvest.enumerated() {
-            let agent = act.id.surfaceID
+            let agent = act.id
             guard liveHits[agent] != nil,
                   !agentsWithFreshRows.contains(agent),
                   !ActivityHarvest.isFresh(act, nowMs: nowMs),
@@ -200,7 +183,7 @@ enum SnapshotBuilder {
         // MARK: 1 · Session rows, from the harvest.
 
         for (harvestIndex, act) in input.harvest.enumerated() {
-            let agentID = act.id.surfaceID
+            let agentID = act.id
             let fresh = ActivityHarvest.isFresh(act, nowMs: nowMs)
             if !fresh, act.subRunning == 0, !staleFallbackIndices.contains(harvestIndex) {
                 result.debugNotes.append("drop stale harvest \(agentID.rawValue) hm=\(act.harvestMs)")
@@ -262,9 +245,10 @@ enum SnapshotBuilder {
             draft.subagentsRunning = draft.subagentsRunning || act.subRunning > 0
             draft.hasEvidence = draft.hasEvidence || hasHarvestEvidence(act)
 
-            // Harvest pending → Waiting, only for an agent whose format has
-            // a stated source (`waiting: .harvestPending`). 23.0: an
-            // unverified reader's `pending` is not evidence of a block.
+            // Harvest pending → Waiting, only for an agent whose vendor
+            // reports blocks at all (`waiting: .hooks`). 24.0: Codex and
+            // Cursor never do, so their `pending` is not evidence of a block.
+            // The harvest layer, and this path with it, goes in the next phase.
             if act.skill == "pending", agentID.waitingSource != .none, fresh {
                 if !context.dismissedPendingKeys.contains(key) {
                     draft.wait = RowWait(
@@ -319,7 +303,7 @@ enum SnapshotBuilder {
                 // "it finished" would have no other evidence.
                 guard !att.isTurn else { continue }
                 let key = att.hookRowKey
-                var draft = drafts[key] ?? Draft(row: AgentRow(rowKey: key, agent: att.id.surfaceID))
+                var draft = drafts[key] ?? Draft(row: AgentRow(rowKey: key, agent: att.id))
                 draft.row.sessionID = att.session
                 draft.row.attentionSession = att.session
                 if draft.row.cwd.isEmpty { draft.row.cwd = att.cwd }
@@ -419,7 +403,7 @@ enum SnapshotBuilder {
         // 2.9 activity events: push-fresh "now" from the hook, applied to the
         // matching session row. Never a wait, and never a new row.
         for event in input.activity {
-            guard let agent = AgentID(rawValue: event.agent)?.surfaceID else { continue }
+            guard let agent = AgentID(rawValue: event.agent) else { continue }
             for (key, draft) in drafts
             where draft.row.agent == agent && !event.session.isEmpty && draft.row.sessionID == event.session {
                 var updated = draft
@@ -749,7 +733,7 @@ enum SnapshotBuilder {
     /// an entry by folder, so the `done` that dismisses it names exactly the
     /// entry it clears. Unmatched makes a hook-only row (the caller decides).
     static func matchAttention(_ att: AttentionReader.Entry, in rows: [AgentRow]) -> AttentionMatch {
-        let candidates = rows.filter { $0.agent == att.id.surfaceID && !RowIdentity.isProcessKey($0.rowKey) }
+        let candidates = rows.filter { $0.agent == att.id && !RowIdentity.isProcessKey($0.rowKey) }
         guard !candidates.isEmpty else { return .unmatched }
         let pool = candidates.filter { $0.sessionID.isEmpty }
         if !att.session.isEmpty {

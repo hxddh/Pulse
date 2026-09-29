@@ -247,8 +247,8 @@ package enum NativeActivityHarvest {
         let allDescriptors = descriptors(home: home)
         let filtered: [Descriptor]
         if let agentFilter {
-            let allowed = Set(agentFilter.map(\.surfaceID))
-            filtered = allDescriptors.filter { allowed.contains($0.id.surfaceID) }
+            let allowed = Set(agentFilter)
+            filtered = allDescriptors.filter { allowed.contains($0.id) }
         } else {
             filtered = allDescriptors
         }
@@ -400,34 +400,6 @@ package enum NativeActivityHarvest {
             }
         }
 
-        // Windsurf shell rows only when Cascade produced none — shared
-        // ~/.windsurf roots must not double the same pending session as two
-        // red lamps (0.95 Extinguish Honesty).
-        //
-        // This copy exists so the health lines agree with the rows this pass
-        // reports; it is no longer the rule. The rule is
-        // `ActivityHarvest.dedupeSharedRoots`, applied where the tray's rows
-        // are actually assembled — a cursor rotation, a tripped collector or
-        // a scoped rescan all deliver one of the pair without the other, and
-        // this block, which can only see one scan, is blind to every one of
-        // them. It also no longer skips itself when the scan is scoped: a
-        // filter that happens to exclude Cascade was never a reason to let a
-        // duplicate through.
-        if rows.contains(where: { $0.id == .cascade }) {
-            rows.removeAll { $0.id == .windsurf }
-            for index in health.indices where health[index].id == .windsurf {
-                if health[index].state == .observed || health[index].rowCount > 0 {
-                    health[index].state = .noSessions
-                    health[index].rowCount = 0
-                    // 2.9 Codex review on #78: the yield was measured before
-                    // this cleanup, so without clearing it Support Health
-                    // could report "no sessions" and a list of measured
-                    // facts about the same adapter in the same breath.
-                    health[index].factClasses = []
-                }
-            }
-        }
-
         // Resume at the first adapter this pass could not reach, so the next
         // scan spends its budget on them first. A complete pass rewinds to the
         // start, keeping the flagship agents at the head in the common case.
@@ -525,8 +497,8 @@ package enum NativeActivityHarvest {
     ) -> String {
         var lines = ["Pulse harvest shape report", "keys and value kinds only — no values"]
         let fm = FileManager.default
-        let wanted = Set(agents.map(\.surfaceID))
-        for descriptor in descriptors(home: home) where wanted.contains(descriptor.id.surfaceID) {
+        let wanted = Set(agents)
+        for descriptor in descriptors(home: home) where wanted.contains(descriptor.id) {
             let permitted = allowAppData || appDataAgents.contains {
                 accessAlias($0, matches: descriptor.id)
             }
@@ -629,20 +601,14 @@ package enum NativeActivityHarvest {
         func d(_ id: AgentID, _ paths: [String], _ commands: [String] = []) -> Descriptor {
             Descriptor(id: id, roots: paths.map(h), commands: commands)
         }
-        // `cursorAgent` is intentionally a transport alias of Cursor and has
-        // no roots of its own, so no second health row. The roots, commands
-        // and their rationale live in `AgentCatalog`.
+        // The roots, commands and their rationale live in `AgentCatalog`.
         return AgentCatalog.all
             .filter { !$0.harvestRoots.isEmpty }
             .map { d($0.id, $0.harvestRoots, $0.harvestCommands) }
     }
 
     package static func accessAlias(_ selected: AgentID, matches id: AgentID) -> Bool {
-        if selected.surfaceID == id.surfaceID { return true }
-        if (selected == .cascade || selected == .windsurf)
-            && (id == .cascade || id == .windsurf) { return true }
-        if (selected == .cursor || selected == .cursorAgent) && id == .cursor { return true }
-        return false
+        selected == id
     }
 
     package static func isProtected(_ url: URL, home: URL) -> Bool {
@@ -934,9 +900,6 @@ package enum NativeActivityHarvest {
             if id.waitingSource == .none, parsed[index].skill == "pending" {
                 parsed[index].skill = ""
                 parsed[index].explicitPending = false
-            }
-            if id == .amp, item.path.lowercased().hasSuffix("history.jsonl") {
-                parsed[index].records = 0
             }
             // 20.0: the chat's own `sessionId` wins; the file name is the
             // fallback when the head (metadata line) was outside the window.

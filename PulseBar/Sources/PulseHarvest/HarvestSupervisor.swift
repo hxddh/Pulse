@@ -44,7 +44,7 @@ package struct HarvestSupervisor: Equatable {
         nowMs: Int64,
         agents: Set<AgentID> = ActivityHarvest.expectedCollectorIDs
     ) -> Plan {
-        let publicAgents = agents.map(\.surfaceID).filter { $0 != .cursorAgent }
+        let publicAgents = agents
         var attempted = Set<AgentID>()
         var deferred = Set<AgentID>()
         for agent in publicAgents {
@@ -70,8 +70,7 @@ package struct HarvestSupervisor: Equatable {
         nowMs: Int64
     ) {
         for item in health {
-            let agent = item.id.surfaceID
-            guard agent != .cursorAgent else { continue }
+            let agent = item.id
             var state = states[agent] ?? AgentState()
             switch item.state {
             case .observed, .noRecentData, .noSessions, .sourceAbsent:
@@ -110,7 +109,7 @@ package struct HarvestSupervisor: Equatable {
     }
 
     package func state(for agent: AgentID) -> AgentState {
-        states[agent.surfaceID] ?? AgentState()
+        states[agent] ?? AgentState()
     }
 
     package func summary(nowMs: Int64) -> String {
@@ -120,7 +119,7 @@ package struct HarvestSupervisor: Equatable {
         }.count
         let deferred = AgentID.allCases
             .filter { agent in
-                let state = states[agent.surfaceID] ?? AgentState()
+                let state = states[agent] ?? AgentState()
                 return state.circuitOpenUntilMs > nowMs || state.nextRetryAtMs > nowMs
             }
             .map(\.rawValue)
@@ -128,7 +127,7 @@ package struct HarvestSupervisor: Equatable {
         let deferredLabel = deferred.isEmpty ? "-" : deferred.joined(separator: ",")
         let starved = AgentID.allCases
             .filter { agent in
-                let state = states[agent.surfaceID] ?? AgentState()
+                let state = states[agent] ?? AgentState()
                 return state.lastUnscannedAtMs > 0
                     && nowMs - state.lastUnscannedAtMs <= 10 * 60_000
             }
@@ -144,12 +143,9 @@ package struct HarvestSupervisor: Equatable {
     package func failureTimeline(nowMs: Int64, limit: Int = 8) -> [(agent: AgentID, error: String, atMs: Int64)] {
         AgentID.allCases
             .compactMap { agent -> (AgentID, String, Int64)? in
-                let state = states[agent.surfaceID] ?? AgentState()
+                let state = states[agent] ?? AgentState()
                 guard state.lastFailureAtMs > 0, !state.lastError.isEmpty else { return nil }
-                // Prefer the surface id (Cursor Agent folds into Cursor).
-                let surface = agent.surfaceID
-                guard surface == agent else { return nil }
-                return (surface, state.lastError, state.lastFailureAtMs)
+                return (agent, state.lastError, state.lastFailureAtMs)
             }
             .sorted { $0.2 > $1.2 }
             .prefix(limit)
@@ -157,7 +153,7 @@ package struct HarvestSupervisor: Equatable {
     }
 
     private func retryDate(for agent: AgentID) -> Int64 {
-        let state = states[agent.surfaceID] ?? AgentState()
+        let state = states[agent] ?? AgentState()
         return max(state.nextRetryAtMs, state.circuitOpenUntilMs)
     }
 }

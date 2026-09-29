@@ -154,17 +154,9 @@ extension StatusStore {
     var supportHealth: [AgentSupportHealth] {
         // Cached by the scan: a Diagnostics redraw reads no file.
         let waitingEvents = previewWaitingEventTimes ?? engine.latestHookEventMs
-        // Cursor Agent is a transport identity, not a second product. Its
-        // process/session rows are normalized into Cursor by SnapshotBuilder;
-        // listing it again here made the coverage screen claim two adapters
-        // and split the same health result into duplicate entries.
-        let displayAgents = AgentID.priority.filter { $0 != .cursorAgent }
-        return displayAgents.map { agent in
-            let rows = cachedAll.filter {
-                $0.agent == agent || (agent == .cursor && $0.agent == .cursorAgent)
-            }
+        return AgentID.priority.map { agent in
+            let rows = cachedAll.filter { $0.agent == agent }
             let health = engine.collectorHealthByAgent[agent]
-                ?? (agent == .cursor ? engine.collectorHealthByAgent[.cursorAgent] : nil)
             let strongest: ObservationSource? = {
                 if rows.contains(where: { $0.source == .session }) { return .session }
                 if rows.contains(where: { $0.source == .cache }) { return .cache }
@@ -172,7 +164,6 @@ extension StatusStore {
                 return nil
             }()
             let process = engine.processesByAgent[agent]
-                ?? (agent == .cursor ? engine.processesByAgent[.cursorAgent] : nil)
             let measured = health?.factClasses ?? []
             return AgentSupportHealth(
                 agent: agent,
@@ -298,22 +289,7 @@ extension StatusStore {
     private func waitingSignalReady(for agent: AgentID) -> Bool {
         switch agent.waitingSource {
         case .hooks:
-            if hooksStatus.isInstalled(for: agent) { return true }
-            // Codex also has a harvest-pending Waiting path (README matrix).
-            if agent == .codex {
-                let state = engine.collectorHealthByAgent[agent]?.state ?? .unscanned
-                return state == .observed || state == .noRecentData
-            }
-            return false
-        case .harvestPending:
-            let state = engine.collectorHealthByAgent[agent]?.state
-                ?? (agent == .cursor ? engine.collectorHealthByAgent[.cursorAgent]?.state : nil)
-                ?? .unscanned
-            // A source that exists but yielded no usable session cannot yet
-            // prove a pending signal. Counting `.noSessions` as ready made a
-            // process-only Amp row read “1/5 useful signals” despite having no
-            // activity feed or actionable Waiting route.
-            return state == .observed || state == .noRecentData
+            return hooksStatus.isInstalled(for: agent)
         case .none:
             return false
         }
@@ -485,16 +461,10 @@ extension StatusStore {
 
     /// The score pills answer “how much can Pulse observe?”; this answers the
     /// next question, “what did it actually observe?” Keeping one compact,
-    /// representative session per adapter makes the 31-agent matrix useful
+    /// representative session per adapter makes the agent matrix useful
     /// without turning it into a transcript or exposing raw session IDs.
     func supportObservedDetail(_ health: AgentSupportHealth) -> String {
-        // Cursor Agent is normalized into Cursor for the user-facing support
-        // row. Keep the evidence lookup normalized too; otherwise a Cursor
-        // Agent-only session can score correctly above and still render as
-        // "no usable session signals" below it.
-        let candidates = cachedAll.filter {
-            $0.agent == health.agent || (health.agent == .cursor && $0.agent == .cursorAgent)
-        }
+        let candidates = cachedAll.filter { $0.agent == health.agent }
         guard let row = candidates.max(by: { lhs, rhs in
             let left = (
                 lhs.isBlocked ? 4 : 0,
@@ -603,7 +573,6 @@ extension StatusStore {
     private func supportWaitingLabel(_ agent: AgentID) -> String {
         switch agent.waitingSource {
         case .hooks: return tr(.supportWaitingHooks)
-        case .harvestPending: return tr(.supportWaitingHarvest)
         case .none: return tr(.supportWaitingNoneDetail)
         }
     }
@@ -640,7 +609,7 @@ extension StatusStore {
 
     /// Thin vs deep observation — never let a cache/none Agent look session-deep.
     /// Rich cache (goal + workspace/activity) stays Limited but says so honestly.
-    /// Waiting-none still exposes harvest depth so ZCode/Trae cannot hide behind
+    /// Waiting-none still exposes harvest depth so Codex/Cursor cannot hide behind
     /// “Waiting unavailable” alone (0.70 Contract Honesty).
     func supportDepthDetail(_ health: AgentSupportHealth) -> String {
         let harvest: String

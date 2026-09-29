@@ -32,8 +32,7 @@ extension TranscriptDialect {
 package enum TranscriptDialects {
     /// Registration order is precedence.
     package static let all: [any TranscriptDialect] = [
-        CodexDialect(), PiDialect(), GeminiDialect(), ClineFamilyDialect(), KimiDialect(), GrokDialect(), CopilotDialect(),
-        ContinueDialect(), OpenHandsDialect(),
+        CodexDialect(), PiDialect(), GeminiDialect(), CopilotDialect(),
     ]
 
     package static func dialect(for path: String) -> (any TranscriptDialect)? {
@@ -86,47 +85,6 @@ package struct GeminiDialect: TranscriptDialect {
     }
 }
 
-/// Cline, Roo Code and Kilo Code task stores (20.0): the vendor's own ask
-/// classification, the `ts` clock, the task directory as session id
-/// (`HarvestClineFamily.swift`).
-package struct ClineFamilyDialect: TranscriptDialect {
-    package func claims(lowerPath: String) -> Bool {
-        NativeActivityHarvest.isClineFamilyPath(lowerPath) && lowerPath.hasSuffix(".json")
-    }
-
-    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
-        NativeActivityHarvest.parseClineFamily(text, path: path)
-    }
-}
-
-/// Kimi Code (20.0): `state.json` plus the main agent's `wire.jsonl`, joined
-/// by the session directory (`HarvestKimi.swift`). Everything else under a
-/// session is claimed and says nothing.
-package struct KimiDialect: TranscriptDialect {
-    package func claims(lowerPath: String) -> Bool {
-        lowerPath.contains("/.kimi-code/sessions/")
-    }
-
-    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
-        NativeActivityHarvest.parseKimiSession(text, path: path)
-    }
-}
-
-/// Grok Build's per-session ACP stream (20.0): `{"timestamp": <s>, "method":
-/// "session/update", "params": {"sessionId", "update": {"sessionUpdate":
-/// "user_message_chunk" | "agent_message_chunk", "content": {"text"}}}}`.
-/// The newest run of agent chunks is the last word; the database row with
-/// the same session id supplies title and working directory.
-package struct GrokDialect: TranscriptDialect {
-    package func claims(lowerPath: String) -> Bool {
-        lowerPath.contains("/.grok/sessions/") && lowerPath.hasSuffix("/updates.jsonl")
-    }
-
-    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
-        NativeActivityHarvest.parseGrokUpdates(text, path: path)
-    }
-}
-
 /// GitHub Copilot CLI `session-state/<id>/events.jsonl` (20.0).
 package struct CopilotDialect: TranscriptDialect {
     package func claims(lowerPath: String) -> Bool {
@@ -136,27 +94,5 @@ package struct CopilotDialect: TranscriptDialect {
     package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
         let facts = NativeActivityHarvest.parseCopilotEvents(text, path: path)
         return facts.isEmpty ? nil : facts
-    }
-}
-
-/// Continue sessions (20.0; `HarvestContinueOpenHands.swift`).
-package struct ContinueDialect: TranscriptDialect {
-    package func claims(lowerPath: String) -> Bool {
-        lowerPath.contains("/.continue/") && lowerPath.hasSuffix(".json")
-    }
-
-    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
-        NativeActivityHarvest.parseContinue(text, path: path)
-    }
-}
-
-/// OpenHands conversation directories (20.0).
-package struct OpenHandsDialect: TranscriptDialect {
-    package func claims(lowerPath: String) -> Bool {
-        lowerPath.contains("/.openhands/") && lowerPath.contains("conversations/") && lowerPath.hasSuffix(".json")
-    }
-
-    package func parse(_ text: String, path: String) -> [NativeActivityHarvest.Fact]? {
-        NativeActivityHarvest.parseOpenHands(text, path: path)
     }
 }

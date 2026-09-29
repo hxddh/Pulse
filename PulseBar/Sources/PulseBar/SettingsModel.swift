@@ -3,7 +3,7 @@ import Foundation
 /// 23.0 · Settings as a value: one page, seven short groups, a footer.
 ///
 /// General (login, language) · Shortcut · Notifications (and the muted
-/// agents, each with ✕) · Hooks (Claude and Codex) · Terminal control ·
+/// agents, each with ✕) · Hooks (one line per agent, 24.0) · Terminal control ·
 /// Data access · Updates. About, build and "running from" collapsed into a
 /// footer line. `SettingsFace` renders this and sends `Action`s; the store
 /// builds it from `settings` and a few flags — never from a scan. Pure.
@@ -50,6 +50,8 @@ struct SettingsModel: Equatable {
     // Hooks
     var hooksStatus: String
     var hooksInstalled: Bool
+    /// 24.0: one line per supported agent.
+    var hookAgents: [HookAgent] = []
     var hookTest: String
     var hookTestTone: PulseTheme.Tone
     var hookTestRunning: Bool
@@ -66,6 +68,60 @@ struct SettingsModel: Equatable {
     var buildWarning: String?
     /// Where a deep link asked the page to scroll.
     var focus: Section?
+
+    /// One agent's hook, as the Hooks section says it.
+    struct HookAgent: Equatable, Identifiable {
+        var agent: AgentID
+        /// Installed / not installed / not on this Mac.
+        var state: String
+        var installed: Bool
+        /// "last event 12s ago" / "no event yet"; empty when not installed.
+        var lastEvent: String
+        /// Said for an agent whose hook never reports a wait.
+        var note: String?
+
+        var id: AgentID { agent }
+    }
+
+    /// Pure: the Hooks section's lines, in roster order.
+    static func hookAgents(
+        installed: Set<AgentID>,
+        present: Set<AgentID>,
+        lastEventMs: [AgentID: Int64],
+        nowMs: Int64,
+        lang: ResolvedLanguage
+    ) -> [HookAgent] {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        return AgentID.priority.map { agent in
+            let isInstalled = installed.contains(agent)
+            let state: String
+            if isInstalled {
+                state = t(.settingsHookInstalled)
+            } else if present.contains(agent) {
+                state = t(.hooksMissing)
+            } else {
+                state = t(.settingsHookNotFound)
+            }
+            var lastEvent = ""
+            if isInstalled {
+                if let ms = lastEventMs[agent], ms > 0 {
+                    let seconds = Double(max(0, nowMs - ms)) / 1000
+                    lastEvent = seconds < 5
+                        ? t(.settingsHookLastEventNow)
+                        : String(format: t(.settingsHookLastEvent), DurationFormat.label(seconds: seconds, lang: lang))
+                } else {
+                    lastEvent = t(.settingsHookNoEvent)
+                }
+            }
+            return HookAgent(
+                agent: agent,
+                state: state,
+                installed: isInstalled,
+                lastEvent: lastEvent,
+                note: agent.waitingSource == .none ? t(.settingsHookNoWait) : nil
+            )
+        }
+    }
 
     /// The page, top to bottom.
     static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .terminal, .dataAccess, .updates]

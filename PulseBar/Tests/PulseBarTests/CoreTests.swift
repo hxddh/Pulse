@@ -44,9 +44,19 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertNil(AgentCatalog.agent(named: "not-an-agent"))
     }
 
-    func testOnlyCursorAgentHasNoCollectorOfItsOwn() {
-        let without = AgentCatalog.all.filter { $0.harvestRoots.isEmpty }.map(\.id)
-        XCTAssertEqual(without, [.cursorAgent])
+    /// 24.0 (Exact): the owner's roster, and nothing else.
+    func testRosterIsTheSevenSupportedAgents() {
+        XCTAssertEqual(
+            AgentID.allCases.map(\.rawValue),
+            ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
+        )
+        XCTAssertEqual(Set(AgentID.priority), Set(AgentID.allCases))
+        XCTAssertEqual(AgentCatalog.agent(named: "cursor-agent"), .cursor, "the CLI is Cursor")
+        XCTAssertEqual(AgentCatalog.agent(named: "cursor_agent"), .cursor)
+    }
+
+    func testEveryAgentHasACollector() {
+        XCTAssertTrue(AgentCatalog.all.allSatisfy { !$0.harvestRoots.isEmpty })
     }
 
     func testTranscriptPolicyKeepsPiReadingIdleFiles() {
@@ -56,24 +66,41 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertFalse(AgentID.cursor.spec.transcripts.allowsBoundedLargeFiles)
     }
 
-    /// 23.0: an agent whose on-disk format is `unverified` in
-    /// docs/vendor-formats.json does not infer Waiting from its harvest.
-    func testUnverifiedFormatsInferNoWaiting() {
-        let unverified: [AgentID] = [
-            .cursor, .cursorAgent, .amp, .amazonQ, .cascade, .windsurf,
-            .augment, .zedAgent, .kiro, .droid, .commandCode,
-        ]
-        for id in unverified {
-            XCTAssertEqual(id.waitingSource, .none, id.rawValue)
+    /// 24.0: Waiting by evidence — only a vendor hook that reports a block.
+    func testWaitingComesOnlyFromAVendorBlockEvent() {
+        let reportsBlocks: Set<AgentID> = [.claude, .gemini, .copilot, .opencode, .pi]
+        for id in AgentID.allCases {
+            XCTAssertEqual(id.waitingSource == .hooks, reportsBlocks.contains(id), id.rawValue)
         }
+        // Codex's PermissionRequest fires before its own auto-review;
+        // Cursor has no observe-only block event.
+        XCTAssertEqual(AgentID.codex.waitingSource, .none)
+        XCTAssertEqual(AgentID.cursor.waitingSource, .none)
+        XCTAssertEqual(AgentID.waitingNoneAgents, [.codex, .cursor])
+    }
+
+    /// 24.0: every agent's hook is the vendor's documented, non-blocking one.
+    func testEveryHookContractIsObserveOnly() {
+        for spec in AgentCatalog.all {
+            let names = spec.hooks.events.map(\.name)
+            XCTAssertFalse(names.isEmpty, spec.id.rawValue)
+            XCTAssertEqual(Set(names).count, names.count, "\(spec.id.rawValue) lists an event twice")
+            for name in names {
+                XCTAssertFalse(HookContract.gatingEvents.contains(name), "\(spec.id.rawValue) installs gating \(name)")
+            }
+            XCTAssertFalse(spec.hooks.path.hasPrefix("/"), "hook paths are home-relative")
+            XCTAssertTrue(spec.hooks.path.hasPrefix(spec.hooks.home + "/"), "\(spec.id.rawValue) writes inside its vendor directory")
+        }
+        XCTAssertFalse(AgentID.codex.spec.hooks.events.contains { $0.name == "PermissionRequest" })
+        XCTAssertFalse(AgentID.claude.spec.hooks.events.contains { $0.name == "PreToolUse" })
+        XCTAssertFalse(AgentID.cursor.spec.hooks.events.contains { $0.name.hasPrefix("before") })
     }
 
     // MARK: - 12.1 · the walk is data
 
     func testEveryCollectorHasAPlaceOnTheFixtureWall() {
-        // Agents with a hand-written fixture in NativeHarvestSelfTest, plus
-        // Cursor Agent, which has no collector of its own.
-        let handWritten: Set<AgentID> = [.cursor, .cursorAgent, .grok, .pi, .opencode, .warpAgent, .goose]
+        // Agents with a hand-written fixture in NativeHarvestSelfTest.
+        let handWritten: Set<AgentID> = [.cursor, .pi, .opencode]
         for spec in AgentCatalog.all where !handWritten.contains(spec.id) {
             XCTAssertNotNil(spec.walk.fixturePath, "\(spec.id.rawValue) has no generic fixture")
         }
@@ -82,20 +109,17 @@ final class AgentCatalogTests: XCTestCase {
     func testDatabaseAdaptersAreWhereTheyWere() {
         XCTAssertEqual(AgentID.cursor.spec.walk.database, .cursor)
         XCTAssertEqual(AgentID.opencode.spec.walk.database, .openCode)
-        XCTAssertEqual(AgentID.warpAgent.spec.walk.database, .warp)
         XCTAssertEqual(AgentID.pi.spec.walk.database, .pi)
-        XCTAssertEqual(AgentID.goose.spec.walk.database, .goose)
-        XCTAssertEqual(AgentID.grok.spec.walk.database, .grok)
-        // 20.0: Goose's sessions.db and Kilo 7.x's OpenCode-schema kilo.db.
-        XCTAssertEqual(AgentID.kilo.spec.walk.database, .openCode)
-        XCTAssertEqual(AgentCatalog.all.filter { $0.walk.database != nil }.count, 7)
+        XCTAssertEqual(AgentCatalog.all.filter { $0.walk.database != nil }.count, 3)
         XCTAssertTrue(DatabaseAdapter.pi.runsAfterTranscripts)
         XCTAssertFalse(DatabaseAdapter.pi.failsOnUnreadableFile)
         XCTAssertTrue(DatabaseAdapter.cursor.extensions.contains("vscdb"))
+        XCTAssertTrue(DatabaseAdapter.openCode.admits(fileName: "opencode.db"))
+        XCTAssertFalse(DatabaseAdapter.openCode.admits(fileName: "kilo.db"))
     }
 
     func testTranscriptSelection() {
-        XCTAssertFalse(AgentID.grok.spec.walk.transcripts.admits("/users/me/.grok/sessions/a.jsonl"))
+        XCTAssertFalse(AgentID.opencode.spec.walk.transcripts.admits("/users/me/.local/share/opencode/a.jsonl"))
         XCTAssertTrue(AgentID.pi.spec.walk.transcripts.admits("/users/me/.pi/agent/sessions/x.jsonl"))
         XCTAssertFalse(AgentID.pi.spec.walk.transcripts.admits("/users/me/.pi/context-mode/cache.json"))
         XCTAssertFalse(AgentID.gemini.spec.walk.transcripts.admits("/users/me/.gemini/tmp/x/src/main.json"))
@@ -108,9 +132,7 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertEqual(AgentID.pi.spec.walk.windowBytes, 496_000)
         XCTAssertEqual(AgentID.pi.spec.walk.headBytes, 96_000)
         XCTAssertEqual(AgentID.claude.spec.walk.windowBytes, 1_000_000)
-        XCTAssertEqual(AgentID.grok.spec.walk.maxFileBytes, 16 * 1024 * 1024)
-        // 20.0: Goose is read from its database, not transcripts.
-        XCTAssertEqual(AgentCatalog.all.filter(\.walk.dropsContinuationPrompts).count, 10)
+        XCTAssertEqual(AgentCatalog.all.filter(\.walk.dropsContinuationPrompts).map(\.id), [.claude, .gemini, .copilot])
     }
 }
 
@@ -292,36 +314,10 @@ final class ProcessProbeTests: XCTestCase {
             (.claude, "/Users/me/.local/bin/claude"),
             (.codex, "/opt/homebrew/bin/codex app-server"),
             (.cursor, "/Applications/Cursor.app/Contents/MacOS/Cursor"),
-            (.cursorAgent, "/Users/me/.local/bin/cursor-agent"),
-            (.antigravity, "/Users/me/.local/bin/agy"),
-            (.grok, "/Users/me/.grok/bin/grok"),
             (.pi, "pi"),
-            (.amp, "amp"),
-            (.aider, "aider"),
             (.gemini, "gemini"),
             (.copilot, "/opt/homebrew/bin/copilot"),
             (.opencode, "opencode"),
-            (.goose, "goose"),
-            (.openhands, "openhands"),
-            (.cline, "/tmp/saoudrizwan.claude-dev/cline"),
-            (.roo, "roo"),
-            (.continue_, "continue"),
-            (.amazonQ, "/opt/homebrew/bin/q chat"),
-            (.cascade, "/tmp/cascade-agent"),
-            (.windsurf, "/Applications/Windsurf.app/Contents/MacOS/Windsurf"),
-            (.augment, "augment"),
-            (.zedAgent, "/tmp/zed-agent"),
-            (.trae, "/tmp/trae-agent"),
-            (.warpAgent, "/tmp/warp-agent"),
-            (.devin, "devin"),
-            (.kiro, "kiro"),
-            (.junie, "junie"),
-            (.kilo, "kilo"),
-            (.replit, "replit"),
-            (.droid, "droid"),
-            (.commandCode, "cmd"),
-            (.kimi, "kimi"),
-            (.zcode, "/Applications/ZCode.app/Contents/MacOS/ZCode"),
         ]
 
         XCTAssertEqual(samples.count, AgentID.allCases.count)
@@ -333,15 +329,16 @@ final class ProcessProbeTests: XCTestCase {
 
     func testProcessMatchExplainsRuleWithoutKeepingArgv() {
         XCTAssertEqual(
-            ProcessProbe.matchEvidence(args: "/Applications/Antigravity.app/Contents/MacOS/Antigravity")?.evidence,
+            ProcessProbe.matchEvidence(args: "/Applications/Cursor.app/Contents/MacOS/Cursor")?.evidence,
             .pathSignature
         )
-        XCTAssertEqual(ProcessProbe.matchEvidence(args: "amp")?.evidence, .executable)
-        XCTAssertEqual(
-            ProcessProbe.match(args: "⌘ Command Code · rustji COLORTERM=truecolor"),
-            .commandCode,
-            "process titles rewritten by Node must still identify Command Code"
-        )
+        XCTAssertEqual(ProcessProbe.matchEvidence(args: "opencode")?.evidence, .executable)
+    }
+
+    /// 24.0: the IDE and the `cursor-agent` CLI are one agent.
+    func testCursorAgentCLIIsCursor() {
+        XCTAssertEqual(ProcessProbe.match(args: "/Users/me/.local/bin/cursor-agent"), .cursor)
+        XCTAssertEqual(ProcessProbe.match(args: "node /Users/me/.local/share/cursor-agent/versions/1/index.js"), .cursor)
     }
 
     func testShortAgentNamesDoNotReintroduceKnownFalsePositives() {

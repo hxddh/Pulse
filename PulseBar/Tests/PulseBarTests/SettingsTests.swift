@@ -209,7 +209,7 @@ struct SettingsModelTests {
     }
 
     @Test func mutedAgentsReadInOrder() {
-        let muted = SettingsModel.sortedMuted([.gemini, .aider, .claude])
+        let muted = SettingsModel.sortedMuted([.gemini, .pi, .claude])
         let names = muted.map { $0.displayName }
         let ordered = names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         #expect(names == ordered)

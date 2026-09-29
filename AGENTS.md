@@ -21,11 +21,16 @@ supervision, transcript parsing, probe cadence, the debug log),
 `PulseHarvest` (the collector) and the `PulseBar` app (22.0 removed
 `PulseManaged`, 23.0 removed `PulseRespond`). No
 library may import AppKit, SwiftUI or reach `StatusStore`; library members are
-`package`, Core's are `public`. **Adding an agent** means one
-`case` and one `AgentSpec` in `PulseCore/AgentCatalog.swift`, plus its icon, README
-row and an entry in `docs/vendor-formats.json` — `scripts/catalog_check.py`
-fails if a per-agent table grows back anywhere else, if the README matrix
-disagrees with the catalog, or if the agent's format has no stated source. The legacy Python collector was deleted in 0.99 and the Vercel Native
+`package`, Core's are `public`. **The roster is seven agents** (24.0, an owner
+decision): Claude, Codex, Cursor (IDE + `cursor-agent` CLI), Pi, Gemini CLI,
+Copilot CLI, OpenCode. Adding one is a product decision; mechanically it is one
+`case` and one `AgentSpec` (with its `HookContract`) in
+`PulseCore/AgentCatalog.swift`, its receiver adapter in `PulseHookReceiver`,
+its icon, README row and an entry in `docs/vendor-formats.json` (format **and**
+`hooks` source) — `scripts/catalog_check.py` fails if the roster is not the
+seven, if a per-agent table grows back anywhere else, if the README matrix
+disagrees with the catalog, if a contract lists a gating event, or if a format
+or hook contract has no stated source. The legacy Python collector was deleted in 0.99 and the Vercel Native
 SDK shell in 0.22 — recover either from git history if you ever need it.
 
 ## Invariants
@@ -33,9 +38,14 @@ SDK shell in 0.22 — recover either from git history if you ever need it.
 These are product decisions, not preferences. Breaking one is a bug even if it
 compiles and ships.
 
-- **No fake Waiting.** Waiting comes from hooks, harvest `skill=pending`, or
-  (18.0) the vendor's own report of a blocked session — `claude agents --json`
-  `status: waiting` — never from inference. An agent with no Waiting path shows Running and says so.
+- **No fake Waiting.** Waiting comes from the vendor's own hook / plugin /
+  extension event that reports a block (24.0: `waiting: .hooks` in the
+  catalog), or the vendor's own report of a blocked session —
+  `claude agents --json` `status: waiting` — never from inference. Until the
+  harvest layer goes (next phase), a `.hooks` agent's harvest `skill=pending`
+  still counts. Codex and Cursor have `waiting: .none`: their hooks say
+  running and your turn only, the receiver refuses a blocked line for them,
+  and the product says "doesn't report when it waits".
   Since 16.0 (Attention Protocol v3) **red means blocked** — `permission`,
   `question`, `waiting`. A finished turn (`turn`: Claude Stop / `idle_prompt`,
   Codex `agent-turn-complete`) is "your turn": a quiet tray count, never the
@@ -54,13 +64,18 @@ compiles and ships.
   it back is a product decision, not a feature.
 - **A harvest failure must not blank the scan.** `NativeActivityHarvest` has a
   per-agent bounded adapter; the optional legacy `guard()` path has the same
-  isolation. One broken collector cannot blind the other 32.
+  isolation. One broken collector cannot blind the other six.
 - **No fixed probe interval.** Cadence follows `ProbeSchedule` — a resident
   menu-bar app flagged for energy use is a dead product.
 - **The builder stays pure.** `SnapshotBuilder` takes the world through
   `Context` and returns intents. Side effects belong in `StatusStore`.
-- **Don't expand the hook installer** past Claude and Codex. Everything else
-  goes through [`docs/attention-bridge.md`](docs/attention-bridge.md)
+- **Install only each supported vendor's documented hook/plugin, only events
+  that cannot change the agent's decisions** (never PreToolUse /
+  beforeShellExecution-style gating hooks, never anything that returns a
+  decision), **and every install is reversible byte-for-byte.** The installer
+  is driven by the catalog's `HookContract`s; `HookContract.gatingEvents`
+  lists what is never installed; `hook-installs.json` records what each
+  install replaced. See [`docs/attention-bridge.md`](docs/attention-bridge.md)
   / [`docs/attention-protocol.md`](docs/attention-protocol.md).
 
 ## Working on it
@@ -176,7 +191,22 @@ to users.
 
 ## Current state
 
-23.0.0 is the current source version (Essence; see below). 22.0 (Lamp) was subtractive: a status
+**24.0 "Exact", phase P1 (in progress on source, not yet released; version
+still 23.0.0).** The roster is seven agents, each wired through the vendor's
+own documented, non-blocking hook (Claude, Codex, Gemini, Copilot, Cursor:
+command hooks; OpenCode: a plugin; Pi: an extension — `HooksInstaller`,
+`HookModules`). Attention Protocol v4 (`AttentionRecord`, ten columns: adds
+`pid`, `transcript`, `landing`; kinds `start` / `working` / `end`; v3 lines are
+not read). `PulseHookReceiver` maps each vendor's event names and payloads per
+agent (`interpret(agent:event:payload:)`); `HookLanding` reads the agent pid
+(parent chain matched against the catalog process rule) and landing handles
+(TMUX_PANE, ITERM_SESSION_ID, tty, TERM_PROGRAM) with `sysctl` only. Settings
+→ Hooks and the self-check have one line per agent with "last event N ago".
+The harvest file-scraping layer is still there for the seven and is deleted
+in the next phase; the readers used only by removed agents (Goose, Cline
+family, Kimi, Continue/OpenHands, Grok, Warp, Aider) are gone.
+
+23.0.0 is the last released version (Essence; see below). 22.0 (Lamp) was subtractive: a status
 lamp should watch orchestrators, not be one, so it removed the `PulseManaged`
 target (managed sessions, the permission MCP server and `--permission-server`,
 worktrees, Missions, acceptance checks, `EvidenceBook`, workspace effect), the
@@ -434,7 +464,7 @@ Observation announces every assignment, equal or not.
 Since 23.0 an agent whose on-disk format is `unverified` in
 `docs/vendor-formats.json` has `waiting: .none`: its harvest `pending` is not
 evidence, and `SnapshotBuilder` lights harvest pending only for
-`waiting: .harvestPending`. Attention lines need all eight v3 columns.
+`waiting: .harvestPending`. Attention lines needed all eight v3 columns (24.0: ten, v4).
 The cadence (`SnapshotBuilder.activity`) and the VoiceOver census
 (`SnapshotBuilder.Census`) count rows by state, like the lamp: a bare
 process or a finished turn is not running. `settings.json` lives beside

@@ -286,27 +286,18 @@ package enum ActivityHarvest {
     /// Keep named, non-draft local sessions visible for a bounded work window
     /// without treating the Cursor application itself as running evidence.
     package static let cursorLocalWindowMs: Int64 = 6 * 60 * 60 * 1000
-    /// The native scan reports one health result for every user-facing
-    /// adapter. Cursor Agent is intentionally merged into Cursor, so it has no
-    /// separate collector line. This set lets the app distinguish a complete
+    /// The native scan reports one health result for every adapter. This set lets the app distinguish a complete
     /// scan from a partial result without relying on row count (which may
     /// legitimately be zero for an installed but idle Agent).
-    package static let expectedCollectorIDs: Set<AgentID> = Set(
-        AgentID.allCases.filter { $0 != .cursorAgent }
-    )
+    package static let expectedCollectorIDs: Set<AgentID> = Set(AgentID.allCases)
 
     package static func isCompleteHealth(_ health: [CollectorHealth]) -> Bool {
-        let reported = Set(health.map { $0.id.surfaceID })
+        let reported = Set(health.map { $0.id })
         // A full list of IDs is not enough: the native scanner intentionally
         // emits an explicit `.unscanned` line when its global budget/deadline
         // expires. Treat that result as partial so SnapshotBuilder can retain
         // the previous evidence for the adapters it never reached.
         let hasIncomplete = health.contains { item in
-            // Cursor Agent is a transport alias of Cursor, not an additional
-            // public collector. An alias health line appended after the real
-            // Cursor result must not make an otherwise complete surface scan
-            // look partial.
-            guard item.id.surfaceID == item.id else { return false }
             switch item.state {
             case .failed, .schemaMismatch, .unscanned:
                 return true
@@ -329,7 +320,6 @@ package enum ActivityHarvest {
         health: [CollectorHealth],
         previous: [Row]
     ) -> [Row] {
-        let normalize: (AgentID) -> AgentID = { $0.surfaceID }
         // An adapter that explicitly failed without yielding a row did not
         // produce a trustworthy replacement. Keep its last good rows until
         // the next successful/empty result, while still replacing an adapter
@@ -343,15 +333,15 @@ package enum ActivityHarvest {
             // source_absent/no_sessions is allowed to clear that adapter.
             switch item.state {
             case .failed, .permissionDenied, .schemaMismatch, .unscanned:
-                return item.rowCount > 0 ? normalize(item.id) : nil
+                return item.rowCount > 0 ? item.id : nil
             case .observed, .noRecentData, .sourceAbsent, .noSessions:
-                return normalize(item.id)
+                return item.id
             }
         })
         // An adapter may emit a row before its health line. Treat that row's
         // adapter as reached rather than retaining a stale duplicate beside
         // the fresh evidence.
-        reported.formUnion(current.map { normalize($0.id) })
+        reported.formUnion(current.map { $0.id })
         guard !reported.isEmpty else { return previous }
 
         // An adapter that failed *after* yielding some rows — Codex timing
@@ -363,36 +353,19 @@ package enum ActivityHarvest {
         let partial = Set(health.compactMap { item -> AgentID? in
             switch item.state {
             case .failed, .permissionDenied, .schemaMismatch, .unscanned:
-                return item.rowCount > 0 ? normalize(item.id) : nil
+                return item.rowCount > 0 ? item.id : nil
             case .observed, .noRecentData, .sourceAbsent, .noSessions:
                 return nil
             }
         })
-        let fresh = Set(current.map { "\(normalize($0.id).rawValue)|\($0.sessionID)" })
+        let fresh = Set(current.map { "\($0.id.rawValue)|\($0.sessionID)" })
         let retained = previous.filter { row in
-            let agent = normalize(row.id)
+            let agent = row.id
             if !reported.contains(agent) { return true }
             guard partial.contains(agent), !row.sessionID.isEmpty else { return false }
             return !fresh.contains("\(agent.rawValue)|\(row.sessionID)")
         }
-        return dedupeSharedRoots(current + retained)
-    }
-
-    /// Cascade and Windsurf read the same `~/.windsurf` tree — one session,
-    /// never two lamps (0.95 "Extinguish Honesty").
-    ///
-    /// That rule used to live inside one complete scan, which is the one case
-    /// where it was never needed. Three ordinary paths walk around it: the
-    /// adapter cursor rotates and only one of the pair gets a turn, the
-    /// supervisor trips a collector, or the store asks for a scoped rescan.
-    /// In all three, this pass's fresh Windsurf rows meet the *retained*
-    /// Cascade rows — after the in-scan check has already run — and the same
-    /// pending session lights twice. The check therefore belongs here, on the
-    /// union the tray actually receives, and the collector keeps its own copy
-    /// only so its health lines stay consistent with the rows it reports.
-    package static func dedupeSharedRoots(_ rows: [Row]) -> [Row] {
-        guard rows.contains(where: { $0.id.surfaceID == .cascade }) else { return rows }
-        return rows.filter { $0.id.surfaceID != .windsurf }
+        return current + retained
     }
 
     package static func mapAgent(_ raw: String) -> AgentID? {
@@ -404,7 +377,7 @@ package enum ActivityHarvest {
         if row.subRunning > 0 { return true }
         // Missing mtime is not trustworthy as a standalone running signal.
         guard row.harvestMs > 0 else { return false }
-        let window = row.id.surfaceID == .cursor && row.mode == "local"
+        let window = row.id == .cursor && row.mode == "local"
             ? cursorLocalWindowMs
             : freshWindowMs
         let age = nowMs - row.harvestMs
@@ -459,9 +432,9 @@ package enum ActivityHarvest {
 ///
 /// `attention.tsv` is this Mac's own file: every line in it was raised here.
 /// 22.0 removed the remote inbox (`attention.d/<host>.tsv`) and with it the
-/// per-host keys, arrival clocks and "lost contact" rows. The protocol's
-/// `host` column is ignored. Since 23.0 only complete v3 records (eight
-/// columns) are read.
+/// per-host keys, arrival clocks and "lost contact" rows. Since 24.0 only
+/// complete v4 records (ten columns) are read; the lifecycle kinds `start`,
+/// `working` and `end` clear a session's entry like `done`.
 package enum AttentionReader {
     package static let ttlMs: Int64 = 30 * 60 * 1000
     /// A turn ending right after a blocked raise must not wipe it: the order
@@ -478,9 +451,14 @@ package enum AttentionReader {
         package var tsMs: Int64
         package var session: String = ""
         package var cwd: String = ""
-        /// v3 column 8: the prompt's window was frontmost when this was
-        /// raised (`true`), was not (`false`), or nobody could tell (`nil`).
+        /// The prompt's window was frontmost when this was raised (`true`),
+        /// was not (`false`), or nobody could tell (`nil`).
         package var front: Bool? = nil
+        /// v4: the agent process the hook ran under (0 unknown), the vendor's
+        /// transcript path, and where the session can be reached.
+        package var pid: Int32 = 0
+        package var transcript: String = ""
+        package var landing: String = ""
 
         /// 16.0: "your turn" — the agent finished and is idle at its prompt.
         /// Never the red lamp.
@@ -490,8 +468,7 @@ package enum AttentionReader {
 
         /// Stable key for last-event-wins map.
         package var mapKey: String {
-            let surfaceID = id.surfaceID
-            return session.isEmpty ? surfaceID.rawValue : "\(surfaceID.rawValue)|\(session)"
+            return session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
         }
     }
 
@@ -506,10 +483,12 @@ package enum AttentionReader {
             case .question: return .question
             case .waiting: return .waiting
             case .turn: return .turn
-            case .done: return .done
+            case .done, .start, .working, .end: return .done
             case .subagentStart, .subagentStop, .none: return .ignore
             }
         }
+
+        var isBlocking: Bool { self == .permission || self == .question || self == .waiting }
 
         var label: String {
             switch self {
@@ -530,20 +509,22 @@ package enum AttentionReader {
 
         var byKey: [String: Entry] = [:]
         for line in text.split(whereSeparator: \.isNewline) {
-            guard let cols = AttentionProtocol.columns(of: line),
-                  let parsedID = ActivityHarvest.mapAgent(cols[0]) else { continue }
-            let id = parsedID.surfaceID
-            let kind = Kind.parse(cols[1])
-            let tsMs = Int64(cols[2]) ?? 0
-            let message = ContentSanitizer.redact(cols[3])
-            let session = cols[4]
-            let cwd = ContentSanitizer.redact(cols[5])
+            guard let record = AttentionRecord(line: line),
+                  let id = ActivityHarvest.mapAgent(record.agent) else { continue }
+            let kind = Kind.parse(record.kind)
+            let tsMs = record.ms
+            let message = ContentSanitizer.redact(record.message)
+            let session = record.session
+            let cwd = ContentSanitizer.redact(record.cwd)
             let mapKey = session.isEmpty ? id.rawValue : "\(id.rawValue)|\(session)"
 
             if kind == .ignore { continue }
+            // 24.0: an agent whose hooks cannot report a block (Codex,
+            // Cursor) is never blocked, whoever wrote the line.
+            if kind.isBlocking, id.waitingSource == .none { continue }
 
             func siblingKeys() -> [String] {
-                byKey.compactMap { key, entry in entry.id.surfaceID == id ? key : nil }
+                byKey.compactMap { key, entry in entry.id == id ? key : nil }
             }
 
             // 23.0: a `done` clears exactly the entry it names — a session,
@@ -581,7 +562,7 @@ package enum AttentionReader {
                 if let existing = byKey[mapKey], shouldKeep(existing) { continue }
                 byKey[mapKey] = nil
                 // The user watched it finish: nothing is owed.
-                if AttentionProtocol.parseFront(cols[7]) == true { continue }
+                if record.front == true { continue }
             }
 
             // No stamp, a stamp from the future, or one past the TTL: a local
@@ -598,7 +579,10 @@ package enum AttentionReader {
                 session: session,
                 cwd: cwd
             )
-            entry.front = AttentionProtocol.parseFront(cols[7])
+            entry.front = record.front
+            entry.pid = record.pid
+            entry.transcript = record.transcript
+            entry.landing = record.landing
             // A later event with nothing to say must not erase what an earlier
             // one said. One approval makes Claude raise both `Notification`
             // and `PermissionRequest`, only one of them carries text, and

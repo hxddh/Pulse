@@ -11,7 +11,8 @@ import XCTest
 final class AttentionReaderTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
-    /// Rows are padded to the eight v3 columns (host and front empty).
+    /// Rows are padded to the ten v4 columns (front, pid, transcript and
+    /// landing empty).
     private func tsv(_ rows: [[String]]) -> String {
         rows.map { row in
             (row + Array(repeating: "", count: max(0, AttentionProtocol.columnCount - row.count)))
@@ -89,7 +90,7 @@ final class AttentionReaderTests: XCTestCase {
     }
 
     func testUnknownKindNeverRaisesWaiting() {
-        let text = tsv([["replit", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]])
+        let text = tsv([["cursor", "totally_fake_kind", "\(now)", "nope", "s1", "/p"]])
         XCTAssertTrue(
             AttentionReader.parse(text, nowMs: now).isEmpty,
             "free-text kinds must never light Waiting"
@@ -98,11 +99,11 @@ final class AttentionReaderTests: XCTestCase {
 
     func testProtocolHeaderIsIgnoredAsComment() {
         let text = AttentionProtocol.header + tsv([
-            ["junie", "waiting", "\(now - 1000)", "Need choice", "j1", "/w"],
+            ["gemini", "waiting", "\(now - 1000)", "Need choice", "j1", "/w"],
         ])
         let entries = AttentionReader.parse(text, nowMs: now)
         XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0].id, .junie)
+        XCTAssertEqual(entries[0].id, .gemini)
         XCTAssertEqual(entries[0].kind, "Waiting")
     }
 
@@ -111,15 +112,42 @@ final class AttentionReaderTests: XCTestCase {
         XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
     }
 
-    /// 23.0: v3 needs all eight columns. A v1 (six-column) or v2
-    /// (seven-column) line is not read.
+    /// 24.0: v4 needs all ten columns. A v3 (eight-column) line is not read.
     func testAnOlderShorterLineIsNotRead() {
         let v1 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\n"
-        let v2 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\n"
-        XCTAssertTrue(AttentionReader.parse(v1, nowMs: now).isEmpty)
-        XCTAssertTrue(AttentionReader.parse(v2, nowMs: now).isEmpty)
         let v3 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t\n"
-        XCTAssertEqual(AttentionReader.parse(v3, nowMs: now).count, 1)
+        XCTAssertTrue(AttentionReader.parse(v1, nowMs: now).isEmpty)
+        XCTAssertTrue(AttentionReader.parse(v3, nowMs: now).isEmpty)
+        let v4 = "claude\tpermission\t\(now - 1000)\tapprove\ts1\t/p\t\t4242\t/t.jsonl\ttmux:%3\n"
+        let entries = AttentionReader.parse(v4, nowMs: now)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.pid, 4242)
+        XCTAssertEqual(entries.first?.transcript, "/t.jsonl")
+        XCTAssertEqual(entries.first?.landing, "tmux:%3")
+    }
+
+    /// 24.0: a hand-written blocked line for an agent whose hooks cannot
+    /// report a block is not a wait; its turn still is its turn.
+    func testAWaitingNoneAgentIsNeverBlockedByALine() {
+        let text = tsv([
+            ["codex", "permission", "\(now - 3000)", "approve", "x1", "/p"],
+            ["cursor", "question", "\(now - 2000)", "which?", "c1", "/p"],
+            ["codex", "turn", "\(now - 1000)", "", "x2", "/p"],
+        ])
+        let entries = AttentionReader.parse(text, nowMs: now)
+        XCTAssertEqual(entries.map(\.session), ["x2"])
+        XCTAssertTrue(entries.allSatisfy { !$0.isBlocking })
+    }
+
+    /// 24.0: the lifecycle kinds clear a session's entry like `done`.
+    func testStartWorkingAndEndClearTheSession() {
+        for kind in ["start", "working", "end"] {
+            let text = tsv([
+                ["claude", "turn", "\(now - 5000)", "", "s1", "/p"],
+                ["claude", kind, "\(now - 1000)", "", "s1", "/p"],
+            ])
+            XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty, kind)
+        }
     }
 
     func testALaterSilentEventDoesNotEraseTheReason() throws {
@@ -196,58 +224,10 @@ final class AttentionReaderTests: XCTestCase {
 
     // MARK: - 2.2 · one shared root, one lamp — across scans
 
-    /// Regression (B-9 / `H-M3`): Cascade and Windsurf read the same
-    /// `~/.windsurf` tree, and the rule that Windsurf yields to Cascade lived
-    /// inside a single complete scan. A rotating adapter cursor, a tripped
-    /// collector or a scoped rescan all deliver Windsurf's fresh rows while
-    /// Cascade's rows are merely *retained* — and the same pending session
-    /// then lit two red lamps, which is precisely what 0.95 exists to prevent.
-    func testWindsurfDoesNotLightBesideARetainedCascadeRow() {
-        let cascade = ActivityHarvest.Row(
-            id: .cascade,
-            task: "Approve the edit",
-            project: "Pulse",
-            cwd: "/Users/me/Pulse",
-            skill: "pending",
-            harvestMs: 1_700_000_000_000,
-            sessionID: "shared-1"
-        )
+    /// A reached adapter's fresh row is kept by the partial merge.
+    func testAReachedAdaptersRowSurvivesThePartialMerge() {
         let windsurf = ActivityHarvest.Row(
-            id: .windsurf,
-            task: "Approve the edit",
-            project: "Pulse",
-            cwd: "/Users/me/Pulse",
-            skill: "pending",
-            harvestMs: 1_700_000_000_500,
-            sessionID: "shared-1"
-        )
-        // This pass reached Windsurf only; Cascade was never reported, so its
-        // row survives the partial merge.
-        let health = [ActivityHarvest.CollectorHealth(
-            id: .windsurf,
-            state: .observed,
-            durationMs: 8,
-            rowCount: 1,
-            sourcePresent: true,
-            errorKind: ""
-        )]
-
-        let merged = ActivityHarvest.mergePartialRows(
-            current: [windsurf],
-            health: health,
-            previous: [cascade]
-        )
-        XCTAssertEqual(
-            merged.map(\.id), [.cascade],
-            "one session, one lamp — the shell adapter yields to Cascade"
-        )
-    }
-
-    /// The other half of the same rule: with no Cascade row anywhere, the
-    /// Windsurf shell row is the only evidence there is and must stay.
-    func testWindsurfSurvivesWhenCascadeHasNoRow() {
-        let windsurf = ActivityHarvest.Row(
-            id: .windsurf,
+            id: .copilot,
             task: "Approve the edit",
             project: "Pulse",
             cwd: "/Users/me/Pulse",
@@ -256,7 +236,7 @@ final class AttentionReaderTests: XCTestCase {
             sessionID: "shared-2"
         )
         let health = [ActivityHarvest.CollectorHealth(
-            id: .windsurf,
+            id: .copilot,
             state: .observed,
             durationMs: 8,
             rowCount: 1,
@@ -277,28 +257,13 @@ final class AttentionReaderTests: XCTestCase {
         let now: Int64 = 1_700_000_000_000
         let raised = now - 60_000
         let text = [
-            "claude\tpermission\t\(raised)\tBash: npm run build\tsession-9\t/Users/me/Pulse\t\t",
-            "claude\tstop\t\(raised + 1)\t\tsession-9\t\t\t",
+            "claude\tpermission\t\(raised)\tBash: npm run build\tsession-9\t/Users/me/Pulse\t\t\t\t",
+            "claude\tstop\t\(raised + 1)\t\tsession-9\t\t\t\t\t",
         ].joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: now)
         let entry = try XCTUnwrap(entries.first, "the permission survived its own Stop")
         XCTAssertEqual(entries.count, 1)
         XCTAssertEqual(entry.kind, "Permission")
-    }
-
-    /// `attention.tsv` is this Mac's file. A value in the `host` column
-    /// makes no separate wait — the same session with or without it is one
-    /// wait, and one `done` clears it.
-    func testTheHostColumnIsIgnored() {
-        let now: Int64 = 1_700_000_000_000
-        let raised = now - 60_000
-        let text = [
-            "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox\t",
-            "claude\tdone\t\(raised + 1_000)\t\tsession-1\t/x\t\t",
-        ].joined(separator: "\n") + "\n"
-        XCTAssertTrue(AttentionReader.parse(text, nowMs: now).isEmpty)
-        let raisedOnly = "claude\tpermission\t\(raised)\tBash: make\tsession-1\t/x\tbox\t\n"
-        XCTAssertEqual(AttentionReader.parse(raisedOnly, nowMs: now).map(\.mapKey), ["claude|session-1"])
     }
 
     /// And the grace still expires on the clock it is measured against: a
@@ -308,10 +273,10 @@ final class AttentionReaderTests: XCTestCase {
         let now: Int64 = 1_700_000_000_000
         let old = now - 60_000
         let text = [
-            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t",
+            "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t\t\t",
             // The Stop itself lands past the window: the grace is measured
             // between the two lines, not against the reader's clock.
-            "claude\tstop\t\(old + AttentionReader.stopGraceMs + 1)\t\tsession-10\t\t\t",
+            "claude\tstop\t\(old + AttentionReader.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t",
         ].joined(separator: "\n") + "\n"
         let entries = AttentionReader.parse(text, nowMs: now)
         XCTAssertFalse(entries.contains(where: \.isBlocking))
@@ -327,77 +292,231 @@ final class PulseHookReceiverTests: XCTestCase {
             .appendingPathComponent("pulse-hook-recv-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
         AttentionIO.pathOverride = tempHome.appendingPathComponent("attention.tsv")
+        ActivitySpool.directoryOverride = tempHome.appendingPathComponent("activity.d", isDirectory: true)
     }
 
     override func tearDownWithError() throws {
         AttentionIO.pathOverride = nil
+        ActivitySpool.directoryOverride = nil
         try? FileManager.default.removeItem(at: tempHome)
     }
 
-    func testV3SeparatesAQuestionFromYourTurn() {
-        XCTAssertEqual(AttentionProtocol.normalizeKind("request_user_input"), "question")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("exec_approval_request"), "permission")
-        // 16.0: a finished turn is "your turn", not a clear and not a wait.
+    /// A fixed answer for the agent pid and landing handles.
+    private let located: (AgentID, [String: String]) -> (pid: Int32, landing: String) = { _, _ in
+        (4242, "tmux:%3;tty:/dev/ttys004")
+    }
+
+    /// Run one vendor event through the receiver, as its installed hook does.
+    @discardableResult
+    private func deliver(_ agent: String, _ event: String, _ payload: String) -> Int32 {
+        var arguments = ["PulseBar", "--hook", agent]
+        if !event.isEmpty { arguments.append(event) }
+        return PulseHookReceiver.run(arguments: arguments, stdin: payload, locate: located)
+    }
+
+    private func records() -> [AttentionRecord] {
+        let text = (try? String(contentsOf: AttentionIO.path, encoding: .utf8)) ?? ""
+        return text.split(separator: "\n").compactMap { AttentionRecord(line: $0) }
+    }
+
+    private func kinds() -> [String] {
+        records().map { $0.kind }
+    }
+
+    // MARK: - The protocol's own words
+
+    func testTheProtocolSeparatesAQuestionFromYourTurn() {
+        XCTAssertEqual(AttentionProtocol.normalizeKind("elicitation_dialog"), "question")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("permission_prompt"), "permission")
         XCTAssertEqual(AttentionProtocol.normalizeKind("agent-turn-complete"), "turn")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("idle"), "turn")
         XCTAssertEqual(AttentionProtocol.normalizeKind("idle_prompt"), "turn",
                        "Claude's idle_prompt is a 60 s timer after every finished turn")
         XCTAssertEqual(AttentionProtocol.normalizeKind("stop"), "turn")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("session_start"), "start")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("prompt"), "working")
+        XCTAssertEqual(AttentionProtocol.normalizeKind("session_end"), "end")
         XCTAssertNotEqual(AttentionProtocol.kind("idle_prompt")?.isBlocking, true)
-        XCTAssertEqual(AttentionProtocol.kind("elicitation_dialog")?.isBlocking, true)
         XCTAssertTrue(AttentionProtocol.acceptsWrite(kind: "permission"))
         XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "totally_made_up_kind"))
+        // 24.0: no free-text guessing — "…approval…" is not a permission.
+        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "exec_approval_request"))
+        XCTAssertTrue(AttentionKind.start.clears && AttentionKind.working.clears && AttentionKind.end.clears)
     }
 
-    func testRunWritesFlockedAttentionLineWithoutPython() throws {
+    /// v4: ten columns, and a record survives its own line.
+    func testAV4RecordRoundTrips() throws {
+        let record = AttentionRecord(
+            agent: "claude", kind: "permission", ms: 1_800_000_000_000,
+            message: "Bash: npm test", session: "s1", cwd: "/w", front: false,
+            pid: 4242, transcript: "/Users/me/.claude/projects/w/s1.jsonl",
+            landing: "tmux:%3;tty:/dev/ttys004"
+        )
+        XCTAssertEqual(record.line.split(separator: "\t", omittingEmptySubsequences: false).count, 10)
+        XCTAssertEqual(AttentionRecord(line: record.line), record)
+        let unknown = AttentionRecord(agent: "codex", kind: "turn", ms: 1)
+        XCTAssertEqual(AttentionRecord(line: unknown.line), unknown, "empty columns stay empty")
+        XCTAssertNil(AttentionRecord(line: "claude\tpermission\t1\tx\ts\t/p\t\t"), "a v3 line is not read")
+        XCTAssertTrue(AttentionProtocol.header.hasPrefix("# pulse-attention v4"))
+    }
+
+    // MARK: - Claude (code.claude.com/docs/en/hooks)
+
+    func testClaudePermissionRequestIsABlockThatNamesTheAsk() throws {
+        deliver("claude", "PermissionRequest", #"""
+        {"session_id":"c9","transcript_path":"/Users/me/.claude/projects/w/c9.jsonl","cwd":"/w",
+         "permission_mode":"default","hook_event_name":"PermissionRequest","tool_name":"Bash",
+         "tool_input":{"command":"npm run build","description":"Build"}}
+        """#)
+        let record = try XCTUnwrap(records().first)
+        XCTAssertEqual(record.kind, "permission")
+        XCTAssertEqual(record.message, "Bash: npm run build")
+        XCTAssertEqual(record.session, "c9")
+        XCTAssertEqual(record.cwd, "/w")
+        XCTAssertEqual(record.transcript, "/Users/me/.claude/projects/w/c9.jsonl")
+        XCTAssertEqual(record.pid, 4242)
+        XCTAssertEqual(record.landing, "tmux:%3;tty:/dev/ttys004")
+    }
+
+    func testClaudeAskUserQuestionIsAQuestion() {
+        deliver("claude", "PermissionRequest", #"{"session_id":"c1","cwd":"/w","hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{}}"#)
+        XCTAssertEqual(kinds(), ["question"])
+    }
+
+    func testClaudeNotificationTypesMapByMeaning() {
+        func note(_ type: String) {
+            deliver("claude", "Notification", #"{"session_id":"n-\#(type)","cwd":"/w","hook_event_name":"Notification","message":"Claude needs your input","notification_type":"\#(type)"}"#)
+        }
+        note("permission_prompt")
+        note("elicitation_dialog")
+        note("agent_needs_input")
+        note("idle_prompt")
+        note("auth_success")
+        XCTAssertEqual(kinds(), ["permission", "question", "question", "turn"], "auth_success says nothing Pulse shows")
+    }
+
+    func testClaudeLifecycleAndTurn() {
+        deliver("claude", "SessionStart", #"{"session_id":"s1","cwd":"/w","hook_event_name":"SessionStart","source":"startup"}"#)
+        deliver("claude", "UserPromptSubmit", #"{"session_id":"s1","cwd":"/w","hook_event_name":"UserPromptSubmit","prompt":"Fix the login"}"#)
+        deliver("claude", "PostToolUse", #"{"session_id":"s1","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/w/a.swift"}}"#)
+        deliver("claude", "Stop", #"{"session_id":"s1","cwd":"/w","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"All tests pass."}"#)
+        deliver("claude", "SessionEnd", #"{"session_id":"s1","cwd":"/w","hook_event_name":"SessionEnd","reason":"exit"}"#)
+        XCTAssertEqual(kinds(), ["start", "working", "turn", "end"], "a tool call is activity, never an attention line")
+        XCTAssertEqual(records().first { $0.kind == "turn" }?.message, "All tests pass.")
+        let spool = ActivitySpool.readEvents(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+        XCTAssertEqual(spool.first?.tool, "Edit")
+    }
+
+    /// A 23.0 entry names no event; the payload does.
+    func testALegacyClaudeEntryIsReadFromItsPayload() {
+        deliver("claude", "", #"{"hook_event_name":"PermissionRequest","tool_name":"Edit","tool_input":{"file_path":"/w/a"},"session_id":"c1"}"#)
+        XCTAssertEqual(kinds(), ["permission"])
+    }
+
+    // MARK: - Codex (openai/codex codex-rs/hooks)
+
+    func testCodexStopAndNotifyAreYourTurnAndItNeverBlocks() {
+        deliver("codex", "Stop", #"{"session_id":"x1","turn_id":"t1","transcript_path":null,"cwd":"/w","hook_event_name":"Stop","model":"gpt-5","permission_mode":"default","stop_hook_active":false,"last_assistant_message":"Done."}"#)
+        let notify = #"{"type":"agent-turn-complete","thread-id":"x2","turn-id":"1","cwd":"/w","input-messages":["go"],"last-assistant-message":"Shipped."}"#
+        PulseHookReceiver.run(arguments: ["pulse-hook", "--hook", "codex", notify], locate: located)
+        // A bridge that says Codex is blocked is refused: Codex's own
+        // PermissionRequest fires before its auto-review.
+        deliver("codex", "permission", #"{"session_id":"x3","message":"Approve shell"}"#)
+        deliver("codex", "PermissionRequest", #"{"session_id":"x4","tool_name":"Bash"}"#)
+        XCTAssertEqual(kinds(), ["turn", "turn"])
+        XCTAssertEqual(records().map(\.session), ["x1", "x2"])
+        XCTAssertEqual(records().last?.message, "Shipped.")
+    }
+
+    // MARK: - Gemini CLI (docs/hooks/reference.md)
+
+    func testGeminiToolPermissionNotificationIsABlock() throws {
+        deliver("gemini", "BeforeAgent", #"{"session_id":"g1","transcript_path":"/Users/me/.gemini/tmp/h/chats/g1.json","cwd":"/w","hook_event_name":"BeforeAgent","timestamp":"2026-09-29T10:00:00Z","prompt":"Fix it"}"#)
+        deliver("gemini", "Notification", #"{"session_id":"g1","transcript_path":"/Users/me/.gemini/tmp/h/chats/g1.json","cwd":"/w","hook_event_name":"Notification","timestamp":"2026-09-29T10:00:05Z","notification_type":"ToolPermission","message":"Allow run_shell_command: npm test?","details":{"tool_name":"run_shell_command"}}"#)
+        deliver("gemini", "AfterAgent", #"{"session_id":"g1","cwd":"/w","hook_event_name":"AfterAgent","prompt":"Fix it","prompt_response":"Fixed.","stop_hook_active":false}"#)
+        XCTAssertEqual(kinds(), ["working", "permission", "turn"])
+        let block = try XCTUnwrap(records().first { $0.kind == "permission" })
+        XCTAssertEqual(block.message, "Allow run_shell_command: npm test?")
+        XCTAssertEqual(block.transcript, "/Users/me/.gemini/tmp/h/chats/g1.json")
+    }
+
+    // MARK: - Copilot CLI (github/docs hooks-reference.md)
+
+    func testCopilotNotificationsAndStop() {
+        deliver("copilot", "notification", #"{"sessionId":"cp1","timestamp":1790000000000,"cwd":"/w","hook_event_name":"Notification","message":"Copilot wants to run: npm test","title":"Permission needed","notification_type":"permission_prompt"}"#)
+        deliver("copilot", "notification", #"{"sessionId":"cp1","timestamp":1790000000001,"cwd":"/w","hook_event_name":"Notification","message":"Which branch?","notification_type":"elicitation_dialog"}"#)
+        deliver("copilot", "notification", #"{"sessionId":"cp1","timestamp":1790000000002,"cwd":"/w","hook_event_name":"Notification","message":"Background agent idle","notification_type":"agent_idle"}"#)
+        deliver("copilot", "agentStop", #"{"sessionId":"cp1","timestamp":1790000000003,"cwd":"/w","transcriptPath":"/Users/me/.copilot/session-state/cp1/events.jsonl","stopReason":"end_turn","stop_hook_active":false}"#)
+        XCTAssertEqual(kinds(), ["permission", "question", "turn"], "a background agent's idle is not this session's turn")
+        XCTAssertEqual(records().first?.message, "Copilot wants to run: npm test")
+        XCTAssertEqual(records().last?.transcript, "/Users/me/.copilot/session-state/cp1/events.jsonl")
+    }
+
+    // MARK: - OpenCode (plugin events, SDK v2)
+
+    func testOpenCodePermissionAskedThenReplied() throws {
+        deliver("opencode", "permission.asked", #"{"sessionID":"ses_1","directory":"/w","permission":"bash","patterns":["npm test"]}"#)
+        let block = try XCTUnwrap(records().first)
+        XCTAssertEqual(block.kind, "permission")
+        XCTAssertEqual(block.message, "bash: npm test")
+        XCTAssertEqual(block.session, "ses_1")
+        XCTAssertEqual(block.cwd, "/w")
+        deliver("opencode", "permission.replied", #"{"sessionID":"ses_1","directory":"/w"}"#)
+        deliver("opencode", "question.asked", #"{"sessionID":"ses_1","directory":"/w","questions":[{"question":"Which database?","header":"DB"}]}"#)
+        deliver("opencode", "session.status", #"{"sessionID":"ses_1","directory":"/w","status":"busy"}"#)
+        deliver("opencode", "session.idle", #"{"sessionID":"ses_1","directory":"/w"}"#)
+        XCTAssertEqual(kinds(), ["permission", "done", "question", "turn"])
+        XCTAssertEqual(records()[2].message, "Which database?")
+        let entries = AttentionReader.parse(
+            (try? String(contentsOf: AttentionIO.path, encoding: .utf8)) ?? "",
+            nowMs: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+        XCTAssertEqual(entries.map(\.kind), ["Input"], "an idle moments after a question does not wipe it (stop grace)")
+    }
+
+    // MARK: - Cursor (hooks.json, observe-only events)
+
+    func testCursorStopIsYourTurnAndItNeverBlocks() throws {
+        deliver("cursor", "stop", #"{"conversation_id":"cu1","generation_id":"g1","model":"gpt-5","hook_event_name":"stop","cursor_version":"1.7","workspace_roots":["/Users/me/app"],"transcript_path":"/Users/me/.cursor/projects/app/cu1.jsonl","status":"completed","loop_count":0}"#)
+        deliver("cursor", "permission", #"{"conversation_id":"cu1","message":"approve"}"#)
+        let record = try XCTUnwrap(records().first)
+        XCTAssertEqual(kinds(), ["turn"])
+        XCTAssertEqual(record.session, "cu1")
+        XCTAssertEqual(record.cwd, "/Users/me/app")
+        XCTAssertEqual(record.transcript, "/Users/me/.cursor/projects/app/cu1.jsonl")
+    }
+
+    // MARK: - Pi (extension events)
+
+    func testPiUIPromptsAreBlocksUntilTheyEnd() {
+        deliver("pi", "agent_start", #"{"session_id":"p1","transcript_path":"/Users/me/.pi/agent/sessions/w/p1.jsonl","cwd":"/w"}"#)
+        deliver("pi", "ui_prompt_start", #"{"session_id":"p1","cwd":"/w","kind":"confirm","title":"Allow rm -rf build?"}"#)
+        deliver("pi", "ui_prompt_end", #"{"session_id":"p1","cwd":"/w","kind":"confirm","title":"Allow rm -rf build?"}"#)
+        deliver("pi", "ui_prompt_start", #"{"session_id":"p1","cwd":"/w","kind":"select","title":"Pick a model"}"#)
+        deliver("pi", "agent_settled", #"{"session_id":"p1","cwd":"/w"}"#)
+        XCTAssertEqual(kinds(), ["working", "permission", "done", "question", "turn"])
+        XCTAssertEqual(records()[1].message, "Allow rm -rf build?")
+    }
+
+    // MARK: - Rejections
+
+    func testUnknownEventsAndAgentsWriteNothing() throws {
+        XCTAssertEqual(deliver("claude", "made_up_vendor_event", #"{"message":"x","session_id":"x"}"#), 0)
+        XCTAssertEqual(deliver("goose", "permission", #"{"message":"x","session_id":"x"}"#), 0, "not a supported agent")
+        XCTAssertEqual(deliver("claude", "", #"{"message":"says nothing about what it is","session_id":"x"}"#), 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttentionIO.path.path))
+        XCTAssertFalse(PulseHookReceiver.appendEvent(agent: "claude", kind: "", message: "nope"))
+        XCTAssertEqual(AttentionProtocol.normalizeKind("   "), "")
+    }
+
+    func testGrokRunningClaudesHooksIsRefused() {
         let code = PulseHookReceiver.run(
-            arguments: ["PulseBar", "--hook", "codex", "request_user_input"],
-            stdin: #"{"message":"Approve shell","session_id":"sess-1","cwd":"/tmp/pulse"}"#
+            arguments: ["PulseBar", "--hook", "claude", "PermissionRequest"],
+            stdin: #"{"session_id":"g","tool_name":"Bash"}"#,
+            environment: ["GROK_HOOK_EVENT": "PermissionRequest"],
+            locate: located
         )
         XCTAssertEqual(code, 0)
-        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
-        XCTAssertTrue(text.contains("codex\tquestion\t"))
-        XCTAssertTrue(text.contains("\tApprove shell\tsess-1\t/tmp/pulse"))
-        XCTAssertTrue(
-            text.hasPrefix(AttentionProtocol.header.trimmingCharacters(in: .newlines)),
-            "writer must stamp the current Attention Protocol header"
-        )
-    }
-
-    func testUnknownKindIsRejectedWithoutWrite() throws {
-        let code = PulseHookReceiver.run(
-            arguments: ["PulseBar", "--hook", "replit", "made_up_vendor_event"],
-            stdin: #"{"message":"should not land","session_id":"x"}"#
-        )
-        XCTAssertEqual(code, 0, "vendor hooks must never block")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: AttentionIO.path.path))
-        XCTAssertFalse(PulseHookReceiver.appendEvent(
-            agent: "replit",
-            kind: "made_up_vendor_event",
-            message: "nope"
-        ))
-    }
-
-    /// 23.0 bug: a hook call that named no kind — no argv kind, no
-    /// `notification_type`, no event — was written as `waiting` and lit the
-    /// red lamp. Empty is rejected like any unknown kind.
-    func testAnEmptyKindIsRejectedWithoutWrite() throws {
-        let code = PulseHookReceiver.run(
-            arguments: ["PulseBar", "--hook", "replit"],
-            stdin: #"{"message":"says nothing about what it is","session_id":"x"}"#
-        )
-        XCTAssertEqual(code, 0, "vendor hooks must never block")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: AttentionIO.path.path))
-        XCTAssertEqual(PulseHookReceiver.parseKind(from: ["message": "hello"]), "")
-        XCTAssertEqual(AttentionProtocol.normalizeKind(""), "")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("   "), "")
-        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: ""))
-        XCTAssertFalse(PulseHookReceiver.appendEvent(agent: "replit", kind: "", message: "nope"))
-        let line = "replit\t\t\(Int64(Date().timeIntervalSince1970 * 1000))\tnope\tx\t/p\t\t\n"
-        XCTAssertTrue(
-            AttentionReader.parse(line, nowMs: Int64(Date().timeIntervalSince1970 * 1000)).isEmpty,
-            "a line with an empty kind column is not Waiting either"
-        )
+        XCTAssertTrue(records().isEmpty)
     }
 
     /// Codex `notify` hands its JSON as the last argument; stdin is then not
@@ -407,49 +526,20 @@ final class PulseHookReceiverTests: XCTestCase {
             ["pulse-hook", "--hook", "codex", #"{"type":"agent-turn-complete"}"#]
         ))
         XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "claude"]))
-        XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "junie", "permission"]))
-    }
-
-    func testExternalRaiseBecomesAttentionWaiting() throws {
-        XCTAssertTrue(PulseHookReceiver.appendEvent(
-            agent: "replit",
-            kind: "permission",
-            message: "Approve deploy",
-            session: "ext-1",
-            cwd: "/tmp/ext"
-        ))
-        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let entries = AttentionReader.parse(text, nowMs: now)
-        XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0].id, .replit)
-        XCTAssertEqual(entries[0].kind, "Permission")
-        XCTAssertEqual(entries[0].session, "ext-1")
-        XCTAssertEqual(entries[0].message, "Approve deploy")
-    }
-
-    func testPermissionEventFromClaudeJSON() throws {
-        let stdin = #"{"hook_event_name":"PermissionRequest","message":"Edit file","session_id":"c1"}"#
-        _ = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
-        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
-        XCTAssertTrue(text.contains("claude\tpermission\t"))
-        XCTAssertTrue(text.contains("\tEdit file\tc1\t"))
+        XCTAssertFalse(PulseHookReceiver.payloadInArguments(["pulse-hook", "--hook", "gemini", "Notification"]))
     }
 
     func testSelfTestDoesNotNeedPython() {
-        // Route seedAssets away from the real support dir: without this, the
-        // self-test rewrote the user's actual hook-runner.path to the xctest
-        // binary — breaking the machine's Waiting path until Pulse relaunches.
+        // Route seedAssets away from the real support dir: the self-test must
+        // never rewrite the user's hook-runner.path to the xctest binary.
         HooksInstaller.homeOverride = tempHome
         defer { HooksInstaller.homeOverride = nil }
         let before = AttentionIO.pathOverride
         let result = HooksSupport.selfTest()
         guard case .passed = result else {
-            XCTFail("native self-test must pass without Python: \(result)")
+            XCTFail("native self-test must pass: \(result)")
             return
         }
-        // 23.0: it writes its own temporary file, passed explicitly — the
-        // global path a scan reads is never redirected, even for a moment.
         XCTAssertEqual(AttentionIO.pathOverride, before)
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: AttentionIO.path.path),
@@ -457,12 +547,12 @@ final class PulseHookReceiverTests: XCTestCase {
         )
     }
 
-    /// 23.0 bug: the file was decoded strictly, so one invalid byte (a hook
-    /// cut off mid-character) read as an empty file — every wait vanished.
+    /// One invalid byte (a hook cut off mid-character) must not read as an
+    /// empty file — every wait would vanish.
     func testOneBadByteDoesNotHideEveryWait() throws {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         var bytes = Data(AttentionIO.header.utf8)
-        bytes.append(Data("claude\tpermission\t\(now - 1_000)\tBash: make\ts1\t/p\t\t\n".utf8))
+        bytes.append(Data("claude\tpermission\t\(now - 1_000)\tBash: make\ts1\t/p\t\t\t\t\n".utf8))
         bytes.append(contentsOf: [0x63, 0x6C, 0xE2, 0x82, 0x0A]) // "cl" + a truncated "€"
         try bytes.write(to: AttentionIO.path)
         let text = AttentionIO.readText()
@@ -472,8 +562,6 @@ final class PulseHookReceiverTests: XCTestCase {
     }
 
     func testRunnerPathRefusesTestHarnessBinaries() throws {
-        // The guard behind the fix above: even when seeding runs in a test
-        // process, hook-runner.path must never point at xctest.
         HooksInstaller.homeOverride = tempHome
         defer { HooksInstaller.homeOverride = nil }
         HooksInstaller.refreshRunnerPath()
@@ -486,20 +574,6 @@ final class PulseHookReceiverTests: XCTestCase {
     }
 
     // MARK: - A permission ask must say what is being asked
-
-    /// Regression: Claude's PermissionRequest payload carries no `message`,
-    /// and the receiver only looked for prose keys — so the banner, the row
-    /// and Details all showed a bare "Permission" for the single most
-    /// important event in the product.
-    func testPermissionRequestNamesTheToolAndItsTarget() throws {
-        let stdin = #"""
-        {"hook_event_name":"PermissionRequest","tool_use_id":"toolu_a","tool_name":"Bash",
-         "tool_input":{"command":"npm run build"},"session_id":"c9","cwd":"/w"}
-        """#
-        _ = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
-        let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
-        XCTAssertTrue(text.contains("\tBash: npm run build\t"), text)
-    }
 
     func testFilePathAndURLAreNamedWhenThereIsNoCommand() {
         XCTAssertEqual(
@@ -514,7 +588,6 @@ final class PulseHookReceiverTests: XCTestCase {
             ]),
             "WebFetch: https://example.com/x"
         )
-        // A tool with nothing nameable is still better than silence.
         XCTAssertEqual(
             PulseHookReceiver.toolDescriptor(from: ["tool_name": "MultiEdit", "tool_input": ["edits": []]]),
             "MultiEdit"
@@ -533,34 +606,89 @@ final class PulseHookReceiverTests: XCTestCase {
     }
 
     func testACredentialInsideACommandIsStillRedacted() throws {
-        let stdin = #"""
-        {"hook_event_name":"PermissionRequest","tool_use_id":"toolu_b","tool_name":"Bash",
+        deliver("claude", "PermissionRequest", #"""
+        {"hook_event_name":"PermissionRequest","tool_name":"Bash",
          "tool_input":{"command":"curl -H 'Authorization: Bearer abcdefgh12345678' https://x"},
          "session_id":"c10"}
-        """#
-        _ = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
+        """#)
         let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
         XCTAssertTrue(text.contains("Bash: curl"), text)
         XCTAssertFalse(text.contains("abcdefgh12345678"), "naming the ask must not leak the secret in it")
     }
 
-    // MARK: - 23.0: nothing is held, every line is a full v3 record
-
     func testAPermissionRequestIsWrittenAndNeverHeld() throws {
-        let stdin = #"{"hook_event_name":"PermissionRequest","tool_use_id":"toolu_x","tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"s1","cwd":"/w"}"#
         let started = Date()
-        let code = PulseHookReceiver.run(arguments: ["--hook", "claude"], stdin: stdin)
+        let code = deliver("claude", "PermissionRequest", #"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"s1","cwd":"/w"}"#)
         XCTAssertEqual(code, 0)
         XCTAssertLessThan(Date().timeIntervalSince(started), 5, "the receiver exits at once")
         let text = try String(contentsOf: AttentionIO.path, encoding: .utf8)
         let line = try XCTUnwrap(text.split(separator: "\n").first { $0.hasPrefix("claude\t") })
-        let columns = line.split(separator: "\t", omittingEmptySubsequences: false)
-        XCTAssertEqual(columns.count, AttentionProtocol.columnCount)
-        XCTAssertEqual(columns[1], "permission")
-        XCTAssertEqual(columns[6], "", "the host column is written empty")
+        XCTAssertEqual(line.split(separator: "\t", omittingEmptySubsequences: false).count, AttentionProtocol.columnCount)
     }
 }
 
+/// 24.0 · landing handles and the agent pid, read by the hook itself.
+final class HookLandingTests: XCTestCase {
+    func testHandlesAreMostSpecificFirst() {
+        let env = [
+            "TMUX": "/private/tmp/tmux-501/default,123,0",
+            "TMUX_PANE": "%3",
+            "ITERM_SESSION_ID": "w0t1p0:ABCD-1234",
+            "TERM_PROGRAM": "iTerm.app",
+        ]
+        XCTAssertEqual(
+            HookLanding.handles(environment: env, tty: "/dev/ttys004"),
+            "tmux:%3;iterm:w0t1p0:ABCD-1234;tty:/dev/ttys004;term:iTerm.app"
+        )
+        XCTAssertEqual(HookLanding.handles(environment: ["TERM_PROGRAM": "Apple_Terminal"], tty: "/dev/ttys001"),
+                       "tty:/dev/ttys001;term:Apple_Terminal")
+        XCTAssertEqual(HookLanding.handles(environment: [:], tty: nil), "")
+        XCTAssertEqual(HookLanding.handles(environment: [:], tty: "??"), "", "only a device path is a tty")
+    }
+
+    func testAHandleNeverBreaksTheColumn() {
+        let handles = HookLanding.handles(environment: ["TERM_PROGRAM": "evil\tprog;x\n"], tty: nil)
+        XCTAssertFalse(handles.contains("\t"))
+        XCTAssertFalse(handles.contains("\n"))
+        XCTAssertEqual(handles, "term:evil prog,x")
+    }
+
+    func testTheAgentPidIsTheFirstAncestorThatIsTheAgent() {
+        let parents: [Int32: Int32] = [300: 200, 200: 100, 100: 1]
+        let argv: [Int32: String] = [
+            300: "/bin/sh -c pulse-hook claude Stop",
+            200: "/Users/me/.local/bin/claude --resume",
+            100: "/bin/zsh -l",
+        ]
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .claude, start: 300, parentOf: { parents[$0] }, argumentsOf: { argv[$0] }),
+            200
+        )
+        let node: [Int32: String] = [300: "sh -c hook", 200: "node /opt/homebrew/bin/gemini", 100: "zsh"]
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .gemini, start: 300, parentOf: { parents[$0] }, argumentsOf: { node[$0] }),
+            200
+        )
+        XCTAssertEqual(
+            HookLanding.agentPID(agent: .codex, start: 300, parentOf: { parents[$0] }, argumentsOf: { argv[$0] }),
+            300,
+            "no ancestor is the agent: the direct parent"
+        )
+    }
+
+    func testProcArgsParseArgvAndSkipTheExecPath() {
+        var bytes: [UInt8] = [2, 0, 0, 0]
+        bytes += Array("/usr/local/bin/node".utf8) + [0, 0, 0]
+        bytes += Array("node".utf8) + [0]
+        bytes += Array("/opt/homebrew/bin/gemini".utf8) + [0]
+        bytes += Array("SECRET=env".utf8) + [0]
+        XCTAssertEqual(HookLanding.parseProcArgs(bytes), "node /opt/homebrew/bin/gemini", "argc bounds the read: no environment")
+        XCTAssertNil(HookLanding.parseProcArgs([0, 0]))
+    }
+}
+
+/// 24.0 · every agent's documented, non-blocking hook, installed from the
+/// catalog and removed byte for byte.
 final class HooksInstallerTests: XCTestCase {
     private var tempHome: URL!
 
@@ -576,192 +704,242 @@ final class HooksInstallerTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempHome)
     }
 
-    /// 19.0: the self-check reads what the real installer wrote and calls
-    /// it complete — so a new event added to one and not the other fails here.
-    func testTheSelfCheckRecognisesAFreshInstall() throws {
-        _ = try HooksInstaller.install()
-        let facts = DoctorProbe.gather(home: tempHome, nowMs: 1_800_000_000_000)
-        XCTAssertEqual(facts.claudeHookEvents, Set(DoctorModel.claudeEvents))
-        XCTAssertTrue(DoctorModel.matcherTokens.allSatisfy { facts.claudeNotificationMatcher?.contains($0) == true })
-        XCTAssertEqual(facts.codexHookEvents, Set(DoctorModel.codexEvents))
-        XCTAssertFalse(facts.codexPermissionHook)
-        XCTAssertTrue(facts.codexNotifyInstalled)
-
-        let report = DoctorModel.evaluate(facts, lang: .en)
-        XCTAssertEqual(report.checks.first { $0.id == "claude-hooks" }?.verdict, .works)
-        XCTAssertEqual(report.checks.first { $0.id == "codex-hooks" }?.verdict, .unproven,
-                       "installed is not trusted: only a fired event proves Codex runs them")
-
-        _ = try HooksInstaller.uninstall()
-        let after = DoctorProbe.gather(home: tempHome, nowMs: 1_800_000_000_000)
-        XCTAssertTrue(after.claudeHookEvents.isEmpty)
-        XCTAssertTrue(after.codexHookEvents.isEmpty)
+    private func write(_ relative: String, _ text: String) throws {
+        let url = tempHome.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    func testNativeInstallWritesClaudeAndCodex() throws {
-        try HooksInstaller.ensureLauncher()
-        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: HooksInstaller.launcherURL.path))
+    private func read(_ relative: String) -> String? {
+        try? String(contentsOf: tempHome.appendingPathComponent(relative), encoding: .utf8)
+    }
 
-        _ = try HooksInstaller.install()
-        let claude = try String(
-            contentsOf: tempHome.appendingPathComponent(".claude/settings.json"),
-            encoding: .utf8
-        )
-        XCTAssertTrue(claude.contains("pulse-hook"))
-        XCTAssertTrue(claude.contains("PermissionRequest"))
-        // 2.9: the hook finally speaks about work, not just waits.
-        XCTAssertTrue(claude.contains("PreToolUse"))
-        XCTAssertTrue(claude.contains("UserPromptSubmit"))
+    /// Every file and directory under the home, outside Pulse's own
+    /// Application Support folder, with its bytes.
+    private func snapshot() -> [String: Data] {
+        var out: [String: Data] = [:]
+        let root = tempHome.standardizedFileURL.path
+        guard let walker = FileManager.default.enumerator(atPath: root) else { return out }
+        for case let relative as String in walker where !relative.hasPrefix("Library") {
+            var isDirectory: ObjCBool = false
+            let path = root + "/" + relative
+            _ = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            if isDirectory.boolValue {
+                out[relative + "/"] = Data()
+            } else {
+                out[relative] = FileManager.default.contents(atPath: path) ?? Data()
+            }
+        }
+        return out
+    }
 
-        let codex = try String(
-            contentsOf: tempHome.appendingPathComponent(".codex/config.toml"),
-            encoding: .utf8
-        )
-        XCTAssertTrue(codex.contains("pulse-hook"))
-        XCTAssertTrue(codex.contains("notify = "))
-        // 18.0: Codex hooks — Stop and UserPromptSubmit, never PermissionRequest.
-        let codexHooks = try String(contentsOf: HooksInstaller.codexHooksURL, encoding: .utf8)
-        XCTAssertTrue(codexHooks.contains("\"Stop\""))
-        XCTAssertTrue(codexHooks.contains("\"UserPromptSubmit\""))
-        XCTAssertFalse(codexHooks.contains("PermissionRequest"),
-                       "Codex fires it before auto-review: it is not proof anyone is asked")
-        XCTAssertTrue(codexHooks.contains("pulse-hook"))
-        // 18.0: Claude questions and failed turns reach Pulse.
-        XCTAssertTrue(claude.contains("elicitation_dialog"))
-        XCTAssertTrue(claude.contains("StopFailure"))
+    /// A Mac with every vendor present, some with configs of their own.
+    private func seedVendors() throws {
+        for spec in AgentCatalog.all {
+            try FileManager.default.createDirectory(
+                at: tempHome.appendingPathComponent(spec.hooks.home), withIntermediateDirectories: true
+            )
+        }
+        try write(".claude/settings.json", """
+        {
+            "model": "opus",
+          "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "~/bin/guard.sh"}]}]}
+        }
+        """)
+        try write(".codex/config.toml", "model = \"gpt-5\"\n\n[profiles.fast]\nmodel = \"o4-mini\"\n")
+        try write(".gemini/settings.json", "{\"theme\":\"Dracula\",\"hooks\":{\"AfterTool\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"lint.sh\"}]}]}}")
+        try write(".cursor/hooks.json", "{\n  \"version\": 1,\n  \"hooks\": {\"afterFileEdit\": [{\"command\": \"./format.sh\"}]}\n}\n")
+    }
 
-        XCTAssertEqual(HooksSupport.probeStatus(), .installedBoth)
+    func testEveryAgentInstallsAndUninstallsByteForByte() throws {
+        try seedVendors()
+        let before = snapshot()
+        let report = try HooksInstaller.install()
+        XCTAssertEqual(report.count, AgentID.allCases.count)
+        for agent in AgentID.allCases {
+            let text = try XCTUnwrap(read(agent.spec.hooks.path), agent.rawValue)
+            let events = try XCTUnwrap(HooksInstaller.installedEvents(agent, text: text), agent.rawValue)
+            XCTAssertEqual(events, Set(agent.spec.hooks.events.map(\.name)), agent.rawValue)
+            XCTAssertTrue(HooksSupport.isWired(agent), agent.rawValue)
+        }
+        XCTAssertEqual(HooksSupport.probeStatus(), .all)
+        XCTAssertNotEqual(snapshot(), before)
 
-        _ = try HooksInstaller.uninstall()
-        let claudeAfter = try String(
-            contentsOf: tempHome.appendingPathComponent(".claude/settings.json"),
-            encoding: .utf8
-        )
-        XCTAssertFalse(HooksInstaller.containsPulseMarker(claudeAfter))
-        XCTAssertFalse(HooksInstaller.containsPulseMarker(
-            try String(contentsOf: HooksInstaller.codexHooksURL, encoding: .utf8)
-        ))
+        try HooksInstaller.uninstall()
+        XCTAssertEqual(snapshot(), before, "every file and directory is back exactly as it was")
         XCTAssertEqual(HooksSupport.probeStatus(), .missing)
     }
 
+    func testAReinstallIsStillReversibleByteForByte() throws {
+        try seedVendors()
+        let before = snapshot()
+        try HooksInstaller.install()
+        try HooksInstaller.install()
+        try HooksInstaller.uninstall()
+        XCTAssertEqual(snapshot(), before)
+    }
+
+    func testNoGatingEventIsEverInstalled() throws {
+        try seedVendors()
+        try HooksInstaller.install()
+        for agent in AgentID.allCases {
+            let text = try XCTUnwrap(read(agent.spec.hooks.path))
+            let events = HooksInstaller.installedEvents(agent, text: text) ?? []
+            XCTAssertTrue(events.isDisjoint(with: HookContract.gatingEvents), agent.rawValue)
+        }
+        // The user's own gating hook is theirs and stays; Pulse adds none.
+        let claude = try XCTUnwrap(read(".claude/settings.json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(claude.utf8)) as? [String: Any])
+        let hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+        let pre = try XCTUnwrap(hooks["PreToolUse"] as? [[String: Any]])
+        XCTAssertEqual(pre.count, 1)
+        XCTAssertFalse(HooksInstaller.containsPulseMarker(String(describing: pre)))
+        XCTAssertFalse(read(".codex/hooks.json")?.contains("PermissionRequest") ?? true)
+        XCTAssertFalse(read(".cursor/hooks.json")?.contains("beforeSubmitPrompt") ?? true)
+    }
+
+    /// Claude and Codex run Pulse's entries in the background, where no
+    /// output can decide anything.
+    func testClaudeAndCodexEntriesAreAsync() throws {
+        try seedVendors()
+        try HooksInstaller.install()
+        let files: [(String, Set<String>)] = [(".claude/settings.json", []), (".codex/hooks.json", ["SessionEnd"])]
+        for (path, exempt) in files {
+            let text = try XCTUnwrap(read(path))
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+            let hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+            for (event, value) in hooks {
+                for group in value as? [[String: Any]] ?? [] {
+                    for body in group["hooks"] as? [[String: Any]] ?? [] {
+                        let command = body["command"] as? String ?? ""
+                        guard HooksInstaller.containsPulseMarker(command) else { continue }
+                        XCTAssertTrue(command.hasSuffix(" \(event)"), "\(path) \(event): the command names its event")
+                        if !exempt.contains(event) {
+                            XCTAssertEqual(body["async"] as? Bool, true, "\(path) \(event)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testAnAbsentVendorGetsNothing() throws {
+        try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        let report = try HooksInstaller.install()
+        XCTAssertEqual(report.count, 1)
+        XCTAssertNil(read(".gemini/settings.json"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempHome.appendingPathComponent(".copilot").path))
+        XCTAssertEqual(HooksSupport.probeStatus(), .installed([.claude]))
+    }
+
+    /// A file the user changed after the install keeps their change: only
+    /// Pulse's entries go.
+    func testAnEditAfterInstallSurvivesTheUninstall() throws {
+        try seedVendors()
+        try HooksInstaller.install()
+        let url = tempHome.appendingPathComponent(".claude/settings.json")
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        root["theme"] = "dark"
+        try JSONSerialization.data(withJSONObject: root).write(to: url)
+        try HooksInstaller.uninstall(agents: [.claude])
+        let after = try XCTUnwrap(read(".claude/settings.json"))
+        XCTAssertFalse(HooksInstaller.containsPulseMarker(after))
+        XCTAssertTrue(after.contains("\"theme\""))
+        XCTAssertTrue(after.contains("guard.sh"), "the user's own hook stays")
+    }
+
+    func testAModuleFilePulseDidNotWriteIsNeverReplaced() throws {
+        try write(".config/opencode/plugins/pulse.js", "export const Mine = async () => ({})\n")
+        XCTAssertThrowsError(try HooksInstaller.install(agents: [.opencode]))
+        XCTAssertEqual(read(".config/opencode/plugins/pulse.js"), "export const Mine = async () => ({})\n")
+    }
+
+    func testTheModulesObserveAndNeverDecide() throws {
+        try seedVendors()
+        try HooksInstaller.install()
+        let plugin = try XCTUnwrap(read(".config/opencode/plugins/pulse.js"))
+        XCTAssertTrue(plugin.contains("event: async ({ event })"))
+        XCTAssertTrue(plugin.contains("detached: true"))
+        XCTAssertTrue(plugin.contains("child.unref()"))
+        XCTAssertFalse(plugin.contains("tool.execute.before"), "never a gating hook")
+        XCTAssertFalse(plugin.contains("await spawn"))
+        for event in AgentID.opencode.spec.hooks.events {
+            XCTAssertTrue(plugin.contains("\"\(event.name)\""), event.name)
+        }
+        let extensionText = try XCTUnwrap(read(".pi/agent/extensions/pulse.js"))
+        XCTAssertTrue(extensionText.contains("export default function (pi)"))
+        XCTAssertFalse(extensionText.contains("\"tool_call\""), "never the event that can block a tool")
+        XCTAssertTrue(extensionText.contains("\"ui_prompt_start\""))
+        let copilot = try XCTUnwrap(read(".copilot/hooks/pulse.json"))
+        XCTAssertTrue(copilot.contains("\"version\" : 1"))
+        XCTAssertFalse(copilot.contains("preToolUse"))
+    }
+
     func testInstallNeverOverwritesTheUsersOwnCodexNotify() throws {
-        let cfg = tempHome.appendingPathComponent(".codex/config.toml")
-        try FileManager.default.createDirectory(at: cfg.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let original = """
-        model = "gpt"
-        notify = [
-          "terminal-notifier",
-          "-title", "Codex",
-        ]
-
-        [mcp]
-        enabled = true
-
-        """
-        try original.write(to: cfg, atomically: true, encoding: .utf8)
-
-        try HooksInstaller.ensureLauncher()
-        _ = try HooksInstaller.install()
-        XCTAssertEqual(try String(contentsOf: cfg, encoding: .utf8), original, "their notify is theirs")
+        try write(".codex/config.toml", "notify = [\"/usr/local/bin/my-notifier\"]\n")
+        let report = try HooksInstaller.install(agents: [.codex])
+        XCTAssertTrue(report.joined().contains("kept your own notify"))
+        let text = try XCTUnwrap(read(".codex/config.toml"))
+        XCTAssertTrue(text.contains("my-notifier"))
+        XCTAssertFalse(text.contains("pulse-hook"))
     }
 
     func testInstallWritesThroughASymlinkedSettingsFile() throws {
-        let real = tempHome.appendingPathComponent("dotfiles/settings.json")
-        try FileManager.default.createDirectory(at: real.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try "{}\n".write(to: real, atomically: true, encoding: .utf8)
-        let settings = tempHome.appendingPathComponent(".claude/settings.json")
-        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(at: settings, withDestinationURL: real)
+        try write("dotfiles/claude-settings.json", "{\"model\": \"opus\"}\n")
+        try FileManager.default.createDirectory(at: tempHome.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: tempHome.appendingPathComponent(".claude/settings.json").path,
+            withDestinationPath: tempHome.appendingPathComponent("dotfiles/claude-settings.json").path
+        )
+        try HooksInstaller.install(agents: [.claude])
+        let link = try FileManager.default.destinationOfSymbolicLink(atPath: tempHome.appendingPathComponent(".claude/settings.json").path)
+        XCTAssertTrue(link.hasSuffix("dotfiles/claude-settings.json"), "the link is still a link")
+        XCTAssertTrue(HooksInstaller.containsPulseMarker(read("dotfiles/claude-settings.json") ?? ""))
+        try HooksInstaller.uninstall(agents: [.claude])
+        XCTAssertEqual(read("dotfiles/claude-settings.json"), "{\"model\": \"opus\"}\n")
+    }
 
-        try HooksInstaller.ensureLauncher()
-        _ = try HooksInstaller.install()
-        let attributes = try FileManager.default.attributesOfItem(atPath: settings.path)
-        XCTAssertEqual(attributes[.type] as? FileAttributeType, .typeSymbolicLink, "the link survives")
-        XCTAssertTrue(try String(contentsOf: real, encoding: .utf8).contains("pulse-hook"))
+    func testInstallRefusesInvalidJSON() throws {
+        try write(".claude/settings.json", "{ not json")
+        XCTAssertThrowsError(try HooksInstaller.install(agents: [.claude]))
+        XCTAssertEqual(read(".claude/settings.json"), "{ not json", "the user's file is left alone")
     }
 
     func testRootTableEndFindsFirstSection() {
-        let text = "a = 1\n\n[profile]\nx = 1\n"
+        let text = "model = \"o3\"\n\n[profiles.x]\nmodel = \"y\"\n"
         let end = HooksInstaller.rootTableEnd(text)
-        XCTAssertEqual(String(text.prefix(end)).trimmingCharacters(in: .newlines), "a = 1")
+        XCTAssertEqual(String(text.prefix(end)), "model = \"o3\"\n\n")
     }
 
-    func testInstallAndUninstallKeepUserHooksWithHookLikeTokens() throws {
-        // Regression: pulseMarkers used to include a bare "--hook", so a
-        // user's own `mytool --hook-dir …` entry was silently deleted by the
-        // strip that runs on every install, and by uninstall.
-        let settings = tempHome.appendingPathComponent(".claude/settings.json")
-        try FileManager.default.createDirectory(
-            at: settings.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try """
-        {
-          "hooks": {
-            "Stop": [
-              { "hooks": [ { "type": "command", "command": "/usr/local/bin/mytool --hook-dir /tmp claude stop" } ] }
-            ]
-          }
-        }
-        """.write(to: settings, atomically: true, encoding: .utf8)
-
-        try HooksInstaller.ensureLauncher()
-        _ = try HooksInstaller.install()
-        var text = try String(contentsOf: settings, encoding: .utf8)
-        XCTAssertTrue(text.contains("--hook-dir"), "install must not delete the user's own hook entry")
-        XCTAssertTrue(text.contains("pulse-hook"), "a user entry containing 'claude stop' must not suppress Pulse's own Stop entry")
-
-        _ = try HooksInstaller.uninstall()
-        text = try String(contentsOf: settings, encoding: .utf8)
-        XCTAssertTrue(text.contains("--hook-dir"), "uninstall must not delete the user's own hook entry")
-        XCTAssertFalse(text.contains("pulse-hook"))
-
-        // Legacy direct-binary entries are still ours.
-        XCTAssertTrue(HooksInstaller.containsPulseMarker(
-            #"/Applications/Pulse.app/Contents/MacOS/PulseBar --hook claude"#
-        ))
+    func testMarkersNeverClaimAUsersOwnHook() {
+        XCTAssertTrue(HooksInstaller.containsPulseMarker("/x/pulse-hook claude Stop"))
+        XCTAssertTrue(HooksInstaller.containsPulseMarker("/Applications/Pulse.app/Contents/MacOS/PulseBar --hook claude"))
         XCTAssertFalse(HooksInstaller.containsPulseMarker("mytool --hook-dir /tmp"))
     }
 
-    func testReinstallMigratesPulseEntriesToCurrentShape() throws {
-        // Regression: ensureClaudeEvent used to early-return on a marker hit,
-        // so an installed entry kept its old command and timeout forever.
-        try HooksInstaller.ensureLauncher()
-        _ = try HooksInstaller.install()
-
-        let previous = HooksInstaller.claudeHookTimeoutSeconds
-        defer { HooksInstaller.claudeHookTimeoutSeconds = previous }
-        HooksInstaller.claudeHookTimeoutSeconds = 45
-        _ = try HooksInstaller.install()
-
-        let settings = tempHome.appendingPathComponent(".claude/settings.json")
-        let data = try JSONSerialization.jsonObject(
-            with: Data(contentsOf: settings)
-        ) as? [String: Any]
-        let hooks = data?["hooks"] as? [String: Any]
-        let permission = hooks?["PermissionRequest"] as? [[String: Any]]
-        XCTAssertEqual(permission?.count, 1, "re-install must not duplicate Pulse entries")
-        let body = (permission?.first?["hooks"] as? [[String: Any]])?.first
-        XCTAssertEqual(body?["timeout"] as? Int, 45, "re-install must migrate timeout to the current value")
-    }
-
-    func testInstallRefusesInvalidClaudeJSON() throws {
-        let settings = tempHome.appendingPathComponent(".claude/settings.json")
-        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try "not-json".write(to: settings, atomically: true, encoding: .utf8)
-        try HooksInstaller.ensureLauncher()
-        XCTAssertThrowsError(try HooksInstaller.install()) { error in
-            let text = (error as? LocalizedError)?.errorDescription ?? "\(error)"
-            XCTAssertTrue(text.contains("refusing to rewrite"), text)
-        }
-        // Original untouched.
-        XCTAssertEqual(try String(contentsOf: settings, encoding: .utf8), "not-json")
+    /// The Settings lines say what is installed, what is not there, when a
+    /// hook last spoke, and which agents never report a wait.
+    func testSettingsSaysEachAgentsHook() {
+        let now: Int64 = 1_800_000_000_000
+        let lines = SettingsModel.hookAgents(
+            installed: [.claude, .codex], present: [.claude, .codex, .gemini],
+            lastEventMs: [.claude: now - 12_000], nowMs: now, lang: .en
+        )
+        XCTAssertEqual(lines.map(\.agent), AgentID.priority)
+        let claude = lines[0]
+        XCTAssertTrue(claude.installed)
+        XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), DurationFormat.label(seconds: 12, lang: .en)))
+        XCTAssertNil(claude.note)
+        let codex = lines.first { $0.agent == .codex }
+        XCTAssertEqual(codex?.lastEvent, L10n.t(.settingsHookNoEvent, .en))
+        XCTAssertEqual(codex?.note, L10n.t(.settingsHookNoWait, .en))
+        XCTAssertEqual(lines.first { $0.agent == .cursor }?.note, L10n.t(.settingsHookNoWait, .en))
+        XCTAssertEqual(lines.first { $0.agent == .gemini }?.state, L10n.t(.hooksMissing, .en))
+        XCTAssertEqual(lines.first { $0.agent == .pi }?.state, L10n.t(.settingsHookNotFound, .en))
+        XCTAssertEqual(lines.first { $0.agent == .pi }?.lastEvent, "")
     }
 }
 
-/// Re-arming attention.tsv used to tear down every other watch with it
-/// (U-4). Since 22.0 removed the remote inbox the other watch is the
-/// activity spool, and the rule is the same: each watch re-arms alone.
 final class AttentionWatcherReArmTests: XCTestCase {
     private var home: URL!
 
@@ -843,8 +1021,9 @@ struct TurnTruthTests {
         _ agent: String, _ kind: String, ago: Int64, message: String = "",
         session: String = "s1", cwd: String = "/p", front: String? = nil
     ) -> String {
-        // v3: all eight columns; host empty, front as given (empty = unknown).
-        let cols = [agent, kind, "\(now - ago)", message, session, cwd, "", front ?? ""]
+        // v4: all ten columns; front as given (empty = unknown), pid,
+        // transcript and landing empty.
+        let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", ""]
         return cols.joined(separator: "\t")
     }
 
@@ -978,10 +1157,31 @@ struct TurnTruthTests {
             expect: turn
         ),
         Case(
-            name: "codex · exec approval → red",
+            name: "codex · an approval word is not a protocol kind → not red",
             lines: [line("codex", "exec_approval_request", ago: 3 * second, message: "git push")],
             agent: .codex,
-            expect: blocked
+            expect: quiet
+        ),
+        Case(
+            name: "gemini · ToolPermission → red",
+            lines: [line("gemini", "permission", ago: 3 * second, message: "Allow run_shell_command?")],
+            agent: .gemini,
+            expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: "Permission")
+        ),
+        Case(
+            name: "pi · a select prompt → red, says Input",
+            lines: [line("pi", "question", ago: 3 * second, message: "Pick a model")],
+            agent: .pi,
+            expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: "Input")
+        ),
+        Case(
+            name: "opencode · permission then replied → cleared",
+            lines: [
+                line("opencode", "permission", ago: 30 * second, message: "bash: npm test"),
+                line("opencode", "done", ago: 2 * second),
+            ],
+            agent: .opencode,
+            expect: quiet
         ),
         Case(
             name: "presence · blocked prompt already in front → lamp, no banner",
@@ -1064,7 +1264,7 @@ struct TurnTruthTests {
         #expect(r.rows.isEmpty, "a row made only of 'it finished' would have no other evidence")
     }
 
-    @Test func theReceiverWritesTheV3Kinds() throws {
+    @Test func theReceiverWritesTheV4Kinds() throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulse-turn-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -1075,19 +1275,25 @@ struct TurnTruthTests {
             ActivitySpool.directoryOverride = nil
             try? FileManager.default.removeItem(at: home)
         }
-        #expect(PulseHookReceiver.parseKind(from: ["hook_event_name": "Stop"]) == "turn")
-        #expect(PulseHookReceiver.parseKind(from: ["hook_event_name": "StopFailure"]) == "stop_failure")
-        #expect(PulseHookReceiver.parseKind(from: ["hook_event_name": "SubagentStop"]) == "subagent_stop")
+        let stop = PulseHookReceiver.interpret(agent: .claude, event: "Stop", payload: [:])
+        let failure = PulseHookReceiver.interpret(agent: .claude, event: "StopFailure", payload: [:])
+        let subagent = PulseHookReceiver.interpret(agent: .claude, event: "SubagentStop", payload: [:])
+        #expect(stop?.action == .turn)
+        #expect(failure?.action == .turn)
+        #expect(subagent?.action == .ignore)
 
-        // The installed Claude Stop hook passes `stop` explicitly.
-        PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "stop"],
-                              stdin: #"{"session_id":"s1","cwd":"/p","last_assistant_message":"All tests pass."}"#)
-        PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "prompt"],
-                              stdin: #"{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/p","prompt":"next"}"#)
+        // The installed Claude hooks pass the vendor's event name.
+        let here: (AgentID, [String: String]) -> (pid: Int32, landing: String) = { _, _ in (0, "") }
+        PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "Stop"],
+                              stdin: #"{"session_id":"s1","cwd":"/p","last_assistant_message":"All tests pass."}"#,
+                              locate: here)
+        PulseHookReceiver.run(arguments: ["PulseBar", "--hook", "claude", "UserPromptSubmit"],
+                              stdin: #"{"hook_event_name":"UserPromptSubmit","session_id":"s1","cwd":"/p","prompt":"next"}"#,
+                              locate: here)
         let lines = try String(contentsOf: AttentionIO.path, encoding: .utf8)
             .split(separator: "\n").filter { !$0.hasPrefix("#") }
             .map { $0.split(separator: "\t", omittingEmptySubsequences: false) }
-        #expect(lines.map { String($0[1]) } == ["turn", "done"])
+        #expect(lines.map { String($0[1]) } == ["turn", "working"])
         #expect(lines.allSatisfy { $0.count == AttentionProtocol.columnCount })
         #expect(String(lines[0][3]) == "All tests pass.")
     }
@@ -1096,7 +1302,8 @@ struct TurnTruthTests {
         for kind in AttentionKind.allCases {
             #expect(AttentionProtocol.kind(kind.rawValue) == kind)
         }
-        #expect(AttentionKind.allCases.filter(\.isBlocking) == [.permission, .question, .waiting])
+        let blocking = AttentionKind.allCases.filter { $0.isBlocking }
+        #expect(blocking == [.permission, .question, .waiting])
         #expect(!AttentionKind.turn.isBlocking)
         #expect(AttentionKind.turn.isOpen)
     }
@@ -1236,10 +1443,13 @@ final class ActivitySpoolTests: XCTestCase {
             .appendingPathComponent("pulse-activity-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         ActivitySpool.directoryOverride = directory
+        // A prompt also writes a `working` line: never into the real file.
+        AttentionIO.pathOverride = directory.appendingPathComponent("attention.tsv")
     }
 
     override func tearDownWithError() throws {
         ActivitySpool.directoryOverride = nil
+        AttentionIO.pathOverride = nil
         try? FileManager.default.removeItem(at: directory)
     }
 
@@ -1342,9 +1552,9 @@ final class AttentionCompactTests: XCTestCase {
     func testAttentionCompactKeepsUnresolvedRaise() {
         var lines: [String] = []
         for index in 0..<90 {
-            lines.append("amp\tdone\t\(1_700_000_000_000 + index)\tok\tsess-\(index)\t/tmp\t\t")
+            lines.append("copilot\tdone\t\(1_700_000_000_000 + index)\tok\tsess-\(index)\t/tmp\t\t\t\t")
         }
-        lines.insert("amp\tpermission\t1\tapprove\tkeep-me\t/tmp\t\t", at: 0)
+        lines.insert("copilot\tpermission\t1\tapprove\tkeep-me\t/tmp\t\t\t\t", at: 0)
         let compacted = AttentionIO.compactLines(lines, cap: 80)
         XCTAssertEqual(compacted.count, 80)
         XCTAssertTrue(
@@ -1420,8 +1630,8 @@ struct AttentionFixTests {
     @Test func theStopGraceDoesNotDependOnWhenTheFileIsRead() {
         let raise = now - 10 * Self.minute
         let text = [
-            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", ""],
-            ["claude", "stop", "\(raise + 1_000)", "", "s1", "", "", ""],
+            ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", "", "", ""],
+            ["claude", "stop", "\(raise + 1_000)", "", "s1", "", "", "", "", ""],
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
         let soon = AttentionReader.parse(text, nowMs: raise + 2_000)
         let later = AttentionReader.parse(text, nowMs: now)
@@ -1438,13 +1648,13 @@ struct AttentionFixTests {
         let file = home.url.appendingPathComponent("attention.tsv")
         try FileManager.default.createDirectory(at: home.url, withIntermediateDirectories: true)
         var bytes = Data(AttentionIO.header.utf8)
-        bytes.append(Data("claude\tpermission\t\(now)\tBash: npm test\ts1\t/p\t\t\n".utf8))
+        bytes.append(Data("claude\tpermission\t\(now)\tBash: npm test\ts1\t/p\t\t\t\t\n".utf8))
         bytes.append(Data([0x63, 0x6f, 0xff, 0x0a]))
         try bytes.write(to: file)
         AttentionIO.pathOverride = file
         defer { AttentionIO.pathOverride = nil }
 
-        AttentionIO.appendRawLine("codex\tdone\t\(now)\t\ts2\t\t\t")
+        AttentionIO.appendRawLine("codex\tdone\t\(now)\t\ts2\t\t\t\t\t")
         let written = try Data(contentsOf: file)
         let text = String(decoding: written, as: UTF8.self)
         #expect(text.contains("claude\tpermission"), "the rewrite used to start from an empty decode")

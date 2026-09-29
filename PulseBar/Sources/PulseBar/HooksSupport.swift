@@ -1,33 +1,36 @@
 import Foundation
 
 enum HooksSupport {
+    /// Which agents carry Pulse's hook (24.0: all seven, each by its own
+    /// contract).
     enum Status: Equatable {
         case unknown
+        /// The launcher is missing, or no agent carries Pulse's hook.
         case missing
-        case installedClaude
-        case installedCodex
-        case installedBoth
+        case installed(Set<AgentID>)
         case failed(String)
+
+        /// Every supported agent — the fixtures' and tests' "all wired".
+        static var all: Status { .installed(Set(AgentID.allCases)) }
 
         func label(lang: ResolvedLanguage) -> String {
             switch self {
             case .unknown: return L10n.t(.hooksUnknown, lang)
             case .missing: return L10n.t(.hooksMissing, lang)
-            case .installedBoth: return L10n.t(.hooksInstalledBoth, lang)
-            case .installedClaude: return L10n.t(.hooksInstalledClaude, lang)
-            case .installedCodex: return L10n.t(.hooksInstalledCodex, lang)
+            case .installed(let agents):
+                return String(format: L10n.t(.hooksInstalledCount, lang), agents.count, AgentID.allCases.count)
             case .failed(let m): return "\(L10n.t(.hooksFailed, lang)) · \(m)"
             }
         }
 
         func isInstalled(for agent: AgentID) -> Bool {
-            switch (self, agent) {
-            case (.installedBoth, .claude), (.installedBoth, .codex),
-                 (.installedClaude, .claude), (.installedCodex, .codex):
-                return true
-            default:
-                return false
-            }
+            if case .installed(let agents) = self { return agents.contains(agent) }
+            return false
+        }
+
+        var installedAgents: Set<AgentID> {
+            if case .installed(let agents) = self { return agents }
+            return []
         }
     }
 
@@ -55,32 +58,23 @@ enum HooksSupport {
 
     static func probeStatus() -> Status {
         let launcher = HooksInstaller.launcherURL
-        let hasAsset = FileManager.default.isExecutableFile(atPath: launcher.path)
-        guard hasAsset else { return .missing }
+        guard FileManager.default.isExecutableFile(atPath: launcher.path) else { return .missing }
+        let wired = Set(AgentID.allCases.filter(isWired))
+        return wired.isEmpty ? .missing : .installed(wired)
+    }
 
-        let home = HooksInstaller.homeURL
-        let claudeCandidates = [
-            home.appendingPathComponent(".claude/settings.json"),
-            home.appendingPathComponent(".claude/settings.local.json"),
-        ]
-        let codex = home.appendingPathComponent(".codex/config.toml")
-        let claudeOK = claudeCandidates.contains { url in
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
-            return HooksInstaller.containsPulseMarker(text)
+    /// Whether an agent's config carries Pulse's hook. Codex also counts its
+    /// `notify` line in config.toml.
+    static func isWired(_ agent: AgentID) -> Bool {
+        let text = try? String(contentsOf: HooksInstaller.configURL(for: agent), encoding: .utf8)
+        if let text, let events = HooksInstaller.installedEvents(agent, text: text), !events.isEmpty {
+            return true
         }
-        // Codex hooks live in two places: `config.toml` `notify` and, since
-        // 18.0, `~/.codex/hooks.json` (Stop + UserPromptSubmit). Either one
-        // carrying Pulse's marker means Codex is wired.
-        let codexOK = codexHooked(
-            configTOML: try? String(contentsOf: codex, encoding: .utf8),
-            hooksJSON: try? String(contentsOf: HooksInstaller.codexHooksURL, encoding: .utf8)
+        guard agent == .codex else { return false }
+        return codexHooked(
+            configTOML: try? String(contentsOf: HooksInstaller.codexConfigURL, encoding: .utf8),
+            hooksJSON: text
         )
-        switch (claudeOK, codexOK) {
-        case (true, true): return .installedBoth
-        case (true, false): return .installedClaude
-        case (false, true): return .installedCodex
-        case (false, false): return .missing
-        }
     }
 
     /// Pure: is Codex wired to Pulse, given the text of `config.toml` and
@@ -93,7 +87,7 @@ enum HooksSupport {
         }
     }
 
-    /// Remove Pulse hooks from Claude/Codex configs.
+    /// Remove Pulse hooks from every agent's config.
     @discardableResult
     static func uninstall() -> Status {
         seedAssets()
@@ -105,7 +99,7 @@ enum HooksSupport {
         return probeStatus()
     }
 
-    /// Install native `pulse-hook` into Claude/Codex configs.
+    /// Install the native `pulse-hook` into every present agent's config.
     @discardableResult
     static func install() -> Status {
         seedAssets()
@@ -114,8 +108,7 @@ enum HooksSupport {
         } catch {
             return .failed(error.localizedDescription)
         }
-        let status = probeStatus()
-        return status == .missing ? .missing : status
+        return probeStatus()
     }
 
     /// Exercise the native hook receiver end-to-end in an isolated temporary
@@ -134,22 +127,15 @@ enum HooksSupport {
         do {
             try fm.createDirectory(at: temp, withIntermediateDirectories: true)
             let file = temp.appendingPathComponent("attention.tsv")
-            PulseHookReceiver.appendEvent(
-                agent: "codex",
-                kind: AttentionProtocol.normalizeKind("request_user_input"),
-                message: "Pulse self-test",
-                session: "selftest",
-                cwd: "",
-                attentionURL: file
-            )
-            // Also exercise argv/stdin parsing the vendor path uses.
+            // The vendor path: a Claude Notification as its hook sends it.
             _ = PulseHookReceiver.run(
-                arguments: ["--hook", "codex", "request_user_input"],
-                stdin: #"{"message":"Pulse self-test","session_id":"selftest"}"#,
-                attentionURL: file
+                arguments: ["--hook", "claude", "Notification"],
+                stdin: #"{"hook_event_name":"Notification","notification_type":"elicitation_dialog","message":"Pulse self-test","session_id":"selftest"}"#,
+                attentionURL: file,
+                locate: { _, _ in (0, "") }
             )
             let text = try String(contentsOf: file, encoding: .utf8)
-            guard text.contains("codex\tquestion\t"),
+            guard text.contains("claude\tquestion\t"),
                   text.contains("\tPulse self-test\tselftest\t")
             else { return .failed("hook output mismatch") }
             return .passed(Date())

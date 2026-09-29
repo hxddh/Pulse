@@ -173,11 +173,11 @@ struct SessionLogTests {
 
     @Test func aFilePendingWhoseClockMovesIsNotANewAsk() {
         var log = SessionLog()
-        log.reconcileWaits(rows: [waiting("cline|a", .cline, since: now - minute, signal: .pending)], released: [], nowMs: now)
-        let moved = waiting("cline|a", .cline, since: now + 5 * minute, signal: .pending)
+        log.reconcileWaits(rows: [waiting("opencode|a", .opencode, since: now - minute, signal: .pending)], released: [], nowMs: now)
+        let moved = waiting("opencode|a", .opencode, since: now + 5 * minute, signal: .pending)
         #expect(!SessionLog.isNewRaise(moved, previousSinceMs: now - minute), "a pending stamps the file's clock")
         log.reconcileWaits(rows: [moved], released: [], nowMs: now + 5 * minute)
-        let waits = log.sessions["cline|a"]?.waits ?? []
+        let waits = log.sessions["opencode|a"]?.waits ?? []
         #expect(waits.count == 1)
     }
 

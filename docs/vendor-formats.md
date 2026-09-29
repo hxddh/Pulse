@@ -24,6 +24,14 @@ other than `none`. Tests are named by file (`HarvestTests.swift`,
 `VendorFormatTests.swift`, …; 23.0 grouped them by component). **Adding or changing a dialect means updating its entry
 and its vendor-shaped fixture in the same change.**
 
+## Hook contracts (24.0)
+
+Each entry also has a `hooks` block: where the agent's hook / plugin /
+extension contract was read (`repo` + 40-hex `commit` + `watch`, or `docs` +
+`urls`), the date, and the event list — which must equal the catalog's
+`HookContract.events`. `catalog_check.py` requires it for all seven, and
+`vendor_drift.py` watches its pinned files like a format's.
+
 ## The sentinel
 
 `.github/workflows/vendor-drift.yml` runs `scripts/vendor_drift.py` weekly
@@ -37,6 +45,8 @@ the parser and fixture if the shape moved, then move the pin (`commit`,
 `checked`) — the same change, so the gate and the sentinel agree.
 
 ## What 20.0 found
+
+(24.0 removed every agent below except the seven; the table is history.)
 
 | Agent | Drift | Effect before 20.0 |
 | --- | --- | --- |

@@ -455,26 +455,26 @@ final class HarvestSupervisorTests: XCTestCase {
     func testSupervisorOpensCircuitAfterThreeFailuresAndAllowsHalfOpenProbe() {
         var supervisor = HarvestSupervisor()
         let failed = ActivityHarvest.CollectorHealth(
-            id: .amp, state: .failed, durationMs: 10, rowCount: 0,
+            id: .copilot, state: .failed, durationMs: 10, rowCount: 0,
             sourcePresent: true, errorKind: "locked"
         )
         for index in 0..<3 { supervisor.record([failed], nowMs: Int64(index * 10_000)) }
-        let blocked = supervisor.plan(nowMs: 30_001, agents: [.amp, .codex])
-        XCTAssertTrue(blocked.deferred.contains(.amp))
+        let blocked = supervisor.plan(nowMs: 30_001, agents: [.copilot, .codex])
+        XCTAssertTrue(blocked.deferred.contains(.copilot))
         XCTAssertTrue(blocked.attempted.contains(.codex))
-        let probe = supervisor.plan(nowMs: 60_001, agents: [.amp])
-        XCTAssertTrue(probe.attempted.contains(.amp))
+        let probe = supervisor.plan(nowMs: 60_001, agents: [.copilot])
+        XCTAssertTrue(probe.attempted.contains(.copilot))
     }
 
     @MainActor
     func testSupervisorDeferralDoesNotMakeHealthyPartialScanUnreliable() {
         var supervisor = HarvestSupervisor()
         let failure = ActivityHarvest.CollectorHealth(
-            id: .amp, state: .failed, durationMs: 10, rowCount: 0,
+            id: .copilot, state: .failed, durationMs: 10, rowCount: 0,
             sourcePresent: true, errorKind: "locked"
         )
         supervisor.record([failure], nowMs: 1_000)
-        let plan = supervisor.plan(nowMs: 1_100, agents: [.amp, .codex])
+        let plan = supervisor.plan(nowMs: 1_100, agents: [.copilot, .codex])
         let healthyCodex = ActivityHarvest.CollectorHealth(
             id: .codex, state: .observed, durationMs: 10, rowCount: 1,
             sourcePresent: true, errorKind: ""
@@ -575,9 +575,9 @@ final class PendingRefreshTests: XCTestCase {
             reason: "permission-cursor",
             agentFilter: [.cursor]
         )
-        pending.absorb(reason: "permission-cline", agentFilter: [.cline])
-        XCTAssertEqual(pending.agentFilter, [.cursor, .cline])
-        XCTAssertEqual(pending.reason, "permission-cline")
+        pending.absorb(reason: "permission-opencode", agentFilter: [.opencode])
+        XCTAssertEqual(pending.agentFilter, [.cursor, .opencode])
+        XCTAssertEqual(pending.reason, "permission-opencode")
     }
 
     @MainActor
@@ -607,19 +607,19 @@ final class SupervisorBudgetTests: XCTestCase {
     func testSupervisorRecordsBudgetCutoffWithoutCallingItAFailure() {
         var supervisor = HarvestSupervisor()
         let now: Int64 = 1_800_000_000_000
-        supervisor.record([.unscanned(.zcode)], nowMs: now)
+        supervisor.record([.unscanned(.opencode)], nowMs: now)
 
-        let state = supervisor.state(for: .zcode)
+        let state = supervisor.state(for: .opencode)
         XCTAssertEqual(state.lastUnscannedAtMs, now)
         XCTAssertEqual(state.consecutiveFailures, 0, "a budget cutoff is not an adapter failure")
         XCTAssertFalse(state.isCircuitOpen)
-        XCTAssertTrue(supervisor.summary(nowMs: now).contains("zcode"))
+        XCTAssertTrue(supervisor.summary(nowMs: now).contains("opencode"))
     }
 
     func testAnOldBudgetCutoffFallsOutOfTheSummary() {
         var supervisor = HarvestSupervisor()
         let now: Int64 = 1_800_000_000_000
-        supervisor.record([.unscanned(.zcode)], nowMs: now - 60 * 60_000)
-        XCTAssertFalse(supervisor.summary(nowMs: now).contains("zcode"))
+        supervisor.record([.unscanned(.opencode)], nowMs: now - 60 * 60_000)
+        XCTAssertFalse(supervisor.summary(nowMs: now).contains("opencode"))
     }
 }

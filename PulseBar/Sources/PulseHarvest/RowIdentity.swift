@@ -34,7 +34,7 @@ package enum RowIdentity {
         startedMs: Int64 = 0,
         task: String = ""
     ) -> String {
-        let prefix = agent.surfaceID.rawValue
+        let prefix = agent.rawValue
         let sid = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         if !sid.isEmpty { return "\(prefix)|\(sid)" }
         if !transcriptPath.isEmpty { return "\(prefix)|file:\(stableHash(transcriptPath))" }
@@ -51,13 +51,13 @@ package enum RowIdentity {
 
     /// A process seen with no session to attach to.
     package static func process(agent: AgentID, pid: Int) -> String {
-        "\(agent.surfaceID.rawValue)|pid:\(pid)"
+        "\(agent.rawValue)|pid:\(pid)"
     }
 
     /// A hook wait with no session row to attach to.
     package static func hook(agent: AgentID, session: String, cwd: String) -> String {
         if !session.isEmpty { return self.session(agent: agent, sessionID: session) }
-        return "\(agent.surfaceID.rawValue)|hook:\(cwd.isEmpty ? "-" : stableHash(cwd))"
+        return "\(agent.rawValue)|hook:\(cwd.isEmpty ? "-" : stableHash(cwd))"
     }
 
     /// Whether a key names a process-only row.

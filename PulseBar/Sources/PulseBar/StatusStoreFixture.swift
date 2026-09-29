@@ -114,16 +114,16 @@ extension StatusStore {
             )
             codex.model = "gpt-5"
 
-            var amp = row(
-                "coverage-amp",
-                .amp,
+            var pi = row(
+                "coverage-pi",
+                .pi,
                 task: "",
                 cwd: "",
                 source: .process
             )
-            amp.harvestMs = 0
-            amp.state = .processOnly
-            amp.startedMs = now - 60 * 60 * 1000
+            pi.harvestMs = 0
+            pi.state = .processOnly
+            pi.startedMs = now - 60 * 60 * 1000
 
             let cursor = row(
                 "coverage-cursor",
@@ -133,12 +133,12 @@ extension StatusStore {
                 source: .cache,
                 live: false
             )
-            setCachedAll([codex, amp, cursor])
+            setCachedAll([codex, pi, cursor])
             engine.processesByAgent = [
                 .codex: ProcessFacts(evidence: .pathSignature, startedMs: now - 54 * 60 * 1000, count: 1),
-                .amp: ProcessFacts(evidence: .executable, startedMs: now - 60 * 60 * 1000, count: 2),
+                .pi: ProcessFacts(evidence: .executable, startedMs: now - 60 * 60 * 1000, count: 2),
             ]
-            hooksStatus = .installedBoth
+            hooksStatus = .all
             previewWaitingEventTimes = [
                 .claude: now - 48_000,
                 .codex: now - 12_000,
@@ -166,8 +166,8 @@ extension StatusStore {
                     sourcePresent: true,
                     errorKind: ""
                 )
-            health[.amp] = .init(
-                    id: .amp,
+            health[.pi] = .init(
+                    id: .pi,
                     state: .noSessions,
                     durationMs: 4,
                     rowCount: 0,
@@ -246,8 +246,8 @@ extension StatusStore {
         var rows = [waiting, active, stalled, recent]
         if name != "compact" {
             let cache = row(
-                "kiro-preview",
-                .kiro,
+                "gemini-preview",
+                .gemini,
                 task: "Audit settings copy",
                 cwd: "/Users/me/code/Docs",
                 source: .cache,
@@ -255,8 +255,8 @@ extension StatusStore {
                 ageMinutes: 6
             )
             var process = row(
-                "replit-preview",
-                .replit,
+                "copilot-preview",
+                .copilot,
                 task: "",
                 cwd: "",
                 source: .process,

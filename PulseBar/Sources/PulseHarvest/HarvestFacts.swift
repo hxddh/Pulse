@@ -663,12 +663,6 @@ extension NativeActivityHarvest {
         ])
         f.model = regexValue(text, patterns: [#"(?i)\"(?:model|modelId)\"\s*:\s*\"([^\"]+)\""#])
         f.tool = regexValue(text, patterns: [#"(?i)\"(?:lastTool|lastAction|toolName)\"\s*:\s*\"([^\"]+)\""#])
-        // 9.0: Aider's chat history is markdown — `#### ` heads each user
-        // turn, the agent's prose follows. The last plain paragraph after
-        // the newest user turn is the agent's latest word.
-        if path.lowercased().contains("aider"), path.lowercased().contains("history") {
-            f.lastWord = aiderLastWord(from: text)
-        }
         f.phase = semanticPhase(regexValue(text, patterns: [#"(?i)\"(?:phase|stage|status|state)\"\s*:\s*\"([^\"]+)\""#]))
         f.outcome = regexValue(text, patterns: [#"(?i)\"(?:outcome|result|finalStatus)\"\s*:\s*\"([^\"]+)\""#])
         // Display fields only. This is the *free-text* fallback: it runs on
@@ -900,6 +894,17 @@ extension NativeActivityHarvest {
             })
     }
 
+    /// Asks a vendor classifies as interactive — the agent is blocked on the
+    /// person (Roo `message.ts`; kept from the removed Cline-family reader,
+    /// 24.0). Everything else (`completion_result`, `api_req_failed`,
+    /// `resume_task`, `command_output`, …) is idle, resumable or
+    /// non-blocking.
+    package static let interactiveAsks: Set<String> = [
+        "followup", "command", "tool", "use_mcp_server", "browser_action_launch",
+        "plan_mode_respond", "act_mode_respond", "new_task", "condense",
+        "summarize_task", "report_bug", "use_subagents", "checkpoint_restore",
+    ]
+
     package static func vendorAskFieldPending(_ dict: [String: Any]) -> Bool {
         let ask = firstString(dict, keys: ["ask", "askType", "ask_type"])
         guard !ask.isEmpty else { return false }
@@ -914,7 +919,7 @@ extension NativeActivityHarvest {
         // `message.ts`) — every finished task ends on a `completion_result`
         // ask, so counting it made every finished task red.
         if anyTruthy(dict, keys: ["isAnswered"]) { return false }
-        let waitingAsks = clineBlockingAsks.union(["clarifying_question", "user_input", "permission"])
+        let waitingAsks = interactiveAsks.union(["clarifying_question", "user_input", "permission"])
         return waitingAsks.contains(normalized) || pendingPhase(ask)
     }
 
