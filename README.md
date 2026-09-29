@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`19.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v19.0.0) · macOS 14+
+**版本：`20.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v20.0.0) · macOS 14+
 
 ---
 
@@ -109,7 +109,8 @@ observed、no_sessions、source_absent、permission_denied、schema_mismatch 或
 | Agent | Probe | Harvest | Waiting |
 | --- | --- | --- | --- |
 | Claude / Codex | A | Structured session | hooks（+ Codex pending） |
-| Cursor / Grok / Pi / Amp / Aider / Gemini / Copilot / OpenCode / Goose / OpenHands / Continue / Droid / Command Code / Kimi | A* | Structured session | pending |
+| Cursor / Grok / Pi / Amp / Gemini / Copilot / OpenCode / Goose / OpenHands / Droid / Command Code / Kimi | A* | Structured session | pending |
+| Aider / Continue | A | Structured session | **none**（格式里没有等待信号，20.0 核对源码） |
 | Amazon Q / Cline / Roo / Cascade / Windsurf / Augment / Zed / Kilo / Kiro | A | Best effort cache | pending（尽力） |
 | Trae / Warp / Antigravity / Devin / Junie / Replit / ZCode | A | Best effort cache | **none**（本机无可靠信号） |
 

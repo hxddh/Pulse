@@ -62,6 +62,8 @@ extension NativeActivityHarvest {
             return
         case .grok:
             collectGrokDatabase(database, url: url, home: home, into: &facts, error: &error)
+        case .goose:
+            collectGooseDatabase(database, url: url, into: &facts, error: &error)
         }
         // A locked, corrupt, or non-SQLite file can successfully open and only
         // fail on the first prepared statement/step. Do not turn that into a
@@ -108,12 +110,13 @@ extension NativeActivityHarvest {
             fact.records = content.split(whereSeparator: \.isNewline).count
             fact.activityMs = normalizeTimestamp(sqlite3_column_int64(statement, 2))
             if fact.activityMs == 0 { fact.activityMs = fileMTime(url) }
-            // 0.95: never infer Waiting from free-text transcript content.
-            let lower = content.lowercased()
-            if lower.contains("tool") || lower.contains("command") { fact.phase = "running" }
-            // 8.3: the same tagged document `grokTitle` reads carries the
-            // agent's replies under `<assistant` markers — the latest one is
-            // the row's last word. Unknown layouts yield "", never a guess.
+            // 20.0 Drift (xai-org/grok-build session/storage/search_content.rs):
+            // `content` is plain text — every prompt, then every reply, then
+            // every tool title, kept for the life of the session. A "tool" or
+            // "command" substring therefore said nothing about now, and made
+            // finished sessions read as running forever; there are no
+            // `<assistant` markers to find a last word by. The session's own
+            // `updates.jsonl` carries the words (GrokDialect).
             if fact.lastWord.isEmpty { fact.lastWord = grokLastWord(from: content) }
             if fact.hasUsefulSignal { facts.append(fact) }
             if facts.count >= maxFactsPerAgent { break }
@@ -154,21 +157,75 @@ extension NativeActivityHarvest {
         return ""
     }
 
+    /// Grok Build `updates.jsonl` (see `GrokDialect`).
+    package static func parseGrokUpdates(_ text: String, path: String) -> [Fact] {
+        var fact = Fact()
+        fact.structured = true
+        fact.sourcePath = path
+        var latest: Int64 = 0
+        var prompt = ""
+        var words = ""
+        var lastKind = ""
+        for line in text.split(whereSeparator: \.isNewline) {
+            guard line.hasPrefix("{"),
+                  let data = line.data(using: .utf8),
+                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let params = record["params"] as? [String: Any]
+            else { continue }
+            latest = max(latest, normalizeTimestamp(record["timestamp"]))
+            let sid = firstString(params, keys: ["sessionId"])
+            if !sid.isEmpty { fact.sessionID = sid }
+            guard let update = params["update"] as? [String: Any] else { continue }
+            let kind = firstString(update, keys: ["sessionUpdate"])
+            let content = update["content"] as? [String: Any] ?? [:]
+            // Raw: a streamed chunk's edge spaces are part of the words.
+            let text = content["text"] as? String ?? ""
+            fact.records += 1
+            switch kind {
+            case "user_message_chunk":
+                if lastKind != kind { prompt = "" }
+                prompt += text
+            case "agent_message_chunk":
+                if lastKind != kind { words = "" }
+                words += text
+            default:
+                continue
+            }
+            lastKind = kind
+        }
+        guard fact.records > 0 else { return [] }
+        let task = cleanPiSessionTitle(prompt)
+        if !task.isEmpty {
+            fact.task = task
+            fact.taskOrigin = .userPrompt
+        }
+        fact.lastWord = selfReportLine(words)
+        fact.activityMs = latest
+        return [fact]
+    }
+
     package static func collectOpenCodeDatabase(
         _ database: OpaquePointer,
         url: URL,
         into facts: inout [Fact],
         error: inout Bool
     ) {
-        let sql = """
-        SELECT id, title, directory, agent, model, tokens_input, tokens_output,
-               time_created, time_updated, summary_files
-        FROM session
-        WHERE IFNULL(time_archived, 0) = 0
-        ORDER BY time_updated DESC
-        LIMIT \(maxRowsPerAgent)
-        """
-        guard let statement = sqlitePrepare(database, sql) else {
+        // 20.0: a subagent session (`parent_id` set, titled "… (@agent
+        // subagent)") is part of its parent's work, not a row of its own.
+        // Databases from before `parent_id` existed fall back to all sessions.
+        func query(_ filter: String) -> String {
+            """
+            SELECT id, title, directory, agent, model, tokens_input, tokens_output,
+                   time_created, time_updated, summary_files
+            FROM session
+            WHERE IFNULL(time_archived, 0) = 0\(filter)
+            ORDER BY time_updated DESC
+            LIMIT \(maxRowsPerAgent)
+            """
+        }
+        guard let statement = sqlitePrepare(database, query(" AND parent_id IS NULL"))
+            ?? sqlitePrepare(database, query(""))
+        else {
             error = true
             return
         }
@@ -179,7 +236,13 @@ extension NativeActivityHarvest {
         while sqlite3_step(statement) == SQLITE_ROW {
             let sid = sqliteString(statement, column: 0)
             guard !sid.isEmpty else { continue }
-            let title = sqliteString(statement, column: 1)
+            // 20.0: "New session - <ISO>" is OpenCode's placeholder until its
+            // title model answers — and forever when that fails. The user's
+            // own first prompt is the truer title.
+            var title = sqliteString(statement, column: 1)
+            if isOpenCodePlaceholderTitle(title) {
+                title = openCodeFirstUserText(database, sessionID: sid)
+            }
             let cwd = normalizedPath(sqliteString(statement, column: 2))
             let agent = sqliteString(statement, column: 3)
             let model = modelIdentifier(sqliteString(statement, column: 4))
@@ -202,9 +265,11 @@ extension NativeActivityHarvest {
             ]
             var fact = fact(from: values, context: "opencode.session", structured: true, path: url.path)
             fact.sessionID = sid
-            fact.activityMs = normalizeTimestamp(updated) > 0
-                ? normalizeTimestamp(updated)
-                : fileMTime(url)
+            // 20.0: `session.time_updated` moves only when a prompt starts;
+            // every part upsert stamps its own `time_updated`, so the newest
+            // part is when the session last did anything.
+            let touched = max(normalizeTimestamp(updated), openCodeLatestPartMs(database, sessionID: sid))
+            fact.activityMs = touched > 0 ? touched : fileMTime(url)
             fact.startedMs = normalizeTimestamp(created)
             fact.records = openCodePartCount(database, sessionID: sid)
             enrichOpenCodeParts(database, sessionID: sid, fact: &fact)
@@ -253,6 +318,50 @@ extension NativeActivityHarvest {
         return ""
     }
 
+    package static func isOpenCodePlaceholderTitle(_ title: String) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty
+            || trimmed.hasPrefix("New session - ")
+            || trimmed.hasPrefix("Child session - ")
+    }
+
+    /// The first text part of the session's first user message.
+    package static func openCodeFirstUserText(_ database: OpaquePointer, sessionID: String) -> String {
+        let messageSQL = "SELECT id, data FROM message WHERE session_id = ? ORDER BY rowid ASC LIMIT 20"
+        guard let messages = sqlitePrepare(database, messageSQL),
+              sqliteBind(messages, index: 1, text: sessionID) else { return "" }
+        defer { sqlite3_finalize(messages) }
+        while sqlite3_step(messages) == SQLITE_ROW {
+            let messageID = sqliteString(messages, column: 0)
+            guard !messageID.isEmpty,
+                  let object = jsonObject(sqliteString(messages, column: 1)),
+                  firstString(object, keys: ["role"]).lowercased() == "user"
+            else { continue }
+            let partSQL = "SELECT data FROM part WHERE message_id = ? ORDER BY rowid ASC LIMIT 20"
+            guard let parts = sqlitePrepare(database, partSQL),
+                  sqliteBind(parts, index: 1, text: messageID) else { return "" }
+            defer { sqlite3_finalize(parts) }
+            while sqlite3_step(parts) == SQLITE_ROW {
+                guard let part = jsonObject(sqliteString(parts, column: 0)),
+                      firstString(part, keys: ["type"]).lowercased() == "text",
+                      !anyTruthy(part, keys: ["synthetic", "ignored"])
+                else { continue }
+                let title = clean(firstString(part, keys: ["text"]), limit: 160)
+                if !title.isEmpty { return title }
+            }
+            return ""
+        }
+        return ""
+    }
+
+    package static func openCodeLatestPartMs(_ database: OpaquePointer, sessionID: String) -> Int64 {
+        let sql = "SELECT MAX(time_updated) FROM part WHERE session_id = ?"
+        guard let statement = sqlitePrepare(database, sql) else { return 0 }
+        defer { sqlite3_finalize(statement) }
+        guard sqliteBind(statement, index: 1, text: sessionID), sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+        return normalizeTimestamp(sqlite3_column_int64(statement, 0))
+    }
+
     package static func openCodePartCount(_ database: OpaquePointer, sessionID: String) -> Int {
         let sql = "SELECT COUNT(*) FROM part WHERE session_id = ?"
         guard let statement = sqlitePrepare(database, sql) else { return 0 }
@@ -281,19 +390,22 @@ extension NativeActivityHarvest {
             if type == "tool", let state = dict["state"] as? [String: Any], !decidedPending {
                 let status = firstString(state, keys: ["status"]).lowercased()
                 let tool = firstString(dict, keys: ["tool", "name"]).lowercased()
-                if status == "running" || status == "pending" || status == "waiting" {
+                // 20.0 Drift — checked against anomalyco/opencode
+                // (packages/opencode/src/session/processor.ts, permission/index.ts):
+                // `pending` is the tool input still streaming, and a tool
+                // waiting on a permission prompt stays `running` while the ask
+                // itself lives only in memory. Before 20.0 Pulse lit red on
+                // every `pending` — a fake Waiting on every tool call. The one
+                // blocked state the database does record is the `question`
+                // tool, which only ever waits for the user.
+                if status == "running" || status == "pending" {
                     fact.phase = "working"
                 }
-                if status == "pending" || status == "waiting" {
-                    // Ask/permission-like tools, or an explicit pending state on
-                    // an edit/bash that OpenCode blocked on the user.
-                    let askLike = ["permission", "ask", "question", "confirm"].contains {
-                        tool == $0 || tool.contains($0)
-                    }
-                    if askLike || status == "pending" {
-                        fact.explicitPending = true
-                        fact.skill = "pending"
-                    }
+                if status == "running", tool == "question" {
+                    fact.explicitPending = true
+                    fact.skill = "pending"
+                    decidedPending = true
+                } else if status == "running" || status == "pending" {
                     decidedPending = true
                 } else if status.contains("complete") || status == "error" || status == "rejected" {
                     fact.outcome = status.contains("complete") ? "completed" : fact.outcome

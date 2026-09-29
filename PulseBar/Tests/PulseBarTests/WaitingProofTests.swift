@@ -143,13 +143,13 @@ final class WaitingProofTests: XCTestCase {
     func testBlockedOnUserFlagStampsPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-blocked-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"{"sessionId":"g-block","title":"Need you","cwd":"/tmp/g","status":"running","isBlockedOnUser":true}"#
             .write(to: goose, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.skill, "pending")
     }
 
@@ -157,13 +157,13 @@ final class WaitingProofTests: XCTestCase {
     func testAskUserQuestionToolStampsPending() throws {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("pulse-proof-asktool-\(UUID().uuidString)")
-        let goose = home.appendingPathComponent(".config/goose/session.json")
+        let goose = home.appendingPathComponent(".copilot/session.json")
         try fm.createDirectory(at: goose.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: home) }
         try #"{"sessionId":"g-ask","title":"Question","cwd":"/tmp/g","status":"running","currentTool":"ask_user_question"}"#
             .write(to: goose, atomically: true, encoding: .utf8)
-        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.goose])
-        let row = try XCTUnwrap(result.rows.first { $0.id == .goose })
+        let result = NativeActivityHarvest.scan(home: home, agentFilter: [.copilot])
+        let row = try XCTUnwrap(result.rows.first { $0.id == .copilot })
         XCTAssertEqual(row.skill, "pending")
     }
 

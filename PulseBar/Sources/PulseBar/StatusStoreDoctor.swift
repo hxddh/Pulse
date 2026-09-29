@@ -21,16 +21,35 @@ extension StatusStore {
         return tally
     }
 
+    /// 20.0: what the parsers got from each agent's session files this run —
+    /// counts only. Remote rows are another machine's reading, not this one's.
+    var doctorReadCoverage: [String: DoctorModel.Coverage] {
+        var coverage: [String: DoctorModel.Coverage] = [:]
+        for row in cachedAll where row.observationSource == .session && row.host.isEmpty {
+            let key = row.agent.rawValue
+            var item = coverage[key] ?? DoctorModel.Coverage(
+                name: row.agent.displayName,
+                expectsLastWord: row.agent.spec.transcripts != .none
+            )
+            item.sessions += 1
+            if row.usefulTask != nil { item.withTask += 1 }
+            if !row.lastWord.isEmpty { item.withLastWord += 1 }
+            coverage[key] = item
+        }
+        return coverage
+    }
+
     func runDoctor() {
         guard !isRunningDoctor else { return }
         isRunningDoctor = true
         let home = HooksInstaller.homeURL
         let tally = doctorRespondTally
+        let coverage = doctorReadCoverage
         let lang = self.lang
         DebugLog.write("self-check started")
         Task.detached(priority: .userInitiated) {
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-            let facts = DoctorProbe.gather(home: home, respond: tally, nowMs: nowMs)
+            let facts = DoctorProbe.gather(home: home, respond: tally, coverage: coverage, nowMs: nowMs)
             let report = DoctorModel.evaluate(facts, lang: lang)
             await MainActor.run { [weak self] in
                 guard let self else { return }

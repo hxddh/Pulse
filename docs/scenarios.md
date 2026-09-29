@@ -5,7 +5,7 @@
 > `scripts/scenario_map.py`（`gates.sh` 的一环）核对存在；写着「人工 / QA 脚本」的场景没有
 > 自动测试，靠 `scripts/qa_*.sh` 与真机检查 —— 这是覆盖缺口，不是免检。
 
-60 / 84 个场景有具名测试。
+61 / 85 个场景有具名测试。
 
 | # | 场景 | 期望 | 证明 |
 | --- | --- | --- | --- |
@@ -93,3 +93,4 @@
 | CD | Why（为什么） | 每个红灯 / 轮到你都给出证据句（hook 的 kind 与时间、在最前时补「所以没有通知」、pending 的步骤、受管回合的权限请求），说不出就不说；hook 事件另存有界历史（每会话 40 条、64 个会话、24 小时、0600、入库再脱敏、同一文件重复读不写盘、协议拒绝的不收、远端各自成史）；Details 时间线新的在上且有界；导出为 v3 八列 TSV、工作目录只留末段，重放得到同一结论；托盘行的脸是纯值：权限行有灯、标记、槽与动作，轮到你安静无槽，稍后可撤销，仅进程指向支持健康度，远端不给聚焦，Respond 只给拒绝与查看、从不给同意 | `WhyTests` |
 | CE | Current（跟上厂商） | `claude agents --json` 的 `status: waiting` 点红灯并标「Claude 自报」，只在有 Claude 进程且未装 hooks 时、至少隔 15 秒运行，失败退避且不当作「仍在等」，同会话 hook 优先，不造行，可软忽略；Claude 的 elicitation 与 URL elicitation 是提问、StopFailure 是轮到你、AskUserQuestion 不走扣留；Codex 分页格式（`item_completed`）读出任务与最后一句话，`.jsonl.zst` 不读；Codex hooks 只装 Stop / UserPromptSubmit，永不装 PermissionRequest | `ClaudeAgentsProbeTests` · `CodexPaginatedRolloutTests` · `TurnTruthTests` · `PulseHookReceiverTests` |
 | CF | Observe（逐项观察 · 自检） | store 是 `@Observable`：视图只因它读到的属性变化而重绘；同一世界的第二轮扫描不改任何被观察属性（逐个跟踪，新增属性不登记即失败）；设置窗口不被只移动了一行的扫描唤醒；状态栏只跟随 `snapshot`，一轮内多次写只投递一次。行下方的卡片（Respond、托管权限请求、托管回复、展开卡、摘要）只渲染值：Allow 只出现在完整请求旁、截断即撤、Respond 的点击带着当时屏上的请求 id 与摘要。自检只读、只在点击时运行：hooks 已装 ≠ 已证实，没触发过就是「未证实」，一周前触发的也是；`claude agents --json` 的四种结局各有说法；Respond 只有被 hook 取走才算已验证；复制的报告不含家目录路径 | `ScanQuietTests` · `RowCardModelTests` · `DoctorTests` · `PulseHookReceiverTests` |
+| CG | Drift（厂商格式漂移） | 每个 Agent 的解析器写明它照的是厂商哪个仓库哪个提交（或哪份文档，或诚实的「未核实」），没有来源的方言过不了 gate；每周哨兵在被钉住的格式文件变动时变红；按厂商源码造的夹具断言标题、最后一句话、目录与等待的**值**：Gemini JSONL（检查点、回退、子代理、沙箱目录）、OpenCode 的 `pending` 不是等待而 `question` 工具在跑才是、Cline/Roo/Kilo 已完成任务不亮红而待批准命令亮红、Goose 读 `sessions.db` 且未答的 elicitation 是等待、Kimi Code 未答的 approval 是等待、Grok 的话来自 `updates.jsonl`、Copilot `session-state`、Continue、OpenHands `waiting_for_confirmation`、Pi 的缓存预热不算活动；Grok 借 Claude hooks 的调用记在 Grok 名下，非 Claude 不走 Respond 扣留，认不出的 hook 事件不写不亮 | `VendorDriftTests` · `NativeActivityHarvestTests` · `DoctorTests` |

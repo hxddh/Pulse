@@ -31,6 +31,8 @@ Claude / Codex 同级。
 | `antigravity` | Antigravity |
 | `junie` | Junie |
 | `zcode` | ZCode |
+| `aider` | Aider（20.0：历史写在项目目录，里面没有等待信号） |
+| `continue_` | Continue（20.0：待批准的工具调用与普通调用在磁盘上无法区分） |
 
 设置 → Waiting signals 是 **Waiting Reach 漏斗**（0.90）：
 
@@ -38,7 +40,7 @@ Claude / Codex 同级。
 2. **打开 Attention 文件夹** / **打开桥接工具包** ——
    `~/Library/Application Support/Pulse/` 与同级 `attention-bridge/`（`raise.sh` /
    `clear.sh`，默认含 zcode）；
-3. **写入样本 Waiting** —— 可为单个聚焦 Agent 或全部七个 Waiting-none 追加
+3. **写入样本 Waiting** —— 可为单个聚焦 Agent 或全部 Waiting-none 追加
    `pulse-sample` 会话；可复制 raise 命令给桥接作者；
 4. 托盘应亮红并可清除 —— **不扩 hook 安装器，不伪造原生 Waiting**。
 
@@ -144,6 +146,62 @@ printf 'replit\tpermission\t%s\tApprove tool\tsess1\t%s\n' "$ms" "$PWD" \
 ```
 
 ---
+
+## 各家 hook 配方（20.0，按厂商文档核对）
+
+这些 Agent 有自己的 hook 系统，但 Pulse 的安装器只管 Claude 与 Codex —— 下面是**你自己**
+加进各家配置的片段。三条规则贯穿全部：
+
+- **argv 里写明 kind。** 各家的事件名大小写不同（`stop`、`agentStop`、`preToolUse`）；
+  20.0 起 `pulse-hook` 把认不出的事件名当作未知、**不写不亮**，但只有 argv 里的 kind
+  才能保证落到对的类别。
+- **永远不要接「批准之前」的事件。** Copilot 的 `permissionRequest`、Cursor 的
+  `beforeShellExecution`、Kiro / Droid 的 `PreToolUse` 都在厂商自己的规则与自动批准**之前**
+  触发 —— 接了就是伪造等待。也不要把非 Claude 的 `PermissionRequest` 接进来：Respond 的
+  扣留只对 Claude 开放（20.0 起接收端也这样把守）。
+- **Grok Build 默认会执行 `~/.claude/settings.json` 里的 hooks。** 20.0 起 `pulse-hook`
+  凭 `GROK_HOOK_EVENT` / `GROK_SESSION_ID` 把这些调用记在 Grok 名下，不需要另配。
+
+**GitHub Copilot CLI** —— `~/.copilot/hooks/pulse.json`
+（github/docs `copilot/reference/hooks-reference.md`）：
+
+```json
+{"version":1,"hooks":{
+ "notification":[{"type":"command","matcher":"permission_prompt|elicitation_dialog",
+   "bash":"\"$HOME/Library/Application Support/Pulse/pulse-hook\" copilot","timeoutSec":5}],
+ "agentStop":[{"type":"command","bash":"\"$HOME/Library/Application Support/Pulse/pulse-hook\" copilot turn","timeoutSec":5}],
+ "userPromptSubmitted":[{"type":"command","bash":"\"$HOME/Library/Application Support/Pulse/pulse-hook\" copilot prompt","timeoutSec":5}]}}
+```
+
+`matcher` 必须排除 `agent_completed` / `agent_idle`（那是后台子代理，不是你的回合）。
+
+**Factory Droid** —— `~/.factory/hooks.json`（Factory docs `reference/hooks-reference.mdx`）：
+
+```json
+{"hooks":{
+ "Notification":[{"hooks":[{"type":"command","command":"in=$(cat); printf %s \"$in\" | grep -q '\"notification_type\"' && printf %s \"$in\" | \"$HOME/Library/Application Support/Pulse/pulse-hook\" droid; exit 0"}]}],
+ "Stop":[{"hooks":[{"type":"command","command":"\"$HOME/Library/Application Support/Pulse/pulse-hook\" droid turn"}]}],
+ "UserPromptSubmit":[{"hooks":[{"type":"command","command":"\"$HOME/Library/Application Support/Pulse/pulse-hook\" droid prompt"}]}]}}
+```
+
+Droid 的「输入框空闲 60 秒」也走 Notification；没有 `notification_type` 的那种会被上面的
+守卫丢掉（20.0 起接收端也不再把它当成等待）。
+
+**Qwen Code** —— `~/.qwen/settings.json` 的 `hooks`（Claude 兼容，QwenLM/qwen-code
+`docs/users/features/hooks.md`）：`Notification`（matcher `permission_prompt|idle_prompt`）、
+`Stop`、`UserPromptSubmit` 各接 `pulse-hook qwen`；**不要**接 `PermissionRequest`。
+Qwen Code 目前不在 Pulse 的名录里：它的行会以桥接的方式出现，没有会话采集。
+
+**Cursor Agent CLI** —— `~/.cursor/hooks.json`：`stop` → `pulse-hook cursor turn`，
+`beforeSubmitPrompt` → `pulse-hook cursor prompt`。Cursor 没有「需要你批准」的事件，
+所以这里只有「轮到你」；CLI 是否触发这些 hook 各方说法不一，需要真机确认。
+
+**Kiro** —— `.kiro/hooks/pulse.json`：`Stop` → `pulse-hook kiro turn`，
+`UserPromptSubmit` → `pulse-hook kiro prompt`。同样没有阻塞类事件。
+
+**Amp** —— 插件 `~/.config/amp/plugins/pulse.ts` 订阅 `ctx.thread.state`：
+`awaiting-approval` → `pulse-hook amp permission`，从 `running` 回到 `idle` → `turn`，
+从 `awaiting-approval` 回到 `running` → `done`。不要接 `tool.call`（批准之前）。
 
 ## 界面上会怎样
 

@@ -816,6 +816,9 @@ package enum NativeActivityHarvest {
 
             let ext = item.pathExtension.lowercased()
             if let adapter = walk.database, adapter.extensions.contains(ext) {
+                // 20.0: only the vendor's own store; a foreign `.db` in a
+                // checkout under the same tree is not evidence of anything.
+                guard adapter.admits(fileName: name) else { continue }
                 if adapter.runsAfterTranscripts {
                     // JSONL carries /resume titles. A sibling sessions.db
                     // (or any non-session_meta file) must not run first or
@@ -920,13 +923,14 @@ package enum NativeActivityHarvest {
         let structured = isSessionPath(item)
             || walk.structuredPathFragment.map { item.path.lowercased().contains($0) } == true
         let birth = values.creationDate.map { Int64($0.timeIntervalSince1970 * 1000) } ?? 0
-        var parsed = parseFacts(text, structured: structured, path: item.path)
-        if parsed.isEmpty, ext == "json",
+        let answer = parseFactsAnswering(text, structured: structured, path: item.path)
+        var parsed = answer.facts
+        if parsed.isEmpty, !answer.answered, ext == "json",
            let data = text.data(using: .utf8),
            (try? JSONSerialization.jsonObject(with: data)) == nil {
             error = true
         }
-        if parsed.isEmpty,
+        if parsed.isEmpty, !answer.answered,
            !(id == .pi && piLooksOfficial(text)),
            let fallback = textFacts(text, structured: structured, path: item.path) {
             parsed = [fallback]
@@ -999,7 +1003,9 @@ package enum NativeActivityHarvest {
             if id == .amp, item.path.lowercased().hasSuffix("history.jsonl") {
                 parsed[index].records = 0
             }
-            if id == .gemini, structured {
+            // 20.0: the chat's own `sessionId` wins; the file name is the
+            // fallback when the head (metadata line) was outside the window.
+            if id == .gemini, structured, parsed[index].sessionID.isEmpty {
                 parsed[index].sessionID = sessionIDFromPath(item)
             }
             if parsed[index].cwd.isEmpty, id == .gemini,
@@ -1039,17 +1045,6 @@ package enum NativeActivityHarvest {
         if remaining > 0 {
             facts.append(contentsOf: parsed.filter { $0.hasUsefulSignal && $0.hasDisplaySignal }.prefix(remaining))
         }
-    }
-
-    package static func geminiProjectRoot(for url: URL) -> String? {
-        // ~/.gemini/tmp/<project>/chats/<session>.jsonl → <project>/.project_root
-        let marker = url
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent(".project_root")
-        guard let text = try? String(contentsOf: marker, encoding: .utf8) else { return nil }
-        let path = normalizedPath(text)
-        return path.isEmpty ? nil : path
     }
 
     package static func isContinuationPrompt(_ value: String) -> Bool {

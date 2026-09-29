@@ -113,6 +113,23 @@ public enum TranscriptPolicy: Sendable {
 /// A vendor store read through SQLite rather than as transcript files.
 public enum DatabaseAdapter: Sendable {
     case cursor, openCode, warp, pi, grok
+    /// 20.0: Goose keeps every session in `sessions/sessions.db` since
+    /// v1.10 (block/goose crates/goose/src/session/session_manager.rs).
+    case goose
+
+    /// Whether a database file of the right extension is this vendor's store
+    /// at all. OpenCode's data directory also holds git snapshots, worktree
+    /// checkouts and repos whose own `.db` files are not OpenCode's — opening
+    /// one failed the adapter; Goose's tree has only one store.
+    public func admits(fileName: String) -> Bool {
+        let name = fileName.lowercased()
+        switch self {
+        // Kilo 7.x is an OpenCode fork with the same schema (`kilo.db`).
+        case .openCode: return (name.hasPrefix("opencode") || name.hasPrefix("kilo")) && name.hasSuffix(".db")
+        case .goose: return name == "sessions.db"
+        default: return true
+        }
+    }
 
     /// File extensions the walk hands to this adapter instead of the
     /// transcript reader.
@@ -295,13 +312,17 @@ public enum AgentCatalog {
             waiting: .harvestPending,
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
-            transcripts: .none,
+            transcripts: .freshWindow,
             respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["grok"], pathNeedles: ["/.grok/bin/grok", "grok-0.", "GROK_AGENT=", "/bin/grok"], denyNeedles: []),
             harvestRoots: [".grok/sessions"],
             harvestCommands: ["grok"],
-            walk: HarvestWalk(database: .grok, transcripts: .none, keptDirectoryNames: ["logs"], structuredPathFragment: "/.grok/logs/", maxFileBytes: 16 * 1024 * 1024)
+            // 20.0: Grok Build keeps each session's ACP stream in
+            // `sessions/<cwd>/<id>/updates.jsonl` — the only place the
+            // agent's words are separable from the prompts. The search index
+            // stays the title and working-directory source.
+            walk: HarvestWalk(database: .grok, transcripts: .pathContains("/updates.jsonl"), maxFileBytes: 16 * 1024 * 1024)
         ),
         AgentSpec(
             id: .pi,
@@ -352,7 +373,9 @@ public enum AgentCatalog {
             id: .aider,
             displayName: "Aider",
             monogram: "Ai",
-            waiting: .harvestPending,
+            // 20.0: nothing this agent writes says it is blocked on the person
+            // (see docs/vendor-formats.json) — Running, and it says so.
+            waiting: .none,
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
@@ -374,7 +397,9 @@ public enum AgentCatalog {
             respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["gemini", "gemini-cli"], pathNeedles: ["/bin/gemini", "gemini-cli", "@google/gemini-cli"], denyNeedles: ["Gemini.app"]),
-            harvestRoots: [".gemini/tmp"],
+            // 20.0: under the macOS Seatbelt sandbox (`SANDBOX=sandbox-exec`)
+            // Gemini CLI keeps its runtime directory in ~/.cache/.gemini.
+            harvestRoots: [".gemini/tmp", ".cache/.gemini/tmp"],
             harvestCommands: ["gemini"],
             walk: HarvestWalk(transcripts: .pathContains("/chats/"), dropsContinuationPrompts: true, fixturePath: ".gemini/tmp/fixture/chats/session-fixture.jsonl")
         ),
@@ -393,7 +418,9 @@ public enum AgentCatalog {
                 pathNeedles: ["/bin/copilot", "github/gh-copilot", "@github/copilot", "copilot-cli"],
                 denyNeedles: ["crashpad", "language-server", "copilot-language-server", "Copilot.Helper", "Copilot for Xcode"]
             ),
-            harvestRoots: [".copilot", ".config/copilot"],
+            // 20.0: Copilot CLI migrates XDG locations into ~/.copilot at
+            // startup; sessions are session-state/<id>/events.jsonl.
+            harvestRoots: [".copilot"],
             harvestCommands: ["copilot"],
             walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".copilot/session.json")
         ),
@@ -410,7 +437,10 @@ public enum AgentCatalog {
             process: AgentProcessRule(basenames: ["opencode", "open-code"], pathNeedles: ["/bin/opencode", "/opencode/", "opencode@", "@opencode"], denyNeedles: []),
             harvestRoots: [".local/share/opencode"],
             harvestCommands: ["opencode"],
-            walk: HarvestWalk(database: .openCode)
+            // 20.0: the database is the session store; the rest of the data
+            // directory is snapshots, checkouts, logs and pre-1.2 JSON that
+            // OpenCode imported and left behind.
+            walk: HarvestWalk(database: .openCode, transcripts: .none)
         ),
         AgentSpec(
             id: .goose,
@@ -423,9 +453,12 @@ public enum AgentCatalog {
             respondReach: .none,
             aliases: [],
             process: AgentProcessRule(basenames: ["goose"], pathNeedles: ["/bin/goose", "block/goose", "goose-cli"], denyNeedles: []),
-            harvestRoots: [".config/goose", ".local/share/goose", "Library/Application Support/Goose"],
+            // 20.0: since v1.10 every session is a row in
+            // ~/.local/share/goose/sessions/sessions.db (XDG on macOS too);
+            // the old per-session JSONL is imported once and left frozen.
+            harvestRoots: [".local/share/goose/sessions"],
             harvestCommands: ["goose"],
-            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".config/goose/session.json")
+            walk: HarvestWalk(database: .goose, transcripts: .none)
         ),
         AgentSpec(
             id: .openhands,
@@ -458,9 +491,12 @@ public enum AgentCatalog {
                 "Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev",
                 "Library/Application Support/Windsurf/User/globalStorage/saoudrizwan.claude-dev",
                 "Library/Application Support/Trae/User/globalStorage/saoudrizwan.claude-dev",
+                // 20.0: the SDK bundle (4.1+ "next" cohort), the CLI 3.x and
+                // JetBrains write under ~/.cline/data.
+                ".cline/data",
             ],
             harvestCommands: [],
-            walk: HarvestWalk(fixturePath: "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/session.json")
+            walk: HarvestWalk(fixturePath: "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/1785715200000/ui_messages.json")
         ),
         AgentSpec(
             id: .roo,
@@ -486,7 +522,9 @@ public enum AgentCatalog {
             id: .continue_,
             displayName: "Continue",
             monogram: "Cn",
-            waiting: .harvestPending,
+            // 20.0: nothing this agent writes says it is blocked on the person
+            // (see docs/vendor-formats.json) — Running, and it says so.
+            waiting: .none,
             harvest: .structuredSession,
             requiresAppDataOptIn: false,
             transcripts: .freshWindow,
@@ -720,9 +758,12 @@ public enum AgentCatalog {
             harvestRoots: [
                 "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code",
                 "Library/Application Support/Cursor/User/globalStorage/kilocode.kilo-code",
+                // 20.0: Kilo 7.x (extension, CLI, JetBrains) runs `kilo serve`
+                // and keeps sessions in an OpenCode-schema database here.
+                ".local/share/kilo",
             ],
             harvestCommands: [],
-            walk: HarvestWalk(fixturePath: "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/session.json")
+            walk: HarvestWalk(database: .openCode, fixturePath: "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/session.json")
         ),
         AgentSpec(
             id: .replit,
@@ -844,7 +885,14 @@ public enum AgentCatalog {
             ),
             harvestRoots: [".kimi-code"],
             harvestCommands: ["kimi"],
-            walk: HarvestWalk(dropsContinuationPrompts: true, fixturePath: ".kimi-code/session.jsonl")
+            // 20.0: only the session tree — ~/.kimi-code also holds
+            // credentials/*.json (OAuth tokens), config and caches, which are
+            // not session evidence and must not be parsed as if they were.
+            walk: HarvestWalk(
+                transcripts: .pathContains("/.kimi-code/sessions/"),
+                dropsContinuationPrompts: true,
+                fixturePath: ".kimi-code/sessions/wd_fixture/session_fixture/agents/main/wire.jsonl"
+            )
         ),
         AgentSpec(
             id: .zcode,

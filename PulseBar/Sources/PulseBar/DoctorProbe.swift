@@ -20,8 +20,11 @@ enum DoctorProbe {
         var expired = 0
     }
 
-    static func gather(home: URL, respond: RespondTally, nowMs: Int64) -> DoctorModel.Facts {
+    static func gather(
+        home: URL, respond: RespondTally, coverage: [String: DoctorModel.Coverage] = [:], nowMs: Int64
+    ) -> DoctorModel.Facts {
         var facts = DoctorModel.Facts()
+        facts.readCoverage = coverage
         facts.channel = PulseVersion.distributionChannel
         let os = ProcessInfo.processInfo.operatingSystemVersion
         facts.macOS = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"

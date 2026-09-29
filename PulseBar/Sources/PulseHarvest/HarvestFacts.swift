@@ -10,9 +10,24 @@ extension NativeActivityHarvest {
     // MARK: - Conservative metadata extraction
 
     package static func parseFacts(_ text: String, structured: Bool, path: String) -> [Fact] {
+        parseFactsAnswering(text, structured: structured, path: path).facts
+    }
+
+    /// `answered` is true when a vendor dialect read the file itself. Its
+    /// answer is final — an empty one means "this file says nothing" (an
+    /// index, a subagent's stream, a credential) and must not be handed to the
+    /// generic text reader afterwards, which is how an index file became a
+    /// row of its own.
+    package static func parseFactsAnswering(_ text: String, structured: Bool, path: String) -> (facts: [Fact], answered: Bool) {
         // 12.3 γ: vendor formats with their own reading are dialects.
         let dialect = TranscriptDialects.dialect(for: path)
-        if let facts = dialect?.parse(text, path: path) { return facts }
+        if let facts = dialect?.parse(text, path: path) { return (facts, true) }
+        return (parseGenericFacts(text, structured: structured, path: path, dialect: dialect), false)
+    }
+
+    private static func parseGenericFacts(
+        _ text: String, structured: Bool, path: String, dialect: (any TranscriptDialect)?
+    ) -> [Fact] {
         var objects: [(Any, String)] = []
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")),
@@ -764,6 +779,14 @@ extension NativeActivityHarvest {
         target.subRunning = max(target.subRunning, source.subRunning)
         target.subTotal = max(target.subTotal, source.subTotal)
         // explicitPending already resolved above by activityMs order — do not OR.
+        // 20.0: a session split across files (a task directory's messages and
+        // its history entry, a database row and its stream) keeps the words
+        // of whichever fragment has them — the newer one when both do. Until
+        // now the second fragment's last word was simply dropped.
+        if !source.lastWord.isEmpty,
+           target.lastWord.isEmpty || source.activityMs > target.activityMs {
+            target.lastWord = source.lastWord
+        }
         target.score = max(target.score, source.score)
         target.activityMs = max(target.activityMs, source.activityMs)
         target.startedMs = target.startedMs == 0 ? source.startedMs : min(target.startedMs, source.startedMs == 0 ? target.startedMs : source.startedMs)
@@ -913,16 +936,14 @@ extension NativeActivityHarvest {
         let normalized = ask.lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
-        let waitingAsks: Set<String> = [
-            "followup", "command", "command_output", "completion_result",
-            "tool", "use_mcp_server", "browser_action_launch",
-            "resume_task", "resume_completed_task", "plan_mode_response",
-            "clarifying_question", "user_input", "permission",
-            "auto_approval_max_req_reached", "mistake_limit_reached",
-            "new_task",
-            // 0.94 — additional Cline-family ask enums (exact tokens).
-            "yolo_mode_toggled", "api_req_failed",
-        ]
+        // 20.0: the vendors' own interactive asks only. `completion_result`,
+        // `api_req_failed`, `resume_*`, `mistake_limit_reached`,
+        // `auto_approval_max_req_reached` and `command_output` are idle,
+        // resumable or non-blocking in the vendors' classification (Roo
+        // `message.ts`) — every finished task ends on a `completion_result`
+        // ask, so counting it made every finished task red.
+        if anyTruthy(dict, keys: ["isAnswered"]) { return false }
+        let waitingAsks = clineBlockingAsks.union(["clarifying_question", "user_input", "permission"])
         return waitingAsks.contains(normalized) || pendingPhase(ask)
     }
 
