@@ -238,15 +238,15 @@ enum SettingsPresenter {
     /// Called from UI actions only, i.e. on the main thread.
     static func prepareToOpen() {
         MainActor.assumeIsolated {
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp?.activate(ignoringOtherApps: true)
         }
     }
 
     static func ensureKeyableIfNeeded() {
         MainActor.assumeIsolated {
-            if NSApp.activationPolicy() != .regular {
-                NSApp.setActivationPolicy(.regular)
-                NSApp.activate(ignoringOtherApps: true)
+            if NSApp?.activationPolicy() != .regular {
+                NSApp?.setActivationPolicy(.regular)
+                NSApp?.activate(ignoringOtherApps: true)
             }
         }
     }
@@ -254,11 +254,11 @@ enum SettingsPresenter {
     static func restoreAccessoryIfNeeded() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             if SettingsWindowController.shared.isOpen { return }
-            let settingsOpen = NSApp.windows.contains { win in
+            let settingsOpen = (NSApp?.windows ?? []).contains { win in
                 win.isVisible && win.identifier?.rawValue == "pulse-settings"
             }
-            if !settingsOpen, NSApp.activationPolicy() != .accessory {
-                NSApp.setActivationPolicy(.accessory)
+            if !settingsOpen, NSApp?.activationPolicy() != .accessory {
+                NSApp?.setActivationPolicy(.accessory)
             }
         }
     }

@@ -48,13 +48,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp?.activate(ignoringOtherApps: true)
         // Escalate activation only if the window didn't become key (slow path).
         DispatchQueue.main.async {
             if !window.isKeyWindow {
                 SettingsPresenter.ensureKeyableIfNeeded()
                 window.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp?.activate(ignoringOtherApps: true)
             }
         }
     }

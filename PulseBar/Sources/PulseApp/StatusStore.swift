@@ -117,7 +117,7 @@ final class StatusStore {
     func quit() {
         engine.stop()
         GlobalHotKey.uninstall()
-        NSApp.terminate(nil)
+        NSApp?.terminate(nil)
     }
 
     func refresh(reason: String) {
