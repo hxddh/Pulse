@@ -106,11 +106,15 @@ final class WaitNotifier {
         withdraw(ledger.dismiss(rowKey))
     }
 
+    /// How banners leave Notification Center. Tests replace it to see which
+    /// ids are withdrawn.
+    var withdrawBanners: ([String]) -> Void = { PulseNotify.withdraw(ids: $0) }
+
     /// Take these banners out of Notification Center — delivered or still
     /// pending.
     private func withdraw(_ ids: Set<String>) {
         guard !ids.isEmpty else { return }
-        PulseNotify.withdraw(ids: ids.sorted())
+        withdrawBanners(ids.sorted())
         DebugLog.write("waiting banners withdrawn n=\(ids.count)")
     }
 
@@ -186,8 +190,9 @@ final class WaitNotifier {
     }
 
     /// Commit the banner only once Notification Center has said whether it
-    /// accepted the request; a refused one stays owed and is retried.
-    private func finishDelivery(keys: [String], bannerID: String, success: Bool) {
+    /// accepted the request; a refused one stays owed and is retried. Tests
+    /// call it as Notification Center would.
+    func finishDelivery(keys: [String], bannerID: String, success: Bool) {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         for key in keys { inFlight.remove(key) }
         // A banner Notification Center refused is said in the tray, not

@@ -496,6 +496,265 @@ struct EventFeedTests {
         let after = store.engine.book.sessions["claude|s1"]?.steps.count
         #expect(after == 2)
     }
+
+    // MARK: - A line is applied once
+
+    /// A temporary folder of this test's own: an explicit log, never a
+    /// global override (suites run in parallel).
+    final class Home {
+        let url: URL
+        init() {
+            url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("pulse-feed-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        deinit { try? FileManager.default.removeItem(at: url) }
+        var log: URL { url.appendingPathComponent(EventLog.fileName) }
+    }
+
+    /// Until no event read is in flight or asked for.
+    private func settle(_ store: StatusStore) async throws {
+        for _ in 0..<500 where store.engine.eventReadPending {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pending = store.engine.eventReadPending
+        #expect(!pending, "the reads never landed")
+    }
+
+    /// The watcher fires again while a read is in flight (a burst of tool
+    /// lines): the re-read starts from the cursor the first read moved, so
+    /// no line is applied twice — a step is not doubled, an answered block
+    /// is not raised again.
+    @Test func aReReadAskedForDuringAReadAppliesNothingTwice() async throws {
+        let home = Home()
+        defer { withExtendedLifetime(home) {} }
+        let log = home.log
+        let store = StatusStore()
+        store.engine.readLog = { EventLog.read(at: log, after: $0) }
+        let now = ScanEngine.nowMs()
+        EventLog.append(AttentionRecord(agent: "claude", kind: "working", ms: now - 5_000, message: "Fix it", session: "s1", cwd: "/w/app").line, at: log, nowMs: now)
+        store.engine.readEvents()
+        try await settle(store)
+        for index in 0..<3 {
+            EventLog.append(tool("Read", now - 4_000 + Int64(index)).line, at: log, nowMs: now)
+        }
+        store.engine.readEvents()
+        store.engine.readEvents()
+        try await settle(store)
+        let steps = store.engine.book.sessions["claude|s1"]?.steps.count
+        #expect(steps == 3, "each tool line is one step")
+    }
+
+    /// A chunk read from a cursor the engine has since moved past applies
+    /// only the lines after it; one from a generation the engine has left
+    /// applies nothing.
+    @Test func aChunkReadBehindTheCursorAppliesOnlyWhatIsNew() throws {
+        let home = Home()
+        let now = ScanEngine.nowMs()
+        let store = StatusStore()
+        EventLog.append(AttentionRecord(agent: "claude", kind: "working", ms: now - 5_000, message: "Fix it", session: "s1", cwd: "/w/app").line, at: home.log, nowMs: now)
+        let first = try #require(EventLog.read(at: home.log, after: nil))
+        store.engine.landLog(first, nowMs: now)
+        EventLog.append(tool("Read", now - 4_000).line, at: home.log, nowMs: now)
+        EventLog.append(tool("Grep", now - 3_900).line, at: home.log, nowMs: now)
+        let early = try #require(EventLog.read(at: home.log, after: first.cursor))
+        EventLog.append(tool("Edit", now - 3_800).line, at: home.log, nowMs: now)
+        // Read from the same cursor: it holds the two lines above again.
+        let late = try #require(EventLog.read(at: home.log, after: first.cursor))
+        #expect(late.lines.count == 3)
+        store.engine.landLog(early, nowMs: now)
+        store.engine.landLog(late, nowMs: now)
+        let tools = store.engine.book.sessions["claude|s1"]?.steps.map(\.tool)
+        #expect(tools == ["Read", "Grep", "Edit"])
+        let stale = EventLog.Chunk(header: "# pulse-events v5 gOLD", lines: [tool("Bash", now - 3_000).line], end: 4_096, fresh: false, start: 10)
+        store.engine.landLog(stale, nowMs: now)
+        let still = store.engine.book.sessions["claude|s1"]?.steps.map(\.tool)
+        #expect(still == ["Read", "Grep", "Edit"], "a generation the engine has left")
+    }
+}
+
+/// End to end, for each of the seven agents: the vendor's own hook payload
+/// → `pulse-hook` writes its line to an event log (a file of the test's
+/// own) → the engine reads it after its cursor and applies it → the lamp →
+/// the banner owed → the vendor's answer → the lamp goes out and the banner
+/// is withdrawn. Codex and Cursor cannot say they wait: a
+/// PermissionRequest-like payload never turns them red.
+@Suite("Hook to banner", .serialized)
+@MainActor
+struct HookToBannerTests {
+    typealias Event = (name: String, payload: String)
+
+    struct Case {
+        var agent: AgentID
+        var session: String
+        /// What happens before the ask.
+        var before: [Event]
+        /// The ask — for an agent that cannot block, what would be one.
+        var ask: [Event]
+        /// Events after the ask that are not its answer.
+        var noise: [Event] = []
+        /// The vendor's answer (for an agent that cannot block, its turn).
+        var answer: Event
+    }
+
+    static let cases: [Case] = [
+        Case(
+            agent: .claude, session: "c1",
+            before: [
+                ("SessionStart", #"{"session_id":"c1","cwd":"/w/app","hook_event_name":"SessionStart","source":"startup"}"#),
+                ("UserPromptSubmit", #"{"session_id":"c1","cwd":"/w/app","hook_event_name":"UserPromptSubmit","prompt":"Run the tests"}"#),
+            ],
+            ask: [("PermissionRequest", #"{"session_id":"c1","cwd":"/w/app","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"npm test"}}"#)],
+            noise: [("Notification", #"{"session_id":"c1","cwd":"/w/app","hook_event_name":"Notification","message":"Claude needs your permission to use Bash","notification_type":"permission_prompt"}"#)],
+            answer: ("PostToolUse", #"{"session_id":"c1","cwd":"/w/app","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}"#)
+        ),
+        Case(
+            agent: .gemini, session: "g1",
+            before: [("BeforeAgent", #"{"session_id":"g1","cwd":"/w/app","hook_event_name":"BeforeAgent","prompt":"Fix it"}"#)],
+            ask: [("Notification", #"{"session_id":"g1","cwd":"/w/app","hook_event_name":"Notification","notification_type":"ToolPermission","message":"Allow run_shell_command: npm test?","details":{"tool_name":"run_shell_command"}}"#)],
+            answer: ("AfterTool", #"{"session_id":"g1","cwd":"/w/app","hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{"command":"npm test"}}"#)
+        ),
+        Case(
+            agent: .copilot, session: "cp1",
+            before: [("userPromptSubmitted", #"{"sessionId":"cp1","cwd":"/w/app","prompt":"Run the tests"}"#)],
+            ask: [("notification", #"{"sessionId":"cp1","cwd":"/w/app","hook_event_name":"Notification","message":"Allow bash?","notification_type":"permission_prompt"}"#)],
+            noise: [("errorOccurred", #"{"sessionId":"cp1","cwd":"/w/app","recoverable":true,"error":{"message":"Rate limited"}}"#)],
+            answer: ("postToolUse", #"{"sessionId":"cp1","cwd":"/w/app","toolName":"bash","toolArgs":"{\"command\":\"npm test\"}"}"#)
+        ),
+        Case(
+            agent: .opencode, session: "ses_1",
+            before: [("session.created", #"{"sessionID":"ses_1","directory":"/w/app"}"#)],
+            ask: [("permission.asked", #"{"sessionID":"ses_1","directory":"/w/app","permission":"bash","patterns":["npm test"]}"#)],
+            noise: [("session.status", #"{"sessionID":"ses_1","directory":"/w/app","status":{"type":"busy"}}"#)],
+            answer: ("permission.replied", #"{"sessionID":"ses_1","directory":"/w/app"}"#)
+        ),
+        Case(
+            agent: .pi, session: "p1",
+            before: [
+                ("session_start", #"{"session_id":"p1","cwd":"/w/app"}"#),
+                ("agent_start", #"{"session_id":"p1","cwd":"/w/app"}"#),
+            ],
+            ask: [("ui_prompt_start", #"{"session_id":"p1","cwd":"/w/app","kind":"confirm","title":"Allow rm -rf build?"}"#)],
+            answer: ("ui_prompt_end", #"{"session_id":"p1","cwd":"/w/app","kind":"confirm","title":"Allow rm -rf build?"}"#)
+        ),
+        Case(
+            agent: .codex, session: "x1",
+            before: [("UserPromptSubmit", #"{"session_id":"x1","cwd":"/w/app","hook_event_name":"UserPromptSubmit","prompt":"Add a retry"}"#)],
+            ask: [
+                ("PermissionRequest", #"{"session_id":"x1","cwd":"/w/app","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#),
+                ("permission", #"{"session_id":"x1","cwd":"/w/app","message":"Approve shell"}"#),
+            ],
+            answer: ("Stop", #"{"session_id":"x1","cwd":"/w/app","hook_event_name":"Stop","last_assistant_message":"Done."}"#)
+        ),
+        Case(
+            agent: .cursor, session: "cu1",
+            before: [
+                ("sessionStart", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"hook_event_name":"sessionStart"}"#),
+                ("afterAgentResponse", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"hook_event_name":"afterAgentResponse","text":"Looking"}"#),
+            ],
+            ask: [
+                ("permission", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"message":"approve"}"#),
+                ("question", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"message":"which?"}"#),
+            ],
+            answer: ("stop", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"hook_event_name":"stop","status":"completed"}"#)
+        ),
+    ]
+
+    /// Banner ids the notifier withdrew.
+    final class Withdrawn {
+        var ids: [String] = []
+    }
+
+    /// One hook event, as the installed hook runs it: the two modules pass
+    /// their payload as the last argument, the rest pipe it on stdin.
+    private func deliver(_ agent: AgentID, _ event: Event, log: URL, at ms: Int64) {
+        var arguments = ["PulseBar", "--hook", agent.rawValue, event.name]
+        var stdin = event.payload
+        if agent == .opencode || agent == .pi {
+            arguments.append(event.payload)
+            stdin = ""
+        }
+        PulseHookReceiver.run(
+            arguments: arguments, stdin: stdin, logURL: log, nowMs: ms,
+            locate: { _, _ in (0, "") }, front: { false }
+        )
+    }
+
+    /// What the watcher does: read after the engine's cursor, land it.
+    private func land(_ store: StatusStore, log: URL, at ms: Int64) {
+        let chunk = EventLog.read(at: log, after: store.engine.logCursor)
+        #expect(chunk != nil, "the log could not be read")
+        if let chunk { store.engine.landLog(chunk, nowMs: ms) }
+    }
+
+    @Test func everyAgentFromItsHookToTheBannerAndBack() throws {
+        let covered = Set(Self.cases.map(\.agent))
+        #expect(covered == Set(AgentID.allCases), "every agent of the roster")
+        for item in Self.cases {
+            let name = item.agent.rawValue
+            let home = EventFeedTests.Home()
+            defer { withExtendedLifetime(home) {} }
+            let log = home.log
+            let store = StatusStore()
+            store.notifyAuthorized = nil
+            let withdrawn = Withdrawn()
+            store.notifier.withdrawBanners = { withdrawn.ids += $0 }
+            var ms = ScanEngine.nowMs() - 60_000
+            // The launch replay: nothing in the log yet.
+            land(store, log: log, at: ms)
+            for event in item.before {
+                ms += 1_000
+                deliver(item.agent, event, log: log, at: ms)
+                land(store, log: log, at: ms)
+            }
+            for event in item.ask {
+                ms += 1_000
+                deliver(item.agent, event, log: log, at: ms)
+                land(store, log: log, at: ms)
+            }
+            let key = RowIdentity.session(agent: item.agent, session: item.session, cwd: "/w/app")
+            let listed = store.cachedAll.contains { $0.rowKey == key }
+            #expect(listed, "\(name): its session is a row")
+            if item.agent.waitingSource == .none {
+                let glance = store.snapshot.glance
+                #expect(glance != .waiting, "\(name) never reports a wait")
+                let owed = store.notifier.ledger.queuedKeys
+                #expect(owed.isEmpty, "\(name): no banner")
+                ms += 1_000
+                deliver(item.agent, item.answer, log: log, at: ms)
+                land(store, log: log, at: ms)
+                let turn = store.cachedAll.first { $0.rowKey == key }?.isYourTurn
+                #expect(turn == true, "\(name): its turn is quiet")
+                let after = store.snapshot.glance
+                #expect(after != .waiting, "\(name)")
+                continue
+            }
+            let red = store.snapshot.glance
+            #expect(red == .waiting, "\(name): the ask turns the lamp red")
+            let owed = store.notifier.ledger.queuedKeys
+            #expect(owed == [key], "\(name): its banner is owed")
+            for event in item.noise {
+                ms += 1_000
+                deliver(item.agent, event, log: log, at: ms)
+                land(store, log: log, at: ms)
+                let still = store.snapshot.glance
+                #expect(still == .waiting, "\(name): \(event.name) is not the answer")
+            }
+            // Notification Center accepts the banner.
+            let banner = WaitLedger.bannerID(rowKey: key)
+            store.notifier.finishDelivery(keys: [key], bannerID: banner, success: true)
+            ms += 1_000
+            deliver(item.agent, item.answer, log: log, at: ms)
+            land(store, log: log, at: ms)
+            let out = store.snapshot.glance
+            #expect(out != .waiting, "\(name): the answer puts the lamp out")
+            let blocked = store.cachedAll.first { $0.rowKey == key }?.isBlocked
+            #expect(blocked == false, "\(name)")
+            #expect(withdrawn.ids == [banner], "\(name): the banner is withdrawn")
+            let left = store.notifier.ledger.queuedKeys
+            #expect(left.isEmpty, "\(name)")
+        }
+    }
 }
 
 /// Cadence policy — no fixed probe interval: a tick for time-based

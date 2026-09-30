@@ -74,6 +74,17 @@ public struct AttentionRecord: Equatable, Sendable {
     /// The `tool` column of a `turn` line that ended on an error.
     public static let errorTool = "error"
 
+    /// The `tool` column of a `tool` line that says only that work goes on
+    /// — a status (OpenCode `session.status` busy / retry), a recoverable
+    /// error (Copilot `errorOccurred`) — not that a tool ran. It is neither
+    /// a step nor an answer to a block.
+    public static let statusTool = "status"
+
+    /// Whether a `tool` line's `tool` column is the status marker.
+    public static func isStatus(tool: String) -> Bool {
+        tool.trimmingCharacters(in: .whitespacesAndNewlines) == statusTool
+    }
+
     public init(
         agent: String,
         kind: String,

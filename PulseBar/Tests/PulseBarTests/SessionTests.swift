@@ -633,6 +633,92 @@ struct SessionBookTests {
         #expect(changed10)
         #expect(book.sessions.isEmpty)
     }
+
+    // MARK: - Dismissals, errors and status lines
+
+    /// Claude says one approval twice: its PermissionRequest, then its
+    /// Notification about six seconds later. A dismissal between the two
+    /// stays a dismissal — the echo does not raise the block (or its banner)
+    /// again. Work after the dismissal, then a new ask, is a new block.
+    @Test func aDismissedAskIsNotRaisedAgainByItsEcho() {
+        var book = SessionBook()
+        func feed(_ lines: [AttentionRecord], at ms: Int64) {
+            for line in lines { book.apply(line, nowMs: ms) }
+        }
+        feed(HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "npm test"]], at: t0).lines, at: t0)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
+        // The person dismisses it in Pulse: a `done` for the session.
+        feed([AttentionRecord(agent: "claude", kind: "done", ms: t0 + 3 * second, session: "s1", cwd: "/Users/me/app")], at: t0 + 3 * second)
+        let echo = HookFeed.write(.claude, "Notification", [
+            "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash",
+        ], at: t0 + 6 * second).lines
+        feed(echo, at: t0 + 6 * second)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "working", "the echo of a dismissed ask is not a new wait")
+        // Work goes on, then a new ask: red again.
+        feed(HookFeed.write(.claude, "PostToolUse", ["tool_name": "Read"], at: t0 + 9 * second).lines, at: t0 + 9 * second)
+        feed(HookFeed.write(.claude, "PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"]], at: t0 + 11 * second).lines, at: t0 + 11 * second)
+        #expect(HookFeed.word(book.sessions["claude|s1"]?.state) == "blocked:permission")
+    }
+
+    /// A vendor's own "resolved" followed at once by a different ask (no
+    /// event between: OpenCode asks for the next command) is a new block.
+    @Test func aNewAskRightAfterAnAnsweredOneIsRaised() {
+        let run = playAt(.opencode, [
+            (0, "permission.asked", ["permission": "bash", "patterns": ["ls"]]),
+            (2 * second, "permission.replied", [:]),
+            (4 * second, "permission.asked", ["permission": "bash", "patterns": ["rm -rf build"]]),
+        ])
+        #expect(run.states == ["blocked:permission", "working", "blocked:permission"])
+    }
+
+    /// OpenCode's error is the session's last error until the next turn
+    /// starts — here its next `session.status` busy, since its plugin sends
+    /// no prompt. It never outlives the turn it belongs to.
+    @Test func aNewTurnClearsTheLastError() {
+        var book = SessionBook()
+        let steps: [(Int64, String, [String: Any])] = [
+            (0, "session.created", [:]),
+            (1 * second, "session.status", ["status": ["type": "busy"]]),
+            (2 * second, "session.error", ["error": "Model unavailable"]),
+            (3 * second, "session.idle", [:]),
+        ]
+        for (offset, event, payload) in steps {
+            for line in HookFeed.write(.opencode, event, payload, at: t0 + offset).lines { book.apply(line, nowMs: t0 + offset) }
+        }
+        let error = book.sessions["opencode|s1"]?.lastError
+        #expect(error == "Model unavailable")
+        #expect(HookFeed.word(book.sessions["opencode|s1"]?.state) == "turn")
+        let next = t0 + 5 * minute
+        for line in HookFeed.write(.opencode, "session.status", ["status": ["type": "busy"]], at: next).lines { book.apply(line, nowMs: next) }
+        #expect(HookFeed.word(book.sessions["opencode|s1"]?.state) == "working")
+        let cleared = book.sessions["opencode|s1"]?.lastError
+        #expect(cleared == "", "the error belonged to the turn before")
+    }
+
+    /// A status line — Copilot's recoverable `errorOccurred`, OpenCode's
+    /// `session.status` busy or retry — says work goes on, not that the
+    /// person answered: the red lamp stays until the vendor's own answer.
+    @Test func aStatusLineNeverAnswersABlock() {
+        let copilot = playAt(.copilot, [
+            (0, "userPromptSubmitted", ["prompt": "Run the tests"]),
+            (2 * second, "notification", ["notification_type": "permission_prompt", "message": "Allow bash?"]),
+            (4 * second, "errorOccurred", ["recoverable": true, "error": ["message": "Rate limited, retrying"]]),
+            (6 * second, "postToolUse", ["toolName": "bash"]),
+        ])
+        #expect(copilot.states == ["working", "blocked:permission", "blocked:permission", "working"])
+        let openCode = playAt(.opencode, [
+            (0, "session.status", ["status": ["type": "busy"]]),
+            (2 * second, "permission.asked", ["permission": "bash", "patterns": ["npm test"]]),
+            (4 * second, "session.status", ["status": ["type": "busy"]]),
+            (5 * second, "session.status", ["status": ["type": "retry"]]),
+            (7 * second, "permission.replied", [:]),
+        ])
+        #expect(openCode.states == ["working", "blocked:permission", "blocked:permission", "blocked:permission", "working"])
+        let status = HookFeed.write(.copilot, "errorOccurred", ["recoverable": true], at: t0).lines.first
+        #expect(status?.kind == "tool")
+        #expect(status?.tool == AttentionRecord.statusTool)
+        #expect(openCode.book.sessions["opencode|s1"]?.steps.isEmpty == true, "a status is not a step")
+    }
 }
 
 /// The book as rows: process-only discovery, the time rules, and what the

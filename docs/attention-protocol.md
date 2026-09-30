@@ -41,9 +41,14 @@ line is a header naming the protocol and the file's **generation**:
   never the agent alone; a session-less `done` belongs to the group of the
   folder it names, or — naming none — to every session-less group of its
   agent), the last 64 lines and every line of the last two hours are kept; a
-  session whose newest line is a day old goes whole; and an **open block** (a
-  `permission` / `question` / `waiting` no later line in its session answers)
-  is kept with every line after it, whatever the budget. Over half a MiB the
+  session whose newest line is a day old goes whole; whatever the budget,
+  each session keeps what a replay rebuilds its own facts from — its first
+  line that is not a block (its first clock), the prompt its title came from
+  (the first `working` line that says something) and its latest prompt (the
+  turn's clock); and an **open block** (a `permission` / `question` /
+  `waiting` no later line in its session answers; a `status` line answers
+  nothing) is kept with every line after it. An answered block is never kept
+  without its answer. Over half a MiB the
   per-session count and the window halve until it fits. The line being
   appended is always kept: an append reports success only when its line is
   in the file.
@@ -52,10 +57,18 @@ line is a header naming the protocol and the file's **generation**:
   under a shared lock, complete lines only. Lines end at `\n` bytes alone: a
   U+2028, NEL or lone `\r` inside a field never splits a record. A cursor
   from another generation, or past the end of the file, reads the whole file
-  again; the lines already applied are matched to it **by position** — a
-  rewrite keeps lines in order, so each kept line takes the next applied line
-  with the same text, and a line with no match left is new (the same text
-  written twice is applied twice). A missing file is an empty log; an
+  again; the lines already applied are matched to it **by position**, never
+  by text alone. A rewrite keeps lines in order, and what was not applied
+  (the line being appended, anything written since, anything the reader had
+  not reached) comes after what was: the last line applied is the anchor —
+  its copy is the last one whose earlier lines all fit, in order, among the
+  lines applied before it — and every line after it is new, even one whose
+  text matches a line applied earlier. When the rewrite kept no copy of it,
+  each line takes the next applied line with the same text, and a line with
+  no match left is new (the same text written twice is applied twice). A
+  line is applied once: a read that began before the reader's cursor moved
+  (another read landed first) applies only the lines past the cursor, and
+  one from a generation the reader has left applies nothing. A missing file is an empty log; an
   unreadable one is a failed read: the reader keeps what it had and retries
   once, backing off from 5 s to a minute.
 - **Replayed at launch.** The app reads the whole log and applies every line,
@@ -77,14 +90,14 @@ the trailing tabs are part of the record.
 | `agent` | One of the seven `AgentID` raw values: `claude`, `codex`, `cursor`, `pi`, `gemini`, `copilot`, `opencode` (`cursor-agent` / `cursor_agent` read as `cursor`) |
 | `kind` | An allowlisted kind (below) |
 | `unix_ms` | Integer milliseconds since epoch, stamped by the writer |
-| `message` | What is asked, the turn's last words (or its error, when `tool` is `error`), the prompt's text on a `working` line, or a tool line's target; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted |
+| `message` | What is asked, the turn's last words (or its error, when `tool` is `error`), the prompt's text on a `working` line, or a tool line's target; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted from the whole value before it is shortened |
 | `session` | The vendor's session id; empty allowed (not for `tool` and `working`) |
 | `cwd` | Absolute project path; empty allowed |
 | `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for blocked kinds, `turn` and `idle` |
 | `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown |
 | (reserved) | Written empty, never read. It once named a transcript file; Pulse reads no vendor file |
 | `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`docs/landing-hosts.md`) |
-| `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); on a `turn` line, `error` when the turn ended on an error; empty when the event names none |
+| `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); on a `turn` line, `error` when the turn ended on an error; on a `tool` line, `status` when the event says only that work goes on (a status, a retry, a recoverable error) — never a step, never an answer; empty when the event names none |
 
 Readers skip blank lines, `#` comments, and unknown kinds.
 
@@ -101,13 +114,13 @@ Readers skip blank lines, `#` comments, and unknown kinds.
 | Lifecycle | `start` | The session started or resumed |
 | | `working` | The user submitted a prompt (message = its text: the title's source) |
 | | `end` | The session ended |
-| Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step. Never a wait |
+| Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step. Never a wait. With tool = `status`: work goes on, no tool ran — not a step, and it answers no block |
 
 `working` and `end` clear the session's block like `done`; `start` does
 unless the session is working. A `tool` line keeps a working session from
 reading stalled and answers a block raised before it in the same session —
 unless both name a tool and the names differ (a parallel tool is not the
-answer).
+answer), or it is a `status` line.
 
 Anything else — including an empty kind — is **rejected** by `pulse-hook`
 (exit 0, no write) and **ignored** by the reader. A blocked kind for an agent
@@ -128,6 +141,9 @@ Bridge words normalized before the allowlist check
 
 Every installed command is `pulse-hook <agent> <vendor event name>`; the
 payload is the vendor's JSON on stdin (the two modules: the last argument).
+A payload that does not parse as JSON — cut off at the 1 MiB stdin bound,
+or broken — writes nothing; plain text on stdin is read only for a protocol
+word (below), as its message, never for a vendor's event.
 Only observe-only events are installed; `HookContract.gatingEvents` lists the
 ones that never are, and an event Pulse does not install is not read.
 
@@ -158,9 +174,9 @@ ones that never are, and an event Pulse does not install is not read.
 | | `agentStop` | `turn` |
 | | `notification` `permission_prompt` / `elicitation_dialog` | `permission` / `question` |
 | | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
-| | `errorOccurred` | `turn`, tool = `error`, message = `error.message` when `recoverable: false`; else `tool` |
+| | `errorOccurred` | `turn`, tool = `error`, message = `error.message` when `recoverable: false`; else `tool`, tool = `status` |
 | **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`; payload as the last argument; a subagent's child session is dropped, its asks sent under the root session) | `session.created` | `start` |
-| | `session.status` `busy` / `retry` | `tool` (no tool name) |
+| | `session.status` `busy` / `retry` | `tool`, tool = `status` |
 | | `permission.asked` | `permission` (ask = `permission: patterns`) |
 | | `question.asked` | `question` (ask = first question) |
 | | `permission.replied` / `question.replied` / `question.rejected` | `done` |
@@ -172,7 +188,7 @@ ones that never are, and an event Pulse does not install is not read.
 | | `stop` | `turn` (session = `conversation_id`, cwd = `workspace_roots[0]`) |
 | **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument) | `session_start` / `session_shutdown` (not on `reload`) | `start` / `end` |
 | | `agent_start` | `working` |
-| | `tool_execution_end` | `tool` (tool = the tool's name, message = one short argument, forwarded by the extension) |
+| | `tool_execution_end` | `tool` (tool = the tool's name, message = one argument, forwarded by the extension — sliced at 2000 characters only to bound the argv; the receiver redacts the whole value before it shortens it) |
 | | `ui_prompt_start` `kind: confirm` / other kinds | `permission` / `question` (ask = `title`; never the event's `reason` — the extension sends a reason only with `session_shutdown`) |
 | | `ui_prompt_end` | `done` |
 | | `agent_settled` | `turn` |
@@ -187,17 +203,20 @@ ones that never are, and an event Pulse does not install is not read.
   agent's session-less entry in the folder it names, or every session-less
   one when it names none; a dismissal always names the folder).
 - A `tool` line that names its tool is a step: the session keeps its last
-  five (tool, target, time). A `working` line starts a new turn (its clock),
-  its text is the latest prompt, and the first that says something (not
-  "continue") is the title. A `turn` line's message is the last words — or,
-  with tool = `error`, the turn's error, until the next prompt.
+  five (tool, target, time); a `status` line is not a step. A `working`
+  line starts a new turn (its clock), its text is the latest prompt, and the
+  first that says something (not "continue") is the title. A `turn` line's
+  message is the last words — or, with tool = `error`, the turn's error,
+  until the next turn starts: a prompt, or a `tool` line after the turn
+  ended (OpenCode's plugin sends no prompt).
 - A blocked entry that names no session never attaches to a session row; it
   is its own row in its folder.
 - A blocked entry goes out when a `tool` line (or a prompt) of that session,
   stamped after the raise, arrives: the ask was answered in the vendor's
   prompt. When the block names its tool (the `tool` column, else the
   `Tool: target` ask) and the tool line names one, only the same tool
-  answers it — a parallel tool finishing does not.
+  answers it — a parallel tool finishing does not. A `status` line never
+  answers it.
 - A re-raise of the same kind within **20 s** is the same block (Claude's
   `PermissionRequest`, then its `Notification`): it keeps the first clock and
   the more specific ask — a command, a path or a question beats a bare tool
@@ -211,6 +230,12 @@ ones that never are, and an event Pulse does not install is not read.
   only clears — the user watched it finish.
 - A `done` stamped before the current block or turn began is about an
   earlier one and changes nothing.
+- A block a `done` cleared (a dismissal in Pulse, a vendor's "resolved") is
+  not raised again by its echo: a raise of the same kind within **20 s** of
+  the cleared block's raise, with no prompt or tool line since the `done`,
+  whose words say nothing new (the same ask, or only a generic "needs your
+  permission") is ignored — Claude's `Notification` after a dismissed
+  `PermissionRequest` does not turn the lamp red or post a banner again.
 - A blocked line with `front` = `1` lights the lamp but raises no banner.
 - A session whose recorded pid is dead — or now runs another agent, or
   started after the first line that named it (a reused pid) — has ended.
@@ -233,4 +258,5 @@ echo '{"session_id":"sess-1"}' | "$HOOK" gemini done
   and the v4 files are deleted at launch. The ninth column is reserved —
   written empty, never read — so a live log keeps its format (no new
   protocol version, no log deleted); `tool` = `error` on a `turn` line marks
-  a failed turn.
+  a failed turn, and `tool` = `status` on a `tool` line marks work that is
+  not a tool (a reader that does not know it reads a tool named `status`).

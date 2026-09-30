@@ -120,6 +120,23 @@ final class ScanEngine {
     private var reading: Set<Source> = []
     private var rereadWanted: Set<Source> = []
 
+    /// How the event log is read after a cursor, off the main thread: the
+    /// real log. A test reads its own file (never a global override —
+    /// suites run in parallel).
+    var readLog: @Sendable (EventLog.Cursor?) -> EventLog.Chunk? = { EventLog.read(after: $0) }
+
+    /// Read what is new in the event log — what the watcher does when the
+    /// log changes. A read asked for while one is in flight runs once that
+    /// one has landed.
+    func readEvents() {
+        read(.events)
+    }
+
+    /// An event read is in flight, or asked for after the one in flight.
+    var eventReadPending: Bool {
+        reading.contains(.events) || rereadWanted.contains(.events)
+    }
+
     // MARK: - Lifecycle
 
     /// Arm everything: the first reads, the watchers, the exit watch, the
@@ -244,16 +261,20 @@ final class ScanEngine {
         switch source {
         case .events:
             let cursor = logCursor
+            let readLog = self.readLog
             ioQueue.async { [weak self] in
-                let chunk = EventLog.read(after: cursor)
+                let chunk = readLog(cursor)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
-                    self.finishRead(.events)
+                    // Land first, then start any read asked for meanwhile:
+                    // it must begin at the cursor this one moved, or it
+                    // reads — and applies — the same lines again.
                     if let chunk {
                         self.landLog(chunk)
                     } else {
                         self.logReadFailed()
                     }
+                    self.finishRead(.events)
                 }
             }
         case .processes:
@@ -279,12 +300,27 @@ final class ScanEngine {
     /// baseline. After it, only the lines after the cursor — unless the log
     /// was rewritten (`chunk.fresh`), when the lines already applied are
     /// skipped. An empty read changes nothing: it never resets what was
-    /// applied, so the next read cannot replay an answered block.
+    /// applied, so the next read cannot replay an answered block. A read
+    /// that began behind the cursor (another landed first) applies only the
+    /// lines past it, and one from a generation the cursor has left applies
+    /// nothing: a line is applied once.
     func landLog(_ chunk: EventLog.Chunk, nowMs: Int64 = ScanEngine.nowMs()) {
         holdProjection = false
         logRetry?.cancel()
         logRetry = nil
         logRetryDelay = Self.firstLogRetry
+        var chunk = chunk
+        if !chunk.fresh, let start = chunk.start, let cursor = logCursor {
+            // The whole-file read of the newer generation already applied
+            // what this one holds.
+            guard chunk.header == cursor.header else { return }
+            if start < cursor.offset {
+                guard chunk.end > cursor.offset, let rest = chunk.lines(after: cursor.offset) else { return }
+                chunk.lines = rest
+                chunk.lineEnds = chunk.lineEnds.filter { $0 > cursor.offset }
+                chunk.start = cursor.offset
+            }
+        }
         let baseline = !logRead
         if chunk.lines.isEmpty, chunk.fresh {
             // Nothing there (a missing file, an empty one): keep the cursor

@@ -119,7 +119,9 @@ enum HookModules {
     /// handler returns `undefined`, so no event's result is changed. A tool
     /// event carries the tool's name and one short argument — the command,
     /// path, pattern, URL or query — as `tool_name` / `tool_input`, the
-    /// receiver's own words for a tool call.
+    /// receiver's own words for a tool call. The argument is sliced only to
+    /// bound the argv, well past what a row shows: the receiver redacts
+    /// credentials from the whole value it gets before it shortens it.
     static func piExtension(launcher: String, events: [String]) -> String {
         let list = events.map(literal).joined(separator: ", ")
         return """
@@ -142,7 +144,7 @@ enum HookModules {
             if (args && typeof args === "object") {
               for (const key of ARG_KEYS) {
                 if (typeof args[key] === "string" && args[key]) {
-                  out.tool_input = { [key]: args[key].slice(0, 200) }
+                  out.tool_input = { [key]: args[key].slice(0, 2000) }
                   break
                 }
               }

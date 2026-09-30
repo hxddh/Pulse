@@ -593,7 +593,61 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(line.message, "ls -la")
         let module = HookModules.piExtension(launcher: "/x/pulse-hook", events: ["tool_execution_end"])
         XCTAssertTrue(module.contains("Object.assign(payload, toolSummary(event))"))
-        XCTAssertTrue(module.contains("out.tool_input = { [key]: args[key].slice(0, 200) }"))
+        XCTAssertTrue(module.contains("out.tool_input = { [key]: args[key].slice(0, 2000) }"))
+    }
+
+    // MARK: - Payloads that do not parse, and credentials at the cut
+
+    /// A payload cut off (at `stdinLimit`, or by a writer that died) is not
+    /// JSON: it writes nothing — never a ghost wait whose ask is raw JSON.
+    /// Plain text is only a bridge word's message, never a vendor event's.
+    func testAPayloadThatDoesNotParseWritesNothing() throws {
+        let whole = #"{"session_id":"t1","cwd":"/w","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"npm test"}}"#
+        let cut = String(whole.prefix(60))
+        deliver("claude", "PermissionRequest", cut)
+        deliver("claude", "", cut)
+        deliver("gemini", "Notification", cut)
+        deliver("copilot", "notification", cut)
+        PulseHookReceiver.run(
+            arguments: ["PulseBar", "--hook", "opencode", "permission.asked", #"{"sessionID":"o1","directory":"/w","permis"#],
+            stdin: "", logURL: log, locate: located
+        )
+        XCTAssertTrue(records().isEmpty, "\(records().map(\.message))")
+        XCTAssertNil(PulseHookReceiver.parsePayload(stdin: cut, trailingArg: nil))
+        // A vendor's event with plain text on stdin writes nothing either.
+        deliver("claude", "Stop", "all done")
+        deliver("cursor", "stop", "all done")
+        XCTAssertTrue(records().isEmpty)
+        // A bridge word may still carry its message as plain text.
+        deliver("gemini", "permission", "Approve the deploy?")
+        let bridged = try XCTUnwrap(records().first)
+        XCTAssertEqual(bridged.kind, "permission")
+        XCTAssertEqual(bridged.message, "Approve the deploy?")
+    }
+
+    /// Credentials are redacted from the whole value before it is cut to a
+    /// row's length: a token straddling the cut never leaves its head
+    /// behind (too short for the redaction to know it after the cut).
+    func testACredentialAcrossTheCutIsRedacted() throws {
+        // 127 characters, then `Bearer ` ends at 134: the cut at 139 would
+        // keep the token's first five characters.
+        let lead = "echo " + String(repeating: "a", count: 121) + " "
+        XCTAssertEqual(lead.count, 127)
+        let command = lead + "Bearer tok3nVALUEabcdef1234"
+        let object: [String: Any] = [
+            "session_id": "r1", "cwd": "/w", "tool_name": "Bash", "tool_input": ["command": command],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let payload = String(decoding: data, as: UTF8.self)
+        deliver("claude", "PostToolUse", payload)
+        deliver("claude", "PermissionRequest", payload)
+        let written = records()
+        XCTAssertEqual(written.map(\.kind), ["tool", "permission"])
+        for record in written {
+            XCTAssertFalse(record.message.contains("tok3n"), record.message)
+        }
+        XCTAssertFalse(PulseHookReceiver.condenseOneLine(command).contains("tok3n"))
+        XCTAssertTrue(PulseHookReceiver.condenseOneLine(command).contains("Bearer ••••"))
     }
 
     // MARK: - Rejections
@@ -1695,11 +1749,71 @@ struct EventLogTests {
     /// A rewritten log is matched to what was applied by position: a kept
     /// line is not applied again, and a line written twice is applied twice.
     @Test func unappliedLinesAreMatchedByPositionNotText() {
-        #expect(EventLog.unapplied(["A", "B"], after: ["A", "B", "A"]) == [], "the compaction kept a subset")
+        #expect(EventLog.unapplied(["A", "B", "A"], after: ["A", "B", "A"]) == [], "the compaction kept everything")
+        #expect(EventLog.unapplied(["B", "A"], after: ["A", "B", "A"]) == [], "the compaction kept a subset")
         #expect(EventLog.unapplied(["B", "A", "A"], after: ["A", "B", "A"]) == ["A"], "the same text appended again is new")
         #expect(EventLog.unapplied(["A", "B", "C"], after: ["A", "B"]) == ["C"])
         #expect(EventLog.unapplied(["C", "A"], after: ["A", "B"]) == ["C"], "an unknown line is new; a known one is not")
         #expect(EventLog.unapplied(["A"], after: []) == ["A"])
+    }
+
+    /// The last line applied anchors a rewrite: everything after the copy
+    /// the compaction kept is new — even a line whose text matches one
+    /// applied earlier and dropped. A greedy match took the kept last line
+    /// for the earlier copy, then the new line for a dropped one, and
+    /// skipped it.
+    @Test func aNewLineLikeADroppedAppliedOneIsStillNew() {
+        // Applied: A, B, A. The compaction kept the newest A only; B is
+        // written again (the same text) after it.
+        let fresh = EventLog.unapplied(["A", "B"], after: ["A", "B", "A"])
+        #expect(fresh == ["B"])
+        // Lines the reader had not reached before the rewrite come after
+        // the anchor too.
+        let unread = EventLog.unapplied(["X", "C", "D"], after: ["W", "X", "C"])
+        #expect(unread == ["D"])
+        // With no copy of the last applied line kept, lines are matched in
+        // order.
+        let noAnchor = EventLog.unapplied(["W", "E"], after: ["W", "X", "C"])
+        #expect(noAnchor == ["E"])
+    }
+
+    /// A compaction keeps what a replay rebuilds a session's own facts
+    /// from: its first clock, the prompt its title came from and its latest
+    /// prompt — so after a rewrite and a replay the row says the same title
+    /// and the same age.
+    @Test func compactionKeepsTheTitleAndTheFirstClock() {
+        let now = t0
+        let base = now - 5 * Self.hour
+        var lines = [
+            line("start", base, session: "t"),
+            line("working", base + 1_000, session: "t", message: "continue"),
+            line("working", base + 2_000, session: "t", message: "Fix the login redirect"),
+        ]
+        for index in 0..<300 { lines.append(line("tool", base + 10_000 + Int64(index), session: "t", tool: "Read")) }
+        lines.append(line("working", base + 20_000, session: "t", message: "Now the logout"))
+        for index in 0..<300 { lines.append(line("tool", base + 30_000 + Int64(index), session: "t", tool: "Edit")) }
+        func replay(_ text: [String]) -> SessionBook.Session? {
+            var book = SessionBook()
+            for raw in text {
+                if let record = AttentionRecord(line: raw) { book.apply(record, nowMs: now) }
+            }
+            return book.sessions["claude|t"]
+        }
+        let kept = EventLog.compact(lines, nowMs: now, budget: 1 << 30)
+        #expect(kept.count < lines.count)
+        let before = replay(lines)
+        let after = replay(kept)
+        #expect(before?.title == "Fix the login redirect")
+        #expect(after?.title == before?.title)
+        #expect(after?.startedMs == before?.startedMs)
+        #expect(after?.lastPrompt == before?.lastPrompt)
+        #expect(after?.turnStartMs == before?.turnStartMs)
+        let state = HookFeed.word(after?.state)
+        #expect(state == HookFeed.word(before?.state))
+        // A tight budget keeps them too.
+        let tight = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
+        #expect(tight?.title == before?.title)
+        #expect(tight?.startedMs == before?.startedMs)
     }
 
     /// The record being appended is always in the file after its own
@@ -1797,8 +1911,8 @@ struct EventLogTests {
 
         let records = EventLog.compact(lines, nowMs: now, budget: 1 << 30).compactMap { AttentionRecord(line: $0) }
         let a = records.filter { $0.session == "a" }
-        #expect(a.count == EventLog.linesPerSession, "a session keeps its last lines once nothing in it is open")
-        #expect(!a.contains { $0.kind == "permission" })
+        #expect(a.count == EventLog.linesPerSession + 1, "a session keeps its last lines once nothing in it is open, and its first clock")
+        #expect(!a.contains { $0.kind == "permission" }, "an answered block is never kept without its answer")
         let b = records.filter { $0.session == "b" }
         #expect(b.first?.kind == "permission", "an open block is kept, with every line after it")
         #expect(b.count == 101)
