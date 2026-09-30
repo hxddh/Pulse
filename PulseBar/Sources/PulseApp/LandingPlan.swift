@@ -1,7 +1,7 @@
 import Foundation
 import PulseHarvest
 
-/// 24.0 · where a session can be reached, read from the v4 `landing` column
+/// Where a session can be reached, read from the v5 `landing` column
 /// (`HookLanding.handles`): `tmux:%3;tmuxsock:<path>;iterm:w0t1p0:<uuid>;
 /// tty:/dev/ttys004;term:<TERM_PROGRAM>;app:<bundle id>`.
 struct LandingHandle: Hashable, Sendable {
@@ -83,7 +83,7 @@ enum LandingStep: Hashable, Sendable {
     }
 }
 
-/// 24.0 · how a click lands, decided once per projection and never in a view:
+/// How a click lands, decided once per projection and never in a view:
 /// steps in order, the first that succeeds wins, and its precision is what
 /// the click reports. Pure.
 struct LandingPlan: Hashable, Sendable {

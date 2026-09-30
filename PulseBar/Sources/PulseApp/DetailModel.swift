@@ -4,11 +4,11 @@ import Foundation
 ///
 /// The row is one line; this is what a person reads after deciding to look,
 /// in the order it is worth reading: the ask (and what to do about it), the
-/// why, the agent's last message, the last error and a few plain facts (the
-/// message, model and error come from the session's transcript, read when
-/// this opens). How Pulse reads the session is folded away at the bottom.
-/// Nothing is shown as a placeholder: a fact Pulse does not have is not a
-/// row.
+/// why, the recent steps, the agent's last message, the last error and a few
+/// plain facts — all from the session's own events. How Pulse reads the
+/// session is folded away at the bottom. Nothing is shown as a placeholder:
+/// a fact Pulse does not have is not a row. Tokens, context, cost, model and
+/// plan are never shown — a decision.
 struct DetailModel: Equatable {
     struct Fact: Equatable {
         var label: String
@@ -35,6 +35,9 @@ struct DetailModel: Equatable {
     /// The full question of a blocked row.
     var ask: String?
     var why: String
+    /// Up to `SessionBook.maxSteps` recent steps, newest first: how long
+    /// ago, and "tool · target".
+    var steps: [Fact]
     var lastMessage: String?
     var error: String?
     var facts: [Fact]
@@ -56,8 +59,10 @@ struct DetailModel: Equatable {
         let fresh = row.selfReportFresh(at: nowMs)
 
         var facts: [Fact] = []
-        let model = row.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !model.isEmpty { facts.append(Fact(label: t(.detailModel), value: model)) }
+        if row.state == .running || row.isBlocked {
+            let turn = Explain.turnDuration(row, nowMs: nowMs, lang: lang)
+            if !turn.isEmpty { facts.append(Fact(label: t(.stepThisTurn), value: turn)) }
+        }
         facts.append(Fact(label: t(.detailSource), value: explain.source))
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
         if row.startedMs > 0, row.startedMs <= nowMs {
@@ -69,6 +74,9 @@ struct DetailModel: Equatable {
         let age = row.isBlocked
             ? Explain.waitDuration(row, nowMs: nowMs, lang: lang)
             : Explain.activityLabel(row, nowMs: nowMs, lang: lang)
+        let steps = row.recentSteps.reversed().map { step in
+            Fact(label: Explain.minuteAgo(step.ms, nowMs: nowMs, lang: lang), value: Explain.stepText(step))
+        }
 
         return DetailModel(
             lang: lang,
@@ -83,6 +91,7 @@ struct DetailModel: Equatable {
             headlineQuiet: row.isProcessOnly,
             ask: explain.ask,
             why: explain.why,
+            steps: steps,
             lastMessage: fresh && !row.lastWord.isEmpty ? row.lastWord : nil,
             error: error,
             facts: facts,

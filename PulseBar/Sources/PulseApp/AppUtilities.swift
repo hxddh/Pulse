@@ -1,6 +1,4 @@
-// 3.0-α: standalone utility types moved verbatim out of StatusStore.swift
-// — they were never part of the store, just parked at the bottom of its
-// file.
+// Standalone utility types — never part of the store.
 
 import Foundation
 import AppKit

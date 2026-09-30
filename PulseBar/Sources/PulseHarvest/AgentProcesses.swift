@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import PulseCore
 
-/// 24.0 · agent processes, read from the kernel's process table.
+/// Agent processes, read from the kernel's process table.
 ///
 /// libproc and `sysctl` only — no `ps`, no `lsof`, no subprocess, no
 /// privacy prompt. Two jobs:

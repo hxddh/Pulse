@@ -1,7 +1,7 @@
 import Foundation
 
 enum HooksSupport {
-    /// Which agents carry Pulse's hook (24.0: all seven, each by its own
+    /// Which agents carry Pulse's hook (all seven, each by its own
     /// contract).
     enum Status: Equatable {
         case unknown
@@ -93,28 +93,13 @@ enum HooksSupport {
         return wired.isEmpty ? .missing : .installed(wired)
     }
 
-    /// Whether an agent's config carries Pulse's hook. Codex also counts its
-    /// `notify` line in config.toml.
+    /// Whether an agent's config carries Pulse's hook (for Codex, its
+    /// `hooks.json` — Pulse never touches `config.toml`).
     static func isWired(_ agent: AgentID) -> Bool {
-        let text = try? String(contentsOf: HooksInstaller.configURL(for: agent), encoding: .utf8)
-        if let text, let events = HooksInstaller.installedEvents(agent, text: text), !events.isEmpty {
-            return true
-        }
-        guard agent == .codex else { return false }
-        return codexHooked(
-            configTOML: try? String(contentsOf: HooksInstaller.codexConfigURL, encoding: .utf8),
-            hooksJSON: text
-        )
-    }
-
-    /// Pure: is Codex wired to Pulse, given the text of `config.toml` and
-    /// `hooks.json` (nil when unreadable)? Either file carrying the marker
-    /// counts.
-    static func codexHooked(configTOML: String?, hooksJSON: String?) -> Bool {
-        [configTOML, hooksJSON].contains { text in
-            guard let text else { return false }
-            return HooksInstaller.containsPulseMarker(text)
-        }
+        guard let text = try? String(contentsOf: HooksInstaller.configURL(for: agent), encoding: .utf8),
+              let events = HooksInstaller.installedEvents(agent, text: text)
+        else { return false }
+        return !events.isEmpty
     }
 
     /// Installs and removals run one at a time, on this queue: two clicks

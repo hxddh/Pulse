@@ -2,9 +2,8 @@
 # Every source gate, in one place.
 #
 # CI, release.yml, scripts/release.sh and PulseBar/Scripts/package.sh all
-# call this; adding a gate is one line here. 23.0 cut the list to the gates
-# that still guard a real fact: the four catalog gates became one, and the
-# greps for long-deleted code went.
+# call this; adding a gate is one line here. Each gate still guards a real
+# fact; one that only checks prose or long-deleted code is removed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

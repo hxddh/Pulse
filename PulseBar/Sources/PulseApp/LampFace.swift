@@ -1,6 +1,6 @@
 import Foundation
 
-/// 23.0 · one lamp vocabulary for the row, the detail page and the menu bar.
+/// One lamp vocabulary for the row, the detail page and the menu bar.
 ///
 /// The shape says what the session needs; the tone says how it is going.
 ///
@@ -11,8 +11,8 @@ import Foundation
 /// | hollow | your turn, recent, idle            |
 /// | dotted | seen only as a process             |
 ///
-/// Tones: red is blocked, green is running, orange is **only** a stall (24.0:
-/// the error count went with the harvest), grey is everything else. A
+/// Tones: red is blocked, green is running, orange is **only** a stall (an
+/// error is a detail-page fact, not a tone), grey is everything else. A
 /// process-only session is grey dotted — a process is not a session, so it
 /// is never orange and never green.
 /// Shape plus tone, so the state reads without colour too. Pure.

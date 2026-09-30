@@ -1,8 +1,8 @@
 import Foundation
 
-/// The tray, as one pure value: the session book, the process table and the
-/// transcript summaries in; every row, the lamp, the menu-bar title, the
-/// counts, the Waiting edges and what was left out for age out.
+/// The tray, as one pure value: the session book and the process table in;
+/// every row, the lamp, the menu-bar title, the counts, the Waiting edges and
+/// what was left out for age out.
 ///
 /// `SessionBook` holds what the events said. `project` turns it into rows
 /// (`sessionRows`: one per session worth showing, plus a process-only row for
@@ -71,15 +71,36 @@ struct TrayState: Equatable {
     /// `showAllAgents` after collapsing it when the list got short again.
     var showAllAgents = false
 
-    /// The book, the processes and the transcripts, as the tray.
+    /// The book and the processes, as the tray.
     static func project(
         book: SessionBook,
         processes: [AgentProcesses.Hit],
-        summaries: [String: TranscriptSummary],
         context: Context
     ) -> TrayState {
-        let found = sessionRows(book: book, processes: processes, summaries: summaries, context: context)
+        let found = sessionRows(book: book, processes: processes, context: context)
         return assemble(rows: found.rows, staleHidden: found.staleHidden, context: context)
+    }
+
+    /// This state with every fact a burst of tool lines moves on its own —
+    /// the steps, the activity and event clocks — set aside: two states with
+    /// the same `quietSignature` differ only in what a row's quiet second
+    /// line says, never in a state, a wait, the lamp or a count. The engine
+    /// lands such a change at most once per tick.
+    var quietSignature: TrayState {
+        func quiet(_ row: AgentRow) -> AgentRow {
+            var copy = row
+            copy.lastStep = nil
+            copy.recentSteps = []
+            copy.lastEventMs = 0
+            copy.activityMs = 0
+            return copy
+        }
+        var copy = self
+        copy.rows = rows.map(quiet)
+        copy.newlyBlocked = newlyBlocked.map(quiet)
+        copy.snapshot.rows = snapshot.rows.map(quiet)
+        copy.snapshot.updatedAt = .distantPast
+        return copy
     }
 
     // MARK: - Rows
@@ -95,7 +116,6 @@ struct TrayState: Equatable {
     static func sessionRows(
         book: SessionBook,
         processes: [AgentProcesses.Hit],
-        summaries: [String: TranscriptSummary],
         context: Context
     ) -> SessionRows {
         let nowMs = context.nowMs
@@ -134,13 +154,14 @@ struct TrayState: Equatable {
                 continue
             }
 
-            if let summary = summaries[session.transcript], !session.transcript.isEmpty {
-                row.task = summary.title
-                row.model = summary.model
-                row.lastWord = summary.lastMessage
-                row.lastErrorText = summary.lastError
-            }
-            if row.lastWord.isEmpty { row.lastWord = TranscriptSummaryReader.firstLine(session.message) }
+            // What its events said: the title, the last words, the error,
+            // the steps and the turn's clock.
+            row.task = session.title
+            row.lastWord = session.message
+            row.lastErrorText = session.lastError
+            row.recentSteps = session.steps
+            row.lastStep = session.steps.last
+            row.turnStartMs = session.turnStartMs
 
             // How to reach it: the hook's landing handle first; the process
             // table fills only what the hook did not say.

@@ -73,8 +73,8 @@ fi
 # sit at its root, with no Contents/. Do not "helpfully" add Contents/Resources
 # inside it: CFBundle switches to the modern layout the moment it sees a
 # Contents/ directory, stops looking at the root, and — with no
-# Contents/Info.plist to find — refuses to open the bundle at all. Every release
-# up to 0.23.0 did exactly that, and the app died on launch.
+# Contents/Info.plist to find — refuses to open the bundle at all, and the app
+# dies on launch.
 RES_BUNDLE="$(dirname "$BIN")/PulseBar_PulseApp.bundle"
 if [[ ! -d "$RES_BUNDLE" ]]; then
   echo "error: SwiftPM resource bundle missing at $RES_BUNDLE" >&2
@@ -132,8 +132,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 # The app is assembled — check it can find its own resources before we sign it
-# into a DMG. Source-level gates cannot see this: every release up to 0.23.0
-# passed all of them and still crashed on launch.
+# into a DMG. Source-level gates cannot see this: a bundle can pass all of them
+# and still crash on launch.
 if [[ -n "$CHECK_PYTHON" ]]; then
   "$CHECK_PYTHON" "$ROOT/scripts/package_check.py" "$APP"
 else

@@ -3,8 +3,8 @@ import Foundation
 
 /// The debug log (`~/Library/Application Support/Pulse/debug.log`).
 ///
-/// 12.3: moved into PulseCore so the harvest and respond libraries can log
-/// without reaching back into the app. Every write holds one lock.
+/// In PulseCore, so the libraries can log without reaching back into the
+/// app. Every write holds one lock.
 public enum DebugLog {
     public static let path: URL = {
         FileManager.default.homeDirectoryForCurrentUser

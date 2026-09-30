@@ -1,12 +1,13 @@
 import Foundation
 
-/// 17.0 · the tray row's face as a value.
+/// The tray row's face as a value.
 ///
-/// 23.0 · one line — lamp · agent · project · headline · age — and a second
-/// line only when the row owes an explanation: the ask of a blocked row, or
-/// the why of a stalled or failing one. No chip, no tint, no "new" dot, no
-/// buttons on the row: the verbs are keys (↩ D M →), the context menu and
-/// VoiceOver actions, and the detail page.
+/// One line — lamp · agent · project · headline · time — and a second line
+/// only when the row has something to add: the ask of a blocked row, the why
+/// of a stalled one, or — quietly — a running row's last step ("Bash · swift
+/// test · 12m ago", a past step, never "running"). No chip, no tint, no "new"
+/// dot, no buttons on the row: the verbs are keys (↩ D M →), the context
+/// menu and VoiceOver actions, and the detail page.
 ///
 /// Pure: the row, the language, the clock and a few facts only the store
 /// knows, passed in as plain values. The words come from `Explain`, so the
@@ -34,6 +35,8 @@ struct TrayRowModel: Equatable {
             case ask
             /// Why a stalled row is orange.
             case warning
+            /// A running row's last step — quiet.
+            case step
         }
         var kind: Kind
         var text: String
@@ -50,8 +53,8 @@ struct TrayRowModel: Equatable {
     var headline: String
     /// A process-only row's headline is quiet: it says what little is true.
     var headlineQuiet: Bool
-    /// The one time on the row: how long a blocked row has waited, else when
-    /// the session last moved.
+    /// The one time on the row: how long a blocked row has waited, how long
+    /// a running row's turn has run, else when the session last moved.
     var age: String
     /// "Your turn", quietly, for a session whose turn ended unseen.
     var turnLabel: String?
@@ -85,12 +88,10 @@ struct TrayRowModel: Equatable {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         let explain = Explain.make(row, lang: lang, nowMs: input.nowMs)
         let lamp = LampFace.row(row)
-        let age = row.isBlocked
-            ? Explain.waitDuration(row, nowMs: input.nowMs, lang: lang)
-            : Explain.activityLabel(row, nowMs: input.nowMs, lang: lang)
+        let age = Explain.rowTime(row, nowMs: input.nowMs, lang: lang)
         let place = row.shortPlace
         let project = place == explain.headline ? "" : place
-        let second = secondLine(row, explain: explain, lamp: lamp, lang: lang)
+        let second = secondLine(row, explain: explain, lamp: lamp, lang: lang, nowMs: input.nowMs)
         let turnLabel = row.isYourTurn ? t(.yourTurn) : nil
 
         var menu: [Button] = []
@@ -99,13 +100,14 @@ struct TrayRowModel: Equatable {
         }
         menu.append(Button(action: .details, title: t(.details)))
         if row.isBlocked { menu.append(Button(action: .dismiss, title: t(.dismissWait))) }
-        // 22.0: muting lives on the row it silences, not in a 32-switch list.
+        // Muting lives on the row it silences, not in a list of switches.
         menu.append(Button(action: .mute, title: t(input.muted ? .unmute : .mute)))
 
         var spoken = [row.agent.displayName, explain.state, explain.headline]
         if !project.isEmpty { spoken.append(project) }
         if !age.isEmpty { spoken.append(age) }
-        if let second { spoken.append(second.text) } else { spoken.append(explain.why) }
+        if let second, second.kind != .step { spoken.append(second.text) } else { spoken.append(explain.why) }
+        if let second, second.kind == .step { spoken.append(second.text) }
         if input.muted { spoken.append(t(.mutedWord)) }
 
         return TrayRowModel(
@@ -131,13 +133,16 @@ struct TrayRowModel: Equatable {
     }
 
     /// The second line exists only for a blocked row (its ask — or, when
-    /// the agent did not say, what kind of wait it is) and for an orange row
-    /// (the why). Everything else is one line.
+    /// the agent did not say, what kind of wait it is), for an orange row
+    /// (the why, which names the last step) and for a running row whose hook
+    /// named a step (the step, quietly). Everything else is one line — a
+    /// Cursor or OpenCode row among them: their hooks name no tool.
     static func secondLine(
         _ row: AgentRow,
         explain: Explain,
         lamp: LampFace,
-        lang: ResolvedLanguage
+        lang: ResolvedLanguage,
+        nowMs: Int64
     ) -> SecondLine? {
         if let wait = row.wait {
             let text = explain.ask ?? L10n.waitKind(wait.kind, lang)
@@ -145,6 +150,9 @@ struct TrayRowModel: Equatable {
         }
         if lamp.tone == .attention {
             return SecondLine(kind: .warning, text: explain.why)
+        }
+        if row.state == .running, let step = row.lastStep {
+            return SecondLine(kind: .step, text: Explain.truncate(Explain.stepLine(step, nowMs: nowMs, lang: lang), 140))
         }
         return nil
     }

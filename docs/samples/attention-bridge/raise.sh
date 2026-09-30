@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Generic Attention Protocol v5 raise for one of Pulse's seven agents.
-# Prefers native pulse-hook (no Python); falls back to a direct append to
-# the event log (events.tsv).
+# Generic Attention Protocol v5 raise for one of Pulse's seven agents,
+# through the native pulse-hook — the one writer that appends under the
+# event log's lock (a plain `>>` can interleave with a hook writing at the
+# same moment, and macOS ships no flock(1)). No launcher, no write.
 # See docs/attention-protocol.md and docs/attention-bridge.md
 #
 # Codex and Cursor never report a wait (their hooks cannot say so honestly):
-# pulse-hook refuses a blocked kind for them, and so does this fallback.
+# pulse-hook refuses a blocked kind for them, and so does this script.
 set -euo pipefail
 PULSE="${PULSE_HOME:-$HOME/Library/Application Support/Pulse}"
-mkdir -p "$PULSE"
 agent="${1:?usage: raise.sh <claude|gemini|copilot|opencode|pi> [session] [kind] [message]}"
 session="${2:-sample-$agent}"
 kind="${3:-permission}"
@@ -20,19 +20,10 @@ case "$agent" in
     esac;;
 esac
 HOOK="$PULSE/pulse-hook"
-if [ -x "$HOOK" ]; then
-  echo "{\"message\":\"$message\",\"session_id\":\"$session\",\"cwd\":\"$PWD\"}" \
-    | "$HOOK" "$agent" "$kind"
-  echo "Wrote $agent $kind via pulse-hook (session=$session)"
-  exit 0
+if [ ! -x "$HOOK" ]; then
+  echo "no launcher at $HOOK — open Pulse once (it writes it), then try again" >&2
+  exit 1
 fi
-ms=$(($(date +%s) * 1000))
-log="$PULSE/events.tsv"
-if [ ! -s "$log" ]; then
-  printf '# pulse-events v5 g%s-%s (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\ttranscript\tlanding\ttool)\n' "$ms" "$$" >> "$log"
-fi
-# agent kind ms message session cwd front pid transcript landing tool — one
-# whole line, appended (the log is append-only).
-printf '%s\t%s\t%s\t%s\t%s\t%s\t\t%s\t\t%s\t\n' \
-  "$agent" "$kind" "$ms" "$message" "$session" "${PWD}" "$PPID" "${TMUX_PANE:+tmux:$TMUX_PANE}" >> "$log"
-echo "Wrote $agent $kind → $log (session=$session)"
+echo "{\"message\":\"$message\",\"session_id\":\"$session\",\"cwd\":\"$PWD\"}" \
+  | "$HOOK" "$agent" "$kind"
+echo "Wrote $agent $kind via pulse-hook (session=$session)"

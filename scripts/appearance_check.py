@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gate: nothing in the UI may freeze the system appearance into a constant.
 
-0.27.1 shipped a panel that rendered light grey with black text on a dark
+A panel once shipped rendering light grey with black text on a dark
 desktop. The cause was one line:
 
     static let surface = Color(nsColor: .windowBackgroundColor)

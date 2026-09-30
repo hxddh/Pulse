@@ -1,16 +1,13 @@
 import Foundation
 
-/// What an event means, as a type.
-///
-/// v3 (16.0) separated the three things a person can owe an agent; v4 (24.0)
-/// added the session lifecycle the vendors' own hooks report; v5 puts
-/// tool activity in the same log (`tool`), so every hook event is one line:
+/// What an event means, as a type. Every hook event is one line of the
+/// event log:
 ///
 /// - **blocked** (`permission`, `question`, `waiting`): the agent cannot go
 ///   on without you — the red lamp, a banner, a sound;
 /// - **your turn** (`turn`): it finished and is waiting for the next prompt —
 ///   a quiet count, never the red lamp;
-/// - **idle** (`idle`, 24.0): it has sat at its prompt a while (Claude's
+/// - **idle** (`idle`): it has sat at its prompt a while (Claude's
 ///   `idle_prompt`, about a minute after a turn). Your turn only when Pulse
 ///   had not seen the turn end — the session was still working or blocked,
 ///   or was never seen — so a turn the person already saw is not revived;
@@ -18,7 +15,8 @@ import Foundation
 /// - **lifecycle** (`start`, `working`, `end`): the session began, took a
 ///   prompt, or ended;
 /// - **activity** (`tool`): a tool ran. It keeps a working session
-///   from reading stalled and answers a block raised for that tool.
+///   from reading stalled, answers a block raised for that tool, and is
+///   the session's last step.
 public enum AttentionKind: String, Sendable, CaseIterable {
     case permission
     case question
@@ -42,20 +40,25 @@ public enum AttentionKind: String, Sendable, CaseIterable {
 
 /// One v5 record: eleven tab-separated columns.
 ///
-/// `agent  kind  ms  message  session  cwd  front  pid  transcript  landing  tool`
+/// `agent  kind  ms  message  session  cwd  front  pid  -  landing  tool`
 ///
+/// - `message`: what the event said — a block's ask, a turn's last words
+///   (or, on a failed turn, its error), a prompt's text, a tool's target;
 /// - `front`: `1` when the prompt's own window was frontmost as the event was
 ///   raised, `0` when it was not, empty when that could not be established;
 /// - `pid`: the agent process the hook ran under, empty when unknown (a
 ///   pid of 1 or less is never written: the hook's parent had exited);
-/// - `transcript`: the vendor's transcript path, when its hook names one;
+/// - the ninth column is reserved: written empty, never read (it once
+///   named a transcript file; Pulse reads none);
 /// - `landing`: where the session can be reached, most specific first,
 ///   `;`-separated — `tmux:%3`, `iterm:w0t1p0:<uuid>`, `tty:/dev/ttys004`,
 ///   `term:<TERM_PROGRAM>`;
 /// - `tool`: the tool a `tool` line ran, or the tool a block is about
-///   (`Bash`); its target, when known, is the message.
+///   (`Bash`); its target, when known, is the message. On a `turn` line,
+///   `error` says the turn ended on an error and the message is its text.
 ///
-/// Writers clean every field (no tabs, no line breaks) before building one.
+/// Writers clean every field (`AttentionProtocol.flatten`: no tabs, no line
+/// breaks of any kind) before building one.
 public struct AttentionRecord: Equatable, Sendable {
     public var agent: String
     public var kind: String
@@ -65,9 +68,11 @@ public struct AttentionRecord: Equatable, Sendable {
     public var cwd: String
     public var front: Bool?
     public var pid: Int32
-    public var transcript: String
     public var landing: String
     public var tool: String
+
+    /// The `tool` column of a `turn` line that ended on an error.
+    public static let errorTool = "error"
 
     public init(
         agent: String,
@@ -78,7 +83,6 @@ public struct AttentionRecord: Equatable, Sendable {
         cwd: String = "",
         front: Bool? = nil,
         pid: Int32 = 0,
-        transcript: String = "",
         landing: String = "",
         tool: String = ""
     ) {
@@ -90,7 +94,6 @@ public struct AttentionRecord: Equatable, Sendable {
         self.cwd = cwd
         self.front = front
         self.pid = pid
-        self.transcript = transcript
         self.landing = landing
         self.tool = tool
     }
@@ -106,7 +109,7 @@ public struct AttentionRecord: Equatable, Sendable {
             cwd,
             AttentionProtocol.frontField(front),
             pid > 1 ? String(pid) : "",
-            transcript,
+            "",
             landing,
             tool,
         ].joined(separator: "\t")
@@ -125,7 +128,6 @@ public struct AttentionRecord: Equatable, Sendable {
             cwd: cols[5],
             front: AttentionProtocol.parseFront(cols[6]),
             pid: AttentionProtocol.parsePid(cols[7]),
-            transcript: cols[8],
             landing: cols[9],
             tool: cols[10]
         )
@@ -149,18 +151,21 @@ public enum AttentionProtocol {
     /// a reader holding a byte offset knows the file was rewritten). Only
     /// complete v5 records (eleven columns) are read.
     public static func header(generation: String) -> String {
-        "# pulse-events v5 \(generation) (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\ttranscript\\tlanding\\ttool)\n"
+        "# pulse-events v5 \(generation) (agent\\tkind\\tms\\tmessage\\tsession\\tcwd\\tfront\\tpid\\t-\\tlanding\\ttool)\n"
     }
 
     /// Column count of a complete v5 record.
     public static let columnCount = 11
 
     /// The columns of one v5 record, or nil for a blank line, a comment or
-    /// header, or a line without exactly `columnCount` columns. Only line
-    /// breaks are trimmed: a record's trailing columns are often empty, so
-    /// trailing tabs are part of it.
+    /// header, or a line without exactly `columnCount` columns. Only the
+    /// line's own break (`\n`, `\r`) is trimmed: a record's trailing columns
+    /// are often empty, so trailing tabs are part of it.
     public static func columns<S: StringProtocol>(of line: S) -> [String]? {
-        let raw = String(line).trimmingCharacters(in: .newlines)
+        var raw = String(line)
+        while let last = raw.unicodeScalars.last, last == "\n" || last == "\r" {
+            raw.unicodeScalars.removeLast()
+        }
         if raw.isEmpty || raw.hasPrefix("#") { return nil }
         let cols = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
         return cols.count == columnCount ? cols : nil
@@ -213,7 +218,7 @@ public enum AttentionProtocol {
             // Activity: a tool ran.
             "tool": .tool,
             "activity": .tool,
-            // 24.0 lifecycle.
+            // Lifecycle.
             "start": .start,
             "session_start": .start,
             "working": .working,
@@ -255,6 +260,24 @@ public enum AttentionProtocol {
               head.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_.-".unicodeScalars.contains($0) })
         else { return "" }
         return head
+    }
+
+    /// Every character that ends a line somewhere — `\n`, `\r`, vertical
+    /// tab, form feed, NEL, the Unicode line and paragraph separators — and
+    /// the tab. A field holding one would split a record, or a column.
+    public static let breakingScalars: Set<Unicode.Scalar> = [
+        "\t", "\n", "\r", "\u{0B}", "\u{0C}", "\u{85}", "\u{2028}", "\u{2029}",
+    ]
+
+    /// A field as it may be written: every tab and line break a space,
+    /// trimmed. Writers call it (or a stricter cleaner built on it) on every
+    /// field.
+    public static func flatten(_ value: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        for scalar in value.unicodeScalars {
+            scalars.append(breakingScalars.contains(scalar) ? " " : scalar)
+        }
+        return String(scalars).trimmingCharacters(in: .whitespaces)
     }
 
     /// The `pid` column: a pid of 1 or less (launchd — the hook's parent had

@@ -4,9 +4,11 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     case auto, en, zh
     var id: String { rawValue }
 
-    var menuLabel: String {
+    /// The picker's label, in the interface's language for "System"; each
+    /// language names itself.
+    func menuLabel(_ lang: ResolvedLanguage) -> String {
         switch self {
-        case .auto: return "System"
+        case .auto: return L10n.t(.languageSystem, lang)
         case .en: return "English"
         case .zh: return "中文"
         }
@@ -179,7 +181,6 @@ enum L10n {
         case .explainKindWaiting: return "is waiting for you"
         case .sourceHooks: return "Hooks only"
         case .sourceProcess: return "Process only"
-        case .detailModel: return "Model"
         case .detailSource: return "Source"
         case .detailFolder: return "Folder"
         case .detailStarted: return "Started"
@@ -229,6 +230,12 @@ enum L10n {
         case .durSecSpoken: return "%ds"
         case .durMinSpoken: return "%dm"
         case .durHourSpoken: return "%dh"
+        case .durUnderMinute: return "<1m"
+        case .stepStalled: return "Nothing new for %@ — last step: %@"
+        case .stepHeading: return "Recent steps"
+        case .stepThisTurn: return "This turn"
+        case .setupFailedAction: return "Open Settings"
+        case .languageSystem: return "System"
         }
     }
 
@@ -347,7 +354,6 @@ enum L10n {
         case .explainKindWaiting: return "在等你"
         case .sourceHooks: return "仅 hook"
         case .sourceProcess: return "仅进程"
-        case .detailModel: return "模型"
         case .detailSource: return "来源"
         case .detailFolder: return "目录"
         case .detailStarted: return "开始于"
@@ -397,6 +403,12 @@ enum L10n {
         case .durSecSpoken: return "%d 秒"
         case .durMinSpoken: return "%d 分钟"
         case .durHourSpoken: return "%d 小时"
+        case .durUnderMinute: return "<1 分"
+        case .stepStalled: return "已经 %@ 没有新动静——上一步：%@"
+        case .stepHeading: return "最近几步"
+        case .stepThisTurn: return "本回合"
+        case .setupFailedAction: return "打开设置"
+        case .languageSystem: return "跟随系统"
         }
     }
 
@@ -471,11 +483,9 @@ enum L10n {
         case explainKindWaiting
         case sourceHooks
         case sourceProcess
-        case detailModel
         case detailSource
         case detailFolder
         case detailStarted
-        // 23.0
         case processOnly
         case processOnlyN
         case waiting1
@@ -502,6 +512,10 @@ enum L10n {
         case setupFound, setupConnect, setupDone, setupGotIt, setupStepCodex, setupStepRestart
         case automationOffer, automationAllow, automationNotNow, automationAllowed
         case durSecSpoken, durMinSpoken, durHourSpoken
+        case durUnderMinute
+        case stepStalled, stepHeading, stepThisTurn
+        case setupFailedAction
+        case languageSystem
     }
 }
 

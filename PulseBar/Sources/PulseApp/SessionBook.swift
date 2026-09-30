@@ -1,16 +1,28 @@
 import Foundation
 
-/// 24.0 · the event core: every session Pulse knows, and the one state each
-/// is in, from the agents' own hook events.
+/// The event core: every session Pulse knows, the one state each is in, and
+/// what its events said about it — from the agents' own hook events.
 ///
-/// Pulse no longer reads vendor session files to guess what a session is
-/// doing. Each supported agent's hook appends one v5 line to the event log
-/// (`EventLog`) when a session starts, takes a prompt, runs a tool, is
-/// blocked, finishes its turn or ends; a process exit ends a session. This
-/// is the reducer those lines feed, in file order — a pure value, `apply`
-/// in, `sessions` out — and `TrayState.project` turns it into what the tray
-/// draws. At launch the engine replays the whole log through it before the
-/// first projection.
+/// Pulse reads no vendor session file. Each supported agent's hook appends
+/// one v5 line to the event log (`EventLog`) when a session starts, takes a
+/// prompt, runs a tool, is blocked, finishes its turn or ends; a process exit
+/// ends a session. This is the reducer those lines feed, in file order — a
+/// pure value, `apply` in, `sessions` out — and `TrayState.project` turns it
+/// into what the tray draws. At launch the engine replays the whole log
+/// through it before the first projection, so everything here — the steps,
+/// the title, the turn's clock — is rebuilt from the log and never kept
+/// anywhere else.
+///
+/// What a session says about itself, from its events only:
+///
+/// - **steps**: the last `maxSteps` tool lines that named their tool (the
+///   tool, its target, when), and the clock of the prompt that started the
+///   current turn — the row's quiet "last step" and its turn's duration;
+/// - **title**: the first prompt that says something (not "continue"), and
+///   the latest prompt;
+/// - **last words**: what the latest turn line carried; **error**: the text
+///   of a turn that ended on an error (`tool` = `error`), until the next
+///   prompt. Tokens, context, cost and model are never read — a decision.
 ///
 /// The rules, each an owner decision:
 ///
@@ -35,7 +47,8 @@ import Foundation
 ///   hides it.
 /// - **`done`** (the vendor's "resolved", or a dismissal in Pulse) clears the
 ///   session it names; an empty session clears only the agent's session-less
-///   sessions, never one that has an id.
+///   session in the folder it names (every session-less one of the agent
+///   when it names none), never one that has an id.
 /// - **An exit ends a session**: a process exit (kqueue) or a pid found dead
 ///   ends every live session that pid ran. Nothing here guesses "running".
 struct SessionBook: Equatable {
@@ -73,6 +86,15 @@ struct SessionBook: Equatable {
         var front: Bool
     }
 
+    /// One tool step, as its `tool` line said it: the tool (`Bash`), its
+    /// target (`swift test`, sanitized; "" when the hook did not say) and
+    /// when it was reported. A past step — never a claim that it still runs.
+    struct Step: Hashable, Sendable {
+        var tool: String
+        var target: String
+        var ms: Int64
+    }
+
     struct Session: Equatable, Sendable {
         /// `RowIdentity.session` — decided by the first event, never changed.
         var key: String
@@ -86,8 +108,6 @@ struct SessionBook: Equatable {
         /// The first event that named the current `pid` — a process that
         /// started after it is not that process (a reused pid).
         var pidSinceMs: Int64 = 0
-        /// The vendor's transcript, when its hook names one.
-        var transcript = ""
         /// Where the session can be reached (`tmux:…;tty:…;term:…`).
         var landing = ""
         var state: State = .idle
@@ -102,9 +122,20 @@ struct SessionBook: Equatable {
         /// The newest tool event — the only evidence a silence can be a stall.
         var toolMs: Int64 = 0
         /// What the latest turn line carried (a vendor's last words, when
-        /// its hook sends them) — the only words an agent with no transcript
-        /// has.
+        /// its hook sends them).
         var message = ""
+        /// The text of the latest turn that ended on an error; cleared by
+        /// the next prompt.
+        var lastError = ""
+        /// The first prompt that says something — the session's title.
+        var title = ""
+        /// The latest prompt's text.
+        var lastPrompt = ""
+        /// The prompt (or, with none seen, the step) that started the
+        /// current turn; 0 unknown.
+        var turnStartMs: Int64 = 0
+        /// The last `maxSteps` tool steps, oldest first.
+        var steps: [Step] = []
         /// A turn waiting out the grace of the current block.
         var heldTurn: HeldTurn?
 
@@ -123,6 +154,10 @@ struct SessionBook: Equatable {
     /// A session nothing has said anything about for this long is dropped.
     static let retentionMs: Int64 = 24 * 60 * 60 * 1000
     static let maxSessions = 256
+    /// Tool steps kept per session.
+    static let maxSteps = 5
+    /// A step's target is at most this many characters.
+    static let stepTargetLimit = 120
 
     init() {}
 
@@ -143,9 +178,15 @@ struct SessionBook: Equatable {
 
         switch kind {
         case .done where spelled.isEmpty:
-            // An empty `done` clears the agent's session-less entries only.
+            // An empty `done` clears the agent's session-less entries only:
+            // the one of the folder it names, or — naming none — every one.
+            let folder = record.cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+            let folderKey = RowIdentity.session(agent: agent, session: "", cwd: record.cwd)
+            let redacted = ContentSanitizer.redact(folder)
             var changed = false
-            for key in sessions.keys.sorted() where sessions[key]?.agent == agent && sessions[key]?.session.isEmpty == true {
+            for key in sessions.keys.sorted() {
+                guard let session = sessions[key], session.agent == agent, session.session.isEmpty else { continue }
+                if !folder.isEmpty, key != folderKey, session.cwd != redacted { continue }
                 changed = resolve(key, at: ms) || changed
             }
             return changed
@@ -169,10 +210,12 @@ struct SessionBook: Equatable {
             if session.state != .working { Self.set(&session, .idle, at: ms) }
         case .working:
             session.activityMs = max(session.activityMs, ms)
+            Self.prompt(record.message, at: ms, into: &session)
             Self.answer(&session, at: ms)
         case .tool:
             session.activityMs = max(session.activityMs, ms)
             session.toolMs = max(session.toolMs, ms)
+            Self.step(record, at: ms, into: &session)
             // Work goes on — unless it is older than the state it would
             // end, or a different tool than the one a block is about.
             if ms > session.stateSinceMs || before == nil {
@@ -182,14 +225,20 @@ struct SessionBook: Equatable {
                 case .blocked(let block):
                     if Self.answers(tool: record.tool, block) { Self.answer(&session, at: ms) }
                 case .idle, .yourTurn, .ended:
+                    // A turn whose prompt Pulse did not see starts here.
+                    session.turnStartMs = ms
                     Self.set(&session, .working, at: ms)
                 }
             }
         case .permission, .question, .waiting:
             Self.raise(kind, record: record, at: ms, in: &session)
         case .turn:
-            let message = ContentSanitizer.redact(record.message)
-            if !message.isEmpty { session.message = message }
+            let message = TitleHeuristics.firstLine(record.message)
+            if record.tool == AttentionRecord.errorTool {
+                if !message.isEmpty { session.lastError = message }
+            } else if !message.isEmpty {
+                session.message = message
+            }
             Self.turn(&session, at: ms, front: record.front == true)
         case .idle:
             // Sat at its prompt a while: news only if Pulse had not seen the
@@ -230,10 +279,32 @@ struct SessionBook: Equatable {
         } else if record.pid > 1, ms < session.pidSinceMs {
             session.pidSinceMs = ms
         }
-        if !record.transcript.isEmpty { session.transcript = record.transcript }
         if !record.landing.isEmpty { session.landing = record.landing }
         if session.startedMs == 0 || ms < session.startedMs { session.startedMs = ms }
         session.lastEventMs = max(session.lastEventMs, ms)
+    }
+
+    /// A prompt: a new turn. Its text is the latest prompt, and the title
+    /// when the session has none yet and it says something. The error of
+    /// the last turn is over.
+    private static func prompt(_ raw: String, at ms: Int64, into session: inout Session) {
+        session.turnStartMs = ms
+        session.lastError = ""
+        let text = TitleHeuristics.promptTitle(raw)
+        guard !text.isEmpty else { return }
+        session.lastPrompt = text
+        if session.title.isEmpty, TitleHeuristics.isMeaningful(text) { session.title = text }
+    }
+
+    /// A `tool` line that names its tool is a step. Lines are applied in
+    /// file order, so the last `maxSteps` are the newest.
+    private static func step(_ record: AttentionRecord, at ms: Int64, into session: inout Session) {
+        let tool = record.tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tool.isEmpty else { return }
+        var target = TitleHeuristics.firstLine(record.message, limit: stepTargetLimit)
+        if target.caseInsensitiveCompare(tool) == .orderedSame { target = "" }
+        session.steps.append(Step(tool: String(tool.prefix(64)), target: target, ms: ms))
+        if session.steps.count > maxSteps { session.steps.removeFirst(session.steps.count - maxSteps) }
     }
 
     /// A blocked event. A re-raise of the same kind inside the grace is the

@@ -8,7 +8,7 @@ import XCTest
 
 // Core: the agent catalog, bounded IO, and the agent processes (libproc).
 
-/// 12.0 · the roster is one table, and the table is whole.
+/// The roster is one table, and the table is whole.
 final class AgentCatalogTests: XCTestCase {
     func testEveryAgentHasExactlyOneSpecInDeclarationOrder() {
         XCTAssertEqual(AgentCatalog.all.map(\.id), AgentID.allCases,
@@ -44,7 +44,7 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertNil(AgentCatalog.agent(named: "not-an-agent"))
     }
 
-    /// 24.0 (Exact): the owner's roster, and nothing else.
+    /// The owner's roster, and nothing else.
     func testRosterIsTheSevenSupportedAgents() {
         XCTAssertEqual(
             AgentID.allCases.map(\.rawValue),
@@ -55,7 +55,7 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertEqual(AgentCatalog.agent(named: "cursor_agent"), .cursor)
     }
 
-    /// 24.0: Waiting by evidence — only a vendor hook that reports a block.
+    /// Waiting by evidence — only a vendor hook that reports a block.
     func testWaitingComesOnlyFromAVendorBlockEvent() {
         let reportsBlocks: Set<AgentID> = [.claude, .gemini, .copilot, .opencode, .pi]
         for id in AgentID.allCases {
@@ -68,7 +68,7 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertEqual(AgentID.waitingNoneAgents, [.codex, .cursor])
     }
 
-    /// 24.0: every agent's hook is the vendor's documented, non-blocking one.
+    /// Every agent's hook is the vendor's documented, non-blocking one.
     func testEveryHookContractIsObserveOnly() {
         for spec in AgentCatalog.all {
             let names = spec.hooks.events.map(\.name)
@@ -202,7 +202,7 @@ final class SingleInstanceGuardTests: XCTestCase {
 
 /// Resource loading must never be able to kill the app.
 ///
-/// Every release from 0.21 to 0.23.0 shipped a DMG that crashed on launch:
+/// Releases once shipped a DMG that crashed on launch:
 /// `package.sh` built a malformed resource bundle, `Bundle(url:)` returned nil,
 /// and the compiler-generated `Bundle.module` accessor called `fatalError()`
 /// while drawing the menu bar icon. `swift test` was green the whole time,
@@ -257,7 +257,7 @@ final class AgentIconAlignmentTests: XCTestCase {
     }
 }
 
-/// 24.0 · agent processes, from the kernel's table: which command line is
+/// Agent processes, from the kernel's table: which command line is
 /// which agent (shared with the hook's pid lookup), how a wrapper and its
 /// child become one family, and the handles Focus reads off the parent
 /// chain. Pure: the table is injected.
@@ -280,7 +280,7 @@ final class AgentProcessesTests: XCTestCase {
         }
     }
 
-    /// 24.0: the IDE and the `cursor-agent` CLI are one agent.
+    /// The IDE and the `cursor-agent` CLI are one agent.
     func testCursorAgentCLIIsCursor() {
         XCTAssertEqual(AgentProcesses.match(args: "/Users/me/.local/bin/cursor-agent"), .cursor)
         XCTAssertEqual(AgentProcesses.match(args: "node /Users/me/.local/share/cursor-agent/versions/1/index.js"), .cursor)
@@ -308,7 +308,7 @@ final class AgentProcessesTests: XCTestCase {
         )
     }
 
-    /// 24.0: path fragments match only the program — the executable, and
+    /// Path fragments match only the program — the executable, and
     /// an interpreter's script — at a path-component boundary.
     func testPathFragmentsMatchOnlyTheProgramAtAComponentBoundary() {
         let notAgents = [
@@ -344,7 +344,7 @@ final class AgentProcessesTests: XCTestCase {
         XCTAssertEqual(AgentProcesses.commandLine(path: "", argv: ["pi", "--model", "x"]), "pi --model x")
     }
 
-    /// 25.0 fix 14: Pi's deny list reads the program, never its arguments:
+    /// Pi's deny list reads the program, never its arguments:
     /// `pi ./pipeline.ts` is Pi. Other agents' argument-level denials stay.
     func testPisDenyListReadsOnlyTheProgram() {
         XCTAssertEqual(AgentProcesses.match(args: "/opt/homebrew/bin/pi ./pipeline.ts"), .pi)
@@ -355,7 +355,7 @@ final class AgentProcessesTests: XCTestCase {
         XCTAssertNil(AgentProcesses.match(args: "/Users/me/.local/bin/cursor-agent worker start --worker-dir /w"), "an argument-level denial still reads the line")
     }
 
-    /// 25.0 fix 5: a recorded pid is still the session's process only while
+    /// A recorded pid is still the session's process only while
     /// it runs no other agent and started no later than the first event that
     /// named it.
     func testAReusedPidIsNotTheSessionsProcess() {
@@ -556,7 +556,7 @@ final class PromptVisibilityTests: XCTestCase {
     }
 }
 
-/// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
+/// The defects a fresh audit turned up.
 ///
 /// Each of these is a place where the code said something it had not
 /// measured, dropped work it had been asked to do, or let a click reach
@@ -614,15 +614,14 @@ final class PrivateFileTests: XCTestCase {
     }
 }
 
-/// 0.99 Quiet Data — what Pulse writes down, and whether it says so.
+/// Quiet Data — what Pulse writes down, and whether it says so.
 ///
-/// 0.90–0.97 made the display honest and 0.98 made the collector honest. These
-/// cover the surface neither of them touched: the bytes that outlive the scan.
+/// These cover the bytes that outlive the scan.
 final class DebugLogKeyTests: XCTestCase {
     // MARK: - The debug log keeps the project name off disk
 
     /// A row key used to fall back to the workspace leaf, so it could be a
-    /// directory name from the user's disk (23.0 hashes it — `RowIdentity`).
+    /// directory name from the user's disk (it is hashed now — `RowIdentity`).
     func testDebugLogKeyDropsTheProjectNameButStaysCorrelatable() {
         let key = DebugLog.key("claude|SecretProject")
         XCTAssertFalse(key.contains("SecretProject"))
@@ -636,12 +635,8 @@ final class DebugLogKeyTests: XCTestCase {
     }
 }
 
-/// 0.99.2 Live Wire — the rest of the path 0.99.1 只修了一半.
-///
-/// 0.99.1 fixed how `lsof` output is parsed. These cover what happens to that
-/// output afterwards: the gate that decided whether to keep it at all, the
-/// subprocess wrapper underneath, and the code downstream that had never once
-/// run with a working directory in hand.
+/// Live Wire — the subprocess wrapper underneath, and the code downstream
+/// that had never once run with a working directory in hand.
 final class ProcessTerminationTests: XCTestCase {
     // MARK: - The subprocess wrapper under it
 

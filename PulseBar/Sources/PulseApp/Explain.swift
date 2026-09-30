@@ -82,9 +82,9 @@ struct Explain: Equatable {
 
     /// The tray hero, by value. A wait leads with what the person must
     /// recognise to answer (the task, else the project); a process-only row
-    /// says what little is true; a session leads with its task (22.0 — a
-    /// stable line the eye can find), then the agent's fresh last words, then
-    /// the project.
+    /// says what little is true; a session leads with its task (a stable line
+    /// the eye can find), then the agent's fresh last words, then the
+    /// project.
     static func headline(_ row: AgentRow, lang: ResolvedLanguage, nowMs: Int64) -> String {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         let project = AgentRow.shortProject(row.project)
@@ -123,12 +123,15 @@ struct Explain: Equatable {
             if row.isStalled {
                 guard row.lastActivityMs > 0 else { return t(.explainStalledUnknown) }
                 let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang, spoken: true)
+                if let step = row.lastStep {
+                    return String(format: t(.stepStalled), quiet, stepText(step))
+                }
                 return String(format: t(.explainStalled), quiet)
             }
             guard row.lastActivityMs > 0 else { return t(.explainRunningNoClock) }
             return String(format: t(.explainRunning), name, ago(row.lastActivityMs, nowMs: nowMs, lang: lang))
         case .recent:
-            // 24.0: which rule made it recent — never a guess that it runs.
+            // Which rule made it recent — never a guess that it runs.
             switch row.recentReason {
             case .atPrompt:
                 return String(format: t(.explainIdle), since(row.lastActivityMs))
@@ -174,7 +177,39 @@ struct Explain: Equatable {
         }
     }
 
+    // MARK: - Steps
+
+    /// A step in the words a row uses: "Bash · swift test", or the tool
+    /// alone. What was reported, never a claim that it still runs.
+    static func stepText(_ step: SessionBook.Step) -> String {
+        step.target.isEmpty ? step.tool : "\(step.tool) · \(step.target)"
+    }
+
+    /// A step with its age: "Bash · swift test · 12m ago" — "now" below a
+    /// minute, like the row's own time, so a standing row is not redrawn
+    /// every tick.
+    static func stepLine(_ step: SessionBook.Step, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        "\(stepText(step)) · \(minuteAgo(step.ms, nowMs: nowMs, lang: lang))"
+    }
+
+    /// How long the current turn has run ("14m"); "" when its start is not
+    /// known. Below a minute it says so ("<1m"), so it is not redrawn every
+    /// tick.
+    static func turnDuration(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        guard row.turnStartMs > 0, row.turnStartMs <= nowMs else { return "" }
+        let seconds = Double(nowMs - row.turnStartMs) / 1000
+        if seconds < 60 { return L10n.t(.durUnderMinute, lang) }
+        return DurationFormat.label(seconds: seconds, lang: lang)
+    }
+
     // MARK: - Time
+
+    /// "12m ago", or "now" below a minute.
+    static func minuteAgo(_ ms: Int64, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        let seconds = max(0, Double(nowMs - ms) / 1000)
+        if seconds < 60 { return L10n.t(.durNow, lang) }
+        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
+    }
 
     /// "3m ago" / "3 分钟前", or "now" alone — never "now ago".
     static func ago(_ ms: Int64, nowMs: Int64, lang: ResolvedLanguage) -> String {
@@ -188,9 +223,18 @@ struct Explain: Equatable {
     /// the difference between 40 and 54 seconds.
     static func activityLabel(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
         guard row.lastActivityMs > 0 else { return "" }
-        let seconds = row.lastActivitySeconds(at: nowMs)
-        if seconds < 60 { return L10n.t(.durNow, lang) }
-        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
+        return minuteAgo(row.lastActivityMs, nowMs: nowMs, lang: lang)
+    }
+
+    /// The row's one time: a wait's duration; for a running row this
+    /// turn's duration, when its start is known; else when it last moved.
+    static func rowTime(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        if row.isBlocked { return waitDuration(row, nowMs: nowMs, lang: lang) }
+        if row.state == .running {
+            let turn = turnDuration(row, nowMs: nowMs, lang: lang)
+            if !turn.isEmpty { return turn }
+        }
+        return activityLabel(row, nowMs: nowMs, lang: lang)
     }
 
     /// How long a wait has been outstanding ("4m"); "" when unknown.

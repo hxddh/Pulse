@@ -56,18 +56,21 @@ struct TrayHeaderModel: Equatable {
 /// 2. the setup card: agents on this Mac that are not connected — "Found
 ///    Claude, Codex — Connect" installs their hooks, then asks macOS to allow
 ///    banners. It comes first: without a hook there is nothing to notify;
-/// 3. notifications denied, then not yet asked (a "needs you" cannot reach
+/// 3. an agent whose install failed, and why ("Gemini: its settings file is
+///    not valid JSON — fix it, then install again") — never offered again as
+///    "Connect", which would fail the same way;
+/// 4. notifications denied, then not yet asked (a "needs you" cannot reach
 ///    a closed tray);
-/// 4. the last banner refused while a wait is open.
+/// 5. the last banner refused while a wait is open.
 ///
 /// Pure.
 struct TrayNoticeModel: Equatable {
     enum Kind: Equatable {
-        case setup, setupDone, notificationsDenied, notificationsOff, bannerFailed
+        case setup, setupDone, setupFailed, notificationsDenied, notificationsOff, bannerFailed
     }
 
     enum Action: Equatable {
-        case connect, dismissSetup, openNotificationSettings, enableNotifications
+        case connect, dismissSetup, openHooksSettings, openNotificationSettings, enableNotifications
     }
 
     var kind: Kind
@@ -86,9 +89,13 @@ struct TrayNoticeModel: Equatable {
         var notifyAuthorized: Bool?
         /// Notification Center refused the last banner while a wait is open.
         var bannerFailed: Bool
-        /// Agents on this Mac (or running) whose hook is not installed, in
-        /// roster order — empty once the person removed the hooks on purpose.
+        /// Agents on this Mac whose hook is not installed and whose last
+        /// install did not fail, in roster order — empty once the person
+        /// removed the hooks on purpose.
         var unconnected: [AgentID] = []
+        /// Why the last install failed for some agents
+        /// (`HooksSupport.Status.failureText`); "" when none did.
+        var installFailure: String = ""
         /// The agents the setup card just connected (never empty); nil when
         /// it has no follow-up to show.
         var justConnected: [AgentID]? = nil
@@ -113,6 +120,13 @@ struct TrayNoticeModel: Equatable {
                 kind: .setup, text: String(format: t(.setupFound), names(input.unconnected)),
                 actionTitle: t(.setupConnect), action: .connect,
                 systemImage: "link", tone: .idle
+            )
+        }
+        if !input.installFailure.isEmpty {
+            return TrayNoticeModel(
+                kind: .setupFailed, text: input.installFailure,
+                actionTitle: t(.setupFailedAction), action: .openHooksSettings,
+                systemImage: "exclamationmark.triangle", tone: .attention
             )
         }
         if input.notifyOnWaiting, input.notifyAuthorized == false {

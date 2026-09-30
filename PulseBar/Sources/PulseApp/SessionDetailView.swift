@@ -17,16 +17,14 @@ struct SessionDetailView: View {
         SessionDetailFace(model: store.detailModel(row), maxHeight: CGFloat(ui.maxListHeight)) { action in
             ui.send(action, row: row)
         }
-        // 24.0: the moment a person looks is when its transcript is read.
-        .onAppear { store.detailOpened(row) }
     }
 }
 
 /// Renders a `DetailModel` and nothing else: the header (back, lamp,
 /// agent · project, state and age), then the ask with Go and Dismiss, the
-/// why, the last message, the error and the facts — each block only when it
-/// has something to say — with how Pulse reads the session folded at the
-/// bottom.
+/// why, the recent steps, the last message, the error and the facts — each
+/// block only when it has something to say — with how Pulse reads the
+/// session folded at the bottom.
 struct SessionDetailFace: View {
     let model: DetailModel
     /// Off for a fixture capture, which measures the whole page.
@@ -123,6 +121,11 @@ struct SessionDetailFace: View {
                 .font(PulseTheme.Font.body)
                 .foregroundStyle(model.lamp.tone == .attention ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))
                 .fixedSize(horizontal: false, vertical: true)
+            if !model.steps.isEmpty {
+                section(t(.stepHeading)) {
+                    FactGrid(facts: model.steps)
+                }
+            }
             if let message = model.lastMessage {
                 section(t(.detailLastMessage)) {
                     Text(message)
@@ -211,7 +214,7 @@ struct FactGrid: View {
     }
 }
 
-/// 23.0: the lamp's shape in its tone — filled, ring, hollow or dotted
+/// The lamp's shape in its tone — filled, ring, hollow or dotted
 /// (`LampFace`). The same vocabulary as the menu-bar glyph.
 struct LampShapeView: View {
     let lamp: LampFace

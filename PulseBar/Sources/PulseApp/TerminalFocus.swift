@@ -1,6 +1,6 @@
 import AppKit
 
-/// 24.0 · runs a `LandingPlan` on an explicit click. The plan decided what
+/// Runs a `LandingPlan` on an explicit click. The plan decided what
 /// to try (pure, `LandingPlan.make`); this only does it, in order, and says
 /// how precisely it landed. Nothing here enumerates running apps.
 enum TerminalFocus {
@@ -223,7 +223,7 @@ enum TerminalFocus {
         """
     }
 
-    /// Internal since 4.0-β for the same reason as `focusTTY`.
+    /// Internal for the same reason as `focusTTY`.
     ///
     /// Bounded: `ProcessIO.run` drains both pipes and kills the child at the
     /// deadline, so a scripted app that never answers cannot hang the caller.

@@ -50,7 +50,6 @@ extension StatusStore {
                     : "Ship Signal Quality",
                 cwd: "/Users/me/code/Pulse"
             )
-            fixtureRow.model = "fixture-model"
             switch name {
             case "status-waiting":
                 fixtureRow.state = .blocked(RowWait(
@@ -62,9 +61,13 @@ extension StatusStore {
                 fixtureRow.isStalled = true
                 fixtureRow.lastEventMs = now - 25 * 60 * 1000
             case "status-running":
-                fixtureRow.lastWord = "Running the fixtures."
+                fixtureRow.lastWord = "The fixtures pass."
+                let step = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 60 * 1000)
+                fixtureRow.recentSteps = [step]
+                fixtureRow.lastStep = step
+                fixtureRow.turnStartMs = now - 14 * 60 * 1000
             case "status-turn":
-                // 16.0: finished, unseen — a quiet count, not the red lamp.
+                // Finished, unseen — a quiet count, not the red lamp.
                 fixtureRow.state = .yourTurn(sinceMs: now - 3 * 60 * 1000)
             default:
                 fixtureRow.liveProcess = false
@@ -103,13 +106,12 @@ extension StatusStore {
         }
 
         if name == "coverage" {
-            var codex = row(
+            let codex = row(
                 "coverage-codex",
                 .codex,
                 task: "Ship runtime observability",
                 cwd: "/Users/me/code/Pulse"
             )
-            codex.model = "gpt-5"
 
             var pi = row(
                 "coverage-pi",
@@ -159,8 +161,13 @@ extension StatusStore {
             task: "[hxddh/Pulse](https://github.com/hxddh/Pulse) Fix panel corners"
         )
         active.activityMs = now - 15_000
-        active.model = "gpt-5"
-        active.lastWord = "Corners now follow the panel radius; running the snapshot tests."
+        active.lastWord = "Corners now follow the panel radius."
+        active.recentSteps = [
+            SessionBook.Step(tool: "Edit", target: "Sources/PulseApp/PulseTheme.swift", ms: now - 3 * 60 * 1000),
+            SessionBook.Step(tool: "Bash", target: "swift test --filter Snapshot", ms: now - 15_000),
+        ]
+        active.lastStep = active.recentSteps.last
+        active.turnStartMs = now - 9 * 60 * 1000
 
         var stalled = row(
             "pi-preview",
@@ -201,13 +208,12 @@ extension StatusStore {
             process.lastEventMs = 0
             process.state = .processOnly
             process.startedMs = now - 70 * 60 * 1000
-            var sub = row(
+            let sub = row(
                 "claude-sub-preview",
                 .claude,
                 task: "Run collector fixtures",
                 cwd: "/Users/me/code/Pulse"
             )
-            sub.model = "claude-sonnet-4"
             rows += [quiet, process, sub]
         }
         rows.sort { $0.section.rawValue < $1.section.rawValue }

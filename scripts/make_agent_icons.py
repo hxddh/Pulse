@@ -104,7 +104,7 @@ def bar(x0, y0, x1, y1, weight):
 # Each is chosen to be unmistakable at 16pt and unlike every other silhouette
 # in the roster — that is the whole job of a row icon.
 
-# 24.0: every supported agent ships its vendor mark, so no glyph is generated
+# Every supported agent ships its vendor mark, so no glyph is generated
 # today. Add one here (and it is checked) when an agent without a mark joins.
 ICONS: dict = {}
 

@@ -5,17 +5,16 @@ import Testing
 @testable import PulseHarvest
 
 // Vendor formats: each agent's hook contract, read from the vendor's own
-// source (docs/vendor-formats.json). 24.0: the session-file fixtures went
-// with the harvest; the transcript lines Pulse still reads lazily are
-// pinned in TranscriptTests (`TranscriptSummaryTests`).
+// source (docs/vendor-formats.json). Pulse reads no vendor file, so there
+// are no session-file fixtures: the events are the contract.
 
-/// 20.0 Drift — what a vendor's hook says, read the way its source says it.
+/// Drift — what a vendor's hook says, read the way its source says it.
 /// The ones marked "invariant" were fake Waiting once.
 @Suite("Vendor drift", .serialized)
 struct VendorDriftTests {
     // MARK: - Hooks (invariant)
 
-    /// 24.0: Grok runs Claude's hooks by default and marks its calls; Grok
+    /// Grok runs Claude's hooks by default and marks its calls; Grok
     /// is not supported, and its events never land on a Claude row.
     @Test func grokCallingClaudesHooksIsRefused() {
         #expect(PulseHookReceiver.attributedAgent("claude", environment: ["GROK_HOOK_EVENT": "Notification"]) == nil)
@@ -42,7 +41,7 @@ struct VendorDriftTests {
         #expect(AttentionProtocol.normalizeKind("stop") == AttentionKind.turn.rawValue, "a known alias still normalises")
     }
 
-    /// 24.0: a red lamp has a way to go out — every agent that can block
+    /// A red lamp has a way to go out — every agent that can block
     /// installs an event that answers it — and each per-tool event reads as
     /// activity: never a decision, never a block.
     @Test func everyAgentThatCanBlockInstallsItsAnswer() {

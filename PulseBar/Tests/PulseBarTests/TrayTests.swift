@@ -9,9 +9,8 @@ import XCTest
 
 // Tray: the row face, header, keys, order, lamp, detail page and copy.
 
-// 23.0 removed the observation, work and compute lines (and the CPU and
-// memory facts they rendered) with `RowNarrator`; what a row says is pinned
-// in `ExplainTests`. The focus-honesty rule below stays.
+// What a row says is pinned in `ExplainTests`; the focus-honesty rule is
+// here.
 
 /// A folder that cannot be a workspace is never opened as one: the editor
 /// drops to app precision.
@@ -222,7 +221,7 @@ struct TrayInteractionTests {
         #expect(stable == ["a", "c", "e", "d"], "a newcomer keeps the place it was given")
     }
 
-    /// 23.0 bug: while the tray was open the list was the builder's top-12
+    /// While the tray was open the list was the builder's top-12
     /// window re-arranged, so a new wait sorting to the top pushed the
     /// twelfth row — possibly the one under the pointer — out of the list.
     @Test func aNewWaitWhileOpenIsAppendedAndPushesNothingOut() {
@@ -290,11 +289,11 @@ struct TrayInteractionTests {
 
     private func notice(
         notify: Bool = true, authorized: Bool? = true, banner: Bool = false,
-        unconnected: [AgentID] = [], connected: [AgentID]? = nil
+        unconnected: [AgentID] = [], failure: String = "", connected: [AgentID]? = nil
     ) -> TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: .en, notifyOnWaiting: notify, notifyAuthorized: authorized,
-            bannerFailed: banner, unconnected: unconnected, justConnected: connected
+            bannerFailed: banner, unconnected: unconnected, installFailure: failure, justConnected: connected
         ))
     }
 
@@ -311,6 +310,12 @@ struct TrayInteractionTests {
         let notAsked = notice(authorized: nil)
         #expect(notAsked?.kind == .notificationsOff)
         #expect(notAsked?.action == .enableNotifications)
+        let failed = notice(authorized: false, failure: "Gemini: broken")
+        #expect(failed?.kind == .setupFailed, "a failed install comes before notifications")
+        #expect(failed?.action == .openHooksSettings)
+        #expect(failed?.text == "Gemini: broken")
+        let unconnectedFirst = notice(unconnected: [.claude], failure: "Gemini: broken")
+        #expect(unconnectedFirst?.kind == .setup, "agents that can still connect are offered first")
         let banner = notice(banner: true)
         #expect(banner?.kind == .bannerFailed)
         #expect(notice() == nil)
@@ -422,7 +427,10 @@ struct TrayInteractionTests {
         #expect(ui.keys.selected == oldest?.rowKey)
     }
 
-    @Test func theInitialSelectionIsTheOldestWaitElseTheFirstRow() {
+    /// A fresh glance selects the first row, so the projection's order is
+    /// what makes it the oldest wait: waits first, the oldest first, an
+    /// unknown clock last, then the rest.
+    @Test func theProjectionListsTheOldestWaitFirst() {
         func blocked(_ key: String, since: Int64) -> AgentRow {
             var row = AgentRow(rowKey: key, agent: .claude)
             row.state = .blocked(RowWait(kind: "Permission", sinceMs: since))
@@ -431,10 +439,10 @@ struct TrayInteractionTests {
         var running = AgentRow(rowKey: "run", agent: .codex)
         running.state = .running
         let rows = [running, blocked("new", since: 9_000), blocked("unknown", since: 0), blocked("old", since: 1_000)]
-        #expect(TrayUI.initialSelection(rows) == "old")
-        #expect(TrayUI.initialSelection([running, blocked("unknown", since: 0)]) == "unknown")
-        #expect(TrayUI.initialSelection([running]) == "run")
-        #expect(TrayUI.initialSelection([]) == nil)
+        let order = TrayState.assemble(rows: rows, context: .init(nowMs: 10_000)).rows.map(\.rowKey)
+        #expect(order == ["old", "new", "unknown", "run"])
+        let onlyUnknown = TrayState.assemble(rows: [running, blocked("unknown", since: 0)], context: .init(nowMs: 10_000)).rows.first?.rowKey
+        #expect(onlyUnknown == "unknown")
     }
 
     /// The shortcuts offered leave the editors' own alone.
@@ -664,7 +672,7 @@ final class SurfaceModelTests: XCTestCase {
     }
 }
 
-/// 24.0 · landing: the handle decides, the plan says how precisely, and the
+/// Landing: the handle decides, the plan says how precisely, and the
 /// label never promises more than the plan.
 @Suite("Landing plan")
 struct LandingPlanTests {
@@ -846,8 +854,7 @@ final class DurationFormatTests: XCTestCase {
     }
 }
 
-/// 0.96 Return Truth — Glance width and Attention compact. (23.0: the rekey
-/// and story-honesty tests went with the remap and `RowNarrator`.)
+/// Return Truth — Glance width and Attention compact.
 final class GlanceTitleTests: XCTestCase {
 
     @MainActor
@@ -923,7 +930,7 @@ struct TerminalTabScriptTests {
     }
 }
 
-/// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
+/// The defects a fresh audit turned up.
 ///
 /// Each of these is a place where the code said something it had not
 /// measured, dropped work it had been asked to do, or let a click reach

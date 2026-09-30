@@ -2,9 +2,8 @@ import Foundation
 
 /// User settings as a value, saved as `settings.json` (0600, `PrivateFile`).
 ///
-/// 23.0 replaced the flat `key=value` `settings.txt` with this `Codable`
-/// struct and carries nothing over: a `settings.txt` found at load is
-/// deleted and the defaults apply. Only settings a person can reach from the
+/// A `Codable` struct; an old flat `settings.txt` is carried nothing over
+/// from: found at load, it is deleted and the defaults apply. Only settings a person can reach from the
 /// UI (or that Pulse genuinely needs) are kept. Decoding is tolerant — a
 /// missing key is its default, an unknown enum value is its default, and an
 /// unknown agent in the mute list is dropped — so one bad field never costs
@@ -98,19 +97,19 @@ struct PulseSettings: Equatable, Codable, Sendable {
         directory(home: home).appendingPathComponent("settings.json")
     }
 
-    /// The pre-23.0 file. Deleted at load, never read.
+    /// The old flat file. Deleted at load, never read.
     static func retiredFileURL(home: URL? = nil) -> URL {
         directory(home: home).appendingPathComponent("settings.txt")
     }
 
     /// The saved settings, or the defaults when there is no readable file.
-    /// A `settings.txt` from before 23.0 is removed, unread.
+    /// An old `settings.txt` is removed, unread.
     static func load(home: URL? = nil) -> PulseSettings {
         loadIfPresent(home: home) ?? PulseSettings()
     }
 
     /// The saved settings, or nil when there is no readable `settings.json`.
-    /// A `settings.txt` from before 23.0 is removed, unread.
+    /// An old `settings.txt` is removed, unread.
     static func loadIfPresent(home: URL? = nil) -> PulseSettings? {
         let retired = retiredFileURL(home: home)
         if FileManager.default.fileExists(atPath: retired.path) {

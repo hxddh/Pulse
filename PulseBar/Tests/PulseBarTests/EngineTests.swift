@@ -10,14 +10,14 @@ import XCTest
 // Engine: ScanEngine (the event feed and the projection), the tick and the
 // process-scan cadence, scan quiet.
 
-/// 12.4 Surface — a projection that found the same world wakes no surface.
+/// Surface — a projection that found the same world wakes no surface.
 ///
-/// 19.0: the store is `@Observable`. A view is invalidated by the properties
+/// The store is `@Observable`. A view is invalidated by the properties
 /// its body read, and Observation announces every assignment, equal or not.
 /// This is the counter wall: track every observed property of the store,
 /// project the same world twice, and nothing may fire. When it fails, it
-/// names the property that did. 24.0: an event-free period is exactly that
-/// — the tick re-projects with no event, and must announce nothing.
+/// names the property that did. An event-free period is exactly that — the
+/// tick re-projects with no event, and must announce nothing.
 @Suite("Scan quiet", .serialized)
 @MainActor
 struct ScanQuietTests {
@@ -136,6 +136,38 @@ struct ScanQuietTests {
         #expect(owed.isEmpty)
     }
 
+    /// A burst of tool lines while the tray is open: each line moves only
+    /// a row's quiet facts (its last step, its clocks), so the burst lands
+    /// at most once before the tick, and the tick lands the newest step. A
+    /// line that changes a state — a block — lands at once.
+    @Test func aBurstOfToolLinesLandsAtMostOncePerTick() {
+        let store = quietStore()
+        store.engine.setTrayOpen(true)
+        let t0 = Int64(Date().timeIntervalSince1970 * 1000)
+        store.engine.apply(records: [
+            AttentionRecord(agent: "claude", kind: "working", ms: t0, message: "Fix it", session: "s-burst", cwd: "/w/app"),
+        ], nowMs: t0, quiet: true)
+        let before = store.engine.landings
+        for index in 0..<20 {
+            let ms = t0 + 100 + Int64(index) * 50
+            store.engine.apply(records: [
+                AttentionRecord(agent: "claude", kind: "tool", ms: ms, message: "file\(index).swift", session: "s-burst", cwd: "/w/app", tool: "Read"),
+            ], nowMs: ms, quiet: true)
+        }
+        let burst = store.engine.landings - before
+        #expect(burst <= 1, "a burst of \(burst) landings between ticks")
+        store.engine.tick(nowMs: t0 + 5_000)
+        let step = store.cachedAll.first?.lastStep
+        #expect(step?.target == "file19.swift", "the tick lands the newest step")
+        let raised = store.engine.landings
+        store.engine.apply(records: [
+            AttentionRecord(agent: "claude", kind: "permission", ms: t0 + 5_100, message: "Bash: make", session: "s-burst", cwd: "/w/app", tool: "Bash"),
+        ], nowMs: t0 + 5_100, quiet: true)
+        #expect(store.engine.landings == raised + 1, "a block is not quiet")
+        let blocked = store.cachedAll.first?.isBlocked
+        #expect(blocked == true)
+    }
+
     @Test func aChangedWorldIsStillAnnounced() {
         let store = quietStore()
         tick(store)
@@ -209,7 +241,7 @@ struct ScanQuietTests {
         #expect(loop.deliveries == 2, "and the loop re-arms")
     }
 
-    // MARK: - The publish decision (unchanged since 12.4)
+    // MARK: - The publish decision
 
     @Test func aChangedWorldStillPublishes() {
         var current = PulseSnapshot()
@@ -222,7 +254,7 @@ struct ScanQuietTests {
         #expect(PulseSnapshot.needsPublish(next: next, current: current), "content moved")
     }
 
-    /// 23.0 bug: the snapshot carried the oldest wait's age in seconds, so
+    /// The snapshot carried the oldest wait's age in seconds, so
     /// every scan while anything was blocked differed from the last and
     /// republished — the tray and the lamp woke on every tick.
     @Test func aStandingWaitIsQuietBetweenMinuteLabels() {
@@ -231,7 +263,7 @@ struct ScanQuietTests {
         book.apply(AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 10 * 60_000, message: "Bash: make", session: "s1", cwd: "/w", pid: 0), nowMs: t0)
         func project(at nowMs: Int64) -> PulseSnapshot {
             var snap = TrayState.project(
-                book: book, processes: [], summaries: [:],
+                book: book, processes: [],
                 context: TrayState.Context(nowMs: nowMs, lang: .en)
             ).snapshot
             snap.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
@@ -284,7 +316,7 @@ struct ScanQuietTests {
     }
 }
 
-/// 25.0 · the engine's feed: the event log replayed whole at launch, then
+/// The engine's feed: the event log replayed whole at launch, then
 /// read from its cursor; a rewritten log is read whole and only what was
 /// not applied is applied.
 @Suite("Event feed", .serialized)
@@ -413,25 +445,60 @@ struct EventFeedTests {
         #expect(store.cachedAll.isEmpty)
     }
 
-    /// A transcript is read at the moments a person looks: a finished turn
-    /// or a wait — never while it works, and never without a path.
-    @Test func aTranscriptIsWantedOnlyAtATurnOrAWait() {
-        func session(_ state: SessionBook.State, transcript: String = "/t.jsonl") -> SessionBook.Session {
-            var s = SessionBook.Session(key: "claude|s1", agent: .claude, session: "s1")
-            s.state = state
-            s.transcript = transcript
-            s.pid = 42
-            s.lastEventMs = t0
-            return s
+    /// A launch replay that found the log empty (or missing) is over: the
+    /// first wait written after it is news, owed its banner.
+    @Test func aWaitWrittenAfterAnEmptyReplayIsNews() {
+        let store = StatusStore()
+        store.notifyAuthorized = nil
+        store.engine.landLog(EventLog.Chunk(header: "", lines: [], end: 0, fresh: true), nowMs: t0)
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: t0 + 500, message: "Bash: make", session: "s1", cwd: "/w/app", tool: "Bash")
+        store.engine.landLog(chunk([raise]), nowMs: t0 + 1_000)
+        let owed = store.notifier.ledger.queuedKeys
+        #expect(owed == ["claude|s1"])
+    }
+
+    /// A failed read at launch lifts the hold but does not use up the
+    /// baseline: the replay, when a read finally lands, is still the
+    /// baseline — its old waits are owed no banner.
+    @Test func aFailedLaunchReadLeavesTheReplayAsTheBaseline() {
+        let store = StatusStore()
+        store.notifyAuthorized = nil
+        store.engine.logReadFailed()
+        let raise = AttentionRecord(agent: "claude", kind: "permission", ms: t0 - 60_000, message: "Bash: make", session: "s1", cwd: "/w/app", tool: "Bash")
+        store.engine.landLog(chunk([raise]), nowMs: t0)
+        #expect(store.cachedAll.first?.isBlocked == true)
+        let owed = store.notifier.ledger.queuedKeys
+        #expect(owed.isEmpty)
+    }
+
+    /// One retry at a time, each waiting twice as long as the last: 5 s,
+    /// 10 s, 20 s, 40 s, then a minute.
+    @Test func aFailedReadIsRetriedWithBackoff() {
+        var delay = ScanEngine.firstLogRetry
+        var waits: [Duration] = []
+        for _ in 0..<6 {
+            waits.append(delay)
+            delay = ScanEngine.nextLogRetry(after: delay)
         }
-        #expect(ScanEngine.wantsTranscript(session(.yourTurn(sinceMs: t0)), nowMs: t0))
-        #expect(ScanEngine.wantsTranscript(session(.blocked(.init(kind: .permission, ask: "", sinceMs: t0, inFront: false))), nowMs: t0))
-        #expect(!ScanEngine.wantsTranscript(session(.working), nowMs: t0))
-        #expect(!ScanEngine.wantsTranscript(session(.yourTurn(sinceMs: t0), transcript: ""), nowMs: t0))
+        #expect(waits == [.seconds(5), .seconds(10), .seconds(20), .seconds(40), .seconds(60), .seconds(60)])
+    }
+
+    /// A line written twice (the same text) after a rewrite is applied
+    /// again; a kept line is not.
+    @Test func aRewrittenLogAppliesARepeatedLineOnce() {
+        let store = StatusStore()
+        let first = tool("Read", t0 - 3_000)
+        store.engine.landLog(chunk([first]), nowMs: t0)
+        let steps = store.engine.book.sessions["claude|s1"]?.steps.count
+        #expect(steps == 1)
+        // A compaction kept the line and the same text was appended again.
+        store.engine.landLog(chunk([first, first], header: "# g2"), nowMs: t0 + 1_000)
+        let after = store.engine.book.sessions["claude|s1"]?.steps.count
+        #expect(after == 2)
     }
 }
 
-/// 24.0 cadence policy — no fixed probe interval: a tick for time-based
+/// Cadence policy — no fixed probe interval: a tick for time-based
 /// facts, a slow process scan, nothing while the display sleeps.
 final class ProbeScheduleTests: XCTestCase {
     private let awake = ProbeSchedule.Power()
@@ -477,7 +544,7 @@ final class ProbeScheduleTests: XCTestCase {
         XCTAssertEqual(ProbeSchedule.processScan(power: awake), 30)
     }
 
-    /// 24.0: a scan that finds the same processes backs the next one off,
+    /// A scan that finds the same processes backs the next one off,
     /// 30 s → 5 min; any change brings it back to 30 s.
     func testTheProcessScanBacksOffWhileNothingChanges() {
         XCTAssertEqual(ProbeSchedule.processScan(power: awake, quietScans: 1), 60)

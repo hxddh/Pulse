@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "Where each agent's hook contract was checked (24.0 reads no session store). Gate: scripts/catalog_check.py. Weekly sentinel: scripts/vendor_drift.py.",
+  "about": "Where each agent's hook contract was checked (Pulse reads no vendor file). Gate: scripts/catalog_check.py. Weekly sentinel: scripts/vendor_drift.py.",
   "agents": {
     "claude": {
       "hooks": {
@@ -9,7 +9,7 @@
           "https://code.claude.com/docs/en/hooks"
         ],
         "checked": "2026-09-30",
-        "note": "Every Pulse entry runs async: true — an async hook cannot block or decide (\"Run hooks in the background\"). PostToolUse replaces PreToolUse for activity; PostToolUseFailure (after a tool call fails; output cannot change the outcome) is activity too. PermissionDenied is not installed: its hookSpecificOutput.retry can change what the model does. PermissionRequest AskUserQuestion reads tool_input.questions[0].question; ExitPlanMode reads tool_input.plan.",
+        "note": "Every Pulse entry runs async: true — an async hook cannot block or decide (\"Run hooks in the background\"). PostToolUse is activity (tool_name + tool_input: the step); PostToolUseFailure (after a tool call fails; output cannot change the outcome) is activity too. UserPromptSubmit's prompt is the session's title. Stop's last_assistant_message is the last words; StopFailure's last_assistant_message / error_details / error is the turn's error. PermissionDenied is not installed: its hookSpecificOutput.retry can change what the model does. PermissionRequest AskUserQuestion reads tool_input.questions[0].question; ExitPlanMode reads tool_input.plan.",
         "events": [
           "SessionStart",
           "SessionEnd",
@@ -35,10 +35,9 @@
         "checked": "2026-09-29",
         "watch": [
           "codex-rs/hooks/src/engine/discovery.rs",
-          "codex-rs/hooks/src/schema.rs",
-          "codex-rs/hooks/src/legacy_notify.rs"
+          "codex-rs/hooks/src/schema.rs"
         ],
-        "note": "hooks.json shares Claude's nested shape and honours async (SessionEnd always runs synchronously, capped at 3 s). PermissionRequest is never installed: it fires before Codex's own auto-review. The legacy notify argv (agent-turn-complete) stays. PostToolUse is installed async (engine/discovery.rs: only SessionEnd is forced synchronous; an async handler's output is never read) — the per-tool activity that makes a stall meaningful.",
+        "note": "hooks.json only — Pulse never touches config.toml (no notify argv). hooks.json shares Claude's nested shape and honours async (SessionEnd always runs synchronously, capped at 3 s). PermissionRequest is never installed: it fires before Codex's own auto-review. Stop is the end of a turn (last_assistant_message: the last words); UserPromptSubmit's prompt is the title. PostToolUse is installed async (engine/discovery.rs: only SessionEnd is forced synchronous; an async handler's output is never read) — the per-tool activity that makes a stall meaningful, and the step.",
         "events": [
           "SessionStart",
           "SessionEnd",
@@ -59,7 +58,7 @@
           "https://cursor.com/docs/hooks"
         ],
         "checked": "2026-09-29",
-        "note": "cursor.com was unreachable from the build environment on 2026-09-29; event names and payload fields (conversation_id, workspace_roots, transcript_path, status) were cross-checked against third-party typed bindings (pkg.go.dev/github.com/Checkmarx/ast-cx-hooks/cursor, github.com/speakeasy-api/gram server/design/hooks). beforeSubmitPrompt can stop a prompt and is not installed. Re-read the docs on a machine that can reach them.",
+        "note": "cursor.com was unreachable from the build environment on 2026-09-29; event names and payload fields (conversation_id, workspace_roots, status) were cross-checked against third-party typed bindings (pkg.go.dev/github.com/Checkmarx/ast-cx-hooks/cursor, github.com/speakeasy-api/gram server/design/hooks). beforeSubmitPrompt can stop a prompt and is not installed. Re-read the docs on a machine that can reach them. No installed event names a tool, so a Cursor row has no steps.",
         "events": [
           "sessionStart",
           "sessionEnd",
@@ -82,7 +81,7 @@
           "packages/coding-agent/docs/extensions.md",
           "packages/coding-agent/src/core/extensions/types.ts"
         ],
-        "note": "Extension events are notifications when the handler returns nothing; ui_prompt_start/ui_prompt_end are Pi's own report of a blocking user-facing prompt.",
+        "note": "Extension events are notifications when the handler returns nothing; ui_prompt_start/ui_prompt_end are Pi's own report of a blocking user-facing prompt. Pulse's extension forwards tool_execution_end's toolName and one short argument (command, path, file_path, pattern, url or query, from the event's args when present) as tool_name / tool_input — the step. agent_start carries no prompt, so a Pi row has no title from its events.",
         "events": [
           "session_start",
           "session_shutdown",
@@ -132,7 +131,7 @@
         "watch": [
           "content/copilot/reference/hooks-reference.md"
         ],
-        "note": "camelCase event names select the camelCase payload. notification is fire-and-forget; agentStop/sessionStart outputs are ignored when stdout is empty. agent_idle/agent_completed describe background subagents and are not read as the session's turn. postToolUse / postToolUseFailure: empty output keeps the original result (\"Return {} or empty output\"); only exit 2 on postToolUseFailure adds context, and Pulse exits 0 — the tool ran, which answers a permission_prompt.",
+        "note": "camelCase event names select the camelCase payload. notification is fire-and-forget; agentStop/sessionStart outputs are ignored when stdout is empty. agent_idle/agent_completed describe background subagents and are not read as the session's turn. postToolUse / postToolUseFailure: empty output keeps the original result (\"Return {} or empty output\"); only exit 2 on postToolUseFailure adds context, and Pulse exits 0 — the tool ran, which answers a permission_prompt. postToolUse sends toolArgs as a JSON string; its command or path is the step's target. userPromptSubmitted's prompt is the title. An unrecoverable errorOccurred ends the turn with error.message as its error.",
         "events": [
           "sessionStart",
           "sessionEnd",
@@ -161,7 +160,7 @@
           "packages/plugin/src/index.ts",
           "packages/opencode/src/plugin/index.ts"
         ],
-        "note": "A legacy plugin module: every named export is a plugin function. Only the event hook is used; it never throws and never awaits the child it spawns.",
+        "note": "A legacy plugin module: every named export is a plugin function. Only the event hook is used; it never throws and never awaits the child it spawns. session.error forwards the error's message (the turn's error). No installed event names a tool or carries a prompt: an OpenCode row has no steps and no title from its events.",
         "events": [
           "session.created",
           "session.status",

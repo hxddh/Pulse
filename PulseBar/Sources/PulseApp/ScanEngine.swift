@@ -24,11 +24,14 @@ import AppKit
 ///
 /// Each change re-projects the book (`TrayState.project`, pure) and hands
 /// the result to `StatusStore.land`, which assigns an observed property only
-/// when its value changed. A transcript is
-/// read only when its session reaches your turn or a wait, or its detail
-/// opens — bounded, off the main thread, cached per (path, size, mtime).
-/// A failed read — event log, process table, transcript — keeps what the
-/// engine had: a source failure never blanks the tray.
+/// when its value changed. A projection an event read produced that moves
+/// only a row's quiet facts — its last step, its clocks
+/// (`TrayState.quietSignature`) — lands at most once per tick: a burst of
+/// tool lines is one landing, not one per line. No vendor file is read:
+/// what a row says comes from its events. A failed read — event log,
+/// process table — keeps what the engine had: a source failure never blanks
+/// the tray, and a failed log read is retried on one timer that backs off
+/// from 5 s to 60 s.
 @MainActor
 final class ScanEngine {
     /// The model this engine feeds. Weak: the model owns the engine.
@@ -49,16 +52,14 @@ final class ScanEngine {
     /// Where the engine is in the event log: its generation and the byte
     /// after the last line applied.
     private(set) var logCursor: EventLog.Cursor?
-    /// Every line of the current generation already applied — consulted
-    /// only when the log was rewritten and is read whole again, so a line
-    /// the compaction kept is not applied twice. Bounded by the log.
-    private var appliedLines: Set<String> = []
+    /// Every line of the current generation applied so far, in the order it
+    /// was applied — consulted only when the log was rewritten and is read
+    /// whole again (`EventLog.unapplied`), so a line the compaction kept is
+    /// not applied twice and a line written twice is not skipped. Bounded by
+    /// the log.
+    private var appliedLines: [String] = []
     /// Agent processes the last process scan found.
     private(set) var processes: [AgentProcesses.Hit] = []
-    /// Transcript summaries by path, and the file stamp each was read at.
-    private(set) var transcripts: [String: TranscriptSummary] = [:]
-    private var transcriptStamps: [String: FileStamp] = [:]
-    private var transcriptReads: Set<String> = []
     /// The newest hook event per agent, for Settings' "last event" and the
     /// report. Kept here so a redraw never reads a file.
     private(set) var latestHookEventMs: [AgentID: Int64] = [:]
@@ -67,11 +68,26 @@ final class ScanEngine {
     private var lastWaits: [String: Int64] = [:]
     /// The event log has been read once: every projection up to and
     /// including the one after that read (the launch replay) is the
-    /// baseline — a wait already in the log is not news.
+    /// baseline — a wait already in the log is not news. Only the launch
+    /// replay is: every projection after it can notify.
     private(set) var logRead = false
     /// `start()` holds every projection until the launch replay has landed
     /// (or failed), so the first tray drawn is the replayed one.
     private var holdProjection = false
+    /// The one pending retry of a failed log read, and the wait before the
+    /// next one (5 s, doubling to 60 s; back to 5 s after a good read).
+    private var logRetry: Task<Void, Never>?
+    private(set) var logRetryDelay: Duration = ScanEngine.firstLogRetry
+    nonisolated static let firstLogRetry: Duration = .seconds(5)
+    nonisolated static let maxLogRetry: Duration = .seconds(60)
+    /// What the last landing looked like with its quiet facts set aside
+    /// (`TrayState.quietSignature`).
+    private var landedQuiet: TrayState?
+    /// A projection landed since the last tick: an event read that moves
+    /// only quiet facts waits for the next one.
+    private var landedSinceTick = false
+    /// Projections handed to the model — what `ScanQuietTests` counts.
+    private(set) var landings = 0
 
     // MARK: Cadence
 
@@ -103,11 +119,6 @@ final class ScanEngine {
     private enum Source: Hashable { case events, processes }
     private var reading: Set<Source> = []
     private var rereadWanted: Set<Source> = []
-
-    struct FileStamp: Equatable, Sendable {
-        var size: Int64
-        var mtimeMs: Int64
-    }
 
     // MARK: - Lifecycle
 
@@ -149,6 +160,8 @@ final class ScanEngine {
 
     func stop() {
         armed = false
+        logRetry?.cancel()
+        logRetry = nil
         attentionWatcher.stop()
         exitWatch.stop()
         tickTimer?.invalidate()
@@ -158,8 +171,10 @@ final class ScanEngine {
     }
 
     /// The tray came on screen or left it — tick faster while it is read.
+    /// A tray that just opened shows the newest steps at once.
     func setTrayOpen(_ open: Bool) {
         trayOpen = open
+        if open { landedSinceTick = false }
         rescheduleTimer()
     }
 
@@ -190,7 +205,7 @@ final class ScanEngine {
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             // Bind before the Task: the timer block is @Sendable.
             guard let engine = self else { return }
-            Task { @MainActor in engine.project() }
+            Task { @MainActor in engine.tick() }
         }
         timer.tolerance = interval * 0.2
         tickTimer = timer
@@ -267,46 +282,57 @@ final class ScanEngine {
     /// applied, so the next read cannot replay an answered block.
     func landLog(_ chunk: EventLog.Chunk, nowMs: Int64 = ScanEngine.nowMs()) {
         holdProjection = false
+        logRetry?.cancel()
+        logRetry = nil
+        logRetryDelay = Self.firstLogRetry
         let baseline = !logRead
         if chunk.lines.isEmpty, chunk.fresh {
-            // Nothing there (a missing header, an empty file): keep the
-            // cursor and what was applied.
+            // Nothing there (a missing file, an empty one): keep the cursor
+            // and what was applied.
             if baseline { project(nowMs: nowMs) }
             logRead = true
             return
         }
-        var fresh: [String] = []
+        let fresh: [String]
         if chunk.fresh {
-            var next: Set<String> = []
-            for line in chunk.lines {
-                if !appliedLines.contains(line) { fresh.append(line) }
-                next.insert(line)
-            }
-            appliedLines = next
+            fresh = EventLog.unapplied(chunk.lines, after: appliedLines)
+            appliedLines = chunk.lines
         } else {
             fresh = chunk.lines
-            appliedLines.formUnion(chunk.lines)
+            appliedLines += chunk.lines
         }
         logCursor = chunk.cursor
         let records = fresh.compactMap { AttentionRecord(line: $0) }
-        apply(records: records, nowMs: nowMs, verifyPids: baseline)
+        apply(records: records, nowMs: nowMs, verifyPids: baseline, quiet: !baseline)
         // The projection above was the baseline; the next one can notify.
         logRead = true
     }
 
     /// The log could not be read. Nothing changes; the launch hold is lifted
-    /// (the tray draws what it has, baseline) and the read is tried again.
+    /// (the tray draws what it has) and one retry is scheduled — never a
+    /// second while one is pending — each waiting twice as long as the last,
+    /// up to a minute. The launch replay stays the baseline whenever it lands.
     func logReadFailed() {
         DebugLog.write("event log read failed; keeping \(book.sessions.count) sessions")
         if holdProjection {
             holdProjection = false
             project()
         }
-        guard armed, !Self.suppressBackgroundScansForTesting else { return }
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
-            self?.read(.events)
+        guard armed, !Self.suppressBackgroundScansForTesting, logRetry == nil else { return }
+        let delay = logRetryDelay
+        logRetryDelay = Self.nextLogRetry(after: delay)
+        logRetry = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.logRetry = nil
+            self.read(.events)
         }
+    }
+
+    /// The wait after `delay` for the next retry: twice as long, at most
+    /// `maxLogRetry`. Pure.
+    nonisolated static func nextLogRetry(after delay: Duration) -> Duration {
+        min(delay * 2, maxLogRetry)
     }
 
     private func noteHookEvent(_ agent: AgentID, atMs ms: Int64) {
@@ -315,8 +341,10 @@ final class ScanEngine {
 
     /// Event records, in order. Tests call this directly. `verifyPids` (the
     /// launch replay) also ends a session whose pid now belongs to another
-    /// process — a pid reused since the log was written.
-    func apply(records: [AttentionRecord], nowMs: Int64, verifyPids: Bool = false) {
+    /// process — a pid reused since the log was written. `quiet`: the
+    /// records came from an event read, so a projection that moves only
+    /// quiet facts may wait for the tick.
+    func apply(records: [AttentionRecord], nowMs: Int64, verifyPids: Bool = false, quiet: Bool = false) {
         for record in records {
             book.apply(record, nowMs: nowMs)
             // A `done` may be Pulse's own (a dismissal): not the agent's hook
@@ -346,7 +374,7 @@ final class ScanEngine {
                 read(.processes)
             }
         }
-        project(nowMs: nowMs)
+        project(nowMs: nowMs, deferQuiet: quiet)
     }
 
     /// A process scan. `nil` — the table could not be read — keeps the last
@@ -377,13 +405,6 @@ final class ScanEngine {
         project(nowMs: nowMs)
     }
 
-    /// The detail page for this row opened: read its transcript if it has
-    /// one and it changed since it was last read.
-    func detailOpened(rowKey: String) {
-        guard let session = book.sessions[rowKey] else { return }
-        requestTranscript(session)
-    }
-
     // MARK: - Projection
 
     /// Ends every live session whose process is gone: its pid is dead, or
@@ -402,9 +423,18 @@ final class ScanEngine {
         })
     }
 
+    /// The tick: time moved, nothing else. Its projection always lands, so
+    /// whatever an event read left for it goes on screen now.
+    func tick(nowMs: Int64 = ScanEngine.nowMs()) {
+        landedSinceTick = false
+        project(nowMs: nowMs)
+    }
+
     /// The book as rows, landed on the model. Pure but for the landing.
-    /// Held while the launch replay is being read.
-    func project(nowMs: Int64 = ScanEngine.nowMs()) {
+    /// Held while the launch replay is being read. `deferQuiet`: when this
+    /// projection differs from the last landed one only in quiet facts and a
+    /// projection already landed since the last tick, it waits for the tick.
+    func project(nowMs: Int64 = ScanEngine.nowMs(), deferQuiet: Bool = false) {
         guard let model, !holdProjection else { return }
         // A turn held for a block lands once its grace has passed, even when
         // no event follows (a denied prompt, then Stop within 20 s).
@@ -413,7 +443,6 @@ final class ScanEngine {
         var state = TrayState.project(
             book: book,
             processes: processes,
-            summaries: transcripts,
             context: TrayState.Context(
                 nowMs: nowMs,
                 lang: model.lang,
@@ -422,20 +451,19 @@ final class ScanEngine {
                 previousWaits: lastWaits
             )
         )
+        exitWatch.follow(book.livePids)
+        let quiet = state.quietSignature
+        if deferQuiet, landedSinceTick, quiet == landedQuiet {
+            // Only a step or a clock moved: the tick lands it.
+            return
+        }
         lastWaits = state.waitingSince
         state.snapshot.updatedAt = Date(timeIntervalSince1970: Double(nowMs) / 1000)
         model.land(state, nowMs: nowMs, baseline: !logRead)
+        landedQuiet = quiet
+        landedSinceTick = true
+        landings += 1
         let snap = state.snapshot
-
-        exitWatch.follow(book.livePids)
-        for session in book.sessions.values where Self.wantsTranscript(session, nowMs: nowMs) {
-            requestTranscript(session)
-        }
-        // Summaries and their stamps go together: a stamp without its
-        // summary would make a returning session's unchanged file look read.
-        let paths = Set(book.sessions.values.map(\.transcript))
-        transcripts = transcripts.filter { paths.contains($0.key) }
-        transcriptStamps = transcriptStamps.filter { paths.contains($0.key) }
 
         // Re-arm the tick only when its tier moved.
         let nextFreshWait = state.rows.contains { row in
@@ -455,54 +483,6 @@ final class ScanEngine {
             lastApplyLogSignature = signature
             DebugLog.write("apply " + signature)
         }
-    }
-
-    // MARK: - Transcripts (lazy)
-
-    /// A session whose transcript is worth reading now: one that finished
-    /// its turn or is waiting — the moments a person looks.
-    static func wantsTranscript(_ session: SessionBook.Session, nowMs: Int64) -> Bool {
-        guard !session.transcript.isEmpty else { return false }
-        switch TrayState.state(of: session, nowMs: nowMs) {
-        case .yourTurn, .blocked: return true
-        case .running, .recent, .processOnly: return false
-        }
-    }
-
-    private func requestTranscript(_ session: SessionBook.Session) {
-        let path = session.transcript
-        guard !path.isEmpty, !transcriptReads.contains(path), !Self.suppressBackgroundScansForTesting else { return }
-        transcriptReads.insert(path)
-        // Only a stamp whose summary is still held can skip the read.
-        let known = transcripts[path] == nil ? nil : transcriptStamps[path]
-        let agent = session.agent
-        ioQueue.async { [weak self] in
-            let stamp = Self.stamp(path)
-            let summary: TranscriptSummary? = stamp != nil && stamp != known
-                ? TranscriptSummaryReader.read(path: path, agent: agent)
-                : nil
-            DispatchQueue.main.async { [weak self] in
-                self?.landTranscript(path: path, stamp: stamp, summary: summary)
-            }
-        }
-    }
-
-    private func landTranscript(path: String, stamp: FileStamp?, summary: TranscriptSummary?) {
-        transcriptReads.remove(path)
-        // Unchanged, or unreadable: keep what was read before.
-        guard let stamp, let summary else { return }
-        transcriptStamps[path] = stamp
-        guard transcripts[path] != summary else { return }
-        transcripts[path] = summary
-        project()
-    }
-
-    nonisolated static func stamp(_ path: String) -> FileStamp? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let size = attributes[.size] as? NSNumber,
-              let date = attributes[.modificationDate] as? Date
-        else { return nil }
-        return FileStamp(size: size.int64Value, mtimeMs: Int64(date.timeIntervalSince1970 * 1000))
     }
 
     nonisolated static func nowMs() -> Int64 {

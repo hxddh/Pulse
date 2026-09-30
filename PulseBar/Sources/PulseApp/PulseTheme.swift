@@ -1,14 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// 21.0 Clarity — the product's one visual system.
-///
-/// 11.0 named card chrome and motion; the rest — type sizes, fills, radii,
-/// state colours — kept being written by hand at each call site, and an audit
-/// at 20.0 counted seven corner radii, a dozen point sizes and three different
-/// reds. Everything a view needs to look like Pulse is named here, and
-/// `scripts/surface_check.py` rejects a literal size, radius or opacity in a
-/// view that has a token for it.
+/// The product's one visual system: type sizes, fills, radii, motion and
+/// state colours, named once. Everything a view needs to look like Pulse is
+/// named here, so no call site writes its own radius, point size or red.
 ///
 /// Colours are computed properties, never `static let`: a stored colour
 /// freezes the appearance that was current on first touch (see
@@ -29,7 +24,7 @@ enum PulseTheme {
     // MARK: Radii — three, nested inside each other
 
     enum Radius {
-        /// Inner blocks, chips' containers, fields inside a card.
+        /// Inner blocks, fields inside a card.
         static let inner: CGFloat = 6
         /// Rows' hover/selection fill and every card.
         static let card: CGFloat = 10
@@ -45,7 +40,6 @@ enum PulseTheme {
         static let selected: Double = 0.10
         /// A notice's tinted surface.
         static let waitTint: Double = 0.07
-        static let chip: Double = 0.14
     }
 
     // MARK: Type — semantic styles, so the platform owns the sizes
@@ -65,16 +59,12 @@ enum PulseTheme {
         static let label: SwiftUI.Font = .system(.subheadline, design: .rounded).weight(.semibold)
         /// Times, sources, footnotes.
         static let caption: SwiftUI.Font = .system(.caption)
-        /// Chips.
-        static let chip: SwiftUI.Font = .system(.caption, design: .rounded).weight(.semibold)
         /// Machine text: commands, paths, an agent's error in its own words.
         static let code: SwiftUI.Font = .system(.caption, design: .monospaced)
     }
 
     // MARK: Chrome
 
-    static let hairline: CGFloat = 1
-    static let cardPadding: CGFloat = Space.m
     static let innerPadding: CGFloat = Space.s
 
     // MARK: Motion
@@ -91,7 +81,7 @@ enum PulseTheme {
     // MARK: State colours — one per state, everywhere
 
     /// The four things Pulse can say about an agent, plus neutral. The lamp,
-    /// the chip and the header count all read this.
+    /// the row and the header count all read this.
     enum Tone: Equatable {
         /// Blocked on the person (red).
         case waiting
@@ -127,11 +117,6 @@ extension GlanceKind {
 // MARK: - Shared chrome
 
 extension View {
-    /// A card: the one surface every in-list and window card shares.
-    func pulseCard(padding: CGFloat = PulseTheme.cardPadding) -> some View {
-        modifier(PulseCardChrome(padding: padding, radius: PulseTheme.Radius.card))
-    }
-
     /// A block inside a card.
     func pulseInner(padding: CGFloat = PulseTheme.innerPadding) -> some View {
         self
@@ -141,46 +126,5 @@ extension View {
                 Color.primary.opacity(PulseTheme.Fill.subtle),
                 in: RoundedRectangle(cornerRadius: PulseTheme.Radius.inner, style: .continuous)
             )
-    }
-}
-
-private struct PulseCardChrome: ViewModifier {
-    let padding: CGFloat
-    let radius: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color.primary.opacity(PulseTheme.Fill.subtle),
-                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(.quaternary, lineWidth: PulseTheme.hairline)
-            )
-    }
-}
-
-/// One chip for the whole product: a state word in its tone.
-struct PulseChip: View {
-    let label: String
-    var tone: PulseTheme.Tone = .idle
-
-    var body: some View {
-        Text(label)
-            .font(PulseTheme.Font.chip)
-            .monospacedDigit()
-            .foregroundStyle(tone == .idle ? AnyShapeStyle(.secondary) : AnyShapeStyle(tone.color))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(
-                (tone == .idle ? Color.primary : tone.color)
-                    .opacity(tone == .idle ? PulseTheme.Fill.hover : PulseTheme.Fill.chip),
-                in: Capsule(style: .continuous)
-            )
-            .lineLimit(1)
-            .fixedSize()
     }
 }

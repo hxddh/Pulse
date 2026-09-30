@@ -10,13 +10,9 @@ import Foundation
 /// the rename. Creating the file with the mode we want, before a byte goes
 /// into it, closes the window instead of narrowing it.
 ///
-/// 2.2 established this for the session digest, which by design stored only
-/// counts and vendor tool names. The two files holding actual prose had the
-/// weakest protection of anything Pulse writes: the attention ledger kept
-/// session titles — the user's own words, up to 160 characters — and set no
-/// mode at all; `events.tsv` keeps the command an agent asked to run and
-/// the directory it asked from, and was created 0644. `settings.json` and
-/// the hook-install ledger are written through here.
+/// `events.tsv` keeps the command an agent asked to run, the prompt the
+/// person typed and the directory it came from; `settings.json` and the
+/// hook-install ledger are written through here too.
 public enum PrivateFile {
     public static let mode: mode_t = 0o600
 
@@ -73,7 +69,7 @@ public enum PrivateFile {
 
 /// Reading files that someone else's sync tool may have put there.
 ///
-/// The spool directories are fed by rsync / Syncthing / a shared folder, and
+/// A settings file may be fed by rsync / Syncthing / a shared folder, and
 /// those copy symlinks and (with `rsync -D`) FIFOs as faithfully as regular
 /// files. A size check through `attributesOfItem` describes the *link*, and
 /// `Data(contentsOf:)` then follows it — so a link to `/dev/zero` passed the

@@ -9,11 +9,10 @@
       ScanEngine            启动时整份重放、再第一次投影；之后只按游标读新字节，逐行按顺序交给会话簿
            │
            ▼
-      SessionBook           纯值 reducer：apply(event) → 工作中 / 需要你 / 轮到你 / 结束
+      SessionBook           纯值 reducer：apply(event) → 工作中 / 需要你 / 轮到你 / 结束，外加最后 5 步、标题、本回合时钟
            │   ◄── AgentProcesses（libproc，启动 / 唤醒 / 未知 pid 时 + 30 秒起退避到 5 分钟）· ProcessExitWatch（每个会话 pid 一个退出源）
-           │   ◄── TranscriptSummaryReader（轮到你 / 需要你 / 打开详情时有界读一次，离开主线程，按大小与 mtime 缓存）
            ▼
-      TrayState.project     纯函数：会话 + 进程 + 会话摘要 → 行、灯、菜单栏标题、计数、新的等待边沿、较早隐藏数
+      TrayState.project     纯函数：会话 + 进程 → 行、灯、菜单栏标题、计数、新的等待边沿、较早隐藏数
            │  land(结果)
            ▼
       StatusStore          视图读的唯一 @Observable 模型：快照、行、设置、少量 UI 标志、intent
@@ -31,9 +30,8 @@ PulseBar/Sources/
   PulseCore/     内核库。只 import Foundation（+ CryptoKit / CoreGraphics）。
                  AgentCatalog（每 Agent 的全部事实：进程规则、别名、Waiting、hook 契约）· PrivateFile / SafeRead
                  · ProcessIO · ContentSanitizer · AttentionProtocol · ProbeSchedule · DebugLog · Guarded
-  PulseHarvest/  事件与进程库，依赖 Core。AttentionIO · ActivitySpool · AgentProcesses（libproc）
-                 · TranscriptSummary（六种会话文件方言：标题、最后的消息、模型、最后的错误）
-                 · RowIdentity · TitleHeuristics · HostAppKind
+  PulseHarvest/  事件与进程库，依赖 Core。EventLog（追加、按游标读、压缩、按位置认出已应用的行）
+                 · AgentProcesses（libproc）· RowIdentity · TitleHeuristics（标题：提示词的清洗与取舍）· HostAppKind
   PulseApp/      应用库，依赖两个库并拥有资源（图标与品牌图，经 PulseResources 找，从不用 Bundle.module）。
                  SessionBook、TrayState、ScanEngine、ProcessExitWatch、StatusStore、WaitNotifier、WaitLedger、
                  WaitingDelivery、Explain、hook 入口与安装器、全部视图。表面是纯值：视图只渲染值、发 intent，
@@ -55,39 +53,45 @@ QA 代码不进产品：`surface_check.py` 不让 QA 文件回到 `PulseApp`，`
 `StatusStore` 是 `@Observable`：视图只因它的 body 实际读到的属性变化而重绘。状态分三份：
 
 - **`ScanEngine`**（`@MainActor`，不被观察）：持有 `SessionBook`、事件日志的游标（这一代的表头与
-  已应用到的字节）与这一代已应用过的行、最近一次有效的进程列表、会话摘要缓存、上一轮开着的等待
-  （给下一轮算边沿）与两个便宜的定时器；在后台队列读事件日志、进程表与会话文件；调用纯函数 `TrayState.project`，把结果交给
-  `StatusStore.land`。它不持有也不写任何 UI 状态。
+  已应用到的字节）与这一代按顺序已应用过的行、最近一次有效的进程列表、上一轮开着的等待
+  （给下一轮算边沿）、一个读失败时的重试（5 秒起翻倍到 60 秒，同时只有一个）与两个便宜的定时器；
+  在后台队列读事件日志与进程表；调用纯函数 `TrayState.project`，把结果交给 `StatusStore.land` ——
+  事件读出的、只动了行的安静事实（上一步、时钟，`TrayState.quietSignature`）的投影每拍至多落地一次，
+  一阵工具行不会让托盘每行重绘一次。它不持有也不写任何 UI 状态。
 - **`WaitNotifier`**（`@MainActor`，不被观察）：横幅的规划（`WaitingDelivery`）、发送
   （`PulseNotify`）、限流与点横幅回到对应行；记账在纯值 `WaitLedger` 里，只在内存。
 - **`StatusStore`**（`@Observable`）：只放视图要读的 —— `snapshot`、`cachedAll`、`settings`、
   `settingsFocus` 与几个状态标志，外加视图发出的 intent（聚焦、忽略、静音、打开设置、安装 hooks、
-  复制报告、打开详情……）。`land` 只在值变化时赋值。
+  复制报告……）。`land` 只在值变化时赋值。
 
 更新路径因此只在值变化时写被观察的属性（`ScanQuietTests` 逐个跟踪每个被观察属性，超过 25 个
 即失败）。设置窗口不读 `snapshot` 或行（`surface_check.py` 把守）；AppKit 侧（状态栏图标）用
 `ObservationLoop` 只跟随 `snapshot`。测试用 `store.engine.apply(records:nowMs:)` 与 `engine.project(nowMs:)`
 驱动一轮。
 
-## 三个来源
+## 两个来源
 
 ### 事件（主干）
 
 `~/Library/Application Support/Pulse/events.tsv` —— **一个**只追加的事件日志（`EventLog`），由原生
 `pulse-hook` / `PulseBar --hook`（`PulseHookReceiver`）在排他 `flock` 下追加，或按 Attention Protocol v5
-（每行十一列：agent、kind、ms、message、session、cwd、front、pid、transcript、landing、tool）直接追加。
+（每行十一列：agent、kind、ms、message、session、cwd、front、pid、保留列（写空、不读）、landing、tool）直接追加。
 每个 Agent 的 hook 都以 `pulse-hook <agent> <厂商事件名>` 调用，接收器按 Agent 把厂商事件与载荷
 映射成 start / working / tool / 阻塞（permission / question / waiting）/ turn / idle / done / end，
-每个事件一行、带自己的时间戳。契约见 [`attention-protocol.md`](attention-protocol.md)；产品政策见
+每个事件一行、带自己的时间戳；提示事件带提示原文（标题的来源），工具事件带工具与目标（上一步），
+回合事件带最后一句话或错误。契约见 [`attention-protocol.md`](attention-protocol.md)；产品政策见
 [`attention-bridge.md`](attention-bridge.md)。
 
 文件有界：追加会让它超过 1 MiB 时先压缩并换一代表头 —— 每个会话（无会话的按 Agent + 目录）留最近
-64 行与两小时内的全部行，一天没动静的会话整组丢掉，开着的阻塞连同它之后的行永不丢。
+64 行与两小时内的全部行，一天没动静的会话整组丢掉，开着的阻塞连同它之后的行永不丢，正在追加的那一行
+永远留下。只按 `\n` 字节分行。
 
 `AttentionWatcher` 用一个 `DispatchSource` 盯着它，写入即触发读取。**启动时**引擎把整份日志读一遍、
 逐行应用到会话簿，然后才第一次投影（这次投影是横幅基线）；之后只读游标之后的完整行。表头的「代」
-变了（被压缩重写）或文件比游标短时整份再读，已应用过的行按原文跳过、不重放。**读失败或读到空不改变
-任何状态** —— 游标与已应用的行都保留，被回答过的阻塞不会因为重读而再红。
+变了（被压缩重写）或文件比游标短时整份再读，已应用过的行按位置认出（`EventLog.unapplied`：重写保持
+顺序，每一行对上下一个同文的已应用行；对不上的才是新的）、不重放，同样的一行写两次就应用两次。
+**读失败或读到空不改变任何状态** —— 游标与已应用的行都保留，被回答过的阻塞不会因为重读而再红；
+文件不存在就是空日志。
 
 ### 进程（便宜，按需）
 
@@ -110,12 +114,8 @@ TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与�
 是否仍是那个进程（`AgentProcesses.stillRuns`：换成了别的 Agent、或在第一次报出这个 pid 的事件之后才
 启动的，都算 pid 被复用 —— 会话已结束）。**一次失败的扫描保留上一份有效列表。**
 
-### 会话文件（按需）
-
-`TranscriptSummaryReader` 只在会话轮到你、需要你，或用户打开详情页时读一次它的会话文件：小文件整读，
-大文件读头 64 KB + 尾 256 KB 并丢掉撕裂的边缘；在后台队列读，按（路径、大小、mtime）缓存。
-六种方言（Claude、Codex、Gemini、Pi、Copilot、Cursor）各给出标题、最后的消息、模型与最后的错误；
-OpenCode 没有会话文件，用它的事件自带的内容。读不到文件只是行少了标题，**从不移除会话**。
+不读任何厂商文件：没有会话文件、没有 transcript。token、上下文、费用、模型与套餐不显示 —— 这是
+决定，`catalog_check` 不放行读这些字段的代码。
 
 ## SessionBook（纯值 reducer）
 
@@ -130,6 +130,9 @@ OpenCode 没有会话文件，用它的事件自带的内容。读不到文件�
   只在会话仍在工作或阻塞时算轮到你，从不复活已看过的回合；`done` → 清掉阻塞 / 轮到你（早于当前
   状态的 `done` 不算）；`end` → ended。未来戳拒收；不点名会话的 `turn` 与 `done` / `end` 不造会话；
   协议之外的词不造会话。
+- 每个会话还记下：最后 5 个点名工具的 `tool` 行（`Step`：工具、目标、时间）；开始本回合的提示的时间
+  （没见到提示时是让它动起来的那一步）；第一条说了事的提示（标题，至多 120 字）与最近的提示；回合事件
+  带的最后一句话；`tool` = `error` 的回合带的错误（下一条提示清掉）。全部由启动重放重建，不另存。
 - `tool` 行：同一会话在提问之后的工具活动熄灭等待（回答发生在厂商自己的提示里）；提问与工具行都
   点名工具时，只有同一个工具算回答（并行的别的工具结束不算）。每一行都应用，答案前后的并行工具不会
   把它盖掉。
@@ -139,7 +142,7 @@ OpenCode 没有会话文件，用它的事件自带的内容。读不到文件�
 
 ## TrayState（纯函数）
 
-`TrayState.project(book:processes:summaries:context:)` 把会话簿变成托盘，分两步：
+`TrayState.project(book:processes:context:)` 把会话簿变成托盘，分两步：
 
 `sessionRows` 把会话投影成 `AgentRow`：
 
@@ -147,7 +150,7 @@ OpenCode 没有会话文件，用它的事件自带的内容。读不到文件�
    （`RecentReason.quiet`，`Explain.why` 这样说）；轮到你超过 30 分钟也是 `.recent`。
 2. 会话认领它 pid 所在的进程家族；没有 pid 的未结束会话认领同目录的进程；没被认领的进程家族
    是仅进程行 `agent|pid:<pid>`（灰色虚线灯，永不橙、不装绿）。
-3. 标题与最后的消息来自会话摘要，否则来自 `turn` 事件带的原话；落地句柄先取事件的 landing 列，
+3. 标题、最后的消息、错误、最近几步与本回合时钟都来自会话自己的事件；落地句柄先取事件的 landing 列，
    进程（TTY / Warp / 宿主）只补它没说的；`LandingPlan.make` 据此排出落地步骤（见 `docs/landing-hosts.md`）。
 4. 停滞（橙）只给 hook 契约里有逐工具事件的 Agent（`HookContract.reportsToolActivity`：Claude /
    Codex `PostToolUse`、Gemini `AfterTool`、Copilot `postToolUse`、Pi `tool_execution_end`），且会话
@@ -196,8 +199,9 @@ VoiceOver 计数，以及**边沿**：上一轮没在等的行，或同一行上
   被拒的留着欠账重试。安静时段与声音交给 macOS 的专注模式与通知设置。
 - **设置**。`PulseSettings` 是 `Codable` 值，存为 `settings.json`（与 events.tsv 同目录，`PULSE_HOME`
   一起搬；经 `PrivateFile` 以 `0600` 写入；缺字段取默认、未知值取默认）。改设置只走
-  `StatusStore.set(_:_:)`：值变了才写盘并应用（登录项、快捷键、横幅按钮语言、重扫），且只在 `start()`
-  读过设置之后。`allowTerminalAutomation` 没有设置项，只在 `settings.json` 里改，报告会写出它的值。
+  `StatusStore.set(_:_:)` / `update(_:)`：值变了才写盘，并只应用变了的那项需要的
+  （`StatusStore.effects(from:to:)`：快捷键只为快捷键、登录项只为登录项、语言与终端自动化重新投影，
+  静音与通知开关什么都不用做），且只在 `start()` 读过设置之后。`allowTerminalAutomation` 没有设置项，只在 `settings.json` 里改，报告会写出它的值。
 - **诊断**。没有诊断窗口：设置的 Hooks 一节每个在这台 Mac 上的 Agent 一行（已安装 / 未安装 / 失败原因、
   「最近事件 N 前」来自 `ScanEngine.latestHookEventMs`、修复按钮），不在的合成一行；「复制报告」
   （`SettingsModel.report`，纯函数）给出版本、每个 Agent 的安装状态与最近事件、通知授权、终端自动化与
@@ -249,10 +253,10 @@ hook 安装或 `--selftest`。
 | 脚本 | 守什么 |
 | --- | --- |
 | `version_check.py` | 版本只有一个真源，CHANGELOG 与 README 徽标跟随 |
-| `catalog_check.py` | 每个 `AgentID` 一条 spec、别处不长出按 Agent 的表；Cursor worker 被拒；进程只经 libproc（不起 `ps` / `lsof`）；AppleScript 只在 Automation 授权后；README 矩阵的 Waiting 列 == 目录；每个 Agent 的 hook 契约有出处与测试（`docs/vendor-formats.json`） |
+| `catalog_check.py` | 每个 `AgentID` 一条 spec、别处不长出按 Agent 的表；Cursor worker 被拒；进程只经 libproc（不起 `ps` / `lsof`）；AppleScript 只在 Automation 授权后；不读 token / 用量 / 费用字段；README 矩阵的 Waiting 列 == 目录；每个 Agent 的 hook 契约有出处与测试（`docs/vendor-formats.json`） |
 | `make_agent_icons.py --check` | 每个 `AgentID` 都有图标，且与生成器逐字节一致 |
 | `appearance_check.py` | 没有把随外观变化的值冻进常量 |
-| `surface_check.py` | 表面渲染值、不碰 store；fixture 与截图清单一致；QA 文件只在 `PulseQA` |
+| `surface_check.py` | 表面渲染值、不碰 store；fixture 与截图清单一致；QA 文件只在 `PulseQA`；「为什么」不提 hook；步骤的话从不说「正在」/ running |
 | `scenario_map.py` | `docs/scenarios.md` 点名的测试套件与方法都存在 |
 | `package_check.py` | 打出来的 `.app` 能找到自己的资源，且二进制里没有 QA 代码 |
 
@@ -260,7 +264,7 @@ hook 安装或 `--selftest`。
 `scripts/qa_observation_truth.sh` 构建并运行 `PulseQA` 得到。
 
 测试（`PulseBar/Tests/PulseBarTests/`）按组件分文件：`CoreTests`（目录、有界 IO、libproc 进程）、
-`TranscriptTests`（有界尾读与六种会话文件方言）、`VendorFormatTests`（hook 契约与漂移）、`AttentionTests`
+`VendorFormatTests`（hook 契约与漂移）、`AttentionTests`
 （会话簿读事件行、协议、事件日志、hook 接收器、安装器）、`SessionTests`（七个 Agent 的真值表、`TrayState`、身份）、
 `ExplainTests`、`NotifierTests`（`WaitLedger`、横幅规划与路由）、`TrayTests`、`SettingsTests`、
 `DiagnosticsTests`（报告、Hooks 一节、托盘提示、版本与更新）、`EngineTests`（扫描静默、事件馈送、节奏）。

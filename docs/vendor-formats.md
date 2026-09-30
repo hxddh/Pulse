@@ -1,13 +1,24 @@
 # Vendor contracts — where each hook's shape comes from
 
-Since 24.0 Pulse's state comes from the vendors' own hook / plugin /
-extension events. It no longer scans session stores; it reads one transcript
-lazily — at a finished turn, a wait, or when the detail opens — for the
-title, the last message, the model and the last error
-(`PulseHarvest/TranscriptSummary.swift`, one dialect per agent, pinned by
-`TranscriptSummaryTests`). When a vendor changes a hook contract nothing
-fails loudly: an event stops arriving, or (worse) a new one is read as the
-wrong state. So each contract names the source it was read from.
+Pulse's state, and everything a row says, comes from the vendors' own hook /
+plugin / extension events. It reads no vendor file: no session store, no
+transcript. The title is the session's first prompt (the prompt event's own
+text), the last words and a turn's error are what the turn event carried,
+and the steps are the per-tool events (the tool and its target). Tokens,
+context, cost and plan are never read — a decision `catalog_check` holds.
+When a vendor changes a hook contract nothing fails loudly: an event stops
+arriving, or (worse) a new one is read as the wrong state. So each contract
+names the source it was read from.
+
+| Agent | Title (prompt event) | Step (tool event) | Last words / error |
+| --- | --- | --- | --- |
+| Claude | `UserPromptSubmit` `prompt` | `PostToolUse(Failure)` `tool_name` + `tool_input` | `Stop` `last_assistant_message`; `StopFailure` error |
+| Codex | `UserPromptSubmit` `prompt` | `PostToolUse` `tool_name` + `tool_input` | `Stop` `last_assistant_message` |
+| Gemini | `BeforeAgent` `prompt` | `AfterTool` `tool_name` + `tool_input` | `AfterAgent` `prompt_response` |
+| Copilot | `userPromptSubmitted` `prompt` | `postToolUse` `toolName` + `toolArgs` (a JSON string) | unrecoverable `errorOccurred` `error.message` |
+| Pi | — (`agent_start` carries none) | `tool_execution_end`, forwarded as `tool_name` + one argument | — |
+| OpenCode | — | — (no tool event) | `session.error` message |
+| Cursor | — | — (no tool event) | — |
 
 ## The manifest
 
@@ -20,12 +31,11 @@ holds only a `hooks` block:
 | `docs` | Closed source; public documentation was read | `urls`, `checked`, `events`, `tests` |
 
 `events` must equal the catalog's `HookContract.events`. `tests` names test
-files (by file; 23.0 grouped them by component) that exercise the contract;
-each must exist and mention the agent.
+files (grouped by component) that exercise the contract; each must exist and
+mention the agent.
 
 `scripts/catalog_check.py` (in `gates.sh`) fails when an agent has no entry,
-an entry carries anything besides `hooks` (the 20.0 format entries went with
-the harvest in 24.0), a repo block lacks a full commit or watch list, the
+an entry carries anything besides `hooks`, a repo block lacks a full commit or watch list, the
 events disagree with the catalog, a named test file does not exist or never
 mentions the agent, or the manifest names an agent the catalog no longer has.
 It also holds two facts about the events themselves: an agent that can raise
@@ -37,7 +47,8 @@ the answer to a permission, and the only silence that means a stall
 (`HookContract.reportsToolActivity`). Each was checked non-blocking at exit 0
 with empty output against the pinned source (Codex: `engine/discovery.rs`
 runs every event but `SessionEnd` async when asked; Gemini: "Global hook
-mechanics"; Copilot: "postToolUse output"). Claude also installs
+mechanics"; Copilot: "postToolUse output"). Codex is `hooks.json` only:
+Pulse never touches its `config.toml`. Claude also installs
 `PostToolUseFailure` (after a tool call fails; its output cannot change the
 outcome), which answers a block for that tool like `PostToolUse`; it does
 not install `PermissionDenied`, whose `hookSpecificOutput.retry` can change
@@ -57,10 +68,3 @@ public repositories and prints; it writes nothing.
 A red run is a prompt to read, not proof of breakage: read the commits, fix
 the receiver and its test if the contract moved, then move the pin
 (`commit`, `checked`) — the same change, so the gate and the sentinel agree.
-
-## History
-
-20.0 pinned every agent's on-disk session format this way and found drift in
-eleven of them (Gemini, OpenCode's fake `pending` Waiting, the Cline family,
-Goose, Kimi, Grok, Copilot, Continue, OpenHands, Pi, Aider). 24.0 deleted the
-session-store scanning those pins guarded; see CHANGELOG and git history.

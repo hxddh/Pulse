@@ -1,7 +1,7 @@
 # Attention bridge samples
 
-Two minimal scripts that append Attention Protocol v5 lines (all eleven
-columns) to the event log, `events.tsv`, for one of Pulse's seven agents — see
+Two minimal scripts that append Attention Protocol v5 lines to the event
+log, `events.tsv`, for one of Pulse's seven agents — see
 [`docs/attention-protocol.md`](../../attention-protocol.md) and
 [`docs/attention-bridge.md`](../../attention-bridge.md). The installed hooks
 do this for real; these are for trying the tray by hand.
@@ -17,9 +17,9 @@ do this for real; these are for trying the tray by hand.
 ./docs/samples/attention-bridge/clear.sh gemini sess-42
 ```
 
-`raise.sh` **prefers** `~/Library/Application Support/Pulse/pulse-hook`
-(native) and only falls back to a direct append when the launcher is
-missing. `clear.sh` appends directly. A direct append must write one whole
-line; a file that does not exist yet gets its header (with a generation)
-first. Codex and Cursor never report a wait: a blocked kind for them is
-refused, by `pulse-hook` and by the script.
+Both write through `~/Library/Application Support/Pulse/pulse-hook` (the
+native launcher Pulse writes at launch), which appends one whole line under
+the event log's exclusive lock — a plain `>>` could interleave with a hook
+writing at the same moment, and macOS ships no `flock(1)`. Without the
+launcher they write nothing. Codex and Cursor never report a wait: a blocked
+kind for them is refused, by `pulse-hook` and by the script.

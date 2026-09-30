@@ -24,15 +24,16 @@ Pulse 把这件事变成余光可见：
 
 点开托盘看到的是**一行一个会话**：灯的形状、Agent、项目、任务、时间。灯不只靠颜色 ——
 实心（需要你）、环（运行中）、空心（轮到你、最近）、虚线（只看到进程），菜单栏用同一套形状，
-色弱和灰度下也分得开；**橙色只给停滞**。等待行多一行问题本身，停滞行多一行橙色原因；
-其余动作在键盘、右键菜单与详情页里。行上不列 token、费用或上下文占用。
+色弱和灰度下也分得开；**橙色只给停滞**。等待行多一行问题本身，停滞行多一行橙色原因（点名上一步），
+运行中的行安静地多一行**上一步**「Bash · swift test · 12 分钟前」，时间位写本回合跑了多久；
+其余动作在键盘、右键菜单与详情页里。**不显示 token、上下文、费用、模型或套餐 —— 这是决定**。
 
 **键盘优先**：↑↓ 选择，↩ 前往（没有终端可落就开详情），→ / 空格 详情，← / Esc 返回，
 在列表上 Esc 关面板；⌘D 忽略所选等待，⌘M 静音所选 Agent，⌘R 刷新，⌘, 设置。
 头部一行彩色计数，「⋯」里是设置与退出；同一时间最多一条提示；面板开着时行的顺序不动。
 
 **每个颜色都说得清来历**：鼠标停在菜单栏图标上，提示用一句话写出决定颜色的规则；
-详情页写出这一行为什么是这个状态、从什么时候起，Agent 最后说的话与最后的错误。
+详情页写出这一行为什么是这个状态、从什么时候起，最近几步，Agent 最后说的话与它自己报的错误。
 
 权限通知直接说出被请求的那件事（`Bash: npm run build`，命令里的凭据仍被抹掉）。
 
@@ -74,15 +75,15 @@ hook / 插件 / 扩展：设置 → Hooks 一键安装，**只装不能改变 Ag
 应用数据，因此不会触发跨应用权限弹窗。进程用 libproc 查看：启动、唤醒、hook 报出一个
 没见过的进程时各看一次，此外从 30 秒起、进程没变化就逐次加倍、最长 5 分钟看一次，
 只为找出 Pulse 启动前就在跑、还没报过事件的会话（显示为「仅进程」，下一步之后显示详情），以及知道会话的
-进程何时退出（退出本身由系统即时通知）。会话文件只在轮到你、需要你或打开详情时读一次
-（有界、离开主线程、按大小与修改时间缓存），用来补标题、最后的消息、模型和最后的错误。
-读不到文件或查不到进程，都不会让已有的会话消失。
+进程何时退出（退出本身由系统即时通知）。一行说的一切都来自事件：标题是会话第一句说了事的提示，
+上一步是工具事件自带的工具与目标，最后的消息与错误是回合结束事件带的原话。Pulse 不读任何厂商文件
+（没有会话文件、没有 transcript）。查不到进程不会让已有的会话消失。
 
 Pulse 自己不存会话记录：跨重启留下的只有 hook 写的文件与你的 `settings.json`。
 通知记账只在内存里；启动时已经在等的会话不补发通知。
 
-按 → 或行菜单「详情」进入详情页，可查看任务、为什么是这个状态、最后的消息与最后的错误，
-以及折叠起来的「Pulse 如何读取这个会话」。
+按 → 或行菜单「详情」进入详情页，可查看任务、为什么是这个状态、最近几步、本回合时长、最后的消息与
+最后的错误，以及折叠起来的「Pulse 如何读取这个会话」。
 
 **第一次打开**，托盘顶上是一张设置卡：「在这台 Mac 上找到 Claude、Codex——连接」。一次点击为这台
 Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后列出还剩的事（Codex 要在它自己里运行
@@ -98,13 +99,12 @@ Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后
 
 ## 它怎么知道
 
-三个来源，**每个只承诺自己能兑现的**：
+两个来源，**每个只承诺自己能兑现的**：
 
 | 来源 | 手段 | 能回答 |
 | --- | --- | --- |
-| **事件** | 厂商自己的 hook / 插件 / 扩展 | 在干活、在等你、轮到你、结束了 |
+| **事件** | 厂商自己的 hook / 插件 / 扩展 | 在干活、在等你、轮到你、结束了；标题、上一步、最后的消息与错误 |
 | **进程** | libproc（启动 / 唤醒 / 未知进程时，及 30 秒起退避到 5 分钟）+ 每个会话进程的退出通知 | 有没有人在跑，会话进程还在不在 |
-| **会话文件** | 轮到你 / 需要你 / 打开详情时有界读一次尾部 | 标题、最后的消息、模型、最后的错误 |
 
 **诚实规则**（写死的产品约束，见 [`AGENTS.md`](AGENTS.md)）：
 
@@ -122,15 +122,15 @@ Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后
 
 ## 支持的 Agent
 
-| Agent | 进程 | 会话文件 | Waiting |
+| Agent | 进程 | 上一步 | Waiting |
 | --- | --- | --- | --- |
-| Claude | libproc | transcript（按需） | hooks（PermissionRequest、Notification 权限 / 提问；全部 `async`） |
-| Gemini | libproc | transcript（按需） | hooks（Notification `ToolPermission`） |
-| Copilot | libproc | transcript（按需） | hooks（notification `permission_prompt` / `elicitation_dialog`） |
-| OpenCode | libproc | 无（用事件自带内容） | plugin（`permission.asked` / `question.asked`） |
-| Pi | libproc | transcript（按需） | extension（`ui_prompt_start` / `ui_prompt_end`） |
-| Codex | libproc | transcript（按需） | **none**（hooks 只报运行中与轮到你；它的 PermissionRequest 在自己的自动审查之前触发） |
-| Cursor | libproc* | transcript（按需） | **none**（hooks 只报运行中与轮到你；没有不拦截的等待事件） |
+| Claude | libproc | `PostToolUse` | hooks（PermissionRequest、Notification 权限 / 提问；全部 `async`） |
+| Gemini | libproc | `AfterTool` | hooks（Notification `ToolPermission`） |
+| Copilot | libproc | `postToolUse`（`toolArgs`） | hooks（notification `permission_prompt` / `elicitation_dialog`） |
+| OpenCode | libproc | 无（没有工具事件） | plugin（`permission.asked` / `question.asked`） |
+| Pi | libproc | `tool_execution_end`（扩展转发） | extension（`ui_prompt_start` / `ui_prompt_end`） |
+| Codex | libproc | `PostToolUse`（只用 hooks.json） | **none**（hooks 只报运行中与轮到你；它的 PermissionRequest 在自己的自动审查之前触发） |
+| Cursor | libproc* | 无（没有工具事件） | **none**（hooks 只报运行中与轮到你；没有不拦截的等待事件） |
 
 \* Cursor 编辑器与 `cursor-agent` 命令行按进程认，同属 Cursor；编辑器里的会话以 hook 事件为准。
 每个 Agent 装哪些 hook 事件、对应 Pulse 的哪种状态、读的是厂商哪份文档或哪个提交，记在

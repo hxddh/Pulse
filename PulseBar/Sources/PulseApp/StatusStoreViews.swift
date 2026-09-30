@@ -7,7 +7,7 @@ import AppKit
 extension StatusStore {
     // MARK: - Row models
 
-    /// 17.0: the tray row's face, as a value — the store contributes only
+    /// The tray row's face, as a value — the store contributes only
     /// what only it knows.
     func trayRowModel(_ row: AgentRow) -> TrayRowModel {
         TrayRowModel.make(TrayRowModel.Input(
@@ -40,16 +40,28 @@ extension StatusStore {
 
     // MARK: - The tray's one notice
 
-    /// Agents on this Mac — or running — whose hook is not wired, in roster
-    /// order: the setup card's "Found …". Empty once the person removed the
-    /// hooks on purpose, while an install runs, or when the last one could
-    /// not write anything (Settings says why).
+    /// Agents on this Mac whose hook is not wired, in roster order: the
+    /// setup card's "Found …". Only agents whose vendor folder is here —
+    /// exactly the ones "Connect" installs — and never one whose last install
+    /// failed (the card says why instead: `setupFailureText`). Empty once the
+    /// person removed the hooks on purpose, while an install runs, or when
+    /// the last one could not write anything (Settings says why).
     var setupAgents: [AgentID] {
         if settings.hooksNudgeOff { return [] }
         if case .failed = hooksStatus { return [] }
         if hooksStatus.isWorking { return [] }
-        let here = presentAgents.union(cachedAll.filter(\.liveProcess).map(\.agent))
-        return AgentID.priority.filter { here.contains($0) && !hooksStatus.isInstalled(for: $0) }
+        let failed = hooksStatus.failures
+        return AgentID.priority.filter {
+            presentAgents.contains($0) && !hooksStatus.isInstalled(for: $0) && failed[$0] == nil
+        }
+    }
+
+    /// Why the last install failed for some agents, in the existing failure
+    /// copy; "" when none did or the person removed the hooks on purpose.
+    var setupFailureText: String {
+        if settings.hooksNudgeOff { return "" }
+        let failed = hooksStatus.failures.filter { !hooksStatus.isInstalled(for: $0.key) }
+        return failed.isEmpty ? "" : HooksSupport.Status.failureText(failed, lang: lang)
     }
 
     /// Packaged bundle version disagrees with the compiled semver — usually a
@@ -71,6 +83,7 @@ extension StatusStore {
             notifyAuthorized: notifyAuthorized,
             bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
             unconnected: setupAgents,
+            installFailure: setupFailureText,
             justConnected: setupConnected.map { connected in AgentID.priority.filter(connected.contains) }
         ))
     }
@@ -79,6 +92,7 @@ extension StatusStore {
         switch action {
         case .connect: connectFromSetup()
         case .dismissSetup: if setupConnected != nil { setupConnected = nil }
+        case .openHooksSettings: openSettings(focus: .waitingSignals)
         case .openNotificationSettings: openSystemNotificationSettings()
         case .enableNotifications: requestNotificationAuthorization()
         }
@@ -110,7 +124,7 @@ extension StatusStore {
         return nil
     }
 
-    /// 21.0: the reason in the person's language; only the system's own
+    /// The reason in the person's language; only the system's own
     /// network message stays as the system wrote it.
     func updateFailureText(_ failure: UpdateCheck.Failure) -> String {
         switch failure {

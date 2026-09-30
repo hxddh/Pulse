@@ -1,7 +1,7 @@
 import Foundation
 
 /// Removes credential-shaped content before it reaches any user-visible
-/// surface. Agent transcripts are untrusted input: a prompt, tool result, or
+/// surface. What an agent's hook sends is untrusted input: a prompt, tool target, or
 /// waiting message may contain a secret even when Pulse only intends to show a
 /// short title.
 public enum ContentSanitizer {

@@ -29,7 +29,7 @@ package enum PulseBarMain {
             let arguments = ProcessInfo.processInfo.arguments
             var stdinText = ""
             // Vendors pipe JSON on stdin. Never read when attached to a TTY,
-            // nor when the payload came in argv (Codex `notify`); otherwise
+            // nor when the payload came in argv (the two modules); otherwise
             // read for at most a second — a pipe nobody closes must not hold
             // the agent that is waiting on this hook.
             if isatty(STDIN_FILENO) == 0, !PulseHookReceiver.payloadInArguments(arguments) {
@@ -47,10 +47,9 @@ package enum PulseBarMain {
             return
         }
         instanceGuard = guardLock
-        // AppKit-only run loop — no SwiftUI `Settings { EmptyView() }` scene.
-        // That scene was a lifecycle anchor and became a blank Settings window
-        // on Finder/Spotlight reopen after update (0.56.1 workaround). Real
-        // settings stay in SettingsWindowController.
+        // AppKit-only run loop — no SwiftUI scene, so a Finder or Spotlight
+        // reopen has no window to invent. Settings is
+        // SettingsWindowController.
         let app = NSApplication.shared
         let delegate = AppDelegate()
         delegate.launchHook = launchHook
@@ -66,13 +65,6 @@ package enum PulseBarMain {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Windows Pulse intentionally owns. Orphan titled windows without these
-    /// ids are closed as defense-in-depth (should not appear without a Settings scene).
-    private static let ownedWindowIDs: Set<String> = [
-        "pulse-settings",
-        "pulse-tray-preview",
-    ]
-
     /// `PulseQA`'s driver, when it launched the app; nil in the product.
     var launchHook: PulseLaunchHook?
     private var statusPanel: StatusPanelController?
@@ -82,16 +74,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Activation policy is also set before run(); keep accessory here so
         // CLI/QA relaunch paths stay consistent.
         NSApp.setActivationPolicy(.accessory)
-        // The delegate lives for the whole process (`retainedAppDelegate`),
-        // and the block runs on the main queue.
-        let delegate = Unchecked(self)
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: NSApp,
             queue: .main
         ) { _ in
             PulseNotify.refreshAuthorization()
-            delegate.value.dismissPhantomSettingsWindows()
         }
         if ProcessInfo.processInfo.arguments.contains("--appearance=dark") {
             NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -113,11 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             AppServices.store.start()
         }
-        // Post-update Launch Services reopen can surface the EmptyView Settings
-        // scene before we refuse it — sweep once on the next runloop turn.
-        DispatchQueue.main.async { [weak self] in
-            self?.dismissPhantomSettingsWindows()
-        }
     }
 
     /// Finder / Spotlight reopen must not invent windows. Tray is user-driven.
@@ -125,31 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        dismissPhantomSettingsWindows()
-        return false
+        false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
-    }
-
-    /// Defense-in-depth: close titled windows that are not Pulse-owned.
-    /// After removing the SwiftUI Settings scene this should be a no-op.
-    private func dismissPhantomSettingsWindows() {
-        // AppKit window callbacks run on the main thread.
-        MainActor.assumeIsolated {
-            for window in NSApp.windows {
-                if let id = window.identifier?.rawValue, Self.ownedWindowIDs.contains(id) {
-                    continue
-                }
-                if window.styleMask.contains(.borderless) { continue }
-                if window.level != .normal { continue }
-                guard window.styleMask.contains(.titled) else { continue }
-                if window.identifier == nil {
-                    window.close()
-                }
-            }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

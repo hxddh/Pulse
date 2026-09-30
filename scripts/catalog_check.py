@@ -2,24 +2,23 @@
 """Catalog gate: one agent roster, read from AgentCatalog.swift, and every
 promise made about it.
 
-23.0 merged four gates that each re-read the catalog (`agent_catalog_check`,
-`coverage_check`, `matrix_check`, `vendor_formats_check`) and the roster
-reader they shared (`agent_roster`). The checks are the ones that guard a
-real fact; prose checks ("EXPERIENCE.md must say 32 visible Agents") went.
+The checks are the ones that guard a real fact; prose checks went.
 
 1. Roster — `AgentCatalog.all` has one `AgentSpec` per `AgentID` case, in
    declaration order (process-rule precedence), with unique monograms, and
-   no per-agent table grows back elsewhere (12.0): outside the catalog no
+   no per-agent table grows back elsewhere: outside the catalog no
    `case` line or list names more than MAX_PER_CASE agents and no file's
    `case` lines name more than MAX_PER_FILE.
 2. Processes — agent processes come from the kernel's table (libproc,
    `AgentProcesses.swift`): no `ps`, no `lsof`, no subprocess; and Cursor's
    private worker daemon is denied.
 3. Privacy — AppleScript only behind the Terminal/iTerm Automation opt-in;
-   no enumeration of every running app.
+   no enumeration of every running app; and no tokens, context, cost or
+   plan: no source reads `usage`, `token_count`, `rate_limits`, `cost` (or
+   their cousins) from a payload or a module's event — an owner decision.
 4. README support matrix — each row's waiting cell equals the catalog, and
    every agent has a row.
-5. Vendor sources (24.0) — every agent has an entry in
+5. Vendor sources — every agent has an entry in
    docs/vendor-formats.json with a `hooks` block: the roster is exactly the
    seven supported agents; each has a `HookContract` whose events are never
    a gating event, and its manifest entry names the source it was read from
@@ -44,7 +43,7 @@ MANIFEST = ROOT / "docs" / "vendor-formats.json"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 MAX_PER_CASE = 6
 MAX_PER_FILE = 8
-# 24.0 (Exact): the owner's roster. Adding an agent is a product decision.
+# The owner's roster. Adding an agent is a product decision.
 ROSTER = ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
 
 
@@ -141,8 +140,8 @@ def check_roster(text: str, roster: list[Agent], problems: list[str]) -> None:
                 problems.append(f"{path.name}:{number}: a case naming {len(hits)} agents — "
                                 "roster-wide facts belong in AgentCatalog")
             seen |= hits
-        # A roster list is a roster table too: 12.0 missed an eleven-agent
-        # `[.amp, .claude, …].contains(id)` that wrapped across two lines.
+        # A roster list is a roster table too — one that wraps across lines
+        # included.
         code = re.sub(r"//[^\n]*", "", source)
         for match in re.finditer(r"\[([^\[\]]*)\]", code):
             listed = set(agent_re.findall(match.group(1)))
@@ -166,7 +165,7 @@ def check_processes(text: str, problems: list[str]) -> None:
     for path in sorted(SOURCES.glob("*/*.swift")):
         source = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8"))
         if re.search(r'"/(usr/)?s?bin/(ps|lsof)"', source):
-            problems.append(f"{path.name}: no ps or lsof subprocess — the process table is libproc (24.0)")
+            problems.append(f"{path.name}: no ps or lsof subprocess — the process table is libproc")
 
 
 # 3 · privacy ----------------------------------------------------------------
@@ -174,7 +173,7 @@ def check_processes(text: str, problems: list[str]) -> None:
 def check_privacy(problems: list[str]) -> None:
     focus = swift_file("TerminalFocus.swift").read_text(encoding="utf-8")
     plan = swift_file("LandingPlan.swift").read_text(encoding="utf-8")
-    # 24.0: LandingPlan decides (pure), TerminalFocus runs. Every AppleScript
+    # LandingPlan decides (pure), TerminalFocus runs. Every AppleScript
     # step is planned only behind the Automation opt-in.
     make = plan[plan.find("static func make("):]
     make = make[:make.find("\n    }\n")]
@@ -192,6 +191,34 @@ def check_privacy(problems: list[str]) -> None:
             r"runningApplications\s*\(withBundleIdentifier:", source
         )):
             problems.append(f"{name} must not enumerate every running app")
+    check_no_tokens(problems)
+
+
+# Tokens, context, cost and plan are not shown — a decision. A payload key
+# or a module's event field that carries them is never read. Legitimate
+# unrelated uses of a word, if one ever appears, are listed here with why.
+USAGE_KEYS = [
+    "usage", "token_count", "tokenCount", "rate_limits", "rateLimits", "cost", "total_cost_usd",
+    "cost_usd", "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens",
+    "context_window", "contextWindow", "plan_type", "planType",
+]
+USAGE_ALLOWED: dict[str, str] = {}
+USAGE_LITERAL = re.compile(r"""["'](""" + "|".join(re.escape(k) for k in USAGE_KEYS) + r""")["']""")
+USAGE_MEMBER = re.compile(r"\.(" + "|".join(re.escape(k) for k in USAGE_KEYS) + r")\b")
+
+
+def check_no_tokens(problems: list[str]) -> None:
+    for path in sorted(SOURCES.glob("*/*.swift")):
+        code = re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.S)
+        code = re.sub(r"(?m)^\s*//.*$", "", code)
+        code = re.sub(r"\s//[^\n\"]*$", "", code, flags=re.M)
+        for pattern in (USAGE_LITERAL, USAGE_MEMBER):
+            for match in pattern.finditer(code):
+                if path.name in USAGE_ALLOWED:
+                    continue
+                number = code.count("\n", 0, match.start()) + 1
+                problems.append(f"{path.name}:{number}: reads {match.group(1)!r} — tokens, context, cost and "
+                                "plan are not shown (a decision); the last step comes from events only")
 
 
 # 4 · README support matrix --------------------------------------------------
@@ -262,7 +289,7 @@ DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
     raws = [a.raw for a in roster]
     if sorted(raws) != sorted(ROSTER):
-        problems.append(f"roster must be exactly {ROSTER} (24.0), found {raws}")
+        problems.append(f"roster must be exactly {ROSTER}, found {raws}")
     gating = re.search(r"gatingEvents: Set<String> = \[(.*?)\]", text, re.S)
     listed = set(re.findall(r'"([^"]+)"', gating.group(1))) if gating else set()
     for must in ("PreToolUse", "preToolUse", "beforeShellExecution", "beforeSubmitPrompt", "BeforeTool", "tool.execute.before"):
@@ -299,7 +326,7 @@ def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
     for agent in roster:
         entry = manifest.get(agent.raw) or {}
         if set(entry) - {"hooks"}:
-            problems.append(f"vendor sources — {agent.raw}: only a hooks block is kept (24.0 reads no session store); "
+            problems.append(f"vendor sources — {agent.raw}: only a hooks block is kept (Pulse reads no vendor file); "
                             f"found {sorted(set(entry) - {'hooks'})}")
         if not agent.hook_format or not agent.hook_events:
             problems.append(f"hooks — {agent.raw}: no HookContract with events in the catalog")

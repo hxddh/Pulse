@@ -14,7 +14,7 @@ enum TrayChrome {
     /// title instead of thirty, still narrow beside the system popovers.
     static let width: CGFloat = 448
     static let padX: CGFloat = PulseTheme.Space.l
-    /// 21.0: the height the panel may grow to before the list scrolls. One
+    /// The height the panel may grow to before the list scrolls. One
     /// number, read by the list and by `StatusPanelController` (which also
     /// clamps it to the screen).
     static let maxHeight: CGFloat = 760
@@ -275,7 +275,7 @@ struct TrayHeaderFace: View {
 
 // MARK: - Notice
 
-/// 21.0: the tray's one notice. 23.0: with its one action as a button.
+/// The tray's one notice, with its one action as a button.
 /// The setup card's remaining steps, one line each, under its text.
 struct TrayNoticeFace: View {
     let model: TrayNoticeModel
@@ -345,8 +345,9 @@ private struct TrayRowButton: View {
     }
 }
 
-/// The row's face: one line — lamp, agent, project, headline, age — and a
-/// second line only for a blocked row (its ask) or an orange one (its why).
+/// The row's face: one line — lamp, agent, project, headline, time — and a
+/// second line only for a blocked row (its ask), an orange one (its why) or
+/// a running one whose hook named its last step (quietly).
 /// A click goes (the terminal, else the detail); the chevron that appears
 /// under the pointer opens the detail. Renders a `TrayRowModel` and nothing
 /// else, so a fixture can draw every state (`PulseQA`'s `SurfaceCapture`).
@@ -376,10 +377,8 @@ struct TrayRowFace: View {
             }
             if let second = model.secondLine {
                 Text(second.text)
-                    .font(PulseTheme.Font.body)
-                    .foregroundStyle(second.kind == .warning
-                        ? AnyShapeStyle(PulseTheme.Tone.attention.color)
-                        : AnyShapeStyle(.secondary))
+                    .font(second.kind == .step ? PulseTheme.Font.caption : PulseTheme.Font.body)
+                    .foregroundStyle(Self.secondLineStyle(second.kind))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.leading, TrayChrome.oneLineTextStart)
@@ -424,6 +423,16 @@ struct TrayRowFace: View {
             if model.notice?.offersAutomation == true {
                 Button(L10n.t(.automationAllow, model.lang)) { send(.allowAutomation) }
             }
+        }
+    }
+
+    /// The ask reads as secondary, the why of a stall in its tone, a step
+    /// quietest of all.
+    private static func secondLineStyle(_ kind: TrayRowModel.SecondLine.Kind) -> AnyShapeStyle {
+        switch kind {
+        case .ask: return AnyShapeStyle(.secondary)
+        case .warning: return AnyShapeStyle(PulseTheme.Tone.attention.color)
+        case .step: return AnyShapeStyle(.tertiary)
         }
     }
 

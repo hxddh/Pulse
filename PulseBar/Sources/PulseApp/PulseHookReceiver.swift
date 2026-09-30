@@ -1,6 +1,6 @@
 import Foundation
 
-/// What one vendor hook event means to Pulse (24.0).
+/// What one vendor hook event means to Pulse.
 enum HookAction: Equatable {
     /// A session began (or resumed).
     case start
@@ -12,6 +12,9 @@ enum HookAction: Equatable {
     case blocked(AttentionKind)
     /// The turn is over: your turn.
     case turn
+    /// The turn ended on an error (an API error, an unrecoverable failure):
+    /// your turn, and the error's text is the session's last error.
+    case failedTurn
     /// The agent has sat at its prompt a while (Claude's `idle_prompt`):
     /// your turn only if the turn's end was not seen (`AttentionKind.idle`).
     case idle
@@ -34,7 +37,7 @@ struct HookReading: Equatable {
 /// and for the public Attention bridge (`pulse-hook` / `PulseBar --hook`).
 ///
 /// `pulse-hook <agent> <event>` with the vendor's JSON payload on stdin (or,
-/// for Codex `notify` and the two modules, as the last argument). Each
+/// for the two modules, as the last argument). Each
 /// agent's adapter maps its own event names and payload onto a
 /// `HookAction`; anything else falls back to the protocol vocabulary
 /// (`permission`, `turn`, `done`, …). Writes one v5 line to the event log
@@ -120,6 +123,8 @@ enum PulseHookReceiver {
             // must not clear another's.
             guard !context.session.isEmpty else { return nil }
             kind = .working
+            // What the person typed: the session's title and latest prompt.
+            message = TitleHeuristics.promptTitle(string(payload, keys: ["prompt"]), limit: 200)
         case .start:
             kind = .start
         case .blocked(let blocked):
@@ -129,6 +134,10 @@ enum PulseHookReceiver {
         case .turn:
             kind = .turn
             message = genericMessage(from: payload)
+        case .failedTurn:
+            kind = .turn
+            toolColumn = AttentionRecord.errorTool
+            message = errorMessage(from: payload)
         case .idle:
             kind = .idle
         case .resolved:
@@ -143,7 +152,6 @@ enum PulseHookReceiver {
             message: cleanField(message, limit: 200),
             session: cleanField(context.session, limit: 80),
             cwd: cleanField(context.cwd, limit: 240),
-            transcript: cleanField(context.transcript, limit: 400),
             tool: toolColumn
         )
     }
@@ -151,8 +159,7 @@ enum PulseHookReceiver {
     // MARK: - Adapters
 
     /// The event an agent's hook reported: the argument the installed command
-    /// carries, else what the payload names (a legacy `pulse-hook claude`
-    /// entry, Codex `notify`).
+    /// carries, else what the payload names (an entry that names no event).
     static func eventName(_ event: String, payload: [String: Any]) -> String {
         let trimmed = event.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
@@ -200,7 +207,7 @@ enum PulseHookReceiver {
         case "SessionStart": return HookReading(action: .start)
         case "SessionEnd": return HookReading(action: .end)
         case "UserPromptSubmit": return HookReading(action: .prompt)
-        case "PreToolUse", "PostToolUse", "PostToolUseFailure": return HookReading(action: .activity)
+        case "PostToolUse", "PostToolUseFailure": return HookReading(action: .activity)
         case "PermissionRequest":
             // AskUserQuestion comes through PermissionRequest; it is a
             // question — no allow/deny answers it.
@@ -220,22 +227,23 @@ enum PulseHookReceiver {
             // A Notification that does not say it is a block is not one.
             default: return HookReading(action: .ignore)
             }
-        case "Stop", "StopFailure": return HookReading(action: .turn)
-        case "SubagentStart", "SubagentStop": return HookReading(action: .ignore)
+        case "Stop": return HookReading(action: .turn)
+        // The turn ended on an API error (rate limit, auth, overload).
+        case "StopFailure": return HookReading(action: .failedTurn)
         default: return nil
         }
     }
 
-    /// Codex hooks.json and `notify` (openai/codex codex-rs/hooks). Never
-    /// blocked: its PermissionRequest fires before its own auto-review.
+    /// Codex hooks.json (openai/codex codex-rs/hooks). Never blocked: its
+    /// PermissionRequest fires before its own auto-review, and is not
+    /// installed.
     static func readCodex(_ event: String, _ payload: [String: Any]) -> HookReading? {
         switch event {
         case "SessionStart": return HookReading(action: .start)
         case "SessionEnd": return HookReading(action: .end)
         case "UserPromptSubmit": return HookReading(action: .prompt)
         case "PostToolUse": return HookReading(action: .activity)
-        case "Stop", "agent-turn-complete": return HookReading(action: .turn)
-        case "PermissionRequest", "PreToolUse": return HookReading(action: .ignore)
+        case "Stop": return HookReading(action: .turn)
         default: return nil
         }
     }
@@ -270,7 +278,7 @@ enum PulseHookReceiver {
         case "errorOccurred", "ErrorOccurred":
             // An unrecoverable error ends the turn; a recoverable one is work.
             let recoverable = payload["recoverable"] as? Bool ?? true
-            return HookReading(action: recoverable ? .activity : .turn)
+            return HookReading(action: recoverable ? .activity : .failedTurn)
         case "notification", "Notification":
             let ask = string(payload, keys: ["message", "title"])
             switch string(payload, keys: ["notification_type", "notificationType"]) {
@@ -293,7 +301,8 @@ enum PulseHookReceiver {
             let status = (payload["status"] as? [String: Any]).map { string($0, keys: ["type"]) }
                 ?? string(payload, keys: ["status"])
             return HookReading(action: status == "busy" || status == "retry" ? .activity : .ignore)
-        case "session.idle", "session.error": return HookReading(action: .turn)
+        case "session.idle": return HookReading(action: .turn)
+        case "session.error": return HookReading(action: .failedTurn)
         case "session.deleted": return HookReading(action: .end)
         case "permission.asked": return HookReading(action: .blocked(.permission), ask: openCodePermissionAsk(payload))
         case "question.asked": return HookReading(action: .blocked(.question), ask: openCodeQuestionAsk(payload))
@@ -303,27 +312,27 @@ enum PulseHookReceiver {
         }
     }
 
-    /// Cursor hooks.json — observe-only events.
+    /// Cursor hooks.json — observe-only events. None names a tool, so a
+    /// Cursor row has no steps.
     static func readCursor(_ event: String, _ payload: [String: Any]) -> HookReading? {
         switch event {
         case "sessionStart": return HookReading(action: .start)
         case "sessionEnd": return HookReading(action: .end)
-        case "afterAgentResponse", "afterAgentThought", "afterShellExecution", "afterFileEdit",
-             "afterMCPExecution", "postToolUse":
-            return HookReading(action: .activity)
+        case "afterAgentResponse": return HookReading(action: .activity)
         case "stop": return HookReading(action: .turn)
         default: return nil
         }
     }
 
     /// Pi extension events (badlogic/pi-mono coding-agent extensions/types.ts),
-    /// forwarded by Pulse's extension.
+    /// forwarded by Pulse's extension — a tool's name and a short summary of
+    /// its arguments ride along (`tool_name`, `tool_input`).
     static func readPi(_ event: String, _ payload: [String: Any]) -> HookReading? {
         switch event {
         case "session_start": return HookReading(action: .start)
         case "session_shutdown": return HookReading(action: .end)
         case "agent_start": return HookReading(action: .prompt)
-        case "tool_execution_start", "tool_execution_end", "turn_end": return HookReading(action: .activity)
+        case "tool_execution_end": return HookReading(action: .activity)
         case "agent_settled": return HookReading(action: .turn)
         case "ui_prompt_start":
             let kind: AttentionKind = string(payload, keys: ["kind"]) == "confirm" ? .permission : .question
@@ -396,37 +405,11 @@ enum PulseHookReceiver {
         return condenseOneLine(string(payload, keys: ["question", "title"]))
     }
 
-    // MARK: - Write
-
-    /// In-process helper for a bridge word (`permission`, `turn`, …): one
-    /// line in the event log. Rejects unknown kinds the same way as `run`.
-    @discardableResult
-    static func appendEvent(
-        agent: String,
-        kind: String,
-        message: String,
-        session: String = "",
-        cwd: String = "",
-        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        logURL: URL? = nil
-    ) -> Bool {
-        let normalized = AttentionProtocol.normalizeKind(kind)
-        guard AttentionProtocol.acceptsWrite(kind: normalized) else { return false }
-        let record = AttentionRecord(
-            agent: cleanField(agent, limit: 48),
-            kind: cleanField(normalized, limit: 64),
-            ms: nowMs,
-            message: cleanField(message, limit: 200),
-            session: cleanField(session, limit: 80),
-            cwd: cleanField(cwd, limit: 240)
-        )
-        return EventLog.append(record.line, at: logURL, nowMs: nowMs)
-    }
-
     // MARK: - stdin
 
-    /// Whether the payload already came in argv (Codex `notify` appends its
-    /// JSON as the last argument) — then stdin is not read at all.
+    /// Whether the payload already came in argv (the OpenCode plugin and the
+    /// Pi extension pass their JSON as the last argument) — then stdin is not
+    /// read at all.
     static func payloadInArguments(_ arguments: [String]) -> Bool {
         arguments.drop(while: { $0 != "--hook" }).dropFirst().dropFirst().contains {
             $0.trimmingCharacters(in: .whitespaces).hasPrefix("{")
@@ -472,7 +455,7 @@ enum PulseHookReceiver {
     ///
     /// xAI's Grok Build runs the hooks in `~/.claude/settings.json` by default
     /// and marks its own calls with `GROK_HOOK_EVENT` / `GROK_SESSION_ID`.
-    /// 24.0 does not support Grok, and its events must never land on a
+    /// Pulse does not support Grok, and its events must never land on a
     /// Claude row — so they are refused.
     static func attributedAgent(_ raw: String, environment: [String: String]) -> AgentID? {
         guard let agent = AgentCatalog.agent(named: raw) else { return nil }
@@ -506,7 +489,7 @@ enum PulseHookReceiver {
     /// A block never takes `reason`: it is an event's why (Pi's
     /// `ui_prompt`, a shutdown's `exit`), not what is asked.
     static func genericMessage(from payload: [String: Any], blocked: Bool = false) -> String {
-        let keys = ["last_assistant_message", "last-assistant-message", "message", "prompt_response", "body"]
+        let keys = ["last_assistant_message", "message", "prompt_response", "body"]
             + (blocked ? [] : ["reason"]) + ["title"]
         for key in keys {
             if let value = payload[key] as? String {
@@ -517,18 +500,31 @@ enum PulseHookReceiver {
         return toolDescriptor(from: payload)
     }
 
+    /// What a failed turn said went wrong: Claude StopFailure's rendered
+    /// error (`last_assistant_message`, else `error_details`, else its
+    /// `error` type), Copilot's `error.message`, the OpenCode plugin's
+    /// `error` — the hook's own words only.
+    static func errorMessage(from payload: [String: Any]) -> String {
+        var text = string(payload, keys: ["last_assistant_message", "error_details", "error", "message"])
+        if text.isEmpty, let error = payload["error"] as? [String: Any] {
+            text = string(error, keys: ["message", "name"])
+            if text.isEmpty, let data = error["data"] as? [String: Any] { text = string(data, keys: ["message"]) }
+        }
+        return condenseOneLine(text, limit: 200)
+    }
+
     /// What is actually being asked, when the vendor sends no prose.
     ///
     /// Claude's `PermissionRequest` payload has **no** `message` field — the
     /// ask *is* the tool call (`tool_name` + `tool_input`). Field priority
     /// mirrors the vendor's own permission label (`command` → `file_path` →
-    /// `url`). Everything here still passes through `cleanField`, which
-    /// redacts credentials and bounds the field.
+    /// `url`). Copilot sends `toolArgs` as a JSON string; it is read as the
+    /// object it encodes. Everything here still passes through `cleanField`,
+    /// which redacts credentials and bounds the field.
     static func toolDescriptor(from payload: [String: Any]) -> String {
         let tool = string(payload, keys: ["tool_name", "toolName"])
         guard !tool.isEmpty else { return "" }
-        let input = payload["tool_input"] as? [String: Any] ?? payload["toolArgs"] as? [String: Any]
-        guard let input else { return tool }
+        guard let input = toolInput(payload) else { return tool }
         for key in ["command", "file_path", "url", "path", "notebook_path", "pattern", "query"] {
             guard let raw = input[key] as? String else { continue }
             let target = condenseOneLine(raw)
@@ -536,6 +532,18 @@ enum PulseHookReceiver {
             return "\(tool): \(target)"
         }
         return tool
+    }
+
+    /// A tool call's arguments: `tool_input` / `toolArgs` as an object, or
+    /// `toolArgs` as a JSON string holding one (Copilot).
+    static func toolInput(_ payload: [String: Any]) -> [String: Any]? {
+        if let input = payload["tool_input"] as? [String: Any] { return input }
+        if let input = payload["toolArgs"] as? [String: Any] { return input }
+        guard let raw = payload["toolArgs"] as? String,
+              raw.trimmingCharacters(in: .whitespaces).hasPrefix("{"),
+              let data = raw.data(using: .utf8)
+        else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
     /// A banner, a tray row and a TSV field are all single-line: fold every
@@ -557,13 +565,13 @@ enum PulseHookReceiver {
         return ""
     }
 
+    /// One field of a v5 line: credentials redacted, every tab and line
+    /// break — `\n`, `\r`, VT, FF, NEL, U+2028, U+2029 — a space
+    /// (`AttentionProtocol.flatten`), bounded.
     static func cleanField(_ value: String, limit: Int) -> String {
-        let redacted = ContentSanitizer.redact(value)
-            .replacingOccurrences(of: "\t", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
+        let flat = AttentionProtocol.flatten(ContentSanitizer.redact(value))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return String(redacted.prefix(limit))
+        return String(flat.prefix(limit))
     }
 }
 
@@ -571,12 +579,14 @@ enum PulseHookReceiver {
 struct HookContext: Equatable {
     var session: String
     var cwd: String
+    /// The vendor's transcript path, when its payload names one — used only
+    /// to name a session that has no id; never written, never read.
     var transcript: String
 
     init(payload: [String: Any]) {
         session = String(PulseHookReceiver.string(payload, keys: [
             "session_id", "sessionId", "sessionID", "thread_id", "threadId",
-            "thread-id", "conversation_id", "conversationId",
+            "conversation_id", "conversationId",
         ]).prefix(80))
         transcript = PulseHookReceiver.string(payload, keys: [
             "transcript_path", "transcriptPath", "session_file", "sessionFile", "rollout_path",
@@ -588,7 +598,7 @@ struct HookContext: Equatable {
         }
         cwd = dir.hasPrefix("/") ? String(dir.prefix(240)) : ""
         // A session named only by its transcript file (a vendor that sends
-        // no id): the file's own name, as 23.0 did.
+        // no id): the file's own name. The file itself is never read.
         if session.isEmpty, !transcript.isEmpty {
             var name = URL(fileURLWithPath: transcript).lastPathComponent
             if name.hasSuffix(".jsonl") { name = String(name.dropLast(".jsonl".count)) }

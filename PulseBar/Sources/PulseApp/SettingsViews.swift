@@ -7,7 +7,7 @@ import AppKit
 
 @MainActor
 struct SettingsView: View {
-    /// The store itself (19.0). Under Observation this page is redrawn only
+    /// The store itself. Under Observation this page is redrawn only
     /// by the properties it reads, and it reads no per-scan fact
     /// (`surface_check.py` keeps it so).
     let store: StatusStore
@@ -197,7 +197,7 @@ struct SettingsFace: View {
             Toggle(t(.launchAtLogin), isOn: binding(model.launchAtLogin) { .setLaunchAtLogin($0) })
             Picker(t(.language), selection: languageBinding) {
                 ForEach(AppLanguage.allCases) { lang in
-                    Text(lang.menuLabel).tag(lang)
+                    Text(lang.menuLabel(model.lang)).tag(lang)
                 }
             }
         case .shortcut:

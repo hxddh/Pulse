@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""20.0 Drift sentinel: has a vendor changed the files its hooks live in?
+"""Drift sentinel: has a vendor changed the files its hooks live in?
 
-For every ``source: "repo"`` hooks block in docs/vendor-formats.json (24.0
-keeps only each agent's hook contract; it reads no session store) this makes a
+For every ``source: "repo"`` hooks block in docs/vendor-formats.json (only
+each agent's hook contract is kept; Pulse reads no vendor file) this makes a
 blob-less clone of the vendor repository (history only, no file contents)
 and lists the commits since the pinned one that touched a ``watch`` path.
 Any such commit fails the run and is printed — vendor, path, commit, date,
@@ -47,7 +47,7 @@ def main() -> int:
     drifted: list[str] = []
     failed: list[str] = []
     clones: dict[str, Path] = {}
-    # 24.0: only the hook contract is pinned.
+    # Only the hook contract is pinned.
     pins = [(f"{raw} hooks", entry["hooks"]) for raw, entry in sorted(agents.items())
             if isinstance(entry.get("hooks"), dict)]
     for raw, entry in pins:

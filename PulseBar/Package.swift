@@ -29,9 +29,9 @@ let package = Package(
             path: "Sources/PulseCore",
             swiftSettings: strict
         ),
-        // The event sources: the attention file and the activity spool the
-        // hooks write, the process table (libproc), row identity and the
-        // bounded read of one known transcript. It sees the kernel, never the
+        // The event sources: the one event log the hooks append to
+        // (`EventLog`), the process table (libproc), row identity and title
+        // heuristics. No vendor file is read. It sees the kernel, never the
         // store or the UI.
         .target(
             name: "PulseHarvest",
@@ -42,8 +42,9 @@ let package = Package(
         // The app: the session book, the tray projection, the store, the
         // notifier, the hook receiver and installer, every view. A library,
         // so the shipping executable and the QA driver link the same code.
-        // It owns the resources, so `Bundle.module` (and `PulseResources`,
-        // which resolves `PulseBar_PulseApp.bundle` without trapping) is here.
+        // It owns the resources, found through `PulseResources` (it resolves
+        // `PulseBar_PulseApp.bundle` without trapping; the generated accessor
+        // is never used — `gates.sh` greps for it).
         .target(
             name: "PulseApp",
             dependencies: ["PulseCore", "PulseHarvest"],

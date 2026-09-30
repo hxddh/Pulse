@@ -26,8 +26,8 @@ UTF-8 TSV, one event per line, in the order the hooks wrote them. The first
 line is a header naming the protocol and the file's **generation**:
 
 ```text
-# pulse-events v5 <generation> (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\ttranscript\tlanding\ttool)
-<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<front>\t<pid>\t<transcript>\t<landing>\t<tool>
+# pulse-events v5 <generation> (agent\tkind\tms\tmessage\tsession\tcwd\tfront\tpid\t-\tlanding\ttool)
+<agent>\t<kind>\t<unix_ms>\t<message>\t<session>\t<cwd>\t<front>\t<pid>\t\t<landing>\t<tool>
 ```
 
 - **Append only.** A writer opens the file `O_APPEND`, takes an exclusive
@@ -38,22 +38,33 @@ line is a header naming the protocol and the file's **generation**:
 - **Bounded.** An append that would take the file past 1 MiB compacts it
   first, under the same lock, and writes a **new generation** header: per
   session (`agent|session`, or `agent|hook:<folder>` for a session-less one —
-  never the agent alone; a session-less `done` belongs to every session-less
-  group of its agent), the last 64 lines and every line of the last two
-  hours are kept; a session whose newest line is a day old goes whole; and
-  an **open block** (a `permission` / `question` / `waiting` no later line in
-  its session answers) is kept with every line after it, whatever the
-  budget. Over half a MiB the per-session count and the window halve until it
-  fits.
+  never the agent alone; a session-less `done` belongs to the group of the
+  folder it names, or — naming none — to every session-less group of its
+  agent), the last 64 lines and every line of the last two hours are kept; a
+  session whose newest line is a day old goes whole; and an **open block** (a
+  `permission` / `question` / `waiting` no later line in its session answers)
+  is kept with every line after it, whatever the budget. Over half a MiB the
+  per-session count and the window halve until it fits. The line being
+  appended is always kept: an append reports success only when its line is
+  in the file.
 - **Read from an offset.** A reader keeps a cursor (the header line and the
   byte after the last complete line it applied) and reads only what follows,
-  under a shared lock, complete lines only. A cursor from another generation,
-  or past the end of the file, reads the whole file again; the lines already
-  applied are recognised by their text and skipped. A missing or unreadable
-  file is a failed read: the reader keeps what it had.
+  under a shared lock, complete lines only. Lines end at `\n` bytes alone: a
+  U+2028, NEL or lone `\r` inside a field never splits a record. A cursor
+  from another generation, or past the end of the file, reads the whole file
+  again; the lines already applied are matched to it **by position** — a
+  rewrite keeps lines in order, so each kept line takes the next applied line
+  with the same text, and a line with no match left is new (the same text
+  written twice is applied twice). A missing file is an empty log; an
+  unreadable one is a failed read: the reader keeps what it had and retries
+  once, backing off from 5 s to a minute.
 - **Replayed at launch.** The app reads the whole log and applies every line,
   in order, before its first projection. That projection is the banner
-  baseline: a block already in the log gets no banner.
+  baseline: a block already in the log gets no banner. Only that one is: a
+  launch read that failed leaves the baseline to the replay that lands, and
+  every projection after it can notify. Everything the app shows about a
+  session — its steps, its title, its turn's clock — is rebuilt by this
+  replay and kept nowhere else.
 - A v4 `attention.tsv` and the `activity.d/` spool are deleted at launch,
   never read.
 
@@ -66,14 +77,14 @@ the trailing tabs are part of the record.
 | `agent` | One of the seven `AgentID` raw values: `claude`, `codex`, `cursor`, `pi`, `gemini`, `copilot`, `opencode` (`cursor-agent` / `cursor_agent` read as `cursor`) |
 | `kind` | An allowlisted kind (below) |
 | `unix_ms` | Integer milliseconds since epoch, stamped by the writer |
-| `message` | What is asked, the turn's last words, or a tool line's target; tab/newline stripped; ≤200 chars; credentials redacted |
+| `message` | What is asked, the turn's last words (or its error, when `tool` is `error`), the prompt's text on a `working` line, or a tool line's target; tabs and every kind of line break (`\n`, `\r`, VT, FF, NEL, U+2028, U+2029) made spaces; ≤200 chars; credentials redacted |
 | `session` | The vendor's session id; empty allowed (not for `tool` and `working`) |
 | `cwd` | Absolute project path; empty allowed |
 | `front` | `1` when the prompt's own window was frontmost as the event was raised, `0` when not, empty when unknown. Only written for blocked kinds, `turn` and `idle` |
-| `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule, else the hook's direct parent. Never `1` (a hook whose parent had exited is re-parented to launchd) — empty when unknown |
-| `transcript` | The vendor's transcript path when its hook names one |
+| `pid` | The agent process the hook ran under: the first ancestor of the hook whose argv matches the agent's catalog process rule. Never the hook's direct parent (usually a `sh -c` that exits with the hook) and never `1` — empty when unknown |
+| (reserved) | Written empty, never read. It once named a transcript file; Pulse reads no vendor file |
 | `landing` | Where the session can be reached, most specific first, `;`-separated: `tmux:%3`, `tmuxsock:<TMUX socket path>`, `iterm:<ITERM_SESSION_ID>`, `tty:/dev/ttys004`, `term:<TERM_PROGRAM>`, `app:<__CFBundleIdentifier>`; unknown keys are ignored (`docs/landing-hosts.md`) |
-| `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); empty when the event names none |
+| `tool` | The tool a `tool` line ran, or the tool a block is about (`Bash`, `AskUserQuestion`); on a `turn` line, `error` when the turn ended on an error; empty when the event names none |
 
 Readers skip blank lines, `#` comments, and unknown kinds.
 
@@ -88,9 +99,9 @@ Readers skip blank lines, `#` comments, and unknown kinds.
 | | `idle` | It has sat at its prompt a while (Claude's `idle_prompt`, ~60 s after a turn): your turn only if the session was still working or blocked (an Esc on a prompt fires no Stop) or is new to Pulse — never revives a turn already seen |
 | Resolved | `done` | Nothing is owed any more |
 | Lifecycle | `start` | The session started or resumed |
-| | `working` | The user submitted a prompt |
+| | `working` | The user submitted a prompt (message = its text: the title's source) |
 | | `end` | The session ended |
-| Activity | `tool` | A tool ran (or a reply streamed): the session is working. Never a wait |
+| Activity | `tool` | A tool ran (or a reply streamed): the session is working, and — when it names its tool — its last step. Never a wait |
 
 `working` and `end` clear the session's block like `done`; `start` does
 unless the session is working. A `tool` line keeps a working session from
@@ -116,51 +127,52 @@ Bridge words normalized before the allowlist check
 ## Per-agent mapping (what `pulse-hook <agent> <event>` writes)
 
 Every installed command is `pulse-hook <agent> <vendor event name>`; the
-payload is the vendor's JSON on stdin (Codex `notify`: the last argument). Only
-observe-only events are installed; `HookContract.gatingEvents` lists the ones
-that never are.
+payload is the vendor's JSON on stdin (the two modules: the last argument).
+Only observe-only events are installed; `HookContract.gatingEvents` lists the
+ones that never are, and an event Pulse does not install is not read.
 
 | Agent | Vendor event | Pulse |
 | --- | --- | --- |
 | **Claude** (`~/.claude/settings.json`, every entry `async: true`) | `SessionStart` | `start` |
-| | `UserPromptSubmit` | `working` |
+| | `UserPromptSubmit` | `working` (message = `prompt`) |
 | | `PostToolUse`, `PostToolUseFailure` | `tool` (tool = `tool_name`, message = its target) |
 | | `PermissionRequest` | `permission` — ask = `tool_name: command/file_path/url`, tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line |
 | | `Notification` `permission_prompt` | `permission` |
 | | `Notification` `elicitation_dialog` / `elicitation_url_dialog` / `agent_needs_input` | `question` |
 | | `Notification` `idle_prompt` | `idle` |
 | | `Notification` `elicitation_complete` / `elicitation_response` | `done` |
-| | `Stop`, `StopFailure` | `turn` (message = `last_assistant_message`) |
+| | `Stop` | `turn` (message = `last_assistant_message`) |
+| | `StopFailure` | `turn`, tool = `error` (message = `last_assistant_message`, else `error_details`, else `error`) |
 | | `SessionEnd` | `end` |
-| **Codex** (`~/.codex/hooks.json` + `notify`) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` / `turn` / `end` |
-| | `PostToolUse` (async) | `tool` (the stall rule's evidence) |
-| | `notify` `agent-turn-complete` | `turn` (session = `thread-id`) |
-| | `PermissionRequest` | never installed; ignored if seen (fires before Codex's own auto-review) |
+| **Codex** (`~/.codex/hooks.json` only; `config.toml` is never touched) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` (message = `prompt`) / `turn` (message = `last_assistant_message`) / `end` |
+| | `PostToolUse` (async) | `tool` (the stall rule's evidence; tool = `tool_name`, message = its target) |
+| | `PermissionRequest` | never installed, not read (fires before Codex's own auto-review) |
 | **Gemini CLI** (`~/.gemini/settings.json` `hooks`) | `SessionStart` / `SessionEnd` | `start` / `end` |
-| | `BeforeAgent` | `working` (exit 0, no output: never blocks) |
+| | `BeforeAgent` | `working` (message = `prompt`; exit 0, no output: never blocks) |
 | | `AfterTool` | `tool` (the tool ran: answers a `ToolPermission`) |
-| | `AfterAgent` | `turn` |
+| | `AfterAgent` | `turn` (message = `prompt_response`) |
 | | `Notification` `notification_type: ToolPermission` | `permission` (ask = `message`) |
 | **Copilot CLI** (`~/.copilot/hooks/pulse.json`) | `sessionStart` / `sessionEnd` | `start` / `end` |
-| | `userPromptSubmitted` | `working` |
-| | `postToolUse` / `postToolUseFailure` | `tool` (the tool ran: answers a `permission_prompt`) |
+| | `userPromptSubmitted` | `working` (message = `prompt`) |
+| | `postToolUse` / `postToolUseFailure` | `tool` (the tool ran: answers a `permission_prompt`; tool = `toolName`, message = the command or path in `toolArgs`, a JSON string) |
 | | `agentStop` | `turn` |
 | | `notification` `permission_prompt` / `elicitation_dialog` | `permission` / `question` |
 | | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
-| | `errorOccurred` | `turn` when `recoverable: false`, else `tool` |
+| | `errorOccurred` | `turn`, tool = `error`, message = `error.message` when `recoverable: false`; else `tool` |
 | **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`; payload as the last argument; a subagent's child session is dropped, its asks sent under the root session) | `session.created` | `start` |
 | | `session.status` `busy` / `retry` | `tool` (no tool name) |
 | | `permission.asked` | `permission` (ask = `permission: patterns`) |
 | | `question.asked` | `question` (ask = first question) |
 | | `permission.replied` / `question.replied` / `question.rejected` | `done` |
-| | `session.idle`, `session.error` | `turn` |
+| | `session.idle` | `turn` |
+| | `session.error` | `turn`, tool = `error` (message = the error's message, forwarded by the plugin) |
 | | `session.deleted` | `end` |
 | **Cursor** (`~/.cursor/hooks.json`) — never blocked | `sessionStart` / `sessionEnd` | `start` / `end` |
 | | `afterAgentResponse` | `tool` (no tool name) |
 | | `stop` | `turn` (session = `conversation_id`, cwd = `workspace_roots[0]`) |
 | **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument) | `session_start` / `session_shutdown` (not on `reload`) | `start` / `end` |
 | | `agent_start` | `working` |
-| | `tool_execution_end` | `tool` |
+| | `tool_execution_end` | `tool` (tool = the tool's name, message = one short argument, forwarded by the extension) |
 | | `ui_prompt_start` `kind: confirm` / other kinds | `permission` / `question` (ask = `title`; never the event's `reason` — the extension sends a reason only with `session_shutdown`) |
 | | `ui_prompt_end` | `done` |
 | | `agent_settled` | `turn` |
@@ -172,7 +184,13 @@ that never are.
 - A blocked line for an agent with `waiting: .none` (Codex, Cursor) is
   ignored, whoever wrote it.
 - `done`, `working`, `end` clear that session (`session` empty → only the
-  agent's session-less entries).
+  agent's session-less entry in the folder it names, or every session-less
+  one when it names none; a dismissal always names the folder).
+- A `tool` line that names its tool is a step: the session keeps its last
+  five (tool, target, time). A `working` line starts a new turn (its clock),
+  its text is the latest prompt, and the first that says something (not
+  "continue") is the title. A `turn` line's message is the last words — or,
+  with tool = `error`, the turn's error, until the next prompt.
 - A blocked entry that names no session never attaches to a session row; it
   is its own row in its folder.
 - A blocked entry goes out when a `tool` line (or a prompt) of that session,
@@ -208,8 +226,11 @@ echo '{"session_id":"sess-1"}' | "$HOOK" gemini done
 ## Versioning
 
 - v1–v4: see git history. v3 split blocked / your turn / resolved; v4 added
-  `pid`, `transcript`, `landing` and the lifecycle kinds.
+  `pid`, a transcript column, `landing` and the lifecycle kinds.
 - **v5**: one append-only event log (`events.tsv`) replaces `attention.tsv`
   and the per-session activity spool; a generation in the header; an
   eleventh column, `tool`; a `tool` kind for activity. v4 lines are not read
-  and the v4 files are deleted at launch.
+  and the v4 files are deleted at launch. The ninth column is reserved —
+  written empty, never read — so a live log keeps its format (no new
+  protocol version, no log deleted); `tool` = `error` on a `turn` line marks
+  a failed turn.

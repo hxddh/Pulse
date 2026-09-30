@@ -5,11 +5,6 @@ import PulseCore
 /// The one event log: `events.tsv`, append-only, one v5 line per hook
 /// event (`AttentionRecord`), in the order the hooks wrote them.
 ///
-/// It replaces two stores that disagreed: `attention.tsv` (rewritten whole
-/// on every write, 80 lines) and the activity spool (one file per session,
-/// newest event only — so an answer followed by a parallel tool was lost,
-/// and a re-read after a failed read replayed old blocks). Now:
-///
 /// - **Writers append** under an exclusive `flock` (`append`): the hook
 ///   receiver, the app's own `done` for a dismissal, an integrator's script.
 ///   The file is created 0600 (`PrivateFile.tighten`) with a header naming
@@ -20,12 +15,14 @@ import PulseCore
 ///   compaction keeps, per session (or per agent + folder for a session-less
 ///   one), its last `linesPerSession` lines and every line of the last
 ///   `recentWindowMs`; it never drops an open block, nor anything after it
-///   in that session — the lines that answer it.
+///   in that session — the lines that answer it — nor the line being
+///   appended.
 /// - **Readers read from an offset** (`read(after:)`) under a shared lock,
-///   only complete lines. A cursor from another generation, or past the end,
-///   reads the whole file again (`Chunk.fresh`); the engine then skips the
-///   lines it has already applied. A failed read returns nil and changes
-///   nothing.
+///   only complete lines, split on `\n` bytes alone. A cursor from another
+///   generation, or past the end, reads the whole file again
+///   (`Chunk.fresh`); the engine then applies only the lines it has not
+///   (`unapplied(_:after:)`). A missing file is an empty log; a failed read
+///   returns nil and changes nothing.
 package enum EventLog {
     package static let fileName = "events.tsv"
     /// An append that would pass this compacts the file first.
@@ -120,7 +117,10 @@ package enum EventLog {
                 // would drop lines nobody has read.
                 if let data = readRange(fd, from: 0, count: size), data.count == size {
                     let lines = parse(data, from: 0, header: "", fresh: true).lines
-                    let kept = compact(lines + [record], nowMs: nowMs)
+                    // The record being appended is always kept: the append
+                    // reports success only when its line is in the file.
+                    var kept = compact(lines + [record], nowMs: nowMs)
+                    if kept.last != record { kept.append(record) }
                     let body = AttentionProtocol.header(generation: generation(nowMs: nowMs))
                         + kept.map { $0 + "\n" }.joined()
                     guard ftruncate(fd, 0) == 0 else { return false }
@@ -154,11 +154,13 @@ package enum EventLog {
     // MARK: - Read
 
     /// The lines after `cursor`, or the whole file when the cursor is nil,
-    /// from another generation, or past the end. Nil when the file is
-    /// missing or could not be read — the caller keeps what it had.
+    /// from another generation, or past the end. A missing file is an empty
+    /// log (a fresh, empty chunk). Nil when the file could not be read — the
+    /// caller keeps what it had.
     package static func read(at url: URL? = nil, after cursor: Cursor?) -> Chunk? {
         let target = url ?? path
         let fd = target.path.withCString { open($0, O_RDONLY) }
+        if fd < 0, errno == ENOENT { return Chunk(header: "", lines: [], end: 0, fresh: true) }
         guard fd >= 0 else { return nil }
         defer { close(fd) }
         guard flock(fd, LOCK_SH) == 0 else { return nil }
@@ -198,7 +200,9 @@ package enum EventLog {
 
     /// `data` read from byte `start`: its complete lines (up to the last line
     /// break; a line still being written is left for the next read), without
-    /// comments or blanks. Lossy: one invalid byte never hides the file.
+    /// comments or blanks. Lines end at `\n` bytes only — a U+2028 or a lone
+    /// `\r` inside a field never splits a record. Lossy: one invalid byte
+    /// never hides the file.
     package static func parse(_ data: Data, from start: Int, header: String, fresh: Bool, skipFirstLine: Bool = false) -> Chunk {
         let bytes = [UInt8](data)
         guard let lastBreak = bytes.lastIndex(of: 0x0A) else {
@@ -208,9 +212,12 @@ package enum EventLog {
         if skipFirstLine, let first = body.firstIndex(of: 0x0A) {
             body = body[(first + 1)...]
         }
-        let lines = String(decoding: body, as: UTF8.self)
-            .split(whereSeparator: \.isNewline)
-            .map(String.init)
+        let lines = body.split(separator: 0x0A, omittingEmptySubsequences: true)
+            .map { bytes -> String in
+                var line = String(decoding: bytes, as: UTF8.self)
+                if line.hasSuffix("\r") { line.removeLast() }
+                return line
+            }
             .filter { !$0.isEmpty && !$0.hasPrefix("#") }
         return Chunk(header: header, lines: lines, end: start + lastBreak + 1, fresh: fresh)
     }
@@ -221,8 +228,9 @@ package enum EventLog {
     ///
     /// Lines are grouped by session — `RowIdentity.session`, so a
     /// session-less line is grouped by agent **and** folder, never by agent
-    /// alone — and a session-less `done` belongs to every session-less group
-    /// of its agent it could clear. A group whose newest line is older than
+    /// alone — and a session-less `done` belongs to the group of its folder,
+    /// or, when it names none, to every session-less group of its agent it
+    /// could clear. A group whose newest line is older than
     /// `retentionMs` goes whole. Of the rest, each keeps its last
     /// `linesPerSession` lines, every line newer than `recentWindowMs`, and —
     /// whatever the budget — everything from its open block on (a block no
@@ -247,7 +255,7 @@ package enum EventLog {
             let kind = AttentionProtocol.kind(record.kind)
             let session = record.session.trimmingCharacters(in: .whitespacesAndNewlines)
             var groups: [String]
-            if session.isEmpty, kind == .done {
+            if session.isEmpty, kind == .done, record.cwd.isEmpty {
                 groups = (sessionless[agent] ?? []).sorted()
                 if groups.isEmpty { groups = ["\(agent.rawValue)|done"] }
             } else {
@@ -324,6 +332,33 @@ package enum EventLog {
             keep = select(perSession: perSession, windowMs: windowMs)
         }
         return keep.sorted().map { lines[parsed[$0].index] }
+    }
+
+    // MARK: - Re-reading a rewritten log
+
+    /// The lines of a whole-file read (`Chunk.fresh`) not already applied,
+    /// in file order. `applied` is every line of the log applied so far, in
+    /// the order it was applied.
+    ///
+    /// A rewrite keeps lines in their order (a compaction drops some, the
+    /// record being appended goes last), so the kept lines are matched to
+    /// the applied ones in order: each line takes the next applied line with
+    /// the same text, and a line with no match left is new. Identity is the
+    /// position, not the text — a line written twice is applied twice, and a
+    /// kept line is never applied again. Pure.
+    package static func unapplied(_ lines: [String], after applied: [String]) -> [String] {
+        var positions: [String: [Int]] = [:]
+        for (index, line) in applied.enumerated() { positions[line, default: []].append(index) }
+        var next = 0
+        var fresh: [String] = []
+        for line in lines {
+            if let candidates = positions[line], let match = candidates.first(where: { $0 >= next }) {
+                next = match + 1
+            } else {
+                fresh.append(line)
+            }
+        }
+        return fresh
     }
 
     // MARK: - Descriptors

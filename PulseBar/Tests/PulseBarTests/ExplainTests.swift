@@ -8,7 +8,7 @@ import XCTest
 
 // Explain: the one explanation of a row and of the lamp.
 
-/// 23.0 · One Explain — the headline, the why and the source for a row, and
+/// One Explain — the headline, the why and the source for a row, and
 /// the row face and detail page built on them. Ported from the truth tests
 /// of `RowNarrator.whyLine`, `TrayRowLead` and the Why card.
 @Suite("Explain")
@@ -92,7 +92,7 @@ struct ExplainTests {
         #expect(Explain.make(row, lang: .en, nowMs: now).source == L10n.t(.sourceProcess, .en))
     }
 
-    /// 23.0: the stall rule is not a setting, so the sentence names the
+    /// The stall rule is not a setting, so the sentence names the
     /// silence and nothing the person could not have set.
     @Test func aStalledRowNamesTheSilence() {
         var row = session()
@@ -101,6 +101,79 @@ struct ExplainTests {
         let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en, spoken: true)
         let expected = String(format: L10n.t(.explainStalled, .en), quiet)
         #expect(why(row) == expected)
+    }
+
+    /// A stalled row's why names its last step: "Nothing new for 23m — last
+    /// step: Bash · swift test".
+    @Test func aStalledRowNamesItsLastStep() {
+        var row = session()
+        row.lastEventMs = now - 23 * minute
+        row.isStalled = true
+        row.lastStep = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 23 * minute)
+        #expect(why(row) == "Nothing new for 23m — last step: Bash · swift test")
+        #expect(why(row, .zh) == "已经 23 分钟 没有新动静——上一步：Bash · swift test")
+        let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
+        #expect(face.secondLine == TrayRowModel.SecondLine(kind: .warning, text: why(row)))
+    }
+
+    /// A running row's quiet second line is its last step, worded as a
+    /// past step; its time slot is this turn's duration.
+    @Test func aRunningRowShowsItsLastStepAndItsTurn() {
+        var row = session()
+        row.turnStartMs = now - 14 * minute
+        row.lastStep = SessionBook.Step(tool: "Bash", target: "swift test", ms: now - 12 * minute)
+        row.recentSteps = [row.lastStep].compactMap { $0 }
+        let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
+        #expect(face.secondLine == TrayRowModel.SecondLine(kind: .step, text: "Bash · swift test · 12m ago"))
+        #expect(face.age == "14m")
+        #expect(face.accessibilityLabel.contains("Bash · swift test"))
+        let zh = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .zh, nowMs: now))
+        #expect(zh.secondLine?.text == "Bash · swift test · 12 分钟前")
+        #expect(zh.age == "14 分")
+        // Under a minute the turn says so, and the step says "now".
+        row.turnStartMs = now - 20_000
+        row.lastStep = SessionBook.Step(tool: "Read", target: "", ms: now - 10_000)
+        let young = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
+        #expect(young.age == "<1m")
+        #expect(young.secondLine?.text == "Read · now")
+    }
+
+    /// No step, no second line: a Cursor or OpenCode row stays one line,
+    /// and a row whose turn start is unknown shows when it last moved.
+    @Test func aRowWithoutStepsStaysOneLine() {
+        let face = TrayRowModel.make(TrayRowModel.Input(row: session(.cursor), lang: .en, nowMs: now))
+        #expect(face.secondLine == nil)
+        #expect(face.age == String(format: L10n.t(.agoFormat, .en), "1m"))
+    }
+
+    /// Step words say what was reported, never that it is still going.
+    @Test func noStepWordingSaysRunning() {
+        var row = session()
+        row.isStalled = true
+        row.lastStep = SessionBook.Step(tool: "Edit", target: "a.swift", ms: now - 30 * minute)
+        row.recentSteps = [row.lastStep].compactMap { $0 }
+        row.turnStartMs = now - 40 * minute
+        for lang in [ResolvedLanguage.en, .zh] {
+            var texts = [why(row, lang), Explain.stepLine(row.recentSteps[0], nowMs: now, lang: lang)]
+            texts += [L10n.t(.stepStalled, lang), L10n.t(.stepHeading, lang), L10n.t(.stepThisTurn, lang)]
+            let detail = DetailModel.make(row: row, lang: lang, nowMs: now)
+            texts += detail.steps.flatMap { [$0.label, $0.value] }
+            for text in texts {
+                #expect(!text.lowercased().contains("running"), "\(text)")
+                #expect(!text.contains("正在"), "\(text)")
+            }
+        }
+    }
+
+    /// The detail page lists up to five steps, newest first, and this
+    /// turn's duration as a fact.
+    @Test func theDetailListsRecentStepsAndThisTurn() {
+        let detail = SurfaceFixtures.detailSteps(lang: .en)
+        #expect(detail.steps.count == SessionBook.maxSteps)
+        #expect(detail.steps.first?.value == "Bash · swift test")
+        #expect(detail.steps.last?.value == "Read · Sources/Upload/Queue.swift")
+        let turn = detail.facts.first { $0.label == L10n.t(.stepThisTurn, .en) }
+        #expect(turn?.value == "14m")
     }
 
     @Test func aStalledRowWithNoClockSaysSoRatherThanGuess() {
@@ -118,8 +191,8 @@ struct ExplainTests {
         #expect(why(noClock) == L10n.t(.explainRunningNoClock, .en))
     }
 
-    /// 24.0: orange is only a stall — an error in the transcript is a fact
-    /// in the detail page, not a lamp.
+    /// Orange is only a stall — a turn's error is a fact in the detail page,
+    /// not a lamp.
     @Test func anErrorIsNotAnOrangeLamp() {
         var row = session()
         row.lastErrorText = "npm ERR! missing script: test"
@@ -127,7 +200,7 @@ struct ExplainTests {
         #expect(face.lamp == LampFace(shape: .ring, tone: .running))
     }
 
-    /// 24.0: a recent row says which rule made it recent.
+    /// A recent row says which rule made it recent.
     @Test func aRecentRowSaysWhichRuleMadeItRecent() {
         var row = session()
         row.liveProcess = false
@@ -368,8 +441,8 @@ struct ExplainTests {
         #expect(detail.ask == "Bash: npm run build")
         #expect(detail.canDismiss)
         let labels = detail.facts.map { $0.label }
-        #expect(labels.contains(L10n.t(.detailModel, .en)))
         #expect(labels.contains(L10n.t(.detailSource, .en)))
+        #expect(!labels.contains("Model"), "the model is never shown")
     }
 
     @Test func theTurnDetailQuotesTheLastMessage() {
@@ -390,7 +463,6 @@ struct ExplainTests {
     /// raw values are words.
     @Test func theDetailListsOnlyWhatItKnows() {
         var row = session()
-        row.model = ""
         row.cwd = ""
         row.project = ""
         row.startedMs = 0
@@ -403,7 +475,7 @@ struct ExplainTests {
     }
 }
 
-/// 2.3 — the defects a fresh audit at the 2.2 baseline turned up.
+/// The defects a fresh audit turned up.
 ///
 /// Each of these is a place where the code said something it had not
 /// measured, dropped work it had been asked to do, or let a click reach
@@ -421,7 +493,7 @@ final class ExplainErrorTests: XCTestCase {
 
     // MARK: D-2 · a fault is not crowded out
 
-    /// 24.0: a transcript's last error is shown on the detail page, where
+    /// A turn's last error is shown on the detail page, where
     /// it can be read in full — not guessed into a count.
     func testALastErrorIsTheDetailPagesError() {
         var row = liveRow()

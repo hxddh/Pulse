@@ -1,6 +1,6 @@
-# 20.0 Drift sentinel. Once a week, checks whether any open-source vendor
+# Drift sentinel. Once a week, checks whether any open-source vendor
 # changed the files its hook contract is defined in since the commit Pulse's
-# receiver was checked against (docs/vendor-formats.json; 24.0 keeps only the
+# receiver was checked against (docs/vendor-formats.json keeps only the
 # hooks). Red means "read those commits" — a hook contract may have moved. Read-only: it clones
 # public repositories without file contents and prints; it writes nothing.
 name: Vendor drift

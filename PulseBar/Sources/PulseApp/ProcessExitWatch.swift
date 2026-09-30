@@ -1,6 +1,6 @@
 import Foundation
 
-/// 24.0 · a session ends when its process exits — told by the kernel, not
+/// A session ends when its process exits — told by the kernel, not
 /// found by polling.
 ///
 /// One `DispatchSource` process source (kqueue `NOTE_EXIT`) per pid a live
@@ -53,12 +53,6 @@ final class ProcessExitWatch: @unchecked Sendable {
         sources.removeAll()
         onExit = nil
         lock.unlock()
-    }
-
-    var watchedCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return sources.count
     }
 
     private func exited(_ pid: Int32, report: (@Sendable (Int32) -> Void)? = nil) {

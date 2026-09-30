@@ -1,7 +1,7 @@
 import Foundation
 
-/// Installs Pulse's hook for every supported agent (24.0), driven by the
-/// catalog's `HookContract`s.
+/// Installs Pulse's hook for every supported agent, driven by the catalog's
+/// `HookContract`s.
 ///
 /// The rule: install only each vendor's documented hook, plugin or
 /// extension; only events that cannot change the agent's decisions (never a
@@ -54,7 +54,7 @@ enum HooksInstaller {
     /// binary (`…/PulseBar --hook claude`) are the token `PulseBar` followed
     /// by the token `--hook`; a bare `--hook` alone (`mytool --hook-dir`) is
     /// never ours. The quote and backslash boundaries cover the command as
-    /// it sits inside JSON, TOML and JavaScript text.
+    /// it sits inside JSON and JavaScript text.
     static let pulseMarkerPatterns = [
         #"(?:^|[\s/"'\\])pulse-hook(?:$|[\s"'\\])"#,
         #"(?:^|[\s/"'\\])PulseBar["'\\]*\s+--hook(?:$|[\s"'\\])"#,
@@ -70,15 +70,9 @@ enum HooksInstaller {
         return "\(quoted) \(agent.rawValue) \(event)"
     }
 
-    static func codexNotifyArgv() -> [String] {
-        [launcherURL.path, "codex"]
-    }
-
     static func configURL(for agent: AgentID) -> URL {
         homeURL.appendingPathComponent(agent.spec.hooks.path)
     }
-
-    static var codexConfigURL: URL { homeURL.appendingPathComponent(".codex/config.toml") }
 
     /// Whether the vendor's own directory exists — Pulse installs nothing
     /// for an agent that is not on this Mac.
@@ -168,9 +162,8 @@ enum HooksInstaller {
             try edit(url) { try renderNested(agent, contract, existing: $0) }
         case .codexHooks:
             try edit(url) { try renderNested(agent, contract, existing: $0) }
-            let notify = try installCodexNotify()
             return url.path + " (" + contract.events.map(\.name).joined(separator: ", ")
-                + " — trust them once in Codex: /hooks); " + notify
+                + " — trust them once in Codex: /hooks)"
         case .cursorHooks:
             try edit(url) { try renderVersioned(agent, contract, existing: $0, key: "command") }
         case .copilotHooks, .openCodePlugin, .piExtension:
@@ -196,11 +189,7 @@ enum HooksInstaller {
         case .copilotHooks, .openCodePlugin, .piExtension:
             changed = try revert(url) { _ in nil }
         }
-        var report = url.path + (changed ? "" : " (nothing to remove)")
-        if contract.format == .codexHooks {
-            report += "; " + (try uninstallCodexNotify())
-        }
-        return report
+        return url.path + (changed ? "" : " (nothing to remove)")
     }
 
     /// Which of an agent's contract events carry Pulse's command in `text`
@@ -562,77 +551,6 @@ enum HooksInstaller {
         try? (runner + "\n").write(to: runnerPathURL, atomically: true, encoding: .utf8)
     }
 
-    // MARK: - Codex notify
-
-    /// Codex's legacy `notify` argv (`agent-turn-complete`), kept beside
-    /// hooks.json for Codex builds without hooks. Codex runs exactly one
-    /// notify: a user's own is kept and Pulse's is not added.
-    private static func installCodexNotify() throws -> String {
-        let cfg = codexConfigURL
-        var report = cfg.path
-        try edit(cfg) { existing in
-            let text = existing ?? ""
-            let argv = codexNotifyArgv()
-            let quoted = argv.map { value -> String in
-                let escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                return "\"\(escaped)\""
-            }.joined(separator: ", ")
-            let end = rootTableEnd(text)
-            var root = String(text[..<end])
-            let rest = String(text[end...])
-            // A `notify` may span lines (a reformatted array): the whole
-            // statement decides whose it is.
-            let rootBytes = Array(root.utf8)
-            let notify = TOMLScan.statements(root).filter { !$0.isTable && $0.key == "notify" }
-            if notify.contains(where: { containsPulseMarker(String(decoding: rootBytes[$0.start..<$0.end], as: UTF8.self)) }) {
-                return text
-            }
-            if !notify.isEmpty {
-                report += " (kept your own notify — Codex allows one; Pulse was not added)"
-                return text
-            }
-            if !root.isEmpty, !root.hasSuffix("\n") { root += "\n" }
-            root += "\n# Pulse attention hooks\nnotify = [\(quoted)]\n"
-            if !rest.isEmpty {
-                if !root.hasSuffix("\n") { root += "\n" }
-                if !root.hasSuffix("\n\n") { root += "\n" }
-            }
-            return root + rest
-        }
-        return report
-    }
-
-    private static func uninstallCodexNotify() throws -> String {
-        let cfg = codexConfigURL
-        let changed = try revert(cfg) { text in
-            // Whole statements, not lines: a `notify` reformatted over
-            // several lines goes with every line of it.
-            let bytes = Array(text.utf8)
-            var body = ""
-            for statement in TOMLScan.statements(text) {
-                let chunk = String(decoding: bytes[statement.start..<statement.end], as: UTF8.self)
-                if !statement.isTable, containsPulseMarker(chunk) { continue }
-                body += chunk
-            }
-            var kept: [String] = []
-            for line in body.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
-                if line.trimmingCharacters(in: .whitespaces) == "# Pulse attention hooks" { continue }
-                if line.trimmingCharacters(in: .whitespaces).isEmpty,
-                   let last = kept.last,
-                   last.trimmingCharacters(in: .whitespaces).isEmpty {
-                    continue
-                }
-                kept.append(line)
-            }
-            var result = kept.joined(separator: "\n")
-            while result.hasSuffix("\n\n") { result = String(result.dropLast()) }
-            if !result.hasSuffix("\n") { result += "\n" }
-            return result
-        }
-        return cfg.path + (changed ? "" : " (nothing to remove)")
-    }
-
     // MARK: - Files
 
     /// Write a vendor config in place of the file the user actually has.
@@ -648,14 +566,6 @@ enum HooksInstaller {
         if let mode {
             try? FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: target.path)
         }
-    }
-
-    /// Where Codex's root table ends: the start of the first `[table]`
-    /// header — a line that begins with `[` outside any multi-line array or
-    /// string (an element line of a reformatted array is not one).
-    static func rootTableEnd(_ text: String) -> String.Index {
-        guard let table = TOMLScan.statements(text).first(where: \.isTable) else { return text.endIndex }
-        return text.utf8.index(text.utf8.startIndex, offsetBy: table.start)
     }
 
     static func containsPulseMarker(_ text: String) -> Bool {
@@ -683,7 +593,7 @@ enum HooksInstaller {
     }
 }
 
-/// 24.0 · rewrite one member of a user's JSON config and leave every other
+/// Rewrite one member of a user's JSON config and leave every other
 /// byte as they wrote it.
 ///
 /// `JSONSerialization` round-trips lose key order, spacing and number
@@ -1049,121 +959,5 @@ enum JSONSplice {
         if position > 0 { return members[position - 1].valueEnd..<member.valueEnd }
         if members.count > 1 { return member.start..<members[1].start }
         return (open + 1)..<close
-    }
-}
-
-/// Just enough of TOML to find Codex's statements: a key/value that
-/// runs over several lines (a multi-line array or string) is one statement,
-/// and only a line that begins with `[` outside all of them is a table
-/// header. Byte offsets, UTF-8 — every character that matters is ASCII.
-enum TOMLScan {
-    struct Statement: Equatable {
-        /// Byte offset of its first line.
-        var start: Int
-        /// Byte offset after its last line's line break (or the end).
-        var end: Int
-        /// A `[table]` / `[[array]]` header line.
-        var isTable: Bool
-        /// The key of a key/value statement ("" for a blank or comment line).
-        var key: String
-    }
-
-    static func statements(_ text: String) -> [Statement] {
-        let bytes = Array(text.utf8)
-        var out: [Statement] = []
-        var depth = 0
-        var multiBasic = false
-        var multiLiteral = false
-        var lineStart = 0
-        while lineStart < bytes.count {
-            var lineEnd = lineStart
-            while lineEnd < bytes.count, bytes[lineEnd] != 0x0A { lineEnd += 1 }
-            let next = min(lineEnd + 1, bytes.count)
-            if depth > 0 || multiBasic || multiLiteral, var last = out.popLast() {
-                last.end = next
-                out.append(last)
-            } else {
-                var first = lineStart
-                while first < lineEnd, bytes[first] == 0x20 || bytes[first] == 0x09 { first += 1 }
-                let isTable = first < lineEnd && bytes[first] == UInt8(ascii: "[")
-                var key = ""
-                if !isTable, let equals = (first..<lineEnd).first(where: { bytes[$0] == UInt8(ascii: "=") }) {
-                    key = String(decoding: bytes[first..<equals], as: UTF8.self).trimmingCharacters(in: .whitespaces)
-                }
-                out.append(Statement(start: lineStart, end: next, isTable: isTable, key: key))
-                if isTable {
-                    lineStart = next
-                    continue
-                }
-            }
-            scan(bytes, from: lineStart, to: lineEnd, depth: &depth, multiBasic: &multiBasic, multiLiteral: &multiLiteral)
-            lineStart = next
-        }
-        return out
-    }
-
-    /// One line's brackets and strings, carried over from the lines before.
-    private static func scan(
-        _ bytes: [UInt8], from start: Int, to end: Int,
-        depth: inout Int, multiBasic: inout Bool, multiLiteral: inout Bool
-    ) {
-        let quote = UInt8(ascii: "\""), apostrophe = UInt8(ascii: "'"), backslash = UInt8(ascii: "\\")
-        func triple(_ byte: UInt8, at index: Int) -> Bool {
-            index + 2 < end && bytes[index] == byte && bytes[index + 1] == byte && bytes[index + 2] == byte
-        }
-        var index = start
-        while index < end {
-            let byte = bytes[index]
-            if multiBasic {
-                if byte == backslash {
-                    index += 2
-                } else if triple(quote, at: index) {
-                    multiBasic = false
-                    index += 3
-                } else {
-                    index += 1
-                }
-                continue
-            }
-            if multiLiteral {
-                if triple(apostrophe, at: index) {
-                    multiLiteral = false
-                    index += 3
-                } else {
-                    index += 1
-                }
-                continue
-            }
-            switch byte {
-            case UInt8(ascii: "#"):
-                return
-            case quote:
-                if triple(quote, at: index) {
-                    multiBasic = true
-                    index += 3
-                } else {
-                    index += 1
-                    while index < end, bytes[index] != quote { index += bytes[index] == backslash ? 2 : 1 }
-                    index += 1
-                }
-            case apostrophe:
-                if triple(apostrophe, at: index) {
-                    multiLiteral = true
-                    index += 3
-                } else {
-                    index += 1
-                    while index < end, bytes[index] != apostrophe { index += 1 }
-                    index += 1
-                }
-            case UInt8(ascii: "["), UInt8(ascii: "{"):
-                depth += 1
-                index += 1
-            case UInt8(ascii: "]"), UInt8(ascii: "}"):
-                depth = max(0, depth - 1)
-                index += 1
-            default:
-                index += 1
-            }
-        }
     }
 }

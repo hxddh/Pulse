@@ -1,13 +1,13 @@
 import Foundation
 import Observation
 
-/// AppKit's way to follow an `@Observable` value (19.0).
+/// AppKit's way to follow an `@Observable` value.
 ///
 /// SwiftUI re-reads what a body touched; AppKit code (the status item, the
 /// panel's size) has no body. This re-arms `withObservationTracking` after
 /// every change so `onChange` runs once per change of anything `track`
 /// read — and never for a change of something it did not read, which is the
-/// point: the status item used to be woken by every `@Published` write.
+/// point: the status item is not woken by a write it does not draw.
 ///
 /// `Observations` (the async sequence) would do this, but needs macOS 26;
 /// Pulse deploys to 14.

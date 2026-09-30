@@ -7,9 +7,9 @@ import Testing
 
 // Settings: the persisted settings and the Settings page model.
 
-/// Settings are the one file Pulse keeps for the person. 23.0: a `Codable`
-/// value in `settings.json`; a pre-23.0 `settings.txt` is deleted, unread,
-/// and the defaults apply.
+/// Settings are the one file Pulse keeps for the person: a `Codable` value
+/// in `settings.json`; an old `settings.txt` is deleted, unread, and the
+/// defaults apply.
 @Suite("Settings")
 struct PulseSettingsTests {
     private func roundTrip(_ settings: PulseSettings) throws -> PulseSettings {
@@ -89,7 +89,7 @@ struct PulseSettingsTests {
         #expect(decoded.language == .zh)
     }
 
-    /// 24.0: a `readProtectedAppData` key from 23.0 is simply ignored —
+    /// A retired `readProtectedAppData` key is simply ignored —
     /// Pulse reads no other app's data any more.
     @Test func theRetiredAppDataKeyIsIgnored() throws {
         let decoded = try decode(#"{"readProtectedAppData": true, "notifyOnWaiting": false}"#)
@@ -259,6 +259,55 @@ struct SettingsModelTests {
     }
 }
 
+/// A settings change applies only what that setting needs: a mute or a
+/// notification switch touches nothing outside the file; the shortcut
+/// re-registers only for the shortcut; the language and Terminal
+/// automation re-project.
+@Suite("Setting effects")
+struct SettingEffectTests {
+    @Test func eachSettingAppliesOnlyWhatItNeeds() {
+        let base = PulseSettings()
+        func effects(_ change: (inout PulseSettings) -> Void) -> Set<SettingEffect> {
+            var next = base
+            change(&next)
+            return StatusStore.effects(from: base, to: next)
+        }
+        let hotkey = effects { $0.hotkey = .optionCommandP }
+        let login = effects { $0.launchAtLogin = true }
+        let updates = effects { $0.updateCheckEnabled = false }
+        let language = effects { $0.language = .zh }
+        let automation = effects { $0.allowTerminalAutomation = true }
+        let mute = effects { $0.mutedAgents = [.gemini] }
+        let notify = effects { $0.notifyOnWaiting = false }
+        let answered = effects { $0.automationOfferAnswered = true }
+        let nothing = effects { _ in }
+        #expect(hotkey == [.hotkey])
+        #expect(login == [.loginItem])
+        #expect(updates == [.updateCheck])
+        #expect(language == [.bannerCategory, .reproject])
+        #expect(automation == [.reproject])
+        #expect(mute.isEmpty)
+        #expect(notify.isEmpty)
+        #expect(answered.isEmpty)
+        #expect(nothing.isEmpty)
+        // Answering the offer with "Allow" is two settings, one effect.
+        let both = effects {
+            $0.automationOfferAnswered = true
+            $0.allowTerminalAutomation = true
+        }
+        #expect(both == [.reproject])
+    }
+
+    /// "System" is said in the interface's language.
+    @Test func theLanguagePickerSaysSystemInTheInterfacesLanguage() {
+        #expect(AppLanguage.auto.menuLabel(.en) == "System")
+        #expect(AppLanguage.auto.menuLabel(.zh) == L10n.t(.languageSystem, .zh))
+        #expect(AppLanguage.auto.menuLabel(.zh) != "System")
+        #expect(AppLanguage.zh.menuLabel(.en) == "中文")
+        #expect(AppLanguage.en.menuLabel(.zh) == "English")
+    }
+}
+
 /// "Don't suggest hooks" is the person's decision, and it persists.
 @Suite("Hooks nudge setting")
 struct HooksNudgeSettingTests {
@@ -278,6 +327,7 @@ struct HooksNudgeSettingTests {
     @Test func anUninstalledChoiceSilencesTheHooksNudge() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
+        store.presentAgents = [.claude, .codex]
         store.notifyAuthorized = true
         #expect(!store.setupAgents.isEmpty)
         store.settings.hooksNudgeOff = true
@@ -319,7 +369,7 @@ struct AutomationOfferTests {
         book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now, session: "pane", cwd: "/w/b",
                                    landing: "tmux:%3;term:tmux"), nowMs: now)
         func project(_ allow: Bool) -> [String: Bool] {
-            let state = TrayState.project(book: book, processes: [], summaries: [:],
+            let state = TrayState.project(book: book, processes: [],
                                           context: TrayState.Context(nowMs: now, allowAutomation: allow))
             return Dictionary(uniqueKeysWithValues: state.rows.map { ($0.sessionID, $0.exactWithAutomation) })
         }

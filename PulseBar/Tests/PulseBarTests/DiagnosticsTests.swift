@@ -143,11 +143,12 @@ struct HooksSectionTests {
 /// The tray's one notice, and the fixtures the tray captures are made of.
 final class TrayNoticeTests: XCTestCase {
     /// The setup card comes first — without a hook there is nothing
-    /// to notify. It names the agents running (or on this Mac) unconnected.
+    /// to notify. It names the agents on this Mac unconnected.
     @MainActor
     func testTheSetupCardOutranksNotificationSetup() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
+        store.presentAgents = [.claude, .codex]
 
         XCTAssertFalse(store.setupAgents.isEmpty)
         XCTAssertEqual(store.trayNotice?.kind, .setup)
@@ -167,6 +168,42 @@ final class TrayNoticeTests: XCTestCase {
         XCTAssertEqual(store.trayNotice?.text, String(format: store.tr(.setupFound), "Claude, Codex"))
         store.hooksStatus = .installed([.claude, .codex])
         XCTAssertNil(store.trayNotice, "connected: nothing to set up")
+    }
+
+    /// A live agent process whose vendor folder is not on this Mac is not
+    /// offered: "Connect" installs only where the folder is, so offering it
+    /// would ask again after every click.
+    @MainActor
+    func testOnlyAgentsWhoseFolderIsHereAreOffered() {
+        let store = StatusStore()
+        store.installPreviewFixture("waiting")
+        store.notifyAuthorized = true
+        store.presentAgents = []
+        XCTAssertTrue(store.cachedAll.contains { $0.liveProcess })
+        XCTAssertTrue(store.setupAgents.isEmpty, "running is not being on this Mac")
+        store.presentAgents = [.gemini]
+        XCTAssertEqual(store.setupAgents, [.gemini])
+    }
+
+    /// An agent whose install failed is never offered "Connect" again —
+    /// it would fail the same way, card after card. The card says why,
+    /// in the failure's own words, and opens Settings.
+    @MainActor
+    func testAFailedInstallIsSaidNotOfferedAgain() {
+        let store = StatusStore()
+        store.notifyAuthorized = true
+        store.presentAgents = [.claude, .codex, .gemini]
+        store.hooksStatus = .installed([.claude], failed: [.gemini: .invalidJSON])
+        XCTAssertEqual(store.setupAgents, [.codex], "Gemini failed: not offered again")
+        XCTAssertEqual(store.trayNotice?.kind, .setup)
+        store.hooksStatus = .installed([.claude, .codex], failed: [.gemini: .invalidJSON])
+        XCTAssertTrue(store.setupAgents.isEmpty)
+        let card = store.trayNotice
+        XCTAssertEqual(card?.kind, .setupFailed)
+        XCTAssertEqual(card?.action, .openHooksSettings)
+        XCTAssertEqual(card?.text, HooksSupport.Status.failureText([.gemini: .invalidJSON], lang: store.lang))
+        store.settings.hooksNudgeOff = true
+        XCTAssertNil(store.trayNotice, "hooks removed on purpose: nothing to say")
     }
 
     /// After "Connect" the card shows what is left, until "Got it".
@@ -218,8 +255,8 @@ final class TrayNoticeTests: XCTestCase {
     }
 }
 
-/// The 0.5.0-vs-0.21.0 drift that shipped for months was invisible because
-/// nothing ever compared the two.
+/// A version drift once shipped for months, invisible because nothing ever
+/// compared the two.
 final class PulseVersionTests: XCTestCase {
     func testSemverIsWellFormed() {
         let parts = PulseVersion.semver.split(separator: ".")
@@ -334,7 +371,6 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertEqual(PulseVersion.distributionChannel, "dev")
         XCTAssertFalse(PulseVersion.prefersPrereleaseUpdates)
         XCTAssertFalse(PulseVersion.isNotarized)
-        XCTAssertFalse(PulseVersion.isGatekeeperReady)
     }
 
     @MainActor
