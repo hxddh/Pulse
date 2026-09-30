@@ -30,17 +30,13 @@ if ! git -C "$ROOT" diff --quiet HEAD 2>/dev/null; then
   GIT_COMMIT="${GIT_COMMIT}+"
 fi
 BUILD_DATE="$(date -u +%Y-%m-%d)"
-# Channel starts provisional: ad-hoc → preview; Developer ID without notary →
-# signed. Only a successful notarization upgrades to stable. Never stamp
-# "stable" before stapler validates — that mislabels Gatekeeper-blocked builds.
+# Every build starts as `preview`; only a notarization that stapler validates
+# upgrades it to `stable`. Never stamp "stable" earlier — that mislabels a
+# build Gatekeeper blocks.
 SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
 NOTARY_PROFILE="${PULSE_NOTARY_PROFILE:-}"
 PULSE_NOTARIZED="false"
-if [[ "$SIGN_IDENTITY" == "-" ]]; then
-  DISTRIBUTION_CHANNEL="preview"
-else
-  DISTRIBUTION_CHANNEL="signed"
-fi
+DISTRIBUTION_CHANNEL="preview"
 
 echo "building PulseBar ${VERSION}..."
 # The product, not the package: a plain `swift build -c release` would also
@@ -54,18 +50,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN" "$APP/Contents/MacOS/PulseBar"
-# Brand marks (template PNGs + SVG sources)
-if [[ -d "$ROOT/PulseBar/Sources/PulseApp/Resources/AgentIcons" ]]; then
-  rm -rf "$APP/Contents/Resources/AgentIcons"
-  cp -R "$ROOT/PulseBar/Sources/PulseApp/Resources/AgentIcons" "$APP/Contents/Resources/AgentIcons"
-fi
-if [[ -d "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand" ]]; then
-  rm -rf "$APP/Contents/Resources/Brand"
-  cp -R "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand" "$APP/Contents/Resources/Brand"
-  if [[ -f "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand/AppIcon.icns" ]]; then
-    cp "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-  fi
-fi
+# The Finder / Dock icon (CFBundleIconFile). Everything the app draws at
+# runtime — the agent marks, the brand mark — lives in the SwiftPM resource
+# bundle below and is found through PulseResources.
+cp "$ROOT/PulseBar/Packaging/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 # SwiftPM resource bundle. This is not optional: the app resolves its icons
 # through it, so shipping without it ships a broken app.
 #
@@ -191,7 +179,7 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
   xcrun stapler validate "$APP"
   spctl -a -vv --type execute "$APP"
   rm -f "$APP_ZIP"
-  # Upgrade channel only after stapler validates — signed≠stable until then.
+  # Upgrade the channel only after stapler validates.
   DISTRIBUTION_CHANNEL="stable"
   PULSE_NOTARIZED="true"
   /usr/libexec/PlistBuddy -c "Set :PulseDistributionChannel ${DISTRIBUTION_CHANNEL}" "$APP/Contents/Info.plist"
@@ -215,21 +203,25 @@ if [[ "$PULSE_NOTARIZED" != "true" ]]; then
   cat > "$GUIDE" <<TXT
 Pulse ${VERSION} · 首次打开 / First launch
 
-当前版本为 ${DISTRIBUTION_CHANNEL} 通道构建（未公证）。macOS 首次打开可能拦截它，这是
+当前版本为 ${DISTRIBUTION_CHANNEL} 通道构建（未公证）。macOS 首次打开会拦截它，这是
 Gatekeeper 的信任策略，不是 Pulse 运行时崩溃。请只对 Pulse 做一次明确放行：
 
-1. 将 Pulse.app 拖入“应用程序”。
-2. 在 Finder 的“应用程序”中按住 Control 点 Pulse.app，选择“打开”，再点“打开”。
-3. 若仍被拦截：系统设置 → 隐私与安全性 → 安全性，点“仍要打开”。
+1. 将 Pulse.app 拖入“应用程序”，双击打开一次；macOS 提示无法验证时点“完成”。
+2. 打开 系统设置 → 隐私与安全性，滚动到“安全性”，点 Pulse 旁边的“仍要打开”，
+   再输入密码确认。
 
-也可以在确认路径正确后，仅移除 Pulse 自己的下载隔离标记：
+或者在“终端”里，确认路径正确后，仅移除 Pulse 自己的下载隔离标记：
   xattr -dr com.apple.quarantine /Applications/Pulse.app
 
+macOS 15 起，按住 Control 点“打开”不再能放行未公证的 App。
 不要关闭“允许从以下位置下载的 App”或全局禁用 Gatekeeper。
 需要 macOS 14 或更高版本；当前构建面向 Apple silicon（arm64）。
 
-English: this DMG is channel=${DISTRIBUTION_CHANNEL} and not notarized. Control-click
-Pulse.app → Open once, or use the xattr command above. Developer ID + notarization
+English: this DMG is channel=${DISTRIBUTION_CHANNEL} and not notarized. Drag Pulse to
+Applications and open it once; when macOS blocks it, go to System Settings →
+Privacy & Security, scroll to Security and click "Open Anyway". Or, in Terminal:
+  xattr -dr com.apple.quarantine /Applications/Pulse.app
+(macOS 15 removed the Control-click → Open shortcut.) Developer ID + notarization
 removes this step.
 TXT
   cp "$GUIDE" "$STAGE/"

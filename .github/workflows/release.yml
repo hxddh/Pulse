@@ -7,7 +7,11 @@ name: Release
 #   3. push to main with [release] in the message
 #
 # (3) exists because tag pushes need tag-write credentials that a CI/agent
-# session may not have. The marker keeps it explicit — no push ever releases by
+# session may not have. `[release] [prerelease]` (scripts/release.sh
+# --prerelease) publishes the same DMG and notes as a GitHub *prerelease*,
+# never marked Latest: `/releases/latest` — what the in-app update check
+# reads — does not see it until the owner promotes it on GitHub after a
+# real-Mac smoke run (untick "pre-release", set as latest). The marker keeps it explicit — no push ever releases by
 # accident — and the job additionally refuses to publish a version that already
 # has a Release, so re-running is harmless.
 #
@@ -24,6 +28,10 @@ on:
       version:
         description: "Version to release (e.g. 0.22.0). Defaults to PulseVersion.semver."
         required: false
+      prerelease:
+        description: "Publish as a GitHub prerelease (not Latest)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -40,6 +48,7 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       release: ${{ steps.check.outputs.release }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
 
@@ -47,6 +56,10 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # Through env, never interpolated into the script: a commit message
+          # is arbitrary text.
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          DISPATCH_PRERELEASE: ${{ github.event.inputs.prerelease }}
         run: |
           set -euo pipefail
           CODE="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' PulseBar/Sources/PulseApp/Models.swift)"
@@ -69,6 +82,14 @@ jobs:
           esac
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+          PRERELEASE=false
+          if [[ "${{ github.event_name }}" == "push" && "$COMMIT_MESSAGE" == *"[prerelease]"* ]]; then
+            PRERELEASE=true
+          elif [[ "${DISPATCH_PRERELEASE:-false}" == "true" ]]; then
+            PRERELEASE=true
+          fi
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
           # The tag must describe the code it points at.
           if [[ "$CODE" != "$VERSION" ]]; then
             echo "::error::asked to release $VERSION but Models.swift says $CODE"
@@ -85,7 +106,7 @@ jobs:
             exit 0
           fi
 
-          echo "releasing $VERSION (trigger: $REASON)"
+          echo "releasing $VERSION (trigger: $REASON, prerelease: $PRERELEASE)"
           echo "release=true" >> "$GITHUB_OUTPUT"
 
   release:
@@ -167,11 +188,24 @@ jobs:
           PULSE_NOTARY_PROFILE: ${{ steps.signing.outputs.notary_profile }}
         run: ./PulseBar/Scripts/package.sh
 
-      - name: Release notes from CHANGELOG
+      - name: Release notes and checksum
         run: |
+          set -euo pipefail
           VERSION="${{ needs.decide.outputs.version }}"
-          DMG="zig-out/package/pulse-${VERSION}-macos-PulseBar.dmg"
+          DMG_NAME="pulse-${VERSION}-macos-PulseBar.dmg"
+          # The checksum file names the DMG relative to itself, so
+          # `shasum -a 256 -c pulse-….dmg.sha256` works in the download folder.
+          (cd zig-out/package && shasum -a 256 "$DMG_NAME" > "$DMG_NAME.sha256")
           python3 scripts/changelog_section.py "$VERSION" > /tmp/notes.md
+          if [[ "${{ needs.decide.outputs.prerelease }}" == "true" ]]; then
+            {
+              echo
+              echo "### Prerelease"
+              echo
+              echo "Not yet verified on a real Mac. Pulse's update check and GitHub **Latest**"
+              echo "do not offer this version until it is promoted."
+            } >> /tmp/notes.md
+          fi
           if [[ "${{ steps.signing.outputs.sign_identity }}" == "-" || -z "${{ steps.signing.outputs.notary_profile }}" ]]; then
             {
               echo
@@ -179,8 +213,11 @@ jobs:
               echo
               echo "This build is **ad-hoc / unnotarized** (no Apple Developer ID in CI)."
               echo "About stays \`preview\` — it is **not** Gatekeeper-ready and must not be"
-              echo "described as notarized stable. First open: Control-click → Open, or"
+              echo "described as notarized stable. First open: drag Pulse to Applications and"
+              echo "open it once; when macOS blocks it, go to **System Settings → Privacy &"
+              echo "Security**, scroll to Security and click **Open Anyway**. Or, in Terminal:"
               echo "\`xattr -dr com.apple.quarantine /Applications/Pulse.app\`."
+              echo "(macOS 15 removed the Control-click → Open shortcut.)"
             } >> /tmp/notes.md
           fi
           {
@@ -188,7 +225,7 @@ jobs:
             echo "### Download verification"
             echo
             echo '```text'
-            shasum -a 256 "$DMG"
+            cat "zig-out/package/$DMG_NAME.sha256"
             echo '```'
           } >> /tmp/notes.md
 
@@ -201,11 +238,14 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Pulse ${{ needs.decide.outputs.version }}
           # Without an Apple Developer ID the DMG is still ad-hoc / unnotarized
-          # (Info.plist stays preview|signed — never stamp stable). GitHub Latest
-          # must still track the current semver so /releases/latest is not stuck
-          # on an older build. Gatekeeper recovery stays in README + notes.
-          prerelease: false
-          make_latest: true
+          # (Info.plist stays preview — never stamp stable). A release marked
+          # [prerelease] is published as a GitHub prerelease and never as
+          # Latest; every other release becomes Latest so /releases/latest
+          # tracks the current semver.
+          prerelease: ${{ needs.decide.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.decide.outputs.prerelease == 'true' && 'false' || 'true' }}
           body_path: /tmp/notes.md
-          files: zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
+          files: |
+            zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
+            zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg.sha256
           fail_on_unmatched_files: true

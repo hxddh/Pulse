@@ -41,7 +41,6 @@ struct PulseSettingsTests {
         original.notifyOnWaiting = false
         original.mutedAgents = [.claude, .codex]
         original.allowTerminalAutomation = true
-        original.automationOfferAnswered = true
         original.updateCheckEnabled = false
         original.hooksNudgeOff = true
         let reparsed = try roundTrip(original)
@@ -60,7 +59,6 @@ struct PulseSettingsTests {
         #expect(d.hotkey == .off, "the global shortcut is opt-in")
         #expect(d.notifyOnWaiting)
         #expect(!d.allowTerminalAutomation)
-        #expect(!d.automationOfferAnswered)
         #expect(d.updateCheckEnabled)
         #expect(!d.hooksNudgeOff)
     }
@@ -222,8 +220,8 @@ struct StoreSettingsTests {
 struct SettingsModelTests {
     // MARK: - Settings
 
-    /// Terminal control is not a section: the automation setting stays in
-    /// `settings.json`, and the landing plan reads it.
+    /// Terminal automation is a switch in General, not a section of its
+    /// own.
     @Test func settingsIsOnePageOfFiveSections() {
         #expect(SettingsModel.sections == [.general, .shortcut, .notifications, .hooks, .updates])
         let titles = SettingsModel.sections.map { SettingsModel.title($0, lang: .zh) }
@@ -257,6 +255,86 @@ struct SettingsModelTests {
         store.performSettings(.unmute(.codex))
         #expect(store.settings.mutedAgents.isEmpty)
     }
+
+    /// Every Hooks line has its own Install or Remove: the job names that
+    /// one agent; the section's buttons name every agent.
+    @Test func aLinesButtonInstallsOrRemovesOnlyItsAgent() {
+        #expect(SettingsModel.hooksJob(.installHook(.gemini)) == .install([.gemini]))
+        #expect(SettingsModel.hooksJob(.uninstallHook(.claude)) == .uninstall([.claude]))
+        #expect(SettingsModel.hooksJob(.installHooks) == .install(nil))
+        #expect(SettingsModel.hooksJob(.uninstallHooks) == .uninstall(nil))
+        #expect(SettingsModel.hooksJob(.copyReport) == nil)
+        let one = HooksSupport.Job.install([.gemini])
+        #expect(one.agents == [.gemini], "one agent, never the roster")
+    }
+
+    /// A job over some agents keeps what it knew of the others: removing
+    /// Claude's hook does not forget why Gemini's install failed.
+    @Test func aJobKeepsTheFailuresOfAgentsItDidNotTouch() {
+        let results = [HooksInstaller.AgentResult(agent: .claude, report: "", failure: nil)]
+        let kept = HooksSupport.failures(after: results, keeping: [.gemini: .invalidJSON, .claude: .unwritable])
+        #expect(kept == [.gemini: .invalidJSON], "Claude was done again; Gemini's reason stays")
+        let failedAgain = [HooksInstaller.AgentResult(agent: .gemini, report: "", failure: .hasComments)]
+        let replaced = HooksSupport.failures(after: failedAgain, keeping: [.gemini: .invalidJSON])
+        #expect(replaced == [.gemini: .hasComments], "this run's reason wins")
+    }
+
+    /// The login toggle shows what macOS says: on while approval is
+    /// pending (with a line to Login Items), off when macOS did not take it
+    /// (with a line saying so), and what was asked until macOS is read.
+    @Test func theLoginToggleShowsWhatMacOSSays() {
+        let pending = SettingsModel.loginLine(asked: true, state: .requiresApproval)
+        #expect(pending.isOn)
+        #expect(pending.note == .needsApproval)
+        let refused = SettingsModel.loginLine(asked: true, state: .off)
+        #expect(!refused.isOn)
+        #expect(refused.note == .failed)
+        let removedElsewhere = SettingsModel.loginLine(asked: false, state: .off)
+        #expect(!removedElsewhere.isOn)
+        #expect(removedElsewhere.note == nil)
+        let enabled = SettingsModel.loginLine(asked: true, state: .enabled)
+        #expect(enabled.isOn)
+        #expect(enabled.note == nil)
+        let unread = SettingsModel.loginLine(asked: true, state: nil)
+        #expect(unread.isOn)
+        #expect(unread.note == nil)
+        #expect(LoginItemState.requiresApproval.isOn)
+        #expect(!LoginItemState.unavailable.isOn)
+    }
+
+    @MainActor
+    @Test func theSettingsPageShowsTheLoginItemAndTheAutomationSwitch() {
+        let store = StatusStore()
+        store.settings.launchAtLogin = true
+        store.landLoginItem(.requiresApproval)
+        store.settings.allowTerminalAutomation = true
+        let model = store.settingsModel
+        #expect(model.launchAtLogin)
+        #expect(model.loginNote == .needsApproval)
+        #expect(model.terminalAutomation)
+        store.performSettings(.setTerminalAutomation(false))
+        #expect(!store.settings.allowTerminalAutomation)
+    }
+
+    /// The LaunchAgent earlier versions wrote is retired only when it is
+    /// Pulse's own: its label and a Pulse program.
+    @Test func onlyPulsesOwnLegacyLaunchAgentIsRetired() throws {
+        func plist(_ label: String, _ arguments: [String]) throws -> Data {
+            try PropertyListSerialization.data(
+                fromPropertyList: ["Label": label, "ProgramArguments": arguments, "RunAtLoad": true],
+                format: .xml, options: 0
+            )
+        }
+        let bundled = try plist("com.pulse.app", ["/usr/bin/open", "-a", "/Applications/Pulse.app"])
+        let shell = try plist("com.pulse.app", ["/Users/me/Pulse/.build/debug/PulseBar"])
+        let stranger = try plist("com.pulse.app", ["/usr/local/bin/something-else"])
+        let otherLabel = try plist("com.other.app", ["/Applications/Pulse.app"])
+        #expect(LoginItem.isPulsesOwnAgent(bundled))
+        #expect(LoginItem.isPulsesOwnAgent(shell))
+        #expect(!LoginItem.isPulsesOwnAgent(stranger), "not a Pulse program: not Pulse's to remove")
+        #expect(!LoginItem.isPulsesOwnAgent(otherLabel))
+        #expect(!LoginItem.isPulsesOwnAgent(Data("not a plist".utf8)))
+    }
 }
 
 /// A settings change applies only what that setting needs: a mute or a
@@ -279,7 +357,6 @@ struct SettingEffectTests {
         let automation = effects { $0.allowTerminalAutomation = true }
         let mute = effects { $0.mutedAgents = [.gemini] }
         let notify = effects { $0.notifyOnWaiting = false }
-        let answered = effects { $0.automationOfferAnswered = true }
         let nothing = effects { _ in }
         #expect(hotkey == [.hotkey])
         #expect(login == [.loginItem])
@@ -288,14 +365,31 @@ struct SettingEffectTests {
         #expect(automation == [.reproject])
         #expect(mute.isEmpty)
         #expect(notify.isEmpty)
-        #expect(answered.isEmpty)
         #expect(nothing.isEmpty)
-        // Answering the offer with "Allow" is two settings, one effect.
+        // Two settings, each with its own effect, applied once each.
         let both = effects {
-            $0.automationOfferAnswered = true
+            $0.launchAtLogin = true
             $0.allowTerminalAutomation = true
         }
-        #expect(both == [.reproject])
+        #expect(both == [.loginItem, .reproject])
+    }
+
+    /// The setup card's "Open at login" checkbox is the same setting as the
+    /// Settings toggle: ticking it asks for the login item. It starts
+    /// unticked — never ticked for the person.
+    @MainActor
+    @Test func theSetupCardsLoginCheckboxIsTheLoginSetting() {
+        let store = StatusStore()
+        store.presentAgents = [.claude]
+        let card = store.trayNotice
+        #expect(card?.kind == .setup)
+        #expect(card?.openAtLogin == false, "unticked until the person ticks it")
+        store.performTrayNotice(.setOpenAtLogin(true))
+        #expect(store.settings.launchAtLogin)
+        let ticked = store.trayNotice
+        #expect(ticked?.openAtLogin == true)
+        let login = StatusStore.effects(from: PulseSettings(), to: store.settings)
+        #expect(login == [.loginItem])
     }
 
     /// "System" is said in the interface's language.
@@ -303,7 +397,7 @@ struct SettingEffectTests {
         #expect(AppLanguage.auto.menuLabel(.en) == "System")
         #expect(AppLanguage.auto.menuLabel(.zh) == L10n.t(.languageSystem, .zh))
         #expect(AppLanguage.auto.menuLabel(.zh) != "System")
-        #expect(AppLanguage.zh.menuLabel(.en) == "中文")
+        #expect(AppLanguage.zh.menuLabel(.en) == "简体中文", "Simplified is the one Chinese there is — said so")
         #expect(AppLanguage.en.menuLabel(.zh) == "English")
     }
 }
@@ -335,72 +429,118 @@ struct HooksNudgeSettingTests {
     }
 }
 
-/// The one-time offer to let Go land on the exact tab: made the first
-/// time a Go lands on the app only for want of Terminal automation, and
-/// never again once answered.
-@Suite("Automation offer")
-struct AutomationOfferTests {
-    private func row(exactWithAutomation: Bool) -> AgentRow {
+/// Terminal automation is a Settings switch. A Go that reaches the app
+/// only says so — and, when that switch is what stands between it and the
+/// exact tab, names the switch.
+@Suite("Terminal automation")
+struct TerminalAutomationTests {
+    private func row(_ handle: String) -> AgentRow {
         var row = AgentRow(rowKey: "claude|s1", agent: .claude)
         row.state = .running
-        row.exactWithAutomation = exactWithAutomation
+        row.cwd = "/w/a"
+        row.landing = LandingHandle(handle)
+        row.landingPlan = LandingPlan.make(handle: row.landing, cwd: row.cwd, allowAutomation: false)
         return row
     }
 
-    @Test func offeredOnlyWhenAutomationWouldHaveMadeItExact() {
-        let could = row(exactWithAutomation: true)
-        #expect(RowNotice.shouldOfferAutomation(outcome: .appOnly, row: could, automationAllowed: false, offerAnswered: false))
-        #expect(!RowNotice.shouldOfferAutomation(outcome: .exact, row: could, automationAllowed: false, offerAnswered: false))
-        #expect(!RowNotice.shouldOfferAutomation(outcome: .failed, row: could, automationAllowed: false, offerAnswered: false))
-        #expect(!RowNotice.shouldOfferAutomation(outcome: .appOnly, row: row(exactWithAutomation: false), automationAllowed: false, offerAnswered: false),
-                "Ghostty, an editor: automation would not help")
-        #expect(!RowNotice.shouldOfferAutomation(outcome: .appOnly, row: could, automationAllowed: true, offerAnswered: false))
-        #expect(!RowNotice.shouldOfferAutomation(outcome: .appOnly, row: could, automationAllowed: false, offerAnswered: true),
-                "answered once — Allow or Not now — never again")
+    @Test func anAppOnlyGoNamesTheSwitchOnlyWhenItWouldHelp() {
+        let tab = row("tty:/dev/ttys004;term:Apple_Terminal")
+        let named = RowNotice.appOnly(row: tab, automationAllowed: false, lang: .en)
+        #expect(named.text == L10n.t(.focusAppOnlyAutomation, .en))
+        let allowed = RowNotice.appOnly(row: tab, automationAllowed: true, lang: .en)
+        #expect(allowed.text == L10n.t(.focusAppOnly, .en), "already on: nothing to point at")
+        let ghostty = RowNotice.appOnly(row: row("tty:/dev/ttys002;term:ghostty"), automationAllowed: false, lang: .en)
+        #expect(ghostty.text == L10n.t(.focusAppOnly, .en), "Ghostty: the switch would not help")
     }
 
-    /// The projection knows: an iTerm session or a Terminal tab handle with
-    /// automation off would be exact with it on; tmux is exact already.
-    @Test func theProjectionMarksRowsAutomationWouldMakeExact() {
-        let now: Int64 = 1_800_000_000_000
-        var book = SessionBook()
-        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: now, session: "tab", cwd: "/w/a",
-                                   landing: "tty:/dev/ttys004;term:Apple_Terminal"), nowMs: now)
-        book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now, session: "pane", cwd: "/w/b",
-                                   landing: "tmux:%3;term:tmux"), nowMs: now)
-        func project(_ allow: Bool) -> [String: Bool] {
-            let state = TrayState.project(book: book, processes: [],
-                                          context: TrayState.Context(nowMs: now, allowAutomation: allow))
-            return Dictionary(uniqueKeysWithValues: state.rows.map { ($0.sessionID, $0.exactWithAutomation) })
+    @Test func theSwitchIsRealCopyInBothLanguages() {
+        for lang in [ResolvedLanguage.en, .zh] {
+            #expect(!L10n.t(.terminalAutomation, lang).isEmpty)
+            #expect(!L10n.t(.terminalAutomationHint, lang).isEmpty)
+            #expect(L10n.t(.focusAppOnlyAutomation, lang).contains(L10n.t(.terminalAutomation, lang)),
+                    "the notice names the switch by its own words")
         }
-        let off = project(false)
-        #expect(off["tab"] == true)
-        #expect(off["pane"] == false, "a tmux pane is exact without automation")
-        let on = project(true)
-        #expect(on["tab"] == false, "already allowed: nothing to offer")
     }
 
     @MainActor
-    @Test func answeringTheOfferIsRememberedAndAllowTurnsItOn() {
+    @Test func theSwitchIsOneSettingAndReprojects() {
         let store = StatusStore()
-        let offered = row(exactWithAutomation: true)
-        store.noteRowAction(offered.rowKey, RowNotice.automationOffer(lang: .en))
-        let shown = store.rowActionNotice(offered)
-        #expect(shown?.offersAutomation == true)
-        store.answerAutomationOffer(offered, allow: false)
-        #expect(store.settings.automationOfferAnswered)
-        #expect(!store.settings.allowTerminalAutomation)
-        #expect(store.rowActionNotice(offered) == nil, "Not now clears the offer")
-        store.answerAutomationOffer(offered, allow: true)
+        store.performSettings(.setTerminalAutomation(true))
         #expect(store.settings.allowTerminalAutomation)
+        let effects = StatusStore.effects(from: PulseSettings(), to: store.settings)
+        #expect(effects == [.reproject])
+    }
+}
+
+/// Opening Pulse again — Finder, Spotlight, a second copy — opens the tray.
+@Suite("Reopen")
+@MainActor
+struct ReopenTests {
+    @Test func reopeningOpensTheTrayOnTheOldestWait() {
+        let store = StatusStore()
+        var opened = 0
+        store.showTray = { opened += 1 }
+        store.reopen()
+        #expect(opened == 1)
+        let pending = store.takePendingReveal()
+        #expect(pending == nil, "no row named: the tray selects the oldest wait itself")
     }
 
-    @Test func theOfferIsRealCopyInBothLanguages() {
-        for lang in [ResolvedLanguage.en, .zh] {
-            let offer = RowNotice.automationOffer(lang: lang)
-            #expect(offer.offersAutomation)
-            #expect(!offer.text.isEmpty)
-            #expect(!L10n.t(.automationAllow, lang).isEmpty)
-        }
+    @Test func aSecondCopyAsksByADistributedNotificationWithNoPayload() {
+        #expect(SingleInstanceGuard.reopenNotification.rawValue == "com.pulse.app.reopen")
+    }
+}
+
+/// "Uninstall Pulse…": what it says it will remove, and when it stops.
+@Suite("Uninstall plan")
+struct UninstallPlanTests {
+    let home = URL(fileURLWithPath: "/Users/me", isDirectory: true)
+
+    @Test func thePlanNamesEveryHookTheLoginItemAndTheFolder() {
+        let plan = UninstallPlan.make(
+            installed: [.gemini, .claude],
+            loginItem: .requiresApproval,
+            folder: home.appendingPathComponent("Library/Application Support/Pulse"),
+            home: home
+        )
+        #expect(plan.hooks == [.claude, .gemini], "roster order")
+        #expect(plan.loginItem)
+        #expect(plan.folder == "~/Library/Application Support/Pulse")
+        let en = plan.message(.en)
+        #expect(en.contains("Claude") && en.contains("Gemini"))
+        #expect(en.contains(L10n.t(.uninstallLogin, .en)))
+        #expect(en.contains("~/Library/Application Support/Pulse"))
+        #expect(en.hasSuffix(L10n.t(.uninstallThen, .en)))
+        #expect(plan.message(.zh) != en)
+    }
+
+    @Test func nothingInstalledAndNoLoginItemSaySo() {
+        let plan = UninstallPlan.make(
+            installed: [], loginItem: .off,
+            folder: URL(fileURLWithPath: "/tmp/pulse-home"), home: home
+        )
+        #expect(plan.hooks.isEmpty)
+        #expect(!plan.loginItem)
+        #expect(plan.folder == "/tmp/pulse-home", "a folder outside home is said in full")
+        let en = plan.message(.en)
+        #expect(en.hasPrefix(L10n.t(.uninstallNoHooks, .en)))
+        #expect(!en.contains(L10n.t(.uninstallLogin, .en)))
+    }
+
+    /// The folder holds the record a byte-for-byte removal needs: it goes
+    /// only when no hook of Pulse's is left anywhere.
+    @Test func theFolderGoesOnlyWhenEveryHookIsOut() {
+        let removed: [HooksSupport.Status] = [.missing, .installed([])]
+        let kept: [HooksSupport.Status] = [
+            .installed([.claude]),
+            .installed([], failed: [.gemini: .invalidJSON]),
+            .failed(.unwritable),
+            .working,
+            .unknown,
+        ]
+        let yes = removed.map(UninstallPlan.hooksRemoved)
+        let no = kept.map(UninstallPlan.hooksRemoved)
+        #expect(yes == [true, true])
+        #expect(no == [false, false, false, false, false])
     }
 }

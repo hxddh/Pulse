@@ -28,26 +28,27 @@ BUNDLE_NAME = "PulseBar_PulseApp.bundle"
 
 # The QA driver (`PulseQA`) is a separate executable and never ships. These
 # strings exist only in its code — the flags that swap this Mac's sessions for
-# a fixture or photograph a surface — so finding one in the app's binary means
-# QA code was linked into the product.
-QA_ONLY_MARKERS = [b"--capture-surfaces=", b"--tray-fixture=", b"--capture-tray-panel="]
+# a fixture, photograph a surface, or force a language or an appearance — so
+# finding one in the app's binary means QA code was linked into the product.
+QA_ONLY_MARKERS = [
+    b"--capture-surfaces=",
+    b"--tray-fixture=",
+    b"--capture-tray-panel=",
+    b"--language=",
+    b"--appearance=",
+]
 
 # Resources the app asks Bundle.module for by name. Paths are relative to the
 # resource bundle root, which is where a flat SwiftPM bundle keeps them.
 REQUIRED_IN_BUNDLE = [
     "Brand/pulse-mark.png",
-    "Brand/pulse-idle.png",
-    "Brand/pulse-running.png",
-    "Brand/pulse-waiting.png",
     "AgentIcons/claude.png",
     "AgentIcons/codex.png",
 ]
 
-# Resources reached through Bundle.main.resourceURL — the fallback path that
-# does not involve CFBundle at all.
+# Read by Finder and the Dock (CFBundleIconFile), not by the app's code.
 REQUIRED_IN_APP = [
-    "Brand/pulse-mark.png",
-    "AgentIcons/claude.png",
+    "AppIcon.icns",
 ]
 
 
@@ -143,7 +144,7 @@ def main(argv: list[str]) -> int:
     if problems:
         return fail(problems)
 
-    icons = len(list((resources / "AgentIcons").glob("*.png")))
+    icons = len(list((found[0] / "AgentIcons").glob("*.png")))
     where = ", ".join(str(b.relative_to(app)) for b in found)
     print(f"package OK — {app.name} {version or '?'} · {icons} agent icons")
     print(f"  resource bundle at: {where} (flat, Info.plist present)")

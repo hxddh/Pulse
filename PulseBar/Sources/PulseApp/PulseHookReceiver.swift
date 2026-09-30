@@ -8,6 +8,10 @@ enum HookAction: Equatable {
     case prompt
     /// The agent is working (a tool ran, a reply streamed): a `tool` line.
     case activity
+    /// Work goes on, but no tool ran — a status, a retry, a recoverable
+    /// error: a `tool` line marked `status` (`AttentionRecord.statusTool`),
+    /// never a step and never the answer to a block.
+    case status
     /// The agent cannot continue until the user acts.
     case blocked(AttentionKind)
     /// The turn is over: your turn.
@@ -33,25 +37,25 @@ struct HookReading: Equatable {
     var ask: String = ""
 }
 
-/// Native receiver for every supported agent's hook, plugin or extension,
-/// and for the public Attention bridge (`pulse-hook` / `PulseBar --hook`).
+/// Native receiver for every supported agent's hook, plugin or extension
+/// (`pulse-hook` / `PulseBar --hook`).
 ///
 /// `pulse-hook <agent> <event>` with the vendor's JSON payload on stdin (or,
-/// for the two modules, as the last argument). Each
-/// agent's adapter maps its own event names and payload onto a
-/// `HookAction`; anything else falls back to the protocol vocabulary
-/// (`permission`, `turn`, `done`, …). Writes one v5 line to the event log
-/// (`EventLog` — the only file it writes) and exits 0 at once.
-/// Unknown events soft-fail (exit 0, no write), and a blocked event from an
-/// agent whose hooks cannot report one (`waiting: .none`) is refused — no
-/// fake Waiting. Nothing is ever held: the vendor's own prompt is always in
-/// charge.
+/// for the two modules, as the last argument). Each agent's adapter maps its
+/// own event names and payload onto a `HookAction`; nothing else is read —
+/// not the protocol's kind words, not plain text. Writes one v5 line to the
+/// event log (`EventLog` — the only file it writes) and exits 0 at once.
+/// Unknown events and payloads that are not a JSON object soft-fail (exit 0,
+/// no write), and a blocked event from an agent whose hooks cannot report
+/// one (`waiting: .none`) is refused — no fake Waiting. Nothing is ever
+/// held: the vendor's own prompt is always in charge.
 enum PulseHookReceiver {
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
     ///
     /// `logURL` nil writes the real event log; a test passes a temporary one
     /// (never a global override — suites run in parallel). `locate` finds
-    /// the agent's pid and the landing handles; tests pass a fixed answer.
+    /// the agent's pid and the landing handles; tests pass a fixed answer, and `front`
+    /// whether the prompt's window is frontmost.
     @discardableResult
     static func run(
         arguments: [String],
@@ -59,7 +63,8 @@ enum PulseHookReceiver {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         logURL: URL? = nil,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-        locate: (AgentID, [String: String]) -> (pid: Int32, landing: String) = HookLanding.current
+        locate: (AgentID, [String: String]) -> (pid: Int32, landing: String) = HookLanding.current,
+        front: () -> Bool? = { PromptVisibility.promptIsFrontmost() }
     ) -> Int32 {
         let args = Array(arguments.drop(while: { $0 != "--hook" }).dropFirst())
         let agentRaw = (args.first ?? "claude").lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -68,7 +73,13 @@ enum PulseHookReceiver {
             return 0
         }
         let eventArg = args.count > 1 && !args[1].hasPrefix("{") ? args[1] : ""
-        var payload = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil)
+        // A payload that is not a JSON object — cut off at `stdinLimit`, a
+        // writer that died mid-write, plain text — writes nothing: its raw
+        // text would become a ghost wait whose ask is broken JSON.
+        guard var payload = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil) else {
+            DebugLog.write("attention reject unparsable payload event=\(eventArg) agent=\(agent.rawValue)")
+            return 0
+        }
         if let msg = payload["msg"] as? [String: Any], payload["type"] == nil {
             payload.merge(msg) { current, _ in current }
         }
@@ -88,7 +99,7 @@ enum PulseHookReceiver {
         // already on screen needs no banner.
         var written = line
         if let kind = AttentionProtocol.kind(line.kind), kind.isOpen {
-            written.front = PromptVisibility.promptIsFrontmost()
+            written.front = front()
         }
         let located = locate(agent, environment)
         written.pid = located.pid > 1 ? located.pid : 0
@@ -118,6 +129,10 @@ enum PulseHookReceiver {
             if !tool.isEmpty, descriptor.hasPrefix(tool + ": ") {
                 message = String(descriptor.dropFirst(tool.count + 2))
             }
+        case .status:
+            guard !context.session.isEmpty else { return nil }
+            kind = .tool
+            toolColumn = AttentionRecord.statusTool
         case .prompt:
             // Session-scoped only: an agent-wide clear from one terminal
             // must not clear another's.
@@ -166,38 +181,18 @@ enum PulseHookReceiver {
         return string(payload, keys: ["hook_event_name", "hookEventName", "type", "event"])
     }
 
-    /// One agent's event, read. `nil` means the adapter does not know it and
-    /// the protocol vocabulary is tried instead.
+    /// One agent's event, read by its own adapter; nil for an event the
+    /// adapter does not know — it writes nothing.
     static func interpret(agent: AgentID, event: String, payload: [String: Any]) -> HookReading? {
         let name = eventName(event, payload: payload)
-        let vendor: HookReading?
         switch agent {
-        case .claude: vendor = readClaude(name, payload)
-        case .codex: vendor = readCodex(name, payload)
-        case .gemini: vendor = readGemini(name, payload)
-        case .copilot: vendor = readCopilot(name, payload)
-        case .opencode: vendor = readOpenCode(name, payload)
-        case .cursor: vendor = readCursor(name, payload)
-        case .pi: vendor = readPi(name, payload)
-        }
-        if let vendor { return vendor }
-        return readBridge(name)
-    }
-
-    /// The protocol's own words, for bridges that write a kind, not a vendor
-    /// event. Unknown and empty words are rejected — never Waiting.
-    static func readBridge(_ word: String) -> HookReading? {
-        let plain = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let kind = AttentionProtocol.kind(plain) else { return nil }
-        switch kind {
-        case .permission, .question, .waiting: return HookReading(action: .blocked(kind))
-        case .turn: return HookReading(action: .turn)
-        case .idle: return HookReading(action: .idle)
-        case .done: return HookReading(action: .resolved)
-        case .start: return HookReading(action: .start)
-        case .working: return HookReading(action: .prompt)
-        case .end: return HookReading(action: .end)
-        case .tool: return HookReading(action: .activity)
+        case .claude: return readClaude(name, payload)
+        case .codex: return readCodex(name, payload)
+        case .gemini: return readGemini(name, payload)
+        case .copilot: return readCopilot(name, payload)
+        case .opencode: return readOpenCode(name, payload)
+        case .cursor: return readCursor(name, payload)
+        case .pi: return readPi(name, payload)
         }
     }
 
@@ -276,9 +271,10 @@ enum PulseHookReceiver {
             return HookReading(action: .activity)
         case "agentStop", "Stop": return HookReading(action: .turn)
         case "errorOccurred", "ErrorOccurred":
-            // An unrecoverable error ends the turn; a recoverable one is work.
+            // An unrecoverable error ends the turn; a recoverable one is work
+            // going on — not a tool that ran, so never an answer.
             let recoverable = payload["recoverable"] as? Bool ?? true
-            return HookReading(action: recoverable ? .activity : .failedTurn)
+            return HookReading(action: recoverable ? .status : .failedTurn)
         case "notification", "Notification":
             let ask = string(payload, keys: ["message", "title"])
             switch string(payload, keys: ["notification_type", "notificationType"]) {
@@ -300,7 +296,9 @@ enum PulseHookReceiver {
         case "session.status":
             let status = (payload["status"] as? [String: Any]).map { string($0, keys: ["type"]) }
                 ?? string(payload, keys: ["status"])
-            return HookReading(action: status == "busy" || status == "retry" ? .activity : .ignore)
+            // Busy or retrying says work goes on, not that a tool ran: it
+            // never answers an ask.
+            return HookReading(action: status == "busy" || status == "retry" ? .status : .ignore)
         case "session.idle": return HookReading(action: .turn)
         case "session.error": return HookReading(action: .failedTurn)
         case "session.deleted": return HookReading(action: .end)
@@ -468,21 +466,22 @@ enum PulseHookReceiver {
 
     // MARK: - Parse
 
-    private static func parsePayload(stdin: String, trailingArg: String?) -> [String: Any] {
+    /// The payload on stdin, else the one in the last argument, else none
+    /// (`[:]` — an event that carries no payload). Nil when what arrived is
+    /// not a JSON object — cut off at `stdinLimit`, broken, or plain text:
+    /// it writes nothing.
+    static func parsePayload(stdin: String, trailingArg: String?) -> [String: Any]? {
         let trimmed = stdin.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            if let data = trimmed.data(using: .utf8),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                return obj
-            }
-            return ["message": trimmed]
-        }
-        if let trailingArg, trailingArg.hasPrefix("{"),
-           let data = trailingArg.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return obj
+        if !trimmed.isEmpty { return object(trimmed) }
+        if let trailingArg, trailingArg.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
+            return object(trailingArg)
         }
         return [:]
+    }
+
+    private static func object(_ text: String) -> [String: Any]? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
     /// What a turn or a block says, when its adapter found no specific ask.
@@ -548,8 +547,10 @@ enum PulseHookReceiver {
 
     /// A banner, a tray row and a TSV field are all single-line: fold every
     /// run of whitespace and bound the result before it ever reaches them.
+    /// Credentials are redacted from the whole value first: a cut made
+    /// before redaction could leave a token's head too short to match.
     static func condenseOneLine(_ raw: String, limit: Int = 140) -> String {
-        let folded = raw.split(whereSeparator: { $0.isWhitespace })
+        let folded = ContentSanitizer.redact(raw).split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
         guard folded.count > limit else { return folded }
         return String(folded.prefix(limit - 1)) + "…"

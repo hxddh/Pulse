@@ -25,6 +25,7 @@ struct SettingsView: View {
         }
         .onAppear {
             store.landHooksStatus(HooksSupport.probeStatus())
+            store.refreshLoginItem()
             PulseNotify.refreshAuthorization()
         }
     }
@@ -40,15 +41,16 @@ extension StatusStore {
             warning = String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
         } else if PulseVersion.distributionChannel == "preview" {
             warning = tr(.updatePreview)
-        } else if PulseVersion.distributionChannel == "signed" {
-            warning = tr(.updateSignedUnnotarized)
         }
         let build = PulseVersion.buildLine
         let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
+        let login = SettingsModel.loginLine(asked: settings.launchAtLogin, state: loginItem)
         return SettingsModel(
             lang: lang,
-            launchAtLogin: settings.launchAtLogin,
+            launchAtLogin: login.isOn,
+            loginNote: login.note,
             language: settings.language,
+            terminalAutomation: settings.allowTerminalAutomation,
             hotkey: settings.hotkey,
             hotkeyTaken: settings.hotkey != .off && !hotkeyRegistered,
             notifications: notifications,
@@ -81,8 +83,10 @@ extension StatusStore {
 
     func performSettings(_ action: SettingsModel.Action) {
         switch action {
-        case .setLaunchAtLogin(let on): set(\.launchAtLogin, on)
+        case .setLaunchAtLogin(let on): setLaunchAtLogin(on)
+        case .openLoginItems: LoginItem.openSystemSettings()
         case .setLanguage(let language): set(\.language, language)
+        case .setTerminalAutomation(let on): set(\.allowTerminalAutomation, on)
         case .setHotkey(let choice): set(\.hotkey, choice)
         case .enableNotifications: requestNotificationAuthorization()
         case .openNotificationSettings: openSystemNotificationSettings()
@@ -91,13 +95,14 @@ extension StatusStore {
             set(\.notifyOnWaiting, on)
         case .unmute(let agent):
             if settings.mutedAgents.contains(agent) { toggleMute(agent) }
-        case .installHooks: installHooks()
-        case .uninstallHooks: uninstallHooks()
+        case .installHooks, .uninstallHooks, .installHook, .uninstallHook:
+            if let job = SettingsModel.hooksJob(action) { runHooks(job) }
         case .copyReport: copyReport()
         case .setUpdateCheck(let on): set(\.updateCheckEnabled, on)
         case .checkForUpdates: checkForUpdatesNow()
         case .openRelease:
             if let url = updateAvailableURL { NSWorkspace.shared.open(url) }
+        case .uninstallPulse: uninstallPulse()
         }
     }
 
@@ -116,11 +121,10 @@ extension StatusStore {
             notifyAuthorized: notifyAuthorized,
             notifyOnWaiting: settings.notifyOnWaiting,
             terminalAutomation: settings.allowTerminalAutomation,
-            automationOfferAnswered: settings.automationOfferAnswered,
             hotkey: settings.hotkey,
             hotkeyRegistered: hotkeyRegistered,
             launchAtLogin: settings.launchAtLogin,
-            loginItemApplied: loginItemApplied,
+            loginItem: loginItem,
             sessions: cachedAll.map(SettingsModel.ReportSession.init)
         ))
     }
@@ -196,10 +200,29 @@ struct SettingsFace: View {
         switch section {
         case .general:
             Toggle(t(.launchAtLogin), isOn: binding(model.launchAtLogin) { .setLaunchAtLogin($0) })
+            switch model.loginNote {
+            case .needsApproval?:
+                LabeledContent {
+                    Button(t(.openLoginItems)) { send(.openLoginItems) }
+                } label: {
+                    Text(t(.loginItemNeedsApproval))
+                        .foregroundStyle(PulseTheme.Tone.attention.color)
+                }
+            case .failed?:
+                Label(t(.loginItemFailed), systemImage: "exclamationmark.triangle")
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(PulseTheme.Tone.attention.color)
+            case nil:
+                EmptyView()
+            }
             Picker(t(.language), selection: languageBinding) {
                 ForEach(AppLanguage.allCases) { lang in
                     Text(lang.menuLabel(model.lang)).tag(lang)
                 }
+            }
+            Toggle(isOn: binding(model.terminalAutomation) { .setTerminalAutomation($0) }) {
+                Text(t(.terminalAutomation))
+                Text(t(.terminalAutomationHint))
             }
         case .shortcut:
             Picker(selection: hotkeyBinding) {
@@ -278,9 +301,16 @@ struct SettingsFace: View {
                                     : line.installed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
                             )
                         if line.needsFix {
-                            Button(t(.installHooks)) { send(.installHooks) }
+                            Button(t(.hookInstallOne)) { send(.installHook(line.agent)) }
                                 .controlSize(.small)
                                 .disabled(model.hooksBusy)
+                                .accessibilityLabel(String(format: t(.hookInstallOneA11y), line.agent.displayName))
+                        }
+                        if line.installed {
+                            Button(t(.hookRemoveOne)) { send(.uninstallHook(line.agent)) }
+                                .controlSize(.small)
+                                .disabled(model.hooksBusy)
+                                .accessibilityLabel(String(format: t(.hookRemoveOneA11y), line.agent.displayName))
                         }
                     }
                 } label: {
@@ -334,7 +364,8 @@ struct SettingsFace: View {
         }
     }
 
-    /// The version and what kind of build it is — one small block.
+    /// The version and what kind of build it is — one small block — and
+    /// "Uninstall Pulse…".
     private var about: some View {
         Section {
             VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
@@ -348,6 +379,8 @@ struct SettingsFace: View {
                         .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
             }
+            Button(t(.uninstallPulse), role: .destructive) { send(.uninstallPulse) }
+                .disabled(model.hooksBusy)
         }
     }
 }

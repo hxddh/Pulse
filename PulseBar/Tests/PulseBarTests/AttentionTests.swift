@@ -139,7 +139,7 @@ final class AttentionBookTests: XCTestCase {
         // after a permission was raised must not wipe it.
         let b = book(tsv([
             ["claude", "permission", "\(now - 1000)", "approve", "s1", "/p"],
-            ["claude", "stop", "\(now)", "", "s1", ""],
+            ["claude", "turn", "\(now)", "", "s1", ""],
         ]))
         XCTAssertEqual(state(b, "claude|s1"), "blocked:permission", "recent permission survives a Stop")
     }
@@ -148,7 +148,7 @@ final class AttentionBookTests: XCTestCase {
         let old = now - SessionBook.stopGraceMs - 5000
         let b = book(tsv([
             ["claude", "permission", "\(old)", "approve", "s1", "/p"],
-            ["claude", "stop", "\(now)", "", "s1", ""],
+            ["claude", "turn", "\(now)", "", "s1", ""],
         ]))
         XCTAssertEqual(state(b, "claude|s1"), "turn", "the permission is gone; what is left is not red")
     }
@@ -246,7 +246,7 @@ final class AttentionBookTests: XCTestCase {
         let old = now - 60_000
         let b = book([
             "claude\tpermission\t\(old)\tBash: npm run build\tsession-10\t/Users/me/Pulse\t\t\t\t\t",
-            "claude\tstop\t\(old + SessionBook.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t\t",
+            "claude\tturn\t\(old + SessionBook.stopGraceMs + 1)\t\tsession-10\t\t\t\t\t\t",
         ].joined(separator: "\n") + "\n")
         XCTAssertEqual(state(b, "claude|session-10"), "turn")
     }
@@ -301,21 +301,18 @@ final class PulseHookReceiverTests: XCTestCase {
 
     // MARK: - The protocol's own words
 
-    func testTheProtocolSeparatesAQuestionFromYourTurn() {
-        XCTAssertEqual(AttentionProtocol.normalizeKind("elicitation_dialog"), "question")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("permission_prompt"), "permission")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("agent-turn-complete"), "turn")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("idle_prompt"), "idle",
-                       "Claude's idle_prompt is a 60 s timer after every finished turn — not a turn of its own")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("stop"), "turn")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("session_start"), "start")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("prompt"), "working")
-        XCTAssertEqual(AttentionProtocol.normalizeKind("session_end"), "end")
-        XCTAssertNotEqual(AttentionProtocol.kind("idle_prompt")?.isBlocking, true)
-        XCTAssertTrue(AttentionProtocol.acceptsWrite(kind: "permission"))
-        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "totally_made_up_kind"))
-        // No free-text guessing — "…approval…" is not a permission.
-        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: "exec_approval_request"))
+    /// A line's kind is one of the v5 kinds, spelled as written — no alias,
+    /// no vendor word, no guess.
+    func testTheLogReadsOnlyTheV5Kinds() {
+        for kind in AttentionKind.allCases {
+            XCTAssertEqual(AttentionProtocol.kind(kind.rawValue), kind)
+        }
+        for word in ["stop", "idle_prompt", "elicitation_dialog", "permission_prompt", "agent-turn-complete",
+                     "exec_approval_request", "activity", "Permission", " turn", ""] {
+            XCTAssertNil(AttentionProtocol.kind(word), word)
+        }
+        XCTAssertNotEqual(AttentionProtocol.kind("idle")?.isBlocking, true,
+                          "Claude's idle_prompt is a 60 s timer after every finished turn — not a block")
     }
 
     /// v5: eleven columns, and a record survives its own line.
@@ -337,7 +334,6 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertTrue(header.hasPrefix("# pulse-events v5 g42 "))
         XCTAssertNotEqual(header, AttentionProtocol.header(generation: "g43"), "each generation has its own header")
         XCTAssertEqual(AttentionProtocol.kind("tool"), .tool)
-        XCTAssertEqual(AttentionProtocol.kind("activity"), .tool)
         XCTAssertFalse(AttentionKind.tool.isOpen)
     }
 
@@ -462,10 +458,10 @@ final class PulseHookReceiverTests: XCTestCase {
     func testCodexStopIsYourTurnAndItNeverBlocks() {
         deliver("codex", "UserPromptSubmit", #"{"session_id":"x1","turn_id":"t1","cwd":"/w","hook_event_name":"UserPromptSubmit","prompt":"Add a retry"}"#)
         deliver("codex", "Stop", #"{"session_id":"x1","turn_id":"t1","transcript_path":null,"cwd":"/w","hook_event_name":"Stop","model":"gpt-5","permission_mode":"default","stop_hook_active":false,"last_assistant_message":"Done."}"#)
-        // A bridge that says Codex is blocked is refused: Codex's own
-        // PermissionRequest fires before its auto-review.
-        deliver("codex", "permission", #"{"session_id":"x3","message":"Approve shell"}"#)
+        // Codex's own PermissionRequest fires before its auto-review: never
+        // installed, never read — and the protocol's word is not an event.
         deliver("codex", "PermissionRequest", #"{"session_id":"x4","tool_name":"Bash"}"#)
+        deliver("codex", "permission", #"{"session_id":"x3","message":"Approve shell"}"#)
         XCTAssertEqual(kinds(), ["working", "turn"])
         XCTAssertEqual(records().map(\.session), ["x1", "x1"])
         XCTAssertEqual(records().first?.message, "Add a retry")
@@ -541,6 +537,7 @@ final class PulseHookReceiverTests: XCTestCase {
     func testCursorStopIsYourTurnAndItNeverBlocks() throws {
         deliver("cursor", "stop", #"{"conversation_id":"cu1","generation_id":"g1","model":"gpt-5","hook_event_name":"stop","cursor_version":"1.7","workspace_roots":["/Users/me/app"],"transcript_path":"/Users/me/.cursor/projects/app/cu1.jsonl","status":"completed","loop_count":0}"#)
         deliver("cursor", "permission", #"{"conversation_id":"cu1","message":"approve"}"#)
+        deliver("cursor", "beforeShellExecution", #"{"conversation_id":"cu1","command":"rm -rf build"}"#)
         let record = try XCTUnwrap(records().first)
         XCTAssertEqual(kinds(), ["turn"])
         XCTAssertEqual(record.session, "cu1")
@@ -593,18 +590,74 @@ final class PulseHookReceiverTests: XCTestCase {
         XCTAssertEqual(line.message, "ls -la")
         let module = HookModules.piExtension(launcher: "/x/pulse-hook", events: ["tool_execution_end"])
         XCTAssertTrue(module.contains("Object.assign(payload, toolSummary(event))"))
-        XCTAssertTrue(module.contains("out.tool_input = { [key]: args[key].slice(0, 200) }"))
+        XCTAssertTrue(module.contains("out.tool_input = { [key]: args[key].slice(0, 2000) }"))
+    }
+
+    // MARK: - Payloads that do not parse, and credentials at the cut
+
+    /// A payload cut off (at `stdinLimit`, or by a writer that died) is not
+    /// JSON: it writes nothing — never a ghost wait whose ask is raw JSON.
+    /// Plain text is no payload either.
+    func testAPayloadThatDoesNotParseWritesNothing() throws {
+        let whole = #"{"session_id":"t1","cwd":"/w","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"npm test"}}"#
+        let cut = String(whole.prefix(60))
+        deliver("claude", "PermissionRequest", cut)
+        deliver("claude", "", cut)
+        deliver("gemini", "Notification", cut)
+        deliver("copilot", "notification", cut)
+        PulseHookReceiver.run(
+            arguments: ["PulseBar", "--hook", "opencode", "permission.asked", #"{"sessionID":"o1","directory":"/w","permis"#],
+            stdin: "", logURL: log, locate: located
+        )
+        XCTAssertTrue(records().isEmpty, "\(records().map(\.message))")
+        XCTAssertNil(PulseHookReceiver.parsePayload(stdin: cut, trailingArg: nil))
+        // Plain text on stdin writes nothing, whatever the event says.
+        deliver("claude", "Stop", "all done")
+        deliver("cursor", "stop", "all done")
+        deliver("gemini", "permission", "Approve the deploy?")
+        XCTAssertTrue(records().isEmpty)
+        XCTAssertNil(PulseHookReceiver.parsePayload(stdin: "Approve the deploy?", trailingArg: nil))
+        XCTAssertEqual(PulseHookReceiver.parsePayload(stdin: "", trailingArg: nil)?.isEmpty, true, "no payload is an empty one")
+    }
+
+    /// Credentials are redacted from the whole value before it is cut to a
+    /// row's length: a token straddling the cut never leaves its head
+    /// behind (too short for the redaction to know it after the cut).
+    func testACredentialAcrossTheCutIsRedacted() throws {
+        // 127 characters, then `Bearer ` ends at 134: the cut at 139 would
+        // keep the token's first five characters.
+        let lead = "echo " + String(repeating: "a", count: 121) + " "
+        XCTAssertEqual(lead.count, 127)
+        let command = lead + "Bearer tok3nVALUEabcdef1234"
+        let object: [String: Any] = [
+            "session_id": "r1", "cwd": "/w", "tool_name": "Bash", "tool_input": ["command": command],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let payload = String(decoding: data, as: UTF8.self)
+        deliver("claude", "PostToolUse", payload)
+        deliver("claude", "PermissionRequest", payload)
+        let written = records()
+        XCTAssertEqual(written.map(\.kind), ["tool", "permission"])
+        for record in written {
+            XCTAssertFalse(record.message.contains("tok3n"), record.message)
+        }
+        XCTAssertFalse(PulseHookReceiver.condenseOneLine(command).contains("tok3n"))
+        XCTAssertTrue(PulseHookReceiver.condenseOneLine(command).contains("Bearer ••••"))
     }
 
     // MARK: - Rejections
 
+    /// Only the agent's own adapter reads an event: the protocol's kind words
+    /// (`permission`, `turn`, `done`, …) are not events of any agent.
     func testUnknownEventsAndAgentsWriteNothing() throws {
         XCTAssertEqual(deliver("claude", "made_up_vendor_event", #"{"message":"x","session_id":"x"}"#), 0)
+        for word in AttentionKind.allCases.map(\.rawValue) {
+            XCTAssertEqual(deliver("claude", word, #"{"message":"x","session_id":"x"}"#), 0)
+            XCTAssertEqual(deliver("gemini", word, #"{"message":"x","session_id":"x"}"#), 0)
+        }
         XCTAssertEqual(deliver("goose", "permission", #"{"message":"x","session_id":"x"}"#), 0, "not a supported agent")
         XCTAssertEqual(deliver("claude", "", #"{"message":"says nothing about what it is","session_id":"x"}"#), 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: log.path))
-        XCTAssertFalse(AttentionProtocol.acceptsWrite(kind: ""))
-        XCTAssertEqual(AttentionProtocol.normalizeKind("   "), "")
     }
 
     func testGrokRunningClaudesHooksIsRefused() {
@@ -1322,11 +1375,11 @@ struct TurnTruthTests {
 
     static func line(
         _ agent: String, _ kind: String, ago: Int64, message: String = "",
-        session: String = "s1", cwd: String = "/p", front: String? = nil
+        session: String = "s1", cwd: String = "/p", front: String? = nil, tool: String = ""
     ) -> String {
-        // v5: all eleven columns; front as given (empty = unknown), pid,
-        // the reserved column, landing and tool empty.
-        let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", "", ""]
+        // v5: all eleven columns; front as given (empty = unknown), pid, the
+        // reserved column and landing empty.
+        let cols = [agent, kind, "\(now - ago)", message, session, cwd, front ?? "", "", "", "", tool]
         return cols.joined(separator: "\t")
     }
 
@@ -1378,8 +1431,8 @@ struct TurnTruthTests {
             name: "claude · finished turn, idle_prompt a minute later → your turn, not red",
             lines: [
                 line("claude", "permission", ago: 180 * second, message: "Bash: npm test"),
-                line("claude", "stop", ago: 61 * second),
-                line("claude", "idle_prompt", ago: 1 * second),
+                line("claude", "turn", ago: 61 * second),
+                line("claude", "idle", ago: 1 * second),
             ],
             expect: turn
         ),
@@ -1389,20 +1442,15 @@ struct TurnTruthTests {
             expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: "Permission")
         ),
         Case(
-            name: "claude · elicitation question → red, says Input",
-            lines: [line("claude", "elicitation_dialog", ago: 5 * second, message: "Which database?")],
-            expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: "Input")
-        ),
-        Case(
-            name: "claude · URL elicitation (18.0) → red, says Input",
-            lines: [line("claude", "elicitation_url_dialog", ago: 5 * second, message: "Sign in to continue")],
+            name: "claude · question → red, says Input",
+            lines: [line("claude", "question", ago: 5 * second, message: "Which database?")],
             expect: Expect(waiting: true, yourTurn: false, red: true, banner: true, waitKind: "Input")
         ),
         Case(
             name: "claude · turn ends moments after a permission → held; the permission stands for the grace",
             lines: [
                 line("claude", "permission", ago: 6 * second, message: "Bash: npm run build"),
-                line("claude", "stop", ago: 1 * second),
+                line("claude", "turn", ago: 1 * second),
             ],
             expect: blocked
         ),
@@ -1413,23 +1461,20 @@ struct TurnTruthTests {
         ),
         Case(
             name: "claude · submitted prompt after a turn → cleared",
-            lines: [line("claude", "stop", ago: 30 * second), line("claude", "done", ago: 2 * second)],
+            lines: [line("claude", "turn", ago: 30 * second), line("claude", "done", ago: 2 * second)],
             expect: quiet
         ),
         Case(
-            name: "claude · StopFailure → your turn, never red",
-            lines: [line("claude", "stop_failure", ago: 10 * second, message: "rate_limit")],
+            name: "claude · StopFailure (a turn with the error tool) → your turn, never red",
+            lines: [line("claude", "turn", ago: 10 * second, message: "rate_limit", tool: AttentionRecord.errorTool)],
             expect: turn
         ),
         Case(
-            name: "codex · a bridge's agent-turn-complete → your turn",
-            lines: [line("codex", "agent-turn-complete", ago: 10 * second)],
-            agent: .codex,
-            expect: turn
-        ),
-        Case(
-            name: "codex · an approval word is not a protocol kind → not red",
-            lines: [line("codex", "exec_approval_request", ago: 3 * second, message: "git push")],
+            name: "codex · a word that is not a v5 kind (an approval, a vendor's turn event) → nothing",
+            lines: [
+                line("codex", "exec_approval_request", ago: 3 * second, message: "git push"),
+                line("codex", "agent-turn-complete", ago: 2 * second),
+            ],
             agent: .codex,
             expect: quiet
         ),
@@ -1465,8 +1510,8 @@ struct TurnTruthTests {
             expect: blocked
         ),
         Case(
-            name: "legacy · an older hook's idle_prompt line reads as your turn",
-            lines: [line("claude", "idle_prompt", ago: 2 * second)],
+            name: "claude · idle with no turn seen → your turn",
+            lines: [line("claude", "idle", ago: 2 * second)],
             expect: turn
         ),
     ]
@@ -1517,7 +1562,7 @@ struct TurnTruthTests {
 
     @Test func aToolCallAfterTheTurnEndsYourTurn() throws {
         let r = Self.world([
-            Self.line("claude", "stop", ago: 30 * Self.second),
+            Self.line("claude", "turn", ago: 30 * Self.second),
             Self.line("claude", "tool", ago: 5 * Self.second, message: "a.swift"),
         ])
         let row = try #require(r.rows.first)
@@ -1525,7 +1570,7 @@ struct TurnTruthTests {
     }
 
     @Test func aTurnThatNamesNoSessionMakesNoRow() {
-        let r = Self.world([Self.line("claude", "stop", ago: 5 * Self.second, session: "")])
+        let r = Self.world([Self.line("claude", "turn", ago: 5 * Self.second, session: "")])
         #expect(r.rows.isEmpty, "with no session there is no row it could belong to")
     }
 
@@ -1695,11 +1740,71 @@ struct EventLogTests {
     /// A rewritten log is matched to what was applied by position: a kept
     /// line is not applied again, and a line written twice is applied twice.
     @Test func unappliedLinesAreMatchedByPositionNotText() {
-        #expect(EventLog.unapplied(["A", "B"], after: ["A", "B", "A"]) == [], "the compaction kept a subset")
+        #expect(EventLog.unapplied(["A", "B", "A"], after: ["A", "B", "A"]) == [], "the compaction kept everything")
+        #expect(EventLog.unapplied(["B", "A"], after: ["A", "B", "A"]) == [], "the compaction kept a subset")
         #expect(EventLog.unapplied(["B", "A", "A"], after: ["A", "B", "A"]) == ["A"], "the same text appended again is new")
         #expect(EventLog.unapplied(["A", "B", "C"], after: ["A", "B"]) == ["C"])
         #expect(EventLog.unapplied(["C", "A"], after: ["A", "B"]) == ["C"], "an unknown line is new; a known one is not")
         #expect(EventLog.unapplied(["A"], after: []) == ["A"])
+    }
+
+    /// The last line applied anchors a rewrite: everything after the copy
+    /// the compaction kept is new — even a line whose text matches one
+    /// applied earlier and dropped. A greedy match took the kept last line
+    /// for the earlier copy, then the new line for a dropped one, and
+    /// skipped it.
+    @Test func aNewLineLikeADroppedAppliedOneIsStillNew() {
+        // Applied: A, B, A. The compaction kept the newest A only; B is
+        // written again (the same text) after it.
+        let fresh = EventLog.unapplied(["A", "B"], after: ["A", "B", "A"])
+        #expect(fresh == ["B"])
+        // Lines the reader had not reached before the rewrite come after
+        // the anchor too.
+        let unread = EventLog.unapplied(["X", "C", "D"], after: ["W", "X", "C"])
+        #expect(unread == ["D"])
+        // With no copy of the last applied line kept, lines are matched in
+        // order.
+        let noAnchor = EventLog.unapplied(["W", "E"], after: ["W", "X", "C"])
+        #expect(noAnchor == ["E"])
+    }
+
+    /// A compaction keeps what a replay rebuilds a session's own facts
+    /// from: its first clock, the prompt its title came from and its latest
+    /// prompt — so after a rewrite and a replay the row says the same title
+    /// and the same age.
+    @Test func compactionKeepsTheTitleAndTheFirstClock() {
+        let now = t0
+        let base = now - 5 * Self.hour
+        var lines = [
+            line("start", base, session: "t"),
+            line("working", base + 1_000, session: "t", message: "continue"),
+            line("working", base + 2_000, session: "t", message: "Fix the login redirect"),
+        ]
+        for index in 0..<300 { lines.append(line("tool", base + 10_000 + Int64(index), session: "t", tool: "Read")) }
+        lines.append(line("working", base + 20_000, session: "t", message: "Now the logout"))
+        for index in 0..<300 { lines.append(line("tool", base + 30_000 + Int64(index), session: "t", tool: "Edit")) }
+        func replay(_ text: [String]) -> SessionBook.Session? {
+            var book = SessionBook()
+            for raw in text {
+                if let record = AttentionRecord(line: raw) { book.apply(record, nowMs: now) }
+            }
+            return book.sessions["claude|t"]
+        }
+        let kept = EventLog.compact(lines, nowMs: now, budget: 1 << 30)
+        #expect(kept.count < lines.count)
+        let before = replay(lines)
+        let after = replay(kept)
+        #expect(before?.title == "Fix the login redirect")
+        #expect(after?.title == before?.title)
+        #expect(after?.startedMs == before?.startedMs)
+        #expect(after?.lastPrompt == before?.lastPrompt)
+        #expect(after?.turnStartMs == before?.turnStartMs)
+        let state = HookFeed.word(after?.state)
+        #expect(state == HookFeed.word(before?.state))
+        // A tight budget keeps them too.
+        let tight = replay(EventLog.compact(lines, nowMs: now, budget: 1_000))
+        #expect(tight?.title == before?.title)
+        #expect(tight?.startedMs == before?.startedMs)
     }
 
     /// The record being appended is always in the file after its own
@@ -1797,8 +1902,8 @@ struct EventLogTests {
 
         let records = EventLog.compact(lines, nowMs: now, budget: 1 << 30).compactMap { AttentionRecord(line: $0) }
         let a = records.filter { $0.session == "a" }
-        #expect(a.count == EventLog.linesPerSession, "a session keeps its last lines once nothing in it is open")
-        #expect(!a.contains { $0.kind == "permission" })
+        #expect(a.count == EventLog.linesPerSession + 1, "a session keeps its last lines once nothing in it is open, and its first clock")
+        #expect(!a.contains { $0.kind == "permission" }, "an answered block is never kept without its answer")
         let b = records.filter { $0.session == "b" }
         #expect(b.first?.kind == "permission", "an open block is kept, with every line after it")
         #expect(b.count == 101)
@@ -1861,7 +1966,7 @@ struct AttentionFixTests {
         let raise = now - 10 * Self.minute
         let text = [
             ["claude", "permission", "\(raise)", "Bash: npm test", "s1", "/p", "", "", "", "", ""],
-            ["claude", "stop", "\(raise + 1_000)", "", "s1", "", "", "", "", "", ""],
+            ["claude", "turn", "\(raise + 1_000)", "", "s1", "", "", "", "", "", ""],
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n") + "\n"
         func read(at nowMs: Int64) -> String {
             var book = SessionBook()

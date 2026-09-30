@@ -8,30 +8,50 @@ import SwiftUI
 /// recent / idle, dotted = seen only as a process. One glyph family, so the
 /// menu bar and the row it summarises read alike.
 enum PulseBrand {
-    /// Full-colour status-bar icon for a glance.
+    /// The lamp's size in the menu bar, in points — drawn at this size,
+    /// never scaled.
+    static let statusIconSize: CGFloat = 16
+
+    /// The status-bar lamp for a glance.
     static func statusBarIcon(for glance: GlanceKind) -> NSImage {
         statusBarIcon(for: LampFace.glance(glance))
     }
 
-    /// Full-colour status-bar icon.
+    /// The status-bar lamp.
     ///
-    /// NSStatusBarButton renders a template image in the menu bar's own
-    /// foreground colour. That is excellent for contrast, but it also erases
-    /// the product's only glance signal: red / green / grey / orange. Forcing
-    /// `contentTintColor` is not an answer because AppKit applies it to the
-    /// title as well and it can resolve black-on-black against a dark menu bar.
-    /// Draw the pixels in the state colour instead; leave the button title
-    /// system-adaptive. Colours are read here, at draw time, never stored.
+    /// A grey lamp (idle, recent, your turn, process only) is a template
+    /// image: the menu bar draws it in its own foreground colour, like every
+    /// system item beside it, in light, dark, tinted and high-contrast menu
+    /// bars. A coloured lamp — red (needs you), green (running), orange (a
+    /// stall) — carries the product's one glance signal, which a template
+    /// would erase, so it is drawn in its colour. `contentTintColor` is not
+    /// the answer: AppKit applies it to the title as well.
+    ///
+    /// The image is a drawing handler at `statusIconSize` points: AppKit
+    /// draws it at the screen's scale (no 16 → 15 downscale blur) and calls
+    /// it again when the menu bar's appearance changes, so the system
+    /// colours resolve at draw time and are never stored.
     static func statusBarIcon(for lamp: LampFace) -> NSImage {
-        let size = NSSize(width: 16, height: 16)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        NSColor.clear.setFill()
-        NSRect(origin: .zero, size: size).fill()
-        let color = statusColor(for: lamp.tone)
-        let stroke: CGFloat = 1.6
-        let circle = NSRect(x: 2.5, y: 2.5, width: 11, height: 11)
-        switch lamp.shape {
+        let side = statusIconSize
+        let template = lamp.tone == .idle
+        let tone = lamp.tone
+        let shape = lamp.shape
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
+            drawLamp(shape: shape, tone: tone, template: template, side: side)
+            return true
+        }
+        image.isTemplate = template
+        return image
+    }
+
+    /// The lamp's strokes, in the current graphics context.
+    private static func drawLamp(shape: LampFace.Shape, tone: PulseTheme.Tone, template: Bool, side: CGFloat) {
+        // A template is drawn in black; the menu bar supplies its colour.
+        let color = template ? NSColor.black : statusColor(for: tone)
+        let scale = side / 16
+        let stroke: CGFloat = 1.6 * scale
+        let circle = NSRect(x: 2.5 * scale, y: 2.5 * scale, width: 11 * scale, height: 11 * scale)
+        switch shape {
         case .filled:
             color.setFill()
             NSBezierPath(ovalIn: circle).fill()
@@ -41,7 +61,7 @@ enum PulseBrand {
             color.setStroke()
             ring.stroke()
             color.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 6, y: 6, width: 4, height: 4)).fill()
+            NSBezierPath(ovalIn: NSRect(x: 6 * scale, y: 6 * scale, width: 4 * scale, height: 4 * scale)).fill()
         case .hollow:
             let ring = NSBezierPath(ovalIn: circle.insetBy(dx: stroke / 2, dy: stroke / 2))
             ring.lineWidth = stroke
@@ -51,26 +71,22 @@ enum PulseBrand {
             let ring = NSBezierPath(ovalIn: circle.insetBy(dx: stroke / 2, dy: stroke / 2))
             ring.lineWidth = stroke
             ring.lineCapStyle = .round
-            ring.setLineDash([0.1, 3.1], count: 2, phase: 0)
+            ring.setLineDash([0.1, 3.1 * scale], count: 2, phase: 0)
             color.setStroke()
             ring.stroke()
         }
         // Orange shares the ring with green; a notch in the top-right corner
         // is a shape the eye reads without the hue (Differentiate Without
         // Colour).
-        if lamp.tone == .attention {
-            let dot: CGFloat = 5
-            let badge = NSRect(x: size.width - dot, y: size.height - dot, width: dot, height: dot)
+        if tone == .attention {
+            let dot: CGFloat = 5 * scale
+            let badge = NSRect(x: side - dot, y: side - dot, width: dot, height: dot)
             NSGraphicsContext.current?.compositingOperation = .clear
-            NSBezierPath(ovalIn: badge.insetBy(dx: -1.2, dy: -1.2)).fill()
+            NSBezierPath(ovalIn: badge.insetBy(dx: -1.2 * scale, dy: -1.2 * scale)).fill()
             NSGraphicsContext.current?.compositingOperation = .sourceOver
             color.setFill()
             NSBezierPath(ovalIn: badge).fill()
         }
-        image.unlockFocus()
-        image.isTemplate = false
-        image.size = size
-        return image
     }
 
     static func statusColor(for glance: GlanceKind) -> NSColor {
@@ -111,17 +127,11 @@ enum PulseBrand {
     }
 
     private static func loadPNG(_ name: String) -> NSImage? {
-        if let url = PulseResources.url(forResource: name, withExtension: "png", subdirectory: "Brand"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        if let url = PulseResources.url(forResource: "\(name)@2x", withExtension: "png", subdirectory: "Brand"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        if let url = Bundle.main.resourceURL?.appendingPathComponent("Brand/\(name).png"),
-           let img = NSImage(contentsOf: url) {
-            return img
+        for file in [name, "\(name)@2x"] {
+            if let url = PulseResources.url(forResource: file, withExtension: "png", subdirectory: "Brand"),
+               let img = NSImage(contentsOf: url) {
+                return img
+            }
         }
         return nil
     }

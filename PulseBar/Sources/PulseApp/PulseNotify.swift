@@ -100,10 +100,17 @@ enum PulseNotify {
         }
     }
 
+    /// macOS lets Pulse send Time Sensitive banners: its notification
+    /// settings say `timeSensitiveSetting == .enabled`, which happens only
+    /// with the entitlement. Read with the authorization.
+    private static let timeSensitiveAllowed = Guarded(false)
+
     /// Re-read the live setting — the user may have flipped it in System Settings.
     static func refreshAuthorization() {
         guard let center else { return }
         center.getNotificationSettings { settings in
+            let timeSensitive = settings.timeSensitiveSetting == .enabled
+            timeSensitiveAllowed.withValue { $0 = timeSensitive }
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
                 authorizationHandler?(true)
@@ -118,11 +125,10 @@ enum PulseNotify {
     }
 
     /// One banner per row (`WaitLedger.bannerID`): a later ask on the same
-    /// row replaces it.
+    /// row replaces it. Its words and its thread are `WaitingBanner`'s.
     static func postWaiting(
         id: String,
-        title: String,
-        body: String,
+        banner: WaitingBanner,
         agent: String,
         session: String = "",
         rowKey: String = "",
@@ -130,8 +136,10 @@ enum PulseNotify {
     ) {
         post(
             id: id,
-            title: title,
-            body: body,
+            title: banner.title,
+            subtitle: banner.subtitle,
+            body: banner.body,
+            threadID: banner.threadID,
             agent: agent,
             session: session,
             rowKey: rowKey,
@@ -154,6 +162,7 @@ enum PulseNotify {
             id: id,
             title: title,
             body: body,
+            threadID: WaitingBanner.summaryThread,
             agent: agent,
             session: session,
             rowKey: rowKeys.first ?? "",
@@ -173,7 +182,9 @@ enum PulseNotify {
     private static func post(
         id: String,
         title: String,
+        subtitle: String = "",
         body: String,
+        threadID: String,
         agent: String,
         session: String,
         rowKey: String,
@@ -192,14 +203,19 @@ enum PulseNotify {
         center.removePendingNotificationRequests(withIdentifiers: [id])
         let content = UNMutableNotificationContent()
         content.title = ContentSanitizer.redact(title)
+        if !subtitle.isEmpty { content.subtitle = ContentSanitizer.redact(subtitle) }
         content.body = ContentSanitizer.redact(body)
         content.sound = .default
-        // Keep all Waiting interruptions together in Notification Centre while
-        // retaining one actionable request per session. A single scan can
-        // surface several approvals; collapsing them into one notification
-        // would hide which Agent needs the user's answer.
-        if !rowKey.isEmpty || !agent.isEmpty {
-            content.threadIdentifier = "pulse.waiting"
+        // One thread per session: a second ask from the same session stacks
+        // with its first, never with another agent's — a burst of
+        // approvals still shows who needs an answer.
+        content.threadIdentifier = threadID
+        // A wait that blocks an agent may break through a Focus — but only
+        // where macOS says Pulse may (the Time Sensitive entitlement, which
+        // only a Developer ID build can carry). Elsewhere the setting reads
+        // unsupported and the banner is an ordinary one.
+        if timeSensitiveAllowed.snapshot {
+            content.interruptionLevel = .timeSensitive
         }
         // A banner that names a session carries the Focus action.
         if !rowKey.isEmpty || !agent.isEmpty {

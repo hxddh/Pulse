@@ -46,12 +46,18 @@ struct DetailModel: Equatable {
     var focusTitle: String
     var canDismiss: Bool
     var muted: Bool
+    /// What the last Go did when it did not land exactly (`RowNotice`) —
+    /// the same words the row says.
+    var notice: String? = nil
 
     static func make(
         row: AgentRow,
         lang: ResolvedLanguage,
         nowMs: Int64,
-        muted: Bool = false
+        muted: Bool = false,
+        notice: String? = nil,
+        locale: Locale? = nil,
+        timeZone: TimeZone = .current
     ) -> DetailModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         typealias Words = TrayRowModel
@@ -64,7 +70,10 @@ struct DetailModel: Equatable {
         }
         if !row.displayPath.isEmpty { facts.append(Fact(label: t(.detailFolder), value: row.displayPath)) }
         if row.startedMs > 0, row.startedMs <= nowMs {
-            facts.append(Fact(label: t(.detailStarted), value: LogClock.label(ms: row.startedMs, nowMs: nowMs, lang: lang)))
+            facts.append(Fact(
+                label: t(.detailStarted),
+                value: LogClock.label(ms: row.startedMs, nowMs: nowMs, lang: lang, timeZone: timeZone, locale: locale)
+            ))
         }
 
         let age = row.isBlocked
@@ -94,17 +103,27 @@ struct DetailModel: Equatable {
             canFocus: row.canFocusTerminal,
             focusTitle: Words.focusTitle(row, lang: lang),
             canDismiss: row.isBlocked,
-            muted: muted
+            muted: muted,
+            notice: notice
         )
     }
 }
 
-/// One clock for every moment the detail page names. `HH:mm` alone says
-/// nothing about which day: yesterday's 14:02 reads as today's. Today is `HH:mm`,
-/// the last week `Mon HH:mm` / `周一 HH:mm`, anything older `M/d HH:mm` —
-/// always in the app's language, not the system's.
+/// One clock for every moment the detail page names. A time alone says
+/// nothing about which day: yesterday's 14:02 reads as today's. Today is the
+/// time of day, the last week the weekday and the time, anything older the
+/// month, the day and the time — each in the locale's own pattern
+/// (`setLocalizedDateFormatFromTemplate`: "3:04 PM" in the US, "15:04" in
+/// Britain and China, and the person's 12/24-hour choice), in the app's
+/// language.
 enum LogClock {
-    static func label(ms: Int64, nowMs: Int64, lang: ResolvedLanguage, timeZone: TimeZone = .current) -> String {
+    static func label(
+        ms: Int64,
+        nowMs: Int64,
+        lang: ResolvedLanguage,
+        timeZone: TimeZone = .current,
+        locale: Locale? = nil
+    ) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let date = Date(timeIntervalSince1970: Double(ms) / 1000)
@@ -113,16 +132,27 @@ enum LogClock {
             [.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)
         ).day ?? 0
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: lang == .zh ? "zh-Hans" : "en_US_POSIX")
+        formatter.locale = locale ?? Self.locale(for: lang)
         formatter.calendar = calendar
         formatter.timeZone = timeZone
         if days == 0 {
-            formatter.dateFormat = "HH:mm"
+            formatter.setLocalizedDateFormatFromTemplate("jmm")
         } else if days > 0, days < 7 {
-            formatter.dateFormat = "EEE HH:mm"
+            formatter.setLocalizedDateFormatFromTemplate("EEEjmm")
         } else {
-            formatter.dateFormat = "M/d HH:mm"
+            formatter.setLocalizedDateFormatFromTemplate("Mdjmm")
         }
         return formatter.string(from: date)
+    }
+
+    /// The person's locale when it speaks the app's language — their region
+    /// and their 12/24-hour choice — else the app's language in their
+    /// region, so a Chinese interface on an English system still says 周三.
+    static func locale(for lang: ResolvedLanguage, current: Locale = .autoupdatingCurrent) -> Locale {
+        let wanted = lang == .zh ? "zh" : "en"
+        if current.language.languageCode?.identifier == wanted { return current }
+        let base = lang == .zh ? "zh_Hans" : "en"
+        guard let region = current.region?.identifier else { return Locale(identifier: base) }
+        return Locale(identifier: "\(base)_\(region)")
     }
 }

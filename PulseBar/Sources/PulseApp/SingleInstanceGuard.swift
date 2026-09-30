@@ -61,11 +61,18 @@ final class SingleInstanceGuard {
             .appendingPathComponent("Pulse.instance.lock")
     }
 
+    /// The distributed notification a second copy posts and the running
+    /// copy observes (`AppDelegate`): open the tray. No payload.
+    static let reopenNotification = Notification.Name("com.pulse.app.reopen")
+
+    /// The caller already knows another copy owns the lock: ask it to open
+    /// its tray, then exit. A distributed notification with no payload —
+    /// never NSRunningApplication or Apple Events, which can raise a
+    /// cross-app privacy prompt.
     @MainActor
     static func activateExistingCopy() {
-        // The caller already knows another copy owns the lock. Do not inspect
-        // or activate another application: NSRunningApplication can trigger a
-        // macOS cross-app privacy prompt. The existing owner remains the only
-        // visible Pulse instance, which is the safe fallback.
+        DistributedNotificationCenter.default().postNotificationName(
+            reopenNotification, object: nil, userInfo: nil, deliverImmediately: true
+        )
     }
 }

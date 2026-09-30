@@ -29,7 +29,7 @@ struct ReportTests {
             notifyOnWaiting: true,
             terminalAutomation: true,
             launchAtLogin: true,
-            loginItemApplied: false
+            loginItem: .off
         )
     }
 
@@ -51,30 +51,33 @@ struct ReportTests {
         let text = SettingsModel.report(input())
         #expect(text.contains("notifications: denied, needs-you banners on"), "\(text)")
         #expect(text.contains("terminal automation: allowed"), "\(text)")
-        #expect(text.contains("launch at login: on, applied: no"),
+        #expect(text.contains("open at login: on, macOS: not registered"),
                 "a toggle whose result is never checked is how this project keeps shipping bugs")
         var unasked = input()
         unasked.notifyAuthorized = nil
         unasked.terminalAutomation = false
-        unasked.loginItemApplied = nil
+        unasked.loginItem = nil
         let other = SettingsModel.report(unasked)
         #expect(other.contains("notifications: not asked"))
         #expect(other.contains("terminal automation: off"))
-        #expect(other.contains("applied: untouched"))
+        #expect(other.contains("macOS: not read"))
+        var pending = input()
+        pending.loginItem = .requiresApproval
+        let waiting = SettingsModel.report(pending)
+        #expect(waiting.contains("open at login: on, macOS: requires approval"), "\(waiting)")
     }
 
-    /// The shortcut and the automation offer are in the report.
-    @Test func theReportSaysTheShortcutAndTheAutomationOffer() {
+    /// The shortcut and Terminal automation are in the report.
+    @Test func theReportSaysTheShortcutAndTerminalAutomation() {
         var chosen = input()
         chosen.hotkey = .controlOptionSpace
         chosen.hotkeyRegistered = false
-        chosen.automationOfferAnswered = true
         let text = SettingsModel.report(chosen)
         #expect(text.contains("shortcut: ctrl_opt_space, registered: no — taken"), "\(text)")
-        #expect(text.contains("terminal automation: allowed, offer answered"), "\(text)")
+        #expect(text.contains("terminal automation: allowed\n"), "\(text)")
         let off = SettingsModel.report(input())
         #expect(off.contains("shortcut: off\n"), "\(off)")
-        #expect(off.contains("offer not answered"), "\(off)")
+        #expect(!off.contains("offer"), "the offer is gone: automation is a switch")
     }
 
     /// The input has no field for a path, a prompt, a session or a
@@ -126,7 +129,7 @@ struct ReportTests {
         #expect(store.engine.latestHookEventMs[.claude] == fired)
         let report = store.reportText
         #expect(report.contains("  claude: "))
-        #expect(report.contains("launch at login: "))
+        #expect(report.contains("open at login: "))
     }
 }
 
@@ -345,63 +348,19 @@ final class PulseVersionTests: XCTestCase {
         )
     }
 
-    func testInterpretReleasesListSkipsPrereleaseOnStableChannel() {
-        let sha = String(repeating: "b", count: 64)
-        let json = """
-        [
-          {
-            "tag_name":"v99.1.0",
-            "prerelease":true,
-            "html_url":"https://example.com/pre",
-            "body":"SHA-256: \(sha)",
-            "assets":[{
-              "name":"pulse-99.1.0.dmg",
-              "browser_download_url":"https://example.com/pre.dmg",
-              "size":100
-            }]
-          },
-          {
-            "tag_name":"v99.0.0",
-            "prerelease":false,
-            "html_url":"https://example.com/r",
-            "body":"SHA-256: \(sha)",
-            "assets":[{
-              "name":"pulse-99.0.0.dmg",
-              "browser_download_url":"https://example.com/pulse.dmg",
-              "size":200
-            }]
-          }
-        ]
-        """
-        let stable = UpdateCheck.interpret(
-            data: Data(json.utf8),
-            response: nil,
-            error: nil,
-            preferPrerelease: false
+    func testInterpretReadsOneReleaseNotAList() {
+        // One feed, `/releases/latest`: a list is not an answer.
+        let list = UpdateCheck.interpret(data: Data(#"[{"tag_name":"v99.0.0"}]"#.utf8), response: nil, error: nil)
+        XCTAssertEqual(list, .failed(.badResponse))
+        let same = UpdateCheck.interpret(
+            data: Data(#"{"tag_name":"v\#(PulseVersion.semver)"}"#.utf8), response: nil, error: nil
         )
-        if case let .available(info) = stable {
-            XCTAssertEqual(info.version, "99.0.0")
-        } else {
-            XCTFail("stable channel should pick the non-prerelease entry, got \(stable)")
-        }
-
-        let preview = UpdateCheck.interpret(
-            data: Data(json.utf8),
-            response: nil,
-            error: nil,
-            preferPrerelease: true
-        )
-        if case let .available(info) = preview {
-            XCTAssertEqual(info.version, "99.1.0")
-        } else {
-            XCTFail("preview channel should accept the newest prerelease, got \(preview)")
-        }
+        XCTAssertEqual(same, .current)
     }
 
-    func testUnpackagedChannelDoesNotPreferPrerelease() {
+    func testAnUnpackagedBuildIsNeitherPreviewNorStable() {
         guard PulseVersion.bundleVersion == nil else { return }
         XCTAssertEqual(PulseVersion.distributionChannel, "dev")
-        XCTAssertFalse(PulseVersion.prefersPrereleaseUpdates)
         XCTAssertFalse(PulseVersion.isNotarized)
     }
 
@@ -414,21 +373,19 @@ final class PulseVersionTests: XCTestCase {
         // XCTest on CI often sees Bundle.main version keys, so channel may be
         // preview rather than unpackaged dev; assert the mapping, not the host.
         let expected: L10n.Key
-        if PulseVersion.prefersPrereleaseUpdates {
-            expected = .updateCurrentPrerelease
-        } else if PulseVersion.distributionChannel == "stable" {
-            expected = .updateCurrentStable
-        } else {
-            expected = .updateCurrent
+        switch PulseVersion.distributionChannel {
+        case "stable": expected = .updateCurrentStable
+        case "preview": expected = .updateCurrentPreview
+        default: expected = .updateCurrent
         }
         XCTAssertEqual(store.updateStatusText, store.tr(expected))
-        XCTAssertNotEqual(store.tr(.updateCurrentPrerelease), store.tr(.updateCurrentStable))
-        XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPrerelease))
+        XCTAssertNotEqual(store.tr(.updateCurrentPreview), store.tr(.updateCurrentStable))
+        XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPreview))
         XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("stable"))
         // A preview build is ad-hoc signed, not "unsigned".
-        XCTAssertTrue(store.tr(.updateCurrentPrerelease).contains("ad-hoc"))
-        XCTAssertFalse(store.tr(.updateCurrentPrerelease).localizedCaseInsensitiveContains("unsigned"))
-        XCTAssertFalse(L10n.t(.updateCurrentPrerelease, .zh).contains("未签名"))
+        XCTAssertTrue(store.tr(.updateCurrentPreview).contains("ad-hoc"))
+        XCTAssertFalse(store.tr(.updateCurrentPreview).localizedCaseInsensitiveContains("unsigned"))
+        XCTAssertFalse(L10n.t(.updateCurrentPreview, .zh).contains("未签名"))
     }
 
     func testHookStatusIsPerAgentNotGlobal() {

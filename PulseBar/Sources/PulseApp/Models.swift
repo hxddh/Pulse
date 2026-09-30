@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "26.0.0"
+    static let semver = "27.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -33,8 +33,9 @@ enum PulseVersion {
     /// ISO date stamped at package time (empty when unpackaged).
     static var buildDate: String { plist("PulseBuildDate") ?? "" }
 
-    /// `preview` (ad-hoc) / `signed` (Developer ID, not notarized) / `stable`
-    /// (notarized) / `dev` (unpackaged). Never treat signed-as-stable.
+    /// `stable` (notarized — `package.sh` stamps it only after stapler
+    /// validates) / `preview` (every other packaged build: ad-hoc or not
+    /// notarized) / `dev` (unpackaged). An unnotarized build is never stable.
     static var distributionChannel: String {
         plist("PulseDistributionChannel") ?? (bundleVersion == nil ? "dev" : "preview")
     }
@@ -42,15 +43,6 @@ enum PulseVersion {
     /// Stapler success stamp from `package.sh`. Absent or false → not Gatekeeper-ready.
     static var isNotarized: Bool {
         (plist("PulseNotarized") ?? "false").lowercased() == "true"
-    }
-
-    /// Preview and signed-but-unnotarized builds should follow prerelease feeds.
-    static var prefersPrereleaseUpdates: Bool {
-        switch distributionChannel {
-        case "stable": return false
-        case "dev": return false
-        default: return true
-        }
     }
 
     static var channel: Channel {
@@ -192,10 +184,6 @@ struct AgentRow: Identifiable, Hashable {
     /// How a click lands (`LandingPlan.make`) — resolved once per projection,
     /// never in a view body.
     var landingPlan = LandingPlan()
-    /// With Terminal automation allowed, the plan would land on the exact
-    /// iTerm session or tab — so an app-only Go can offer it once
-    /// (`RowNotice.shouldOfferAutomation`). False when it is already allowed.
-    var exactWithAutomation = false
 
     // MARK: What it is doing — from its events only
 
@@ -433,12 +421,8 @@ struct PulseSnapshot: Equatable {
     /// the window shown.
     var counts = TrayState.Counts()
     var hiddenCount: Int = 0
-    /// Sessions quiet past the recent window, left out of the list — and
-    /// which agents they belong to (the last 24 hours only).
-    var staleHidden: Int = 0
     /// The menu-bar lamp's shape and tone (`LampFace.glance`).
     var lamp: LampFace = .idle
-    var staleHiddenAgents: [AgentID] = []
     var totalCount: Int = 0
     var updatedAt: Date = .distantPast
 }

@@ -552,14 +552,23 @@ final class StatusPanelChromeTests: XCTestCase {
 }
 
 final class StatusLampTests: XCTestCase {
+    /// Red, green and orange keep their colour; a grey lamp is a template
+    /// the menu bar colours like its neighbours.
     func testStatusBarLampsKeepTheirStateColors() {
         let states: [GlanceKind] = [.waiting, .running, .idle, .stalled]
         for state in states {
-            XCTAssertFalse(
+            XCTAssertEqual(
                 PulseBrand.statusBarIcon(for: state).isTemplate,
-                "\(state) must not be recolored by the menu bar"
+                state == .idle,
+                "\(state): only grey follows the menu bar"
             )
         }
+        for lamp in [LampFace.glance(.idle, processOnly: true), LampFace(shape: .hollow, tone: .idle)] {
+            XCTAssertTrue(PulseBrand.statusBarIcon(for: lamp).isTemplate, "\(lamp.shape)")
+        }
+        // Drawn at its own size — never set smaller after drawing, which
+        // blurred it.
+        XCTAssertEqual(PulseBrand.statusBarIcon(for: .waiting).size, NSSize(width: 16, height: 16))
 
         let waiting = PulseBrand.statusColor(for: GlanceKind.waiting).usingColorSpace(.deviceRGB)!
         let running = PulseBrand.statusColor(for: GlanceKind.running).usingColorSpace(.deviceRGB)!
@@ -604,9 +613,10 @@ final class AccessibilityLocalizationTests: XCTestCase {
             var rgba: Set<String> = []
             for glance in [GlanceKind.idle, .running, .stalled, .waiting] {
                 let icon = PulseBrand.statusBarIcon(for: glance)
-                XCTAssertFalse(
+                XCTAssertEqual(
                     icon.isTemplate,
-                    "\(glance) would be flattened to monochrome in \(appearanceName.rawValue)"
+                    glance == .idle,
+                    "\(glance) in \(appearanceName.rawValue): a coloured lamp is never flattened to monochrome"
                 )
                 XCTAssertEqual(icon.size, NSSize(width: 16, height: 16))
                 let bitmap = try XCTUnwrap(
@@ -821,6 +831,16 @@ final class L10nTests: XCTestCase {
         XCTAssertEqual(L10n.t(.waitingSummaryTitle, .en), "%d agents need you")
         XCTAssertEqual(L10n.t(.settings, .zh), "设置…")
     }
+
+    /// US spelling in English ("Gray"), and no space between a Chinese
+    /// word and a placeholder that may itself be Chinese ("上一步：刚刚").
+    func testSpellingAndChineseSpacing() {
+        for key in L10n.Key.allCases {
+            XCTAssertFalse(L10n.t(key, .en).contains("Grey"), "\(key)")
+            XCTAssertFalse(L10n.t(key, .zh).contains("上一步 %@"), "\(key)")
+        }
+        XCTAssertTrue(L10n.t(.lampRuleIdle, .en).hasPrefix("Gray:"))
+    }
 }
 
 /// Every user-facing string goes through the table (U-9).
@@ -844,6 +864,26 @@ final class DurationFormatTests: XCTestCase {
         XCTAssertEqual(DurationFormat.label(seconds: 42, lang: .en), "42s")
         XCTAssertEqual(DurationFormat.label(seconds: 600, lang: .en), "10m")
         XCTAssertEqual(DurationFormat.label(seconds: 7200, lang: .en), "2h")
+    }
+
+    /// VoiceOver hears whole words: "4 minutes", "1 hour", never "4m".
+    func testSpokenDurationsUseFullUnits() {
+        XCTAssertEqual(DurationFormat.full(seconds: 2, lang: .en), "just now")
+        XCTAssertEqual(DurationFormat.full(seconds: 1, lang: .zh), "刚刚")
+        XCTAssertEqual(DurationFormat.full(seconds: 42, lang: .en), "42 seconds")
+        XCTAssertEqual(DurationFormat.full(seconds: 60, lang: .en), "1 minute")
+        XCTAssertEqual(DurationFormat.full(seconds: 240, lang: .en), "4 minutes")
+        XCTAssertEqual(DurationFormat.full(seconds: 3600, lang: .en), "1 hour")
+        XCTAssertEqual(DurationFormat.full(seconds: 7200, lang: .en), "2 hours")
+        XCTAssertEqual(DurationFormat.full(seconds: 240, lang: .zh), "4 分钟")
+        XCTAssertEqual(DurationFormat.full(seconds: 7200, lang: .zh), "2 小时")
+    }
+
+    /// A count picks its form — never "session(s)".
+    func testNoCopyUsesAPluralHack() {
+        for key in L10n.Key.allCases {
+            XCTAssertFalse(L10n.t(key, .en).contains("(s)"), "\(key): a plural hack")
+        }
     }
 
     func testChineseDiffersFromEnglish() {
@@ -1341,6 +1381,15 @@ struct RowWordsTests {
         #expect(model.age == waited)
     }
 
+    /// The context menu teaches the keys: each item carries the tray key
+    /// that does the same — the tray has no key legend of its own.
+    @Test func theContextMenuShowsEachItemsKey() {
+        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPermission(), lang: .en)
+        let keys: [TrayKeys.Key?] = model.menu.map { $0.key }
+        let expected: [TrayKeys.Key?] = [.enter, .right, .dismiss, .mute]
+        #expect(keys == expected)
+    }
+
     @Test func yourTurnIsQuietAndSaysSo() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowTurn(), lang: .zh)
         #expect(model.lamp == LampFace(shape: .hollow, tone: .idle))
@@ -1394,18 +1443,54 @@ struct RowWordsTests {
 
     // MARK: - The detail page
 
-    /// The detail page's times say the day when it is not today.
+    /// The detail page's times say the day when it is not today, each in
+    /// the locale's own pattern.
     @Test func theClockSaysTheDayWhenItIsNotToday() throws {
         let utc = try #require(TimeZone(identifier: "UTC"))
+        let gb = Locale(identifier: "en_GB")
+        let cn = Locale(identifier: "zh_Hans_CN")
         let hour: Int64 = 60 * minute
         let day: Int64 = 24 * hour
+        func label(_ ms: Int64, _ lang: ResolvedLanguage, _ locale: Locale) -> String {
+            LogClock.label(ms: ms, nowMs: now, lang: lang, timeZone: utc, locale: locale)
+        }
         // 2027-01-15 08:00 UTC, a Friday.
-        #expect(LogClock.label(ms: now - 3 * hour, nowMs: now, lang: .en, timeZone: utc) == "05:00")
-        #expect(LogClock.label(ms: now - 9 * hour, nowMs: now, lang: .en, timeZone: utc) == "Thu 23:00")
-        #expect(LogClock.label(ms: now - 2 * day, nowMs: now, lang: .en, timeZone: utc) == "Wed 08:00")
-        #expect(LogClock.label(ms: now - 2 * day, nowMs: now, lang: .zh, timeZone: utc) == "周三 08:00")
-        #expect(LogClock.label(ms: now - 10 * day, nowMs: now, lang: .en, timeZone: utc) == "1/5 08:00")
-        #expect(LogClock.label(ms: now - 10 * day, nowMs: now, lang: .zh, timeZone: utc) == "1/5 08:00")
+        let today = label(now - 3 * hour, .en, gb)
+        #expect(today == "05:00")
+        let yesterday = label(now - 9 * hour, .en, gb)
+        #expect(yesterday.contains("Thu") && yesterday.contains("23:00"), "\(yesterday)")
+        let wednesday = label(now - 2 * day, .zh, cn)
+        #expect(wednesday.contains("周三") && wednesday.contains("08:00"), "\(wednesday)")
+        let older = label(now - 10 * day, .en, gb)
+        #expect(older.contains("08:00") && older.contains("05") && !older.contains("Tue"), "month and day, no weekday: \(older)")
+    }
+
+    /// Time of day follows the locale: "3:04 PM" in the US, "15:04" in
+    /// Britain — never a fixed "HH:mm".
+    @Test func theTimeOfDayFollowsTheLocale() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        // 2027-01-15 15:04 UTC.
+        let at: Int64 = 1_800_000_000_000 - (1_800_000_000_000 % 86_400_000) + (15 * 60 + 4) * minute
+        func label(_ locale: String) -> String {
+            LogClock.label(ms: at, nowMs: at + minute, lang: .en, timeZone: utc, locale: Locale(identifier: locale))
+                // ICU puts a narrow no-break space before AM/PM.
+                .replacingOccurrences(of: "\u{202F}", with: " ")
+                .replacingOccurrences(of: "\u{00A0}", with: " ")
+        }
+        let us = label("en_US")
+        #expect(us == "3:04 PM", "\(us)")
+        let gb = label("en_GB")
+        #expect(gb == "15:04", "\(gb)")
+    }
+
+    /// Without an injected locale the clock speaks the app's language in
+    /// the person's region.
+    @Test func theClockLocaleIsTheAppsLanguage() {
+        let us = Locale(identifier: "en_US")
+        #expect(LogClock.locale(for: .en, current: us) == us, "the person's own locale when it speaks the app's language")
+        let chineseOnUS = LogClock.locale(for: .zh, current: us)
+        #expect(chineseOnUS.language.languageCode?.identifier == "zh")
+        #expect(chineseOnUS.region?.identifier == "US")
     }
 
     @Test func theDetailPageSaysTheSameWhyAsTheRow() {
@@ -1477,5 +1562,91 @@ final class RowErrorTests: XCTestCase {
     func testNoErrorsIsNoFault() {
         let why = TrayRowModel.why(liveRow(), lang: .en, nowMs: liveRow().lastEventMs)
         XCTAssertFalse(why.contains("error"), why)
+    }
+}
+
+/// VoiceOver speaks up only for a new wait — who and what it asks — and
+/// says nothing when the count falls or holds.
+@Suite("Wait announcement")
+struct WaitAnnouncementTests {
+    let now: Int64 = 1_800_000_000_000
+
+    private func waiting(_ key: String, _ agent: AgentID, ask: String, since: Int64) -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: agent)
+        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: since))
+        return row
+    }
+
+    @Test func onlyARisingBlockedCountIsAnnounced() {
+        let old = waiting("claude|a", .claude, ask: "Bash: npm test", since: now - 600_000)
+        let new = waiting("gemini|b", .gemini, ask: "Edit: src/main.swift", since: now - 5_000)
+        let rose = WaitAnnouncement.text(previousBlocked: 1, rows: [old, new], lang: .en)
+        #expect(rose == "Gemini needs you: Edit: src/main.swift", "the newest wait, in its own words")
+        let held = WaitAnnouncement.text(previousBlocked: 2, rows: [old, new], lang: .en)
+        #expect(held == nil)
+        let fell = WaitAnnouncement.text(previousBlocked: 2, rows: [old], lang: .en)
+        #expect(fell == nil, "an answered wait is not announced")
+        var running = AgentRow(rowKey: "codex|c", agent: .codex)
+        running.state = .running
+        let other = WaitAnnouncement.text(previousBlocked: 0, rows: [running], lang: .en)
+        #expect(other == nil, "a running session is not announced")
+        let first = WaitAnnouncement.text(previousBlocked: nil, rows: [old], lang: .en)
+        #expect(first == nil, "the first scan is the baseline")
+    }
+
+    @Test func aWaitWithoutWordsSaysWhoAndInChinese() {
+        var quiet = AgentRow(rowKey: "pi|a", agent: .pi)
+        quiet.state = .blocked(RowWait(kind: "Waiting", sinceMs: now))
+        let text = WaitAnnouncement.text(previousBlocked: 0, rows: [quiet], lang: .en)
+        #expect(text == "Pi needs you")
+        let zh = WaitAnnouncement.text(previousBlocked: 0, rows: [waiting("claude|a", .claude, ask: "Bash: ls", since: now)], lang: .zh)
+        #expect(zh == "Claude 需要你：Bash: ls")
+    }
+
+    /// A row's VoiceOver label says its time in whole words.
+    @Test func aRowsSpokenTimeIsInFullUnits() {
+        var row = waiting("claude|a", .claude, ask: "Bash: npm test", since: now - 4 * 60_000)
+        row.task = "Fix the flaky test"
+        let face = TrayRowModel.make(TrayRowModel.Input(row: row, lang: .en, nowMs: now))
+        #expect(face.age == "4m", "the drawn time stays compact")
+        #expect(face.accessibilityLabel.contains("4 minutes"), "\(face.accessibilityLabel)")
+        #expect(!face.accessibilityLabel.contains("4m"), "\(face.accessibilityLabel)")
+        var ran = AgentRow(rowKey: "codex|b", agent: .codex)
+        ran.state = .running
+        ran.turnStartMs = now - 20_000
+        ran.lastEventMs = now - 20_000
+        let young = TrayRowModel.rowTimeSpoken(ran, nowMs: now, lang: .en)
+        #expect(young == "less than a minute")
+        ran.state = .yourTurn(sinceMs: now - 12 * 60_000)
+        ran.lastEventMs = now - 12 * 60_000
+        let ago = TrayRowModel.rowTimeSpoken(ran, nowMs: now, lang: .en)
+        #expect(ago == "12 minutes ago")
+    }
+}
+
+/// The hidden main menu routes the standard key equivalents; the
+/// status item's menu is Open Pulse, Settings…, Quit Pulse.
+@Suite("Main menu")
+@MainActor
+struct MainMenuTests {
+    @Test func theMainMenuCarriesTheStandardKeys() {
+        let menu = MainMenu.make(lang: .en)
+        var keys: [String: Selector] = [:]
+        for holder in menu.items {
+            for item in holder.submenu?.items ?? [] where !item.keyEquivalent.isEmpty {
+                if let action = item.action { keys[item.keyEquivalent + "|\(item.keyEquivalentModifierMask.rawValue)"] = action }
+            }
+        }
+        let command = NSEvent.ModifierFlags.command.rawValue
+        #expect(keys["w|\(command)"] == #selector(NSWindow.performClose(_:)), "⌘W closes Settings")
+        #expect(keys["c|\(command)"] == #selector(NSText.copy(_:)))
+        #expect(keys["a|\(command)"] == #selector(NSText.selectAll(_:)))
+        #expect(keys["v|\(command)"] == #selector(NSText.paste(_:)))
+        #expect(keys["q|\(command)"] == #selector(MainMenuActions.quit(_:)))
+        #expect(keys[",|\(command)"] == #selector(MainMenuActions.settings(_:)))
+        let titles = menu.items.map { $0.title }
+        #expect(titles.count == 3, "Pulse, Edit, Window")
+        let zh = MainMenu.make(lang: .zh).items.map { $0.title }
+        #expect(zh.contains(L10n.t(.menuEdit, .zh)))
     }
 }

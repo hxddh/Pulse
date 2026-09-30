@@ -19,13 +19,10 @@ struct PulseSettings: Equatable, Codable, Sendable {
     var mutedAgents: Set<AgentID> = []
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
-    /// Settings has no control for it: a row offers it once, the first time
-    /// a Go lands on the app only for want of it (`RowNotice`), and the
-    /// report says which way it is.
+    /// A Settings toggle (General); a Go that lands on the app only for want
+    /// of it says where that toggle is (`RowNotice.appOnly`), and the report
+    /// says which way it is.
     var allowTerminalAutomation = false
-    /// The person answered that offer (Allow or Not now): it is never made
-    /// again.
-    var automationOfferAnswered = false
     var updateCheckEnabled = true
     /// Set when the user uninstalls the hooks: the tray stops suggesting
     /// them. Installing again clears it.
@@ -35,7 +32,7 @@ struct PulseSettings: Equatable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case launchAtLogin, language, hotkey, notifyOnWaiting, mutedAgents
-        case allowTerminalAutomation, automationOfferAnswered, updateCheckEnabled, hooksNudgeOff
+        case allowTerminalAutomation, updateCheckEnabled, hooksNudgeOff
     }
 
     init(from decoder: any Decoder) throws {
@@ -54,7 +51,6 @@ struct PulseSettings: Equatable, Codable, Sendable {
         let muted = (try? c.decodeIfPresent([String].self, forKey: .mutedAgents)) ?? []
         mutedAgents = Set(muted.compactMap(AgentID.init(rawValue:)))
         allowTerminalAutomation = bool(.allowTerminalAutomation, d.allowTerminalAutomation)
-        automationOfferAnswered = bool(.automationOfferAnswered, d.automationOfferAnswered)
         updateCheckEnabled = bool(.updateCheckEnabled, d.updateCheckEnabled)
         hooksNudgeOff = bool(.hooksNudgeOff, d.hooksNudgeOff)
     }
@@ -67,7 +63,6 @@ struct PulseSettings: Equatable, Codable, Sendable {
         try c.encode(notifyOnWaiting, forKey: .notifyOnWaiting)
         try c.encode(mutedAgents.map(\.rawValue).sorted(), forKey: .mutedAgents)
         try c.encode(allowTerminalAutomation, forKey: .allowTerminalAutomation)
-        try c.encode(automationOfferAnswered, forKey: .automationOfferAnswered)
         try c.encode(updateCheckEnabled, forKey: .updateCheckEnabled)
         try c.encode(hooksNudgeOff, forKey: .hooksNudgeOff)
     }
@@ -76,7 +71,6 @@ struct PulseSettings: Equatable, Codable, Sendable {
     var debugDescription: String {
         "notifyWait=\(notifyOnWaiting) lang=\(language.rawValue) login=\(launchAtLogin) "
             + "hotkey=\(hotkey.rawValue) terminalAutomation=\(allowTerminalAutomation) "
-            + "automationOffer=\(automationOfferAnswered ? "answered" : "open") "
             + "muted=\(mutedAgents.count) updates=\(updateCheckEnabled) "
             + "hooksNudgeOff=\(hooksNudgeOff)"
     }

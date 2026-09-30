@@ -107,23 +107,50 @@ enum HooksSupport {
     /// config at once.
     static let installQueue = DispatchQueue(label: "com.pulse.hooks-install", qos: .userInitiated)
 
-    /// Remove Pulse hooks from every agent's config. One agent's failure
-    /// does not stop the others; the status names it.
-    @discardableResult
-    static func uninstall() -> Status {
-        installQueue.sync {
-            seedAssets()
-            return status(after: HooksInstaller.uninstall())
+    /// One install or removal: every agent (nil — for an install, every
+    /// agent whose vendor folder is on this Mac), or exactly these.
+    enum Job: Equatable, Sendable {
+        case install([AgentID]?)
+        case uninstall([AgentID]?)
+
+        /// The agents it names; nil for every agent.
+        var agents: [AgentID]? {
+            switch self {
+            case .install(let agents), .uninstall(let agents): return agents
+            }
         }
     }
 
-    /// Install the native `pulse-hook` into every present agent's config.
+    /// Do one job. `previous`: the failures already said, kept for the
+    /// agents this job did not touch — removing one agent's hook does not
+    /// forget why another's install failed.
     @discardableResult
-    static func install() -> Status {
+    static func run(_ job: Job, previous: [AgentID: HooksInstaller.Failure] = [:]) -> Status {
+        switch job {
+        case .install(let agents): return install(agents: agents, previous: previous)
+        case .uninstall(let agents): return uninstall(agents: agents, previous: previous)
+        }
+    }
+
+    /// Remove Pulse hooks from every agent's config (or `agents`). One
+    /// agent's failure does not stop the others; the status names it.
+    @discardableResult
+    static func uninstall(agents: [AgentID]? = nil, previous: [AgentID: HooksInstaller.Failure] = [:]) -> Status {
+        installQueue.sync {
+            seedAssets()
+            let results = HooksInstaller.uninstall(agents: agents ?? AgentID.priority)
+            return status(after: results, keeping: previous)
+        }
+    }
+
+    /// Install the native `pulse-hook` into every present agent's config
+    /// (or exactly `agents`).
+    @discardableResult
+    static func install(agents: [AgentID]? = nil, previous: [AgentID: HooksInstaller.Failure] = [:]) -> Status {
         installQueue.sync {
             seedAssets()
             do {
-                return status(after: try HooksInstaller.install())
+                return status(after: try HooksInstaller.install(agents: agents), keeping: previous)
             } catch {
                 let failure = HooksInstaller.failure(of: error)
                 DebugLog.write("hooks install failed \(failure.rawValue): \(error.localizedDescription)")
@@ -132,14 +159,29 @@ enum HooksSupport {
         }
     }
 
-    /// What is wired now, and which agents the last run could not do.
-    static func status(after results: [HooksInstaller.AgentResult]) -> Status {
-        var failed: [AgentID: HooksInstaller.Failure] = [:]
-        for result in results {
-            if let failure = result.failure { failed[result.agent] = failure }
-        }
+    /// What is wired now, and which agents could not be done: this run's
+    /// failures, plus `keeping`'s for the agents this run did not touch.
+    static func status(
+        after results: [HooksInstaller.AgentResult],
+        keeping previous: [AgentID: HooksInstaller.Failure] = [:]
+    ) -> Status {
+        let failed = failures(after: results, keeping: previous)
         let probed = probeStatus()
         guard !failed.isEmpty else { return probed }
         return .installed(probed.installedAgents, failed: failed)
+    }
+
+    /// This run's failures, plus the earlier ones of agents it did not
+    /// touch. Pure.
+    static func failures(
+        after results: [HooksInstaller.AgentResult],
+        keeping previous: [AgentID: HooksInstaller.Failure]
+    ) -> [AgentID: HooksInstaller.Failure] {
+        let touched = Set(results.map(\.agent))
+        var failed = previous.filter { !touched.contains($0.key) }
+        for result in results {
+            if let failure = result.failure { failed[result.agent] = failure }
+        }
+        return failed
     }
 }

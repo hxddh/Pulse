@@ -69,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var launchHook: PulseLaunchHook?
     private var statusPanel: StatusPanelController?
     private var activationObserver: NSObjectProtocol?
+    /// A second copy's "open the tray" (`SingleInstanceGuard`).
+    private var reopenObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Activation policy is also set before run(); keep accessory here so
@@ -80,18 +82,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { _ in
             PulseNotify.refreshAuthorization()
+            MainActor.assumeIsolated { AppServices.store.refreshLoginItem() }
         }
-        if ProcessInfo.processInfo.arguments.contains("--appearance=dark") {
-            NSApp.appearance = NSAppearance(named: .darkAqua)
-        } else if ProcessInfo.processInfo.arguments.contains("--appearance=light") {
-            NSApp.appearance = NSAppearance(named: .aqua)
+        reopenObserver = DistributedNotificationCenter.default().addObserver(
+            forName: SingleInstanceGuard.reopenNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { AppServices.store.reopen() }
         }
-        // Wins over settings.json for this run, and is never saved.
-        if ProcessInfo.processInfo.arguments.contains("--language=zh") {
-            AppServices.store.languageOverride = .zh
-        } else if ProcessInfo.processInfo.arguments.contains("--language=en") {
-            AppServices.store.languageOverride = .en
-        }
+        // Never shown by an accessory app; it routes the standard key
+        // equivalents — ⌘W closes Settings, ⌘C / ⌘A work on selectable text.
+        MainMenu.install(lang: AppServices.store.lang)
         let panel = StatusPanelController(store: AppServices.store)
         statusPanel = panel
         StatusPanelController.shared = panel
@@ -103,12 +105,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Finder / Spotlight reopen must not invent windows. Tray is user-driven.
+    /// Finder / Spotlight opening Pulse again: the person wants to see it,
+    /// so the tray opens (`StatusStore.reopen`). No window is invented —
+    /// false tells AppKit not to do its own reopen.
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        false
+        AppServices.store.reopen()
+        return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -120,8 +125,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.removeObserver(activationObserver)
             self.activationObserver = nil
         }
+        if let reopenObserver {
+            DistributedNotificationCenter.default().removeObserver(reopenObserver)
+            self.reopenObserver = nil
+        }
         GlobalHotKey.uninstall()
         statusPanel?.uninstall()
     }
 }
 
+
+/// The app's main menu. An accessory app never shows it (it does while
+/// Settings is open, when Pulse is briefly a regular app); either way it
+/// routes the standard key equivalents to the key window: ⌘W closes
+/// Settings, ⌘C / ⌘A / ⌘Z work on selectable and editable text, ⌘, opens
+/// Settings, ⌘Q quits. Items that act on text or windows go to the first
+/// responder (a nil target).
+@MainActor
+enum MainMenu {
+    static func install(lang: ResolvedLanguage) {
+        NSApp?.mainMenu = make(lang: lang)
+    }
+
+    static func make(lang: ResolvedLanguage) -> NSMenu {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        func item(
+            _ title: String, _ action: Selector?, _ key: String,
+            _ modifiers: NSEvent.ModifierFlags = .command
+        ) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
+            return item
+        }
+        let main = NSMenu()
+
+        let app = NSMenu(title: "Pulse")
+        let about = item(t(.menuAbout), #selector(MainMenuActions.about(_:)), "")
+        let settings = item(t(.settings), #selector(MainMenuActions.settings(_:)), ",")
+        let quit = item(t(.quit), #selector(MainMenuActions.quit(_:)), "q")
+        for own in [about, settings, quit] { own.target = MainMenuActions.shared }
+        app.addItem(about)
+        app.addItem(.separator())
+        app.addItem(settings)
+        app.addItem(.separator())
+        app.addItem(quit)
+
+        let edit = NSMenu(title: t(.menuEdit))
+        edit.addItem(item(t(.menuUndo), Selector(("undo:")), "z"))
+        edit.addItem(item(t(.menuRedo), Selector(("redo:")), "z", [.command, .shift]))
+        edit.addItem(.separator())
+        edit.addItem(item(t(.menuCut), #selector(NSText.cut(_:)), "x"))
+        edit.addItem(item(t(.menuCopy), #selector(NSText.copy(_:)), "c"))
+        edit.addItem(item(t(.menuPaste), #selector(NSText.paste(_:)), "v"))
+        edit.addItem(item(t(.menuSelectAll), #selector(NSText.selectAll(_:)), "a"))
+
+        let window = NSMenu(title: t(.menuWindow))
+        window.addItem(item(t(.menuClose), #selector(NSWindow.performClose(_:)), "w"))
+        window.addItem(item(t(.menuMinimize), #selector(NSWindow.performMiniaturize(_:)), "m"))
+
+        for (title, submenu) in [("Pulse", app), (t(.menuEdit), edit), (t(.menuWindow), window)] {
+            let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            holder.submenu = submenu
+            main.addItem(holder)
+        }
+        return main
+    }
+}
+
+/// The main menu's own items: About, Settings, Quit.
+@MainActor
+final class MainMenuActions: NSObject {
+    static let shared = MainMenuActions()
+
+    @objc func about(_ sender: Any?) {
+        NSApp?.activate(ignoringOtherApps: true)
+        NSApp?.orderFrontStandardAboutPanel(sender)
+    }
+
+    @objc func settings(_ sender: Any?) {
+        AppServices.store.openSettings()
+    }
+
+    @objc func quit(_ sender: Any?) {
+        AppServices.store.quit()
+    }
+}

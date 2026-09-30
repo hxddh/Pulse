@@ -74,6 +74,17 @@ public struct AttentionRecord: Equatable, Sendable {
     /// The `tool` column of a `turn` line that ended on an error.
     public static let errorTool = "error"
 
+    /// The `tool` column of a `tool` line that says only that work goes on
+    /// — a status (OpenCode `session.status` busy / retry), a recoverable
+    /// error (Copilot `errorOccurred`) — not that a tool ran. It is neither
+    /// a step nor an answer to a block.
+    public static let statusTool = "status"
+
+    /// Whether a `tool` line's `tool` column is the status marker.
+    public static func isStatus(tool: String) -> Bool {
+        tool.trimmingCharacters(in: .whitespacesAndNewlines) == statusTool
+    }
+
     public init(
         agent: String,
         kind: String,
@@ -134,13 +145,12 @@ public struct AttentionRecord: Equatable, Sendable {
     }
 }
 
-/// Frozen Attention bridge contract (v5) — every hook event of every
-/// supported agent, and anything else that can invoke `pulse-hook` /
-/// `PulseBar --hook`, as one line of one append-only event log
-/// (`events.tsv`, `EventLog`).
+/// Attention Protocol v5 — every hook event of every supported agent, read
+/// by its adapter in `pulse-hook` / `PulseBar --hook`, as one line of one
+/// append-only event log (`events.tsv`, `EventLog`).
 ///
-/// Writers: `PulseHookReceiver` (through `EventLog.append`), the app's own
-/// `done` for a dismissal, and external integrators appending lines.
+/// Writers: `PulseHookReceiver` (through `EventLog.append`) and the app's
+/// own `done` for a dismissal.
 /// Reader: `SessionBook` (the app), every line in file order. Spec:
 /// `docs/attention-protocol.md`.
 public enum AttentionProtocol {
@@ -171,73 +181,13 @@ public enum AttentionProtocol {
         return cols.count == columnCount ? cols : nil
     }
 
-    public static var acceptedWriteKinds: Set<String> {
-        Set(AttentionKind.allCases.map(\.rawValue))
-    }
-
-    /// Protocol spellings onto the v5 kinds, for bridges that write a kind
-    /// word rather than a vendor event. Unknown tokens stay as-is — and an
-    /// empty one stays empty — so `acceptsWrite(kind:)` rejects them: a line
-    /// that does not say what it is about is never Waiting.
-    ///
-    /// `stop` is **your turn**, not blocked and not cleared; `idle_prompt` /
-    /// `idle` is **idle** (your turn only if the turn's end was not seen);
-    /// the question family has its own kind.
-    public static func normalizeKind(_ kind: String) -> String {
-        let k = kind.trimmingCharacters(in: .whitespacesAndNewlines)
-        let low = k.lowercased().replacingOccurrences(of: "-", with: "_")
-        let mapping: [String: AttentionKind] = [
-            // Your turn: the agent finished and is idle at its prompt.
-            "turn": .turn,
-            "stop": .turn,
-            // Sat at its prompt a while: your turn only if nobody saw it end.
-            "idle_prompt": .idle,
-            "idle": .idle,
-            "agent_turn_complete": .turn,
-            "turn_complete": .turn,
-            "task_complete": .turn,
-            // Claude's StopFailure — the turn ended on an API error (rate
-            // limit, auth, overload). Over to the user; never red.
-            "stop_failure": .turn,
-            // Blocked on a permission.
-            "permission": .permission,
-            "permission_prompt": .permission,
-            "approval_request": .permission,
-            // Blocked on a question.
-            "question": .question,
-            "elicitation_dialog": .question,
-            "elicitation_url_dialog": .question,
-            "agent_needs_input": .question,
-            // Blocked, reason unknown.
-            "waiting": .waiting,
-            // Resolved.
-            "done": .done,
-            // The elicitation was answered or closed.
-            "elicitation_complete": .done,
-            "elicitation_response": .done,
-            // Activity: a tool ran.
-            "tool": .tool,
-            "activity": .tool,
-            // Lifecycle.
-            "start": .start,
-            "session_start": .start,
-            "working": .working,
-            "prompt": .working,
-            "end": .end,
-            "session_end": .end,
-        ]
-        if let mapped = mapping[low] { return mapped.rawValue }
-        // Never invent Waiting from free text: an unknown word stays unknown.
-        return low
-    }
-
-    /// The typed kind of a token, or nil when the protocol does not know it.
+    /// The typed kind of a line's `kind` column, or nil when it is not one
+    /// of the v5 kinds, spelled as written (`AttentionKind.rawValue`). No
+    /// other spelling is read: every writer is Pulse's own — the receiver's
+    /// adapters and the app's dismissal — so a word the protocol does not
+    /// know is never guessed into a state, and never into Waiting.
     public static func kind(_ raw: String) -> AttentionKind? {
-        AttentionKind(rawValue: normalizeKind(raw))
-    }
-
-    public static func acceptsWrite(kind: String) -> Bool {
-        acceptedWriteKinds.contains(normalizeKind(kind))
+        AttentionKind(rawValue: raw)
     }
 
     /// The `front` column as written: `1` in front, `0` not, empty unknown.

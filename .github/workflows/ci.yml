@@ -58,46 +58,18 @@ jobs:
 
       # The QA driver, not the app: fixtures and captures live in `PulseQA`
       # and never ship (package_check.py fails an app binary that has them).
-      - name: Observation Truth captures
-        id: observation_truth
-        run: ./scripts/qa_observation_truth.sh
+      # Every surface fixture in zh/en × light/dark, and the tray panel and
+      # lamp for each status fixture. A missing PNG fails the build; the
+      # manifests are printed to the log. The PNGs go to this run's
+      # artifacts only — never into the repo or a release.
+      - name: QA captures
+        id: captures
+        run: ./scripts/qa_captures.sh
 
-      - name: Observation Truth captures (en · dark)
-        id: observation_truth_en_dark
-        run: |
-          PULSE_QA_APPEARANCE=dark \
-          PULSE_QA_LANGUAGE=en \
-          PULSE_QA_OUT="$PWD/zig-out/qa-observation-truth-en-dark" \
-            ./scripts/qa_observation_truth.sh
-
-      - name: Upload observation-truth PNGs
+      - name: Upload QA captures
         uses: actions/upload-artifact@v7
-        if: ${{ always() && steps.observation_truth.outcome == 'success' }}
+        if: ${{ always() && steps.captures.outcome != 'skipped' }}
         with:
-          name: qa-observation-truth
-          path: zig-out/qa-observation-truth/
-          if-no-files-found: error
-
-      - name: Upload observation-truth PNGs (en · dark)
-        uses: actions/upload-artifact@v7
-        if: ${{ always() && steps.observation_truth_en_dark.outcome == 'success' }}
-        with:
-          name: qa-observation-truth-en-dark
-          path: zig-out/qa-observation-truth-en-dark/
-          if-no-files-found: error
-
-      # Every surface fixture (tray rows, header, notice, detail page,
-      # Settings) rendered by `PulseQA` in zh/en × light/dark. A missing PNG
-      # fails the build; the manifests (with each capture's size) are printed
-      # to the log.
-      - name: Surface captures
-        id: surfaces
-        run: ./scripts/qa_surfaces.sh
-
-      - name: Upload surface PNGs
-        uses: actions/upload-artifact@v7
-        if: ${{ always() && steps.surfaces.outcome != 'skipped' }}
-        with:
-          name: qa-surfaces
-          path: zig-out/qa-surfaces/
+          name: qa-captures
+          path: zig-out/qa-captures/
           if-no-files-found: error

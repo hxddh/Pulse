@@ -6,6 +6,10 @@ import Foundation
 /// installed at, forever. This is deliberately minimal: no download, no
 /// installer, no background daemon — one request at most once a day, a line
 /// saying which version exists, and a button that opens its release page.
+///
+/// One feed: GitHub's `/releases/latest`. A GitHub prerelease never appears
+/// there — a version published as a prerelease reaches nobody through this
+/// check until the owner promotes it to Latest.
 @MainActor
 final class UpdateCheck {
     static let shared = UpdateCheck()
@@ -35,7 +39,7 @@ final class UpdateCheck {
         case network(String)
         /// GitHub answered with a non-2xx status.
         case http(Int)
-        /// The body is not a release (or a list of releases).
+        /// The body is not a release.
         case badResponse
         /// The release has no usable tag.
         case noTag
@@ -52,8 +56,7 @@ final class UpdateCheck {
     }
 
     /// Default feed; override with `PulseUpdateFeed` in Info.plist.
-    private static let defaultLatestFeed = "https://api.github.com/repos/hxddh/Pulse/releases/latest"
-    private static let defaultReleasesFeed = "https://api.github.com/repos/hxddh/Pulse/releases?per_page=15"
+    private static let defaultFeed = "https://api.github.com/repos/hxddh/Pulse/releases/latest"
     /// Nested, so not main-actor isolated: `isDue` is a pure function.
     enum Cadence {
         static let minInterval: TimeInterval = 24 * 60 * 60
@@ -83,13 +86,7 @@ final class UpdateCheck {
            !raw.isEmpty {
             return URL(string: raw)
         }
-        // Preview/signed builds use the releases list so they see every cut
-        // (including when CI publishes unsigned builds as GitHub Latest).
-        // Stable (notarized) stays on `/latest` and ignores prereleases.
-        let raw = PulseVersion.prefersPrereleaseUpdates
-            ? Self.defaultReleasesFeed
-            : Self.defaultLatestFeed
-        return URL(string: raw)
+        return URL(string: Self.defaultFeed)
     }
 
     /// Called at launch, whenever settings change, and from the probe timer
@@ -141,13 +138,7 @@ final class UpdateCheck {
         request.setValue("Pulse/\(PulseVersion.semver)", forHTTPHeaderField: "User-Agent")
 
         URLSession.shared.dataTask(with: request) { data, response, error in
-            let preferPrerelease = PulseVersion.prefersPrereleaseUpdates
-            let result = Self.interpret(
-                data: data,
-                response: response,
-                error: error,
-                preferPrerelease: preferPrerelease
-            )
+            let result = Self.interpret(data: data, response: response, error: error)
             Task { @MainActor in
                 self.inFlight = false
                 if case .failed = result {} else { self.lastCheck = Date() }
@@ -161,46 +152,20 @@ final class UpdateCheck {
         }.resume()
     }
 
-    nonisolated static func interpret(
-        data: Data?,
-        response: URLResponse?,
-        error: Error?,
-        preferPrerelease: Bool = false
-    ) -> Status {
+    /// Pure: what one answer from `/releases/latest` means for this build.
+    nonisolated static func interpret(data: Data?, response: URLResponse?, error: Error?) -> Status {
         if let error { return .failed(.network(error.localizedDescription)) }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             return .failed(.http(http.statusCode))
         }
-        guard let data else { return .failed(.badResponse) }
+        guard let data,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return .failed(.badResponse) }
 
-        let object: [String: Any]?
-        if let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            object = dict
-        } else if let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            // Releases list: pick the newest tag that matches this channel.
-            object = list.first { entry in
-                let pre = (entry["prerelease"] as? Bool) ?? false
-                if preferPrerelease { return true }
-                return !pre
-            } ?? list.first
-        } else {
-            return .failed(.badResponse)
-        }
-        guard let object else { return .failed(.badResponse) }
-
-        let tag = (object["tag_name"] as? String) ?? ""
-        let page = (object["html_url"] as? String) ?? ""
-        let isPrerelease = (object["prerelease"] as? Bool) ?? false
-        // Stable builds must not auto-offer a prerelease; preview builds may.
-        if isPrerelease && !preferPrerelease {
-            return .current
-        }
-        let latest = normalize(tag)
+        let latest = normalize((object["tag_name"] as? String) ?? "")
         guard !latest.isEmpty else { return .failed(.noTag) }
         guard isNewer(latest, than: PulseVersion.semver) else { return .current }
-
-        let release = ReleaseInfo(version: latest, pageURL: page)
-        return .available(release)
+        return .available(ReleaseInfo(version: latest, pageURL: (object["html_url"] as? String) ?? ""))
     }
 
     /// `v0.22.0` / `0.22.0` → `0.22.0`.

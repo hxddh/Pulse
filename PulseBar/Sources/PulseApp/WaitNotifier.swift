@@ -106,11 +106,15 @@ final class WaitNotifier {
         withdraw(ledger.dismiss(rowKey))
     }
 
+    /// How banners leave Notification Center. Tests replace it to see which
+    /// ids are withdrawn.
+    var withdrawBanners: ([String]) -> Void = { PulseNotify.withdraw(ids: $0) }
+
     /// Take these banners out of Notification Center — delivered or still
     /// pending.
     private func withdraw(_ ids: Set<String>) {
         guard !ids.isEmpty else { return }
-        PulseNotify.withdraw(ids: ids.sorted())
+        withdrawBanners(ids.sorted())
         DebugLog.write("waiting banners withdrawn n=\(ids.count)")
     }
 
@@ -168,10 +172,10 @@ final class WaitNotifier {
         } else {
             for waiting in candidates {
                 let id = WaitLedger.bannerID(rowKey: waiting.rowKey)
+                let banner = WaitingBanner.make(waiting, lang: model.lang)
                 PulseNotify.postWaiting(
                     id: id,
-                    title: notificationTitle(waiting),
-                    body: notificationBody(waiting),
+                    banner: banner,
                     agent: waiting.agent.rawValue,
                     session: waiting.sessionID,
                     rowKey: waiting.rowKey,
@@ -186,8 +190,9 @@ final class WaitNotifier {
     }
 
     /// Commit the banner only once Notification Center has said whether it
-    /// accepted the request; a refused one stays owed and is retried.
-    private func finishDelivery(keys: [String], bannerID: String, success: Bool) {
+    /// accepted the request; a refused one stays owed and is retried. Tests
+    /// call it as Notification Center would.
+    func finishDelivery(keys: [String], bannerID: String, success: Bool) {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         for key in keys { inFlight.remove(key) }
         // A banner Notification Center refused is said in the tray, not
@@ -284,26 +289,12 @@ final class WaitNotifier {
 
     /// `Claude · Pulse` — who and where, so the banner is actionable at a glance.
     func notificationTitle(_ row: AgentRow) -> String {
-        let project = AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
-        return project.isEmpty
-            ? row.agent.displayName
-            : "\(row.agent.displayName) · \(project)"
+        WaitingBanner.make(row, lang: model?.lang ?? AppLanguage.auto.resolved).title
     }
 
     /// `Permission · Approve shell command` — the reason, not just "Needs you".
     func notificationBody(_ row: AgentRow) -> String {
-        let lang = model?.lang ?? AppLanguage.auto.resolved
-        let kind = row.wait?.kind ?? ""
-        var bits: [String] = [
-            kind.isEmpty ? L10n.t(.needsYou, lang) : L10n.waitKind(kind, lang)
-        ]
-        let msg = (row.wait?.ask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !msg.isEmpty {
-            bits.append(msg.count > 120 ? String(msg.prefix(119)) + "…" : msg)
-        } else if let task = row.usefulTask {
-            bits.append(task.count > 120 ? String(task.prefix(119)) + "…" : task)
-        }
-        return bits.joined(separator: " · ")
+        WaitingBanner.body(row, lang: model?.lang ?? AppLanguage.auto.resolved)
     }
 
     // MARK: - Clicks

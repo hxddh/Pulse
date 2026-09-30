@@ -414,6 +414,31 @@ final class NotificationCopyTests: XCTestCase {
         row.state = .blocked(RowWait(kind: "Input"))
         XCTAssertEqual(store.notifier.notificationTitle(row), "Codex")
     }
+
+    /// Who and where in the title, the task in the subtitle, the ask in
+    /// the body — and each session its own Notification Center thread.
+    func testTheBannerPutsTheTaskInTheSubtitleAndEachSessionInItsOwnThread() {
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.task = "Fix the flaky login test"
+        row.project = "/Users/me/code/app"
+        row.state = .blocked(RowWait(kind: "Permission", ask: "Bash: npm run build"))
+        let banner = WaitingBanner.make(row, lang: .en)
+        XCTAssertEqual(banner.title, "Claude · app")
+        XCTAssertEqual(banner.subtitle, "Fix the flaky login test")
+        XCTAssertEqual(banner.body, "Permission · Bash: npm run build")
+        XCTAssertEqual(banner.threadID, "pulse.waiting.claude|s1")
+        var other = row
+        other.rowKey = "claude|s2"
+        XCTAssertNotEqual(WaitingBanner.make(other, lang: .en).threadID, banner.threadID,
+                          "two sessions never share a thread")
+        XCTAssertNotEqual(banner.threadID, WaitingBanner.summaryThread)
+        // No task: no subtitle, and the body says only what it asks.
+        var bare = AgentRow(rowKey: "codex|s3", agent: .codex)
+        bare.state = .blocked(RowWait(kind: "Input"))
+        let plain = WaitingBanner.make(bare, lang: .en)
+        XCTAssertEqual(plain.subtitle, "")
+        XCTAssertEqual(plain.body, L10n.t(.kindInput, .en))
+    }
 }
 
 final class BannerRevealTests: XCTestCase {
