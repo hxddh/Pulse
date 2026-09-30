@@ -265,8 +265,11 @@ so re-pushing is harmless. The in-app update check reads GitHub's
 Latest** (it is published with `prerelease: true`, `make_latest: false`).
 Use it for a version not yet run on a real Mac. After the owner's real-Mac
 smoke run, the owner promotes it by editing the release on GitHub: untick
-"Set as a pre-release" and tick "Set as the latest release". Nothing else
-changes — the DMG, its `.sha256` and the notes are already the release's.
+"Set as a pre-release" and tick "Set as the latest release" — or pushes a
+commit to `main` with `[promote]` in its subject, and the `promote` job does
+the same and rewrites the notes from the current CHANGELOG section (the
+Gatekeeper and checksum blocks stay). Nothing is rebuilt: the DMG and its
+`.sha256` are already the release's.
 `workflow_dispatch` has a `prerelease` switch for the same thing.
 
 ## Versioning and language
