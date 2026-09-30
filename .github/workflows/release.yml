@@ -11,7 +11,9 @@ name: Release
 # --prerelease) publishes the same DMG and notes as a GitHub *prerelease*,
 # never marked Latest: `/releases/latest` — what the in-app update check
 # reads — does not see it until the owner promotes it on GitHub after a
-# real-Mac smoke run (untick "pre-release", set as latest). The marker keeps it explicit — no push ever releases by
+# real-Mac smoke run (untick "pre-release", set as latest), or a push to main
+# with [promote] in the message promotes the current version's prerelease
+# (the `promote` job below) without rebuilding anything. The marker keeps it explicit — no push ever releases by
 # accident — and the job additionally refuses to publish a version that already
 # has a Release, so re-running is harmless.
 #
@@ -43,7 +45,8 @@ jobs:
     if: >-
       github.event_name != 'push'
       || startsWith(github.ref, 'refs/tags/')
-      || contains(github.event.head_commit.message, '[release]')
+      || (contains(github.event.head_commit.message, '[release]')
+          && !contains(github.event.head_commit.message, '[promote]'))
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
@@ -249,3 +252,41 @@ jobs:
             zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg
             zig-out/package/pulse-${{ needs.decide.outputs.version }}-macos-PulseBar.dmg.sha256
           fail_on_unmatched_files: true
+
+  promote:
+    name: Promote the prerelease to Latest
+    # A push to main carrying [promote]: the version in Models.swift, already
+    # published as a prerelease, becomes an ordinary release and Latest. Same
+    # tag, same DMG — only the flags and the prerelease note change.
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && contains(github.event.head_commit.message, '[promote]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' PulseBar/Sources/PulseApp/Models.swift)"
+          if [[ "$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isPrerelease -q .isPrerelease)" != "true" ]]; then
+            echo "v$VERSION is not a prerelease — nothing to promote"
+            exit 0
+          fi
+          gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body -q .body > /tmp/old.md
+          python3 scripts/changelog_section.py "$VERSION" > /tmp/section.md
+          # The notes are this version's CHANGELOG section as it reads now,
+          # followed by the release's own blocks (Gatekeeper, checksum) —
+          # without the prerelease note.
+          python3 - <<'PY'
+          import re
+          old = open("/tmp/old.md").read()
+          tail = old[m.start():] if (m := re.search(r"\n### (Gatekeeper|Download verification)\n", old)) else ""
+          open("/tmp/body.md", "w").write(open("/tmp/section.md").read().rstrip("\n") + "\n" + tail)
+          PY
+          gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --prerelease=false --latest --notes-file /tmp/body.md
+          echo "promoted v$VERSION to Latest"

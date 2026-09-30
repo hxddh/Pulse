@@ -11,8 +11,7 @@ All notable changes to Pulse are documented here.
 `kind` 只认 v5 的十个词、不认别名；`tool` 列的 `status` 成为保留值；托盘上的「终端自动化」提议没有了，
 改为设置里的一个开关。
 
-**这一版以 GitHub 预发布的形式发出**：应用内的「检查更新」与 GitHub Latest 都看不见它，维护者在真机上
-跑通之后才把它转为正式版。
+这一版先以 GitHub 预发布发出，随后按维护者的决定直接转为正式版（Latest），没有等真机冒烟。
 
 ### 读对（修复）
 
@@ -95,8 +94,8 @@ All notable changes to Pulse are documented here.
 ### 已知限制 / 注意
 
 - **这一版没有在真机上验证过。** 代码只在 CI（macos-26）上编译和测试：再打开、登录项、菜单栏的灯、
-  右键菜单、VoiceOver、横幅线程、卸载，都没有在一台真的 Mac 上和真的 Agent 一起跑过。所以它以 GitHub
-  预发布发出，维护者真机冒烟之后才成为 Latest。
+  右键菜单、VoiceOver、横幅线程、卸载，都没有在一台真的 Mac 上和真的 Agent 一起跑过；维护者决定
+  不等真机冒烟，直接作为正式版发布。
 - **仍是 ad-hoc 签名、未公证的 `preview` 包。** Developer ID 还没到位：公证、Sparkle 自动更新、时间敏感
   通知需要的 entitlement、跨更新稳定的隐私授权（每次更新 macOS 可能重新询问），都要等它。
 - **繁体中文系统显示简体。** 只有一张中文表，语言选择器照实写「简体中文」。
