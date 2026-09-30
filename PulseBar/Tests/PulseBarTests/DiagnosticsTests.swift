@@ -106,7 +106,7 @@ struct HooksSectionTests {
     /// no "connect" action — it says what they do not report.
     @Test func aWaitingNoneAgentSaysWhatItDoesNotReport() {
         #expect(L10n.t(.settingsHookNoWait, .en) == "Doesn't report when it waits — running and your turn only")
-        #expect(L10n.t(.settingsHookNoWait, .zh).hasPrefix("不会告诉我们它在等你"))
+        #expect(L10n.t(.settingsHookNoWait, .zh).hasPrefix("不会报告它在等你"))
         for lang in [ResolvedLanguage.en, .zh] {
             let copy = L10n.t(.settingsHookNoWait, lang)
             #expect(!copy.localizedCaseInsensitiveContains("bridge"))

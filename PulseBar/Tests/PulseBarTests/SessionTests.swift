@@ -738,7 +738,7 @@ struct TrayStateTests {
         #expect(row.recentReason == .silent)
         #expect(row.stateSinceMs == t0 + minute + TrayState.silentBoundMs)
         let why = Explain.why(row, lang: .en, nowMs: silent)
-        #expect(why.hasPrefix("No word from it for"), "\(why)")
+        #expect(why.hasPrefix("Nothing heard for"), "\(why)")
         #expect(rows(b, at: silent + TrayState.recentWindowMs).rows.isEmpty, "and it leaves the list, process or not")
     }
 
