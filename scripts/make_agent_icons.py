@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate the agent marks Pulse draws for tools that have no bundled logo.
 
-An agent without a bundled logo falls back to a two-letter monogram beside
-real brand marks — different weight, different shape language, visibly
-unfinished. This file draws a mark for such an agent instead.
+An agent without a bundled logo would draw a blank row icon beside real
+brand marks. This file draws a mark for such an agent instead, and its
+`--check` fails an agent that has no PNG at all.
 
 These are **Pulse's own glyphs, not the vendors' trademarks.** They are drawn
 here rather than copied so that the file you are reading is the source: no
@@ -14,9 +14,7 @@ The app loads them as template images, so only the alpha channel is used — the
 rasteriser below therefore computes coverage and writes black pixels with that
 coverage as alpha. Coordinates are in the same 24×24 space as the bundled
 Simple Icons SVGs; output is 64×64 PNG to match, which is 2× the 16pt the row
-draws at. No `.svg` is written: the loader prefers the PNG, and an SVG that
-merely wrapped it would render blank if the PNG ever went missing — an
-invisible icon is worse than the monogram fallback.
+draws at. The app loads the PNG only; no `.svg` ships.
 
     python3 scripts/make_agent_icons.py [--check]
 
@@ -196,13 +194,12 @@ def main() -> int:
         print("run: python3 scripts/make_agent_icons.py", file=sys.stderr)
         return 1
 
-    # The reason this gate exists at all: an agent added without a mark falls
-    # back to a two-letter monogram, which looks like a placeholder next to
-    # every real icon — and nothing fails until someone opens the tray.
+    # The reason this gate exists at all: an agent added without a mark draws
+    # a blank icon — and nothing fails until someone opens the tray.
     ids = roster(root)
     bare = [n for n in ids if not (out / f"{n}.png").exists()]
     if bare:
-        print("AgentID with no icon (would render as a monogram):", file=sys.stderr)
+        print("AgentID with no icon (its row would draw a blank icon):", file=sys.stderr)
         for n in bare:
             print(f"  · {n}", file=sys.stderr)
         print("add art, or a shape to ICONS in this file", file=sys.stderr)

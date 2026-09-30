@@ -177,9 +177,6 @@ public struct AgentProcessRule: Sendable {
 public struct AgentSpec: Sendable {
     public let id: AgentID
     public let displayName: String
-    /// Fallback glyph when the PNG/SVG mark is missing — unique across the
-    /// roster. The mark itself is `Resources/AgentIcons/<rawValue>.png|svg`.
-    public let monogram: String
     /// Whether the vendor's own hook reports a blocked session.
     public let waiting: WaitingSource
     /// Other spellings a hook or bridge may use for this agent, beyond
@@ -195,7 +192,6 @@ public enum AgentCatalog {
         AgentSpec(
             id: .claude,
             displayName: "Claude",
-            monogram: "Cl",
             // PermissionRequest (at once) and Notification permission_prompt,
             // elicitation_dialog, agent_needs_input (about six seconds later).
             waiting: .hooks,
@@ -226,7 +222,6 @@ public enum AgentCatalog {
         AgentSpec(
             id: .codex,
             displayName: "Codex",
-            monogram: "Cx",
             // Codex's PermissionRequest fires before its own auto-review,
             // so an approval nobody is asked for would light a red lamp
             // (openai/codex#28833). Its hooks say running and your turn
@@ -249,7 +244,6 @@ public enum AgentCatalog {
         AgentSpec(
             id: .cursor,
             displayName: "Cursor",
-            monogram: "Cu",
             // No Cursor hook reports a pending approval without being a
             // gating `before*` hook — running and your turn only.
             waiting: .none,
@@ -276,7 +270,6 @@ public enum AgentCatalog {
         AgentSpec(
             id: .pi,
             displayName: "Pi",
-            monogram: "Pi",
             // `ui_prompt_start` / `ui_prompt_end`: Pi reports when it waits on
             // a blocking user-facing prompt (a confirm, a select, an input).
             waiting: .hooks,
@@ -297,7 +290,6 @@ public enum AgentCatalog {
         AgentSpec(
             id: .gemini,
             displayName: "Gemini",
-            monogram: "Ge",
             // Notification `ToolPermission` — observability only, it cannot
             // grant anything (google-gemini/gemini-cli docs/hooks/reference.md).
             waiting: .hooks,
@@ -320,7 +312,6 @@ public enum AgentCatalog {
         AgentSpec(
             id: .copilot,
             displayName: "Copilot",
-            monogram: "Cp",
             // `notification` permission_prompt / elicitation_dialog —
             // fire-and-forget, never blocks the session.
             waiting: .hooks,
@@ -348,7 +339,6 @@ public enum AgentCatalog {
         AgentSpec(
             id: .opencode,
             displayName: "OpenCode",
-            monogram: "Oc",
             // Plugin events `permission.asked` / `question.asked`, resolved by
             // `permission.replied` / `question.replied` / `question.rejected`.
             waiting: .hooks,

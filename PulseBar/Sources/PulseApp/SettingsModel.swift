@@ -6,7 +6,7 @@ import Foundation
 /// agents, each with ✕) · Hooks — the diagnostics: one line per agent on this
 /// Mac (installed or not, its last event, a fix), the agents that are not
 /// here collapsed into one line, and "Copy report" · Updates. The version and
-/// the kind of build are the footer. `SettingsFace` renders this and sends
+/// the kind of build are the footer, with "Uninstall Pulse…". `SettingsFace` renders this and sends
 /// `Action`s; the store builds it from `settings` and a few flags — never
 /// from a scan. Pure.
 struct SettingsModel: Equatable {
@@ -45,6 +45,9 @@ struct SettingsModel: Equatable {
         case setUpdateCheck(Bool)
         case checkForUpdates
         case openRelease
+        /// "Uninstall Pulse…": confirm, then remove everything Pulse put on
+        /// this Mac (`UninstallPlan`) and quit.
+        case uninstallPulse
     }
 
     var lang: ResolvedLanguage
@@ -350,6 +353,57 @@ struct SettingsModel: Equatable {
 
 /// Pulse's login item as macOS reports it (`SMAppService.mainApp.status`,
 /// read by `LoginItem`). Pure.
+/// "Uninstall Pulse…" as a value: everything Pulse put on this Mac, said in
+/// the confirmation before any of it is removed. Pure — `StatusStore` does
+/// it, in this order: every agent's hook comes out through the installer
+/// (byte for byte, from the record of what each install replaced); only
+/// when none is left does the login item go and the folder — that record
+/// with it — get deleted; then Pulse quits and shows itself in Finder.
+struct UninstallPlan: Equatable, Sendable {
+    /// The agents whose config carries Pulse's hook now, in roster order.
+    /// The removal runs for every agent all the same.
+    var hooks: [AgentID]
+    /// Pulse is a login item (on, or waiting for approval).
+    var loginItem: Bool
+    /// Pulse's folder, as a person reads it (`~/Library/…`).
+    var folder: String
+
+    static func make(installed: Set<AgentID>, loginItem: LoginItemState?, folder: URL, home: URL) -> UninstallPlan {
+        let path = folder.path
+        let homePath = home.path.hasSuffix("/") ? String(home.path.dropLast()) : home.path
+        let shown = path.hasPrefix(homePath + "/") ? "~" + String(path.dropFirst(homePath.count)) : path
+        return UninstallPlan(
+            hooks: AgentID.priority.filter(installed.contains),
+            loginItem: loginItem?.isOn ?? false,
+            folder: shown
+        )
+    }
+
+    /// The confirmation's body: what goes, one line each, then what happens.
+    func message(_ lang: ResolvedLanguage) -> String {
+        func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
+        var lines: [String] = []
+        lines.append(hooks.isEmpty
+            ? t(.uninstallNoHooks)
+            : String(format: t(.uninstallPlanHooks), L10n.joinNames(hooks.map(\.displayName), lang)))
+        if loginItem { lines.append(t(.uninstallLogin)) }
+        lines.append(String(format: t(.uninstallFolder), folder))
+        lines.append(t(.uninstallThen))
+        return lines.joined(separator: "\n\n")
+    }
+
+    /// Whether the hook removal left nothing of Pulse's in any agent's
+    /// config. Only then is the folder — and with it the record a later
+    /// byte-for-byte removal would need — deleted.
+    static func hooksRemoved(_ status: HooksSupport.Status) -> Bool {
+        switch status {
+        case .missing: return true
+        case .installed(let agents, let failed): return agents.isEmpty && failed.isEmpty
+        case .unknown, .working, .failed: return false
+        }
+    }
+}
+
 enum LoginItemState: String, Equatable, Sendable {
     /// Not registered.
     case off

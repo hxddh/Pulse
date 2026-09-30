@@ -98,9 +98,9 @@ final class StatusStore {
 
     // MARK: - Language
 
-    /// `--language=` on the command line: wins over `settings.json` for this
-    /// run and is never saved. Set before `start()`; not observed — it does
-    /// not change while the app runs.
+    /// `PulseQA`'s `--language=`: wins over `settings.json` for that run and
+    /// is never saved. Set before launch; not observed — it does not change
+    /// while the app runs. The shipping app never sets it.
     @ObservationIgnored var languageOverride: AppLanguage?
 
     var lang: ResolvedLanguage { (languageOverride ?? settings.language).resolved }
@@ -223,8 +223,8 @@ final class StatusStore {
     // MARK: - Settings
 
     /// Read `settings.json` (an old `settings.txt` is deleted, unread).
-    /// With no file, the defaults stay. A `--language=` from the command line
-    /// is `languageOverride`, not a setting, so a file cannot undo it.
+    /// With no file, the defaults stay. `PulseQA`'s language is
+    /// `languageOverride`, not a setting, so a file cannot undo it.
     func loadSettings() {
         if let loaded = PulseSettings.loadIfPresent() {
             if loaded != settings { settings = loaded }
@@ -664,6 +664,66 @@ final class StatusStore {
     /// user installs them again.
     func uninstallHooks() {
         runHooks(.uninstall(nil))
+    }
+
+    // MARK: - Uninstall
+
+    /// "Uninstall Pulse…": say what goes (`UninstallPlan`), and on the
+    /// person's yes remove every hook through the installer. Only when none
+    /// is left: the login item, then Pulse's folder, then quit and show the
+    /// app in Finder for the Trash. A hook that would not come out stops it
+    /// there — nothing else is removed, and Settings → Hooks says why.
+    func uninstallPulse() {
+        guard !hooksStatus.isWorking else { return }
+        let plan = UninstallPlan.make(
+            installed: hooksStatus.installedAgents,
+            loginItem: loginItem,
+            folder: HooksSupport.supportDir(),
+            home: FileManager.default.homeDirectoryForCurrentUser
+        )
+        NSApp?.activate(ignoringOtherApps: true)
+        let confirm = NSAlert()
+        confirm.alertStyle = .warning
+        confirm.messageText = tr(.uninstallTitle)
+        confirm.informativeText = plan.message(lang)
+        let uninstall = confirm.addButton(withTitle: tr(.uninstallConfirm))
+        uninstall.hasDestructiveAction = true
+        confirm.addButton(withTitle: tr(.uninstallCancel))
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        DebugLog.write("uninstall: confirmed")
+        runHooks(.uninstall(nil)) { [weak self] status in
+            guard let self else { return }
+            guard UninstallPlan.hooksRemoved(status) else {
+                DebugLog.write("uninstall: stopped — a hook is still in place")
+                let stopped = NSAlert()
+                stopped.messageText = self.tr(.uninstallStopped)
+                stopped.runModal()
+                self.openSettings(focus: .waitingSignals)
+                return
+            }
+            self.finishUninstall(plan)
+        }
+    }
+
+    /// Every hook is out: the rest, then quit. Nothing may write to Pulse's
+    /// folder after it is deleted — the engine and the shortcut stop first,
+    /// and the last log line is written before it goes.
+    private func finishUninstall(_ plan: UninstallPlan) {
+        engine.stop()
+        GlobalHotKey.uninstall()
+        if plan.loginItem { LoginItem.setEnabled(false) }
+        let folder = HooksSupport.supportDir()
+        DebugLog.write("uninstall: deleting the support folder and quitting")
+        do {
+            try FileManager.default.removeItem(at: folder)
+        } catch {
+            DebugLog.write("uninstall: folder not deleted: \(error.localizedDescription)")
+        }
+        let app = Bundle.main.bundleURL
+        if app.pathExtension == "app" {
+            NSWorkspace.shared.activateFileViewerSelecting([app])
+        }
+        NSApp?.terminate(nil)
     }
 
     /// Persist the "don't suggest hooks" choice without a full rescan.

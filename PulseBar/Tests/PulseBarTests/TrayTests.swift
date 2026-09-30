@@ -879,11 +879,8 @@ final class DurationFormatTests: XCTestCase {
         XCTAssertEqual(DurationFormat.full(seconds: 7200, lang: .zh), "2 小时")
     }
 
-    /// "1 older session", "3 older sessions" — never "session(s)".
-    func testTheOlderSessionsLineHasASingularAndAPlural() {
-        XCTAssertEqual(L10n.staleHidden(1, names: "Claude", .en), "1 older session not shown (Claude)")
-        XCTAssertEqual(L10n.staleHidden(3, names: "Claude, Codex", .en), "3 older sessions not shown (Claude, Codex)")
-        XCTAssertEqual(L10n.staleHidden(1, names: "Claude", .zh), "1 个较早的会话未显示（Claude）")
+    /// A count picks its form — never "session(s)".
+    func testNoCopyUsesAPluralHack() {
         for key in L10n.Key.allCases {
             XCTAssertFalse(L10n.t(key, .en).contains("(s)"), "\(key): a plural hack")
         }
@@ -1382,6 +1379,15 @@ struct RowWordsTests {
         // The only time on a waiting row is how long it has waited.
         let waited = TrayRowModel.waitDuration(SurfaceFixtures.rowPermission(), nowMs: SurfaceFixtures.nowMs, lang: .en)
         #expect(model.age == waited)
+    }
+
+    /// The context menu teaches the keys: each item carries the tray key
+    /// that does the same — the tray has no key legend of its own.
+    @Test func theContextMenuShowsEachItemsKey() {
+        let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowPermission(), lang: .en)
+        let keys: [TrayKeys.Key?] = model.menu.map { $0.key }
+        let expected: [TrayKeys.Key?] = [.enter, .right, .dismiss, .mute]
+        #expect(keys == expected)
     }
 
     @Test func yourTurnIsQuietAndSaysSo() {

@@ -38,7 +38,6 @@ struct VendorDriftTests {
         #expect(untyped?.action == .ignore)
         let typed = PulseHookReceiver.interpret(agent: .claude, event: "Notification", payload: ["notification_type": "permission_prompt"])
         #expect(typed?.action == .blocked(.permission))
-        #expect(AttentionProtocol.normalizeKind("stop") == AttentionKind.turn.rawValue, "a known alias still normalises")
     }
 
     /// A red lamp has a way to go out — every agent that can block

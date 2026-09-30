@@ -5,7 +5,7 @@ promise made about it.
 The checks are the ones that guard a real fact; prose checks went.
 
 1. Roster — `AgentCatalog.all` has one `AgentSpec` per `AgentID` case, in
-   declaration order (process-rule precedence), with unique monograms.
+   declaration order (process-rule precedence).
 2. Processes — agent processes come from the kernel's table (libproc,
    `AgentProcesses.swift`): no `ps`, no `lsof`, no subprocess; and Cursor's
    private worker daemon is denied.
@@ -113,9 +113,6 @@ def check_roster(text: str, roster: list[Agent], problems: list[str]) -> None:
         problems.append(f"catalog specs ≠ AgentID cases (missing {missing}, extra {extra})")
     if specs != names:
         problems.append("AgentCatalog.all must follow AgentID declaration order (process-rule precedence)")
-    monograms = re.findall(r'monogram:\s*"([^"]+)"', text)
-    if len(monograms) != len(set(monograms)):
-        problems.append("monograms must be unique across the roster")
 
 
 # 2 · processes --------------------------------------------------------------

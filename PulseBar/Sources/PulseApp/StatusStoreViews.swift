@@ -108,13 +108,11 @@ extension StatusStore {
         case .idle: return tr(.updateIdle)
         case .checking: return tr(.updateChecking)
         case .current:
-            if PulseVersion.prefersPrereleaseUpdates {
-                return tr(.updateCurrentPrerelease)
+            switch PulseVersion.distributionChannel {
+            case "stable": return tr(.updateCurrentStable)
+            case "preview": return tr(.updateCurrentPreview)
+            default: return tr(.updateCurrent)
             }
-            if PulseVersion.distributionChannel == "stable" {
-                return tr(.updateCurrentStable)
-            }
-            return tr(.updateCurrent)
         case .available(let release): return String(format: tr(.updateAvailable), release.version)
         case .failed(let failure): return "\(tr(.updateFailed)) · \(updateFailureText(failure))"
         }

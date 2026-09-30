@@ -6,8 +6,8 @@ import Foundation
 /// only when the row has something to add: the ask of a blocked row, the why
 /// of a stalled one, or — quietly — a running row's last step ("Bash · swift
 /// test · 12m ago", a past step, never "running"). No chip, no tint, no "new"
-/// dot, no buttons on the row: the verbs are keys (↩ D M →), the context
-/// menu and VoiceOver actions, and the detail page.
+/// dot, no buttons on the row: the verbs are keys (↩ → ⌘D ⌘M), the context
+/// menu (which shows each key) and VoiceOver actions, and the detail page.
 ///
 /// Pure: the row, the language, the clock and a few facts only the store
 /// knows, passed in as plain values. Every sentence Pulse says of a row —
@@ -26,6 +26,17 @@ struct TrayRowModel: Equatable {
         var action: Action
         var title: String
         var id: Action { action }
+        /// The tray key that does the same (`TrayKeys`), shown beside the
+        /// item in the context menu — the menu is where the keys are taught.
+        var key: TrayKeys.Key? {
+            switch action {
+            case .focus: return .enter
+            case .details: return .right
+            case .dismiss: return .dismiss
+            case .mute: return .mute
+            case .primary: return nil
+            }
+        }
     }
 
     /// The second line, when the row has one.

@@ -1,4 +1,4 @@
-# Vendor contracts — where each hook's shape comes from
+# Vendor contracts — every per-agent fact, and where each came from
 
 Pulse's state, and everything a row says, comes from the vendors' own hook /
 plugin / extension events. It reads no vendor file: no session store, no
@@ -9,6 +9,82 @@ context, cost and plan are never read — a decision `catalog_check` holds.
 When a vendor changes a hook contract nothing fails loudly: an event stops
 arriving, or (worse) a new one is read as the wrong state. So each contract
 names the source it was read from.
+
+This is the one place per-agent facts live (with `vendor-formats.json`);
+the protocol (`attention-protocol.md`), the install policy
+(`attention-bridge.md`) and the observability contract
+(`observability-matrix.md`) link here instead of repeating them.
+
+## Where each hook is installed
+
+| Agent | Installed into | Form | Reports "needs you" |
+| --- | --- | --- | --- |
+| Claude Code | `hooks` in `~/.claude/settings.json` | command hooks, every entry `async: true` | yes — `PermissionRequest`, `Notification` permission / question |
+| Codex | `~/.codex/hooks.json` (never `config.toml`) | command hooks (`async`) | **no** — its `PermissionRequest` fires before its own auto-review: installing it would be a fake wait |
+| Gemini CLI | `hooks` in `~/.gemini/settings.json` | command hooks | yes — `Notification` `ToolPermission` |
+| Copilot CLI | `~/.copilot/hooks/pulse.json` (Pulse's own file) | command hooks | yes — `notification` `permission_prompt` / `elicitation_dialog` |
+| OpenCode | `~/.config/opencode/plugins/pulse.js` (Pulse's own file) | plugin, `event` only | yes — `permission.asked` / `question.asked` |
+| Cursor | `~/.cursor/hooks.json` | command hooks | **no** — it has no observe-only wait event |
+| Pi | `~/.pi/agent/extensions/pulse.js` (Pulse's own file) | extension | yes — `ui_prompt_start` / `ui_prompt_end` |
+
+## What each event becomes
+
+Every installed command is `pulse-hook <agent> <vendor event name>`; the
+payload is the vendor's JSON on stdin (the two modules: the last argument).
+Only the agent's own adapter reads it. A payload that is not a JSON object —
+cut off at the 1 MiB stdin bound, broken, or plain text — writes nothing,
+and so does an event the adapter does not know. Only observe-only events are
+installed; `HookContract.gatingEvents` lists the ones that never are, and an
+event Pulse does not install is not read. The kinds are the protocol's
+(`attention-protocol.md`).
+
+| Agent | Vendor event | Pulse |
+| --- | --- | --- |
+| **Claude** (`~/.claude/settings.json`, every entry `async: true`) | `SessionStart` | `start` |
+| | `UserPromptSubmit` | `working` (message = `prompt`) |
+| | `PostToolUse`, `PostToolUseFailure` | `tool` (tool = `tool_name`, message = its target) |
+| | `PermissionRequest` | `permission` — ask = `tool_name: command/file_path/url`, tool = `tool_name`; `AskUserQuestion` → `question`, ask = `tool_input.questions[0].question`; `ExitPlanMode` → ask = the plan's first line |
+| | `Notification` `permission_prompt` | `permission` |
+| | `Notification` `elicitation_dialog` / `elicitation_url_dialog` / `agent_needs_input` | `question` |
+| | `Notification` `idle_prompt` | `idle` |
+| | `Notification` `elicitation_complete` / `elicitation_response` | `done` |
+| | `Stop` | `turn` (message = `last_assistant_message`) |
+| | `StopFailure` | `turn`, tool = `error` (message = `last_assistant_message`, else `error_details`, else `error`) |
+| | `SessionEnd` | `end` |
+| **Codex** (`~/.codex/hooks.json` only; `config.toml` is never touched) — never blocked | `SessionStart` / `UserPromptSubmit` / `Stop` / `SessionEnd` | `start` / `working` (message = `prompt`) / `turn` (message = `last_assistant_message`) / `end` |
+| | `PostToolUse` (async) | `tool` (the stall rule's evidence; tool = `tool_name`, message = its target) |
+| | `PermissionRequest` | never installed, not read (fires before Codex's own auto-review) |
+| **Gemini CLI** (`~/.gemini/settings.json` `hooks`) | `SessionStart` / `SessionEnd` | `start` / `end` |
+| | `BeforeAgent` | `working` (message = `prompt`; exit 0, no output: never blocks) |
+| | `AfterTool` | `tool` (the tool ran: answers a `ToolPermission`) |
+| | `AfterAgent` | `turn` (message = `prompt_response`) |
+| | `Notification` `notification_type: ToolPermission` | `permission` (ask = `message`) |
+| **Copilot CLI** (`~/.copilot/hooks/pulse.json`) | `sessionStart` / `sessionEnd` | `start` / `end` |
+| | `userPromptSubmitted` | `working` (message = `prompt`) |
+| | `postToolUse` / `postToolUseFailure` | `tool` (the tool ran: answers a `permission_prompt`; tool = `toolName`, message = the command or path in `toolArgs`, a JSON string) |
+| | `agentStop` | `turn` |
+| | `notification` `permission_prompt` / `elicitation_dialog` | `permission` / `question` |
+| | `notification` `agent_idle` / `agent_completed` / `shell_completed` | ignored (background subagents and shells, not the session's turn) |
+| | `errorOccurred` | `turn`, tool = `error`, message = `error.message` when `recoverable: false`; else `tool`, tool = `status` |
+| **OpenCode** (plugin `~/.config/opencode/plugins/pulse.js`; payload as the last argument; a subagent's child session is dropped, its asks sent under the root session) | `session.created` | `start` |
+| | `session.status` `busy` / `retry` | `tool`, tool = `status` |
+| | `permission.asked` | `permission` (ask = `permission: patterns`) |
+| | `question.asked` | `question` (ask = first question) |
+| | `permission.replied` / `question.replied` / `question.rejected` | `done` |
+| | `session.idle` | `turn` |
+| | `session.error` | `turn`, tool = `error` (message = the error's message, forwarded by the plugin) |
+| | `session.deleted` | `end` |
+| **Cursor** (`~/.cursor/hooks.json`) — never blocked | `sessionStart` / `sessionEnd` | `start` / `end` |
+| | `afterAgentResponse` | `tool` (no tool name) |
+| | `stop` | `turn` (session = `conversation_id`, cwd = `workspace_roots[0]`) |
+| **Pi** (extension `~/.pi/agent/extensions/pulse.js`; payload as the last argument) | `session_start` / `session_shutdown` (not on `reload`) | `start` / `end` |
+| | `agent_start` | `working` |
+| | `tool_execution_end` | `tool` (tool = the tool's name, message = one argument, forwarded by the extension — sliced at 2000 characters only to bound the argv; the receiver redacts the whole value before it shortens it) |
+| | `ui_prompt_start` `kind: confirm` / other kinds | `permission` / `question` (ask = `title`; never the event's `reason` — the extension sends a reason only with `session_shutdown`) |
+| | `ui_prompt_end` | `done` |
+| | `agent_settled` | `turn` |
+
+## Title, steps and last words
 
 | Agent | Title (prompt event) | Step (tool event) | Last words / error |
 | --- | --- | --- | --- |

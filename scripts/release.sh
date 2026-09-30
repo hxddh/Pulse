@@ -4,6 +4,9 @@
 #   ./scripts/release.sh 0.23.0            # dry run: bump, run gates, show the diff
 #   ./scripts/release.sh 0.23.0 --commit   # commit carrying the [release] marker
 #   ./scripts/release.sh 0.23.0 --tag      # commit + local annotated tag
+#   ./scripts/release.sh 0.23.0 --commit --prerelease
+#                                          # marker `[release] [prerelease]`:
+#                                          # a GitHub prerelease, not Latest
 #
 # Then `git push` (or `git push --tags` for --tag). Either lands in
 # .github/workflows/release.yml, which builds the DMG on macOS and publishes the
@@ -11,20 +14,43 @@
 #
 # --commit is the default path: CI creates the tag with its own contents:write
 # token, so publishing does not need tag-write rights on your account.
+#
+# --prerelease (with --commit) publishes the version as a GitHub prerelease:
+# the in-app update check and GitHub Latest do not see it until the owner
+# promotes it on GitHub after a real-Mac smoke run. A tag push is always a
+# full release.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 VERSION="${1:-}"
-MODE="${2:-}"
+MODE=""
+PRERELEASE=""
+if [[ $# -gt 0 ]]; then shift; fi
+for arg in "$@"; do
+  case "$arg" in
+    --commit|--tag)
+      if [[ -n "$MODE" ]]; then
+        echo "error: pick one of --commit or --tag" >&2
+        exit 2
+      fi
+      MODE="$arg"
+      ;;
+    --prerelease) PRERELEASE=" [prerelease]" ;;
+    *)
+      echo "error: unknown option '$arg' (expected --commit, --tag or --prerelease)" >&2
+      exit 2
+      ;;
+  esac
+done
 
 if [[ -z "$VERSION" ]]; then
-  echo "usage: $0 <MAJOR.MINOR.PATCH> [--commit|--tag]" >&2
+  echo "usage: $0 <MAJOR.MINOR.PATCH> [--commit|--tag] [--prerelease]" >&2
   exit 2
 fi
-if [[ -n "$MODE" && "$MODE" != "--commit" && "$MODE" != "--tag" ]]; then
-  echo "error: unknown mode '$MODE' (expected --commit or --tag)" >&2
+if [[ -n "$PRERELEASE" && "$MODE" == "--tag" ]]; then
+  echo "error: --prerelease rides on the commit marker; use --commit --prerelease" >&2
   exit 2
 fi
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -79,21 +105,23 @@ if [[ -z "$MODE" ]]; then
   echo "--- dry run: nothing committed ---"
   git --no-pager diff --stat
   echo
-  echo "next: $0 $VERSION --commit"
+  echo "next: $0 $VERSION --commit${PRERELEASE:+ --prerelease}"
   exit 0
 fi
 
-# `[release]` in the subject is what .github/workflows/release.yml watches for.
+# `[release]` in the subject is what .github/workflows/release.yml watches for;
+# `[prerelease]` beside it publishes a GitHub prerelease.
+SUBJECT="Release $VERSION [release]$PRERELEASE"
 git add -A
 if git diff --cached --quiet; then
   echo "nothing to commit — the version is already recorded at HEAD"
   if [[ "$MODE" == "--commit" ]]; then
     echo "to publish it, push an empty marker commit:"
-    echo "  git commit --allow-empty -m \"Release $VERSION [release]\" && git push"
+    echo "  git commit --allow-empty -m \"$SUBJECT\" && git push"
     exit 1
   fi
 else
-  git commit -m "Release $VERSION [release]"
+  git commit -m "$SUBJECT"
 fi
 
 if [[ "$MODE" == "--tag" ]]; then
@@ -103,6 +131,6 @@ if [[ "$MODE" == "--tag" ]]; then
   echo "next:  git push && git push --tags"
 else
   echo
-  echo "committed Release $VERSION [release]"
+  echo "committed $SUBJECT"
   echo "next:  git push   — CI will build, tag and publish"
 fi

@@ -37,19 +37,18 @@ struct HookReading: Equatable {
     var ask: String = ""
 }
 
-/// Native receiver for every supported agent's hook, plugin or extension,
-/// and for the public Attention bridge (`pulse-hook` / `PulseBar --hook`).
+/// Native receiver for every supported agent's hook, plugin or extension
+/// (`pulse-hook` / `PulseBar --hook`).
 ///
 /// `pulse-hook <agent> <event>` with the vendor's JSON payload on stdin (or,
-/// for the two modules, as the last argument). Each
-/// agent's adapter maps its own event names and payload onto a
-/// `HookAction`; anything else falls back to the protocol vocabulary
-/// (`permission`, `turn`, `done`, …). Writes one v5 line to the event log
-/// (`EventLog` — the only file it writes) and exits 0 at once.
-/// Unknown events soft-fail (exit 0, no write), and a blocked event from an
-/// agent whose hooks cannot report one (`waiting: .none`) is refused — no
-/// fake Waiting. Nothing is ever held: the vendor's own prompt is always in
-/// charge.
+/// for the two modules, as the last argument). Each agent's adapter maps its
+/// own event names and payload onto a `HookAction`; nothing else is read —
+/// not the protocol's kind words, not plain text. Writes one v5 line to the
+/// event log (`EventLog` — the only file it writes) and exits 0 at once.
+/// Unknown events and payloads that are not a JSON object soft-fail (exit 0,
+/// no write), and a blocked event from an agent whose hooks cannot report
+/// one (`waiting: .none`) is refused — no fake Waiting. Nothing is ever
+/// held: the vendor's own prompt is always in charge.
 enum PulseHookReceiver {
     /// Always returns 0 — vendor hooks must never be broken by Pulse.
     ///
@@ -74,27 +73,17 @@ enum PulseHookReceiver {
             return 0
         }
         let eventArg = args.count > 1 && !args[1].hasPrefix("{") ? args[1] : ""
-        // A payload that looks like JSON but does not parse (cut off at
-        // `stdinLimit`, a writer that died mid-write) writes nothing: its
-        // raw text would become a ghost wait whose ask is broken JSON.
-        guard let parsed = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil) else {
+        // A payload that is not a JSON object — cut off at `stdinLimit`, a
+        // writer that died mid-write, plain text — writes nothing: its raw
+        // text would become a ghost wait whose ask is broken JSON.
+        guard var payload = parsePayload(stdin: stdin, trailingArg: args.count > 1 ? args.last : nil) else {
             DebugLog.write("attention reject unparsable payload event=\(eventArg) agent=\(agent.rawValue)")
             return 0
         }
-        var payload = parsed.object
         if let msg = payload["msg"] as? [String: Any], payload["type"] == nil {
             payload.merge(msg) { current, _ in current }
         }
-        // Plain text (not JSON) is only ever a bridge word's message: a
-        // vendor's event (Claude's `Stop`, Cursor's `stop`) reads JSON or
-        // nothing.
-        let understood: HookReading?
-        if parsed.isText {
-            understood = readVendor(agent: agent, eventArg, [:]) == nil ? readBridge(eventArg) : nil
-        } else {
-            understood = interpret(agent: agent, event: eventArg, payload: payload)
-        }
-        guard let reading = understood else {
+        guard let reading = interpret(agent: agent, event: eventArg, payload: payload) else {
             DebugLog.write("attention reject event=\(eventArg) agent=\(agent.rawValue)")
             return 0
         }
@@ -192,15 +181,10 @@ enum PulseHookReceiver {
         return string(payload, keys: ["hook_event_name", "hookEventName", "type", "event"])
     }
 
-    /// One agent's event, read. `nil` means the adapter does not know it and
-    /// the protocol vocabulary is tried instead.
+    /// One agent's event, read by its own adapter; nil for an event the
+    /// adapter does not know — it writes nothing.
     static func interpret(agent: AgentID, event: String, payload: [String: Any]) -> HookReading? {
         let name = eventName(event, payload: payload)
-        return readVendor(agent: agent, name, payload) ?? readBridge(name)
-    }
-
-    /// The agent's own adapter alone; nil for an event it does not know.
-    static func readVendor(agent: AgentID, _ name: String, _ payload: [String: Any]) -> HookReading? {
         switch agent {
         case .claude: return readClaude(name, payload)
         case .codex: return readCodex(name, payload)
@@ -209,23 +193,6 @@ enum PulseHookReceiver {
         case .opencode: return readOpenCode(name, payload)
         case .cursor: return readCursor(name, payload)
         case .pi: return readPi(name, payload)
-        }
-    }
-
-    /// The protocol's own words, for bridges that write a kind, not a vendor
-    /// event. Unknown and empty words are rejected — never Waiting.
-    static func readBridge(_ word: String) -> HookReading? {
-        let plain = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let kind = AttentionProtocol.kind(plain) else { return nil }
-        switch kind {
-        case .permission, .question, .waiting: return HookReading(action: .blocked(kind))
-        case .turn: return HookReading(action: .turn)
-        case .idle: return HookReading(action: .idle)
-        case .done: return HookReading(action: .resolved)
-        case .start: return HookReading(action: .start)
-        case .working: return HookReading(action: .prompt)
-        case .end: return HookReading(action: .end)
-        case .tool: return HookReading(action: .activity)
         }
     }
 
@@ -499,34 +466,22 @@ enum PulseHookReceiver {
 
     // MARK: - Parse
 
-    /// A hook's payload, read.
-    struct Payload {
-        var object: [String: Any]
-        /// stdin held plain text, not JSON: only a bridge word may use it
-        /// (as its message); a vendor adapter never does.
-        var isText = false
+    /// The payload on stdin, else the one in the last argument, else none
+    /// (`[:]` — an event that carries no payload). Nil when what arrived is
+    /// not a JSON object — cut off at `stdinLimit`, broken, or plain text:
+    /// it writes nothing.
+    static func parsePayload(stdin: String, trailingArg: String?) -> [String: Any]? {
+        let trimmed = stdin.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return object(trimmed) }
+        if let trailingArg, trailingArg.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
+            return object(trailingArg)
+        }
+        return [:]
     }
 
-    /// The payload on stdin, else the one in the last argument. Nil when
-    /// what arrived looks like JSON but does not parse — a payload cut off
-    /// at `stdinLimit`, or broken: it writes nothing.
-    static func parsePayload(stdin: String, trailingArg: String?) -> Payload? {
-        let trimmed = stdin.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            if let data = trimmed.data(using: .utf8),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                return Payload(object: obj)
-            }
-            if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") { return nil }
-            return Payload(object: ["message": trimmed], isText: true)
-        }
-        if let trailingArg, trailingArg.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
-            guard let data = trailingArg.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { return nil }
-            return Payload(object: obj)
-        }
-        return Payload(object: [:])
+    private static func object(_ text: String) -> [String: Any]? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
     /// What a turn or a block says, when its adapter found no specific ask.

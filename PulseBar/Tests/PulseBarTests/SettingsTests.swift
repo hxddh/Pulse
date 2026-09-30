@@ -490,3 +490,57 @@ struct ReopenTests {
         #expect(SingleInstanceGuard.reopenNotification.rawValue == "com.pulse.app.reopen")
     }
 }
+
+/// "Uninstall Pulse…": what it says it will remove, and when it stops.
+@Suite("Uninstall plan")
+struct UninstallPlanTests {
+    let home = URL(fileURLWithPath: "/Users/me", isDirectory: true)
+
+    @Test func thePlanNamesEveryHookTheLoginItemAndTheFolder() {
+        let plan = UninstallPlan.make(
+            installed: [.gemini, .claude],
+            loginItem: .requiresApproval,
+            folder: home.appendingPathComponent("Library/Application Support/Pulse"),
+            home: home
+        )
+        #expect(plan.hooks == [.claude, .gemini], "roster order")
+        #expect(plan.loginItem)
+        #expect(plan.folder == "~/Library/Application Support/Pulse")
+        let en = plan.message(.en)
+        #expect(en.contains("Claude") && en.contains("Gemini"))
+        #expect(en.contains(L10n.t(.uninstallLogin, .en)))
+        #expect(en.contains("~/Library/Application Support/Pulse"))
+        #expect(en.hasSuffix(L10n.t(.uninstallThen, .en)))
+        #expect(plan.message(.zh) != en)
+    }
+
+    @Test func nothingInstalledAndNoLoginItemSaySo() {
+        let plan = UninstallPlan.make(
+            installed: [], loginItem: .off,
+            folder: URL(fileURLWithPath: "/tmp/pulse-home"), home: home
+        )
+        #expect(plan.hooks.isEmpty)
+        #expect(!plan.loginItem)
+        #expect(plan.folder == "/tmp/pulse-home", "a folder outside home is said in full")
+        let en = plan.message(.en)
+        #expect(en.hasPrefix(L10n.t(.uninstallNoHooks, .en)))
+        #expect(!en.contains(L10n.t(.uninstallLogin, .en)))
+    }
+
+    /// The folder holds the record a byte-for-byte removal needs: it goes
+    /// only when no hook of Pulse's is left anywhere.
+    @Test func theFolderGoesOnlyWhenEveryHookIsOut() {
+        let removed: [HooksSupport.Status] = [.missing, .installed([])]
+        let kept: [HooksSupport.Status] = [
+            .installed([.claude]),
+            .installed([], failed: [.gemini: .invalidJSON]),
+            .failed(.unwritable),
+            .working,
+            .unknown,
+        ]
+        let yes = removed.map(UninstallPlan.hooksRemoved)
+        let no = kept.map(UninstallPlan.hooksRemoved)
+        #expect(yes == [true, true])
+        #expect(no == [false, false, false, false, false])
+    }
+}

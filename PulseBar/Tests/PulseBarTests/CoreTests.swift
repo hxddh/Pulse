@@ -18,11 +18,6 @@ final class AgentCatalogTests: XCTestCase {
         }
     }
 
-    func testMonogramsAreUnique() {
-        let monograms = AgentCatalog.all.map(\.monogram)
-        XCTAssertEqual(Set(monograms).count, monograms.count)
-    }
-
     func testAliasesNeverShadowAnotherAgent() {
         var seen: [String: AgentID] = [:]
         for spec in AgentCatalog.all {

@@ -137,7 +137,7 @@ enum L10n {
         case .updateIdle: return "Not checked"
         case .updateChecking: return "Checking…"
         case .updateCurrent: return "Up to date"
-        case .updateCurrentPrerelease: return "Up to date on the preview channel (ad-hoc signed, not notarized)"
+        case .updateCurrentPreview: return "Up to date on the preview channel (ad-hoc signed, not notarized)"
         case .updateCurrentStable: return "Up to date on the stable channel"
         case .updateAvailable: return "Update available: %@"
         case .updateFailed: return "Check failed"
@@ -151,7 +151,6 @@ enum L10n {
         case .notifFocus: return "Go"
         case .waitingSummaryTitle: return "%d agents need you"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
-        case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
         case .yourTurn: return "Your turn"
         case .shortcutOff: return "Off"
         case .settingsHooksTitle: return "Agent hooks"
@@ -160,8 +159,6 @@ enum L10n {
         case .updateFailedHTTP: return "GitHub answered %d"
         case .updateFailedBadResponse: return "GitHub's answer was not a release"
         case .updateFailedNoTag: return "The latest release has no version tag"
-        case .staleHidden: return "%d older sessions not shown (%@)"
-        case .staleHiddenOne: return "%d older session not shown (%@)"
         case .waitingBannerFailed: return "macOS did not show the last “needs you” banner — check Notifications"
         case .lampRuleBlocked: return "Red: an agent is waiting on you."
         case .lampRuleStalled: return "Orange: a running session has gone quiet."
@@ -171,7 +168,6 @@ enum L10n {
         case .lampRuleIdle: return "Gray: no coding agent is running."
         case .details: return "Details"
         case .detailBack: return "Back"
-        case .trayKeyHints: return "↑↓ select   ↩ go   → details   ⌘D dismiss   ⌘M mute   esc close"
         case .explainAsked: return "%@ %@ · %@"
         case .explainAskedFront: return " — it was in front of you, so no banner yet"
         case .explainTurn: return "%@ finished its turn · %@"
@@ -195,6 +191,16 @@ enum L10n {
         case .unmute: return "Unmute"
         case .mutedWord: return "muted"
         case .copyReport: return "Copy report"
+        case .uninstallPulse: return "Uninstall Pulse…"
+        case .uninstallTitle: return "Uninstall Pulse?"
+        case .uninstallConfirm: return "Uninstall"
+        case .uninstallCancel: return "Cancel"
+        case .uninstallPlanHooks: return "Removes Pulse's hooks from %@ — each file goes back byte for byte; one you have edited since keeps your edits and loses only Pulse's entries."
+        case .uninstallNoHooks: return "No agent carries Pulse's hook."
+        case .uninstallLogin: return "Removes Pulse from Login Items."
+        case .uninstallFolder: return "Deletes %@ — the event log, the settings and the hook launcher."
+        case .uninstallThen: return "Then Pulse quits and shows itself in Finder, for you to move to the Trash."
+        case .uninstallStopped: return "Pulse was not uninstalled: a hook could not be removed. Settings → Hooks says why; nothing else was deleted."
         case .noticeNotificationsDenied: return "Notifications are off for Pulse — an agent that needs you cannot reach you"
         case .noticeNotificationsOff: return "Turn on notifications so an agent that needs you can reach you"
         case .settingsHookInstalled: return "Installed"
@@ -330,7 +336,7 @@ enum L10n {
         case .updateIdle: return "未检查"
         case .updateChecking: return "检查中…"
         case .updateCurrent: return "已是最新"
-        case .updateCurrentPrerelease: return "已是最新（预览通道 · ad-hoc 签名 · 未公证）"
+        case .updateCurrentPreview: return "已是最新（预览通道 · ad-hoc 签名 · 未公证）"
         case .updateCurrentStable: return "已是最新（正式通道）"
         case .updateAvailable: return "有新版本：%@"
         case .updateFailed: return "检查失败"
@@ -344,7 +350,6 @@ enum L10n {
         case .notifFocus: return "前往"
         case .waitingSummaryTitle: return "%d 个 Agent 需要你"
         case .updatePreview: return "预览版 · ad-hoc 签名 · 未公证"
-        case .updateSignedUnnotarized: return "已用 Developer ID 签名 · 未公证 · Gatekeeper 可能拦截"
         case .yourTurn: return "轮到你"
         case .shortcutOff: return "关闭"
         case .settingsHooksTitle: return "Agent 的 hooks"
@@ -353,8 +358,6 @@ enum L10n {
         case .updateFailedHTTP: return "GitHub 返回 %d"
         case .updateFailedBadResponse: return "GitHub 返回的不是发布信息"
         case .updateFailedNoTag: return "最新发布没有版本标签"
-        case .staleHidden: return "%d 个较早的会话未显示（%@）"
-        case .staleHiddenOne: return "%d 个较早的会话未显示（%@）"
         case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」通知——请检查通知设置"
         case .lampRuleBlocked: return "红：有 Agent 在等你。"
         case .lampRuleStalled: return "橙：有运行中的会话停滞了。"
@@ -364,7 +367,6 @@ enum L10n {
         case .lampRuleIdle: return "灰：没有在运行的编码 Agent。"
         case .details: return "详情"
         case .detailBack: return "返回"
-        case .trayKeyHints: return "↑↓ 选择   ↩ 前往   → 详情   ⌘D 忽略   ⌘M 静音   esc 关闭"
         case .explainAsked: return "%@ %@ · %@"
         case .explainAskedFront: return "——当时它就在你眼前，所以先不发通知"
         case .explainTurn: return "%@ 的回合结束了 · %@"
@@ -388,6 +390,16 @@ enum L10n {
         case .unmute: return "取消静音"
         case .mutedWord: return "已静音"
         case .copyReport: return "复制报告"
+        case .uninstallPulse: return "卸载 Pulse…"
+        case .uninstallTitle: return "卸载 Pulse？"
+        case .uninstallConfirm: return "卸载"
+        case .uninstallCancel: return "取消"
+        case .uninstallPlanHooks: return "移除 %@ 里的 Pulse hook——每个文件逐字节还原；你之后改过的文件保留你的改动，只删 Pulse 的条目。"
+        case .uninstallNoHooks: return "没有 Agent 装着 Pulse 的 hook。"
+        case .uninstallLogin: return "从登录项中移除 Pulse。"
+        case .uninstallFolder: return "删除 %@——事件日志、设置与 hook 启动器。"
+        case .uninstallThen: return "然后 Pulse 退出，并在访达中显示自己，由你拖进废纸篓。"
+        case .uninstallStopped: return "Pulse 没有卸载：有一个 hook 没能移除。设置 → Hooks 写着原因；其他东西都没删。"
         case .noticeNotificationsDenied: return "Pulse 的通知被关闭了——需要你的 Agent 没法提醒你"
         case .noticeNotificationsOff: return "开启通知，需要你的 Agent 才能提醒到你"
         case .settingsHookInstalled: return "已安装"
@@ -483,7 +495,7 @@ enum L10n {
         case revealShortcut, hotkeyTaken
         case emptyHint
         case checkForUpdates, checkNow, openRelease
-        case updateIdle, updateChecking, updateCurrent, updateCurrentPrerelease, updateCurrentStable
+        case updateIdle, updateChecking, updateCurrent, updateCurrentPreview, updateCurrentStable
         case updateAvailable, updateFailed
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting
         case moreActions
@@ -491,7 +503,7 @@ enum L10n {
         case stalled
         case notifFocus
         case waitingSummaryTitle
-        case updatePreview, updateSignedUnnotarized
+        case updatePreview
         case yourTurn
         case shortcutOff
         case settingsHooksTitle
@@ -502,7 +514,6 @@ enum L10n {
         case updateFailedHTTP
         case updateFailedBadResponse
         case updateFailedNoTag
-        case staleHidden, staleHiddenOne
         case waitingBannerFailed
         case lampRuleBlocked
         case lampRuleStalled
@@ -512,7 +523,6 @@ enum L10n {
         case lampRuleIdle
         case details
         case detailBack
-        case trayKeyHints
         case explainAsked
         case explainAskedFront
         case explainTurn
@@ -536,6 +546,8 @@ enum L10n {
         case unmute
         case mutedWord
         case copyReport
+        case uninstallPulse, uninstallTitle, uninstallConfirm, uninstallCancel
+        case uninstallPlanHooks, uninstallNoHooks, uninstallLogin, uninstallFolder, uninstallThen, uninstallStopped
         case noticeNotificationsDenied
         case noticeNotificationsOff
         case settingsHooksSection
@@ -582,13 +594,5 @@ enum DurationFormat {
         if ago < 60 { return count(Int(ago), .durSecFull1, .durSecFullN) }
         if ago < 3600 { return count(Int(ago / 60), .durMinFull1, .durMinFullN) }
         return count(Int(ago / 3600), .durHourFull1, .durHourFullN)
-    }
-}
-
-extension L10n {
-    /// "1 older session not shown (Claude)" / "3 older sessions not shown
-    /// (…)": the count picks the form; Chinese has one.
-    static func staleHidden(_ count: Int, names: String, _ lang: ResolvedLanguage) -> String {
-        String(format: t(count == 1 ? .staleHiddenOne : .staleHidden, lang), count, names)
     }
 }

@@ -348,63 +348,19 @@ final class PulseVersionTests: XCTestCase {
         )
     }
 
-    func testInterpretReleasesListSkipsPrereleaseOnStableChannel() {
-        let sha = String(repeating: "b", count: 64)
-        let json = """
-        [
-          {
-            "tag_name":"v99.1.0",
-            "prerelease":true,
-            "html_url":"https://example.com/pre",
-            "body":"SHA-256: \(sha)",
-            "assets":[{
-              "name":"pulse-99.1.0.dmg",
-              "browser_download_url":"https://example.com/pre.dmg",
-              "size":100
-            }]
-          },
-          {
-            "tag_name":"v99.0.0",
-            "prerelease":false,
-            "html_url":"https://example.com/r",
-            "body":"SHA-256: \(sha)",
-            "assets":[{
-              "name":"pulse-99.0.0.dmg",
-              "browser_download_url":"https://example.com/pulse.dmg",
-              "size":200
-            }]
-          }
-        ]
-        """
-        let stable = UpdateCheck.interpret(
-            data: Data(json.utf8),
-            response: nil,
-            error: nil,
-            preferPrerelease: false
+    func testInterpretReadsOneReleaseNotAList() {
+        // One feed, `/releases/latest`: a list is not an answer.
+        let list = UpdateCheck.interpret(data: Data(#"[{"tag_name":"v99.0.0"}]"#.utf8), response: nil, error: nil)
+        XCTAssertEqual(list, .failed(.badResponse))
+        let same = UpdateCheck.interpret(
+            data: Data(#"{"tag_name":"v\#(PulseVersion.semver)"}"#.utf8), response: nil, error: nil
         )
-        if case let .available(info) = stable {
-            XCTAssertEqual(info.version, "99.0.0")
-        } else {
-            XCTFail("stable channel should pick the non-prerelease entry, got \(stable)")
-        }
-
-        let preview = UpdateCheck.interpret(
-            data: Data(json.utf8),
-            response: nil,
-            error: nil,
-            preferPrerelease: true
-        )
-        if case let .available(info) = preview {
-            XCTAssertEqual(info.version, "99.1.0")
-        } else {
-            XCTFail("preview channel should accept the newest prerelease, got \(preview)")
-        }
+        XCTAssertEqual(same, .current)
     }
 
-    func testUnpackagedChannelDoesNotPreferPrerelease() {
+    func testAnUnpackagedBuildIsNeitherPreviewNorStable() {
         guard PulseVersion.bundleVersion == nil else { return }
         XCTAssertEqual(PulseVersion.distributionChannel, "dev")
-        XCTAssertFalse(PulseVersion.prefersPrereleaseUpdates)
         XCTAssertFalse(PulseVersion.isNotarized)
     }
 
@@ -417,21 +373,19 @@ final class PulseVersionTests: XCTestCase {
         // XCTest on CI often sees Bundle.main version keys, so channel may be
         // preview rather than unpackaged dev; assert the mapping, not the host.
         let expected: L10n.Key
-        if PulseVersion.prefersPrereleaseUpdates {
-            expected = .updateCurrentPrerelease
-        } else if PulseVersion.distributionChannel == "stable" {
-            expected = .updateCurrentStable
-        } else {
-            expected = .updateCurrent
+        switch PulseVersion.distributionChannel {
+        case "stable": expected = .updateCurrentStable
+        case "preview": expected = .updateCurrentPreview
+        default: expected = .updateCurrent
         }
         XCTAssertEqual(store.updateStatusText, store.tr(expected))
-        XCTAssertNotEqual(store.tr(.updateCurrentPrerelease), store.tr(.updateCurrentStable))
-        XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPrerelease))
+        XCTAssertNotEqual(store.tr(.updateCurrentPreview), store.tr(.updateCurrentStable))
+        XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPreview))
         XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("stable"))
         // A preview build is ad-hoc signed, not "unsigned".
-        XCTAssertTrue(store.tr(.updateCurrentPrerelease).contains("ad-hoc"))
-        XCTAssertFalse(store.tr(.updateCurrentPrerelease).localizedCaseInsensitiveContains("unsigned"))
-        XCTAssertFalse(L10n.t(.updateCurrentPrerelease, .zh).contains("未签名"))
+        XCTAssertTrue(store.tr(.updateCurrentPreview).contains("ad-hoc"))
+        XCTAssertFalse(store.tr(.updateCurrentPreview).localizedCaseInsensitiveContains("unsigned"))
+        XCTAssertFalse(L10n.t(.updateCurrentPreview, .zh).contains("未签名"))
     }
 
     func testHookStatusIsPerAgentNotGlobal() {

@@ -1,8 +1,8 @@
 import Foundation
 
 /// The tray, as one pure value: the session book and the process table in;
-/// every row, the lamp, the menu-bar title, the counts, the Waiting edges and
-/// what was left out for age out.
+/// every row, the lamp, the menu-bar title, the counts and the Waiting edges
+/// out.
 ///
 /// `SessionBook` holds what the events said. `project` turns it into rows
 /// (`sessionRows`: one per session worth showing, plus a process-only row for
@@ -21,8 +21,8 @@ import Foundation
 ///   it is stalled for a while, never orange for ever);
 /// - a turn is owed for `idleBoundMs`, then it is recent;
 /// - a recent session (idle, ended, or past a bound) stays listed for
-///   `recentWindowMs` after its last event, then it is counted as "older,
-///   not shown" for a day. A live process does not keep it listed:
+///   `recentWindowMs` after its last event, then it leaves the list. A live
+///   process does not keep it listed:
 ///   one Cursor or OpenCode process runs many sessions all day.
 struct TrayState: Equatable {
     /// Rows shown before the "and N more" fold.
@@ -32,8 +32,6 @@ struct TrayState: Equatable {
     /// A working session with no event for this long is recent, whatever
     /// its process: past the stall, Pulse has no word from it at all.
     static let silentBoundMs: Int64 = 2 * 60 * 60 * 1000
-    /// Hidden sessions are counted only within this window.
-    static let staleHiddenWindowMs: Int64 = 24 * 60 * 60 * 1000
     /// A raise closer than this to the previous one on the same row is the
     /// same ask said twice — Claude raises one approval as both a
     /// `PermissionRequest` and a `Notification`, in an order that is not
@@ -77,8 +75,7 @@ struct TrayState: Equatable {
         processes: [AgentProcesses.Hit],
         context: Context
     ) -> TrayState {
-        let found = sessionRows(book: book, processes: processes, context: context)
-        return assemble(rows: found.rows, staleHidden: found.staleHidden, context: context)
+        assemble(rows: sessionRows(book: book, processes: processes, context: context), context: context)
     }
 
     /// This state with every fact a burst of tool lines moves on its own —
@@ -105,21 +102,15 @@ struct TrayState: Equatable {
 
     // MARK: - Rows
 
-    struct SessionRows: Equatable {
-        var rows: [AgentRow] = []
-        /// Sessions left out for age, per agent (last 24 h only).
-        var staleHidden: [AgentID: Int] = [:]
-    }
-
     /// One row per session worth showing, then one per agent process no
     /// session has claimed. Unsorted.
     static func sessionRows(
         book: SessionBook,
         processes: [AgentProcesses.Hit],
         context: Context
-    ) -> SessionRows {
+    ) -> [AgentRow] {
         let nowMs = context.nowMs
-        var out = SessionRows()
+        var out: [AgentRow] = []
         var claimed: [AgentID: [SessionBook.Session]] = [:]
         let byPid = Dictionary(processes.flatMap { hit in hit.family.map { ($0, hit) } }, uniquingKeysWith: { first, _ in first })
 
@@ -146,13 +137,7 @@ struct TrayState: Equatable {
             // A silent one's window starts when it went silent — its last
             // event is already past the window by then.
             let recentFrom = row.isRecent && row.recentReason == .silent ? row.stateSinceMs : session.lastEventMs
-            let visible = nowMs - recentFrom <= recentWindowMs || !row.isRecent
-            guard visible else {
-                if nowMs - session.lastEventMs <= staleHiddenWindowMs {
-                    out.staleHidden[session.agent, default: 0] += 1
-                }
-                continue
-            }
+            guard nowMs - recentFrom <= recentWindowMs || !row.isRecent else { continue }
 
             // What its events said: the title, the last words, the error,
             // the steps and the turn's clock.
@@ -183,7 +168,7 @@ struct TrayState: Equatable {
                 && session.agent.reportsToolActivity
                 && session.toolMs > 0
                 && AgentRow.stalled(lastActivityMs: session.lastEventMs, nowMs: nowMs, threshold: context.stalledSeconds)
-            out.rows.append(row)
+            out.append(row)
         }
 
         for hit in processes {
@@ -210,7 +195,7 @@ struct TrayState: Equatable {
             row.stateSinceMs = hit.startedMs
             row.source = .process
             row.state = .processOnly
-            out.rows.append(row)
+            out.append(row)
         }
         return out
     }
@@ -274,7 +259,6 @@ struct TrayState: Equatable {
     /// counts and the Waiting edges.
     static func assemble(
         rows input: [AgentRow],
-        staleHidden: [AgentID: Int] = [:],
         context: Context
     ) -> TrayState {
         var state = TrayState()
@@ -302,7 +286,7 @@ struct TrayState: Equatable {
 
         state.rows = all
         state.showAllAgents = context.showAllAgents && all.count > context.maxVisibleRows
-        state.snapshot = snapshot(rows: all, showAll: state.showAllAgents, staleHiddenByAgent: staleHidden, context: context)
+        state.snapshot = snapshot(rows: all, showAll: state.showAllAgents, context: context)
         state.activity = activity(rows: all)
         for row in all {
             guard let wait = row.wait, state.waitingSince[row.rowKey] == nil else { continue }
@@ -343,7 +327,6 @@ struct TrayState: Equatable {
     private static func snapshot(
         rows all: [AgentRow],
         showAll: Bool,
-        staleHiddenByAgent: [AgentID: Int],
         context: Context
     ) -> PulseSnapshot {
         let lang = context.lang
@@ -391,10 +374,6 @@ struct TrayState: Equatable {
         snap.accessibilityLabel = snap.glance == .idle
             ? L10n.t(snap.glance.accessibilityKey, lang)
             : snap.tooltip
-        snap.staleHidden = staleHiddenByAgent.values.reduce(0, +)
-        snap.staleHiddenAgents = staleHiddenByAgent.keys.sorted {
-            (AgentID.priority.firstIndex(of: $0) ?? 999) < (AgentID.priority.firstIndex(of: $1) ?? 999)
-        }
         return snap
     }
 

@@ -105,7 +105,7 @@ struct TrayPanel: View {
             } else {
                 agentList(rows)
             }
-            footer(hasRows: !rows.isEmpty)
+            footer
         }
     }
 
@@ -145,8 +145,9 @@ struct TrayPanel: View {
 
     // MARK: Footer
 
-    /// What is not on screen, then the keys — one quiet line each.
-    private func footer(hasRows: Bool) -> some View {
+    /// What is not on screen: "and N more" / "show less". The keys are on
+    /// the row's context menu, each item with its shortcut.
+    private var footer: some View {
         VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
             if store.snapshot.hiddenCount > 0 {
                 Button {
@@ -170,25 +171,6 @@ struct TrayPanel: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-            }
-            if store.snapshot.staleHidden > 0 {
-                // Sessions that went quiet within the last day and left the
-                // list for age — said, not silently dropped.
-                Text(L10n.staleHidden(
-                    store.snapshot.staleHidden,
-                    names: L10n.joinNames(store.snapshot.staleHiddenAgents.prefix(3).map(\.displayName), store.lang),
-                    store.lang
-                ))
-                .font(PulseTheme.Font.caption)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-            }
-            if hasRows {
-                Text(t(.trayKeyHints))
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, TrayChrome.padX)
@@ -389,6 +371,7 @@ struct TrayRowFace: View {
             .contextMenu {
                 ForEach(model.menu) { button in
                     Button(button.title) { send(button.action) }
+                        .keyboardShortcut(Self.shortcut(button.key))
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -401,6 +384,17 @@ struct TrayRowFace: View {
                     Button(button.title) { send(button.action) }
                 }
             }
+    }
+
+    /// The menu item's shortcut: the tray key that does the same.
+    private static func shortcut(_ key: TrayKeys.Key?) -> KeyboardShortcut? {
+        switch key {
+        case .enter: return KeyboardShortcut(.return, modifiers: [])
+        case .right: return KeyboardShortcut(.rightArrow, modifiers: [])
+        case .dismiss: return KeyboardShortcut("d", modifiers: .command)
+        case .mute: return KeyboardShortcut("m", modifiers: .command)
+        default: return nil
+        }
     }
 
     @MainActor private var content: some View {

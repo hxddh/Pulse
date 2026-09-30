@@ -13,43 +13,21 @@ enum AgentIcon {
         let key = id.rawValue as NSString
         if let cached = cache.object(forKey: key) { return cached }
 
-        let name = assetName(for: id)
-        let source = loadPNG(name) ?? loadSVG(name) ?? monogram(for: id)
+        // `make_agent_icons.py --check` (a gate) fails an agent without its
+        // PNG, so a missing one is a broken bundle, not a case to design for:
+        // it draws nothing rather than a placeholder.
+        let source = loadPNG(assetName(for: id)) ?? NSImage(size: NSSize(width: 16, height: 16))
         let image = opticallyNormalized(source)
         cache.setObject(image, forKey: key)
         return image
     }
 
-    /// `Resources/AgentIcons/<rawValue>.png|svg`.
+    /// `Resources/AgentIcons/<rawValue>.png`.
     static func assetName(for id: AgentID) -> String { id.rawValue }
 
-    /// Fallback glyph when PNG/SVG missing — unique across the roster.
-    static func monogramLetter(for id: AgentID) -> String { id.spec.monogram }
-
     private static func loadPNG(_ name: String) -> NSImage? {
-        if let url = PulseResources.url(forResource: name, withExtension: "png", subdirectory: "AgentIcons"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        if let url = Bundle.main.resourceURL?
-            .appendingPathComponent("AgentIcons/\(name).png"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        return nil
-    }
-
-    private static func loadSVG(_ name: String) -> NSImage? {
-        if let url = PulseResources.url(forResource: name, withExtension: "svg", subdirectory: "AgentIcons"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        if let url = Bundle.main.resourceURL?
-            .appendingPathComponent("AgentIcons/\(name).svg"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        return nil
+        PulseResources.url(forResource: name, withExtension: "png", subdirectory: "AgentIcons")
+            .flatMap { NSImage(contentsOf: $0) }
     }
 
     /// Brand files have very different transparent margins. Scaling every raw
@@ -175,28 +153,6 @@ enum AgentIcon {
             width: maxX - minX + 1,
             height: maxY - minY + 1
         )
-    }
-
-    private static func monogram(for id: AgentID) -> NSImage {
-        let letter = monogramLetter(for: id)
-        let size = NSSize(width: 16, height: 16)
-        let img = NSImage(size: size)
-        img.lockFocus()
-        let rect = NSRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
-        NSColor.labelColor.setStroke()
-        path.lineWidth = 1
-        path.stroke()
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: letter.count > 1 ? 7 : 9, weight: .bold),
-            .foregroundColor: NSColor.labelColor,
-        ]
-        let s = letter as NSString
-        let t = s.size(withAttributes: attrs)
-        s.draw(at: NSPoint(x: (size.width - t.width) / 2, y: (size.height - t.height) / 2 - 0.5), withAttributes: attrs)
-        img.unlockFocus()
-        img.isTemplate = true
-        return img
     }
 }
 

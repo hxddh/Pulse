@@ -9,9 +9,10 @@ import Foundation
 /// menu bar icon — a bounce and nothing else.
 ///
 /// A missing icon is not worth a crash. This resolves the same candidates and
-/// returns nil, so callers fall through to `PulseBrand.fallbackDrawn` and the
-/// monogram icons. `scripts/package_check.py` is what actually keeps the bundle
-/// correct; this only decides how loudly it fails when something slips past.
+/// returns nil, so callers draw without it (`PulseBrand.markImage` draws its
+/// ring; an agent icon is left blank). `scripts/package_check.py` and
+/// `--selftest` are what actually keep the bundle correct; this only decides
+/// how loudly it fails when something slips past.
 enum PulseResources {
     private static let bundleName = "PulseBar_PulseApp.bundle"
 

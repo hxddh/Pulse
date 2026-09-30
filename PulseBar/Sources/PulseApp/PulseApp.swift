@@ -91,17 +91,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { _ in
             MainActor.assumeIsolated { AppServices.store.reopen() }
         }
-        if ProcessInfo.processInfo.arguments.contains("--appearance=dark") {
-            NSApp.appearance = NSAppearance(named: .darkAqua)
-        } else if ProcessInfo.processInfo.arguments.contains("--appearance=light") {
-            NSApp.appearance = NSAppearance(named: .aqua)
-        }
-        // Wins over settings.json for this run, and is never saved.
-        if ProcessInfo.processInfo.arguments.contains("--language=zh") {
-            AppServices.store.languageOverride = .zh
-        } else if ProcessInfo.processInfo.arguments.contains("--language=en") {
-            AppServices.store.languageOverride = .en
-        }
         // Never shown by an accessory app; it routes the standard key
         // equivalents — ⌘W closes Settings, ⌘C / ⌘A work on selectable text.
         MainMenu.install(lang: AppServices.store.lang)

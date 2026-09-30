@@ -642,7 +642,6 @@ struct HookToBannerTests {
             before: [("UserPromptSubmit", #"{"session_id":"x1","cwd":"/w/app","hook_event_name":"UserPromptSubmit","prompt":"Add a retry"}"#)],
             ask: [
                 ("PermissionRequest", #"{"session_id":"x1","cwd":"/w/app","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#),
-                ("permission", #"{"session_id":"x1","cwd":"/w/app","message":"Approve shell"}"#),
             ],
             answer: ("Stop", #"{"session_id":"x1","cwd":"/w/app","hook_event_name":"Stop","last_assistant_message":"Done."}"#)
         ),
@@ -653,8 +652,8 @@ struct HookToBannerTests {
                 ("afterAgentResponse", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"hook_event_name":"afterAgentResponse","text":"Looking"}"#),
             ],
             ask: [
-                ("permission", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"message":"approve"}"#),
-                ("question", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"message":"which?"}"#),
+                ("beforeShellExecution", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"hook_event_name":"beforeShellExecution","command":"rm -rf build"}"#),
+                ("beforeMCPExecution", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"hook_event_name":"beforeMCPExecution","tool_name":"deploy"}"#),
             ],
             answer: ("stop", #"{"conversation_id":"cu1","workspace_roots":["/w/app"],"hook_event_name":"stop","status":"completed"}"#)
         ),

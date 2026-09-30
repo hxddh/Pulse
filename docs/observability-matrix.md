@@ -22,20 +22,13 @@ neither ever removes a session.
 
 ## Per agent
 
-| Agent | Hook events installed | Needs you (red) | Title | Steps (last step) |
-| --- | --- | --- | --- | --- |
-| Claude Code | SessionStart/End, UserPromptSubmit, PostToolUse, PostToolUseFailure, PermissionRequest, Notification, Stop, StopFailure | permission, question (elicitation) | `UserPromptSubmit` prompt | `PostToolUse(Failure)` tool + target |
-| Codex | SessionStart/End, UserPromptSubmit, PostToolUse (async), Stop — `hooks.json` only | never — its PermissionRequest fires before its own auto-review | `UserPromptSubmit` prompt | `PostToolUse` tool + target |
-| Cursor | sessionStart/End, afterAgentResponse, stop | never — no observe-only wait event | — | — (no tool event: one-line rows) |
-| Pi | session_start/shutdown, agent_start, tool_execution_end, ui_prompt_start/end, agent_settled | `ui_prompt_start` | — | `tool_execution_end`, forwarded tool + one argument |
-| Gemini CLI | SessionStart/End, BeforeAgent, AfterAgent, AfterTool, Notification | Notification `ToolPermission` | `BeforeAgent` prompt | `AfterTool` tool + target |
-| GitHub Copilot | sessionStart/End, userPromptSubmitted, postToolUse, postToolUseFailure, agentStop, notification, errorOccurred | `permission_prompt`, `elicitation_dialog` | `userPromptSubmitted` prompt | `postToolUse` tool + `toolArgs` (a JSON string) |
-| OpenCode | session.created/status/idle/error/deleted, permission.*, question.* | `permission.asked`, `question.asked` | — | — (no tool event: one-line rows) |
-
-Each contract's source is pinned in `docs/vendor-formats.json` (see
-`docs/vendor-formats.md`); every agent has a truth table in
-`SessionBookTests`, and `everyAgentsStepsComeFromItsOwnHook` pins where each
-one's steps and title come from.
+Which events each agent installs, which of them say "needs you", and where
+each one's title, steps and last words come from are in
+[`vendor-formats.md`](vendor-formats.md) — the one place per-agent facts live
+— with each contract's source pinned in `vendor-formats.json`. Every agent
+has a truth table in `SessionBookTests`, and
+`everyAgentsStepsComeFromItsOwnHook` pins where each one's steps and title
+come from.
 
 ## What a row does not claim
 

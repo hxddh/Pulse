@@ -122,18 +122,17 @@ struct SessionBookTests {
             ("SessionStart", [:]),
             ("UserPromptSubmit", ["prompt": "Add a queue"]),
             ("PermissionRequest", ["tool_name": "shell"]),
-            ("permission", [:]),
             ("Stop", [:]),
             ("SessionEnd", [:]),
         ])
-        #expect(run.states == ["idle", "working", "working", "working", "turn", "ended"])
+        #expect(run.states == ["idle", "working", "working", "turn", "ended"])
     }
 
     @Test func cursorIsNeverBlocked() {
         let run = play(.cursor, [
             ("sessionStart", [:]),
             ("afterAgentResponse", [:]),
-            ("question", [:]),
+            ("beforeShellExecution", ["command": "rm -rf build"]),
             ("stop", [:]),
             ("sessionEnd", [:]),
         ])
@@ -732,7 +731,7 @@ struct TrayStateTests {
         _ book: SessionBook,
         processes: [AgentProcesses.Hit] = [],
         at nowMs: Int64? = nil
-    ) -> TrayState.SessionRows {
+    ) -> [AgentRow] {
         TrayState.sessionRows(
             book: book, processes: processes,
             context: TrayState.Context(nowMs: nowMs ?? t0)
@@ -747,7 +746,7 @@ struct TrayStateTests {
 
     @Test func aProcessNoSessionClaimedIsAProcessOnlyRow() throws {
         let hit = AgentProcesses.Hit(agent: .claude, pid: 10, cwd: "/Users/me/app", tty: "ttys004", startedMs: t0 - minute)
-        let row = try #require(rows(SessionBook(), processes: [hit]).rows.first)
+        let row = try #require(rows(SessionBook(), processes: [hit]).first)
         #expect(row.rowKey == "claude|pid:10")
         #expect(row.state == .processOnly)
         #expect(row.source == .process)
@@ -758,14 +757,14 @@ struct TrayStateTests {
     @Test func aSessionClaimsItsProcessFamily() {
         let b = book([AttentionRecord(agent: "codex", kind: "working", ms: t0, session: "c1", pid: 11)])
         let hit = AgentProcesses.Hit(agent: .codex, pid: 10, family: [10, 11])
-        #expect(rows(b, processes: [hit]).rows.map(\.rowKey) == ["codex|c1"], "the wrapper and its child are one process")
+        #expect(rows(b, processes: [hit]).map(\.rowKey) == ["codex|c1"], "the wrapper and its child are one process")
     }
 
     @Test func aSessionWithNoPidClaimsTheProcessInItsFolder() {
         let b = book([AttentionRecord(agent: "gemini", kind: "working", ms: t0, session: "g1", cwd: "/w/app")])
         let same = AgentProcesses.Hit(agent: .gemini, pid: 20, cwd: "/w/app")
         let other = AgentProcesses.Hit(agent: .gemini, pid: 21, cwd: "/w/other")
-        #expect(rows(b, processes: [same, other]).rows.map(\.rowKey).sorted() == ["gemini|g1", "gemini|pid:21"])
+        #expect(rows(b, processes: [same, other]).map(\.rowKey).sorted() == ["gemini|g1", "gemini|pid:21"])
     }
 
     @Test func anEndedSessionClaimsNothing() {
@@ -774,20 +773,20 @@ struct TrayStateTests {
             AttentionRecord(agent: "claude", kind: "end", ms: t0 + 1_000, session: "s1", pid: 30),
         ])
         let hit = AgentProcesses.Hit(agent: .claude, pid: 30)
-        #expect(rows(b, processes: [hit]).rows.map(\.rowKey).sorted() == ["claude|pid:30", "claude|s1"])
+        #expect(rows(b, processes: [hit]).map(\.rowKey).sorted() == ["claude|pid:30", "claude|s1"])
     }
 
     @Test func aKnownPidStaysRunningWhileTheProcessLives() throws {
         let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 40)])
-        let row = try #require(rows(b, at: t0 + 100 * minute).rows.first)
+        let row = try #require(rows(b, at: t0 + 100 * minute).first)
         #expect(row.state == .running)
         #expect(row.liveProcess)
     }
 
     @Test func anUnknownPidIsRecentAfterTheIdleBoundAndSaysWhy() throws {
         let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1")])
-        #expect(rows(b, at: t0 + 29 * minute).rows.first?.state == .running)
-        let row = try #require(rows(b, at: t0 + 31 * minute).rows.first)
+        #expect(rows(b, at: t0 + 29 * minute).first?.state == .running)
+        let row = try #require(rows(b, at: t0 + 31 * minute).first)
         #expect(row.state == .recent)
         #expect(row.recentReason == .quiet)
         #expect(row.stateSinceMs == t0 + TrayState.idleBoundMs)
@@ -797,22 +796,19 @@ struct TrayStateTests {
 
     @Test func aTurnIsOwedForHalfAnHour() throws {
         let b = book([AttentionRecord(agent: "codex", kind: "turn", ms: t0, session: "c1", pid: 50)])
-        #expect(rows(b, at: t0 + 10 * minute).rows.first?.isYourTurn == true)
-        let row = try #require(rows(b, at: t0 + 31 * minute).rows.first)
+        #expect(rows(b, at: t0 + 10 * minute).first?.isYourTurn == true)
+        let row = try #require(rows(b, at: t0 + 31 * minute).first)
         #expect(row.state == .recent)
         #expect(row.recentReason == .atPrompt)
     }
 
-    @Test func aRecentSessionLeavesTheListAndIsCountedForADay() {
+    @Test func aRecentSessionLeavesTheListAfterTheWindow() {
         let b = book([
             AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1"),
             AttentionRecord(agent: "claude", kind: "end", ms: t0 + minute, session: "s1"),
         ])
-        #expect(rows(b, at: t0 + 30 * minute).rows.count == 1)
-        let later = rows(b, at: t0 + 60 * minute)
-        #expect(later.rows.isEmpty)
-        #expect(later.staleHidden == [.claude: 1])
-        #expect(rows(b, at: t0 + 25 * 60 * minute).staleHidden.isEmpty, "a session that went quiet yesterday is not news")
+        #expect(rows(b, at: t0 + 30 * minute).count == 1)
+        #expect(rows(b, at: t0 + 60 * minute).isEmpty)
     }
 
     /// Fix 6: one Cursor IDE or OpenCode server process runs many
@@ -827,12 +823,11 @@ struct TrayStateTests {
             AttentionRecord(agent: "opencode", kind: "permission", ms: t0, message: "bash: ls", session: "o4", pid: 60),
         ])
         let early = rows(b, at: t0 + 40 * minute)
-        #expect(early.rows.count == 4, "inside the recent window every one is listed")
+        #expect(early.count == 4, "inside the recent window every one is listed")
         let later = rows(b, at: t0 + 100 * minute)
-        let keys = later.rows.map(\.rowKey).sorted()
+        let keys = later.map(\.rowKey).sorted()
         #expect(keys == ["opencode|o3", "opencode|o4"])
-        #expect(later.staleHidden == [.opencode: 2])
-        let live = later.rows.filter { $0.liveProcess }.count
+        let live = later.filter { $0.liveProcess }.count
         #expect(live == 2)
     }
 
@@ -845,18 +840,18 @@ struct TrayStateTests {
             AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 41),
             AttentionRecord(agent: "claude", kind: "tool", ms: t0 + minute, session: "s1", pid: 41, tool: "Bash"),
         ])
-        let stalled = try #require(rows(b, at: t0 + 30 * minute).rows.first)
+        let stalled = try #require(rows(b, at: t0 + 30 * minute).first)
         #expect(stalled.state == .running)
         #expect(stalled.isStalled)
         let silent = t0 + minute + TrayState.silentBoundMs + minute
-        let row = try #require(rows(b, at: silent).rows.first)
+        let row = try #require(rows(b, at: silent).first)
         #expect(row.state == .recent)
         #expect(!row.isStalled)
         #expect(row.recentReason == .silent)
         #expect(row.stateSinceMs == t0 + minute + TrayState.silentBoundMs)
         let why = TrayRowModel.why(row, lang: .en, nowMs: silent)
         #expect(why.hasPrefix("Nothing heard for"), "\(why)")
-        #expect(rows(b, at: silent + TrayState.recentWindowMs).rows.isEmpty, "and it leaves the list, process or not")
+        #expect(rows(b, at: silent + TrayState.recentWindowMs).isEmpty, "and it leaves the list, process or not")
     }
 
     /// Everything a row says about its session comes from the events: the
@@ -871,7 +866,7 @@ struct TrayStateTests {
             AttentionRecord(agent: "claude", kind: "working", ms: t0 + 4 * minute, message: "Ship it", session: "s1", pid: 70),
             AttentionRecord(agent: "claude", kind: "tool", ms: t0 + 5 * minute, message: "git push", session: "s1", pid: 70, tool: "Bash"),
         ])
-        let row = try #require(rows(b, at: t0 + 6 * minute).rows.first)
+        let row = try #require(rows(b, at: t0 + 6 * minute).first)
         #expect(row.task == "Fix the login test")
         #expect(row.lastWord == "All green.")
         #expect(row.lastStep == SessionBook.Step(tool: "Bash", target: "git push", ms: t0 + 5 * minute))
@@ -886,19 +881,19 @@ struct TrayStateTests {
             AttentionRecord(agent: "cursor", kind: "working", ms: t0, session: "cu1", pid: 72),
             AttentionRecord(agent: "cursor", kind: "tool", ms: t0 + minute, session: "cu1", pid: 72),
         ])
-        let row = try #require(rows(b, at: t0 + 2 * minute).rows.first)
+        let row = try #require(rows(b, at: t0 + 2 * minute).first)
         #expect(row.lastStep == nil)
         #expect(row.recentSteps.isEmpty)
     }
 
     @Test func withoutATranscriptTheTurnSaysTheLastWords() throws {
         let b = book([AttentionRecord(agent: "opencode", kind: "turn", ms: t0, message: "Queue drains on reconnect", session: "o1", pid: 71)])
-        #expect(try #require(rows(b).rows.first).lastWord == "Queue drains on reconnect")
+        #expect(try #require(rows(b).first).lastWord == "Queue drains on reconnect")
     }
 
     @Test func theLandingNamesTheTerminal() throws {
         let b = book([AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "s1", pid: 0, landing: "tmux:%3;tty:/dev/ttys009;term:WarpTerminal")])
-        let row = try #require(rows(b).rows.first)
+        let row = try #require(rows(b).first)
         #expect(row.landing.tmuxPane == "%3")
         #expect(row.landing.tty == "ttys009")
         #expect(row.landing.term == "WarpTerminal")
@@ -908,9 +903,9 @@ struct TrayStateTests {
 
     @Test func aStallNeedsAnAgentThatReportsItsWork() throws {
         var b = book([AttentionRecord(agent: "codex", kind: "working", ms: t0, session: "c1", pid: 80)])
-        #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled == false, "no activity events: silence is not evidence")
+        #expect(try #require(rows(b, at: t0 + 40 * minute).first).isStalled == false, "no activity events: silence is not evidence")
         b.apply(AttentionRecord(agent: "codex", kind: "tool", ms: t0 + minute, session: "c1"), nowMs: t0 + minute)
-        #expect(try #require(rows(b, at: t0 + 40 * minute).rows.first).isStalled)
+        #expect(try #require(rows(b, at: t0 + 40 * minute).first).isStalled)
     }
 
     /// Only an agent whose hook reports every tool call can be
@@ -927,7 +922,7 @@ struct TrayStateTests {
         for agent in [AgentID.cursor, .opencode] {
             var b = book([AttentionRecord(agent: agent.rawValue, kind: "working", ms: t0, session: "x1", pid: 81)])
             b.apply(AttentionRecord(agent: agent.rawValue, kind: "tool", ms: t0 + minute, session: "x1"), nowMs: t0 + minute)
-            let row = try #require(rows(b, at: t0 + 40 * minute).rows.first)
+            let row = try #require(rows(b, at: t0 + 40 * minute).first)
             #expect(row.state == .running)
             #expect(!row.isStalled, "\(agent.rawValue)")
         }
@@ -935,7 +930,7 @@ struct TrayStateTests {
 
     @Test func aBlockedRowCarriesTheProtocolToken() throws {
         let b = book([AttentionRecord(agent: "pi", kind: "question", ms: t0, message: "Which branch?", session: "p1", pid: 90)])
-        let wait = try #require(rows(b).rows.first?.wait)
+        let wait = try #require(rows(b).first?.wait)
         #expect(wait.kind == "Input")
         #expect(wait.ask == "Which branch?")
         #expect(wait.sinceMs == t0)
@@ -962,13 +957,12 @@ final class TrayAssembleTests: XCTestCase {
 
     private func build(
         _ rows: [AgentRow],
-        staleHidden: [AgentID: Int] = [:],
         previousWaits: [String: Int64] = [:],
         showAll: Bool = false,
         maxRows: Int = TrayState.maxVisibleRows
     ) -> TrayState {
         TrayState.assemble(
-            rows: rows, staleHidden: staleHidden,
+            rows: rows,
             context: TrayState.Context(
                 nowMs: now, lang: .en, maxVisibleRows: maxRows, showAllAgents: showAll, previousWaits: previousWaits
             )
@@ -1055,22 +1049,6 @@ final class TrayAssembleTests: XCTestCase {
         let r = build([blocked("a", sinceAgoMs: 60_000), row("b")])
         XCTAssertEqual(r.waitingSince, ["a": now - 60_000])
         XCTAssertTrue(build([row("a")], previousWaits: ["a": now - 60_000]).waitingSince.isEmpty, "a resolved wait is gone")
-    }
-
-    /// "N older not shown" counts only sessions that went quiet
-    /// within the last day — the projection's count, carried to the snapshot.
-    func testStaleHiddenCountsOnlyTheLastDay() {
-        var book = SessionBook()
-        let minute: Int64 = 60_000
-        book.apply(AttentionRecord(agent: "claude", kind: "end", ms: now - 2 * 60 * minute, session: "x"), nowMs: now)
-        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: now - 3 * 60 * minute, session: "y"), nowMs: now)
-        book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now - 30 * 60 * minute, session: "z"), nowMs: now)
-        let r = TrayState.project(
-            book: book, processes: [],
-            context: TrayState.Context(nowMs: now, lang: .en)
-        )
-        XCTAssertEqual(r.snapshot.staleHidden, 1, "the end line made no session; y went quiet today; z yesterday")
-        XCTAssertEqual(r.snapshot.staleHiddenAgents, [.claude])
     }
 
     func testTheGlanceTooltipIsInTheResolvedLanguage() {

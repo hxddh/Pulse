@@ -127,17 +127,11 @@ enum PulseBrand {
     }
 
     private static func loadPNG(_ name: String) -> NSImage? {
-        if let url = PulseResources.url(forResource: name, withExtension: "png", subdirectory: "Brand"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        if let url = PulseResources.url(forResource: "\(name)@2x", withExtension: "png", subdirectory: "Brand"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        if let url = Bundle.main.resourceURL?.appendingPathComponent("Brand/\(name).png"),
-           let img = NSImage(contentsOf: url) {
-            return img
+        for file in [name, "\(name)@2x"] {
+            if let url = PulseResources.url(forResource: file, withExtension: "png", subdirectory: "Brand"),
+               let img = NSImage(contentsOf: url) {
+                return img
+            }
         }
         return nil
     }

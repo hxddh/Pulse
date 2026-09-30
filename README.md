@@ -2,7 +2,7 @@
 
 macOS 菜单栏状态灯：**一眼知道编码 Agent 是空闲、在跑，还是在等你。**
 
-**版本：`26.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v26.0.0) · macOS 14+
+**版本：`27.0.0`** · [下载 DMG](https://github.com/hxddh/Pulse/releases/tag/v27.0.0) · macOS 14+
 
 ---
 
@@ -51,17 +51,21 @@ always-allow / 自动批准、对着截断摘要的盲批，以及替你派活�
 从 [Releases](https://github.com/hxddh/Pulse/releases) 下载与徽标同版本的 DMG，
 拖进「应用程序」。
 
-> **没有 Apple Developer ID 时**：GitHub **Latest** 会跟到当前 semver（避免停在旧包），
-> 但 DMG 仍是 ad-hoc / 未公证，About 标 `preview`，**不是** Gatekeeper-ready。首次打开
-> 仍需右键「打开」或下面的 `xattr`。有 Developer ID + 公证之后才会变成 `stable` 通道。
-
-> 目前的构建是 ad-hoc 签名，首次打开 macOS 会拦。右键点应用选「打开」，或：
+> **首次打开**：目前的构建是 ad-hoc 签名、未公证（About 标 `preview`，**不是**
+> Gatekeeper-ready），macOS 第一次会拦下它：
+>
+> 1. 把 Pulse 拖进「应用程序」，双击打开一次；提示无法验证时点「完成」。
+> 2. 打开「**系统设置 → 隐私与安全性**」，滚到「安全性」，点 Pulse 旁边的「**仍要打开**」，
+>    输入密码确认。
+>
+> 或者在「终端」里只移除 Pulse 自己的下载隔离标记：
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/Pulse.app
 > ```
-> 也可以在「系统设置 → 隐私与安全性」里对 Pulse 点「仍要打开」。不要全局关闭
-> Gatekeeper；配置 Developer ID + 公证之后这一步才不需要，见[发布](#发布)。DMG
-> 内也附有中英文首次启动说明。
+> macOS 15 起，按住 Control 点「打开」不再能放行未公证的 App。不要全局关闭 Gatekeeper；
+> 配置 Developer ID + 公证之后这一步才不需要，见[发布](#发布)。DMG 内也附有中英文首次
+> 打开说明；每个 Release 的 DMG 旁有一个 `.sha256` 文件，可用
+> `shasum -a 256 -c pulse-x.y.z-macos-PulseBar.dmg.sha256` 校验。
 
 **只支持七个主流 Agent**：Claude Code、Codex、Gemini CLI、Copilot CLI、OpenCode、
 Cursor（编辑器与 `cursor-agent` 命令行算同一个）和 Pi。每个都走厂商自己文档里的
@@ -144,14 +148,33 @@ Mac 上的 Agent 装上各自的官方 hook，再请 macOS 允许通知，然后
 最近一次事件是多久前，缺的给一个安装按钮；不在这台 Mac 上的 Agent 合成一行。
 进程命中不会把完整命令行、参数或私有路径带进 UI。
 
-名单就是这七个；Attention Protocol（[`docs/attention-bridge.md`](docs/attention-bridge.md)）
-只服务于它们自己的 hook 与脚本。
+名单就是这七个；Pulse 只读它们自己的 hook 事件（[`docs/attention-bridge.md`](docs/attention-bridge.md)、
+[`docs/vendor-formats.md`](docs/vendor-formats.md)），不接受别的上报方式。
 
 **图标**：七个 Agent 都有现成的品牌图标（[Simple Icons](https://simpleicons.org) 等，
 CC0，商标归各自所有者）；没有现成图标的 Agent 由
 [`scripts/make_agent_icons.py`](scripts/make_agent_icons.py) 画成几何标记——**那是 Pulse
 自己的图形，不是厂商的商标**。
-`--check` 是门禁：新增 Agent 若没有图标，CI 就红，不会悄悄退回字母标。
+`--check` 是门禁：新增 Agent 若没有图标，CI 就红，不会悄悄画出一个空白图标。
+
+
+## 卸载
+
+设置底部的「**卸载 Pulse…**」会先列出要移除的东西，确认后依次：经安装器移除每个 Agent 的
+Pulse hook（每个文件逐字节还原；之后改过的只删 Pulse 的条目），注销登录项，删除
+`~/Library/Application Support/Pulse`（事件日志、设置、hook 启动器与安装记录），然后退出并
+在访达里显示 Pulse.app —— 把它拖进废纸篓即可。有 hook 没能移除时它会停下、什么都不删，
+设置 → Hooks 写着原因。
+
+手动卸载：先在设置 → Hooks 点「全部移除」，再退出 Pulse，然后
+
+```bash
+rm -rf ~/Library/Application\ Support/Pulse
+rm -rf /Applications/Pulse.app
+```
+
+并在「系统设置 → 通用 → 登录项」里移除 Pulse（若开过「登录时打开」）。通知权限条目留在
+「系统设置 → 通知」里，由 macOS 管理。
 
 ---
 
@@ -169,8 +192,8 @@ CC0，商标归各自所有者）；没有现成图标的 Agent 由
   Agent 一行：已安装、未安装或安装失败，以及「最近事件 12 秒前」，各带自己的「安装」或「移除」；Codex 与 Cursor 注明
   「不会报告它在等你」；不在这台 Mac 上的合成一行；「复制报告」给出一份纯文本（版本、每个
   Agent 的 hook 与最近事件、通知授权、终端自动化、快捷键、登录项），不含路径、提示词或会话
-- **更新** —— 检查更新（有新版本时打开发布页，在浏览器里下载）
-- 页脚：版本与构建
+- **更新** —— 检查更新（只问 GitHub 的 Latest；有新版本时打开发布页，在浏览器里下载）
+- 页脚：版本与构建 · 「卸载 Pulse…」
 
 省电是硬约束：没有固定的探测间隔。事件文件一变就处理；此外只有一个便宜的时钟
 （托盘打开或刚出现等待时 5s，否则 60s，没有会话时停表）和按需退避的进程查看（30 秒起，
@@ -183,7 +206,7 @@ CC0，商标归各自所有者）；没有现成图标的 Agent 由
 ```bash
 cd PulseBar && swift run PulseBar   # 开发壳，关于区显示 x.y.z-dev
 cd PulseBar && swift test           # 测试数量以 SwiftPM / CI 当次输出为准
-./scripts/qa_surfaces.sh            # 构建并运行 PulseQA，把每个表面夹具渲染成 PNG
+./scripts/qa_captures.sh            # 构建并运行 PulseQA，把表面与状态夹具渲染成 PNG
 ```
 
 截图、夹具与预览窗口都在单独的 `PulseQA` 可执行文件里，出厂的 Pulse.app 只含 `PulseBar`。
@@ -215,7 +238,7 @@ zig-out/package/Pulse.app/Contents/MacOS/PulseBar --selftest
 open zig-out/package/Pulse.app
 ```
 
-架构见 [`docs/architecture.md`](docs/architecture.md)。
+架构见 [`AGENTS.md`](AGENTS.md) 的 Architecture 与 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 发布
 
@@ -224,21 +247,27 @@ open zig-out/package/Pulse.app
 ```bash
 ./scripts/release.sh X.Y.Z            # 预演：改版本、跑门禁、给出 diff
 ./scripts/release.sh X.Y.Z --commit   # 提交（标题带 [release] 标记）
+./scripts/release.sh X.Y.Z --commit --prerelease   # 标题带 [release] [prerelease]：发成预发布
 git push                               # CI 构建、打 tag、发布
 ```
+
+**预发布**（`[prerelease]`）与正式发布是同一个 DMG、同一份说明，但在 GitHub 上标为 pre-release、
+不设为 Latest：应用内的「检查更新」与 GitHub Latest 都看不见它。在真机上跑通之后，由维护者在
+GitHub 上编辑这个 Release：取消「Set as a pre-release」、勾上「Set as the latest release」。
 
 **tag 由 CI 用自己的 `contents: write` token 创建**，发布不依赖任何人的本地推送权限。
 已发布过的版本会被拒绝重复发布，重推是安全的。
 
-发布通道三态：`preview`（ad-hoc）→ `signed`（Developer ID 未公证）→ `stable`（公证成功）。
+发布通道两态：`preview`（没有公证的一切构建）→ `stable`（公证并 staple 成功）。
 仓库配置齐 `PULSE_CERTIFICATE_P12`（base64）、`PULSE_CERTIFICATE_PASSWORD`、
 `PULSE_SIGN_IDENTITY`、`PULSE_NOTARY_KEY_P8`（base64）、
 `PULSE_NOTARY_KEY_ID` 和 `PULSE_NOTARY_ISSUER_ID` 时，CI 导入临时 keychain，
 公证并 staple App 与 DMG，再以 `spctl` 验收，并在 Info.plist 写入 `stable`。
-**任一凭据缺失时仍发布 GitHub Latest**（跟当前 semver），产物为 ad-hoc / 未公证，
-About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。
+**任一凭据缺失时仍发布**（正式发布设为 GitHub Latest，跟当前 semver），产物为 ad-hoc /
+未公证，About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。每个 Release 都附
+DMG 的 `.sha256`。
 
-> 应用内的「检查更新」读的就是这些 Release，走匿名请求 —— 仓库是 public，所以直接可用。
+> 应用内的「检查更新」只读 `/releases/latest`，走匿名请求 —— 仓库是 public，所以直接可用。
 > 若 fork 成私有仓库，需用 `Info.plist` 的 `PulseUpdateFeed` 指向一个可匿名访问的 feed，
 > 否则 GitHub 会返回 404。
 
@@ -262,7 +291,8 @@ About 保持 `preview` —— **绝不能自称 stable / Gatekeeper-ready**。
 | --- | --- |
 | [`AGENTS.md`](AGENTS.md) | 接手须知：不变量、门禁、发布流程 |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | 体验规格 —— UI 改动的验收依据 |
-| [`docs/architecture.md`](docs/architecture.md) | 数据从进程到菜单栏的完整路径 |
-| [`docs/attention-bridge.md`](docs/attention-bridge.md) | 用 `pulse-hook` / 追加一行上报状态 |
-| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v5（事件日志 `events.tsv`）契约与各 Agent 事件映射 |
+| [`docs/architecture.md`](docs/architecture.md) | 谁持有什么状态、进程怎么读、版本身份（数据流在 `AGENTS.md`） |
+| [`docs/attention-bridge.md`](docs/attention-bridge.md) | hook 安装政策：只装观察型事件、逐字节可逆、卸载 |
+| [`docs/attention-protocol.md`](docs/attention-protocol.md) | Attention Protocol v5（事件日志 `events.tsv`）契约 |
+| [`docs/vendor-formats.md`](docs/vendor-formats.md) | 每个 Agent 的事实：装在哪、每个事件变成什么、出处 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 每个版本改了什么 |

@@ -120,14 +120,14 @@ VoiceOver 读同一句（空闲时读「空闲」）。
 ① Header：按状态着色的计数（一行）· ⋯
 ② 至多一条提示（一个动作）
 ③ 会话列表（一行一个会话；默认最多 12 行，会话簿至多 256 个会话）
-④ 底部：[另有 N 个…] · [N 个较早的会话未显示] · 按键提示（一行）
+④ 底部：[另有 N 个…]（只在超出 12 行时）
 ```
 
 托盘**没有分组、没有折叠、没有展开卡、没有过滤框、没有刷新按钮**：列表按灯的顺序排
 （需要你 → 运行中 → 停滞 → 最近），每个会话一行，更多的东西在详情页里，一个键就到。
 
-面板默认只显示全局前 12 条；超出的精确计数（「另有 N 个…」）。最近 24 小时里停下、已离开
-列表的会话在底部说一句「N 个较早的会话未显示（Agent…）」，不静默丢弃。
+面板默认只显示全局前 12 条；超出的精确计数（「另有 N 个…」）。「最近」的会话 45 分钟后离开列表，
+不再另写一行说它们。
 
 **Pulse 启动前就在跑的会话**先显示为「仅进程」（灰色虚线圈，「为什么」说「在 Pulse 之前启动——下一步之后显示详情」），直到它报出下一个事件；
 进程在启动、唤醒、hook 报出没见过的进程时查看，平时 30 秒起、没有变化就逐步放慢到 5 分钟。
@@ -241,8 +241,8 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 | ⌘R · ⌘, · ⌘Q | 刷新 · 设置 · 退出 | 同左 |
 
 **不带 ⌘ 的字母不是托盘的键。** 托盘打开时已经选中了一行，一个裸的 D 或 M 决不能忽略所选的
-等待或静音它的 Agent；命令都带 ⌘（⌘D 只对等待行）。底部一行写着
-`↑↓ 选择 ↩ 前往 → 详情 ⌘D 忽略 ⌘M 静音 esc 关闭`。
+等待或静音它的 Agent；命令都带 ⌘（⌘D 只对等待行）。托盘底部没有按键说明：行的右键菜单每一项
+旁边写着同一件事的键（「前往终端 ↩」「详情 →」「忽略 ⌘D」「静音 ⌘M」），菜单就是教键的地方。
 
 每次打开托盘都是新的扫视：选中与详情页都不跨打开保留。点菜单栏与全局快捷键打开时都选中
 第一行 —— 投影的顺序让它就是最久的等待（`TrayState.assemble`：等待在前、最久的在前、时钟未知的排在等待最后；
@@ -365,7 +365,7 @@ Pulse 怎么读这个会话（事实来自 hook 还是只有进程、前往是�
 （「4 分钟」），只有菜单栏标题与行尾的等待时长用紧凑写法（「4 分」）；**VoiceOver 念的时长说全单位**
 （「4 minutes」「1 hour」「less than a minute」「4 分钟」），从不念画出来的「4m」。
 详情页的时刻按区域自己的格式（`jmm` 模板：美国「3:04 PM」、英国与中国「15:04」，尊重 12/24 小时设置），
-语言仍是 App 的语言。数量分单复数（「1 older session」「3 older sessions」），不写「session(s)」。
+语言仍是 App 的语言。带数量的话分单复数，不写「session(s)」。
 英文用美式拼写（Gray）。中文里一个可能本身是中文的占位符不与汉字隔空格（「上一步：刚刚」）。
 **所有面向用户的串都必须走 `L10n`** —— 包括 VoiceOver 标签与菜单。
 
@@ -410,8 +410,13 @@ for permission · 4m ago」；仅进程说「在 Pulse 之前启动——下一�
    版本与分发通道、macOS 版本、每个 Agent 的安装状态与最近事件、通知授权与开关、终端自动化、
    全局快捷键与它是否注册成功、登录项（问过什么、macOS 怎么说）—— 只在点击时写进
    你自己的剪贴板，不含路径、提示词、会话或项目
-5. **更新** —— 检查更新 + 状态；有新版本时「vX 可用」与「打开发布页」
-6. 页脚：版本与构建 · 分发通道提示（`preview` / 未公证 / 版本不一致用橙色）
+5. **更新** —— 检查更新 + 状态；有新版本时「vX 可用」与「打开发布页」。只问 GitHub 的
+   `/releases/latest`：标为预发布的版本不会被提示，直到它被转成正式版
+6. 页脚：版本与构建 · 分发通道提示（`preview` / 版本不一致用橙色；只有公证过的包是 `stable`）·
+   「**卸载 Pulse…**」：先弹确认框，逐条说出要移除的 —— 装着 Pulse hook 的 Agent（经安装器逐字节还原）、
+   登录项（若有）、`~/Library/Application Support/Pulse`（事件日志、设置、hook 启动器）；确认后先移除
+   全部 hook，一个都不剩才注销登录项、删文件夹、退出，并在访达里显示 Pulse.app 由你拖进废纸篓。
+   有 hook 移除失败就停下，别的都不删，Hooks 一节写着原因
 
 没有诊断窗口、没有「测试连接」、没有「高级」、没有「关于」一节、没有「数据访问」（Pulse 不读受保护的
 应用数据）、没有停滞阈值（停滞固定为 20 分钟无新事件，且只对 hook
@@ -543,8 +548,7 @@ Spotlight / 更新后「打开」必须拒绝 reopen 造窗；真设置始终是
   Focus，也不把仅激活 App 写成「跳到该会话」；什么都没有就不给聚焦按钮，通知路径退回打开托盘
   并**进入该行的详情页**（Go-Look Closure）。
 - 无 Apple Developer ID 时不标 `stable`。
-- 被上限压下的会话**显式计数告知**，不静默丢弃。「N 个较早的会话未显示」只算最近 24 小时里
-  停下的会话（`TrayState.staleHiddenWindowMs`）—— 一个月前的记录不是「你可能漏看的东西」。
+- 被 12 行上限压下的会话**显式计数告知**（「另有 N 个…」），不静默丢弃。
 
 **没测到的那一半不写 0。** 任何成对呈现的量，只印测到的那一半，两半都没有整条事实消失。
 
@@ -566,7 +570,7 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 
 ## 8. 代码落点
 
-代码分五个 target（依赖只向下，见 [`docs/architecture.md`](docs/architecture.md)）：
+代码分五个 target（依赖只向下，见 [`AGENTS.md`](AGENTS.md) 的 Architecture）：
 `PulseCore` ← `PulseHarvest` ← `PulseApp` ← `PulseBar`（出厂）/ `PulseQA`（QA，不出厂）。
 
 | 规格 | 文件 |
@@ -589,14 +593,15 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 | 托盘行的脸 | `TrayRowModel.swift`（纯值：灯、身份、主行、时间、第二行、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace`；详情页是 `DetailModel` → `SessionDetailFace` |
 | 灯形 | `LampFace.swift`（行与菜单栏同一套：实心 / 环 / 空心 / 虚线；橙只给停滞） |
 | 托盘的键与状态 | `TrayKeys.swift`（纯 reducer `TrayKeys.reduce`、`BannerRoute`）· `TrayModels.swift`（`TrayHeaderModel` / `TrayNoticeModel` / `TrayOrder`）· `TrayUI.swift`（每次打开的状态，面板的按键监视器调用它） |
-| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `LampFace.swift` · `TrayModels.swift` · `TrayKeys.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
+| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `LampFace.swift` · `TrayModels.swift` · `TrayKeys.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_captures.sh`，`scripts/surface_check.py` 核对 |
 | 节奏（事件驱动 + 便宜的时钟） | `PulseCore/ProbeSchedule.swift` + `PulseApp/PowerMonitor.swift` |
 | 文案 | `PulseApp/L10n.swift` |
 | 状态项的手感、右键菜单、VoiceOver 只报新等待 | `PulseApp/StatusPanelController.swift`（`statusItemPressed` / `showStatusMenu`）· `TrayRowModel.swift` → `WaitAnnouncement` |
 | 隐藏的主菜单、再打开就开托盘 | `PulseApp/PulseApp.swift` → `MainMenu` / `applicationShouldHandleReopen` · `SingleInstanceGuard.swift` · `StatusStore.reopen` |
 | 登录项 | `PulseApp/AppUtilities.swift` → `LoginItem`（`SMAppService.mainApp`）· `SettingsModel.loginLine` |
+| 卸载 Pulse | `SettingsModel.swift` → `UninstallPlan`（纯值：要移除什么、何时停下）· `StatusStore.uninstallPulse` |
 | 版本 / 构建指纹 | `PulseApp/Models.swift` → `PulseVersion` |
 | Attention 协议（v5 事件日志） | `PulseCore/AttentionProtocol.swift`、`PulseHarvest/EventLog.swift`、`PulseApp/PulseHookReceiver.swift`；契约 [`docs/attention-protocol.md`](docs/attention-protocol.md) |
 | 验收场景 → 测试 | [`docs/scenarios.md`](docs/scenarios.md)，`scripts/scenario_map.py` 核对 |
 
-数据流详见 [`docs/architecture.md`](docs/architecture.md)。
+数据流详见 [`AGENTS.md`](AGENTS.md) 的 Architecture；谁持有什么、进程怎么读、版本身份见 [`docs/architecture.md`](docs/architecture.md)。

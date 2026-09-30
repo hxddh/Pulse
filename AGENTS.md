@@ -11,10 +11,10 @@ says what is true now; CHANGELOG says when and why it became true.
 | --- | --- |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Start here** — what shipped, when, and why |
 | [`README.md`](README.md) | You want to know what the product is |
-| [`docs/architecture.md`](docs/architecture.md) | You are changing how data reaches the menu bar |
+| [`docs/architecture.md`](docs/architecture.md) | You need who owns which state, how processes are read, or the version identity — the data flow itself is "Architecture" below |
 | [`EXPERIENCE.md`](EXPERIENCE.md) | You are changing anything the user sees — it is the behaviour spec |
 | [`docs/scenarios.md`](docs/scenarios.md) | You add or change an acceptance scenario — each row names the tests that pin it |
-| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver — each agent's hook contract has a pinned source, a test and a weekly drift sentinel, and says which event gives the title and the step |
+| [`docs/vendor-formats.md`](docs/vendor-formats.md) | You touch a hook receiver or any per-agent fact — the one place they live: where each hook is installed, what each event becomes, which gives the title and the step; each contract has a pinned source, a test and a weekly drift sentinel |
 | [`docs/observability-matrix.md`](docs/observability-matrix.md) | You change what a row claims — the sources, and what is never shown |
 | [`docs/attention-protocol.md`](docs/attention-protocol.md) | You touch the event log (`events.tsv`, Attention Protocol v5) or a hook's line |
 | [`docs/landing-hosts.md`](docs/landing-hosts.md) | You change how a click lands on a terminal or an editor |
@@ -133,7 +133,7 @@ and applies those lines, in order, to `SessionBook` (at launch: the whole log,
 before the first projection) → `TrayState.project(book:processes:context:)`
 returns rows (each with its last steps and its turn's clock), lamp, title,
 one `TrayState.Counts` (counted once; the header, the lamp and VoiceOver
-read it), newly-blocked edges and `staleHidden` → `StatusStore.land` assigns an
+read it) and newly-blocked edges → `StatusStore.land` assigns an
 observed property only when it changed; a projection from an event read that
 moves only quiet facts (`TrayState.quietSignature`: steps, clocks) lands at
 most once per tick →
@@ -171,8 +171,7 @@ Gates, from the repo root — CI, `release.yml`, `scripts/release.sh` and
 ```bash
 bash scripts/gates.sh                        # every source gate (below)
 python3 scripts/package_check.py             # reads the built .app
-./scripts/qa_surfaces.sh                     # surface fixture PNGs (builds and runs PulseQA)
-./scripts/qa_observation_truth.sh            # status fixture PNGs (builds and runs PulseQA)
+./scripts/qa_captures.sh                     # surface + status fixture PNGs (builds and runs PulseQA)
 ```
 
 `gates.sh` runs `version_check` (one semver), `catalog_check` (roster,
@@ -216,7 +215,11 @@ password and App Store Connect API key secrets when available. Without an
 Apple Developer account it still publishes GitHub **Latest** for the current
 semver, but the binary stays `preview` / ad-hoc / unnotarized — that artifact
 must never be labeled `stable` or Gatekeeper-ready (`PulseDistributionChannel`
-keeps it honest). Release notes include the Control-click recovery.
+keeps it honest). Release notes and the DMG's first-launch note lead with
+System Settings → Privacy & Security → "Open Anyway" and give
+`xattr -dr com.apple.quarantine` as the Terminal alternative (macOS 15
+removed Control-click → Open). Every release carries the DMG's `.sha256`
+beside it.
 
 "Open at login" is `SMAppService.mainApp`: it works only for an app in a
 bundle (a `swift run` shell reads `unavailable`), and macOS may hold it for
@@ -238,12 +241,14 @@ a CHANGELOG heading.
 ```bash
 ./scripts/release.sh X.Y.Z            # dry run: bump + gates + diff
 ./scripts/release.sh X.Y.Z --commit   # commit carrying the [release] marker
+./scripts/release.sh X.Y.Z --commit --prerelease   # … [release] [prerelease]
 git push                              # CI builds, tags and publishes
 ```
 
 | Trigger | When |
 | --- | --- |
 | `[release]` in the pushed commit subject | default; **`main` only** |
+| `[release] [prerelease]` in the pushed commit subject | the same build and notes, published as a GitHub **prerelease**; **`main` only** |
 | a `v*.*.*` tag push | if you prefer explicit tags and have tag-write rights; any branch |
 | `workflow_dispatch` | from the Actions tab |
 
@@ -253,8 +258,16 @@ runs gates and tests, packages the DMG, and publishes a Release whose body is
 that version's CHANGELOG section. **It creates the tag with its own
 `contents: write` token** — publishing does not depend on any developer's or
 agent's local credentials. A version that already has a Release is refused,
-so re-pushing is harmless. The in-app update check reads those Releases; an
-untagged version is invisible to users.
+so re-pushing is harmless. The in-app update check reads GitHub's
+`/releases/latest` only; an untagged version is invisible to users.
+
+**A prerelease is invisible to the in-app update check and to GitHub
+Latest** (it is published with `prerelease: true`, `make_latest: false`).
+Use it for a version not yet run on a real Mac. After the owner's real-Mac
+smoke run, the owner promotes it by editing the release on GitHub: untick
+"Set as a pre-release" and tick "Set as the latest release". Nothing else
+changes — the DMG, its `.sha256` and the notes are already the release's.
+`workflow_dispatch` has a `prerelease` switch for the same thing.
 
 ## Versioning and language
 
@@ -272,4 +285,4 @@ untagged version is invisible to users.
   saying why; prefer `Sendable` types and `Guarded`.
 - **A new surface comes with a model, a fixture and a capture**: a pure value
   in `PulseApp`, a fixture in `PulseQA/SurfaceFixtures.swift`, and a PNG from
-  `qa_surfaces.sh`.
+  `qa_captures.sh`.

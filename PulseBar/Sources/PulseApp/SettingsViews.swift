@@ -41,8 +41,6 @@ extension StatusStore {
             warning = String(format: tr(.versionMismatchHint), PulseVersion.semver, bundle)
         } else if PulseVersion.distributionChannel == "preview" {
             warning = tr(.updatePreview)
-        } else if PulseVersion.distributionChannel == "signed" {
-            warning = tr(.updateSignedUnnotarized)
         }
         let build = PulseVersion.buildLine
         let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
@@ -104,6 +102,7 @@ extension StatusStore {
         case .checkForUpdates: checkForUpdatesNow()
         case .openRelease:
             if let url = updateAvailableURL { NSWorkspace.shared.open(url) }
+        case .uninstallPulse: uninstallPulse()
         }
     }
 
@@ -365,7 +364,8 @@ struct SettingsFace: View {
         }
     }
 
-    /// The version and what kind of build it is — one small block.
+    /// The version and what kind of build it is — one small block — and
+    /// "Uninstall Pulse…".
     private var about: some View {
         Section {
             VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
@@ -379,6 +379,8 @@ struct SettingsFace: View {
                         .foregroundStyle(PulseTheme.Tone.attention.color)
                 }
             }
+            Button(t(.uninstallPulse), role: .destructive) { send(.uninstallPulse) }
+                .disabled(model.hooksBusy)
         }
     }
 }
