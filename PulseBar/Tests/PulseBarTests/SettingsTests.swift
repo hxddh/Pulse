@@ -153,6 +153,28 @@ struct PulseSettingsTests {
     }
 }
 
+/// What earlier versions kept beside the attention file is deleted at
+/// launch, never read: the agents' hooks are the only state that outlives a
+/// launch.
+@Suite("Retired files")
+struct RetiredFileTests {
+    @Test func theSessionLogIsDeletedNotRead() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pulse-retired-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = dir.appendingPathComponent("session-log.json")
+        let keep = dir.appendingPathComponent("settings.json")
+        try Data("{}".utf8).write(to: log)
+        try Data("{}".utf8).write(to: keep)
+        StatusStore.removeRetiredFiles(in: [dir])
+        let logLeft = FileManager.default.fileExists(atPath: log.path)
+        let settingsLeft = FileManager.default.fileExists(atPath: keep.path)
+        #expect(!logLeft)
+        #expect(settingsLeft, "settings.json is the person's")
+    }
+}
+
 /// The store changes a setting through one path, and only when it changed.
 @Suite("Store settings")
 @MainActor
@@ -170,15 +192,16 @@ struct StoreSettingsTests {
     }
 }
 
-/// 23.0 · the tray as values: the keyboard reducer, the frozen order, the
-/// header and its freshness, the one notice, the row's second line, where a
-/// banner click goes, and the Settings page's sections.
+/// The Settings page as a value: one page of five sections, deep links, the
+/// muted agents.
 @Suite("Settings model")
 struct SettingsModelTests {
     // MARK: - Settings
 
-    @Test func settingsIsOnePageOfSixSections() {
-        #expect(SettingsModel.sections == [.general, .shortcut, .notifications, .hooks, .terminal, .updates])
+    /// Terminal control is not a section: the automation setting stays in
+    /// `settings.json`, and the landing plan reads it.
+    @Test func settingsIsOnePageOfFiveSections() {
+        #expect(SettingsModel.sections == [.general, .shortcut, .notifications, .hooks, .updates])
         let titles = SettingsModel.sections.map { SettingsModel.title($0, lang: .zh) }
         #expect(Set(titles).count == titles.count, "every section has its own name")
     }
@@ -212,8 +235,7 @@ struct SettingsModelTests {
     }
 }
 
-/// 22.x · Lamp fixes — each pins one defect with the pure function that
-/// decides it.
+/// "Don't suggest hooks" is the person's decision, and it persists.
 @Suite("Hooks nudge setting")
 struct HooksNudgeSettingTests {
     // MARK: - "Don't suggest hooks" persists

@@ -1,8 +1,8 @@
 // swift-tools-version: 6.2
 // Xcode 26 / Swift 6.2. Every target is in the Swift 6 language mode
-// (complete concurrency checking is the language, not a flag) and treats
-// every warning as an error through the supported setting rather than
-// `unsafeFlags`.
+// (complete concurrency checking is the language, not a flag); every product
+// target treats every warning as an error through the supported setting
+// rather than `unsafeFlags`.
 import PackageDescription
 
 let strict: [SwiftSetting] = [
@@ -13,9 +13,11 @@ let package = Package(
     name: "PulseBar",
     platforms: [.macOS(.v14)],
     products: [
-        // The shipping app. `PulseQA` is not a product: it is built only by
-        // the QA scripts, in the debug configuration.
+        // The shipping app. `package.sh` builds this product alone.
         .executable(name: "PulseBar", targets: ["PulseBar"]),
+        // The QA driver: fixtures and captures. Debug configuration only
+        // (`swift build --product PulseQA`); never packaged.
+        .executable(name: "PulseQA", targets: ["PulseQA"]),
     ],
     targets: [
         // The kernel. Foundation only — no AppKit, no SwiftUI, no store — so
@@ -40,6 +42,8 @@ let package = Package(
         // The app: the session book, the tray projection, the store, the
         // notifier, the hook receiver and installer, every view. A library,
         // so the shipping executable and the QA driver link the same code.
+        // It owns the resources, so `Bundle.module` (and `PulseResources`,
+        // which resolves `PulseBar_PulseApp.bundle` without trapping) is here.
         .target(
             name: "PulseApp",
             dependencies: ["PulseCore", "PulseHarvest"],
@@ -59,8 +63,7 @@ let package = Package(
         ),
         // The QA driver: surface fixtures, tray fixtures and captures. It
         // reaches the app's internals through `@testable import PulseApp`,
-        // so it builds in the debug configuration only
-        // (`swift build --product PulseQA`); release builds name
+        // so it builds in the debug configuration only; release builds name
         // `--product PulseBar`.
         .executableTarget(
             name: "PulseQA",
@@ -69,12 +72,13 @@ let package = Package(
             swiftSettings: strict
         ),
         // The session reducer and its projection are the most
-        // regression-prone part of the product. Swift 6 mode like the rest;
-        // not warnings-as-errors — the tests exercise deprecated AppKit on
-        // purpose (appearances) and must build on every SDK CI meets. The
+        // regression-prone part of the product. Swift 6 mode like the rest,
+        // but not warnings-as-errors: the tests exercise deprecated AppKit on
+        // purpose (`NSAppearance.current`, for the appearance matrix). The
         // main-actor XCTest suites isolate their test methods (an
-        // `XCTestCase` subclass cannot be `@MainActor`); new suites are
-        // Swift Testing.
+        // `XCTestCase` subclass cannot be `@MainActor`); new suites are Swift
+        // Testing. The QA fixtures are tested too, so the suite links
+        // `PulseQA` as a testable executable.
         .testTarget(
             name: "PulseBarTests",
             dependencies: ["PulseApp", "PulseQA", "PulseCore", "PulseHarvest"],

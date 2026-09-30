@@ -54,10 +54,9 @@ hook 自己会记下 Agent 的进程号（沿父进程链找到第一个符合�
 
 - 阻塞（`permission` / `question`）：红灯、通知（开着的话）、行上第二行写出问的是什么。
 - 回合结束（`turn`）：安静的「轮到你」，不红、不通知。
-- 设置 → Hooks：每个 Agent 一行——已安装 / 未安装 / 这台 Mac 上没有，最近一次事件是多久前；
-  Codex 与 Cursor 注明「不会报告它在等你」。
-- 诊断 → 自检：每个 Agent 一条「hooks 已安装」、一条「hooks 到达 Pulse」；发现 Pulse 条目挂在
-  会拦截的事件上（旧版的 PreToolUse、Codex 的 PermissionRequest）就提示重新安装。
+- 设置 → Hooks 就是诊断：这台 Mac 上的每个 Agent 一行——已安装 / 未安装 / 安装失败及原因，
+  最近一次事件是多久前，缺 hook 的给一个安装按钮；不在这台 Mac 上的 Agent 合成一行；
+  Codex 与 Cursor 注明「不会报告它在等你」。「复制报告」把这些与通知授权一起写成纯文本。
 
 ## 边界
 

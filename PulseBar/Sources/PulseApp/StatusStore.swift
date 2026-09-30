@@ -132,11 +132,15 @@ final class StatusStore {
         "attention-ledger.json", "attention-history.json", "session-timeline.json", "dismissed-pending.json",
     ]
 
-    nonisolated static func removeRetiredFiles(besides attention: URL = AttentionIO.path) {
+    nonisolated static func removeRetiredFiles() {
         let defaultDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Pulse", isDirectory: true)
-        var dirs = [attention.deletingLastPathComponent()]
+        var dirs = [AttentionIO.path.deletingLastPathComponent()]
         if dirs[0].standardizedFileURL != defaultDir.standardizedFileURL { dirs.append(defaultDir) }
+        removeRetiredFiles(in: dirs)
+    }
+
+    nonisolated static func removeRetiredFiles(in dirs: [URL]) {
         for dir in dirs {
             for name in retiredFileNames {
                 let file = dir.appendingPathComponent(name)

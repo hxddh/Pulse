@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Version gate: one product version, everywhere.
 
-`PulseBar/Sources/PulseBar/Models.swift` → `PulseVersion.semver` is the truth.
+`PulseBar/Sources/PulseApp/Models.swift` → `PulseVersion.semver` is the truth.
 Everything else that carries a version string must agree with it:
 
   - CHANGELOG.md           → newest `## x.y.z` heading
@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODELS = ROOT / "PulseBar" / "Sources" / "PulseBar" / "Models.swift"
+MODELS = ROOT / "PulseBar" / "Sources" / "PulseApp" / "Models.swift"
 CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
 

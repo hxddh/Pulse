@@ -97,10 +97,10 @@ final class AttentionBookTests: XCTestCase {
         let b = book(tsv([["claude", "permission", "\(now - 1000)", "old", "s1", "/p"]]))
         let session = try XCTUnwrap(b.sessions["claude|s1"])
         XCTAssertEqual(
-            SessionProjection.state(of: session, nowMs: now),
+            TrayState.state(of: session, nowMs: now),
             .blocked(RowWait(kind: "Permission", ask: "old", sinceMs: now - 1000))
         )
-        XCTAssertEqual(SessionProjection.state(of: session, nowMs: now + SessionProjection.idleBoundMs + 1), .recent)
+        XCTAssertEqual(TrayState.state(of: session, nowMs: now + TrayState.idleBoundMs + 1), .recent)
     }
 
     func testSubagentEventsNeverRaiseWaiting() {
@@ -454,24 +454,6 @@ final class PulseHookReceiverTests: XCTestCase {
         }
     }
 
-    func testSelfTestDoesNotNeedPython() {
-        // Route seedAssets away from the real support dir: the self-test must
-        // never rewrite the user's hook-runner.path to the xctest binary.
-        HooksInstaller.homeOverride = tempHome
-        defer { HooksInstaller.homeOverride = nil }
-        let before = AttentionIO.pathOverride
-        let result = HooksSupport.selfTest()
-        guard case .passed = result else {
-            XCTFail("native self-test must pass: \(result)")
-            return
-        }
-        XCTAssertEqual(AttentionIO.pathOverride, before)
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: AttentionIO.path.path),
-            "the self-test's lines never reach the attention file a scan reads"
-        )
-    }
-
     /// One invalid byte (a hook cut off mid-character) must not read as an
     /// empty file — every wait would vanish.
     func testOneBadByteDoesNotHideEveryWait() throws {
@@ -616,8 +598,8 @@ final class HookLandingTests: XCTestCase {
         bytes += Array("node".utf8) + [0]
         bytes += Array("/opt/homebrew/bin/gemini".utf8) + [0]
         bytes += Array("SECRET=env".utf8) + [0]
-        XCTAssertEqual(AgentProcesses.parseProcArgs(bytes), "node /opt/homebrew/bin/gemini", "argc bounds the read: no environment")
-        XCTAssertNil(AgentProcesses.parseProcArgs([0, 0]))
+        XCTAssertEqual(AgentProcesses.parseProcArgv(bytes), ["node", "/opt/homebrew/bin/gemini"], "argc bounds the read: no environment")
+        XCTAssertNil(AgentProcesses.parseProcArgv([0, 0]))
     }
 }
 
@@ -964,26 +946,47 @@ final class HooksInstallerTests: XCTestCase {
         XCTAssertFalse(HooksInstaller.containsPulseMarker("mytool --hook-dir /tmp"))
     }
 
-    /// The Settings lines say what is installed, what is not there, when a
-    /// hook last spoke, and which agents never report a wait.
+    /// The Settings lines say what is installed, what is not, when a hook
+    /// last spoke, and which agents never report a wait; the agents that
+    /// are not on this Mac share one line.
     func testSettingsSaysEachAgentsHook() {
         let now: Int64 = 1_800_000_000_000
         let lines = SettingsModel.hookAgents(
-            installed: [.claude, .codex], present: [.claude, .codex, .gemini],
+            installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini],
             lastEventMs: [.claude: now - 12_000], nowMs: now, lang: .en
         )
-        XCTAssertEqual(lines.map(\.agent), AgentID.priority)
+        XCTAssertEqual(lines.map(\.agent), [.claude, .codex, .cursor, .gemini])
         let claude = lines[0]
         XCTAssertTrue(claude.installed)
+        XCTAssertFalse(claude.needsFix)
         XCTAssertEqual(claude.lastEvent, String(format: L10n.t(.settingsHookLastEvent, .en), DurationFormat.label(seconds: 12, lang: .en)))
         XCTAssertNil(claude.note)
         let codex = lines.first { $0.agent == .codex }
         XCTAssertEqual(codex?.lastEvent, L10n.t(.settingsHookNoEvent, .en))
         XCTAssertEqual(codex?.note, L10n.t(.settingsHookNoWait, .en))
         XCTAssertEqual(lines.first { $0.agent == .cursor }?.note, L10n.t(.settingsHookNoWait, .en))
-        XCTAssertEqual(lines.first { $0.agent == .gemini }?.state, L10n.t(.hooksMissing, .en))
-        XCTAssertEqual(lines.first { $0.agent == .pi }?.state, L10n.t(.settingsHookNotFound, .en))
-        XCTAssertEqual(lines.first { $0.agent == .pi }?.lastEvent, "")
+        let gemini = lines.first { $0.agent == .gemini }
+        XCTAssertEqual(gemini?.state, L10n.t(.hooksMissing, .en))
+        XCTAssertEqual(gemini?.lastEvent, "")
+        XCTAssertEqual(gemini?.needsFix, true, "an agent here without its hook is offered the install")
+        let absent = SettingsModel.absentAgents(installed: [.claude, .codex], present: [.claude, .codex, .cursor, .gemini])
+        XCTAssertEqual(absent, [.copilot, .opencode, .pi], "in roster order")
+        let line = SettingsModel.absentLine(absent, lang: .en)
+        XCTAssertNotNil(line)
+        for agent in absent { XCTAssertTrue(line?.contains(agent.displayName) == true, agent.rawValue) }
+        XCTAssertNil(SettingsModel.absentLine([], lang: .en), "nothing to say when every agent is here")
+    }
+
+    /// A failed install names the agent and why, and offers the fix again.
+    func testAFailedInstallIsItsOwnLine() {
+        let lines = SettingsModel.hookAgents(
+            installed: [], present: [], lastEventMs: [:], nowMs: 0, lang: .en,
+            failed: [.gemini: .invalidJSON]
+        )
+        XCTAssertEqual(lines.map(\.agent), [.gemini])
+        XCTAssertTrue(lines[0].failed)
+        XCTAssertTrue(lines[0].needsFix)
+        XCTAssertTrue(lines[0].state.contains(L10n.t(.hooksFailureInvalidJSON, .en)), lines[0].state)
     }
 }
 
@@ -1002,35 +1005,9 @@ final class AttentionWatcherReArmTests: XCTestCase {
         try? FileManager.default.removeItem(at: home)
     }
 
-    func testReArmingTheFileWatchLeavesTheActivityWatchAlone() {
-        let watcher = AttentionWatcher()
-        defer { watcher.stop() }
-        watcher.start(onChange: {}, onActivity: {})
-        XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(watcher.isWatchingActivity)
-
-        // What the delete/rename handler does after an atomic replace — which
-        // is what every hook write looks like from the outside.
-        watcher.arm()
-        XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(
-            watcher.isWatchingActivity,
-            "activity.d/ must keep waking Pulse after attention.tsv is replaced"
-        )
-    }
-
-    func testReArmingTheActivityWatchLeavesTheFileWatchAlone() {
-        let watcher = AttentionWatcher()
-        defer { watcher.stop() }
-        watcher.start(onChange: {}, onActivity: {})
-        watcher.armActivity()
-        XCTAssertTrue(watcher.isWatchingFile)
-        XCTAssertTrue(watcher.isWatchingActivity)
-    }
-
     /// A deleted file cannot be reopened, so the watch would have stayed dead
-    /// for the life of the process.
-    func testAFileThatWasDeletedIsRecreatedAndWatchedAgain() throws {
+    /// for the life of the process: re-arming recreates it.
+    func testAFileThatWasDeletedIsRecreatedWhenTheWatchReArms() throws {
         let watcher = AttentionWatcher()
         defer { watcher.stop() }
         watcher.start {}
@@ -1039,15 +1016,6 @@ final class AttentionWatcherReArmTests: XCTestCase {
 
         watcher.arm()
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
-        XCTAssertTrue(watcher.isWatchingFile)
-    }
-
-    func testStopTearsDownEveryWatch() {
-        let watcher = AttentionWatcher()
-        watcher.start(onChange: {}, onActivity: {})
-        watcher.stop()
-        XCTAssertFalse(watcher.isWatchingFile)
-        XCTAssertFalse(watcher.isWatchingActivity)
     }
 }
 
@@ -1077,20 +1045,17 @@ struct TurnTruthTests {
     static func world(
         _ lines: [String],
         activity: [ActivitySpool.Event] = []
-    ) -> SnapshotBuilder.Result {
+    ) -> TrayState {
         let text = AttentionProtocol.header + lines.joined(separator: "\n") + "\n"
         var book = SessionBook()
         for line in text.split(whereSeparator: \.isNewline) {
             if let record = AttentionRecord(line: line) { book.apply(record, nowMs: now) }
         }
         for event in activity { book.apply(activity: event, nowMs: now) }
-        let rows = SessionProjection.rows(
-            book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(
-                nowMs: now
-            )
-        ).rows
-        return SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: now, lang: .en))
+        return TrayState.project(
+            book: book, processes: [], summaries: [:],
+            context: TrayState.Context(nowMs: now, lang: .en)
+        )
     }
 
     static func delivery(_ rows: [AgentRow]) -> WaitingDelivery.Plan {
@@ -1227,11 +1192,10 @@ struct TurnTruthTests {
     @Test func aFinishedTurnWithALiveProcessIsAGreyLamp() throws {
         var book = SessionBook()
         book.apply(AttentionRecord(agent: "claude", kind: "turn", ms: Self.now - 2 * Self.second, session: "s1", cwd: "/p", pid: 42), nowMs: Self.now)
-        let rows = SessionProjection.rows(
-            book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(nowMs: Self.now)
-        ).rows
-        let r = SnapshotBuilder.build(rows: rows, previous: .init(), context: SnapshotBuilder.Context(nowMs: Self.now, lang: .en))
+        let r = TrayState.project(
+            book: book, processes: [], summaries: [:],
+            context: TrayState.Context(nowMs: Self.now, lang: .en)
+        )
         let row = try #require(r.rows.first)
         #expect(row.isYourTurn)
         #expect(row.liveProcess)

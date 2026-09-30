@@ -21,6 +21,7 @@ import SwiftUI
 // through `@testable import`.
 @main
 enum PulseQAMain {
+    @MainActor
     static func main() {
         PulseBarMain.main(launchHook: QADriver.launch)
     }

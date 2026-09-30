@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ROOT / "PulseBar" / "Sources" / "PulseBar"
+SOURCES = ROOT / "PulseBar" / "Sources" / "PulseApp"
 
 # `static let x = Color(nsColor: …)` and friends: a constant binding whose
 # value is read out of the appearance-dependent NSColor catalogue.
@@ -82,7 +82,7 @@ def main() -> int:
     tray_source = tray.read_text(encoding="utf-8")
     if ".focusable()" in tray_source and ".focusEffectDisabled()" not in tray_source:
         problems.append(
-            "  · PulseBar/Sources/PulseBar/PulseApp.swift  "
+            "  · PulseBar/Sources/PulseApp/PulseApp.swift  "
             "focusable tray is missing .focusEffectDisabled()"
         )
 
@@ -102,7 +102,7 @@ def main() -> int:
     for fragment in lamp_contract:
         if fragment not in brand:
             problems.append(
-                "  · PulseBar/Sources/PulseBar/PulseBrand.swift  "
+                "  · PulseBar/Sources/PulseApp/PulseBrand.swift  "
                 f"missing four-state lamp contract: {fragment}"
             )
 

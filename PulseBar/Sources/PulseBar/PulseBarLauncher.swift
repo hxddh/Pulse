@@ -5,6 +5,7 @@ import PulseApp
 /// not linked into this one.
 @main
 enum PulseBarLauncher {
+    @MainActor
     static func main() {
         PulseBarMain.main()
     }

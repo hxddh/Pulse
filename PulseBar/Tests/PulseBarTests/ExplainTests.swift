@@ -197,9 +197,9 @@ struct ExplainTests {
         let waiting = blocked()
         var other = session(.codex)
         other.rowKey = "codex|b"
-        let explanation = LampExplanation.make(rows: [waiting, other], glance: .waiting)
-        #expect(explanation.rule == .blocked)
-        let sentence = explanation.sentence(.en)
+        let rule = Explain.lampRule(rows: [waiting, other], glance: .waiting)
+        #expect(rule == .blocked)
+        let sentence = Explain.lampSentence(rule, lang: .en)
         #expect(sentence == L10n.t(.lampRuleBlocked, .en))
         #expect(!sentence.contains("\n"))
     }
@@ -208,18 +208,18 @@ struct ExplainTests {
         var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 3), agent: .cursor)
         process.liveProcess = true
         process.state = .processOnly
-        let explanation = LampExplanation.make(rows: [process], glance: .idle)
-        #expect(explanation.rule == .processOnly)
-        #expect(explanation.sentence(.zh) == L10n.t(.lampRuleProcessOnly, .zh))
+        let rule = Explain.lampRule(rows: [process], glance: .idle)
+        #expect(rule == .processOnly)
+        #expect(Explain.lampSentence(rule, lang: .zh) == L10n.t(.lampRuleProcessOnly, .zh))
     }
 
     @Test func aStalledLampNamesNoThreshold() {
         var stalled = session()
         stalled.lastEventMs = now - 30 * minute
         stalled.isStalled = true
-        let explanation = LampExplanation.make(rows: [stalled], glance: .stalled)
-        #expect(explanation.rule == .stalled)
-        let sentence = explanation.sentence(.en)
+        let rule = Explain.lampRule(rows: [stalled], glance: .stalled)
+        #expect(rule == .stalled)
+        let sentence = Explain.lampSentence(rule, lang: .en)
         #expect(!sentence.contains("20"))
     }
 
@@ -228,8 +228,8 @@ struct ExplainTests {
         turn.state = .yourTurn(sinceMs: now - minute)
         var process = AgentRow(rowKey: RowIdentity.process(agent: .codex, pid: 4), agent: .codex)
         process.state = .processOnly
-        let explanation = LampExplanation.make(rows: [process, turn], glance: .idle)
-        #expect(explanation.rule == .yourTurn, "a finished turn outranks a bare process")
+        let rule = Explain.lampRule(rows: [process, turn], glance: .idle)
+        #expect(rule == .yourTurn, "a finished turn outranks a bare process")
     }
 
     // MARK: - The lamp's shape and tone, per state
@@ -284,12 +284,12 @@ struct ExplainTests {
         #expect(model.accessibilityLabel.contains("轮到你"))
     }
 
-    @Test func aProcessOnlyRowPointsAtDiagnostics() {
+    @Test func aProcessOnlyRowIsQuietGrey() {
         let model = SurfaceFixtures.rowModel(SurfaceFixtures.rowProcessOnly(), lang: .en)
         #expect(model.lamp == LampFace(shape: .dotted, tone: .idle))
         #expect(model.secondLine == nil, "grey is not a warning")
-        let hasDiagnostics = model.menu.contains { $0.action == .diagnostics }
-        #expect(hasDiagnostics)
+        let actions = model.menu.map { $0.action }
+        #expect(actions == [.details, .mute], "details and mute; nothing to dismiss, nowhere to go")
         #expect(!model.canFocus)
     }
 
@@ -328,6 +328,20 @@ struct ExplainTests {
     }
 
     // MARK: - The detail page
+
+    /// The detail page's times say the day when it is not today.
+    @Test func theClockSaysTheDayWhenItIsNotToday() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        let hour: Int64 = 60 * minute
+        let day: Int64 = 24 * hour
+        // 2027-01-15 08:00 UTC, a Friday.
+        #expect(LogClock.label(ms: now - 3 * hour, nowMs: now, lang: .en, timeZone: utc) == "05:00")
+        #expect(LogClock.label(ms: now - 9 * hour, nowMs: now, lang: .en, timeZone: utc) == "Thu 23:00")
+        #expect(LogClock.label(ms: now - 2 * day, nowMs: now, lang: .en, timeZone: utc) == "Wed 08:00")
+        #expect(LogClock.label(ms: now - 2 * day, nowMs: now, lang: .zh, timeZone: utc) == "周三 08:00")
+        #expect(LogClock.label(ms: now - 10 * day, nowMs: now, lang: .en, timeZone: utc) == "1/5 08:00")
+        #expect(LogClock.label(ms: now - 10 * day, nowMs: now, lang: .zh, timeZone: utc) == "1/5 08:00")
+    }
 
     @Test func theDetailPageSaysTheSameWhyAsTheRow() {
         let row = SurfaceFixtures.rowPermission()

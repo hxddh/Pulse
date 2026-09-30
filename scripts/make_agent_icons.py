@@ -32,7 +32,7 @@ import sys
 import zlib
 from pathlib import Path
 
-ICON_DIR = Path("PulseBar/Sources/PulseBar/Resources/AgentIcons")
+ICON_DIR = Path("PulseBar/Sources/PulseApp/Resources/AgentIcons")
 VIEW = 24.0
 SIZE = 64
 SUPERSAMPLE = 4

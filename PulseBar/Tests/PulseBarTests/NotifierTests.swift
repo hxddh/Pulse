@@ -7,7 +7,8 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Notifier: banner planning, copy, routing and reveals.
+// Notifier: the in-memory wait ledger, banner planning, copy, routing and
+// reveals.
 
 /// 12.3 δ — the Waiting notification decision is a value. No store, no
 /// Notification Center, no ledger file: facts in, a plan out.
@@ -78,6 +79,133 @@ final class WaitingDeliveryTests: XCTestCase {
         let plan = planner().plan([waiting("same"), waiting("same")])
         guard case .post(let ready, _) = plan else { return XCTFail("\(plan)") }
         XCTAssertEqual(ready.count, 1)
+    }
+}
+
+/// What the banner remembers, in memory: the wait open on each row, whether
+/// its banner is owed, went out or was dismissed, and the rate limit. The
+/// edges come from the projection (`TrayState.newlyBlocked`).
+@Suite("Wait ledger")
+struct WaitLedgerTests {
+    let now: Int64 = 1_800_000_000_000
+    let minute: Int64 = 60_000
+
+    private func running(_ key: String, _ agent: AgentID = .claude) -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: agent)
+        row.sessionID = key
+        row.task = "Fix the login test"
+        row.liveProcess = true
+        row.state = .running
+        row.lastEventMs = now - minute
+        return row
+    }
+
+    private func waiting(_ key: String, _ agent: AgentID = .claude, since: Int64? = nil, ask: String = "") -> AgentRow {
+        var row = running(key, agent)
+        row.state = .blocked(RowWait(kind: "Permission", ask: ask, sinceMs: since ?? now - minute))
+        return row
+    }
+
+    /// The projection's edges against the waits it had before.
+    private func edges(_ rows: [AgentRow], previous: [String: Int64]) -> Set<String> {
+        let state = TrayState.assemble(rows: rows, context: TrayState.Context(nowMs: now, previousWaits: previous))
+        return Set(state.newlyBlocked.map(\.rowKey))
+    }
+
+    @Test func aWaitThatResolvedLeavesTheQueue() {
+        var ledger = WaitLedger()
+        ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"])
+        ledger.markQueued("claude|a")
+        #expect(ledger.queuedKeys == ["claude|a"])
+        ledger.reconcile(rows: [running("claude|a")], edges: [])
+        #expect(ledger.queuedKeys.isEmpty, "a resolved wait is owed no banner")
+        #expect(ledger.waits.isEmpty)
+    }
+
+    @Test func owedBannersAreRebuiltFromThisScansRows() {
+        let fresh = waiting("claude|a", ask: "Bash: npm test")
+        let rows = [fresh, running("codex|b", .codex), waiting("cursor|c", .cursor)]
+        let owed = WaitNotifier.queuedDeliveryRows(
+            queued: ["claude|a", "codex|b", "gone|x", "cursor|c"],
+            rows: rows,
+            muted: [.cursor]
+        )
+        let keys = owed.map { $0.rowKey }
+        #expect(keys == ["claude|a"], "only a key waiting now, unmuted, in a current row")
+        #expect(owed.first?.wait?.ask == "Bash: npm test", "the current row, not a frozen copy")
+    }
+
+    /// A second permission on a row that is still waiting is its own wait:
+    /// its own edge, and no dismissal of the first carries over.
+    @Test func aSecondAskOnTheSameRowIsItsOwnWait() {
+        var ledger = WaitLedger()
+        let first = waiting("claude|a", since: now - minute)
+        ledger.reconcile(rows: [first], edges: edges([first], previous: [:]))
+        ledger.dismiss("claude|a")
+        #expect(ledger.dismissedKeys == ["claude|a"])
+
+        var second = waiting("claude|a", since: now + minute)
+        second.activityMs = now + 50_000 // the next tool call began the second ask
+        let edge = edges([second], previous: ["claude|a": now - minute])
+        #expect(edge == ["claude|a"])
+        ledger.reconcile(rows: [second], edges: edge)
+        #expect(ledger.waits["claude|a"]?.sinceMs == now + minute)
+        #expect(ledger.dismissedKeys.isEmpty, "the new ask inherits no dismissal")
+    }
+
+    /// Claude's Notification lands a second after its PermissionRequest,
+    /// with nothing done in between: one wait, one banner.
+    @Test func theSameAskSaidTwiceIsOneWait() {
+        var ledger = WaitLedger()
+        let raise = waiting("claude|a", since: now - minute)
+        ledger.reconcile(rows: [raise], edges: ["claude|a"])
+        ledger.markNotified("claude|a", nowMs: now)
+        let echo = waiting("claude|a", since: now - minute + 1_000)
+        #expect(!TrayState.isNewRaise(echo, previousSinceMs: now - minute))
+        let edge = edges([echo], previous: ["claude|a": now - minute])
+        #expect(edge.isEmpty)
+        ledger.reconcile(rows: [echo], edges: edge)
+        #expect(ledger.waits["claude|a"]?.notified == true, "the echo is the wait that already had its banner")
+    }
+
+    @Test func aRowThatWasNotWaitingIsAnEdge() {
+        #expect(edges([waiting("a")], previous: [:]) == ["a"])
+        #expect(edges([waiting("a")], previous: ["a": now - minute]).isEmpty, "still the same wait")
+        #expect(edges([running("a")], previous: ["a": now - minute]).isEmpty, "a resolved wait is no edge")
+    }
+
+    @Test func queuingTwiceIsOneChange() {
+        var ledger = WaitLedger()
+        ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"])
+        let first = ledger.markQueued("claude|a")
+        let second = ledger.markQueued("claude|a")
+        #expect(first)
+        #expect(!second)
+        let unknown = ledger.markQueued("gone|x")
+        #expect(!unknown, "no open wait, nothing owed")
+    }
+
+    @Test func aDismissalIsOwedNoBanner() {
+        var ledger = WaitLedger()
+        ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"])
+        ledger.markQueued("claude|a")
+        ledger.dismiss("claude|a")
+        #expect(ledger.dismissedKeys == ["claude|a"])
+        #expect(ledger.queuedKeys.isEmpty, "a dismissed wait is owed no banner")
+        let requeued = ledger.markQueued("claude|a")
+        #expect(!requeued)
+    }
+
+    @Test func theRateLimitCountsFromTheLastAcceptedBanner() {
+        var ledger = WaitLedger()
+        #expect(ledger.canDeliver(nowMs: now, minimumIntervalMs: 3_000), "no banner yet")
+        ledger.reconcile(rows: [waiting("claude|a")], edges: ["claude|a"])
+        ledger.markNotified("claude|a", nowMs: now)
+        #expect(!ledger.canDeliver(nowMs: now + 1_000, minimumIntervalMs: 3_000))
+        #expect(ledger.canDeliver(nowMs: now + 3_000, minimumIntervalMs: 3_000))
+        // A banner shown for a wait that resolved meanwhile still counts.
+        ledger.markNotified("gone|x", nowMs: now + 5_000)
+        #expect(ledger.lastNotificationMs == now + 5_000)
     }
 }
 
@@ -221,23 +349,14 @@ final class DeliveryPlanningTests: XCTestCase {
     }
 }
 
-/// Clarity fixes — each test pins one defect found by reading the code: the
-/// value the user would have seen, before and after.
+/// Where a banner click goes: the first wait, and never another agent's.
 @MainActor
 @Suite("Banner routing", .serialized)
 struct BannerRoutingTests {
     let now: Int64 = 1_800_000_000_000
     static let minute: Int64 = 60_000
 
-    // MARK: - 12 · a summary banner's click is audited on every wait it counted
-
-    @Test func aSummaryBannerStandsForEveryWait() {
-        #expect(PulseNotify.bannerWaitIDs(["a|1", "b|1", "c|1", "b|1", ""]) == ["a|1", "b|1", "c|1"])
-        #expect(PulseNotify.bannerWaitIDs(["solo|1"]) == ["solo|1"])
-        #expect(PulseNotify.bannerWaitIDs([]).isEmpty)
-    }
-
-    // MARK: - 13 / 14 · jumping to a wait
+    // MARK: - Jumping to a wait
 
     func waitingRow(_ key: String, _ agent: AgentID, session: String = "", since: Int64) -> AgentRow {
         var row = AgentRow(rowKey: key, agent: agent)

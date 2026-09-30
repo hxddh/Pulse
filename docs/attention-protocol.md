@@ -60,7 +60,6 @@ one).
 | Lifecycle | `start` | The session started or resumed |
 | | `working` | The user submitted a prompt |
 | | `end` | The session ended |
-| Diagnostics | `subagent_start`, `subagent_stop` | Stored, never light anything |
 
 `start`, `working` and `end` clear the session's entry exactly like `done`.
 Tool activity (a tool ran, a reply streamed) is **not** an attention line: it

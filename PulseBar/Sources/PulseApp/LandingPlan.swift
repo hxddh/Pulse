@@ -120,7 +120,7 @@ struct LandingPlan: Hashable, Sendable {
     ///   - handle: the session's landing handle (or, for a process-only row,
     ///     what the process table knows).
     ///   - cwd: the session's folder, opened in an editor host.
-    ///   - allowAutomation: Settings → terminal control. Gates every
+    ///   - allowAutomation: `PulseSettings.allowTerminalAutomation`. Gates every
     ///     AppleScript step (iTerm session, Terminal/iTerm tab); tmux and app
     ///     activation never need it.
     ///   - pid: a live agent process, for the owner-app fallback; 0 none.

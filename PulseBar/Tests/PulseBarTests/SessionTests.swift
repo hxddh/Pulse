@@ -5,9 +5,8 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Sessions (24.0): the event reducer (SessionBook), its projection into rows
-// (SessionProjection), the thin snapshot (SnapshotBuilder), row identity, and
-// what a row carries.
+// Sessions: the event reducer (SessionBook), its projection into the tray
+// (TrayState), row identity, and what a row carries.
 
 /// One vendor hook event as `pulse-hook` writes it — the attention line, the
 /// activity event, both, or nothing — by the receiver's own reading of the
@@ -519,10 +518,10 @@ struct SessionBookTests {
     }
 }
 
-/// 24.0 · the book as rows: process-only discovery, the time rules, and what
-/// a transcript and a landing add.
-@Suite("Session projection")
-struct SessionProjectionTests {
+/// The book as rows: process-only discovery, the time rules, and what a
+/// transcript and a landing add.
+@Suite("Tray projection")
+struct TrayStateTests {
     let t0: Int64 = 1_800_000_000_000
     let minute: Int64 = 60_000
 
@@ -531,12 +530,10 @@ struct SessionProjectionTests {
         processes: [AgentProcesses.Hit] = [],
         transcripts: [String: TranscriptSummary] = [:],
         at nowMs: Int64? = nil
-    ) -> SessionProjection.Output {
-        SessionProjection.rows(
-            book: book, processes: processes, transcripts: transcripts,
-            context: SessionProjection.Context(
-                nowMs: nowMs ?? t0
-            )
+    ) -> TrayState.SessionRows {
+        TrayState.sessionRows(
+            book: book, processes: processes, summaries: transcripts,
+            context: TrayState.Context(nowMs: nowMs ?? t0)
         )
     }
 
@@ -591,7 +588,7 @@ struct SessionProjectionTests {
         let row = try #require(rows(b, at: t0 + 31 * minute).rows.first)
         #expect(row.state == .recent)
         #expect(row.recentReason == .quiet)
-        #expect(row.stateSinceMs == t0 + SessionProjection.idleBoundMs)
+        #expect(row.stateSinceMs == t0 + TrayState.idleBoundMs)
         let why = Explain.why(row, lang: .en, nowMs: t0 + 31 * minute)
         #expect(why.contains("no process Pulse can see"), "\(why)")
     }
@@ -645,7 +642,7 @@ struct SessionProjectionTests {
         #expect(row.landing.tty == "ttys009")
         #expect(row.landing.term == "WarpTerminal")
         #expect(row.landingPlan.steps.first == LandingStep.tmuxPane(pane: "%3", socket: "", hostBundleIDs: ["dev.warp.Warp-Stable", "dev.warp.Warp"]))
-        #expect(row.landsExactly)
+        #expect(row.landingPlan.precision == .exact)
     }
 
     @Test func aStallNeedsAnAgentThatReportsItsWork() throws {
@@ -684,8 +681,9 @@ struct SessionProjectionTests {
     }
 }
 
-/// The thin end: rows in, the tray's snapshot out.
-final class SnapshotBuilderTests: XCTestCase {
+/// Rows in, the tray out: the order, the window, the lamp, the title and
+/// the Waiting edges.
+final class TrayAssembleTests: XCTestCase {
     private let now: Int64 = 1_700_000_000_000
 
     private func row(_ key: String, _ agent: AgentID = .claude, state: RowState = .running, task: String = "") -> AgentRow {
@@ -704,13 +702,15 @@ final class SnapshotBuilderTests: XCTestCase {
     private func build(
         _ rows: [AgentRow],
         staleHidden: [AgentID: Int] = [:],
-        previous: SnapshotBuilder.Previous = .init(),
+        previousWaits: [String: Int64] = [:],
         showAll: Bool = false,
-        maxRows: Int = SnapshotBuilder.maxVisibleRows
-    ) -> SnapshotBuilder.Result {
-        SnapshotBuilder.build(
-            rows: rows, staleHidden: staleHidden, previous: previous,
-            context: SnapshotBuilder.Context(nowMs: now, lang: .en, maxVisibleRows: maxRows, showAllAgents: showAll)
+        maxRows: Int = TrayState.maxVisibleRows
+    ) -> TrayState {
+        TrayState.assemble(
+            rows: rows, staleHidden: staleHidden,
+            context: TrayState.Context(
+                nowMs: now, lang: .en, maxVisibleRows: maxRows, showAllAgents: showAll, previousWaits: previousWaits
+            )
         )
     }
 
@@ -775,24 +775,24 @@ final class SnapshotBuilderTests: XCTestCase {
     }
 
     func testFirstSightOfAWaitIsReportedAsNew() {
-        XCTAssertEqual(build([blocked("a")]).newlyWaiting.map(\.rowKey), ["a"])
+        XCTAssertEqual(build([blocked("a")]).newlyBlocked.map(\.rowKey), ["a"])
     }
 
     func testAWaitAlreadyKnownIsNotReportedAgain() {
         let wait = blocked("a")
-        let previous = SnapshotBuilder.Previous(rows: [wait], waitingKeys: ["a"], waitingSince: ["a": wait.wait?.sinceMs ?? 0])
-        XCTAssertTrue(build([wait], previous: previous).newlyWaiting.isEmpty)
+        XCTAssertTrue(build([wait], previousWaits: ["a": wait.wait?.sinceMs ?? 0]).newlyBlocked.isEmpty)
     }
 
     func testASecondAskOnAWaitingRowIsANewEdge() {
-        let first = blocked("a", sinceAgoMs: 120_000)
-        let previous = SnapshotBuilder.Previous(rows: [first], waitingKeys: ["a"], waitingSince: ["a": now - 120_000])
-        XCTAssertEqual(build([blocked("a", sinceAgoMs: 30_000)], previous: previous).newlyWaiting.map(\.rowKey), ["a"])
+        let second = build([blocked("a", sinceAgoMs: 30_000)], previousWaits: ["a": now - 120_000])
+        XCTAssertEqual(second.newlyBlocked.map(\.rowKey), ["a"])
     }
 
-    func testResolvedWaitsAreReported() {
-        let previous = SnapshotBuilder.Previous(rows: [blocked("a")], waitingKeys: ["a"])
-        XCTAssertEqual(build([row("a")], previous: previous).resolvedWaits.map(\.rowKey), ["a"])
+    /// The next projection's `previousWaits`: when each open wait was raised.
+    func testTheOpenWaitsAreHandedOn() {
+        let r = build([blocked("a", sinceAgoMs: 60_000), row("b")])
+        XCTAssertEqual(r.waitingSince, ["a": now - 60_000])
+        XCTAssertTrue(build([row("a")], previousWaits: ["a": now - 60_000]).waitingSince.isEmpty, "a resolved wait is gone")
     }
 
     /// 21.0/24.0: "N older not shown" counts only sessions that went quiet
@@ -803,18 +803,17 @@ final class SnapshotBuilderTests: XCTestCase {
         book.apply(AttentionRecord(agent: "claude", kind: "end", ms: now - 2 * 60 * minute, session: "x"), nowMs: now)
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: now - 3 * 60 * minute, session: "y"), nowMs: now)
         book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now - 30 * 60 * minute, session: "z"), nowMs: now)
-        let output = SessionProjection.rows(
-            book: book, processes: [], transcripts: [:],
-            context: SessionProjection.Context(nowMs: now)
+        let r = TrayState.project(
+            book: book, processes: [], summaries: [:],
+            context: TrayState.Context(nowMs: now, lang: .en)
         )
-        let r = build(output.rows, staleHidden: output.staleHidden)
         XCTAssertEqual(r.snapshot.staleHidden, 1, "the end line made no session; y went quiet today; z yesterday")
         XCTAssertEqual(r.snapshot.staleHiddenAgents, [.claude])
     }
 
     func testTheGlanceTooltipIsInTheResolvedLanguage() {
-        let en = SnapshotBuilder.build(rows: [blocked("a")], previous: .init(), context: .init(nowMs: now, lang: .en)).snapshot.tooltip
-        let zh = SnapshotBuilder.build(rows: [blocked("a")], previous: .init(), context: .init(nowMs: now, lang: .zh)).snapshot.tooltip
+        let en = TrayState.assemble(rows: [blocked("a")], context: .init(nowMs: now, lang: .en)).snapshot.tooltip
+        let zh = TrayState.assemble(rows: [blocked("a")], context: .init(nowMs: now, lang: .zh)).snapshot.tooltip
         XCTAssertNotEqual(en, zh)
     }
 }
@@ -826,9 +825,6 @@ struct RowIdentityTests {
         #expect(RowIdentity.session(agent: .claude, session: "abc") == "claude|abc")
         #expect(RowIdentity.process(agent: .codex, pid: 7) == "codex|pid:7")
         #expect(RowIdentity.session(agent: .claude, session: "", cwd: "/w").hasPrefix("claude|hook:"))
-        #expect(RowIdentity.isProcessKey("codex|pid:7"))
-        #expect(!RowIdentity.isProcessKey("codex|abc"))
-        #expect(RowIdentity.isFolderKey(RowIdentity.session(agent: .gemini, session: "", cwd: "/w")))
     }
 
     @Test func theHashIsStableAcrossLaunches() {
@@ -854,11 +850,13 @@ struct RowIdentityTests {
     @Test func whenTheSessionSpeaksTheProcessRowSimplyGoes() {
         let t0: Int64 = 1_800_000_000_000
         let hit = AgentProcesses.Hit(agent: .claude, pid: 4242, cwd: "/w/app")
-        let context = SessionProjection.Context(nowMs: t0)
+        let context = TrayState.Context(nowMs: t0)
         var book = SessionBook()
-        #expect(SessionProjection.rows(book: book, processes: [hit], transcripts: [:], context: context).rows.map(\.rowKey) == ["claude|pid:4242"])
+        let before = TrayState.project(book: book, processes: [hit], summaries: [:], context: context).rows.map(\.rowKey)
+        #expect(before == ["claude|pid:4242"])
         book.apply(AttentionRecord(agent: "claude", kind: "working", ms: t0, session: "abc", pid: 4242), nowMs: t0)
-        #expect(SessionProjection.rows(book: book, processes: [hit], transcripts: [:], context: context).rows.map(\.rowKey) == ["claude|abc"])
+        let after = TrayState.project(book: book, processes: [hit], summaries: [:], context: context).rows.map(\.rowKey)
+        #expect(after == ["claude|abc"])
     }
 }
 
@@ -1121,12 +1119,10 @@ final class StallThresholdTests: XCTestCase {
 final class ChromeVocabularyTests: XCTestCase {
     // MARK: - One chrome vocabulary, not three
 
-    /// 0.98 collapsed the collector's two copies. The third lived in
-    /// `usefulTask`, was case-sensitive where the collector lowercases, and had
-    /// never learned `Cascade session`.
+    /// `usefulTask` once had its own case-sensitive copy of the list.
     @MainActor
     func testChromeTitlesAreRejectedWhateverTheirCase() {
-        for title in ["Cascade session", "CASCADE SESSION", "cascade session",
+        for title in ["Copilot session", "COPILOT SESSION", "copilot session",
                       "New Chat", "new chat", "Running", "running", "  Untitled  "] {
             var row = AgentRow(rowKey: "k", agent: .copilot)
             row.task = title
@@ -1138,7 +1134,7 @@ final class ChromeVocabularyTests: XCTestCase {
     /// and none reaches a row as a goal.
     @MainActor
     func testCollectorAndRowShareOneVocabulary() {
-        for title in AgentRow.chromeTitles {
+        for title in TitleHeuristics.chromeTitles {
             XCTAssertTrue(
                 AgentRow.isChromeTitle(title.uppercased()),
                 "\(title) must be chrome in either case"

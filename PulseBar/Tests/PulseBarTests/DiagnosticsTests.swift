@@ -6,192 +6,128 @@ import XCTest
 @testable import PulseCore
 @testable import PulseHarvest
 
-// Diagnostics: the self-check, Health, reports, version and update check.
+// Diagnostics: Settings → Hooks (one line per agent, "Copy report"), the
+// tray's one notice, the version and the update check.
 
-/// 19.0 · the self-check's judgement. It may only say what the facts show:
-/// installed is not proven, silence is not success, and nothing it copies
-/// identifies a person, a project or a session.
-@Suite("Self-check")
-struct DoctorTests {
+/// The report "Copy report" puts on the clipboard: plain text, the facts a
+/// person would be asked for, and nothing that names them, a project or a
+/// session.
+@Suite("Report")
+struct ReportTests {
     let now: Int64 = 1_800_000_000_000
 
-    func healthy() -> DoctorModel.Facts {
-        var f = DoctorModel.Facts()
-        f.channel = "preview"
-        f.macOS = "26.0.0"
-        f.nowMs = now
-        for agent in AgentID.allCases {
-            f.hooks[agent.rawValue] = .init(present: true, events: Set(agent.spec.hooks.events.map { $0.name }))
-            f.lastFire[agent.rawValue] = .init(kind: "turn", tsMs: now - 5 * 60_000)
-        }
-        return f
-    }
-
-    func verdict(_ facts: DoctorModel.Facts, _ id: String) -> DoctorModel.Verdict? {
-        DoctorModel.evaluate(facts, lang: .en).checks.first { $0.id == id }?.verdict
-    }
-
-    @Test func aHealthyMacProvesEveryContract() {
-        let report = DoctorModel.evaluate(healthy(), lang: .en)
-        for check in report.checks where check.id != "codex-hooks" {
-            #expect(check.verdict == .works, "\(check.id): \(check.detail)")
-        }
-        // The file cannot say Codex trusts it; the fired event is the proof.
-        #expect(verdict(healthy(), "codex-hooks") == .unproven)
-        #expect(verdict(healthy(), "codex-fired") == .works)
-        // 24.0: one hook check and one fired check per agent.
-        for agent in AgentID.allCases {
-            #expect(verdict(healthy(), "\(agent.rawValue)-hooks") != nil, "\(agent.rawValue)")
-            #expect(verdict(healthy(), "\(agent.rawValue)-fired") == .works, "\(agent.rawValue)")
-        }
-    }
-
-    @Test func anAgentThatIsNotInstalledIsNotAFailure() {
-        var f = healthy()
-        f.hooks["claude"] = .init()
-        f.hooks["codex"] = .init()
-        f.hooks["pi"] = .init()
-        #expect(verdict(f, "claude-hooks") == .absent)
-        #expect(verdict(f, "codex-hooks") == .absent)
-        #expect(verdict(f, "pi-hooks") == .absent)
-        #expect(verdict(f, "claude-fired") == nil)
-    }
-
-    @Test func aMissingEventIsNamed() throws {
-        var f = healthy()
-        f.hooks["claude"]?.events.remove("StopFailure")
-        let check = try #require(DoctorModel.evaluate(f, lang: .en).checks.first { $0.id == "claude-hooks" })
-        #expect(check.verdict == .attention)
-        #expect(check.detail.contains("StopFailure"))
-        #expect(!check.next.isEmpty)
-    }
-
-    @Test func aPresentVendorWithoutPulseAsksForTheInstall() {
-        var f = healthy()
-        f.hooks["gemini"] = .init(present: true)
-        #expect(verdict(f, "gemini-hooks") == .attention)
-    }
-
-    @Test func aForbiddenPulseEntryIsFlagged() {
-        var f = healthy()
-        f.hooks["codex"]?.forbidden = ["PermissionRequest"]
-        f.hooks["claude"]?.forbidden = ["PreToolUse"]
-        #expect(verdict(f, "codex-hooks") == .attention)
-        #expect(verdict(f, "claude-hooks") == .attention)
-        #expect(DoctorModel.forbiddenEvents(.codex).contains("PermissionRequest"))
-        #expect(!DoctorModel.forbiddenEvents(.claude).contains("PermissionRequest"), "Claude's runs async")
-    }
-
-    @Test func anAgentThatNeverReportsAWaitSaysSo() throws {
-        let report = DoctorModel.evaluate(healthy(), lang: .en)
-        let cursor = try #require(report.checks.first { $0.id == "cursor-hooks" })
-        #expect(cursor.detail.contains(L10n.t(.doctorNoWaitNote, .en)))
-        let gemini = try #require(report.checks.first { $0.id == "gemini-hooks" })
-        #expect(!gemini.detail.contains(L10n.t(.doctorNoWaitNote, .en)))
-    }
-
-    @Test func silenceIsNotSuccess() {
-        var f = healthy()
-        f.lastFire = [:]
-        #expect(verdict(f, "claude-fired") == .unproven)
-        #expect(verdict(f, "codex-fired") == .unproven)
-        f.lastFire = ["claude": .init(kind: "turn", tsMs: now - DoctorModel.staleFireMs - 1)]
-        #expect(verdict(f, "claude-fired") == .unproven, "a hook that fired last month proves little about today")
-    }
-
-    /// 24.0: the self-check checks the hooks and nothing else — no vendor
-    /// CLI is run, no session store is walked.
-    @Test func theSelfCheckIsTheHooks() {
-        let ids = DoctorModel.evaluate(healthy(), lang: .en).checks.map(\.id)
-        #expect(ids.count == AgentID.allCases.count * 2)
-        #expect(ids.allSatisfy { $0.hasSuffix("-hooks") || $0.hasSuffix("-fired") })
-    }
-
-    @Test(arguments: [ResolvedLanguage.en, .zh])
-    func theCopiedReportCarriesNoHomePath(lang: ResolvedLanguage) {
-        var report = DoctorModel.evaluate(healthy(), lang: lang)
-        report.checks[0].detail += " /Users/alice/code/secret-project"
-        let text = DoctorModel.text(report)
-        #expect(!text.contains("alice"))
-        #expect(!text.contains("/Users/"))
-        #expect(text.hasPrefix("Pulse "))
-    }
-}
-
-/// 24.0 · Diagnostics per agent: its hook, whether it fired, and what is
-/// on the list — the only facts left once the collector went.
-final class SupportHealthTests: XCTestCase {
-    private func health(
-        agent: AgentID = .gemini,
-        hook: Bool = true,
-        present: Bool = true,
-        lastEventMs: Int64 = 1_800_000_000_000,
-        sessions: Int = 1,
-        processOnly: Int = 0
-    ) -> AgentSupportHealth {
-        AgentSupportHealth(
-            agent: agent, hookInstalled: hook, vendorPresent: present,
-            lastEventMs: lastEventMs, sessionCount: sessions, processOnlyCount: processOnly
+    func input() -> SettingsModel.ReportInput {
+        SettingsModel.ReportInput(
+            version: "Pulse 25.0.0 · preview",
+            macOS: "26.0.0",
+            installed: [.claude, .gemini],
+            present: [.claude, .codex, .gemini],
+            failed: [.copilot: .unwritable],
+            lastEventMs: [.claude: now - 42_000],
+            nowMs: now,
+            notifyAuthorized: false,
+            notifyOnWaiting: true,
+            terminalAutomation: true,
+            launchAtLogin: true,
+            loginItemApplied: false
         )
     }
 
-    func testAHookedAgentWithSessionsIsAvailable() {
-        XCTAssertEqual(health().disposition, .available)
-        XCTAssertNil(DiagnosticsModel.fix(for: health()))
+    @Test func theReportSaysEachAgentsHookAndItsLastEvent() {
+        let text = SettingsModel.report(input())
+        #expect(text.hasPrefix("Pulse report"))
+        #expect(text.contains("Pulse 25.0.0 · preview"))
+        #expect(text.contains("  claude: installed, last event 42s ago"), "\(text)")
+        #expect(text.contains("  gemini: installed, no event yet"), "\(text)")
+        #expect(text.contains("  codex: not installed"), "\(text)")
+        #expect(text.contains("  copilot: install failed (unwritable)"), "\(text)")
+        #expect(text.contains("  pi: not on this Mac"), "\(text)")
+        for agent in AgentID.allCases {
+            #expect(text.contains("  \(agent.rawValue): "), "\(agent.rawValue)")
+        }
     }
 
-    func testMissingHooksIsActionable() {
-        let item = health(hook: false)
-        XCTAssertEqual(item.disposition, .needsAction)
-        XCTAssertEqual(DiagnosticsModel.fix(for: item), .installHooks)
-        XCTAssertEqual(health(hook: false, present: false, sessions: 0, processOnly: 1).disposition, .needsAction,
-                       "a running agent without its hook needs it even before its directory exists")
-        XCTAssertEqual(health(hook: false, present: false, sessions: 0).disposition, .notInstalled)
+    @Test func theReportSaysNotificationsAutomationAndTheLoginItem() {
+        let text = SettingsModel.report(input())
+        #expect(text.contains("notifications: denied, needs-you banners on"), "\(text)")
+        #expect(text.contains("terminal automation: allowed"), "\(text)")
+        #expect(text.contains("launch at login: on, applied: no"),
+                "a toggle whose result is never checked is how this project keeps shipping bugs")
+        var unasked = input()
+        unasked.notifyAuthorized = nil
+        unasked.terminalAutomation = false
+        unasked.loginItemApplied = nil
+        let other = SettingsModel.report(unasked)
+        #expect(other.contains("notifications: not asked"))
+        #expect(other.contains("terminal automation: off"))
+        #expect(other.contains("applied: untouched"))
     }
 
-    func testInstalledIsNotProven() {
-        XCTAssertEqual(health(lastEventMs: 0, sessions: 0).disposition, .unproven)
-        XCTAssertEqual(health(sessions: 0).disposition, .noRecentSession)
+    /// The input has no field for a path, a prompt, a session or a
+    /// project; the text says only states, counts and ages.
+    @Test func theReportCarriesNoPathSessionOrProject() {
+        let text = SettingsModel.report(input())
+        #expect(!text.contains("/"), "not even a folder: \(text)")
     }
 
-    /// 24.0: no setting makes Codex or Cursor report a wait, so their
-    /// line offers no "connect" action — it says what they do not report.
+    /// The store's report reads the engine's last events, never the file.
     @MainActor
-    func testAWaitingNoneAgentIsOfferedNoImpossibleFix() {
-        for agent in AgentID.waitingNoneAgents {
-            let item = health(agent: agent, sessions: 1, processOnly: 1)
-            XCTAssertNil(DiagnosticsModel.fix(for: item), agent.rawValue)
-        }
-        XCTAssertEqual(L10n.t(.supportWaitingNoneDetail, .en), "Doesn't report when it waits — running and your turn only")
-        XCTAssertTrue(L10n.t(.supportWaitingNoneDetail, .zh).hasPrefix("不会告诉我们它在等你"))
+    @Test func theStoresReportReadsTheEngine() {
+        let store = StatusStore()
+        let fired: Int64 = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
+        let line = AttentionRecord(agent: "claude", kind: "turn", ms: fired, session: "s1").line
+        store.engine.landAttention(AttentionProtocol.header + line + "\n")
+        #expect(store.engine.latestHookEventMs[.claude] == fired)
+        let report = store.reportText
+        #expect(report.contains("  claude: "))
+        #expect(report.contains("launch at login: "))
+    }
+}
+
+/// The hooks section is where an agent's missing hook is fixed, one deep
+/// link away from the tray.
+@Suite("Hooks section")
+struct HooksSectionTests {
+    /// No setting makes Codex or Cursor report a wait, so their line offers
+    /// no "connect" action — it says what they do not report.
+    @Test func aWaitingNoneAgentSaysWhatItDoesNotReport() {
+        #expect(L10n.t(.settingsHookNoWait, .en) == "Doesn't report when it waits — running and your turn only")
+        #expect(L10n.t(.settingsHookNoWait, .zh).hasPrefix("不会告诉我们它在等你"))
         for lang in [ResolvedLanguage.en, .zh] {
-            let copy = L10n.t(.supportWaitingNoneDetail, lang) + L10n.t(.settingsHookNoWait, lang)
-            XCTAssertFalse(copy.localizedCaseInsensitiveContains("bridge"))
-            XCTAssertFalse(copy.contains("桥"))
+            let copy = L10n.t(.settingsHookNoWait, lang)
+            #expect(!copy.localizedCaseInsensitiveContains("bridge"))
+            #expect(!copy.contains("桥"))
+        }
+        let lines = SettingsModel.hookAgents(
+            installed: Set(AgentID.allCases), present: Set(AgentID.allCases),
+            lastEventMs: [:], nowMs: 0, lang: .en
+        )
+        for line in lines {
+            #expect(line.needsFix == false, "\(line.agent.rawValue)")
+            #expect((line.note != nil) == AgentID.waitingNoneAgents.contains(line.agent), "\(line.agent.rawValue)")
         }
     }
 
-    func testWaitingNoneAgentsCoverEveryWaitingNoneContract() {
+    @Test func waitingNoneAgentsCoverEveryWaitingNoneContract() {
         let none = Set(AgentID.allCases.filter { $0.waitingSource == .none })
         let listed = Set(AgentID.waitingNoneAgents)
-        XCTAssertEqual(listed, none)
-        XCTAssertFalse(listed.contains(.claude))
-        XCTAssertEqual(listed, [.codex, .cursor])
+        #expect(listed == none)
+        #expect(!listed.contains(.claude))
+        #expect(listed == [.codex, .cursor])
     }
 
     @MainActor
-    func testTheDetailsSayTheHookTheSessionsAndTheProcesses() {
+    @Test func waitingSignalsAreOneDeepLinkAway() {
         let store = StatusStore()
         store.settings.language = .en
-        let details = store.supportDetails(health(agent: .claude, sessions: 2, processOnly: 1))
-        XCTAssertTrue(details.contains(store.tr(.settingsHookInstalled)), "\(details)")
-        XCTAssertTrue(details.contains(String(format: store.tr(.supportSessions), 2)), "\(details)")
-        XCTAssertTrue(details.contains(String(format: store.tr(.supportProcessOnly), 1)), "\(details)")
-        XCTAssertTrue(details.contains(store.tr(.supportWaitingHooks)))
-        XCTAssertTrue(store.supportDetails(health(agent: .codex)).contains(store.tr(.supportWaitingNoneDetail)))
-        XCTAssertTrue(store.supportDetails(health(agent: .cursor)).contains(store.tr(.supportSharedCursor)))
+        store.openSettings(focus: .waitingSignals)
+        #expect(store.settingsFocus.target == .waitingSignals)
+        #expect(store.settingsModel.focus == .hooks)
     }
+}
 
+/// The tray's one notice, and the fixtures the tray captures are made of.
+final class TrayNoticeTests: XCTestCase {
     @MainActor
     func testNotificationSetupOutranksTheHooksOffer() {
         let store = StatusStore()
@@ -216,8 +152,8 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(store.trayNotice?.action, .installHooks)
     }
 
-    /// 23.0: an agent with no Waiting path is not a tray notice (24.0: and
-    /// nothing offers it a connection it cannot have).
+    /// An agent with no Waiting path is not a tray notice, and nothing
+    /// offers it a connection it cannot have.
     @MainActor
     func testAnOpaqueLiveAgentIsNotATrayNotice() {
         let store = StatusStore()
@@ -227,20 +163,6 @@ final class SupportHealthTests: XCTestCase {
 
         XCTAssertFalse(store.needsHooksNudge)
         XCTAssertNil(store.trayNotice)
-    }
-
-    /// 23.0 bug: every Diagnostics redraw read (and locked) the attention
-    /// file for "has this hook fired". The engine reads it once and keeps
-    /// the answer.
-    @MainActor
-    func testHookFireTimesComeFromTheEngineNotTheFile() {
-        let store = StatusStore()
-        let fired: Int64 = Int64(Date().timeIntervalSince1970 * 1000) - 60_000
-        let line = AttentionRecord(agent: "claude", kind: "turn", ms: fired, session: "s1").line
-        store.engine.landAttention(AttentionProtocol.header + line + "\n")
-        XCTAssertEqual(store.engine.latestHookEventMs[.claude], fired)
-        let claude = store.supportHealth.first { $0.agent == .claude }
-        XCTAssertEqual(claude?.lastEventMs, fired)
     }
 
     @MainActor
@@ -261,32 +183,6 @@ final class SupportHealthTests: XCTestCase {
         XCTAssertEqual(store.snapshot.glance, .stalled)
         XCTAssertEqual(store.snapshot.rows.count, 1)
         XCTAssertTrue(store.snapshot.rows[0].isStalled)
-    }
-
-    @MainActor
-    func testSafeSupportReportCarriesCountsAndStatesOnly() {
-        let store = StatusStore()
-        let report = store.safeSupportReport()
-        XCTAssertTrue(report.contains("channel:"))
-        XCTAssertTrue(report.contains("notarized:"))
-        XCTAssertTrue(report.contains("gatekeeperReady:"))
-        XCTAssertTrue(report.contains("waitingNone: codex,cursor"))
-        XCTAssertTrue(report.contains("notifications: authorization="))
-        XCTAssertTrue(report.contains("queued="))
-        XCTAssertTrue(report.contains("sessionLog: sessions="))
-        XCTAssertTrue(report.contains("processScan:"))
-        XCTAssertTrue(report.contains("sessions: book="))
-        for agent in AgentID.allCases {
-            XCTAssertTrue(report.contains("\(agent.rawValue): "), agent.rawValue)
-        }
-    }
-
-    @MainActor
-    func testWaitingSignalsAreOneDeepLinkAway() {
-        let store = StatusStore()
-        store.settings.language = .en
-        store.openSettings(focus: .waitingSignals)
-        XCTAssertEqual(store.settingsFocus.target, .waitingSignals)
     }
 }
 
@@ -444,8 +340,7 @@ final class PulseVersionTests: XCTestCase {
     }
 }
 
-/// 22.x · Lamp fixes — each pins one defect with the pure function that
-/// decides it.
+/// A background check never replaces a known answer with a failure.
 @Suite("Update status")
 struct UpdateStatusTests {
 
@@ -476,38 +371,9 @@ struct UpdateStatusTests {
         let next = UpdateCheck.resolve(previous: .current, result: .available(Self.release), manual: false)
         #expect(next == .available(Self.release))
     }
-
-    // MARK: - The health line reads the last scan, not the last publish
-
-    @Test func lastReadPrefersTheNewerScan() {
-        let published = Date(timeIntervalSince1970: 1_000)
-        let scanned = Date(timeIntervalSince1970: 1_050)
-        #expect(StatusStore.lastReadDate(lastScanAt: scanned, snapshotUpdatedAt: published) == scanned)
-        #expect(StatusStore.lastReadDate(lastScanAt: nil, snapshotUpdatedAt: published) == published)
-        #expect(StatusStore.lastReadDate(lastScanAt: nil, snapshotUpdatedAt: .distantPast) == nil)
-        #expect(StatusStore.lastReadDate(lastScanAt: scanned, snapshotUpdatedAt: .distantPast) == scanned)
-    }
 }
 
-/// 23.0 · the tray as values: the keyboard reducer, the frozen order, the
-/// header and its freshness, the one notice, the row's second line, where a
-/// banner click goes, and the Settings page's sections.
-@Suite("Diagnostics model")
-struct DiagnosticsModelTests {
-    // MARK: - Diagnostics
-
-    @Test func diagnosticsPutsProblemsFirstAndSortsAgentsByNeed() {
-        let model = SurfaceFixtures.diagnostics(lang: .en)
-        let first = model.problems.first?.id
-        #expect(first == "hooks", "standing problems come before the self-check's findings")
-        let order = model.agents.map { $0.agent }
-        #expect(order.first == .codex, "what needs action sorts first")
-        #expect(order.last == .pi, "not installed sorts last")
-    }
-}
-
-/// Clarity fixes — each test pins one defect found by reading the code: the
-/// value the user would have seen, before and after.
+/// When the update check runs, and what its failures say.
 @MainActor
 @Suite("Update check", .serialized)
 struct UpdateCheckTests {
@@ -530,21 +396,5 @@ struct UpdateCheckTests {
         #expect(UpdateCheck.interpret(data: Data(), response: busy, error: nil) == .failed(.http(503)))
         #expect(UpdateCheck.interpret(data: Data(#"{"tag_name":""}"#.utf8), response: nil, error: nil) == .failed(.noTag))
         #expect(UpdateCheck.Failure.http(503).detail == "HTTP 503")
-    }
-}
-
-/// The support report says whether a setting took effect.
-final class SupportReportTests: XCTestCase {
-    // MARK: - The login item says whether it worked
-
-    @MainActor
-    func testTheSupportReportRecordsWhetherLaunchAtLoginWasApplied() {
-        let store = StatusStore()
-        let report = store.safeSupportReport()
-        XCTAssertTrue(
-            report.contains("launchAtLogin:"),
-            "a toggle whose result is never checked is how this project keeps shipping bugs"
-        )
-        XCTAssertTrue(report.contains("applied="), report)
     }
 }

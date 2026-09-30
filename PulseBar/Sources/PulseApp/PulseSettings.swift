@@ -20,6 +20,8 @@ struct PulseSettings: Equatable, Codable, Sendable {
     var mutedAgents: Set<AgentID> = []
     /// Terminal/iTerm tab Focus uses Apple Events. Default off — enabling may
     /// prompt Automation TCC on the first Focus click, never during a scan.
+    /// Settings has no control for it; it is set in `settings.json`, and the
+    /// report says which way it is.
     var allowTerminalAutomation = false
     var updateCheckEnabled = true
     /// Set when the user uninstalls the hooks: the tray stops suggesting

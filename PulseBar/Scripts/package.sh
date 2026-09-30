@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Build + package PulseBar (Swift/AppKit status-panel shell) as Pulse.app
+# Build + package the PulseBar executable (the app, and only the app) as Pulse.app.
+# `PulseQA` — the QA driver with its fixtures and captures — is never built
+# here and never shipped; `scripts/package_check.py` checks the binary for it.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT/PulseBar"
 
-VERSION="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' Sources/PulseBar/Models.swift | head -1)"
+VERSION="$(sed -n 's/.*static let semver = "\([^"]*\)".*/\1/p' Sources/PulseApp/Models.swift | head -1)"
 VERSION="${VERSION:-0.0.0}"
 
 if [[ "$(uname -m)" != "arm64" ]]; then
@@ -41,24 +43,27 @@ else
 fi
 
 echo "building PulseBar ${VERSION}..."
-swift build -c release
+# The product, not the package: a plain `swift build -c release` would also
+# build `PulseQA`, which reaches the app's internals through `@testable
+# import` and only builds in the debug configuration.
+swift build -c release --product PulseBar
 
-BIN="$(swift build -c release --show-bin-path)/PulseBar"
+BIN="$(swift build -c release --product PulseBar --show-bin-path)/PulseBar"
 APP="$ROOT/zig-out/package/Pulse.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN" "$APP/Contents/MacOS/PulseBar"
 # Brand marks (template PNGs + SVG sources)
-if [[ -d "$ROOT/PulseBar/Sources/PulseBar/Resources/AgentIcons" ]]; then
+if [[ -d "$ROOT/PulseBar/Sources/PulseApp/Resources/AgentIcons" ]]; then
   rm -rf "$APP/Contents/Resources/AgentIcons"
-  cp -R "$ROOT/PulseBar/Sources/PulseBar/Resources/AgentIcons" "$APP/Contents/Resources/AgentIcons"
+  cp -R "$ROOT/PulseBar/Sources/PulseApp/Resources/AgentIcons" "$APP/Contents/Resources/AgentIcons"
 fi
-if [[ -d "$ROOT/PulseBar/Sources/PulseBar/Resources/Brand" ]]; then
+if [[ -d "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand" ]]; then
   rm -rf "$APP/Contents/Resources/Brand"
-  cp -R "$ROOT/PulseBar/Sources/PulseBar/Resources/Brand" "$APP/Contents/Resources/Brand"
-  if [[ -f "$ROOT/PulseBar/Sources/PulseBar/Resources/Brand/AppIcon.icns" ]]; then
-    cp "$ROOT/PulseBar/Sources/PulseBar/Resources/Brand/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+  cp -R "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand" "$APP/Contents/Resources/Brand"
+  if [[ -f "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand/AppIcon.icns" ]]; then
+    cp "$ROOT/PulseBar/Sources/PulseApp/Resources/Brand/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
   fi
 fi
 # SwiftPM resource bundle. This is not optional: the app resolves its icons
@@ -70,20 +75,20 @@ fi
 # Contents/ directory, stops looking at the root, and — with no
 # Contents/Info.plist to find — refuses to open the bundle at all. Every release
 # up to 0.23.0 did exactly that, and the app died on launch.
-RES_BUNDLE="$(dirname "$BIN")/PulseBar_PulseBar.bundle"
+RES_BUNDLE="$(dirname "$BIN")/PulseBar_PulseApp.bundle"
 if [[ ! -d "$RES_BUNDLE" ]]; then
   echo "error: SwiftPM resource bundle missing at $RES_BUNDLE" >&2
   echo "       the packaged app cannot resolve its resources without it" >&2
   exit 1
 fi
-rm -rf "$APP/Contents/Resources/PulseBar_PulseBar.bundle"
+rm -rf "$APP/Contents/Resources/PulseBar_PulseApp.bundle"
 cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
 
 # A bundle directory without an Info.plist is not a bundle — Bundle(url:)
 # returns nil and the compiler-generated Bundle.module accessor calls
 # fatalError(). SwiftPM usually writes one; make sure, rather than find out
 # from a crash report.
-BUNDLE_PLIST="$APP/Contents/Resources/PulseBar_PulseBar.bundle/Info.plist"
+BUNDLE_PLIST="$APP/Contents/Resources/PulseBar_PulseApp.bundle/Info.plist"
 if [[ ! -f "$BUNDLE_PLIST" ]]; then
   echo "note: SwiftPM emitted no Info.plist for the resource bundle — writing one"
   cat > "$BUNDLE_PLIST" <<PLIST
@@ -92,7 +97,7 @@ if [[ ! -f "$BUNDLE_PLIST" ]]; then
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key><string>com.pulse.app.resources</string>
-  <key>CFBundleName</key><string>PulseBar_PulseBar</string>
+  <key>CFBundleName</key><string>PulseBar_PulseApp</string>
   <key>CFBundlePackageType</key><string>BNDL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
@@ -134,8 +139,8 @@ if [[ -n "$CHECK_PYTHON" ]]; then
 else
   test -x "$APP/Contents/MacOS/PulseBar"
   test -f "$APP/Contents/Info.plist"
-  test -d "$APP/Contents/Resources/PulseBar_PulseBar.bundle"
-  test -f "$APP/Contents/Resources/PulseBar_PulseBar.bundle/Info.plist"
+  test -d "$APP/Contents/Resources/PulseBar_PulseApp.bundle"
+  test -f "$APP/Contents/Resources/PulseBar_PulseApp.bundle/Info.plist"
   echo "package structure OK — Python package_check skipped"
 fi
 
