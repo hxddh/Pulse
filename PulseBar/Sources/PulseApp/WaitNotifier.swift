@@ -7,8 +7,10 @@ import AppKit
 /// The projection reports Waiting edges (`TrayState.newlyBlocked`);
 /// `WaitingDelivery` decides which rows get a banner; this class carries the
 /// plan out through `PulseNotify`, rate limits it, keeps an owed banner owed
-/// until it is accepted or its wait resolves (`WaitLedger`, in memory), and
-/// sends a banner click back to the row that raised it.
+/// until it is accepted or its wait resolves (`WaitLedger`, in memory),
+/// withdraws it when its wait is answered, dismissed or ends, and sends a
+/// banner click back to the row that raised it — or to the tray, when that
+/// wait is gone.
 @MainActor
 final class WaitNotifier {
     /// The model this notifier reads settings and rows from. Weak: the model
@@ -26,6 +28,13 @@ final class WaitNotifier {
     /// in-flight until its callback arrives so a fast follow-up scan cannot
     /// post a duplicate or mark a failed request as delivered.
     private(set) var inFlight: Set<String> = []
+    /// Is this blocked row's app in front now? nil: cannot tell (no pid, a
+    /// detached tmux chain). Asked only of a wait raised in front, once it
+    /// is `WaitingDelivery.deferAfterMs` old. Tests replace it.
+    var promptInFront: (AgentRow) -> Bool? = { row in
+        guard row.pid > 1 else { return nil }
+        return PromptVisibility.promptIsFrontmost(selfPID: Int32(row.pid))
+    }
 
     // MARK: - Lifecycle
 
@@ -56,11 +65,24 @@ final class WaitNotifier {
     /// launch (or this is the projection of that first read) — its waits
     /// were raised before Pulse was watching and get no banner.
     func scanLanded(_ state: TrayState, nowMs: Int64, baseline: Bool) {
-        ledger.reconcile(rows: state.rows, edges: Set(state.newlyBlocked.map(\.rowKey)))
+        withdraw(ledger.reconcile(
+            rows: state.rows, edges: Set(state.newlyBlocked.map(\.rowKey)), nowMs: nowMs, baseline: baseline
+        ))
         guard !baseline, let model else { return }
         let settings = model.settings
         guard settings.notifyOnWaiting else { return }
-        let edges = state.newlyBlocked.filter { !settings.mutedAgents.contains($0.agent) }
+        // A wait raised in front of the person, still open after the hold,
+        // whose app has left the front: its one banner is due. Not knowing
+        // is not "in front" — only a known front app holds it back.
+        let due = WaitingDelivery.deferred(
+            rows: state.rows, ledger: ledger, muted: settings.mutedAgents, nowMs: nowMs
+        ).filter { promptInFront($0) != true }
+        for row in due { ledger.markFrontDue(row.rowKey) }
+        // A wait raised in front of the person is not owed a banner until
+        // its hold is over (`due`).
+        let edges = state.newlyBlocked.filter {
+            !settings.mutedAgents.contains($0.agent) && $0.wait?.inFront != true
+        } + due
         // Owed banners are rebuilt from this projection's rows: a wait that
         // resolved has no open record, so it can neither linger in a queue
         // nor bring back a banner for a prompt that is gone.
@@ -78,9 +100,18 @@ final class WaitNotifier {
         }
     }
 
-    /// The person dismissed the row's wait: no banner for it.
+    /// The person dismissed the row's wait: no banner for it, and the one
+    /// it had goes.
     func dismissed(_ rowKey: String) {
-        ledger.dismiss(rowKey)
+        withdraw(ledger.dismiss(rowKey))
+    }
+
+    /// Take these banners out of Notification Center — delivered or still
+    /// pending.
+    private func withdraw(_ ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        PulseNotify.withdraw(ids: ids.sorted())
+        DebugLog.write("waiting banners withdrawn n=\(ids.count)")
     }
 
     // MARK: - Posting
@@ -98,7 +129,8 @@ final class WaitNotifier {
             inFlight: inFlight,
             canDeliverNow: ledger.canDeliver(nowMs: nowMs, minimumIntervalMs: Self.minimumIntervalMs),
             msSinceLastNotification: nowMs - ledger.lastNotificationMs,
-            minimumIntervalMs: Self.minimumIntervalMs
+            minimumIntervalMs: Self.minimumIntervalMs,
+            frontDue: ledger.frontDueKeys
         )
         let candidates: [AgentRow]
         let asSummary: Bool
@@ -120,19 +152,24 @@ final class WaitNotifier {
             let body = candidates.prefix(3).map(notificationBody).joined(separator: " · ")
                 + (candidates.count > 3 ? " …" : "")
             let first = candidates[0]
+            let keys = candidates.map(\.rowKey)
+            let id = WaitLedger.summaryID(rowKeys: keys)
             PulseNotify.postWaitingSummary(
+                id: id,
                 title: title,
                 body: body,
                 agent: first.agent.rawValue,
                 session: first.sessionID,
-                rowKeys: candidates.map(\.rowKey),
+                rowKeys: keys,
                 completion: { [weak self] success in
-                    self?.finishDelivery(keys: candidates.map(\.rowKey), success: success)
+                    self?.finishDelivery(keys: keys, bannerID: id, success: success)
                 }
             )
         } else {
             for waiting in candidates {
+                let id = WaitLedger.bannerID(rowKey: waiting.rowKey)
                 PulseNotify.postWaiting(
+                    id: id,
                     title: notificationTitle(waiting),
                     body: notificationBody(waiting),
                     agent: waiting.agent.rawValue,
@@ -141,7 +178,7 @@ final class WaitNotifier {
                     completion: { [weak self] success in
                         // Each request owns one wait; commit it on its own so
                         // one rejected request never hides the others.
-                        self?.finishDelivery(keys: [waiting.rowKey], success: success)
+                        self?.finishDelivery(keys: [waiting.rowKey], bannerID: id, success: success)
                     }
                 )
             }
@@ -150,19 +187,23 @@ final class WaitNotifier {
 
     /// Commit the banner only once Notification Center has said whether it
     /// accepted the request; a refused one stays owed and is retried.
-    private func finishDelivery(keys: [String], success: Bool) {
+    private func finishDelivery(keys: [String], bannerID: String, success: Bool) {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         for key in keys { inFlight.remove(key) }
         // A banner Notification Center refused is said in the tray, not
         // only in debug.log; the next accepted one clears it.
         model?.landWaitingBannerFailed(!success)
+        var stale: Set<String> = []
         for key in keys {
             if success {
-                ledger.markNotified(key, nowMs: nowMs)
+                stale.formUnion(ledger.markNotified(key, nowMs: nowMs, bannerID: bannerID))
             } else {
                 ledger.markQueued(key)
             }
         }
+        // Answered while the request was in flight: it goes as it came —
+        // unless another wait it names is still open (a summary).
+        withdraw(ledger.withdrawable(stale))
         if !success {
             DebugLog.write("waiting notification requeued keys=\(keys.joined(separator: ","))")
             scheduleDelivery(afterMs: Self.minimumIntervalMs)
@@ -267,19 +308,16 @@ final class WaitNotifier {
 
     // MARK: - Clicks
 
-    /// A banner (or its Focus button) was clicked: go to the row that raised
-    /// it. Prefer the concrete rowKey (a summary carries its first row's key
-    /// too); never open the tray without an identity when one was carried.
+    /// A banner (or its Go button) was clicked: go to the wait it names
+    /// that is still open (a summary names several). When every one was
+    /// answered, dismissed or ended meanwhile, the tray opens instead —
+    /// never a jump to a prompt that is gone.
     func handleBannerClick(agent: String, session: String, rowKey: String, summaryRowKeys: [String]) {
         guard let model else { return }
-        if !rowKey.isEmpty {
-            model.focusAgent(idRaw: agent, session: session, rowKey: rowKey)
-        } else if let first = summaryRowKeys.first {
-            model.focusAgent(idRaw: agent, session: session, rowKey: first)
-        } else if !agent.isEmpty {
-            model.focusAgent(idRaw: agent, session: session, rowKey: "")
+        if let key = ledger.openWait(rowKey: rowKey, summaryRowKeys: summaryRowKeys) {
+            model.focusAgent(idRaw: agent, session: key == rowKey ? session : "", rowKey: key)
         } else {
-            model.focusFirstWaiting()
+            model.requestTrayReveal()
         }
     }
 }

@@ -17,6 +17,8 @@ struct TrayRowModel: Equatable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
         case details, dismiss, focus, mute
+        /// The row notice's offer: let the next Go land on the exact tab.
+        case allowAutomation, declineAutomation
     }
 
     struct Button: Equatable, Identifiable {
@@ -62,8 +64,9 @@ struct TrayRowModel: Equatable {
     /// handle, else the detail page.
     var canFocus: Bool
     var menu: [Button]
-    /// What the last click did, when it did not do the thing.
-    var notice: String?
+    /// What the last click did, when it did not do the thing — and, once,
+    /// the offer that would let it next time.
+    var notice: RowNotice?
     var accessibilityLabel: String
     var accessibilityHint: String
 
@@ -72,7 +75,7 @@ struct TrayRowModel: Equatable {
         var row: AgentRow
         var lang: ResolvedLanguage
         var nowMs: Int64
-        var notice: String? = nil
+        var notice: RowNotice? = nil
         var muted: Bool = false
     }
 
@@ -144,5 +147,28 @@ struct TrayRowModel: Equatable {
             return SecondLine(kind: .warning, text: explain.why)
         }
         return nil
+    }
+}
+
+/// A row's brief notice: what the last click did when it did not do
+/// the thing, or the one-time offer to make the next Go exact. Pure.
+struct RowNotice: Equatable {
+    var text: String
+    /// Carries "Allow" and "Not now" (`TrayRowModel.Action.allowAutomation`
+    /// / `.declineAutomation`).
+    var offersAutomation = false
+
+    /// "Jump to the exact tab next time — Allow": said the first time a Go
+    /// lands on the app only because Terminal automation is off, when the
+    /// same plan with it on would have been exact (an iTerm session or a
+    /// Terminal / iTerm tab). Never again once the person answered it.
+    static func shouldOfferAutomation(
+        outcome: LandingOutcome, row: AgentRow, automationAllowed: Bool, offerAnswered: Bool
+    ) -> Bool {
+        outcome == .appOnly && !automationAllowed && !offerAnswered && row.exactWithAutomation
+    }
+
+    static func automationOffer(lang: ResolvedLanguage) -> RowNotice {
+        RowNotice(text: L10n.t(.automationOffer, lang), offersAutomation: true)
     }
 }

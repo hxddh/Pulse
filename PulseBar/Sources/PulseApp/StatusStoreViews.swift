@@ -40,16 +40,16 @@ extension StatusStore {
 
     // MARK: - The tray's one notice
 
-    /// A live agent whose hook is not wired — tray nudge only (24.0: any of
-    /// the seven, not just Claude and Codex).
-    var needsHooksNudge: Bool {
-        // The user took the hooks out on purpose; do not keep offering them.
-        if settings.hooksNudgeOff { return false }
-        if case .failed = hooksStatus { return false }
-        if hooksStatus.isWorking { return false }
-        return cachedAll.contains {
-            $0.liveProcess && !hooksStatus.isInstalled(for: $0.agent)
-        }
+    /// Agents on this Mac — or running — whose hook is not wired, in roster
+    /// order: the setup card's "Found …". Empty once the person removed the
+    /// hooks on purpose, while an install runs, or when the last one could
+    /// not write anything (Settings says why).
+    var setupAgents: [AgentID] {
+        if settings.hooksNudgeOff { return [] }
+        if case .failed = hooksStatus { return [] }
+        if hooksStatus.isWorking { return [] }
+        let here = presentAgents.union(cachedAll.filter(\.liveProcess).map(\.agent))
+        return AgentID.priority.filter { here.contains($0) && !hooksStatus.isInstalled(for: $0) }
     }
 
     /// Packaged bundle version disagrees with the compiled semver — usually a
@@ -63,22 +63,24 @@ extension StatusStore {
         return false
     }
 
-    /// 23.0: at most one notice, with one action (`TrayNoticeModel.pick`).
+    /// At most one notice, with one action (`TrayNoticeModel.pick`).
     var trayNotice: TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: lang,
             notifyOnWaiting: settings.notifyOnWaiting,
             notifyAuthorized: notifyAuthorized,
             bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
-            hooksMissing: needsHooksNudge
+            unconnected: setupAgents,
+            justConnected: setupConnected.map { connected in AgentID.priority.filter(connected.contains) }
         ))
     }
 
     func performTrayNotice(_ action: TrayNoticeModel.Action) {
         switch action {
+        case .connect: connectFromSetup()
+        case .dismissSetup: if setupConnected != nil { setupConnected = nil }
         case .openNotificationSettings: openSystemNotificationSettings()
         case .enableNotifications: requestNotificationAuthorization()
-        case .installHooks: installHooks()
         }
     }
 

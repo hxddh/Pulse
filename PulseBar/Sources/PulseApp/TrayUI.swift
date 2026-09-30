@@ -64,17 +64,29 @@ final class TrayUI {
 
     // MARK: - Lifecycle
 
-    /// A new glance: nothing carries over from the last one. The hotkey
-    /// selects the most urgent row; a click selects the oldest wait, if any.
-    func open(selectMostUrgent: Bool) {
+    /// A new glance: nothing carries over from the last one. One
+    /// gesture — a menu-bar click and the shortcut both open on the oldest
+    /// wait, else the first row (`initialSelection`).
+    func open() {
         frozen = store.snapshot.rows.map(\.rowKey)
         pinned = Set(frozen)
         pinnedShowAll = store.showAllAgents
         var next = TrayKeys.State()
-        let rows = displayRows
-        next.selected = selectMostUrgent ? rows.first?.rowKey : rows.first(where: \.isBlocked)?.rowKey
+        next.selected = Self.initialSelection(displayRows)
         if keys != next { keys = next }
         applyPendingReveal()
+    }
+
+    /// The row a fresh glance selects: the wait raised longest ago (an
+    /// unknown clock counts as newest), else the first row. Pure.
+    nonisolated static func initialSelection(_ rows: [AgentRow]) -> String? {
+        let waits = rows.filter(\.isBlocked)
+        let oldest = waits.min { a, b in
+            let sa = a.wait?.sinceMs ?? 0, sb = b.wait?.sinceMs ?? 0
+            if (sa > 0) != (sb > 0) { return sa > 0 }
+            return sa < sb
+        }
+        return (oldest ?? rows.first)?.rowKey
     }
 
     /// A reveal from a banner or a jump: select the row — and open its
@@ -152,6 +164,8 @@ final class TrayUI {
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
         case .mute: store.toggleMute(row.agent)
+        case .allowAutomation: store.answerAutomationOffer(row, allow: true)
+        case .declineAutomation: store.answerAutomationOffer(row, allow: false)
         }
     }
 

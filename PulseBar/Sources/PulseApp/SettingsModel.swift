@@ -117,7 +117,7 @@ struct SettingsModel: Equatable {
                     let seconds = Double(max(0, nowMs - ms)) / 1000
                     lastEvent = seconds < 5
                         ? t(.settingsHookLastEventNow)
-                        : String(format: t(.settingsHookLastEvent), DurationFormat.label(seconds: seconds, lang: lang))
+                        : String(format: t(.settingsHookLastEvent), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
                 } else {
                     lastEvent = t(.settingsHookNoEvent)
                 }
@@ -156,8 +156,9 @@ struct SettingsModel: Equatable {
 
     /// What "Copy report" puts on the clipboard: plain text, English, no
     /// path, prompt, session id or project — the version, each agent's hook
-    /// and when it last reported, whether macOS allows banners, and whether
-    /// Pulse may script a terminal.
+    /// and when it last reported, whether macOS allows banners, whether
+    /// Pulse may script a terminal (and whether the row's offer was
+    /// answered), and the global shortcut.
     struct ReportInput: Equatable {
         var version: String
         var macOS: String
@@ -170,6 +171,10 @@ struct SettingsModel: Equatable {
         var notifyAuthorized: Bool?
         var notifyOnWaiting: Bool
         var terminalAutomation: Bool
+        var automationOfferAnswered = false
+        var hotkey: HotkeyChoice = .off
+        /// The system took the shortcut (false: another app owns it).
+        var hotkeyRegistered = true
         var launchAtLogin: Bool
         /// Whether launchd took the toggle; nil when it was not applied this
         /// run.
@@ -183,12 +188,16 @@ struct SettingsModel: Equatable {
         case .some(false): authorization = "denied"
         case .none: authorization = "not asked"
         }
-        var lines = [
+        let shortcut = input.hotkey == .off
+            ? "off"
+            : "\(input.hotkey.rawValue), registered: \(input.hotkeyRegistered ? "yes" : "no — taken")"
+        var lines: [String] = [
             "Pulse report",
             input.version,
             "macOS \(input.macOS)",
             "notifications: \(authorization), needs-you banners \(input.notifyOnWaiting ? "on" : "off")",
-            "terminal automation: \(input.terminalAutomation ? "allowed" : "off")",
+            "terminal automation: \(input.terminalAutomation ? "allowed" : "off"), offer \(input.automationOfferAnswered ? "answered" : "not answered")",
+            "shortcut: \(shortcut)",
             "launch at login: \(input.launchAtLogin ? "on" : "off"), applied: \(input.loginItemApplied.map { $0 ? "yes" : "no" } ?? "untouched")",
             "hooks:",
         ]

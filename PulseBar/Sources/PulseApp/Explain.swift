@@ -4,10 +4,10 @@ import Foundation
 /// is the colour it is. It says three things of a row:
 ///
 /// - `headline` — what it is doing or asking: the tray hero;
-/// - `why` — one sentence: which evidence put the row in its state, and
-///   since when ("Claude's hook reported a permission request 4m ago",
-///   "No new output for 23m", "Seen only as a process — no hook event
-///   since Pulse started", "No event for 40m and no process Pulse can see");
+/// - `why` — one sentence, in plain words: what put the row in its state,
+///   and since when ("Claude asked for permission · 4m ago", "Nothing new
+///   for 23m", "Started before Pulse — details after its next step").
+///   Never the word "hook" — `surface_check.py` holds it;
 /// - `source` — where the facts came from, in plain words.
 ///
 /// and one of the menu-bar lamp: `lampRule` / `lampSentence`, the rule that
@@ -112,8 +112,8 @@ struct Explain: Equatable {
         switch row.state {
         case .blocked(let wait):
             let kind = kindNoun(wait.kind, lang: lang)
-            var text = String(format: t(.explainHook), name, kind, since(wait.sinceMs))
-            if wait.inFront { text += t(.explainHookFront) }
+            var text = String(format: t(.explainAsked), name, kind, since(wait.sinceMs))
+            if wait.inFront { text += t(.explainAskedFront) }
             return text
         case .yourTurn(let sinceMs):
             return String(format: t(.explainTurn), name, since(sinceMs))
@@ -122,7 +122,7 @@ struct Explain: Equatable {
         case .running:
             if row.isStalled {
                 guard row.lastActivityMs > 0 else { return t(.explainStalledUnknown) }
-                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
+                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang, spoken: true)
                 return String(format: t(.explainStalled), quiet)
             }
             guard row.lastActivityMs > 0 else { return t(.explainRunningNoClock) }
@@ -135,16 +135,16 @@ struct Explain: Equatable {
             case .ended:
                 return String(format: t(.explainEnded), since(row.stateSinceMs > 0 ? row.stateSinceMs : row.lastActivityMs))
             case .quiet:
-                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
+                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang, spoken: true)
                 return String(format: t(.explainQuiet), quiet)
             case .silent:
-                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang)
+                let quiet = DurationFormat.label(seconds: row.lastActivitySeconds(at: nowMs), lang: lang, spoken: true)
                 return String(format: t(.explainSilent), quiet)
             }
         }
     }
 
-    /// A wait kind as the object of "reported …".
+    /// A wait kind as what the agent did: "asked for permission".
     static func kindNoun(_ kind: String, lang: ResolvedLanguage) -> String {
         switch kind {
         case "Permission": return L10n.t(.explainKindPermission, lang)
@@ -180,7 +180,7 @@ struct Explain: Equatable {
     static func ago(_ ms: Int64, nowMs: Int64, lang: ResolvedLanguage) -> String {
         let seconds = max(0, Double(nowMs - ms) / 1000)
         if seconds < 5 { return L10n.t(.durNow, lang) }
-        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang))
+        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
     }
 
     /// The row's trailing time: when it last moved. Below a minute it is
@@ -190,7 +190,7 @@ struct Explain: Equatable {
         guard row.lastActivityMs > 0 else { return "" }
         let seconds = row.lastActivitySeconds(at: nowMs)
         if seconds < 60 { return L10n.t(.durNow, lang) }
-        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang))
+        return String(format: L10n.t(.agoFormat, lang), DurationFormat.label(seconds: seconds, lang: lang, spoken: true))
     }
 
     /// How long a wait has been outstanding ("4m"); "" when unknown.

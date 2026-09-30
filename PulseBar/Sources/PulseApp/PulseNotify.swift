@@ -117,7 +117,10 @@ enum PulseNotify {
         }
     }
 
+    /// One banner per row (`WaitLedger.bannerID`): a later ask on the same
+    /// row replaces it.
     static func postWaiting(
+        id: String,
         title: String,
         body: String,
         agent: String,
@@ -125,18 +128,6 @@ enum PulseNotify {
         rowKey: String = "",
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
-        // One banner per session: a later ask on the same row replaces it.
-        let id: String = {
-            if !rowKey.isEmpty {
-                let safe = rowKey
-                    .replacingOccurrences(of: "|", with: "-")
-                    .replacingOccurrences(of: "/", with: "-")
-                return "pulse-waiting-\(safe)"
-            }
-            if !session.isEmpty { return "pulse-waiting-\(agent)-\(session)" }
-            if !agent.isEmpty { return "pulse-waiting-\(agent)" }
-            return "pulse-waiting"
-        }()
         post(
             id: id,
             title: title,
@@ -148,9 +139,10 @@ enum PulseNotify {
         )
     }
 
-    /// A single, actionable summary for a burst of approvals; it only
-    /// reduces the interruption count.
+    /// A single, actionable summary for a burst of approvals
+    /// (`WaitLedger.summaryID`); it only reduces the interruption count.
     static func postWaitingSummary(
+        id: String,
         title: String,
         body: String,
         agent: String,
@@ -158,12 +150,8 @@ enum PulseNotify {
         rowKeys: [String],
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
-        let seed = rowKeys.joined(separator: "|")
-        let safe = String(seed.unicodeScalars.map { scalar in
-            CharacterSet.alphanumerics.contains(scalar) ? String(scalar) : "-"
-        }.joined().prefix(96))
         post(
-            id: "pulse-waiting-summary-\(safe)",
+            id: id,
             title: title,
             body: body,
             agent: agent,
@@ -172,6 +160,14 @@ enum PulseNotify {
             rowKeys: rowKeys,
             completion: completion
         )
+    }
+
+    /// A banner whose wait was answered, dismissed or ended leaves
+    /// Notification Center — delivered or still pending.
+    static func withdraw(ids: [String]) {
+        guard let center, !ids.isEmpty else { return }
+        center.removeDeliveredNotifications(withIdentifiers: ids)
+        center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
     private static func post(

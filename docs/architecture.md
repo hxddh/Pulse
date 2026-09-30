@@ -17,7 +17,7 @@
            │  land(结果)
            ▼
       StatusStore          视图读的唯一 @Observable 模型：快照、行、设置、少量 UI 标志、intent
-           │               ├─ WaitNotifier + WaitLedger 「需要你」横幅：规划、发送、限流、点击（只在内存里）
+           │               ├─ WaitNotifier + WaitLedger 「需要你」横幅：规划、发送、限流、撤回、点击（只在内存里）
            │               └─ settings.json      设置（Codable，0600）
            ▼
    StatusItem（StatusPanelController：灯形 = snapshot.lamp，tooltip = 一句规则；按键 → TrayKeys）
@@ -175,8 +175,15 @@ VoiceOver 计数，以及**边沿**：上一轮没在等的行，或同一行上
 横幅要记住的东西在 `WaitLedger`（纯值，只在内存）：每个开着的等待（按 row key）欠不欠横幅、发没发出、
 有没有被忽略，以及限流的锚点（上一条被接受的横幅）。每轮 `reconcile(rows:edges:)`：没在等的行没有
 等待，所以解决了的等待不再欠横幅；边沿上的行换成一条新的等待，不继承旧的忽略。启动时重放事件日志
-之后的第一次投影是**基线**（重放完成前不投影）：启动时已经在等的不发横幅。重启后记账从零开始 —— 需要跨启动的
+之后的第一次投影是**基线**（重放完成前不投影）：启动时已经在等的不发横幅，30 秒后也不补发。重启后记账从零开始 —— 需要跨启动的
 只有 hook 自己的文件。
+
+它也记下每条横幅的 id（`bannerID(rowKey:)` / `summaryID(rowKeys:)`）：等待关上（被回答、被忽略、会话结束）时，
+`reconcile` / `dismiss` / `markNotified` 返回要撤回的 id —— 一条横幅只在它点名的某个等待还开着时留着——
+`WaitNotifier` 交给 `PulseNotify.withdraw`。点横幅时 `openWait(rowKey:summaryRowKeys:)` 找它点名的、还开着的等待，
+找不到就只打开托盘。提示在最前时发生的等待先不发；`WaitingDelivery.deferred` 在它开满 30 秒时交出来，
+`WaitNotifier` 那时问一次它的 App 是否仍在最前（`promptInFront`，沿会话进程的父链），不在就标 `frontDue`，
+补发一次。
 
 `ScanEngine`、`WaitNotifier` 与 `StatusStore` 一起拥有纯函数刻意不碰的东西：
 

@@ -34,6 +34,12 @@ final class StatusStore {
     /// The tray shows every row rather than its visible window.
     var showAllAgents = false
     var hooksStatus: HooksSupport.Status = .unknown
+    /// Agents whose vendor folder is on this Mac (`HooksInstaller.vendorPresent`)
+    /// — read at launch and when the tray opens; never on the scan path.
+    var presentAgents: Set<AgentID> = []
+    /// The agents the setup card just connected: the card shows what is
+    /// left to do until "Got it". nil otherwise; not saved.
+    var setupConnected: Set<AgentID>?
     /// False when the system refused the shortcut (another app owns it).
     var hotkeyRegistered = true
     /// Whether launchd was actually left in the state `launchAtLogin` claims.
@@ -45,8 +51,9 @@ final class StatusStore {
     var waitingBannerFailed = false
     var updateStatus: UpdateCheck.Status = .idle
     /// What happened the last time the user pressed a button on this row —
-    /// a click that reached nothing says so, briefly.
-    var rowActionNotices: [String: String] = [:]
+    /// a click that reached nothing says so, briefly (and, once, what would
+    /// make it land exactly).
+    var rowActionNotices: [String: RowNotice] = [:]
     /// A new glance is about to start — discard the last one's navigation.
     ///
     /// EXPERIENCE §4: "展开状态不持久化". The panel is built once and only
@@ -106,6 +113,7 @@ final class StatusStore {
         Self.removeRetiredFiles()
         HooksSupport.seedAssets()
         landHooksStatus(HooksSupport.probeStatus())
+        refreshPresentAgents()
         loadSettings()
         applyHotkey()
         notifier.start()
@@ -187,6 +195,12 @@ final class StatusStore {
 
     func landHooksStatus(_ value: HooksSupport.Status) {
         if hooksStatus != value { hooksStatus = value }
+    }
+
+    /// Which agents are on this Mac: seven directory checks.
+    func refreshPresentAgents() {
+        let present = Set(AgentID.priority.filter(HooksInstaller.vendorPresent))
+        if presentAgents != present { presentAgents = present }
     }
 
     func landUpdateStatus(_ value: UpdateCheck.Status) {
@@ -276,6 +290,7 @@ final class StatusStore {
 
     func trayWillAppear() {
         traySessionToken &+= 1
+        if !previewFixtureActive { refreshPresentAgents() }
         // Store-owned, and just as much "last time's rummaging" as the folds.
         if showAllAgents {
             showAllAgents = false
@@ -334,17 +349,23 @@ final class StatusStore {
 
     // MARK: - Row intents
 
-    func rowActionNotice(_ row: AgentRow) -> String? {
+    func rowActionNotice(_ row: AgentRow) -> RowNotice? {
         rowActionNotices[row.rowKey]
     }
 
     /// Say what happened, briefly. Long enough to read, short enough that it
-    /// never settles in and becomes row furniture.
+    /// never settles in and becomes row furniture. An offer stays a little
+    /// longer: it asks for a decision.
     func noteRowAction(_ rowKey: String, _ message: String) {
-        rowActionNotices[rowKey] = message
+        noteRowAction(rowKey, RowNotice(text: message))
+    }
+
+    func noteRowAction(_ rowKey: String, _ notice: RowNotice) {
+        rowActionNotices[rowKey] = notice
+        let seconds: UInt64 = notice.offersAutomation ? 20 : 8
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
-            guard let self, self.rowActionNotices[rowKey] == message else { return }
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            guard let self, self.rowActionNotices[rowKey] == notice else { return }
             self.rowActionNotices.removeValue(forKey: rowKey)
         }
     }
@@ -369,10 +390,33 @@ final class StatusStore {
         case .exact:
             return
         case .appOnly:
-            noteRowAction(row.rowKey, tr(.focusAppOnly))
+            noteAppOnly(row)
         case .failed:
             noteRowAction(row.rowKey, tr(.focusFailed))
             refresh(reason: "focus-failed")
+        }
+    }
+
+    /// The Go reached the app, not the exact terminal. The first time that
+    /// is for want of Terminal automation, the row offers it instead.
+    private func noteAppOnly(_ row: AgentRow) {
+        let offer = RowNotice.shouldOfferAutomation(
+            outcome: .appOnly, row: row,
+            automationAllowed: settings.allowTerminalAutomation,
+            offerAnswered: settings.automationOfferAnswered
+        )
+        noteRowAction(row.rowKey, offer ? RowNotice.automationOffer(lang: lang) : RowNotice(text: tr(.focusAppOnly)))
+    }
+
+    /// The offer's answer. Either way it is never made again; "Allow" turns
+    /// Terminal automation on (macOS asks once, on the next Go).
+    func answerAutomationOffer(_ row: AgentRow, allow: Bool) {
+        set(\.automationOfferAnswered, true)
+        if allow {
+            set(\.allowTerminalAutomation, true)
+            noteRowAction(row.rowKey, tr(.automationAllowed))
+        } else {
+            rowActionNotices.removeValue(forKey: row.rowKey)
         }
     }
 
@@ -451,7 +495,7 @@ final class StatusStore {
         if let row, row.canFocusTerminal {
             let outcome = TerminalFocus.land(row.landingPlan)
             focused = outcome != .failed
-            if outcome == .appOnly { noteRowAction(row.rowKey, tr(.focusAppOnly)) }
+            if outcome == .appOnly { noteAppOnly(row) }
         }
         if let row, row.isYourTurn { markTurnSeen(row) }
         switch BannerRoute.decide(target: row?.rowKey, focused: focused) {
@@ -493,7 +537,7 @@ final class StatusStore {
 
     /// Installs and removals run one at a time (`HooksSupport.installQueue`)
     /// and the buttons are disabled while one runs (`.working`).
-    func installHooks() {
+    func installHooks(then done: @escaping @MainActor @Sendable (HooksSupport.Status) -> Void = { _ in }) {
         guard !hooksStatus.isWorking else { return }
         landHooksStatus(.working)
         setHooksNudgeOff(false)
@@ -504,6 +548,21 @@ final class StatusStore {
                 HooksSupport.install()
             }.value
             self?.landHooksStatus(status)
+            done(status)
+        }
+    }
+
+    /// The setup card's one click: install the hooks of every agent on this
+    /// Mac, then ask macOS to allow banners (asked only if it never was),
+    /// then show what is left — Codex's trust step, and that sessions
+    /// already running appear after their next step.
+    func connectFromSetup() {
+        let before = hooksStatus.installedAgents
+        installHooks { [weak self] status in
+            guard let self else { return }
+            self.requestNotificationAuthorization()
+            let connected = status.installedAgents.subtracting(before)
+            if !connected.isEmpty, self.setupConnected != connected { self.setupConnected = connected }
         }
     }
 

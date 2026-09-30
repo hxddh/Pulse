@@ -31,7 +31,7 @@ enum SurfaceFixtures {
     static let names = [
         "row-blocked", "row-blocked-front", "row-running", "row-running-hover",
         "row-stalled", "row-your-turn", "row-process-only", "row-muted",
-        "header", "notice-hooks", "detail-blocked", "detail-your-turn",
+        "header", "notice-setup", "notice-setup-done", "row-automation-offer", "detail-blocked", "detail-your-turn",
         "settings",
     ]
 
@@ -48,7 +48,9 @@ enum SurfaceFixtures {
             Fixture(name: "row-process-only", width: 448, value: .row(rowModel(rowProcessOnly(), lang: lang))),
             Fixture(name: "row-muted", width: 448, value: .row(rowModel(rowRunning(), lang: lang, muted: true))),
             Fixture(name: "header", width: 448, value: .header(header(lang: lang))),
-            Fixture(name: "notice-hooks", width: 432, value: .notice(noticeHooks(lang: lang))),
+            Fixture(name: "notice-setup", width: 432, value: .notice(noticeSetup(lang: lang))),
+            Fixture(name: "notice-setup-done", width: 432, value: .notice(noticeSetupDone(lang: lang))),
+            Fixture(name: "row-automation-offer", width: 448, value: .row(rowModel(rowRunning(), lang: lang, offer: true))),
             Fixture(name: "detail-blocked", width: 448, value: .detail(detailPermission(lang: lang))),
             Fixture(name: "detail-your-turn", width: 448, value: .detail(detailTurn(lang: lang))),
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
@@ -61,8 +63,9 @@ enum SurfaceFixtures {
     static var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     static let minute: Int64 = 60_000
 
-    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, muted: Bool = false) -> TrayRowModel {
-        TrayRowModel.make(TrayRowModel.Input(row: row, lang: lang, nowMs: nowMs, muted: muted))
+    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, muted: Bool = false, offer: Bool = false) -> TrayRowModel {
+        let notice = offer ? RowNotice.automationOffer(lang: lang) : nil
+        return TrayRowModel.make(TrayRowModel.Input(row: row, lang: lang, nowMs: nowMs, notice: notice, muted: muted))
     }
 
     static func baseRow(_ agent: AgentID, key: String, task: String = "Fix the flaky login test") -> AgentRow {
@@ -140,12 +143,23 @@ enum SurfaceFixtures {
         )
     }
 
-    static func noticeHooks(lang: ResolvedLanguage) -> TrayNoticeModel {
+    /// The first-run card: agents on this Mac, not connected.
+    static func noticeSetup(lang: ResolvedLanguage) -> TrayNoticeModel {
+        TrayNoticeModel.pick(TrayNoticeModel.Input(
+            lang: lang, notifyOnWaiting: true, notifyAuthorized: nil,
+            bannerFailed: false, unconnected: [.claude, .codex]
+        )) ?? TrayNoticeModel(
+            kind: .setup, text: "", actionTitle: "", action: .connect, systemImage: "link", tone: .idle
+        )
+    }
+
+    /// The card right after "Connect": what is left to do.
+    static func noticeSetupDone(lang: ResolvedLanguage) -> TrayNoticeModel {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: lang, notifyOnWaiting: true, notifyAuthorized: true,
-            bannerFailed: false, hooksMissing: true
+            bannerFailed: false, justConnected: [.claude, .codex]
         )) ?? TrayNoticeModel(
-            kind: .hooksMissing, text: "", actionTitle: "", action: .installHooks, systemImage: "link", tone: .idle
+            kind: .setupDone, text: "", actionTitle: "", action: .dismissSetup, systemImage: "checkmark.circle", tone: .idle
         )
     }
 
@@ -166,7 +180,7 @@ enum SurfaceFixtures {
             lang: lang,
             launchAtLogin: true,
             language: .auto,
-            hotkey: .commandShiftP,
+            hotkey: .controlOptionSpace,
             hotkeyTaken: false,
             notifications: .allowed,
             notifyOnWaiting: true,

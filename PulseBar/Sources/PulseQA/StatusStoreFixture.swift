@@ -227,12 +227,7 @@ extension StatusStore {
                 (section, rows.filter { $0.section == section }.count)
             }
         )
-        let bits = TraySection.allCases.compactMap { section -> String? in
-            let count = snap.sectionTotals[section] ?? 0
-            guard count > 0 else { return nil }
-            return "\(count) \(tr(section.titleKey).lowercased())"
-        }
-        snap.headerTitle = bits.joined(separator: " · ")
+        snap.headerTitle = TrayState.Census(rows: rows).summary(lang)
         snap.updatedAt = Date()
         snapshot = snap
     }

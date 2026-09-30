@@ -128,13 +128,13 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         panel.isVisible ? close() : show()
     }
 
-    /// 23.0: the global shortcut always toggles — open closes, closed opens
-    /// with the most urgent row selected.
+    /// The global shortcut is the menu-bar click — open closes,
+    /// closed opens on the oldest wait.
     func toggleFromHotkey() {
-        panel.isVisible ? close() : show(selectMostUrgent: true)
+        togglePanel()
     }
 
-    func show(selectMostUrgent: Bool = false) {
+    func show() {
         // Already open: a reveal (a banner, a jump) is applied in place —
         // even over an open detail page — and nothing else resets.
         if panel.isVisible {
@@ -150,7 +150,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         store.trayWillAppear()
         let anchor = buttonWindow.convertToScreen(button.frame)
         ui.maxListHeight = Double(Self.listHeightBudget(on: buttonWindow.screen ?? NSScreen.main))
-        ui.open(selectMostUrgent: selectMostUrgent)
+        ui.open()
         lastFitRowCount = ui.displayRows.count
         lastFitDetail = ui.keys.detail
         settleLayout()

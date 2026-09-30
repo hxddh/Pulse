@@ -5,9 +5,11 @@ A view that reaches into StatusStore can only be seen by running the whole
 app against real sessions. The rendering views listed here take a value
 (`TrayRowModel`, `DetailModel`, `SettingsModel`…) and send intents; the
 models they render are pure. This gate fails if either grows a store
-reference back, if a surface fixture is missing from the capture list, or if
+reference back, if a surface fixture is missing from the capture list, if
 a QA file (fixtures, captures, the preview window) moves back into the app
-library — the shipping app links `PulseApp`, the QA driver is `PulseQA`.
+library — the shipping app links `PulseApp`, the QA driver is `PulseQA` — or
+if a row's why (`L10n` `explain*`, either language) says "hook": the tray
+speaks plain words ("Claude asked for permission · 4m ago").
 """
 import re
 import sys
@@ -100,6 +102,13 @@ def main() -> int:
             errors.append(f"{file}: QA code is in the app library — it belongs to PulseQA")
         if not (QA / file).exists():
             errors.append(f"{file}: missing from PulseQA")
+    copy = (APP / "L10n.swift").read_text()
+    whys = re.findall(r'case \.(explain\w+):\s*return "((?:[^"\\]|\\.)*)"', copy)
+    if not whys:
+        errors.append("L10n.swift: no explain* strings found")
+    for key, value in whys:
+        if "hook" in value.lower():
+            errors.append(f"L10n.swift: .{key} says \"hook\" — a why is said in plain words")
     fixtures = (QA / "SurfaceFixtures.swift").read_text()
     names = re.search(r"static let names = \[(.*?)\]", fixtures, re.S)
     listed = re.findall(r'"([a-z0-9-]+)"', names.group(1)) if names else []

@@ -675,7 +675,7 @@ struct TrayStateTests {
         #expect(row.recentReason == .quiet)
         #expect(row.stateSinceMs == t0 + TrayState.idleBoundMs)
         let why = Explain.why(row, lang: .en, nowMs: t0 + 31 * minute)
-        #expect(why.contains("no process Pulse can see"), "\(why)")
+        #expect(why.contains("no process to watch"), "\(why)")
     }
 
     @Test func aTurnIsOwedForHalfAnHour() throws {

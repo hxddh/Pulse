@@ -47,17 +47,27 @@ struct TrayHeaderModel: Equatable {
     }
 }
 
-/// The tray's one notice: something on this Mac needs fixing, with
-/// the one action that fixes it. At most one, in this order: notifications
-/// (a "needs you" cannot reach a closed tray), then a hook missing for a
-/// live agent. Pure.
+/// The tray's one notice: something on this Mac needs doing, with the one
+/// action that does it. At most one, in this order:
+///
+/// 1. the setup card's remaining steps, right after it connected agents
+///    ("Codex: run /hooks…", "Sessions already running appear after their
+///    next step") until the person says "Got it";
+/// 2. the setup card: agents on this Mac that are not connected — "Found
+///    Claude, Codex — Connect" installs their hooks, then asks macOS to allow
+///    banners. It comes first: without a hook there is nothing to notify;
+/// 3. notifications denied, then not yet asked (a "needs you" cannot reach
+///    a closed tray);
+/// 4. the last banner refused while a wait is open.
+///
+/// Pure.
 struct TrayNoticeModel: Equatable {
     enum Kind: Equatable {
-        case notificationsDenied, notificationsOff, bannerFailed, hooksMissing
+        case setup, setupDone, notificationsDenied, notificationsOff, bannerFailed
     }
 
     enum Action: Equatable {
-        case openNotificationSettings, enableNotifications, installHooks
+        case connect, dismissSetup, openNotificationSettings, enableNotifications
     }
 
     var kind: Kind
@@ -66,6 +76,8 @@ struct TrayNoticeModel: Equatable {
     var action: Action
     var systemImage: String
     var tone: PulseTheme.Tone
+    /// What is left to do, one line each — the setup card's follow-up.
+    var steps: [String] = []
 
     struct Input {
         var lang: ResolvedLanguage
@@ -74,12 +86,35 @@ struct TrayNoticeModel: Equatable {
         var notifyAuthorized: Bool?
         /// Notification Center refused the last banner while a wait is open.
         var bannerFailed: Bool
-        /// A live agent's hook is not installed.
-        var hooksMissing: Bool
+        /// Agents on this Mac (or running) whose hook is not installed, in
+        /// roster order — empty once the person removed the hooks on purpose.
+        var unconnected: [AgentID] = []
+        /// The agents the setup card just connected (never empty); nil when
+        /// it has no follow-up to show.
+        var justConnected: [AgentID]? = nil
     }
 
     static func pick(_ input: Input) -> TrayNoticeModel? {
         func t(_ key: L10n.Key) -> String { L10n.t(key, input.lang) }
+        func names(_ agents: [AgentID]) -> String { L10n.joinNames(agents.map(\.displayName), input.lang) }
+        if let connected = input.justConnected {
+            var steps: [String] = []
+            if connected.contains(.codex) { steps.append(t(.setupStepCodex)) }
+            steps.append(t(.setupStepRestart))
+            return TrayNoticeModel(
+                kind: .setupDone,
+                text: String(format: t(.setupDone), names(connected)),
+                actionTitle: t(.setupGotIt), action: .dismissSetup,
+                systemImage: "checkmark.circle", tone: .idle, steps: steps
+            )
+        }
+        if !input.unconnected.isEmpty {
+            return TrayNoticeModel(
+                kind: .setup, text: String(format: t(.setupFound), names(input.unconnected)),
+                actionTitle: t(.setupConnect), action: .connect,
+                systemImage: "link", tone: .idle
+            )
+        }
         if input.notifyOnWaiting, input.notifyAuthorized == false {
             return TrayNoticeModel(
                 kind: .notificationsDenied, text: t(.noticeNotificationsDenied),
@@ -99,13 +134,6 @@ struct TrayNoticeModel: Equatable {
                 kind: .bannerFailed, text: t(.waitingBannerFailed),
                 actionTitle: t(.openNotificationSettings), action: .openNotificationSettings,
                 systemImage: "bell.slash", tone: .attention
-            )
-        }
-        if input.hooksMissing {
-            return TrayNoticeModel(
-                kind: .hooksMissing, text: t(.hooksNudge),
-                actionTitle: t(.installHooks), action: .installHooks,
-                systemImage: "link", tone: .idle
             )
         }
         return nil

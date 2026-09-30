@@ -122,7 +122,9 @@ and applies those lines, in order, to `SessionBook` (at launch: the whole log,
 before the first projection) → `TrayState.project(book:processes:summaries:context:)`
 returns rows, lamp, title, counts, newly-blocked edges and `staleHidden` →
 `StatusStore.land` assigns an observed property only when it changed →
-`WaitNotifier` plans banners from the edges. `Explain` says every row's
+`WaitNotifier` plans banners from the edges (a wait raised in front of the
+person waits 30 s and its app leaving the front) and withdraws each banner
+when its wait is answered, dismissed or ends (`WaitLedger` keeps the ids). `Explain` says every row's
 headline and why, and the lamp's one-sentence rule.
 
 ## Working on it

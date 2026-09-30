@@ -276,6 +276,7 @@ struct TrayHeaderFace: View {
 // MARK: - Notice
 
 /// 21.0: the tray's one notice. 23.0: with its one action as a button.
+/// The setup card's remaining steps, one line each, under its text.
 struct TrayNoticeFace: View {
     let model: TrayNoticeModel
     var send: () -> Void = {}
@@ -285,10 +286,18 @@ struct TrayNoticeFace: View {
             Image(systemName: model.systemImage)
                 .foregroundStyle(model.tone == .idle ? Color.secondary : model.tone.color)
                 .accessibilityHidden(true)
-            Text(model.text)
-                .font(PulseTheme.Font.body)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
+                Text(model.text)
+                    .font(PulseTheme.Font.body)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(model.steps, id: \.self) { step in
+                    Text("· " + step)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Spacer(minLength: PulseTheme.Space.s)
             Button(model.actionTitle, action: send)
                 .buttonStyle(.bordered)
@@ -377,10 +386,22 @@ struct TrayRowFace: View {
                     .padding(.trailing, PulseTheme.Space.l)
             }
             if let note = model.notice {
-                Text(note)
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, TrayChrome.oneLineTextStart)
+                HStack(spacing: PulseTheme.Space.s) {
+                    Text(note.text)
+                        .font(PulseTheme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if note.offersAutomation {
+                        Button(L10n.t(.automationAllow, model.lang)) { send(.allowAutomation) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button(L10n.t(.automationNotNow, model.lang)) { send(.declineAutomation) }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.leading, TrayChrome.oneLineTextStart)
+                .padding(.trailing, PulseTheme.Space.l)
             }
         }
         .padding(.horizontal, TrayChrome.padX)
@@ -399,6 +420,9 @@ struct TrayRowFace: View {
         .accessibilityActions {
             ForEach(model.menu) { button in
                 Button(button.title) { send(button.action) }
+            }
+            if model.notice?.offersAutomation == true {
+                Button(L10n.t(.automationAllow, model.lang)) { send(.allowAutomation) }
             }
         }
     }

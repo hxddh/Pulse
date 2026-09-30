@@ -63,6 +63,20 @@ struct ReportTests {
         #expect(other.contains("applied: untouched"))
     }
 
+    /// The shortcut and the automation offer are in the report.
+    @Test func theReportSaysTheShortcutAndTheAutomationOffer() {
+        var chosen = input()
+        chosen.hotkey = .controlOptionSpace
+        chosen.hotkeyRegistered = false
+        chosen.automationOfferAnswered = true
+        let text = SettingsModel.report(chosen)
+        #expect(text.contains("shortcut: ctrl_opt_space, registered: no — taken"), "\(text)")
+        #expect(text.contains("terminal automation: allowed, offer answered"), "\(text)")
+        let off = SettingsModel.report(input())
+        #expect(off.contains("shortcut: off\n"), "\(off)")
+        #expect(off.contains("offer not answered"), "\(off)")
+    }
+
     /// The input has no field for a path, a prompt, a session or a
     /// project; the text says only states, counts and ages.
     @Test func theReportCarriesNoPathSessionOrProject() {
@@ -128,28 +142,46 @@ struct HooksSectionTests {
 
 /// The tray's one notice, and the fixtures the tray captures are made of.
 final class TrayNoticeTests: XCTestCase {
+    /// The setup card comes first — without a hook there is nothing
+    /// to notify. It names the agents running (or on this Mac) unconnected.
     @MainActor
-    func testNotificationSetupOutranksTheHooksOffer() {
+    func testTheSetupCardOutranksNotificationSetup() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
 
-        XCTAssertTrue(store.needsHooksNudge)
-        // Without notification authorization a "needs you" cannot reach a
-        // closed tray; that outranks the (optional) hooks offer.
-        XCTAssertEqual(store.trayNotice?.kind, .notificationsOff)
-        XCTAssertEqual(store.trayNotice?.action, .enableNotifications)
+        XCTAssertFalse(store.setupAgents.isEmpty)
+        XCTAssertEqual(store.trayNotice?.kind, .setup)
+        XCTAssertEqual(store.trayNotice?.action, .connect)
         XCTAssertFalse(store.tr(.emptyHint).localizedCaseInsensitiveContains("install hooks"))
+        XCTAssertFalse(store.tr(.emptyHint).contains("45"), "the empty state says what is true now")
     }
 
+    /// An agent on this Mac with nothing running is offered too — the empty
+    /// tray's first run.
     @MainActor
-    func testLiveClaudeWithoutHooksIsOfferedTheInstall() {
+    func testAnAgentOnThisMacWithNothingRunningIsOfferedTheSetup() {
         let store = StatusStore()
-        store.installPreviewFixture("waiting")
         store.notifyAuthorized = true
+        store.presentAgents = [.codex, .claude]
+        XCTAssertEqual(store.setupAgents, [.claude, .codex], "roster order")
+        XCTAssertEqual(store.trayNotice?.text, String(format: store.tr(.setupFound), "Claude, Codex"))
+        store.hooksStatus = .installed([.claude, .codex])
+        XCTAssertNil(store.trayNotice, "connected: nothing to set up")
+    }
 
-        XCTAssertTrue(store.needsHooksNudge)
-        XCTAssertEqual(store.trayNotice?.text, store.tr(.hooksNudge))
-        XCTAssertEqual(store.trayNotice?.action, .installHooks)
+    /// After "Connect" the card shows what is left, until "Got it".
+    @MainActor
+    func testTheCardShowsTheRemainingStepsUntilDismissed() {
+        let store = StatusStore()
+        store.notifyAuthorized = true
+        store.hooksStatus = .installed([.claude, .codex])
+        store.setupConnected = [.codex, .claude]
+        let card = store.trayNotice
+        XCTAssertEqual(card?.kind, .setupDone)
+        XCTAssertEqual(card?.steps, [store.tr(.setupStepCodex), store.tr(.setupStepRestart)])
+        store.performTrayNotice(.dismissSetup)
+        XCTAssertNil(store.setupConnected)
+        XCTAssertNil(store.trayNotice)
     }
 
     /// An agent with no Waiting path is not a tray notice, and nothing
@@ -161,7 +193,7 @@ final class TrayNoticeTests: XCTestCase {
         store.hooksStatus = .all
         store.notifyAuthorized = true
 
-        XCTAssertFalse(store.needsHooksNudge)
+        XCTAssertTrue(store.setupAgents.isEmpty)
         XCTAssertNil(store.trayNotice)
     }
 
@@ -324,7 +356,11 @@ final class PulseVersionTests: XCTestCase {
         XCTAssertEqual(store.updateStatusText, store.tr(expected))
         XCTAssertNotEqual(store.tr(.updateCurrentPrerelease), store.tr(.updateCurrentStable))
         XCTAssertNotEqual(store.tr(.updateCurrent), store.tr(.updateCurrentPrerelease))
-        XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("prerelease"))
+        XCTAssertTrue(store.tr(.updateCurrentStable).localizedCaseInsensitiveContains("stable"))
+        // A preview build is ad-hoc signed, not "unsigned".
+        XCTAssertTrue(store.tr(.updateCurrentPrerelease).contains("ad-hoc"))
+        XCTAssertFalse(store.tr(.updateCurrentPrerelease).localizedCaseInsensitiveContains("unsigned"))
+        XCTAssertFalse(L10n.t(.updateCurrentPrerelease, .zh).contains("未签名"))
     }
 
     func testHookStatusIsPerAgentNotGlobal() {

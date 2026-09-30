@@ -37,10 +37,11 @@ struct PulseSettingsTests {
         var original = PulseSettings()
         original.launchAtLogin = true
         original.language = .zh
-        original.hotkey = .controlOptionP
+        original.hotkey = .optionCommandP
         original.notifyOnWaiting = false
         original.mutedAgents = [.claude, .codex]
         original.allowTerminalAutomation = true
+        original.automationOfferAnswered = true
         original.updateCheckEnabled = false
         original.hooksNudgeOff = true
         let reparsed = try roundTrip(original)
@@ -59,6 +60,7 @@ struct PulseSettingsTests {
         #expect(d.hotkey == .off, "the global shortcut is opt-in")
         #expect(d.notifyOnWaiting)
         #expect(!d.allowTerminalAutomation)
+        #expect(!d.automationOfferAnswered)
         #expect(d.updateCheckEnabled)
         #expect(!d.hooksNudgeOff)
     }
@@ -277,8 +279,78 @@ struct HooksNudgeSettingTests {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
         store.notifyAuthorized = true
-        #expect(store.needsHooksNudge)
+        #expect(!store.setupAgents.isEmpty)
         store.settings.hooksNudgeOff = true
-        #expect(!store.needsHooksNudge)
+        #expect(store.setupAgents.isEmpty)
+    }
+}
+
+/// The one-time offer to let Go land on the exact tab: made the first
+/// time a Go lands on the app only for want of Terminal automation, and
+/// never again once answered.
+@Suite("Automation offer")
+struct AutomationOfferTests {
+    private func row(exactWithAutomation: Bool) -> AgentRow {
+        var row = AgentRow(rowKey: "claude|s1", agent: .claude)
+        row.state = .running
+        row.exactWithAutomation = exactWithAutomation
+        return row
+    }
+
+    @Test func offeredOnlyWhenAutomationWouldHaveMadeItExact() {
+        let could = row(exactWithAutomation: true)
+        #expect(RowNotice.shouldOfferAutomation(outcome: .appOnly, row: could, automationAllowed: false, offerAnswered: false))
+        #expect(!RowNotice.shouldOfferAutomation(outcome: .exact, row: could, automationAllowed: false, offerAnswered: false))
+        #expect(!RowNotice.shouldOfferAutomation(outcome: .failed, row: could, automationAllowed: false, offerAnswered: false))
+        #expect(!RowNotice.shouldOfferAutomation(outcome: .appOnly, row: row(exactWithAutomation: false), automationAllowed: false, offerAnswered: false),
+                "Ghostty, an editor: automation would not help")
+        #expect(!RowNotice.shouldOfferAutomation(outcome: .appOnly, row: could, automationAllowed: true, offerAnswered: false))
+        #expect(!RowNotice.shouldOfferAutomation(outcome: .appOnly, row: could, automationAllowed: false, offerAnswered: true),
+                "answered once — Allow or Not now — never again")
+    }
+
+    /// The projection knows: an iTerm session or a Terminal tab handle with
+    /// automation off would be exact with it on; tmux is exact already.
+    @Test func theProjectionMarksRowsAutomationWouldMakeExact() {
+        let now: Int64 = 1_800_000_000_000
+        var book = SessionBook()
+        book.apply(AttentionRecord(agent: "claude", kind: "working", ms: now, session: "tab", cwd: "/w/a",
+                                   landing: "tty:/dev/ttys004;term:Apple_Terminal"), nowMs: now)
+        book.apply(AttentionRecord(agent: "codex", kind: "working", ms: now, session: "pane", cwd: "/w/b",
+                                   landing: "tmux:%3;term:tmux"), nowMs: now)
+        func project(_ allow: Bool) -> [String: Bool] {
+            let state = TrayState.project(book: book, processes: [], summaries: [:],
+                                          context: TrayState.Context(nowMs: now, allowAutomation: allow))
+            return Dictionary(uniqueKeysWithValues: state.rows.map { ($0.sessionID, $0.exactWithAutomation) })
+        }
+        let off = project(false)
+        #expect(off["tab"] == true)
+        #expect(off["pane"] == false, "a tmux pane is exact without automation")
+        let on = project(true)
+        #expect(on["tab"] == false, "already allowed: nothing to offer")
+    }
+
+    @MainActor
+    @Test func answeringTheOfferIsRememberedAndAllowTurnsItOn() {
+        let store = StatusStore()
+        let offered = row(exactWithAutomation: true)
+        store.noteRowAction(offered.rowKey, RowNotice.automationOffer(lang: .en))
+        let shown = store.rowActionNotice(offered)
+        #expect(shown?.offersAutomation == true)
+        store.answerAutomationOffer(offered, allow: false)
+        #expect(store.settings.automationOfferAnswered)
+        #expect(!store.settings.allowTerminalAutomation)
+        #expect(store.rowActionNotice(offered) == nil, "Not now clears the offer")
+        store.answerAutomationOffer(offered, allow: true)
+        #expect(store.settings.allowTerminalAutomation)
+    }
+
+    @Test func theOfferIsRealCopyInBothLanguages() {
+        for lang in [ResolvedLanguage.en, .zh] {
+            let offer = RowNotice.automationOffer(lang: lang)
+            #expect(offer.offersAutomation)
+            #expect(!offer.text.isEmpty)
+            #expect(!L10n.t(.automationAllow, lang).isEmpty)
+        }
     }
 }

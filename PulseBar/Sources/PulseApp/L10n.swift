@@ -94,7 +94,6 @@ enum L10n {
         case .recent: return "Recent"
         case .dismissWait: return "Dismiss"
         case .focusFailed: return "Could not open it — that window may be gone. Rescanning."
-        case .hooksNudge: return "Install hooks to see exact requests and \"your turn\" for the agents you run"
         case .hooksUnknown: return "Not checked"
         case .hooksMissing: return "Not installed"
         case .hooksInstalledCount: return "Installed · %d of %d agents"
@@ -113,8 +112,7 @@ enum L10n {
         case .appSession: return "Agent app running"
         case .terminalDetectedNoDetails: return "Terminal session running · activity feed unavailable"
         case .appDetectedNoDetails: return "Agent app running · session feed unavailable"
-        case .versionMismatchHint:
-            return "Binary reports %@ but the bundle says %@ — repackage with PulseBar/Scripts/package.sh."
+        case .versionMismatchHint: return "This build is %@ but its app bundle says %@ — reinstall Pulse."
         case .durNow: return "now"
         case .durSec: return "%ds"
         case .durMin: return "%dm"
@@ -127,33 +125,26 @@ enum L10n {
         case .uninstallHooks: return "Remove hooks"
         case .revealShortcut: return "Open or close Pulse"
         case .hotkeyTaken: return "Another app already owns this shortcut — pick a different one."
-        case .emptyHint:
-            return "Pulse shows agents running now and sessions active in the last 45 minutes, read from this Mac."
+        case .emptyHint: return "When a connected agent starts working, its session appears here."
         case .checkForUpdates: return "Check for updates"
         case .checkNow: return "Check now"
         case .openRelease: return "Open release"
         case .updateIdle: return "Not checked"
         case .updateChecking: return "Checking…"
         case .updateCurrent: return "Up to date"
-        case .updateCurrentPrerelease:
-            return "Up to date on the preview channel (unsigned)"
-        case .updateCurrentStable:
-            return "Up to date on stable (excludes prereleases; notarization may lag)"
+        case .updateCurrentPrerelease: return "Up to date on the preview channel (ad-hoc signed, not notarized)"
+        case .updateCurrentStable: return "Up to date on the stable channel"
         case .updateAvailable: return "Update available: %@"
         case .updateFailed: return "Check failed"
         case .a11yIdle: return "Idle"
         case .a11yRunning: return "Running"
         case .a11yStalled: return "Stalled"
         case .a11yWaiting: return "Needs you"
-        case .sectionNeedsYou: return "Needs you"
-        case .sectionRunning: return "Running"
-        case .sectionStalled: return "Stalled"
-        case .sectionRecent: return "Recent"
         case .moreActions: return "More actions"
         case .agoFormat: return "%@ ago"
         case .stalled: return "Stalled"
         case .notifFocus: return "Go"
-        case .waitingSummaryTitle: return "%d agents need your attention"
+        case .waitingSummaryTitle: return "%d agents need you"
         case .updatePreview: return "Preview build · ad-hoc signed · not notarized"
         case .updateSignedUnnotarized: return "Developer ID signed · not notarized · Gatekeeper may block"
         case .yourTurn: return "Your turn"
@@ -175,17 +166,17 @@ enum L10n {
         case .details: return "Details"
         case .detailBack: return "Back"
         case .trayKeyHints: return "↑↓ select   ↩ go   → details   ⌘D dismiss   ⌘M mute   esc close"
-        case .explainHook: return "%@'s hook reported %@ %@"
-        case .explainHookFront: return " — its window was in front, so no banner"
-        case .explainTurn: return "%@'s hook reported the turn ended %@ — focus it or reply to clear"
-        case .explainProcessOnly: return "Seen only as a process — no hook event for it in the event log"
-        case .explainStalled: return "No new output for %@"
-        case .explainStalledUnknown: return "Running, but Pulse has no clock for its activity"
-        case .explainRunning: return "%@'s hook reported work %@"
-        case .explainRunningNoClock: return "A live process, and no clock for its activity yet"
-        case .explainKindPermission: return "a permission request"
-        case .explainKindInput: return "a question"
-        case .explainKindWaiting: return "that it is waiting"
+        case .explainAsked: return "%@ %@ · %@"
+        case .explainAskedFront: return " — it was in front of you, so no banner yet"
+        case .explainTurn: return "%@ finished its turn · %@"
+        case .explainProcessOnly: return "Started before Pulse — details after its next step"
+        case .explainStalled: return "Nothing new for %@"
+        case .explainStalledUnknown: return "Running, but its last step has no time"
+        case .explainRunning: return "%@ is working · last step %@"
+        case .explainRunningNoClock: return "Working — no step reported yet"
+        case .explainKindPermission: return "asked for permission"
+        case .explainKindInput: return "asked a question"
+        case .explainKindWaiting: return "is waiting for you"
         case .sourceHooks: return "Hooks only"
         case .sourceProcess: return "Process only"
         case .detailModel: return "Model"
@@ -221,10 +212,23 @@ enum L10n {
         case .detailProcess: return "Process"
         case .detailLastChange: return "Last change"
         case .detailDiagnostics: return "How Pulse reads this session"
-        case .explainIdle: return "At its prompt, nothing owed; last event %@"
+        case .explainIdle: return "At its prompt · last step %@"
         case .explainEnded: return "The session ended %@"
-        case .explainQuiet: return "No event for %@, and no process Pulse can see — shown as recent"
-        case .explainSilent: return "No word from it for %@ — shown as recent"
+        case .explainQuiet: return "Nothing heard for %@ and no process to watch — moved to recent"
+        case .explainSilent: return "Nothing heard for %@ — moved to recent"
+        case .setupFound: return "Found %@ on this Mac — connect them so Pulse hears when they need you"
+        case .setupConnect: return "Connect"
+        case .setupDone: return "Connected %@"
+        case .setupGotIt: return "Got it"
+        case .setupStepCodex: return "Codex: run /hooks in Codex and trust Pulse"
+        case .setupStepRestart: return "Sessions already running appear after their next step"
+        case .automationOffer: return "Jump to the exact tab next time — macOS will ask you once"
+        case .automationAllow: return "Allow"
+        case .automationNotNow: return "Not now"
+        case .automationAllowed: return "Allowed — the next Go lands on the exact tab"
+        case .durSecSpoken: return "%ds"
+        case .durMinSpoken: return "%dm"
+        case .durHourSpoken: return "%dh"
         }
     }
 
@@ -240,25 +244,24 @@ enum L10n {
         case .recentN: return "最近"
         case .andMore: return "另有 %d 个…"
         case .showLess: return "收起"
-        case .settings: return "偏好设置…"
+        case .settings: return "设置…"
         case .quit: return "退出 Pulse"
         case .general: return "通用"
         case .notifyWaiting: return "Agent 需要我时通知"
         case .focusExact: return "前往终端"
         case .focusApp: return "打开应用"
         case .focusOpenTray: return "打开 Pulse 托盘"
-        case .focusAppOnly: return "已打开应用 —— 无法选中具体终端"
+        case .focusAppOnly: return "已打开应用——无法选中具体的终端"
         case .launchAtLogin: return "登录时启动"
         case .language: return "语言"
         case .hooksHint: return "为每个 Agent 安装它自己文档里的 hook、插件或扩展——只用观察型事件，从不用能拦截或代答的事件。移除时每个文件逐字节还原。"
         case .installHooks: return "安装 hooks"
         case .shortcuts: return "快捷键"
         case .running: return "运行中"
-        case .settingsTitle: return "Pulse 偏好设置"
+        case .settingsTitle: return "Pulse 设置"
         case .recent: return "最近"
         case .dismissWait: return "忽略"
-        case .focusFailed: return "没能打开 —— 那个窗口可能已经不在了，正在重扫"
-        case .hooksNudge: return "安装 hooks，就能看到你在用的 Agent 的确切请求和「轮到你」"
+        case .focusFailed: return "没能打开——那个窗口可能已经不在了，正在重新扫描"
         case .hooksUnknown: return "未检查"
         case .hooksMissing: return "未安装"
         case .hooksInstalledCount: return "已安装 · %d / %d 个 Agent"
@@ -277,39 +280,34 @@ enum L10n {
         case .appSession: return "Agent 应用正在运行"
         case .terminalDetectedNoDetails: return "终端会话正在运行 · 暂无活动数据"
         case .appDetectedNoDetails: return "Agent 应用正在运行 · 暂无会话数据"
-        case .versionMismatchHint: return "程序版本为 %@，但 app 包标记为 %@ — 请用 PulseBar/Scripts/package.sh 重新打包。"
+        case .versionMismatchHint: return "程序版本是 %@，但应用包标记为 %@——请重新安装 Pulse。"
         case .durNow: return "刚刚"
         case .durSec: return "%d 秒"
         case .durMin: return "%d 分"
         case .durHour: return "%d 小时"
         case .notificationsSection: return "通知"
-        case .notifyNotConfigured: return "通知尚未启用。点击“启用通知”后 Pulse 才会请求权限。"
+        case .notifyNotConfigured: return "通知尚未启用。点「启用通知」后 Pulse 才会请求权限。"
         case .enableNotifications: return "启用通知"
         case .notifyDenied: return "系统已关闭 Pulse 的通知权限，下面的开关不会生效。"
         case .openNotificationSettings: return "打开系统设置"
         case .uninstallHooks: return "移除 hooks"
         case .revealShortcut: return "打开或关闭 Pulse"
         case .hotkeyTaken: return "该快捷键已被其他应用占用，请换一个。"
-        case .emptyHint: return "Pulse 显示正在运行的 Agent，以及 45 分钟内有过活动的会话，全部读自这台 Mac。"
+        case .emptyHint: return "已连接的 Agent 开始工作时，会话会出现在这里。"
         case .checkForUpdates: return "检查更新"
         case .checkNow: return "立即检查"
         case .openRelease: return "打开发布页"
         case .updateIdle: return "未检查"
         case .updateChecking: return "检查中…"
         case .updateCurrent: return "已是最新"
-        case .updateCurrentPrerelease: return "已是最新（preview 通道 · 未签名公证）"
-        case .updateCurrentStable:
-            return "已是最新（stable 不含 prerelease；公证前能力可能仍在预发布）"
+        case .updateCurrentPrerelease: return "已是最新（预览通道 · ad-hoc 签名 · 未公证）"
+        case .updateCurrentStable: return "已是最新（正式通道）"
         case .updateAvailable: return "有新版本：%@"
         case .updateFailed: return "检查失败"
         case .a11yIdle: return "空闲"
         case .a11yRunning: return "运行中"
         case .a11yStalled: return "停滞"
         case .a11yWaiting: return "需要你"
-        case .sectionNeedsYou: return "需要你"
-        case .sectionRunning: return "运行中"
-        case .sectionStalled: return "停滞"
-        case .sectionRecent: return "最近"
         case .moreActions: return "更多操作"
         case .agoFormat: return "%@前"
         case .stalled: return "停滞"
@@ -326,7 +324,7 @@ enum L10n {
         case .updateFailedBadResponse: return "GitHub 返回的不是发布信息"
         case .updateFailedNoTag: return "最新发布没有版本标签"
         case .staleHidden: return "%d 个较早的会话未显示（%@）"
-        case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」的通知 —— 请检查通知设置"
+        case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」通知——请检查通知设置"
         case .lampRuleBlocked: return "红：有 Agent 在等你。"
         case .lampRuleStalled: return "橙：有运行中的会话停滞了。"
         case .lampRuleRunning: return "绿：Agent 在工作，没有需要你的事。"
@@ -336,17 +334,17 @@ enum L10n {
         case .details: return "详情"
         case .detailBack: return "返回"
         case .trayKeyHints: return "↑↓ 选择   ↩ 前往   → 详情   ⌘D 忽略   ⌘M 静音   esc 关闭"
-        case .explainHook: return "%@ 的 hook 报告了%@ · %@"
-        case .explainHookFront: return " —— 当时提示窗口就在最前，所以没有通知"
-        case .explainTurn: return "%@ 的 hook 报告回合结束 · %@ —— 聚焦或回复它即消失"
-        case .explainProcessOnly: return "只看到进程——事件日志里还没有它的 hook 事件"
-        case .explainStalled: return "已经 %@ 没有新输出"
-        case .explainStalledUnknown: return "在运行，但 Pulse 读不到它的活动时间"
-        case .explainRunning: return "%@ 的 hook 报告在工作 · %@"
-        case .explainRunningNoClock: return "进程在运行，还读不到它的活动时间"
-        case .explainKindPermission: return "权限请求"
-        case .explainKindInput: return "一个问题"
-        case .explainKindWaiting: return "在等待"
+        case .explainAsked: return "%@ %@ · %@"
+        case .explainAskedFront: return "——当时它就在你眼前，所以先不发通知"
+        case .explainTurn: return "%@ 的回合结束了 · %@"
+        case .explainProcessOnly: return "在 Pulse 之前启动——下一步之后显示详情"
+        case .explainStalled: return "已经 %@ 没有新动静"
+        case .explainStalledUnknown: return "在运行，但不知道它上一步的时间"
+        case .explainRunning: return "%@ 在工作 · 上一步 %@"
+        case .explainRunningNoClock: return "在工作——还没有报告任何一步"
+        case .explainKindPermission: return "请求权限"
+        case .explainKindInput: return "提了一个问题"
+        case .explainKindWaiting: return "在等你"
         case .sourceHooks: return "仅 hook"
         case .sourceProcess: return "仅进程"
         case .detailModel: return "模型"
@@ -363,29 +361,42 @@ enum L10n {
         case .unmute: return "取消静音"
         case .mutedWord: return "已静音"
         case .copyReport: return "复制报告"
-        case .noticeNotificationsDenied: return "Pulse 的通知被关闭了 —— 需要你的 Agent 没法提醒你"
+        case .noticeNotificationsDenied: return "Pulse 的通知被关闭了——需要你的 Agent 没法提醒你"
         case .noticeNotificationsOff: return "开启通知，需要你的 Agent 才能提醒到你"
         case .settingsHookInstalled: return "已安装"
         case .settingsHookAbsent: return "这台 Mac 上没有：%@"
         case .settingsReportHint: return "一份纯文本报告：每个 hook、通知与这个版本——不含路径、提示词或会话"
-        case .settingsHookLastEvent: return "最近事件 %@ 前"
+        case .settingsHookLastEvent: return "最近事件 %@前"
         case .settingsHookLastEventNow: return "最近事件：刚刚"
         case .settingsHookNoEvent: return "还没有事件"
-        case .settingsHookNoWait: return "不会告诉我们它在等你——只显示运行中与轮到你"
+        case .settingsHookNoWait: return "不会报告它在等你——只显示运行中和轮到你"
         case .settingsHooksSection: return "Hooks"
         case .settingsUpdatesSection: return "更新"
         case .detailLastMessage: return "最后的消息"
         case .detailErrorHeading: return "错误"
         case .detailSession: return "会话"
         case .detailGo: return "前往"
-        case .detailGoNone: return "无法前往 —— 仅观测"
+        case .detailGoNone: return "无法前往——仅观测"
         case .detailProcess: return "进程"
         case .detailLastChange: return "最后变化"
         case .detailDiagnostics: return "Pulse 如何读取这个会话"
-        case .explainIdle: return "停在提示符，没有欠你的事 · 最近事件 %@"
+        case .explainIdle: return "停在提示符 · 上一步 %@"
         case .explainEnded: return "会话已结束 · %@"
-        case .explainQuiet: return "已经 %@ 没有事件，也看不到它的进程 —— 按最近显示"
-        case .explainSilent: return "已经 %@ 没有任何消息 —— 按最近显示"
+        case .explainQuiet: return "已经 %@ 没有消息，也看不到进程——移到最近"
+        case .explainSilent: return "已经 %@ 没有消息——移到最近"
+        case .setupFound: return "在这台 Mac 上找到 %@——连接后，它们需要你时 Pulse 就会知道"
+        case .setupConnect: return "连接"
+        case .setupDone: return "已连接 %@"
+        case .setupGotIt: return "知道了"
+        case .setupStepCodex: return "Codex：在 Codex 里运行 /hooks 并信任 Pulse"
+        case .setupStepRestart: return "已在运行的会话会在它们的下一步之后出现"
+        case .automationOffer: return "下次直接跳到那个标签页——macOS 会询问你一次"
+        case .automationAllow: return "允许"
+        case .automationNotNow: return "暂不"
+        case .automationAllowed: return "已允许——下次前往会直接到那个标签页"
+        case .durSecSpoken: return "%d 秒"
+        case .durMinSpoken: return "%d 分钟"
+        case .durHourSpoken: return "%d 小时"
         }
     }
 
@@ -402,7 +413,7 @@ enum L10n {
         case hooksHint, installHooks
         case shortcuts
         case running, settingsTitle
-        case hooksNudge, hooksUnknown, hooksMissing, hooksInstalledCount
+        case hooksUnknown, hooksMissing, hooksInstalledCount
         case hooksFailed
         case hooksWorking, hooksAgentFailed, hooksFailureInvalidJSON, hooksFailureNotOurs, hooksFailureUnwritable
         case hooksFailureHasComments, hooksFailureShape
@@ -420,7 +431,6 @@ enum L10n {
         case updateIdle, updateChecking, updateCurrent, updateCurrentPrerelease, updateCurrentStable
         case updateAvailable, updateFailed
         case a11yIdle, a11yRunning, a11yStalled, a11yWaiting
-        case sectionNeedsYou, sectionRunning, sectionStalled, sectionRecent
         case moreActions
         case agoFormat
         case stalled
@@ -448,8 +458,8 @@ enum L10n {
         case details
         case detailBack
         case trayKeyHints
-        case explainHook
-        case explainHookFront
+        case explainAsked
+        case explainAskedFront
         case explainTurn
         case explainProcessOnly
         case explainStalled
@@ -489,16 +499,21 @@ enum L10n {
         case detailLastChange
         case detailDiagnostics
         case explainIdle, explainEnded, explainQuiet, explainSilent
+        case setupFound, setupConnect, setupDone, setupGotIt, setupStepCodex, setupStepRestart
+        case automationOffer, automationAllow, automationNotNow, automationAllowed
+        case durSecSpoken, durMinSpoken, durHourSpoken
     }
 }
 
 /// Shared duration wording — pure, so the projection (`TrayState`) can put
 /// the elapsed wait in the menu bar.
 enum DurationFormat {
-    static func label(seconds ago: Double, lang: ResolvedLanguage) -> String {
+    /// `spoken`: the words a sentence uses ("4 分钟", not the menu bar's
+    /// compact "4 分") — the same in English.
+    static func label(seconds ago: Double, lang: ResolvedLanguage, spoken: Bool = false) -> String {
         if ago < 5 { return L10n.t(.durNow, lang) }
-        if ago < 60 { return String(format: L10n.t(.durSec, lang), Int(ago)) }
-        if ago < 3600 { return String(format: L10n.t(.durMin, lang), Int(ago / 60)) }
-        return String(format: L10n.t(.durHour, lang), Int(ago / 3600))
+        if ago < 60 { return String(format: L10n.t(spoken ? .durSecSpoken : .durSec, lang), Int(ago)) }
+        if ago < 3600 { return String(format: L10n.t(spoken ? .durMinSpoken : .durMin, lang), Int(ago / 60)) }
+        return String(format: L10n.t(spoken ? .durHourSpoken : .durHour, lang), Int(ago / 3600))
     }
 }

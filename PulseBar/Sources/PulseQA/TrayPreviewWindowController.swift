@@ -20,7 +20,7 @@ final class TrayPreviewWindowController: NSObject, NSWindowDelegate {
         self.store = store
         let ui = self.ui ?? TrayUI(store: store)
         self.ui = ui
-        ui.open(selectMostUrgent: false)
+        ui.open()
         if let window, let hosting {
             hosting.rootView = TrayPanel(store: store, ui: ui)
             present(window)

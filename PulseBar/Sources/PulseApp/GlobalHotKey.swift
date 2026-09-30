@@ -4,23 +4,21 @@ import Carbon.HIToolbox
 /// User-selectable shortcut for revealing the Pulse tray.
 ///
 /// A single hardcoded ⌘⇧P collided with common apps and failed silently when
-/// taken, so the whole feature looked broken. These are the presets; the store
-/// reports whether registration actually succeeded.
+/// taken, so the whole feature looked broken. Only combinations
+/// the editors people run agents in leave free — ⌘⇧P (the command palette)
+/// and ⌘⇧U (VS Code's output panel) went; a saved one reads as `.off`. The
+/// store reports whether registration actually succeeded.
 enum HotkeyChoice: String, CaseIterable, Identifiable {
-    case commandShiftP = "cmd_shift_p"
-    case commandShiftU = "cmd_shift_u"
-    case commandOptionP = "cmd_opt_p"
-    case controlOptionP = "ctrl_opt_p"
+    case controlOptionSpace = "ctrl_opt_space"
+    case optionCommandP = "cmd_opt_p"  // the same keys ⌘⌥P always saved as
     case off
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .commandShiftP: return "⌘⇧P"
-        case .commandShiftU: return "⌘⇧U"
-        case .commandOptionP: return "⌘⌥P"
-        case .controlOptionP: return "⌃⌥P"
+        case .controlOptionSpace: return "⌃⌥Space"
+        case .optionCommandP: return "⌥⌘P"
         case .off: return "—"
         }
     }
@@ -28,10 +26,8 @@ enum HotkeyChoice: String, CaseIterable, Identifiable {
     /// (virtual key, Carbon modifier mask); `nil` disables the shortcut.
     var binding: (key: UInt32, modifiers: UInt32)? {
         switch self {
-        case .commandShiftP: return (UInt32(kVK_ANSI_P), UInt32(cmdKey | shiftKey))
-        case .commandShiftU: return (UInt32(kVK_ANSI_U), UInt32(cmdKey | shiftKey))
-        case .commandOptionP: return (UInt32(kVK_ANSI_P), UInt32(cmdKey | optionKey))
-        case .controlOptionP: return (UInt32(kVK_ANSI_P), UInt32(controlKey | optionKey))
+        case .controlOptionSpace: return (UInt32(kVK_Space), UInt32(controlKey | optionKey))
+        case .optionCommandP: return (UInt32(kVK_ANSI_P), UInt32(cmdKey | optionKey))
         case .off: return nil
         }
     }
@@ -55,8 +51,9 @@ enum GlobalHotKey {
             &hk
         )
         if err == noErr, hk.signature == GlobalHotKey.signature {
-            // 23.0: the shortcut always toggles the tray; opening selects
-            // the most urgent row. It never jumps to a terminal on its own.
+            // One gesture — the shortcut toggles the tray exactly as
+            // a menu-bar click does, opening on the oldest wait. It never
+            // jumps to a terminal on its own.
             TrayReveal.toggle()
         }
         return noErr

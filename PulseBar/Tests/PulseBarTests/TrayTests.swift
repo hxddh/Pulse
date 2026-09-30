@@ -290,27 +290,42 @@ struct TrayInteractionTests {
 
     private func notice(
         notify: Bool = true, authorized: Bool? = true, banner: Bool = false,
-        hooks: Bool = false
+        unconnected: [AgentID] = [], connected: [AgentID]? = nil
     ) -> TrayNoticeModel? {
         TrayNoticeModel.pick(TrayNoticeModel.Input(
             lang: .en, notifyOnWaiting: notify, notifyAuthorized: authorized,
-            bannerFailed: banner, hooksMissing: hooks
+            bannerFailed: banner, unconnected: unconnected, justConnected: connected
         ))
     }
 
     @Test func atMostOneNoticeInItsOrder() {
-        let all = notice(authorized: false, banner: true, hooks: true)
-        #expect(all?.kind == .notificationsDenied)
-        #expect(all?.action == .openNotificationSettings)
-        let notAsked = notice(authorized: nil, hooks: true)
+        let all = notice(authorized: false, banner: true, unconnected: [.claude])
+        #expect(all?.kind == .setup, "connecting comes before notifications")
+        #expect(all?.action == .connect)
+        let followUp = notice(authorized: false, unconnected: [.gemini], connected: [.claude])
+        #expect(followUp?.kind == .setupDone)
+        #expect(followUp?.action == .dismissSetup)
+        let denied = notice(authorized: false, banner: true)
+        #expect(denied?.kind == .notificationsDenied)
+        #expect(denied?.action == .openNotificationSettings)
+        let notAsked = notice(authorized: nil)
         #expect(notAsked?.kind == .notificationsOff)
         #expect(notAsked?.action == .enableNotifications)
-        let hooks = notice(hooks: true)
-        #expect(hooks?.kind == .hooksMissing)
-        #expect(hooks?.action == .installHooks)
+        let banner = notice(banner: true)
+        #expect(banner?.kind == .bannerFailed)
         #expect(notice() == nil)
         let optedOut = notice(notify: false, authorized: false)
         #expect(optedOut == nil, "notifications turned off in Pulse are not a problem")
+    }
+
+    @Test func theSetupCardNamesTheAgentsAndItsRemainingSteps() {
+        let card = notice(unconnected: [.claude, .codex])
+        #expect(card?.text == String(format: L10n.t(.setupFound, .en), "Claude, Codex"))
+        #expect(card?.steps.isEmpty == true)
+        let codex = notice(connected: [.claude, .codex])
+        #expect(codex?.steps == [L10n.t(.setupStepCodex, .en), L10n.t(.setupStepRestart, .en)])
+        let claudeOnly = notice(connected: [.claude])
+        #expect(claudeOnly?.steps == [L10n.t(.setupStepRestart, .en)], "the Codex step only when Codex was connected")
     }
 
     // MARK: - The row's second line
@@ -372,7 +387,7 @@ struct TrayInteractionTests {
         let store = StatusStore()
         store.installPreviewFixture("status-waiting")
         let ui = TrayUI(store: store)
-        ui.open(selectMostUrgent: false)
+        ui.open()
         store.requestTrayReveal(rowKey: "gone|nowhere", detail: true)
         ui.applyPendingReveal()
         #expect(ui.keys.detail == nil)
@@ -384,7 +399,7 @@ struct TrayInteractionTests {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
         let ui = TrayUI(store: store)
-        ui.open(selectMostUrgent: false)
+        ui.open()
         let rows = store.allRowsForDisplay
         try #require(rows.count >= 2)
         ui.showDetail(rows[0].rowKey)
@@ -394,15 +409,43 @@ struct TrayInteractionTests {
         #expect(ui.keys.selected == rows[1].rowKey)
     }
 
+    /// One gesture — a menu-bar click and the shortcut open the same
+    /// way, on the oldest wait.
     @MainActor
-    @Test func theHotkeyOpensOnTheMostUrgentRow() {
+    @Test func everyOpenSelectsTheOldestWait() {
         let store = StatusStore()
         store.installPreviewFixture("waiting")
         let ui = TrayUI(store: store)
-        ui.open(selectMostUrgent: true)
-        let first = ui.displayRows.first?.rowKey
-        #expect(ui.keys.selected == first)
-        #expect(first != nil)
+        ui.open()
+        let oldest = ui.displayRows.filter(\.isBlocked).min { ($0.wait?.sinceMs ?? 0) < ($1.wait?.sinceMs ?? 0) }
+        #expect(oldest != nil)
+        #expect(ui.keys.selected == oldest?.rowKey)
+    }
+
+    @Test func theInitialSelectionIsTheOldestWaitElseTheFirstRow() {
+        func blocked(_ key: String, since: Int64) -> AgentRow {
+            var row = AgentRow(rowKey: key, agent: .claude)
+            row.state = .blocked(RowWait(kind: "Permission", sinceMs: since))
+            return row
+        }
+        var running = AgentRow(rowKey: "run", agent: .codex)
+        running.state = .running
+        let rows = [running, blocked("new", since: 9_000), blocked("unknown", since: 0), blocked("old", since: 1_000)]
+        #expect(TrayUI.initialSelection(rows) == "old")
+        #expect(TrayUI.initialSelection([running, blocked("unknown", since: 0)]) == "unknown")
+        #expect(TrayUI.initialSelection([running]) == "run")
+        #expect(TrayUI.initialSelection([]) == nil)
+    }
+
+    /// The shortcuts offered leave the editors' own alone.
+    @Test func theShortcutsOfferedDoNotClashWithEditors() {
+        let labels = HotkeyChoice.allCases.map(\.label)
+        #expect(labels.contains("⌃⌥Space"))
+        #expect(labels.contains("⌥⌘P"))
+        #expect(!labels.contains("⌘⇧P"), "VS Code / Cursor's command palette")
+        #expect(!labels.contains("⌘⇧U"))
+        #expect(HotkeyChoice(rawValue: "cmd_shift_p") == nil, "a saved clashing choice reads as off")
+        #expect(PulseSettings().hotkey == .off, "still opt-in")
     }
 }
 
@@ -750,6 +793,25 @@ final class L10nTests: XCTestCase {
 
     func testDurationUnitsAreLocalized() {
         XCTAssertNotEqual(L10n.t(.durMin, .en), L10n.t(.durMin, .zh), "zh tray showed English units")
+        XCTAssertEqual(DurationFormat.label(seconds: 240, lang: .zh, spoken: true), "4 分钟", "a sentence says 分钟")
+        XCTAssertEqual(DurationFormat.label(seconds: 240, lang: .en, spoken: true), "4m")
+    }
+
+    /// One term per concept and one punctuation — 设置 (not 偏好设置),
+    /// 「」 quotes, an unspaced "——"; no developer path or "unsigned" in
+    /// what a person reads.
+    func testTheCopyIsConsistent() {
+        for key in L10n.Key.allCases {
+            let zh = L10n.t(key, .zh)
+            let en = L10n.t(key, .en)
+            XCTAssertFalse(zh.contains("偏好设置"), "\(key): \(zh)")
+            XCTAssertFalse(zh.contains("“") || zh.contains("”"), "\(key): \(zh)")
+            XCTAssertFalse(zh.contains(" ——") || zh.contains("—— "), "\(key): \(zh)")
+            XCTAssertFalse(en.contains("package.sh") || zh.contains("package.sh"), "\(key)")
+            XCTAssertFalse(en.localizedCaseInsensitiveContains("unsigned"), "\(key): \(en)")
+        }
+        XCTAssertEqual(L10n.t(.waitingSummaryTitle, .en), "%d agents need you")
+        XCTAssertEqual(L10n.t(.settings, .zh), "设置…")
     }
 }
 
@@ -893,7 +955,7 @@ final class RowActionNoticeTests: XCTestCase {
         let row = liveRow()
         XCTAssertNil(s.rowActionNotice(row))
         s.noteRowAction(row.rowKey, s.tr(.focusFailed))
-        XCTAssertEqual(s.rowActionNotice(row), s.tr(.focusFailed))
+        XCTAssertEqual(s.rowActionNotice(row)?.text, s.tr(.focusFailed))
 
         var other = liveRow()
         other.rowKey = "codex|s2"

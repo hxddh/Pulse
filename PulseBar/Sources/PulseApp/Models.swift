@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "24.0.0"
+    static let semver = "25.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -198,6 +198,10 @@ struct AgentRow: Identifiable, Hashable {
     /// How a click lands (`LandingPlan.make`) — resolved once per projection,
     /// never in a view body.
     var landingPlan = LandingPlan()
+    /// With Terminal automation allowed, the plan would land on the exact
+    /// iTerm session or tab — so an app-only Go can offer it once
+    /// (`RowNotice.shouldOfferAutomation`). False when it is already allowed.
+    var exactWithAutomation = false
 
     // MARK: What it is doing (24.0: from its transcript, read lazily)
 
@@ -410,15 +414,6 @@ enum TraySection: Int, CaseIterable, Hashable {
     case running = 1
     case stalled = 2
     case recent = 3
-
-    var titleKey: L10n.Key {
-        switch self {
-        case .needsYou: return .sectionNeedsYou
-        case .running: return .sectionRunning
-        case .stalled: return .sectionStalled
-        case .recent: return .sectionRecent
-        }
-    }
 }
 
 struct PulseSnapshot: Equatable {

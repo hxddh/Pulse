@@ -116,6 +116,9 @@ extension StatusStore {
             notifyAuthorized: notifyAuthorized,
             notifyOnWaiting: settings.notifyOnWaiting,
             terminalAutomation: settings.allowTerminalAutomation,
+            automationOfferAnswered: settings.automationOfferAnswered,
+            hotkey: settings.hotkey,
+            hotkeyRegistered: hotkeyRegistered,
             launchAtLogin: settings.launchAtLogin,
             loginItemApplied: loginItemApplied
         ))

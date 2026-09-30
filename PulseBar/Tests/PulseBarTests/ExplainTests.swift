@@ -46,12 +46,28 @@ struct ExplainTests {
         #expect(text.contains("Claude"))
         #expect(text.contains(L10n.t(.explainKindPermission, .en)))
         #expect(text.contains(Explain.ago(now - 4 * minute, nowMs: now, lang: .en)))
-        #expect(!text.hasSuffix(L10n.t(.explainHookFront, .en)))
+        #expect(!text.hasSuffix(L10n.t(.explainAskedFront, .en)))
     }
 
     @Test func aWaitRaisedInFrontSaysWhyThereWasNoBanner() {
         let text = why(blocked(inFront: true))
-        #expect(text.hasSuffix(L10n.t(.explainHookFront, .en)))
+        #expect(text.hasSuffix(L10n.t(.explainAskedFront, .en)))
+    }
+
+    /// The why is plain words — who asked what, and when.
+    @Test func aWaitIsSaidInPlainWords() {
+        #expect(why(blocked()) == "Claude asked for permission · 4m ago")
+        #expect(why(blocked(), .zh) == "Claude 请求权限 · 4 分钟前")
+        var process = AgentRow(rowKey: RowIdentity.process(agent: .cursor, pid: 7), agent: .cursor)
+        process.state = .processOnly
+        #expect(why(process) == "Started before Pulse — details after its next step")
+        #expect(why(process, .zh) == "在 Pulse 之前启动——下一步之后显示详情")
+        for lang in [ResolvedLanguage.en, .zh] {
+            for key in L10n.Key.allCases where "\(key)".hasPrefix("explain") {
+                let text = L10n.t(key, lang).lowercased()
+                #expect(!text.contains("hook"), "\(key): \(text)")
+            }
+        }
     }
 
     @Test func aQuestionSaysInput() {
@@ -82,7 +98,7 @@ struct ExplainTests {
         var row = session()
         row.lastEventMs = now - 23 * minute
         row.isStalled = true
-        let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en)
+        let quiet = DurationFormat.label(seconds: 23 * 60, lang: .en, spoken: true)
         let expected = String(format: L10n.t(.explainStalled, .en), quiet)
         #expect(why(row) == expected)
     }
@@ -94,9 +110,9 @@ struct ExplainTests {
         #expect(why(row) == L10n.t(.explainStalledUnknown, .en))
     }
 
-    @Test func aRunningRowSaysItsHookReportedWork() {
+    @Test func aRunningRowSaysItIsWorking() {
         let text = why(session())
-        #expect(text.hasPrefix("Claude's hook"), "\(text)")
+        #expect(text.hasPrefix("Claude is working"), "\(text)")
         var noClock = session()
         noClock.lastEventMs = 0
         #expect(why(noClock) == L10n.t(.explainRunningNoClock, .en))
@@ -122,7 +138,7 @@ struct ExplainTests {
         row.recentReason = .atPrompt
         #expect(why(row).hasPrefix("At its prompt"))
         row.recentReason = .quiet
-        #expect(why(row).contains("no process Pulse can see"))
+        #expect(why(row).contains("no process to watch"))
     }
 
     @Test func theSameRowAndInstantAlwaysSayTheSameThing() {
