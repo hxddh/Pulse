@@ -21,13 +21,25 @@ final class PulseNotifyDelegate: NSObject, UNUserNotificationCenterDelegate {
         let session = info["session"] as? String ?? ""
         let rowKey = info["rowKey"] as? String ?? ""
         let summaryRowKeys = info["rowKeys"] as? [String] ?? []
+        let intent = BannerIntent.decide(
+            actionID: response.actionIdentifier,
+            dismissActionID: UNNotificationDismissActionIdentifier
+        )
         DispatchQueue.main.async {
-            AppServices.store.notifier.handleBannerClick(
-                agent: agent,
-                session: session,
-                rowKey: rowKey,
-                summaryRowKeys: summaryRowKeys
-            )
+            let notifier = AppServices.store.notifier
+            switch intent {
+            case .go:
+                notifier.handleBannerClick(
+                    agent: agent,
+                    session: session,
+                    rowKey: rowKey,
+                    summaryRowKeys: summaryRowKeys
+                )
+            case .ignore:
+                notifier.handleBannerIgnore(rowKey: rowKey, summaryRowKeys: summaryRowKeys)
+            case .nothing:
+                break
+            }
         }
         completionHandler()
     }
@@ -44,24 +56,30 @@ enum PulseNotify {
     }
     nonisolated(unsafe) private static let delegate = PulseNotifyDelegate()
 
-    static let focusActionID = "pulse.focus"
     static let waitingCategoryID = "pulse.waiting"
 
-    /// The button on the waiting banner: go to the session. There is no
-    /// "Later": a wait is a wait.
+    /// The waiting banner's buttons: go to the session, or ignore the wait
+    /// (the tray's ⌘D — Pulse's own `done`, never an answer to the agent;
+    /// it does not bring Pulse forward). There is no "Later": a wait is a
+    /// wait.
     ///
     /// Registered in the resolved language and re-registered when it changes —
     /// a category is keyed by id, so re-adding replaces the old titles.
     static func registerCategories(lang: ResolvedLanguage) {
         guard let center else { return }
         let focus = UNNotificationAction(
-            identifier: focusActionID,
+            identifier: BannerIntent.goActionID,
             title: L10n.t(.notifFocus, lang),
             options: [.foreground]
         )
+        let ignore = UNNotificationAction(
+            identifier: BannerIntent.ignoreActionID,
+            title: L10n.t(.notifIgnore, lang),
+            options: []
+        )
         let category = UNNotificationCategory(
             identifier: waitingCategoryID,
-            actions: [focus],
+            actions: [focus, ignore],
             intentIdentifiers: [],
             options: []
         )
@@ -217,7 +235,7 @@ enum PulseNotify {
         if timeSensitiveAllowed.snapshot {
             content.interruptionLevel = .timeSensitive
         }
-        // A banner that names a session carries the Focus action.
+        // A banner that names a session carries Go and Ignore.
         if !rowKey.isEmpty || !agent.isEmpty {
             content.categoryIdentifier = waitingCategoryID
         }

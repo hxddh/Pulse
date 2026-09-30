@@ -2,7 +2,7 @@ import Foundation
 
 /// Settings as a value: one page, five short groups, a footer.
 ///
-/// General (open at login, language, Terminal automation) · Shortcut · Notifications (and the muted
+/// General (open at login, language, Terminal automation) · Shortcut (a recorder) · Notifications (and the muted
 /// agents, each with ✕) · Hooks — the diagnostics: one line per agent on this
 /// Mac (installed or not, its last event, a fix), the agents that are not
 /// here collapsed into one line, and "Copy report" · Updates. The version and
@@ -31,7 +31,12 @@ struct SettingsModel: Equatable {
         case openLoginItems
         case setLanguage(AppLanguage)
         case setTerminalAutomation(Bool)
-        case setHotkey(HotkeyChoice)
+        /// The shortcut control was clicked: listen for the next key.
+        case recordHotkey
+        /// Clicked again while listening: stop, keep the old shortcut.
+        case stopRecordingHotkey
+        /// The ✕ beside a recorded shortcut: no shortcut.
+        case clearHotkey
         case enableNotifications
         case openNotificationSettings
         case setNotifyOnWaiting(Bool)
@@ -59,9 +64,14 @@ struct SettingsModel: Equatable {
     /// Go may select the exact Terminal / iTerm tab with AppleScript.
     var terminalAutomation: Bool = false
     // Shortcut
-    var hotkey: HotkeyChoice
-    /// The system refused the chosen shortcut (another app owns it).
-    var hotkeyTaken: Bool
+    /// The recorded shortcut in macOS's glyphs ("⌃⌥Space"); nil: none.
+    var hotkeyLabel: String?
+    /// The control is listening for the next key.
+    var hotkeyRecording = false
+    /// Said under the control: the key needs ⌘, ⌃ or ⌥, or macOS (or
+    /// another app) owns the shortcut — a recorded one that was refused, or
+    /// a saved one that no longer registers.
+    var hotkeyProblem: HotkeyRecorder.Problem? = nil
     // Notifications
     var notifications: Notifications
     /// The switch as it takes effect: off while macOS does not allow banners.
@@ -193,7 +203,7 @@ struct SettingsModel: Equatable {
         var notifyAuthorized: Bool?
         var notifyOnWaiting: Bool
         var terminalAutomation: Bool
-        var hotkey: HotkeyChoice = .off
+        var hotkey: Hotkey? = nil
         /// The system took the shortcut (false: another app owns it).
         var hotkeyRegistered = true
         var launchAtLogin: Bool
@@ -250,9 +260,9 @@ struct SettingsModel: Equatable {
         case .some(false): authorization = "denied"
         case .none: authorization = "not asked"
         }
-        let shortcut = input.hotkey == .off
-            ? "off"
-            : "\(input.hotkey.rawValue), registered: \(input.hotkeyRegistered ? "yes" : "no — taken")"
+        let shortcut = input.hotkey.map {
+            "\($0.label), registered: \(input.hotkeyRegistered ? "yes" : "no — taken")"
+        } ?? "off"
         var lines: [String] = [
             "Pulse report",
             input.version,
@@ -305,6 +315,13 @@ struct SettingsModel: Equatable {
     static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .updates]
 
     /// A deep link's target, as the section it scrolls to.
+    /// What the shortcut control says: "Type shortcut…" while it listens,
+    /// else the recorded combination ("⌃⌥Space"), else "Record Shortcut".
+    static func shortcutTitle(_ model: SettingsModel) -> String {
+        if model.hotkeyRecording { return L10n.t(.shortcutRecording, model.lang) }
+        return model.hotkeyLabel ?? L10n.t(.shortcutRecord, model.lang)
+    }
+
     static func section(for target: SettingsFocus.Target) -> Section {
         switch target {
         case .waitingSignals: return .hooks

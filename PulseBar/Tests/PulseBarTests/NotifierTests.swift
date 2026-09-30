@@ -587,3 +587,59 @@ struct BannerRoutingTests {
         #expect(ambiguous?.rowKey == "claude|a", "two prefixes: no session match, fall back to the agent's first wait")
     }
 }
+
+/// The banner's two buttons: "Go" goes, "Ignore" dismisses the waits it
+/// names exactly as the tray's ⌘D does — Pulse's own `done`, never an
+/// answer to the agent — and macOS's own dismissal does nothing.
+@Suite("Banner intent")
+struct BannerIntentTests {
+    let now: Int64 = 1_800_000_000_000
+    let dismissID = "com.apple.UNNotificationDismissActionIdentifier"
+    let defaultID = "com.apple.UNNotificationDefaultActionIdentifier"
+
+    private func waiting(_ key: String) -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: .claude)
+        row.state = .blocked(RowWait(kind: "Permission", ask: "Bash: make", sinceMs: now - 60_000))
+        return row
+    }
+
+    private func running(_ key: String) -> AgentRow {
+        var row = AgentRow(rowKey: key, agent: .claude)
+        row.state = .running
+        return row
+    }
+
+    @Test func eachButtonIsItsOwnIntent() {
+        let ignore = BannerIntent.decide(actionID: BannerIntent.ignoreActionID, dismissActionID: dismissID)
+        #expect(ignore == .ignore)
+        let go = BannerIntent.decide(actionID: BannerIntent.goActionID, dismissActionID: dismissID)
+        #expect(go == .go)
+        let click = BannerIntent.decide(actionID: defaultID, dismissActionID: dismissID)
+        #expect(click == .go, "a click on the banner itself goes")
+        let closed = BannerIntent.decide(actionID: dismissID, dismissActionID: dismissID)
+        #expect(closed == .nothing, "closing the banner dismisses nothing")
+        #expect(BannerIntent.goActionID != BannerIntent.ignoreActionID)
+    }
+
+    @Test func ignoreDismissesOnlyTheOpenWaitsItNames() {
+        let rows = [waiting("claude|a"), running("claude|b"), waiting("claude|c"), waiting("claude|d")]
+        let one = BannerIntent.ignoreTargets(rowKey: "claude|a", summaryRowKeys: [], rows: rows)
+        let oneKeys = one.map { $0.rowKey }
+        #expect(oneKeys == ["claude|a"])
+        let summary = BannerIntent.ignoreTargets(
+            rowKey: "claude|a", summaryRowKeys: ["claude|a", "claude|b", "claude|c", "gone|x"], rows: rows
+        )
+        let summaryKeys = summary.map { $0.rowKey }
+        #expect(summaryKeys == ["claude|a", "claude|c"], "answered and gone waits are left alone; d was not named")
+        let answered = BannerIntent.ignoreTargets(rowKey: "claude|b", summaryRowKeys: [], rows: rows)
+        #expect(answered.isEmpty, "a wait answered meanwhile is not dismissed")
+    }
+
+    /// The dismissal is the tray's own: the same `done` record with
+    /// Pulse's `:dismiss` marker that ⌘D writes — never a vendor answer.
+    @Test func ignoreWritesTheSameDismissalAsTheTray() {
+        let record = StatusStore.dismissalRecord(agent: .claude, session: "s1", cwd: "/w", nowMs: now)
+        #expect(record.kind == AttentionKind.done.rawValue)
+        #expect(record.tool == AttentionRecord.dismissTool)
+    }
+}

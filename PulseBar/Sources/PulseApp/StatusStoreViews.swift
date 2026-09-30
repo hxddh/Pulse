@@ -26,7 +26,7 @@ extension StatusStore {
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
             muted: settings.mutedAgents.contains(row.agent),
-            notice: rowActionNotice(row)?.text
+            notice: rowActionNotice(row)
         )
     }
 
@@ -35,8 +35,8 @@ extension StatusStore {
         TrayHeaderModel.make(counts: snapshot.counts, lang: lang)
     }
 
-    /// Every retained row, not only the visible window: the open tray keeps
-    /// a row it has shown, and a reveal can land on one behind the fold.
+    /// Every retained row: the open tray keeps a row it has shown, and a
+    /// reveal can land on any of them.
     var allRowsForDisplay: [AgentRow] { cachedAll }
 
     // MARK: - The tray's one notice

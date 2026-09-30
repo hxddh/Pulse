@@ -311,4 +311,16 @@ final class WaitNotifier {
             model.requestTrayReveal()
         }
     }
+
+    /// The banner's "Ignore": each wait it names that is still open is
+    /// dismissed exactly as the tray's ⌘D dismisses it
+    /// (`StatusStore.dismissWaiting`: Pulse's own `done` with `:dismiss`,
+    /// and the banner withdrawn). Never an answer to the agent — its prompt
+    /// still waits in the vendor's own window.
+    func handleBannerIgnore(rowKey: String, summaryRowKeys: [String]) {
+        guard let model else { return }
+        let targets = BannerIntent.ignoreTargets(rowKey: rowKey, summaryRowKeys: summaryRowKeys, rows: model.cachedAll)
+        for row in targets { model.dismissWaiting(row) }
+        DebugLog.write("banner ignore n=\(targets.count)")
+    }
 }

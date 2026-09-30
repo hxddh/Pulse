@@ -1,10 +1,12 @@
 import Foundation
+import CoreGraphics
 import Observation
 
-/// The tray's per-open state: the keyboard state (selection, detail), the
-/// frozen row order and the height the list may use on this
-/// screen. Owned by `StatusPanelController`, reset on every open, and
-/// changed only through `TrayKeys.reduce` or a click — never by a view.
+/// The tray's per-open state: the selection (the keyboard's or the
+/// pointer's), the detail page, the frozen row order and the height the list
+/// may use on this screen. Owned by `StatusPanelController`, reset on every
+/// open, and changed only through `TrayKeys.reduce`, a click or the pointer
+/// entering a row — never by a view's own state.
 @MainActor
 @Observable
 final class TrayUI {
@@ -13,12 +15,17 @@ final class TrayUI {
     /// The order the rows had when the tray opened, newcomers appended.
     var frozen: [String] = []
     /// Every row that has been on screen this glance. While the tray is open
-    /// they stay listed as long as they exist, even when the projection's
-    /// window would now fold them away for a newer wait.
+    /// they stay listed, in their place, as long as they exist.
     var pinned: Set<String> = []
-    /// `store.showAllAgents` when `pinned` was taken — "show all / show
-    /// less" re-lays the list at the person's request.
-    var pinnedShowAll = false
+    /// The row the pointer selected last. The list scrolls to a selection
+    /// the keyboard made, never to one the pointer made — a row that moved
+    /// under a still pointer would select the next one.
+    @ObservationIgnored var pointerSelection: String?
+    /// Where the pointer was when it last selected a row, or when the tray
+    /// opened. A hover with the pointer still there — the list appeared, or
+    /// scrolled to the keyboard's selection, under a pointer that did not
+    /// move — selects nothing.
+    @ObservationIgnored var pointer: CGPoint?
     /// The list's height budget on the current screen.
     var maxListHeight: Double = Double(TrayChrome.maxListHeight)
     /// Asks the panel to close (Esc on the list).
@@ -30,17 +37,15 @@ final class TrayUI {
 
     // MARK: - What the tray lists
 
-    /// The rows on screen: the rows already shown this glance plus
-    /// newcomers to the projection's window (`TrayOrder.openWindow`), in the
-    /// frozen order.
+    /// The rows on screen — every row, the ones already shown this glance
+    /// in the frozen order, then newcomers (`TrayOrder.openWindow`). The
+    /// list scrolls inside the panel's height.
     var displayRows: [AgentRow] {
-        let showAll = store.showAllAgents
-        return TrayOrder.openWindow(
+        TrayOrder.openWindow(
             all: store.allRowsForDisplay,
             window: store.snapshot.rows,
-            pinned: pinnedShowAll == showAll ? pinned : [],
-            frozen: frozen,
-            cap: showAll ? Int.max : TrayOrder.openCap
+            pinned: pinned,
+            frozen: frozen
         )
     }
 
@@ -69,10 +74,11 @@ final class TrayUI {
     /// row, which the projection's order makes the oldest wait
     /// (`TrayState.assemble`: waits first, the oldest first, an unknown
     /// clock last).
-    func open() {
+    func open(pointer: CGPoint? = nil) {
         frozen = store.snapshot.rows.map(\.rowKey)
         pinned = Set(frozen)
-        pinnedShowAll = store.showAllAgents
+        pointerSelection = nil
+        self.pointer = pointer
         var next = TrayKeys.State()
         next.selected = displayRows.first?.rowKey
         if keys != next { keys = next }
@@ -85,9 +91,6 @@ final class TrayUI {
     func applyPendingReveal() {
         guard let reveal = store.takePendingReveal() else { return }
         guard lookup(reveal.rowKey) != nil else { return }
-        if !store.snapshot.rows.contains(where: { $0.rowKey == reveal.rowKey }), !store.showAllAgents {
-            store.toggleShowAllAgents()
-        }
         var next = keys
         next.selected = reveal.rowKey
         next.detail = reveal.detail ? reveal.rowKey : nil
@@ -99,11 +102,8 @@ final class TrayUI {
     func absorbScan() {
         let extended = TrayOrder.extend(frozen, with: store.allRowsForDisplay)
         if extended != frozen { frozen = extended }
-        let showAll = store.showAllAgents
-        let shown = Set(displayRows.map(\.rowKey))
-        let nextPinned = pinnedShowAll == showAll ? pinned.union(shown) : shown
+        let nextPinned = pinned.union(displayRows.map(\.rowKey))
         if nextPinned != pinned { pinned = nextPinned }
-        if pinnedShowAll != showAll { pinnedShowAll = showAll }
         var next = keys
         if let detail = next.detail, lookup(detail) == nil { next.detail = nil }
         next = TrayKeys.normalize(next, rows: displayRows.map { TrayKeys.Row($0) })
@@ -114,6 +114,7 @@ final class TrayUI {
 
     /// One key from the panel's monitor. False: not the tray's key.
     func handle(_ key: TrayKeys.Key) -> Bool {
+        pointerSelection = nil
         let outcome = TrayKeys.reduce(keys, key, rows: reducerRows())
         let next = TrayKeys.normalize(outcome.state, rows: displayRows.map { TrayKeys.Row($0) })
         if keys != next { keys = next }
@@ -154,6 +155,7 @@ final class TrayUI {
         case .dismiss: store.dismissWaiting(row)
         case .focus: store.focusTerminal(row)
         case .mute: store.toggleMute(row.agent)
+        case .turnOnAutomation: store.turnOnTerminalAutomation(row)
         }
     }
 
@@ -163,7 +165,20 @@ final class TrayUI {
         case .focus: store.focusTerminal(row)
         case .dismiss: store.dismissWaiting(row)
         case .mute: store.toggleMute(row.agent)
+        case .turnOnAutomation: store.turnOnTerminalAutomation(row)
         }
+    }
+
+    /// The pointer moved onto a row: it is the selection — one highlight,
+    /// as in a menu. Not while a detail page is open (no row is on screen),
+    /// and not when the pointer is where it was (`pointer`).
+    func hover(_ key: String, at location: CGPoint) {
+        guard keys.detail == nil, location != pointer else { return }
+        pointer = location
+        pointerSelection = key
+        var next = keys
+        next.selected = key
+        if keys != next { keys = next }
     }
 
     func showDetail(_ key: String) {

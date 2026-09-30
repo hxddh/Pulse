@@ -16,7 +16,7 @@ struct TrayHeaderModel: Equatable {
     var title: String
 
     /// `counts`: the projection's one count (`PulseSnapshot.counts`) —
-    /// every row, not the visible window.
+    /// every row.
     static func make(counts all: TrayState.Counts, lang: ResolvedLanguage) -> TrayHeaderModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
         var counts: [Count] = []
@@ -175,18 +175,13 @@ enum TrayOrder {
         return known + newcomers
     }
 
-    /// The most rows the open tray lists while the projection's window stays
-    /// folded: room for newcomers beside the rows already shown.
-    static let openCap = TrayState.maxVisibleRows * 2
-
     /// What the open tray lists: every row already on screen this glance
     /// (`pinned`) that still exists, in the frozen order, then rows that
-    /// entered the projection's `window` since, in the order they
-    /// came. A new wait is appended; it never pushes a row the person is
-    /// looking at out of the list. Newcomers stop at `cap`; pinned rows
-    /// never do. Pure.
+    /// entered the projection's `window` since, in the order they came. A
+    /// new wait is appended; it never pushes a row the person is looking at
+    /// out of the list, nor moves one. Pure.
     static func openWindow(
-        all: [AgentRow], window: [AgentRow], pinned: Set<String>, frozen: [String], cap: Int
+        all: [AgentRow], window: [AgentRow], pinned: Set<String>, frozen: [String]
     ) -> [AgentRow] {
         let windowKeys = Set(window.map(\.rowKey))
         let kept = arrange(all.filter { pinned.contains($0.rowKey) }, frozen: frozen)
@@ -194,7 +189,7 @@ enum TrayOrder {
             all.filter { !pinned.contains($0.rowKey) && windowKeys.contains($0.rowKey) },
             frozen: frozen
         )
-        return kept + newcomers.prefix(max(0, cap - kept.count))
+        return kept + newcomers
     }
 
     /// The frozen order with newcomers appended, so a row keeps the place it

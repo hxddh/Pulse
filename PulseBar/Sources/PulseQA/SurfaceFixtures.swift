@@ -9,8 +9,9 @@ import Foundation
 /// product's rules over them.
 enum SurfaceFixtures {
     enum Value {
-        /// The tray row's face, at rest or under the pointer.
-        case row(TrayRowModel, hovering: Bool = false)
+        /// The tray row's face, at rest or selected (under the pointer or
+        /// the keyboard — one highlight).
+        case row(TrayRowModel, selected: Bool = false)
         /// The tray header — the why, in counts.
         case header(TrayHeaderModel)
         /// The tray's one notice.
@@ -29,12 +30,12 @@ enum SurfaceFixtures {
     }
 
     static let names = [
-        "row-blocked", "row-blocked-front", "row-running", "row-running-hover",
+        "row-blocked", "row-blocked-front", "row-running", "row-running-selected",
         "row-stalled", "row-your-turn", "row-process-only", "row-muted",
         "row-running-step", "row-stalled-step",
         "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
-        "detail-blocked", "detail-your-turn", "detail-steps", "detail-app-only",
-        "settings", "settings-login-approval",
+        "detail-blocked", "detail-your-turn", "detail-steps", "detail-stalled", "detail-app-only",
+        "settings", "settings-login-approval", "settings-shortcut-recording", "settings-shortcut-refused",
     ]
 
     static func all(lang: ResolvedLanguage) -> [Fixture] {
@@ -42,9 +43,10 @@ enum SurfaceFixtures {
             Fixture(name: "row-blocked", width: 448, value: .row(rowModel(rowPermission(), lang: lang))),
             Fixture(name: "row-blocked-front", width: 448, value: .row(rowModel(rowQuestionFront(), lang: lang))),
             Fixture(name: "row-running", width: 448, value: .row(rowModel(rowRunning(), lang: lang))),
-            // The common row under the pointer — the chevron sits beside the
-            // time, never on it.
-            Fixture(name: "row-running-hover", width: 448, value: .row(rowModel(rowRunning(), lang: lang), hovering: true)),
+            // The common row, selected (the pointer entered it): the one
+            // highlight, and its "›" column — always there, clearer now —
+            // beside the time, never on it.
+            Fixture(name: "row-running-selected", width: 448, value: .row(rowModel(rowRunning(), lang: lang), selected: true)),
             Fixture(name: "row-stalled", width: 448, value: .row(rowModel(rowStalled(), lang: lang))),
             Fixture(name: "row-your-turn", width: 448, value: .row(rowModel(rowTurn(), lang: lang))),
             Fixture(name: "row-process-only", width: 448, value: .row(rowModel(rowProcessOnly(), lang: lang))),
@@ -59,18 +61,26 @@ enum SurfaceFixtures {
             Fixture(name: "notice-setup-done", width: 432, value: .notice(noticeSetupDone(lang: lang))),
             Fixture(name: "notice-setup-failed", width: 432, value: .notice(noticeSetupFailed(lang: lang))),
             // A Go that reached the app only, for want of the Terminal
-            // automation switch: the notice names the switch in Settings.
+            // automation switch: the notice says so, with "Turn on".
             Fixture(name: "row-app-only", width: 448, value: .row(rowModel(rowTerminalTab(), lang: lang, appOnly: true))),
             Fixture(name: "detail-blocked", width: 448, value: .detail(detailPermission(lang: lang))),
             Fixture(name: "detail-your-turn", width: 448, value: .detail(detailTurn(lang: lang))),
-            // Up to five recent steps and this turn's duration.
+            // Up to five recent steps and this turn's duration — the page's
+            // one clock.
             Fixture(name: "detail-steps", width: 448, value: .detail(detailSteps(lang: lang))),
-            // The same landing notice on the detail page.
+            // A stalled row: its why is the row's own second line, so the
+            // page does not say it twice.
+            Fixture(name: "detail-stalled", width: 448, value: .detail(detailStalled(lang: lang))),
+            // The same landing notice and "Turn on" on the detail page.
             Fixture(name: "detail-app-only", width: 448, value: .detail(detailAppOnly(lang: lang))),
             // Per-agent Install / Remove on every Hooks line.
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
             // Open at login registered, and macOS waiting for approval.
             Fixture(name: "settings-login-approval", width: 500, value: .settings(settingsLoginApproval(lang: lang))),
+            // The shortcut recorder listening for the next key.
+            Fixture(name: "settings-shortcut-recording", width: 500, value: .settings(settingsShortcutRecording(lang: lang))),
+            // A combination macOS keeps for itself, refused.
+            Fixture(name: "settings-shortcut-refused", width: 500, value: .settings(settingsShortcutRefused(lang: lang))),
         ]
     }
 
@@ -240,11 +250,15 @@ enum SurfaceFixtures {
         DetailModel.make(row: rowRunningStep(), lang: lang, nowMs: nowMs)
     }
 
+    static func detailStalled(lang: ResolvedLanguage) -> DetailModel {
+        DetailModel.make(row: rowStalledStep(), lang: lang, nowMs: nowMs)
+    }
+
     static func detailAppOnly(lang: ResolvedLanguage) -> DetailModel {
         let row = rowTerminalTab()
         return DetailModel.make(
             row: row, lang: lang, nowMs: nowMs,
-            notice: RowNotice.appOnly(row: row, automationAllowed: false, lang: lang).text
+            notice: RowNotice.appOnly(row: row, automationAllowed: false, lang: lang)
         )
     }
 
@@ -256,8 +270,7 @@ enum SurfaceFixtures {
             launchAtLogin: true,
             language: .auto,
             terminalAutomation: false,
-            hotkey: .controlOptionSpace,
-            hotkeyTaken: false,
+            hotkeyLabel: Hotkey.legacy("ctrl_opt_space")?.label,
             notifications: .allowed,
             notifyOnWaiting: true,
             mutedAgents: SettingsModel.sortedMuted([.gemini, .pi]),
@@ -290,6 +303,20 @@ enum SurfaceFixtures {
         let login = SettingsModel.loginLine(asked: true, state: .requiresApproval)
         model.launchAtLogin = login.isOn
         model.loginNote = login.note
+        return model
+    }
+
+    /// The shortcut control listening: "Type shortcut…" and how to finish.
+    static func settingsShortcutRecording(lang: ResolvedLanguage) -> SettingsModel {
+        var model = settings(lang: lang)
+        model.hotkeyRecording = true
+        return model
+    }
+
+    /// ⌘Space pressed: Spotlight's. Refused, the old shortcut kept.
+    static func settingsShortcutRefused(lang: ResolvedLanguage) -> SettingsModel {
+        var model = settings(lang: lang)
+        model.hotkeyProblem = .cantUse
         return model
     }
 }

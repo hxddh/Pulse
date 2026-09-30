@@ -201,12 +201,12 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
         // Every open is a fresh glance. Do it before the first layout pass so
         // the panel is never ordered in showing the previous visit's detail
-        // page or expanded list (EXPERIENCE §4); `settleLayout` below flushes
+        // page (EXPERIENCE §4); `settleLayout` below flushes
         // the rebuilt tree, so the reset and the measurement agree.
         store.trayWillAppear()
         let anchor = buttonWindow.convertToScreen(button.frame)
         ui.maxListHeight = Double(Self.listHeightBudget(on: buttonWindow.screen ?? NSScreen.main))
-        ui.open()
+        ui.open(pointer: NSEvent.mouseLocation)
         lastFitRowCount = ui.displayRows.count
         lastFitDetail = ui.keys.detail
         settleLayout()

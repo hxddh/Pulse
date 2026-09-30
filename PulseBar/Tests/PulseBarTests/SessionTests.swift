@@ -1031,15 +1031,11 @@ final class TrayAssembleTests: XCTestCase {
 
     private func build(
         _ rows: [AgentRow],
-        previousWaits: [String: Int64] = [:],
-        showAll: Bool = false,
-        maxRows: Int = TrayState.maxVisibleRows
+        previousWaits: [String: Int64] = [:]
     ) -> TrayState {
         TrayState.assemble(
             rows: rows,
-            context: TrayState.Context(
-                nowMs: now, lang: .en, maxVisibleRows: maxRows, showAllAgents: showAll, previousWaits: previousWaits
-            )
+            context: TrayState.Context(nowMs: now, lang: .en, previousWaits: previousWaits)
         )
     }
 
@@ -1085,20 +1081,17 @@ final class TrayAssembleTests: XCTestCase {
         XCTAssertEqual(r.activity, .recent)
     }
 
-    func testRowsFoldAtTheVisibleLimit() {
-        let r = build((0..<5).map { row("k\($0)") }, maxRows: 3)
-        XCTAssertEqual(r.snapshot.rows.count, 3)
-        XCTAssertEqual(r.snapshot.hiddenCount, 2)
-        XCTAssertEqual(r.snapshot.totalCount, 5)
-    }
-
-    func testShowAllCollapsesOnceTheListIsShortAgain() {
-        XCTAssertTrue(build((0..<5).map { row("k\($0)") }, showAll: true, maxRows: 3).showAllAgents)
-        XCTAssertFalse(build((0..<2).map { row("k\($0)") }, showAll: true, maxRows: 3).showAllAgents)
+    /// No fold: the tray lists every session and scrolls inside the
+    /// panel's height — there is no "and N more" to click.
+    func testEveryRowIsListedWithoutAFold() {
+        let r = build((0..<30).map { row("k\($0)") })
+        XCTAssertEqual(r.snapshot.rows.count, 30)
+        XCTAssertEqual(r.snapshot.totalCount, 30)
+        XCTAssertEqual(r.snapshot.rows.map(\.rowKey), r.rows.map(\.rowKey))
     }
 
     func testCountsCoverTheWholeListNotTheWindow() {
-        let r = build([blocked("w")] + (0..<4).map { row("k\($0)") }, maxRows: 2)
+        let r = build([blocked("w")] + (0..<4).map { row("k\($0)") })
         XCTAssertEqual(r.snapshot.counts.blocked, 1)
         XCTAssertEqual(r.snapshot.counts.running, 4)
         XCTAssertEqual(r.snapshot.headerTitle, r.snapshot.counts.summary(.en))

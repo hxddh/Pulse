@@ -25,14 +25,12 @@ final class StatusStore {
     // MARK: Observed — what views draw
 
     var snapshot = PulseSnapshot()
-    /// Every row the last scan produced (the tray's visible window is
+    /// Every row the last scan produced (the same list as
     /// `snapshot.rows`); the open tray and focus read this.
     var cachedAll: [AgentRow] = []
     /// The person's settings, persisted as `settings.json`. Change them
     /// through `set(_:_:)` so the change is saved and applied.
     var settings = PulseSettings()
-    /// The tray shows every row rather than its visible window.
-    var showAllAgents = false
     var hooksStatus: HooksSupport.Status = .unknown
     /// Agents whose vendor folder is on this Mac (`HooksInstaller.vendorPresent`)
     /// — read at launch and when the tray opens; never on the scan path.
@@ -42,6 +40,8 @@ final class StatusStore {
     var setupConnected: Set<AgentID>?
     /// False when the system refused the shortcut (another app owns it).
     var hotkeyRegistered = true
+    /// The Settings shortcut recorder: listening, and what went wrong.
+    var hotkeyRecorder = HotkeyRecorder.State()
     /// Pulse's login item as macOS reports it (`SMAppService`); nil until
     /// read. The Settings toggle shows this, not what was asked.
     var loginItem: LoginItemState?
@@ -86,6 +86,8 @@ final class StatusStore {
     /// once `start()` has read them, so a store a test or a fixture builds
     /// never touches the developer's own file or login items.
     @ObservationIgnored private var started = false
+    /// The recorder's key listener, made on the first recording.
+    @ObservationIgnored private var hotkeyCapture: HotkeyCapture?
 
     let engine: ScanEngine
     let notifier: WaitNotifier
@@ -183,7 +185,6 @@ final class StatusStore {
     /// not a new one.
     func land(_ state: TrayState, nowMs: Int64, baseline: Bool = false) {
         setCachedAll(state.rows)
-        if showAllAgents != state.showAllAgents { showAllAgents = state.showAllAgents }
         notifier.scanLanded(state, nowMs: nowMs, baseline: baseline)
         // A scan that found the same world leaves `snapshot` alone — except
         // when a relative-time label on screen is due to move.
@@ -374,11 +375,72 @@ final class StatusStore {
     /// Re-register the global shortcut and report honestly when the system
     /// refuses (another app already owns the combination).
     func applyHotkey() {
-        let choice = settings.hotkey
-        let registered = GlobalHotKey.install(choice: choice)
+        let hotkey = settings.hotkey
+        let registered = GlobalHotKey.install(hotkey)
         if hotkeyRegistered != registered { hotkeyRegistered = registered }
-        if choice != .off, !registered {
-            DebugLog.write("hotkey \(choice.rawValue) registration FAILED — likely taken")
+        if let hotkey, !registered {
+            DebugLog.write("hotkey \(hotkey.label) registration FAILED — likely taken")
+        }
+    }
+
+    // MARK: - Recording a shortcut
+
+    /// Settings' shortcut control was clicked: listen for the next key.
+    /// The live shortcut is set aside meanwhile, so pressing it records it
+    /// rather than opening the tray.
+    func startRecordingHotkey() {
+        GlobalHotKey.uninstall()
+        let capture = hotkeyCapture ?? HotkeyCapture()
+        hotkeyCapture = capture
+        capture.onKey = { [weak self] keyCode, modifiers in
+            self?.recordHotkeyKey(keyCode: keyCode, modifiers: modifiers)
+        }
+        capture.start()
+        landRecorder(HotkeyRecorder.State(recording: true, problem: nil))
+    }
+
+    /// Stop listening (Esc, a second click, Settings closing) and put the
+    /// saved shortcut back.
+    func stopRecordingHotkey() {
+        guard hotkeyRecorder.recording || hotkeyCapture?.isListening == true else { return }
+        endRecording(problem: nil)
+        applyHotkey()
+    }
+
+    private func endRecording(problem: HotkeyRecorder.Problem?) {
+        hotkeyCapture?.stop()
+        landRecorder(HotkeyRecorder.State(recording: false, problem: problem))
+    }
+
+    private func landRecorder(_ next: HotkeyRecorder.State) {
+        if hotkeyRecorder != next { hotkeyRecorder = next }
+    }
+
+    /// One key while recording (`HotkeyRecorder.reduce` decides). A
+    /// combination macOS keeps, or one that will not register, is refused
+    /// and the old shortcut stays.
+    func recordHotkeyKey(keyCode: UInt32, modifiers: UInt32) {
+        switch HotkeyRecorder.reduce(keyCode: keyCode, modifiers: modifiers) {
+        case .cancel:
+            stopRecordingHotkey()
+        case .clear:
+            endRecording(problem: nil)
+            set(\.hotkey, nil)
+            applyHotkey()
+        case .needsModifier:
+            landRecorder(HotkeyRecorder.State(recording: true, problem: .needsModifier))
+        case .record(let hotkey):
+            endRecording(problem: nil)
+            guard HotkeyRecorder.usable(hotkey, systemTaken: GlobalHotKey.systemTaken()),
+                  GlobalHotKey.install(hotkey)
+            else {
+                DebugLog.write("hotkey \(hotkey.label) refused — the system or another app owns it")
+                landRecorder(HotkeyRecorder.State(recording: false, problem: .cantUse))
+                applyHotkey()
+                return
+            }
+            set(\.hotkey, hotkey)
+            applyHotkey()
         }
     }
 
@@ -400,11 +462,6 @@ final class StatusStore {
     func trayWillAppear() {
         traySessionToken &+= 1
         if !previewFixtureActive { refreshPresentAgents() }
-        // Store-owned, and just as much "last time's rummaging" as the folds.
-        if showAllAgents {
-            showAllAgents = false
-            applyRowWindow()
-        }
     }
 
     /// Tray panel appeared — tick faster while the user is looking at it.
@@ -417,22 +474,6 @@ final class StatusStore {
 
     func trayDidDisappear() {
         engine.setTrayOpen(false)
-    }
-
-    func toggleShowAllAgents() {
-        showAllAgents.toggle()
-        applyRowWindow()
-    }
-
-    func applyRowWindow() {
-        var snap = snapshot
-        TrayState.window(
-            rows: cachedAll,
-            showAll: showAllAgents,
-            maxVisible: TrayState.maxVisibleRows,
-            into: &snap
-        )
-        if snap != snapshot { snapshot = snap }
     }
 
     /// Open the tray, optionally selecting a concrete row — and opening its
@@ -470,7 +511,8 @@ final class StatusStore {
 
     func noteRowAction(_ rowKey: String, _ notice: RowNotice) {
         rowActionNotices[rowKey] = notice
-        let seconds: UInt64 = 8
+        // A notice with a button stays long enough to reach it.
+        let seconds: UInt64 = notice.offersAutomation ? 20 : 8
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
             guard let self, self.rowActionNotices[rowKey] == notice else { return }
@@ -502,11 +544,22 @@ final class StatusStore {
 
     /// The Go reached the app, not the exact terminal. When Terminal
     /// automation (a Settings toggle) would have reached the exact tab, the
-    /// notice says where to turn it on.
+    /// notice says so and offers to turn it on.
     private func noteAppOnly(_ row: AgentRow) {
         noteRowAction(row.rowKey, RowNotice.appOnly(
             row: row, automationAllowed: settings.allowTerminalAutomation, lang: lang
         ))
+    }
+
+    /// The landing notice's "Turn on": the same setting as the Settings
+    /// switch, at the moment it is needed. It only allows the AppleScript
+    /// step; macOS asks its own Automation question on the next Go. The
+    /// offer has been taken, so its notice goes.
+    func turnOnTerminalAutomation(_ row: AgentRow) {
+        set(\.allowTerminalAutomation, true)
+        if rowActionNotices[row.rowKey]?.offersAutomation == true {
+            rowActionNotices.removeValue(forKey: row.rowKey)
+        }
     }
 
     /// Looking at a finished session is what "your turn" was asking for. A

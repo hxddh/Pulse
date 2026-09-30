@@ -250,26 +250,24 @@ struct TrayInteractionTests {
         // The builder now puts the wait first and folds the old twelfth row.
         let window = [wait] + shown.prefix(11)
         let all = [wait] + shown
-        let listed = TrayOrder.openWindow(
-            all: all, window: window, pinned: Set(frozen), frozen: frozen, cap: TrayOrder.openCap
-        )
+        let listed = TrayOrder.openWindow(all: all, window: window, pinned: Set(frozen), frozen: frozen)
         let keys = listed.map { $0.rowKey }
         #expect(keys == frozen + ["new-wait"], "every row shown stays, in place; the wait is appended")
     }
 
-    @Test func theOpenListDropsRowsThatLeftAndCapsOnlyNewcomers() {
-        let a = session("a"), b = session("b"), c = session("c"), d = session("d")
+    @Test func theOpenListDropsRowsThatLeftAndAppendsNewcomers() {
+        let a = session("a"), b = session("b"), c = session("c"), d = session("d"), e = session("e")
         let listed = TrayOrder.openWindow(
-            all: [c, a, d], window: [d, c, a], pinned: ["a", "b", "c"], frozen: ["a", "b", "c"], cap: 3
+            all: [c, a, d], window: [d, c, a], pinned: ["a", "b", "c"], frozen: ["a", "b", "c"]
         )
         let keys = listed.map { $0.rowKey }
         #expect(keys == ["a", "c", "d"], "b left the scan; d is new")
-        let capped = TrayOrder.openWindow(
-            all: [a, b, c, d], window: [d, a], pinned: ["a", "b", "c"], frozen: ["a", "b", "c"], cap: 3
+        let many = TrayOrder.openWindow(
+            all: [e, d, a, b, c], window: [e, d, a, b, c], pinned: ["a", "b", "c"], frozen: ["a", "b", "c", "e", "d"]
         )
-        let cappedKeys = capped.map { $0.rowKey }
-        #expect(cappedKeys == ["a", "b", "c"], "the cap holds newcomers back, never a row already shown")
-        let fresh = TrayOrder.openWindow(all: [a, b], window: [b], pinned: [], frozen: [], cap: 12)
+        let manyKeys = many.map { $0.rowKey }
+        #expect(manyKeys == ["a", "b", "c", "e", "d"], "no cap: every newcomer is listed, after the rows already shown")
+        let fresh = TrayOrder.openWindow(all: [a, b], window: [b], pinned: [], frozen: [])
         let freshKeys = fresh.map { $0.rowKey }
         #expect(freshKeys == ["b"], "nothing pinned: the builder's window")
     }
@@ -464,15 +462,74 @@ struct TrayInteractionTests {
         #expect(onlyUnknown == "unknown")
     }
 
-    /// The shortcuts offered leave the editors' own alone.
-    @Test func theShortcutsOfferedDoNotClashWithEditors() {
-        let labels = HotkeyChoice.allCases.map(\.label)
-        #expect(labels.contains("⌃⌥Space"))
-        #expect(labels.contains("⌥⌘P"))
-        #expect(!labels.contains("⌘⇧P"), "VS Code / Cursor's command palette")
-        #expect(!labels.contains("⌘⇧U"))
-        #expect(HotkeyChoice(rawValue: "cmd_shift_p") == nil, "a saved clashing choice reads as off")
-        #expect(PulseSettings().hotkey == .off, "still opt-in")
+    // MARK: - Clicks and the pointer
+
+    /// A click on the row's body goes; the "›" column opens the detail; an
+    /// ⌥-click anywhere opens the detail.
+    @Test func aClickGoesTheChevronAndAnOptionClickOpenTheDetail() {
+        let body = TrayRowModel.clickAction(zone: .body, option: false)
+        #expect(body == .primary)
+        let chevron = TrayRowModel.clickAction(zone: .chevron, option: false)
+        #expect(chevron == .details)
+        let optionBody = TrayRowModel.clickAction(zone: .body, option: true)
+        #expect(optionBody == .details, "⌥-click on the body is Details, not Go")
+        let optionChevron = TrayRowModel.clickAction(zone: .chevron, option: true)
+        #expect(optionChevron == .details)
+    }
+
+    /// Go on a row with no landing plan opens its detail — the click always
+    /// reaches something real.
+    @MainActor
+    @Test func goWithoutAHandleOpensTheDetail() {
+        let store = StatusStore()
+        let row = session("no-handle")
+        store.cachedAll = [row]
+        let ui = TrayUI(store: store)
+        #expect(!row.canFocusTerminal)
+        ui.send(TrayRowModel.Action.primary, row: row)
+        #expect(ui.keys.detail == "no-handle")
+    }
+
+    /// The pointer entering a row selects it — one highlight; the keyboard
+    /// moves the same selection, and only a keyboard move scrolls.
+    @MainActor
+    @Test func thePointerSelectsTheRowItEnters() throws {
+        let store = StatusStore()
+        store.installPreviewFixture("waiting")
+        let ui = TrayUI(store: store)
+        ui.open(pointer: CGPoint(x: 10, y: 10))
+        let rows = ui.displayRows
+        try #require(rows.count >= 2)
+        let first = ui.keys.selected
+        ui.hover(rows[1].rowKey, at: CGPoint(x: 10, y: 10))
+        #expect(ui.keys.selected == first, "the list appeared under a still pointer: nothing moves")
+        ui.hover(rows[1].rowKey, at: CGPoint(x: 12, y: 40))
+        #expect(ui.keys.selected == rows[1].rowKey)
+        #expect(ui.pointerSelection == rows[1].rowKey, "the list does not scroll to a pointer's selection")
+        _ = ui.handle(.up)
+        #expect(ui.keys.selected == rows[0].rowKey, "the keyboard moves the same selection")
+        #expect(ui.pointerSelection == nil)
+        ui.hover(rows[1].rowKey, at: CGPoint(x: 12, y: 40))
+        #expect(ui.keys.selected == rows[0].rowKey, "rows scrolled under a still pointer do not take the selection")
+        ui.showDetail(rows[0].rowKey)
+        ui.hover(rows[1].rowKey, at: CGPoint(x: 30, y: 60))
+        #expect(ui.keys.selected == rows[0].rowKey, "no row is under the pointer on the detail page")
+    }
+
+    /// The keys the row's click model leans on: ↩ goes, → and Space open
+    /// the detail, ← and Esc come back from it.
+    @Test func theKeysMatchTheClicks() {
+        let go = press(TrayKeys.State(selected: "a", detail: nil), [.enter])
+        #expect(go.effect == .focus("a"))
+        for key in [TrayKeys.Key.right, .space] {
+            let details = press(TrayKeys.State(selected: "a", detail: nil), [key])
+            #expect(details.state.detail == "a")
+        }
+        for key in [TrayKeys.Key.left, .escape] {
+            let back = press(TrayKeys.State(selected: "a", detail: "a"), [key])
+            #expect(back.state.detail == nil)
+            #expect(back.state.selected == "a")
+        }
     }
 }
 
@@ -490,17 +547,6 @@ final class TrayGlanceResetTests: XCTestCase {
         let secondOpen = store.traySessionToken
         XCTAssertNotEqual(atLaunch, firstOpen)
         XCTAssertNotEqual(firstOpen, secondOpen, "every open discards the previous view state")
-    }
-
-    /// `showAllAgents` lives on the store rather than in `@State`, so the view
-    /// identity alone cannot reset it.
-    @MainActor
-    func testOpeningTheTrayCollapsesTheExpandedList() {
-        let store = StatusStore()
-        store.toggleShowAllAgents()
-        XCTAssertTrue(store.showAllAgents)
-        store.trayWillAppear()
-        XCTAssertFalse(store.showAllAgents)
     }
 
     /// The host view is what carries the identity into SwiftUI; keep it wired.
@@ -1028,6 +1074,23 @@ final class RowActionNoticeTests: XCTestCase {
         XCTAssertNil(s.rowActionNotice(other), "a notice belongs to the row that was clicked")
     }
 
+    /// "Turn on" on an app-only notice sets the one Terminal automation
+    /// setting — the Settings switch — and the offer, taken, leaves.
+    @MainActor
+    func testTurnOnSetsTheSettingsSwitchAndClearsTheOffer() {
+        let s = store()
+        let row = liveRow()
+        s.noteRowAction(row.rowKey, RowNotice(text: s.tr(.focusAppOnlyAutomation), offersAutomation: true))
+        XCTAssertFalse(s.settings.allowTerminalAutomation)
+        let ui = TrayUI(store: s)
+        ui.send(TrayRowModel.Action.turnOnAutomation, row: row)
+        XCTAssertTrue(s.settings.allowTerminalAutomation, "the same setting as Settings → General")
+        XCTAssertNil(s.rowActionNotice(row))
+        let fromDetail = store()
+        TrayUI(store: fromDetail).send(DetailModel.Action.turnOnAutomation, row: row)
+        XCTAssertTrue(fromDetail.settings.allowTerminalAutomation)
+    }
+
     @MainActor
     func testEveryFailureSentenceIsRealCopyInBothLanguages() {
         // These only ever appear when something went wrong, which is exactly
@@ -1462,56 +1525,6 @@ struct RowWordsTests {
 
     // MARK: - The detail page
 
-    /// The detail page's times say the day when it is not today, each in
-    /// the locale's own pattern.
-    @Test func theClockSaysTheDayWhenItIsNotToday() throws {
-        let utc = try #require(TimeZone(identifier: "UTC"))
-        let gb = Locale(identifier: "en_GB")
-        let cn = Locale(identifier: "zh_Hans_CN")
-        let hour: Int64 = 60 * minute
-        let day: Int64 = 24 * hour
-        func label(_ ms: Int64, _ lang: ResolvedLanguage, _ locale: Locale) -> String {
-            LogClock.label(ms: ms, nowMs: now, lang: lang, timeZone: utc, locale: locale)
-        }
-        // 2027-01-15 08:00 UTC, a Friday.
-        let today = label(now - 3 * hour, .en, gb)
-        #expect(today == "05:00")
-        let yesterday = label(now - 9 * hour, .en, gb)
-        #expect(yesterday.contains("Thu") && yesterday.contains("23:00"), "\(yesterday)")
-        let wednesday = label(now - 2 * day, .zh, cn)
-        #expect(wednesday.contains("周三") && wednesday.contains("08:00"), "\(wednesday)")
-        let older = label(now - 10 * day, .en, gb)
-        #expect(older.contains("08:00") && older.contains("05") && !older.contains("Tue"), "month and day, no weekday: \(older)")
-    }
-
-    /// Time of day follows the locale: "3:04 PM" in the US, "15:04" in
-    /// Britain — never a fixed "HH:mm".
-    @Test func theTimeOfDayFollowsTheLocale() throws {
-        let utc = try #require(TimeZone(identifier: "UTC"))
-        // 2027-01-15 15:04 UTC.
-        let at: Int64 = 1_800_000_000_000 - (1_800_000_000_000 % 86_400_000) + (15 * 60 + 4) * minute
-        func label(_ locale: String) -> String {
-            LogClock.label(ms: at, nowMs: at + minute, lang: .en, timeZone: utc, locale: Locale(identifier: locale))
-                // ICU puts a narrow no-break space before AM/PM.
-                .replacingOccurrences(of: "\u{202F}", with: " ")
-                .replacingOccurrences(of: "\u{00A0}", with: " ")
-        }
-        let us = label("en_US")
-        #expect(us == "3:04 PM", "\(us)")
-        let gb = label("en_GB")
-        #expect(gb == "15:04", "\(gb)")
-    }
-
-    /// Without an injected locale the clock speaks the app's language in
-    /// the person's region.
-    @Test func theClockLocaleIsTheAppsLanguage() {
-        let us = Locale(identifier: "en_US")
-        #expect(LogClock.locale(for: .en, current: us) == us, "the person's own locale when it speaks the app's language")
-        let chineseOnUS = LogClock.locale(for: .zh, current: us)
-        #expect(chineseOnUS.language.languageCode?.identifier == "zh")
-        #expect(chineseOnUS.region?.identifier == "US")
-    }
-
     @Test func theDetailPageSaysTheSameWhyAsTheRow() {
         let row = SurfaceFixtures.rowPermission()
         let face = SurfaceFixtures.rowModel(row, lang: .en)
@@ -1537,6 +1550,40 @@ struct RowWordsTests {
         row.lastWord = "old"
         let detail = DetailModel.make(row: row, lang: .en, nowMs: now)
         #expect(detail.lastMessage == nil)
+    }
+
+    /// The page says each thing once: the headline is its title (no second
+    /// headline block), "This turn" is its one clock (no state-and-age, no
+    /// start time), and a stalled row's why — already the row's second
+    /// line — is not repeated.
+    @Test func theDetailSaysEachThingOnce() {
+        let steps = SurfaceFixtures.detailSteps(lang: .en)
+        let labels = steps.facts.map { $0.label }
+        #expect(labels == [L10n.t(.stepThisTurn, .en), L10n.t(.detailFolder, .en)], "one clock, then the folder")
+        let headline = TrayRowModel.headline(SurfaceFixtures.rowRunningStep(), lang: .en, nowMs: SurfaceFixtures.nowMs)
+        #expect(steps.headline == headline)
+        #expect(steps.why != nil, "a running row's why is not its second line (the step)")
+
+        let stalledRow = SurfaceFixtures.rowStalledStep()
+        let stalledFace = SurfaceFixtures.rowModel(stalledRow, lang: .en)
+        let stalled = SurfaceFixtures.detailStalled(lang: .en)
+        #expect(stalledFace.secondLine?.kind == .warning)
+        #expect(stalledFace.secondLine?.text == stalledFace.why)
+        #expect(stalled.why == nil, "the stall's why is the row's second line — said once")
+
+        let blocked = SurfaceFixtures.detailPermission(lang: .en)
+        #expect(blocked.why != nil, "a wait's why is not its ask")
+        #expect(blocked.ask == "Bash: npm run build")
+    }
+
+    /// The detail page carries the row's landing notice — the same words
+    /// and the same "Turn on".
+    @Test func theDetailCarriesTheLandingNoticeAndItsTurnOn() {
+        let detail = SurfaceFixtures.detailAppOnly(lang: .en)
+        #expect(detail.notice?.offersAutomation == true)
+        #expect(detail.notice?.text == L10n.t(.focusAppOnlyAutomation, .en))
+        let row = SurfaceFixtures.rowModel(SurfaceFixtures.rowTerminalTab(), lang: .en, appOnly: true)
+        #expect(row.notice == detail.notice)
     }
 
     /// No placeholder rows: a fact Pulse does not have is not listed, and

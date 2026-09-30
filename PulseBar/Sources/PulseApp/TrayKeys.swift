@@ -193,6 +193,45 @@ enum TrayKeys {
     }
 }
 
+/// What a response to a "needs you" banner asks for: its "Ignore" button
+/// dismisses the waits it names — the tray's ⌘D, the same `done` line with
+/// Pulse's `:dismiss` marker, never an answer to the vendor; macOS's own
+/// dismissal (the ✕, a swipe) is nothing; a click on the banner or its
+/// "Go" goes (`BannerRoute`). Pure.
+enum BannerIntent: Equatable {
+    case go
+    case ignore
+    case nothing
+
+    /// The banner's buttons, by their `UNNotificationAction` ids.
+    static let goActionID = "pulse.focus"
+    static let ignoreActionID = "pulse.ignore"
+
+    /// `dismissActionID`: the system's own dismiss id
+    /// (`UNNotificationDismissActionIdentifier`), passed in so this stays
+    /// free of the framework.
+    static func decide(actionID: String, dismissActionID: String) -> BannerIntent {
+        switch actionID {
+        case ignoreActionID: return .ignore
+        case dismissActionID: return .nothing
+        default: return .go
+        }
+    }
+
+    /// The rows an "Ignore" dismisses: every wait the banner names (one, or
+    /// a summary's several) that is still open now. A wait answered, ended
+    /// or already dismissed meanwhile is left alone.
+    static func ignoreTargets(rowKey: String, summaryRowKeys: [String], rows: [AgentRow]) -> [AgentRow] {
+        var named = summaryRowKeys
+        if !rowKey.isEmpty, !named.contains(rowKey) { named.insert(rowKey, at: 0) }
+        var seen = Set<String>()
+        return named.compactMap { key in
+            guard seen.insert(key).inserted else { return nil }
+            return rows.first { $0.rowKey == key && $0.isBlocked }
+        }
+    }
+}
+
 /// Where a click on a "needs you" banner goes: to the terminal and
 /// nowhere else when it could be focused (the tray does not pop up over
 /// it); to the row's detail in the tray when it could not; to the tray when

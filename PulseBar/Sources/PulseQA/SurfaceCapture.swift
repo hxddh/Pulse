@@ -51,8 +51,8 @@ enum SurfaceCapture {
 
     static func view(for fixture: SurfaceFixtures.Fixture) -> AnyView {
         switch fixture.value {
-        case .row(let model, let hovering):
-            return AnyView(TrayRowFace(model: model, hovering: hovering))
+        case .row(let model, let selected):
+            return AnyView(TrayRowFace(model: model, selected: selected))
         case .header(let model):
             return AnyView(TrayHeaderFace(model: model))
         case .notice(let model):

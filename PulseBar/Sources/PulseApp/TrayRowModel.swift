@@ -6,8 +6,10 @@ import Foundation
 /// only when the row has something to add: the ask of a blocked row, the why
 /// of a stalled one, or — quietly — a running row's last step ("Bash · swift
 /// test · 12m ago", a past step, never "running"). No chip, no tint, no "new"
-/// dot, no buttons on the row: the verbs are keys (↩ → ⌘D ⌘M), the context
-/// menu (which shows each key) and VoiceOver actions, and the detail page.
+/// dot, no buttons on the row: the verbs are a click (the body goes, the
+/// trailing "›" or an ⌥-click opens the detail — `clickAction`), keys (↩ →
+/// ⌘D ⌘M), the context menu (which shows each key), VoiceOver actions and
+/// the detail page.
 ///
 /// Pure: the row, the language, the clock and a few facts only the store
 /// knows, passed in as plain values. Every sentence Pulse says of a row —
@@ -20,6 +22,24 @@ struct TrayRowModel: Equatable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
         case details, dismiss, focus, mute
+        /// The landing notice's "Turn on": Terminal automation, the same
+        /// setting as the Settings switch (`RowNotice.offersAutomation`).
+        case turnOnAutomation
+    }
+
+    /// Where on the row a click landed: its body (both lines) or the
+    /// trailing "›" column.
+    enum ClickZone: Equatable { case body, chevron }
+
+    /// What a click does. The body goes; the "›" opens the detail; an
+    /// ⌥-click anywhere opens the detail. The view reads the modifier at
+    /// click time and asks this. Pure.
+    static func clickAction(zone: ClickZone, option: Bool) -> Action {
+        if option { return .details }
+        switch zone {
+        case .body: return .primary
+        case .chevron: return .details
+        }
     }
 
     struct Button: Equatable, Identifiable {
@@ -34,7 +54,7 @@ struct TrayRowModel: Equatable {
             case .details: return .right
             case .dismiss: return .dismiss
             case .mute: return .mute
-            case .primary: return nil
+            case .primary, .turnOnAutomation: return nil
             }
         }
     }
@@ -56,7 +76,6 @@ struct TrayRowModel: Equatable {
     var lang: ResolvedLanguage
     var rowKey: String
     var agent: AgentID
-    var agentName: String
     var lamp: LampFace
     /// The short project name — "" when the headline already is the project.
     var project: String
@@ -127,7 +146,6 @@ struct TrayRowModel: Equatable {
             lang: lang,
             rowKey: row.rowKey,
             agent: row.agent,
-            agentName: row.agent.displayName,
             lamp: lamp,
             project: project,
             headline: headline,
@@ -404,12 +422,17 @@ extension TrayRowModel {
 /// thing. Pure.
 struct RowNotice: Equatable {
     var text: String
+    /// The notice carries a "Turn on" button for Terminal automation — the
+    /// one switch that would have made this Go exact. Consent at the moment
+    /// of need; macOS's own Automation prompt still comes on the next Go.
+    var offersAutomation = false
 
     /// A Go that reached the app, not the exact terminal. When the one
     /// thing in the way is Terminal automation — off, and with it on the
     /// same handle would land on the exact iTerm session or Terminal / iTerm
     /// tab (no tmux pane already exact, no editor, no Ghostty) — the notice
-    /// names the Settings switch; otherwise it says only where it landed.
+    /// says so and offers to turn it on; otherwise it says only where it
+    /// landed.
     static func appOnly(row: AgentRow, automationAllowed: Bool, lang: ResolvedLanguage) -> RowNotice {
         let editor = row.landingPlan.steps.contains { step in
             if case .openFolder = step { return true }
@@ -417,7 +440,10 @@ struct RowNotice: Equatable {
         }
         let exactWithAutomation = !automationAllowed && !editor
             && LandingPlan.make(handle: row.landing, cwd: row.cwd, allowAutomation: true).precision == .exact
-        return RowNotice(text: L10n.t(exactWithAutomation ? .focusAppOnlyAutomation : .focusAppOnly, lang))
+        return RowNotice(
+            text: L10n.t(exactWithAutomation ? .focusAppOnlyAutomation : .focusAppOnly, lang),
+            offersAutomation: exactWithAutomation
+        )
     }
 }
 

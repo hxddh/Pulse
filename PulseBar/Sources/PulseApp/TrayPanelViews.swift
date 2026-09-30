@@ -1,6 +1,7 @@
 // The tray: a header that says why the lamp is lit, at most one notice, a
-// list of one-line sessions in an order that holds still while it is open, a
-// detail page one key away, and a footer with the keys. Every key goes
+// list of one-line sessions in an order that holds still while it is open
+// (every session; it scrolls inside the panel's height), and a detail page
+// one click or one key away. Every key goes
 // through `TrayKeys.reduce` (the panel's key monitor calls `TrayUI.handle`);
 // the faces here render values.
 
@@ -18,9 +19,10 @@ enum TrayChrome {
     /// number, read by the list and by `StatusPanelController` (which also
     /// clamps it to the screen).
     static let maxHeight: CGFloat = 760
-    /// The list's share of it: the panel minus header, notice and footer.
+    /// The list's share of it: the panel minus header, notice and margin.
     static let maxListHeight: CGFloat = maxHeight - 120
-    /// The row's hover and selection fill is inset from the panel edge.
+    /// The selected row's fill (the pointer's or the keyboard's) is inset
+    /// from the panel edge.
     static let highlightInset: CGFloat = PulseTheme.Space.s
     /// One hit target for every compact header control.
     static let headerControlSize: CGFloat = 28
@@ -44,7 +46,7 @@ private struct ContentHeightKey: PreferenceKey {
 }
 
 /// Owns nothing but the tray's identity: re-identifying the subtree per open
-/// resets every piece of per-view state (hover, measured height).
+/// resets every piece of per-view state (the measured height).
 @MainActor
 struct TrayPanelHost: View {
     var store: StatusStore
@@ -104,8 +106,8 @@ struct TrayPanel: View {
                 emptyState
             } else {
                 agentList(rows)
+                    .padding(.bottom, PulseTheme.Space.s)
             }
-            footer
         }
     }
 
@@ -137,45 +139,11 @@ struct TrayPanel: View {
             .frame(height: min(max(measuredHeight, 40), CGFloat(ui.maxListHeight)))
             .onPreferenceChange(ContentHeightKey.self) { measuredHeight = $0 }
             .onChange(of: ui.keys.selected) { _, key in
-                guard let key else { return }
+                // Follow the keyboard, not the pointer.
+                guard let key, key != ui.pointerSelection else { return }
                 proxy.scrollTo(key)
             }
         }
-    }
-
-    // MARK: Footer
-
-    /// What is not on screen: "and N more" / "show less". The keys are on
-    /// the row's context menu, each item with its shortcut.
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: PulseTheme.Space.xs) {
-            if store.snapshot.hiddenCount > 0 {
-                Button {
-                    store.toggleShowAllAgents()
-                } label: {
-                    Text(String(format: t(.andMore), store.snapshot.hiddenCount))
-                        .font(PulseTheme.Font.body)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            } else if store.showAllAgents, store.snapshot.totalCount > TrayState.maxVisibleRows {
-                Button {
-                    store.toggleShowAllAgents()
-                } label: {
-                    Text(t(.showLess))
-                        .font(PulseTheme.Font.body)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, TrayChrome.padX)
-        .padding(.top, PulseTheme.Space.xs)
-        .padding(.bottom, PulseTheme.Space.s)
     }
 
     // MARK: Empty
@@ -312,78 +280,101 @@ struct TrayNoticeFace: View {
 
 // MARK: - Agent row
 
-/// The store-bound wrapper: builds the row's value, tracks the pointer, and
-/// routes the row's intents through `TrayUI`.
+/// The store-bound wrapper: builds the row's value and routes the row's
+/// intents through `TrayUI`. The pointer entering a row selects it — one
+/// highlight, as in a menu: the keyboard and the pointer move the same
+/// selection.
 @MainActor
 private struct TrayRowButton: View {
     var store: StatusStore
     var ui: TrayUI
     let row: AgentRow
     var selected = false
-    @State private var hovering = false
 
     var body: some View {
         TrayRowFace(
             model: store.trayRowModel(row),
-            hovering: hovering,
             selected: selected
         ) { action in
             ui.send(action, row: row)
         }
-        .background(
-            RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
-                .fill(selected
-                    ? Color.primary.opacity(PulseTheme.Fill.selected)
-                    : (hovering ? Color.primary.opacity(PulseTheme.Fill.hover) : .clear))
-                .padding(.horizontal, TrayChrome.highlightInset)
-        )
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            if inside { ui.hover(row.rowKey, at: NSEvent.mouseLocation) }
+        }
     }
 }
 
 /// The row's face: one line — lamp, icon, project, headline, time — and a
 /// second line only for a blocked row (its ask), an orange one (its why) or
 /// a running one whose hook named its last step (quietly).
-/// The whole row, both lines, is one button: a click goes (the terminal,
-/// else the detail). The chevron that appears under the pointer sits over
-/// the row's trailing edge and opens the detail. The agent's name is not
-/// written beside its icon — the icon says it, the tooltip and VoiceOver
-/// name it. Renders a `TrayRowModel` and nothing else, so a fixture can draw
-/// every state (`PulseQA`'s `SurfaceCapture`).
+/// The row's body, both lines, is one button: a click goes (the terminal,
+/// else the detail). A "›" column at the trailing edge, as tall as the row
+/// and always drawn, opens the detail; so does an ⌥-click anywhere on the
+/// row (`TrayRowModel.clickAction`). The selected row — the pointer's or
+/// the keyboard's — is the one highlight. The agent's name is not written
+/// beside its icon — the icon says it, VoiceOver names it. Renders a
+/// `TrayRowModel` and nothing else, so a fixture can draw every state
+/// (`PulseQA`'s `SurfaceCapture`).
 struct TrayRowFace: View {
     let model: TrayRowModel
-    var hovering = false
     var selected = false
     var send: (TrayRowModel.Action) -> Void = { _ in }
 
-    private var showsChevron: Bool { hovering || selected }
-    /// The chevron's column, kept free on the first line so it never sits
-    /// on the time.
-    private static let chevronWidth: CGFloat = 14
+    /// The "›" column: wide enough to hit without aiming, the full height
+    /// of the row. The first line leaves it free, so it never sits on the
+    /// time.
+    static let chevronZoneWidth: CGFloat = 28
     private static let verticalPadding: CGFloat = 5
     private static let lineHeight: CGFloat = 22
 
+    private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
+
+    /// ⌥ held at the moment of the click — read from the event, never
+    /// remembered. The decision is `TrayRowModel.clickAction`.
+    private static func optionHeld() -> Bool {
+        NSEvent.modifierFlags.contains(.option)
+    }
+
+    private func click(_ zone: TrayRowModel.ClickZone) {
+        send(TrayRowModel.clickAction(zone: zone, option: Self.optionHeld()))
+    }
+
     var body: some View {
-        Button { send(.primary) } label: { content }
-            .buttonStyle(.plain)
-            .overlay(alignment: .topTrailing) { chevron }
-            .help(model.agentName)
-            .contextMenu {
-                ForEach(model.menu) { button in
-                    Button(button.title) { send(button.action) }
-                        .keyboardShortcut(Self.shortcut(button.key))
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 0) {
+                Button { click(.body) } label: { content }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(model.accessibilityLabel)
+                    .accessibilityHint(model.accessibilityHint)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { send(.primary) }
+                    .accessibilityActions {
+                        ForEach(model.menu) { button in
+                            Button(button.title) { send(button.action) }
+                        }
+                    }
+                chevron
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(model.accessibilityLabel)
-            .accessibilityHint(model.accessibilityHint)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { send(.primary) }
-            .accessibilityActions {
-                ForEach(model.menu) { button in
-                    Button(button.title) { send(button.action) }
-                }
+            // The "›" column takes the row's full height, both lines.
+            .fixedSize(horizontal: false, vertical: true)
+            if let note = model.notice {
+                notice(note)
             }
+        }
+        .padding(.trailing, TrayChrome.highlightInset)
+        .background(
+            RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
+                .fill(selected ? Color.primary.opacity(PulseTheme.Fill.selected) : Color.clear)
+                .padding(.horizontal, TrayChrome.highlightInset)
+        )
+        .contextMenu {
+            ForEach(model.menu) { button in
+                Button(button.title) { send(button.action) }
+                    .keyboardShortcut(Self.shortcut(button.key))
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 
     /// The menu item's shortcut: the tray key that does the same.
@@ -407,37 +398,48 @@ struct TrayRowFace: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.leading, TrayChrome.oneLineTextStart)
-                    .padding(.trailing, PulseTheme.Space.l)
-            }
-            if let note = model.notice {
-                Text(note.text)
-                    .font(PulseTheme.Font.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, TrayChrome.oneLineTextStart)
-                    .padding(.trailing, PulseTheme.Space.l)
             }
         }
-        .padding(.horizontal, TrayChrome.padX)
+        .padding(.leading, TrayChrome.padX)
+        .padding(.trailing, PulseTheme.Space.xs)
         .padding(.vertical, Self.verticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
+    /// Always drawn and always hit-testable: quiet at rest, clearer on the
+    /// selected row. VoiceOver reaches it as its own "Details" button.
     @MainActor private var chevron: some View {
-        Button { send(.details) } label: {
+        Button { click(.chevron) } label: {
             Image(systemName: "chevron.right")
                 .font(PulseTheme.Font.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: Self.chevronWidth, height: Self.lineHeight)
+                .foregroundStyle(selected ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                .frame(width: Self.chevronZoneWidth)
+                .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.trailing, TrayChrome.padX)
-        .padding(.top, Self.verticalPadding)
-        .opacity(showsChevron ? 1 : 0)
-        .allowsHitTesting(showsChevron)
-        .accessibilityHidden(true)
+        .accessibilityLabel(t(.details))
+    }
+
+    /// What the last Go did when it did not land exactly — and, when
+    /// Terminal automation is what stood in the way, its "Turn on".
+    @MainActor private func notice(_ note: RowNotice) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: PulseTheme.Space.s) {
+            Text(note.text)
+                .font(PulseTheme.Font.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if note.offersAutomation {
+                Button(t(.turnOnAutomation)) { send(.turnOnAutomation) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.leading, TrayChrome.padX + TrayChrome.oneLineTextStart)
+        .padding(.trailing, PulseTheme.Space.xs)
+        .padding(.bottom, Self.verticalPadding)
     }
 
     /// The ask reads as secondary, the why of a stall in its tone, a step
@@ -488,9 +490,6 @@ struct TrayRowFace: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            // The chevron's place (it is drawn over the row, above).
-            Color.clear
-                .frame(width: Self.chevronWidth, height: 1)
         }
         .frame(minHeight: Self.lineHeight)
     }
