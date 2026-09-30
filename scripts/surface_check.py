@@ -12,7 +12,7 @@ a row's why (`L10n` `explain*` and `step*`, either language) says "hook": the
 tray speaks plain words ("Claude asked for permission · 4m ago"), or if a
 step string says it is still going: a step is what a hook reported, a past
 step ("Bash · swift test · 12m ago"), never "running" / "正在" — neither in
-the `step*` copy nor in the words `Explain.stepText` / `stepLine` build.
+the `step*` copy nor in the words `TrayRowModel.stepText` / `stepLine` build.
 """
 import re
 import sys
@@ -43,7 +43,7 @@ VIEWS = [
 # Pure models: no store, no UI framework. Paths are relative to APP, except
 # the fixtures, which live in the QA driver.
 PURE_FILES = [
-    "TrayRowModel.swift", "DetailModel.swift", "Explain.swift", "LampFace.swift",
+    "TrayRowModel.swift", "DetailModel.swift", "LampFace.swift",
     "TrayModels.swift", "TrayKeys.swift", "SettingsModel.swift", "TrayState.swift",
     "WaitLedger.swift", "WaitingDelivery.swift",
 ]
@@ -117,11 +117,11 @@ def main() -> int:
     steps = [(key, value) for key, value in whys if key.startswith("step")]
     if not steps:
         errors.append("L10n.swift: no step* strings found")
-    explain = code_only((APP / "Explain.swift").read_text())
+    words = code_only((APP / "TrayRowModel.swift").read_text())
     for name in ("stepText", "stepLine"):
-        body = re.search(r"static func " + name + r"\b.*?\n    \}\n", explain, re.S)
+        body = re.search(r"static func " + name + r"\b.*?\n    \}\n", words, re.S)
         if body is None:
-            errors.append(f"Explain.swift: static func {name} not found")
+            errors.append(f"TrayRowModel.swift: static func {name} not found")
         else:
             steps.append((name, body.group(0)))
     for key, value in steps:

@@ -26,9 +26,8 @@ product decision; mechanically it is one `case` and one `AgentSpec` (with its
 `PulseHookReceiver`, its icon, README row, a truth table in
 `SessionBookTests` and a `hooks` entry in `docs/vendor-formats.json` —
 `scripts/catalog_check.py` fails if the roster is not the seven, if a
-per-agent table grows back anywhere else, if the README matrix disagrees
-with the catalog, if a contract lists a gating event, or if a hook contract
-has no stated source or test.
+contract lists a gating event, or if a hook contract has no stated source
+or test.
 
 ## Invariants
 
@@ -133,14 +132,18 @@ No library imports AppKit or SwiftUI below `PulseApp`, and none reaches
 and applies those lines, in order, to `SessionBook` (at launch: the whole log,
 before the first projection) → `TrayState.project(book:processes:context:)`
 returns rows (each with its last steps and its turn's clock), lamp, title,
-counts, newly-blocked edges and `staleHidden` → `StatusStore.land` assigns an
+one `TrayState.Counts` (counted once; the header, the lamp and VoiceOver
+read it), newly-blocked edges and `staleHidden` → `StatusStore.land` assigns an
 observed property only when it changed; a projection from an event read that
 moves only quiet facts (`TrayState.quietSignature`: steps, clocks) lands at
 most once per tick →
 `WaitNotifier` plans banners from the edges (a wait raised in front of the
 person waits 30 s and its app leaving the front) and withdraws each banner
-when its wait is answered, dismissed or ends (`WaitLedger` keeps the ids). `Explain` says every row's
-headline and why, and the lamp's one-sentence rule.
+when its wait is answered, dismissed or ends (`WaitLedger` keeps the ids).
+`TrayRowModel` says every row's headline and why (the detail page says the
+same words), and `TrayState.lampSentence` the lamp's one-sentence rule. How
+Pulse reads a session is in Settings → Hooks → "Copy report", not on the
+detail page.
 
 ## Working on it
 
@@ -155,8 +158,8 @@ per component: `CoreTests` (catalog, bounded IO, libproc processes),
 `VendorFormatTests` (hook
 contracts and drift), `AttentionTests` (the book reading event lines, the
 protocol, the event log, the hook receiver, the installer), `SessionTests` (the seven agents' truth
-tables, `TrayState`, identity), `ExplainTests`, `NotifierTests` (`WaitLedger`,
-delivery, routing), `TrayTests`, `SettingsTests`, `DiagnosticsTests` (the
+tables, `TrayState`, identity), `NotifierTests` (`WaitLedger`,
+delivery, routing), `TrayTests` (the row's words, the lamp, keys, detail), `SettingsTests`, `DiagnosticsTests` (the
 report, the hooks section, the tray notice, version and updates),
 `EngineTests`. A new test goes in the file of the component it tests — never
 a file named after a release. `docs/scenarios.md` names suites and methods,
@@ -174,7 +177,7 @@ python3 scripts/package_check.py             # reads the built .app
 
 `gates.sh` runs `version_check` (one semver), `catalog_check` (roster,
 libproc-only process rules, privacy rules, no token / usage / cost reads,
-README matrix, hook sources), `make_agent_icons --check`, `appearance_check`,
+no gating event, hook sources), `make_agent_icons --check`,
 `surface_check` (surfaces render values; a step never says "running"),
 `scenario_map` and a `Bundle.module` grep. A gate earns its place by guarding
 a real fact; one that only checks prose or long-deleted code is removed, not

@@ -42,7 +42,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private var lastFitDetail: String?
     private var globalMonitor: Any?
     private var localMonitor: Any?
-    private var lastAnnouncedState: String?
+    private var lastAnnouncedState: TrayState.Counts?
     /// One-shot status-lamp pulse for a newly observed Waiting edge. The red
     /// colour remains steady until the wait is resolved; only the transition
     /// gets motion, so the menu bar can remind without becoming a permanent
@@ -253,7 +253,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         button.toolTip = snapshot.tooltip
         button.setAccessibilityLabel(snapshot.accessibilityLabel)
 
-        let waitingCount = snapshot.sectionTotals[.needsYou] ?? 0
+        let waitingCount = snapshot.counts.blocked
         if snapshot.updatedAt != .distantPast {
             if let previousWaitingCount = lastWaitingCount,
                waitingCount > previousWaitingCount {
@@ -262,9 +262,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             lastWaitingCount = waitingCount
         }
 
-        let state = TraySection.allCases
-            .map { "\(String(describing: $0))=\(snapshot.sectionTotals[$0] ?? 0)" }
-            .joined(separator: ",")
+        let state = snapshot.counts
         // The empty bootstrap snapshot is not a state transition. Seed from
         // the first completed scan so launching Pulse does not speak an
         // unsolicited "Running" announcement.

@@ -23,27 +23,13 @@ struct SessionDetailView: View {
 /// Renders a `DetailModel` and nothing else: the header (back, lamp,
 /// agent · project, state and age), then the ask with Go and Dismiss, the
 /// why, the recent steps, the last message, the error and the facts — each
-/// block only when it has something to say — with how Pulse reads the
-/// session folded at the bottom.
+/// block only when it has something to say.
 struct SessionDetailFace: View {
     let model: DetailModel
     /// Off for a fixture capture, which measures the whole page.
     var scrolls = true
     var maxHeight: CGFloat = TrayChrome.maxListHeight
     var send: (DetailModel.Action) -> Void = { _ in }
-    @State private var diagnosticsOpen = false
-
-    init(
-        model: DetailModel,
-        scrolls: Bool = true,
-        maxHeight: CGFloat = TrayChrome.maxListHeight,
-        send: @escaping (DetailModel.Action) -> Void = { _ in }
-    ) {
-        self.model = model
-        self.scrolls = scrolls
-        self.maxHeight = maxHeight
-        self.send = send
-    }
 
     private func t(_ key: L10n.Key) -> String { L10n.t(key, model.lang) }
 
@@ -144,16 +130,6 @@ struct SessionDetailFace: View {
                 }
             }
             FactGrid(facts: model.facts)
-            if !model.diagnostics.isEmpty {
-                DisclosureGroup(isExpanded: $diagnosticsOpen) {
-                    FactGrid(facts: model.diagnostics)
-                        .padding(.top, PulseTheme.Space.xs)
-                } label: {
-                    Text(t(.detailDiagnostics))
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .padding(.horizontal, TrayChrome.padX)
         .padding(.vertical, PulseTheme.Space.m)

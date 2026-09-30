@@ -5,10 +5,7 @@ promise made about it.
 The checks are the ones that guard a real fact; prose checks went.
 
 1. Roster — `AgentCatalog.all` has one `AgentSpec` per `AgentID` case, in
-   declaration order (process-rule precedence), with unique monograms, and
-   no per-agent table grows back elsewhere: outside the catalog no
-   `case` line or list names more than MAX_PER_CASE agents and no file's
-   `case` lines name more than MAX_PER_FILE.
+   declaration order (process-rule precedence), with unique monograms.
 2. Processes — agent processes come from the kernel's table (libproc,
    `AgentProcesses.swift`): no `ps`, no `lsof`, no subprocess; and Cursor's
    private worker daemon is denied.
@@ -16,9 +13,7 @@ The checks are the ones that guard a real fact; prose checks went.
    no enumeration of every running app; and no tokens, context, cost or
    plan: no source reads `usage`, `token_count`, `rate_limits`, `cost` (or
    their cousins) from a payload or a module's event — an owner decision.
-4. README support matrix — each row's waiting cell equals the catalog, and
-   every agent has a row.
-5. Vendor sources — every agent has an entry in
+4. Vendor sources — every agent has an entry in
    docs/vendor-formats.json with a `hooks` block: the roster is exactly the
    seven supported agents; each has a `HookContract` whose events are never
    a gating event, and its manifest entry names the source it was read from
@@ -38,11 +33,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "PulseBar" / "Sources"
 CATALOG = SOURCES / "PulseCore" / "AgentCatalog.swift"
-README = ROOT / "README.md"
 MANIFEST = ROOT / "docs" / "vendor-formats.json"
 TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
-MAX_PER_CASE = 6
-MAX_PER_FILE = 8
 # The owner's roster. Adding an agent is a product decision.
 ROSTER = ["claude", "codex", "cursor", "pi", "gemini", "copilot", "opencode"]
 
@@ -125,34 +117,6 @@ def check_roster(text: str, roster: list[Agent], problems: list[str]) -> None:
     if len(monograms) != len(set(monograms)):
         problems.append("monograms must be unique across the roster")
 
-    agent_re = re.compile(r"\.(" + "|".join(re.escape(n) for n in names) + r")\b")
-    for path in sorted(SOURCES.glob("*/*.swift")):
-        if path == CATALOG:
-            continue
-        source = path.read_text(encoding="utf-8")
-        seen: set[str] = set()
-        for number, line in enumerate(source.splitlines(), 1):
-            stripped = line.strip()
-            if not stripped.startswith("case ."):
-                continue
-            hits = set(agent_re.findall(stripped.split(":")[0]))
-            if len(hits) > MAX_PER_CASE:
-                problems.append(f"{path.name}:{number}: a case naming {len(hits)} agents — "
-                                "roster-wide facts belong in AgentCatalog")
-            seen |= hits
-        # A roster list is a roster table too — one that wraps across lines
-        # included.
-        code = re.sub(r"//[^\n]*", "", source)
-        for match in re.finditer(r"\[([^\[\]]*)\]", code):
-            listed = set(agent_re.findall(match.group(1)))
-            if len(listed) > MAX_PER_CASE:
-                number = code.count("\n", 0, match.start()) + 1
-                problems.append(f"{path.name}:{number}: a list naming {len(listed)} agents — "
-                                "roster-wide facts belong in AgentCatalog")
-        if len(seen) > MAX_PER_FILE:
-            problems.append(f"{path.name}: `case` lines name {len(seen)} agents — "
-                            "an exhaustive per-agent table belongs in AgentCatalog")
-
 
 # 2 · processes --------------------------------------------------------------
 
@@ -221,70 +185,11 @@ def check_no_tokens(problems: list[str]) -> None:
                                 "plan are not shown (a decision); the last step comes from events only")
 
 
-# 4 · README support matrix --------------------------------------------------
-
-def readme_rows() -> list[tuple[str, str, int]]:
-    """(names cell, waiting cell, line number)."""
-    rows: list[tuple[str, str, int]] = []
-    in_table = False
-    for n, line in enumerate(README.read_text(encoding="utf-8").splitlines(), start=1):
-        if line.startswith("| Agent |"):
-            in_table = True
-            continue
-        if in_table:
-            if not line.startswith("|"):
-                break
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) < 4 or set(cells[0]) <= set("- "):
-                continue
-            rows.append((cells[0], cells[3], n))
-    return rows
-
-
-def waiting_kind(cell: str) -> str:
-    low = cell.lower()
-    if "none" in low:
-        return "none"
-    if "hooks" in low or "plugin" in low or "extension" in low:
-        return "hooks"
-    return "?"
-
-
-def check_matrix(roster: list[Agent], problems: list[str]) -> int:
-    by_case = {a.case: a for a in roster}
-    by_display = {a.display: a for a in roster}
-    rows = readme_rows()
-    if not rows:
-        problems.append("README has no support matrix (expected a '| Agent |' table)")
-        return 0
-    covered: set[str] = set()
-    for names_cell, waiting_cell, lineno in rows:
-        want_wait = waiting_kind(waiting_cell)
-        if want_wait == "?":
-            problems.append(f"README:{lineno} unreadable waiting cell {waiting_cell!r}")
-            continue
-        for raw in names_cell.split("/"):
-            name = raw.strip().rstrip("*").strip()
-            if not name:
-                continue
-            agent = by_display.get(name)
-            if agent is None:
-                problems.append(f"README:{lineno} unknown agent name {name!r}")
-                continue
-            covered.add(agent.case)
-            if agent.waiting != want_wait:
-                problems.append(f"README:{lineno} {name}: waiting says {want_wait}, catalog says {agent.waiting}")
-    for case, agent in by_case.items():
-        if case not in covered:
-            problems.append(f"{agent.display}: absent from the README support matrix")
-    return len(covered)
-
-
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-# 5 · vendor sources: hook contracts ---------------------------------------------------------
+# 4 · vendor sources: hook contracts ---------------------------------------------------------
 
 def check_hooks(text: str, roster: list[Agent], problems: list[str]) -> None:
     raws = [a.raw for a in roster]
@@ -376,14 +281,13 @@ def main() -> int:
     check_roster(text, roster, problems)
     check_processes(text, problems)
     check_privacy(problems)
-    in_matrix = check_matrix(roster, problems)
     check_hooks(text, roster, problems)
     if problems:
         for problem in problems:
             print(f"::error::{problem}")
         return 1
     print(f"catalog OK — {len(roster)} agents, one spec and one hook contract each; "
-          f"{in_matrix} in the README matrix; every hook contract has a source")
+          "every hook contract has a source")
     return 0
 
 

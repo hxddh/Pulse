@@ -179,9 +179,6 @@ enum L10n {
         case .explainKindPermission: return "asked for permission"
         case .explainKindInput: return "asked a question"
         case .explainKindWaiting: return "is waiting for you"
-        case .sourceHooks: return "Hooks only"
-        case .sourceProcess: return "Process only"
-        case .detailSource: return "Source"
         case .detailFolder: return "Folder"
         case .detailStarted: return "Started"
         case .processOnly: return "Process only"
@@ -207,12 +204,6 @@ enum L10n {
         case .settingsUpdatesSection: return "Updates"
         case .detailLastMessage: return "Last message"
         case .detailErrorHeading: return "Error"
-        case .detailSession: return "Session"
-        case .detailGo: return "Go"
-        case .detailGoNone: return "No way to reach it — observed only"
-        case .detailProcess: return "Process"
-        case .detailLastChange: return "Last change"
-        case .detailDiagnostics: return "How Pulse reads this session"
         case .explainIdle: return "At its prompt · last step %@"
         case .explainEnded: return "The session ended %@"
         case .explainQuiet: return "Nothing heard for %@ and no process to watch — moved to recent"
@@ -352,9 +343,6 @@ enum L10n {
         case .explainKindPermission: return "请求权限"
         case .explainKindInput: return "提了一个问题"
         case .explainKindWaiting: return "在等你"
-        case .sourceHooks: return "仅 hook"
-        case .sourceProcess: return "仅进程"
-        case .detailSource: return "来源"
         case .detailFolder: return "目录"
         case .detailStarted: return "开始于"
         case .processOnly: return "仅进程"
@@ -380,12 +368,6 @@ enum L10n {
         case .settingsUpdatesSection: return "更新"
         case .detailLastMessage: return "最后的消息"
         case .detailErrorHeading: return "错误"
-        case .detailSession: return "会话"
-        case .detailGo: return "前往"
-        case .detailGoNone: return "无法前往——仅观测"
-        case .detailProcess: return "进程"
-        case .detailLastChange: return "最后变化"
-        case .detailDiagnostics: return "Pulse 如何读取这个会话"
         case .explainIdle: return "停在提示符 · 上一步 %@"
         case .explainEnded: return "会话已结束 · %@"
         case .explainQuiet: return "已经 %@ 没有消息，也看不到进程——移到最近"
@@ -481,9 +463,6 @@ enum L10n {
         case explainKindPermission
         case explainKindInput
         case explainKindWaiting
-        case sourceHooks
-        case sourceProcess
-        case detailSource
         case detailFolder
         case detailStarted
         case processOnly
@@ -502,12 +481,6 @@ enum L10n {
         case settingsUpdatesSection
         case detailLastMessage
         case detailErrorHeading
-        case detailSession
-        case detailGo
-        case detailGoNone
-        case detailProcess
-        case detailLastChange
-        case detailDiagnostics
         case explainIdle, explainEnded, explainQuiet, explainSilent
         case setupFound, setupConnect, setupDone, setupGotIt, setupStepCodex, setupStepRestart
         case automationOffer, automationAllow, automationNotNow, automationAllowed

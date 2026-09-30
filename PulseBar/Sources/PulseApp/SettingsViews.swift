@@ -120,7 +120,8 @@ extension StatusStore {
             hotkey: settings.hotkey,
             hotkeyRegistered: hotkeyRegistered,
             launchAtLogin: settings.launchAtLogin,
-            loginItemApplied: loginItemApplied
+            loginItemApplied: loginItemApplied,
+            sessions: cachedAll.map(SettingsModel.ReportSession.init)
         ))
     }
 

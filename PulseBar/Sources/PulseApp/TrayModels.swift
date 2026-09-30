@@ -15,31 +15,25 @@ struct TrayHeaderModel: Equatable {
     /// Said when no count applies ("3 recent", "No coding agents").
     var title: String
 
-    /// `rows`: every row the last scan produced, not the visible window.
-    static func make(rows: [AgentRow], lang: ResolvedLanguage) -> TrayHeaderModel {
+    /// `counts`: the projection's one count (`PulseSnapshot.counts`) —
+    /// every row, not the visible window.
+    static func make(counts all: TrayState.Counts, lang: ResolvedLanguage) -> TrayHeaderModel {
         func t(_ key: L10n.Key) -> String { L10n.t(key, lang) }
-        let blocked = rows.filter(\.isBlocked).count
-        let running = rows.filter { $0.state == .running && !$0.isStalled }.count
-        let stalled = rows.filter { $0.state == .running && $0.isStalled }.count
-        let turns = rows.filter(\.isYourTurn).count
-
         var counts: [Count] = []
-        if blocked > 0 {
-            counts.append(Count(count: blocked, label: t(blocked == 1 ? .waiting1 : .waitingN), tone: .waiting))
+        if all.blocked > 0 {
+            counts.append(Count(count: all.blocked, label: t(all.blocked == 1 ? .waiting1 : .waitingN), tone: .waiting))
         }
-        if running > 0 { counts.append(Count(count: running, label: t(.runningN), tone: .running)) }
-        if stalled > 0 { counts.append(Count(count: stalled, label: t(.stalledN), tone: .attention)) }
-        if turns > 0 { counts.append(Count(count: turns, label: t(.yourTurnN), tone: .idle)) }
+        if all.running > 0 { counts.append(Count(count: all.running, label: t(.runningN), tone: .running)) }
+        if all.stalled > 0 { counts.append(Count(count: all.stalled, label: t(.stalledN), tone: .attention)) }
+        if all.yourTurn > 0 { counts.append(Count(count: all.yourTurn, label: t(.yourTurnN), tone: .idle)) }
 
-        let processOnly = rows.filter(\.isProcessOnly).count
-        let recent = rows.filter(\.isRecent).count
         let title: String
         if !counts.isEmpty {
             title = ""
-        } else if processOnly > 0 {
-            title = "\(processOnly) \(t(.processOnlyN))"
-        } else if recent > 0 {
-            title = "\(recent) \(t(.recentN))"
+        } else if all.processOnly > 0 {
+            title = "\(all.processOnly) \(t(.processOnlyN))"
+        } else if all.recent > 0 {
+            title = "\(all.recent) \(t(.recentN))"
         } else {
             title = t(.noAgents)
         }

@@ -173,7 +173,7 @@ enum SurfaceFixtures {
 
     static func header(lang: ResolvedLanguage) -> TrayHeaderModel {
         TrayHeaderModel.make(
-            rows: [rowPermission(), rowQuestionFront(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()],
+            counts: TrayState.Counts(rows: [rowPermission(), rowQuestionFront(), rowRunning(), rowStalled(), rowTurn(), rowProcessOnly()]),
             lang: lang
         )
     }

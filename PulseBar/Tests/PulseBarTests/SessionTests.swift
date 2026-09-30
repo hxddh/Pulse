@@ -705,7 +705,7 @@ struct TrayStateTests {
         #expect(row.state == .recent)
         #expect(row.recentReason == .quiet)
         #expect(row.stateSinceMs == t0 + TrayState.idleBoundMs)
-        let why = Explain.why(row, lang: .en, nowMs: t0 + 31 * minute)
+        let why = TrayRowModel.why(row, lang: .en, nowMs: t0 + 31 * minute)
         #expect(why.contains("no process to watch"), "\(why)")
     }
 
@@ -768,7 +768,7 @@ struct TrayStateTests {
         #expect(!row.isStalled)
         #expect(row.recentReason == .silent)
         #expect(row.stateSinceMs == t0 + minute + TrayState.silentBoundMs)
-        let why = Explain.why(row, lang: .en, nowMs: silent)
+        let why = TrayRowModel.why(row, lang: .en, nowMs: silent)
         #expect(why.hasPrefix("Nothing heard for"), "\(why)")
         #expect(rows(b, at: silent + TrayState.recentWindowMs).rows.isEmpty, "and it leaves the list, process or not")
     }
@@ -943,10 +943,11 @@ final class TrayAssembleTests: XCTestCase {
         XCTAssertFalse(build((0..<2).map { row("k\($0)") }, showAll: true, maxRows: 3).showAllAgents)
     }
 
-    func testSectionTotalsCountTheWholeListNotTheWindow() {
+    func testCountsCoverTheWholeListNotTheWindow() {
         let r = build([blocked("w")] + (0..<4).map { row("k\($0)") }, maxRows: 2)
-        XCTAssertEqual(r.snapshot.sectionTotals[.needsYou], 1)
-        XCTAssertEqual(r.snapshot.sectionTotals[.running], 4)
+        XCTAssertEqual(r.snapshot.counts.blocked, 1)
+        XCTAssertEqual(r.snapshot.counts.running, 4)
+        XCTAssertEqual(r.snapshot.headerTitle, r.snapshot.counts.summary(.en))
     }
 
     func testFirstSightOfAWaitIsReportedAsNew() {
@@ -1118,7 +1119,7 @@ final class RowRedundancyTests: XCTestCase {
         r.state = .processOnly
         XCTAssertNil(r.usefulTask)
         // Hero must not fall back to the agent product name (already on identity).
-        let hero = Explain.make(r, lang: .en, nowMs: 1_700_000_000_000).headline
+        let hero = TrayRowModel.headline(r, lang: .en, nowMs: 1_700_000_000_000)
         XCTAssertNotEqual(hero, r.agent.displayName)
     }
 

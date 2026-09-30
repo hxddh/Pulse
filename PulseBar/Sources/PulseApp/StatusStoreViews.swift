@@ -31,7 +31,7 @@ extension StatusStore {
 
     /// The tray header — the why, in counts.
     var trayHeaderModel: TrayHeaderModel {
-        TrayHeaderModel.make(rows: cachedAll, lang: lang)
+        TrayHeaderModel.make(counts: snapshot.counts, lang: lang)
     }
 
     /// Every retained row, not only the visible window: the open tray keeps

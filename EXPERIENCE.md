@@ -87,7 +87,7 @@ Tray 展开细节 → Prefs 只改开关与连接。
 `2 · 4m`；刚发生（不到 5 秒）的等待只写数量 `1`。预算 **≤ 8 个显示宽度**（CJK 算两格），
 超限只留数量。不写 Agent 名、不写项目、不写 token。
 
-**Tooltip 一行**：决定颜色的那条规则（`Explain.lampSentence`），例如「红：有 Agent 在等你。」
+**Tooltip 一行**：决定颜色的那条规则（`TrayState.lampSentence`），例如「红：有 Agent 在等你。」
 「灰：有 Agent 在运行，但 Pulse 只看到进程。」—— 不列会话、不堆多行；会话由托盘来说。
 VoiceOver 读同一句（空闲时读「空闲」）。
 
@@ -178,14 +178,14 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
   其余是最后一次动静（`3 分前`）。
 - 「轮到你」的行带一个灰色小字「轮到你」；静音的 Agent 带一个 `bell.slash`。
 - **第二行只给三种情况**：需要你的行写问题本身（Agent 原话，一行，次级色；不知道原话时写
-  等待种类）；停滞的行写橙色的原因（`Explain.why`，点名上一步：「已经 23 分钟 没有新动静——上一步：
+  等待种类）；停滞的行写橙色的原因（`TrayRowModel.why`，点名上一步：「已经 23 分钟 没有新动静——上一步：
   Bash · swift test」）；运行中的行安静地写**上一步**（最淡的颜色、小字）：「Bash · swift test · 12 分钟前」——
   hook 报过的工具与目标、多久前，说的是已经发生的一步，**从不写「正在」/ running**（`surface_check` 把守）。
   其余一律一行；Cursor、OpenCode 的 hook 不报工具名，它们的行始终一行。
 - **没有**：行底色、「新」点、芯片、行内按钮。动作在键盘、右键菜单、VoiceOver 动作与详情页里，
   每个动作只出现一次：前往、详情、忽略、静音 / 取消静音。
 - 点击一行 = 前往（有句柄时聚焦终端，否则打开详情页）；指针悬停或选中时行尾出现「›」，点它看详情。
-- 主行是 `Explain.headline`（场景 BL）：等待行 任务→项目→「需要你」，进程行说诚实短语，会话行
+- 主行是 `TrayRowModel.headline`（场景 BL）：等待行 任务→项目→「需要你」，进程行说诚实短语，会话行
   任务→新鲜原话→项目→会话短语；截断走尾部省略，完整原话在详情页。禁止 `update_plan` /
   `Bash` / 文件名 / `Agent session` 当主行，禁止把 Agent 产品名再当主行。
 
@@ -249,14 +249,16 @@ Header 不写更新时间，也不走钟：灯与行本身就是最新的。
 1. 头部：返回、灯形、Agent · 项目、状态与时长（「需要你 · 4m」）
 2. 主行全文
 3. **问题全文**（可选中）与动作：[前往终端 ↩] [忽略 ⌘D]（不是等待时只有前往）
-4. 为什么是这个状态（`Explain.why`，只说一次）
+4. 为什么是这个状态（`TrayRowModel.why`，与托盘行同一句，只说一次）
 5. 最近几步（至多 5 步，新的在上：多久前 · 工具 · 目标）
 6. 最后的消息、最后的错误（**没测到不渲染**；过了 30 分钟的新鲜窗口也不渲染）。都来自会话自己的事件：
    最后的消息是回合结束事件带的原话，错误只是 hook 自己报的（Claude StopFailure、Copilot 不可恢复的
    errorOccurred、OpenCode session.error），下一句提示清掉
-7. 几条事实（小表格）：本回合（运行中或需要你时，「14 分」）、来源、目录、开始于（`LogClock`：今天只写
+7. 几条事实（小表格）：本回合（运行中或需要你时，「14 分」）、目录、开始于（`LogClock`：今天只写
    时刻，一周内写星期，更早写月日）。**不显示模型**
-8. 折叠的「Pulse 如何读取这个会话」：会话 id、如何前往、进程、最后一次事件
+
+Pulse 怎么读这个会话（事实来自 hook 还是只有进程、前往是否精确、进程是否在盯、最近事件）不在详情页上，
+在设置 → Hooks 的「复制报告」里，一个会话一行，不含路径、提示、会话 id 或项目。
 
 **没有占位行**：不知道的事实不列；枚举值一律翻成人话。
 
@@ -325,7 +327,7 @@ macOS 问一次）；无论允许还是暂不，都记进 `settings.json`（`aut
   不要在圆角面板里再画一块矩形材质或颜色 —— 多出来的 inset 会变成第二个表面，面板会读成一个贴上去的盒子。
 - **绝不把随外观变化的颜色存进 `let`。** `static let` 是只初始化一次的全局量，首次绘制时的外观
   被冻在里面，之后再切主题都不动。要么在 `body` 里读，要么用渲染时逐帧解析的 token
-  （`Material` / `.primary` / `.secondary`）。`scripts/appearance_check.py` 是门禁。
+  （`Material` / `.primary` / `.secondary`）。
 - 分割线内缩到文字边距。通宽的分割线是表格线，两条就把面板切成条带。
 
 **一套字阶，一套卡片纪律。** `PulseTheme` 统一间距、圆角、填充、语义字号和每个状态一种颜色
@@ -536,7 +538,7 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 | Tray 结构 | `PulseApp/TrayPanelViews.swift` → `TrayPanel` |
 | Prefs 布局与诊断 | `PulseApp/SettingsViews.swift` → `SettingsView` / `SettingsFace`；`SettingsModel.swift`（Hooks 行、报告） |
 | 投影：行、排序、灯、标题、边沿 | `PulseApp/TrayState.swift` → `TrayState.project` |
-| 行的每一句话与灯的一句规则 | `PulseApp/Explain.swift`（纯值：headline / why / source / lampRule；语言与时刻是输入） |
+| 行的每一句话与灯的一句规则 | `PulseApp/TrayRowModel.swift`（纯函数：headline / why / 状态词 / 步骤与时间的说法；语言与时刻是输入）· `TrayState.lampRule` / `lampSentence` |
 | 行的身份 | `PulseHarvest/RowIdentity.swift`（键一次定下、从不改变） |
 | 扫描静默 | `PulseApp/StatusStore.swift` → `StatusStore.land` / `PulseSnapshot.needsPublish`；测试 `ScanQuietTests` |
 | 等待通知 | `PulseApp/WaitingDelivery.swift`（纯规划）· `WaitLedger.swift`（内存记账）· `WaitNotifier.swift`（执行） |
@@ -550,7 +552,7 @@ fail-open —— 句子里就说清楚它回落到哪儿。
 | 托盘行的脸 | `TrayRowModel.swift`（纯值：灯、身份、主行、时间、第二行、菜单、VoiceOver）→ `TrayPanelViews.swift` → `TrayRowFace`；详情页是 `DetailModel` → `SessionDetailFace` |
 | 灯形 | `LampFace.swift`（行与菜单栏同一套：实心 / 环 / 空心 / 虚线；橙只给停滞） |
 | 托盘的键与状态 | `TrayKeys.swift`（纯 reducer `TrayKeys.reduce`、`BannerRoute`）· `TrayModels.swift`（`TrayHeaderModel` / `TrayNoticeModel` / `TrayOrder`）· `TrayUI.swift`（每次打开的状态，面板的按键监视器调用它） |
-| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `Explain.swift` · `LampFace.swift` · `TrayModels.swift` · `TrayKeys.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
+| 值化的表面 | `TrayRowModel.swift` · `DetailModel.swift` · `LampFace.swift` · `TrayModels.swift` · `TrayKeys.swift` · `SettingsModel.swift`；夹具 `PulseQA/SurfaceFixtures.swift`，截图 `PulseQA/SurfaceCapture.swift` + `scripts/qa_surfaces.sh`，`scripts/surface_check.py` 核对 |
 | 节奏（事件驱动 + 便宜的时钟） | `PulseCore/ProbeSchedule.swift` + `PulseApp/PowerMonitor.swift` |
 | 文案 | `PulseApp/L10n.swift` |
 | 版本 / 构建指纹 | `PulseApp/Models.swift` → `PulseVersion` |

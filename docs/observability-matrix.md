@@ -14,7 +14,7 @@ transcript, no protected app data.
 `SessionBook.apply(_:nowMs:)` is the only place state changes, and it is
 rebuilt from the log at every launch. A session counts as running only while
 its pid is alive; a session whose pid is unknown becomes `.recent` after 30
-minutes without an event, and `Explain.why` says so. A process no session has
+minutes without an event, and `TrayRowModel.why` says so. A process no session has
 claimed is a process-only row (grey dotted lamp), which is how sessions
 started before Pulse appear until their next event. A failed process scan
 keeps the last good list, and a failed log read keeps what was applied;

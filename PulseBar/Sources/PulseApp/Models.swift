@@ -7,7 +7,7 @@ import Foundation
 /// is injected into `Info.plist` by `PulseBar/Scripts/package.sh`, so a `swift
 /// run` build honestly reports itself as `dev` instead of faking a release id.
 enum PulseVersion {
-    static let semver = "25.0.0"
+    static let semver = "26.0.0"
 
     enum Channel {
         /// Packaged Pulse.app whose bundle version matches this binary.
@@ -154,7 +154,7 @@ enum RecentReason: Hashable, Sendable {
     case silent
 }
 
-/// Where a row's facts came from, in the words `Explain` uses.
+/// Where a row's facts came from — said in the "Copy report".
 enum RowSource: String, Equatable, Hashable, Sendable {
     /// The agent's own hook events.
     case hooks
@@ -164,7 +164,7 @@ enum RowSource: String, Equatable, Hashable, Sendable {
 
 /// One tray row: a session (or a process no session has claimed) and
 /// exactly what the tray row, the detail page, the lamp and the notifier
-/// read. `Explain` builds the few sentences Pulse says from what is here.
+/// read. `TrayRowModel` builds the few sentences Pulse says from what is here.
 struct AgentRow: Identifiable, Hashable {
     // MARK: Identity — `RowIdentity` decides the key, and it never changes.
 
@@ -218,7 +218,7 @@ struct AgentRow: Identifiable, Hashable {
     // MARK: State
 
     var state: RowState = .recent
-    /// Why a `.recent` row is recent — `Explain` says the rule.
+    /// Why a `.recent` row is recent — `TrayRowModel.why` says the rule.
     var recentReason: RecentReason = .atPrompt
     /// Resolved once per projection against its clock and the stall rule
     /// (`TrayState`), never against `Date()` in a view.
@@ -421,17 +421,17 @@ enum TraySection: Int, CaseIterable, Hashable {
 struct PulseSnapshot: Equatable {
     var glance: GlanceKind = .idle
     var title: String = ""
-    /// One line: the rule that set the lamp (`Explain.lampSentence`).
+    /// One line: the rule that set the lamp (`TrayState.lampSentence`).
     var tooltip: String = "Pulse"
     /// Glance state spoken by VoiceOver, in the resolved language.
     var accessibilityLabel: String = ""
-    /// The census VoiceOver announces when it changes ("1 needs you · 2
-    /// running"), counted by row state.
+    /// `counts` in words, which VoiceOver announces when they change ("1
+    /// needs you · 2 running").
     var headerTitle: String = ""
     var rows: [AgentRow] = []
-    /// Section totals over the *whole* list, so a heading can say "3 running"
-    /// even when the window is showing two of them.
-    var sectionTotals: [TraySection: Int] = [:]
+    /// Every row of the *whole* list counted once by its state, not only
+    /// the window shown.
+    var counts = TrayState.Counts()
     var hiddenCount: Int = 0
     /// Sessions quiet past the recent window, left out of the list — and
     /// which agents they belong to (the last 24 hours only).

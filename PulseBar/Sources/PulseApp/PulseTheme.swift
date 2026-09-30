@@ -6,9 +6,9 @@ import SwiftUI
 /// named here, so no call site writes its own radius, point size or red.
 ///
 /// Colours are computed properties, never `static let`: a stored colour
-/// freezes the appearance that was current on first touch (see
-/// `scripts/appearance_check.py`). State colours are the system's dynamic
-/// colours, so Increase Contrast and dark mode move them too.
+/// freezes the appearance that was current on first touch. State colours
+/// are the system's dynamic colours, so Increase Contrast and dark mode move
+/// them too.
 enum PulseTheme {
     // MARK: Spacing — the 4-pt grid
 

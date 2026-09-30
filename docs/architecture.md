@@ -34,7 +34,7 @@ PulseBar/Sources/
                  · AgentProcesses（libproc）· RowIdentity · TitleHeuristics（标题：提示词的清洗与取舍）· HostAppKind
   PulseApp/      应用库，依赖两个库并拥有资源（图标与品牌图，经 PulseResources 找，从不用 Bundle.module）。
                  SessionBook、TrayState、ScanEngine、ProcessExitWatch、StatusStore、WaitNotifier、WaitLedger、
-                 WaitingDelivery、Explain、hook 入口与安装器、全部视图。表面是纯值：视图只渲染值、发 intent，
+                 WaitingDelivery、hook 入口与安装器、全部视图。表面是纯值：视图只渲染值、发 intent，
                  由 StatusStore 执行。PulseCoreExports.swift 以 @_exported 引入两个库。
   PulseBar/      出厂可执行：PulseBarLauncher 只调用 PulseBarMain.main()。
   PulseQA/       QA 可执行（只在 debug 构建）：SurfaceFixtures、SurfaceCapture、StatusStoreFixture、
@@ -147,7 +147,7 @@ TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与�
 `sessionRows` 把会话投影成 `AgentRow`：
 
 1. 知道 pid 的会话只在进程活着时算在跑；不知道 pid 的会话 30 分钟没有事件就是 `.recent`
-   （`RecentReason.quiet`，`Explain.why` 这样说）；轮到你超过 30 分钟也是 `.recent`。
+   （`RecentReason.quiet`，`TrayRowModel.why` 这样说）；轮到你超过 30 分钟也是 `.recent`。
 2. 会话认领它 pid 所在的进程家族；没有 pid 的未结束会话认领同目录的进程；没被认领的进程家族
    是仅进程行 `agent|pid:<pid>`（灰色虚线灯，永不橙、不装绿）。
 3. 标题、最后的消息、错误、最近几步与本回合时钟都来自会话自己的事件；落地句柄先取事件的 landing 列，
@@ -158,14 +158,15 @@ TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与�
 5. 最近停下的会话 45 分钟后离开列表，`staleHidden` 只计最近 24 小时里停下的。
 
 `assemble` 做排序（Waiting 最久在前 → 状态 → 键，全序）、12 行窗口、灯（`LampFace.glance`）、
-菜单栏标题（只在有等待时：数量 · 最久时长）、tooltip（`Explain.lampRule` / `lampSentence` 一句规则）、
-VoiceOver 计数，以及**边沿**：上一轮没在等的行，或同一行上的新一次提问（会话在旧提问之后动过，
+菜单栏标题（只在有等待时：数量 · 最久时长）、tooltip（`TrayState.lampRule` / `lampSentence` 一句规则）、
+计数（`TrayState.Counts`，每轮投影只数一次，放在 `PulseSnapshot.counts`：灯、托盘头部、VoiceOver 播报与状态项的闪烁都读它），以及**边沿**：上一轮没在等的行，或同一行上的新一次提问（会话在旧提问之后动过，
 或超过 20 秒）—— `newlyBlocked`。它把本轮开着的等待（`waitingSince`）交回，`ScanEngine` 下一轮
 作为 `previousWaits` 传进来。
 
-一行说什么只由 `Explain`（纯值）决定：`headline`、`why`（哪条证据让它处在这个状态、从何时起）、
-`source`（hook / 仅进程）、`state` 与 `ask`；灯的一句规则也在这里。`TrayRowModel`、详情页的
-`DetailModel` 与菜单栏 tooltip 都用它的话，所以三处永远一致。
+一行说什么由 `TrayRowModel` 上的纯函数决定：`headline`、`why`（哪条证据让它处在这个状态、从何时起）、
+`stateText`、`ask`，以及步骤与时间的说法；详情页的 `DetailModel` 用同样的函数，所以托盘行与详情页
+永远一致。灯的一句规则是 `TrayState.lampRule` / `lampSentence`。Pulse 怎么读一个会话（事实来自 hook
+还是只有进程、前往是否精确、进程是否在盯、最近事件）不在详情页上，在「复制报告」里（`SettingsModel.ReportSession`）。
 
 **它们都不做有副作用的事。** 时钟、语言、终端自动化设置都从 `Context` 注入；想让外界做的事作为数据返回。
 
@@ -253,20 +254,19 @@ hook 安装或 `--selftest`。
 | 脚本 | 守什么 |
 | --- | --- |
 | `version_check.py` | 版本只有一个真源，CHANGELOG 与 README 徽标跟随 |
-| `catalog_check.py` | 每个 `AgentID` 一条 spec、别处不长出按 Agent 的表；Cursor worker 被拒；进程只经 libproc（不起 `ps` / `lsof`）；AppleScript 只在 Automation 授权后；不读 token / 用量 / 费用字段；README 矩阵的 Waiting 列 == 目录；每个 Agent 的 hook 契约有出处与测试（`docs/vendor-formats.json`） |
+| `catalog_check.py` | 名册恰是七个、每个 `AgentID` 一条 spec；Cursor worker 被拒；进程只经 libproc（不起 `ps` / `lsof`）；AppleScript 只在 Automation 授权后；不读 token / 用量 / 费用字段；hook 契约不含拦截类事件，且每个都有出处与测试（`docs/vendor-formats.json`） |
 | `make_agent_icons.py --check` | 每个 `AgentID` 都有图标，且与生成器逐字节一致 |
-| `appearance_check.py` | 没有把随外观变化的值冻进常量 |
 | `surface_check.py` | 表面渲染值、不碰 store；fixture 与截图清单一致；QA 文件只在 `PulseQA`；「为什么」不提 hook；步骤的话从不说「正在」/ running |
 | `scenario_map.py` | `docs/scenarios.md` 点名的测试套件与方法都存在 |
 | `package_check.py` | 打出来的 `.app` 能找到自己的资源，且二进制里没有 QA 代码 |
 
-前六个由 `scripts/gates.sh` 一次跑完；全部都在 `package.sh` 和 CI 里。截图由 `scripts/qa_surfaces.sh` 与
+前五个由 `scripts/gates.sh` 一次跑完；全部都在 `package.sh` 和 CI 里。截图由 `scripts/qa_surfaces.sh` 与
 `scripts/qa_observation_truth.sh` 构建并运行 `PulseQA` 得到。
 
 测试（`PulseBar/Tests/PulseBarTests/`）按组件分文件：`CoreTests`（目录、有界 IO、libproc 进程）、
 `VendorFormatTests`（hook 契约与漂移）、`AttentionTests`
 （会话簿读事件行、协议、事件日志、hook 接收器、安装器）、`SessionTests`（七个 Agent 的真值表、`TrayState`、身份）、
-`ExplainTests`、`NotifierTests`（`WaitLedger`、横幅规划与路由）、`TrayTests`、`SettingsTests`、
+`NotifierTests`（`WaitLedger`、横幅规划与路由）、`TrayTests`（含行的说法 `RowWordsTests` 与灯的规则）、`SettingsTests`、
 `DiagnosticsTests`（报告、Hooks 一节、托盘提示、版本与更新）、`EngineTests`（扫描静默、事件馈送、节奏）。
 新测试放进它所测组件的文件，不按发版建文件；`docs/scenarios.md` 按套件名与方法名点名。加上 `swift test`
 与 `--selftest`，这是全部自动防线。

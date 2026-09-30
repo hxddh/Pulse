@@ -80,8 +80,40 @@ struct ReportTests {
     /// The input has no field for a path, a prompt, a session or a
     /// project; the text says only states, counts and ages.
     @Test func theReportCarriesNoPathSessionOrProject() {
-        let text = SettingsModel.report(input())
+        var withSession = input()
+        var row = AgentRow(rowKey: "claude|secret-session", agent: .claude)
+        row.sessionID = "secret-session"
+        row.cwd = "/Users/me/secret-project"
+        row.project = "secret-project"
+        row.task = "a private prompt"
+        withSession.sessions = [SettingsModel.ReportSession(row)]
+        let text = SettingsModel.report(withSession)
         #expect(!text.contains("/"), "not even a folder: \(text)")
+        #expect(!text.contains("secret"), "\(text)")
+        #expect(!text.contains("private"), "\(text)")
+    }
+
+    /// How Pulse reads each listed session — once on the detail page — is
+    /// in the report: its state, where its facts come from, how a click
+    /// lands, whether its process is watched and when it last spoke.
+    @Test func theReportSaysHowPulseReadsEachSession() {
+        var hooked = AgentRow(rowKey: "claude|s1", agent: .claude)
+        hooked.state = .running
+        hooked.source = .hooks
+        hooked.liveProcess = true
+        hooked.pid = 42
+        hooked.lastEventMs = now - 7_000
+        hooked.landingPlan = LandingPlan(steps: [.ttyTab(tty: "ttys003")])
+        var process = AgentRow(rowKey: "cursor|p", agent: .cursor)
+        process.state = .processOnly
+        process.liveProcess = true
+        var chosen = input()
+        chosen.sessions = [hooked, process].map(SettingsModel.ReportSession.init)
+        let text = SettingsModel.report(chosen)
+        #expect(text.contains("\nsessions:\n"), "\(text)")
+        #expect(text.contains("  claude: running, from hooks, go exact, process watched, last event 7s ago"), "\(text)")
+        #expect(text.contains("  cursor: process only, from process only, go none, process watched, no event"), "\(text)")
+        #expect(SettingsModel.report(input()).hasSuffix("sessions: none listed"))
     }
 
     /// The store's report reads the engine's last events, never the file.
