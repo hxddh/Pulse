@@ -176,10 +176,6 @@ struct TrayState: Equatable {
                 handle: landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
                 pid: live ? session.pid : 0, hostApp: hit?.hostApp
             )
-            row.exactWithAutomation = !context.allowAutomation && row.landingPlan.precision != .exact
-                && LandingPlan.make(
-                handle: landing, cwd: row.cwd, allowAutomation: true, hostApp: hit?.hostApp
-            ).precision == .exact
 
             // Silence is evidence only from an agent whose hook reports
             // every tool call; the others are silent through every long turn.
@@ -210,10 +206,6 @@ struct TrayState: Equatable {
                 handle: row.landing, cwd: row.cwd, allowAutomation: context.allowAutomation,
                 pid: hit.pid, hostApp: hit.hostApp
             )
-            row.exactWithAutomation = !context.allowAutomation && row.landingPlan.precision != .exact
-                && LandingPlan.make(
-                handle: row.landing, cwd: row.cwd, allowAutomation: true, hostApp: hit.hostApp
-            ).precision == .exact
             row.startedMs = hit.startedMs
             row.stateSinceMs = hit.startedMs
             row.source = .process

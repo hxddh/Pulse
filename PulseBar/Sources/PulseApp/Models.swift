@@ -192,10 +192,6 @@ struct AgentRow: Identifiable, Hashable {
     /// How a click lands (`LandingPlan.make`) — resolved once per projection,
     /// never in a view body.
     var landingPlan = LandingPlan()
-    /// With Terminal automation allowed, the plan would land on the exact
-    /// iTerm session or tab — so an app-only Go can offer it once
-    /// (`RowNotice.shouldOfferAutomation`). False when it is already allowed.
-    var exactWithAutomation = false
 
     // MARK: What it is doing — from its events only
 

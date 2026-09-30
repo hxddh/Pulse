@@ -20,8 +20,6 @@ struct TrayRowModel: Equatable {
         /// Go: focus the terminal when there is a handle, else the detail.
         case primary
         case details, dismiss, focus, mute
-        /// The row notice's offer: let the next Go land on the exact tab.
-        case allowAutomation, declineAutomation
     }
 
     struct Button: Equatable, Identifiable {
@@ -69,8 +67,7 @@ struct TrayRowModel: Equatable {
     /// handle, else the detail page.
     var canFocus: Bool
     var menu: [Button]
-    /// What the last click did, when it did not do the thing — and, once,
-    /// the offer that would let it next time.
+    /// What the last click did, when it did not do the thing.
     var notice: RowNotice?
     var accessibilityLabel: String
     var accessibilityHint: String
@@ -106,9 +103,11 @@ struct TrayRowModel: Equatable {
         // Muting lives on the row it silences, not in a list of switches.
         menu.append(Button(action: .mute, title: t(input.muted ? .unmute : .mute)))
 
+        // VoiceOver hears whole words: "4 minutes", never the drawn "4m".
         var spoken = [row.agent.displayName, Self.stateText(row, lang: lang), headline]
         if !project.isEmpty { spoken.append(project) }
-        if !age.isEmpty { spoken.append(age) }
+        let spokenAge = Self.rowTimeSpoken(row, nowMs: input.nowMs, lang: lang)
+        if !spokenAge.isEmpty { spoken.append(spokenAge) }
         if let second, second.kind != .step { spoken.append(second.text) } else { spoken.append(why) }
         if let second, second.kind == .step { spoken.append(second.text) }
         if input.muted { spoken.append(t(.mutedWord)) }
@@ -342,6 +341,24 @@ extension TrayRowModel {
         return activityLabel(row, nowMs: nowMs, lang: lang)
     }
 
+    /// The row's one time as VoiceOver says it, in full units: "4 minutes",
+    /// "less than a minute", "12 minutes ago"; "" when the row has none.
+    static func rowTimeSpoken(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
+        func seconds(since ms: Int64) -> Double { max(0, Double(nowMs - ms) / 1000) }
+        if row.isBlocked {
+            guard let since = row.wait?.sinceMs, since > 0 else { return "" }
+            return DurationFormat.full(seconds: seconds(since: since), lang: lang)
+        }
+        if row.state == .running, row.turnStartMs > 0, row.turnStartMs <= nowMs {
+            let turn = seconds(since: row.turnStartMs)
+            return turn < 60 ? L10n.t(.durUnderMinuteFull, lang) : DurationFormat.full(seconds: turn, lang: lang)
+        }
+        guard row.lastActivityMs > 0 else { return "" }
+        let quiet = seconds(since: row.lastActivityMs)
+        if quiet < 60 { return L10n.t(.durNowFull, lang) }
+        return String(format: L10n.t(.agoFormat, lang), DurationFormat.full(seconds: quiet, lang: lang))
+    }
+
     /// How long a wait has been outstanding ("4m"); "" when unknown.
     static func waitDuration(_ row: AgentRow, nowMs: Int64, lang: ResolvedLanguage) -> String {
         guard let since = row.wait?.sinceMs, since > 0 else { return "" }
@@ -372,25 +389,50 @@ extension TrayRowModel {
     }
 }
 
-/// A row's brief notice: what the last click did when it did not do
-/// the thing, or the one-time offer to make the next Go exact. Pure.
+/// A row's brief notice: what the last click did when it did not do the
+/// thing. Pure.
 struct RowNotice: Equatable {
     var text: String
-    /// Carries "Allow" and "Not now" (`TrayRowModel.Action.allowAutomation`
-    /// / `.declineAutomation`).
-    var offersAutomation = false
 
-    /// "Jump to the exact tab next time — Allow": said the first time a Go
-    /// lands on the app only because Terminal automation is off, when the
-    /// same plan with it on would have been exact (an iTerm session or a
-    /// Terminal / iTerm tab). Never again once the person answered it.
-    static func shouldOfferAutomation(
-        outcome: LandingOutcome, row: AgentRow, automationAllowed: Bool, offerAnswered: Bool
-    ) -> Bool {
-        outcome == .appOnly && !automationAllowed && !offerAnswered && row.exactWithAutomation
+    /// A Go that reached the app, not the exact terminal. When the one
+    /// thing in the way is Terminal automation — off, and with it on the
+    /// same handle would land on the exact iTerm session or Terminal / iTerm
+    /// tab (no tmux pane already exact, no editor, no Ghostty) — the notice
+    /// names the Settings switch; otherwise it says only where it landed.
+    static func appOnly(row: AgentRow, automationAllowed: Bool, lang: ResolvedLanguage) -> RowNotice {
+        let editor = row.landingPlan.steps.contains { step in
+            if case .openFolder = step { return true }
+            return false
+        }
+        let exactWithAutomation = !automationAllowed && !editor
+            && LandingPlan.make(handle: row.landing, cwd: row.cwd, allowAutomation: true).precision == .exact
+        return RowNotice(text: L10n.t(exactWithAutomation ? .focusAppOnlyAutomation : .focusAppOnly, lang))
     }
+}
 
-    static func automationOffer(lang: ResolvedLanguage) -> RowNotice {
-        RowNotice(text: L10n.t(.automationOffer, lang), offersAutomation: true)
+/// What VoiceOver says of its own accord: only a new wait. When the number
+/// of blocked sessions rises it says who and what — "Claude needs you:
+/// Bash: npm run build" — at high priority; a count that falls or holds,
+/// and every other change, is said by nobody (the tray says it when the
+/// person looks). Pure.
+enum WaitAnnouncement {
+    /// `previous`: the blocked count VoiceOver last knew (nil: the first
+    /// scan — the baseline, never announced). `rows`: every row now.
+    static func text(previousBlocked: Int?, rows: [AgentRow], lang: ResolvedLanguage) -> String? {
+        let blocked = rows.filter(\.isBlocked)
+        guard let previousBlocked, blocked.count > previousBlocked else { return nil }
+        // The newest wait: the latest clock; one with no clock is newer
+        // than any that has one (the projection lists it last).
+        guard let newest = blocked.max(by: { a, b in
+            let x = a.wait?.sinceMs ?? 0, y = b.wait?.sinceMs ?? 0
+            if x <= 0 { return false }
+            if y <= 0 { return true }
+            return x < y
+        }) else { return nil }
+        let name = newest.agent.displayName
+        if let ask = TrayRowModel.ask(newest) {
+            return String(format: L10n.t(.a11yNewWait, lang), name, TrayRowModel.truncate(ask, 140))
+        }
+        return String(format: L10n.t(.a11yNewWaitNoAsk, lang), name)
     }
 }

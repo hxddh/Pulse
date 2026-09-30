@@ -24,8 +24,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     /// The panel's surface: Liquid Glass on macOS 26, the menu material
     /// before it. One view either way, so chrome and capture treat it alike.
     private let effectView: NSView
-    /// One rendered lamp per state and appearance, not a fresh
-    /// rasterisation on every scan.
+    /// One lamp image per shape and tone. Each draws itself (a drawing
+    /// handler), so it follows the menu bar's appearance on its own.
     private var iconCache: [String: NSImage] = [:]
     private var lastIconKey = ""
     private let hosting: NSHostingController<TrayPanelHost>
@@ -42,7 +42,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private var lastFitDetail: String?
     private var globalMonitor: Any?
     private var localMonitor: Any?
-    private var lastAnnouncedState: TrayState.Counts?
+    /// The blocked count VoiceOver last knew; nil until the first scan.
+    private var lastAnnouncedBlocked: Int?
     /// One-shot status-lamp pulse for a newly observed Waiting edge. The red
     /// colour remains steady until the wait is resolved; only the transition
     /// gets motion, so the menu bar can remind without becoming a permanent
@@ -80,10 +81,13 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     func install() {
         guard let button = statusItem.button else { return }
         button.target = self
-        button.action = #selector(togglePanel)
-        button.sendAction(on: [.leftMouseUp])
+        button.action = #selector(statusItemPressed)
+        // On mouse-down, like the system's own menu-bar items: the tray is
+        // open by the time the button is let go.
+        button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         button.imagePosition = .imageLeading
-        button.imageScaling = .scaleProportionallyDown
+        // The lamp is drawn at its own size; never scaled into a blur.
+        button.imageScaling = .scaleNone
         // The menu bar's own font, with digits that do not change width as
         // "4m" becomes "5m" — the title no longer nudges its neighbours.
         button.font = NSFont.monospacedDigitSystemFont(
@@ -128,6 +132,50 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         panel.isVisible ? close() : show()
     }
 
+    /// A left click toggles the tray; a right click (or Control-click)
+    /// shows the status item's menu.
+    @objc private func statusItemPressed() {
+        let event = NSApp?.currentEvent
+        let secondary = event?.type == .rightMouseDown
+            || (event?.type == .leftMouseDown && event?.modifierFlags.contains(.control) == true)
+        if secondary {
+            showStatusMenu()
+        } else {
+            togglePanel()
+        }
+    }
+
+    /// Open Pulse · Settings… · Quit Pulse — shown the system way: the
+    /// menu is the status item's for exactly one click.
+    private func showStatusMenu() {
+        close()
+        let lang = store.lang
+        let menu = NSMenu()
+        let open = NSMenuItem(title: L10n.t(.menuOpenPulse, lang), action: #selector(menuOpenPulse), keyEquivalent: "")
+        let settings = NSMenuItem(title: L10n.t(.settings, lang), action: #selector(menuSettings), keyEquivalent: ",")
+        let quit = NSMenuItem(title: L10n.t(.quit, lang), action: #selector(menuQuit), keyEquivalent: "q")
+        for item in [open, settings, quit] { item.target = self }
+        menu.addItem(open)
+        menu.addItem(settings)
+        menu.addItem(.separator())
+        menu.addItem(quit)
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    @objc private func menuOpenPulse() {
+        show()
+    }
+
+    @objc private func menuSettings() {
+        store.openSettings()
+    }
+
+    @objc private func menuQuit() {
+        store.quit()
+    }
+
     /// The global shortcut is the menu-bar click — open closes,
     /// closed opens on the oldest wait.
     func toggleFromHotkey() {
@@ -163,6 +211,18 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             effectView: effectView
         )
         installOutsideClickMonitors()
+        // Pressed while the tray is open, as a menu's title is while its
+        // menu is. The button un-highlights itself when the click that
+        // opened the tray is let go (its mouse tracking runs in the
+        // event-tracking mode), so press it again once the run loop is back
+        // in the default mode — after that mouse-up.
+        button.highlight(true)
+        RunLoop.main.perform(inModes: [.default]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible else { return }
+                self.statusItem.button?.highlight(true)
+            }
+        }
         store.trayDidAppear()
         scheduleResize()
     }
@@ -171,6 +231,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
         removeOutsideClickMonitors()
+        statusItem.button?.highlight(false)
         store.trayDidDisappear()
     }
 
@@ -222,29 +283,26 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
     private func updateStatusItem(_ snapshot: PulseSnapshot) {
         guard let button = statusItem.button else { return }
         let lamp = snapshot.lamp
-        let key = "\(lamp.shape.rawValue)|\(lamp.tone)|\(button.effectiveAppearance.name.rawValue)"
+        let key = "\(lamp.shape.rawValue)|\(lamp.tone)"
         if key != lastIconKey {
             let image: NSImage
             if let cached = iconCache[key] {
                 image = cached
             } else {
-                // Draw against the menu bar's own appearance, not the app's:
-                // the cache key names that appearance, so the pixels must
-                // match it (the system colours resolve at draw time).
-                var rendered = NSImage()
-                button.effectiveAppearance.performAsCurrentDrawingAppearance {
-                    rendered = PulseBrand.statusBarIcon(for: lamp)
-                }
-                rendered.size = NSSize(width: 15, height: 15)
+                // Drawn by a handler at the button's own point size: crisp
+                // at every scale, and redrawn when the menu bar's appearance
+                // changes (a grey lamp is a template the menu bar colours).
+                let rendered = PulseBrand.statusBarIcon(for: lamp)
                 iconCache[key] = rendered
                 image = rendered
             }
             button.image = image
             lastIconKey = key
         }
-        // The image owns its state colour. `contentTintColor` stays nil so
-        // AppKit keeps the adjacent title readable against the actual menu bar
-        // appearance instead of tinting both icon and text together.
+        // A coloured lamp owns its colour and a grey one is a template.
+        // `contentTintColor` stays nil so AppKit keeps the adjacent title
+        // readable against the actual menu bar appearance instead of tinting
+        // both icon and text together.
         button.contentTintColor = nil
         // The icon alone unless something is blocked; then how many
         // and how long the oldest has waited ("2 · 4m").
@@ -262,22 +320,25 @@ final class StatusPanelController: NSObject, NSWindowDelegate {
             lastWaitingCount = waitingCount
         }
 
-        let state = snapshot.counts
-        // The empty bootstrap snapshot is not a state transition. Seed from
-        // the first completed scan so launching Pulse does not speak an
-        // unsolicited "Running" announcement.
+        // VoiceOver speaks up only for a new wait: who, and what it asks
+        // (`WaitAnnouncement`). Other changes are the tray's to say when the
+        // person looks. The empty bootstrap snapshot is not a transition:
+        // the first completed scan seeds the count, so launching Pulse
+        // announces nothing.
         if snapshot.updatedAt != .distantPast {
-            if let previous = lastAnnouncedState, previous != state {
+            if let text = WaitAnnouncement.text(
+                previousBlocked: lastAnnouncedBlocked, rows: store.cachedAll, lang: store.lang
+            ) {
                 NSAccessibility.post(
                     element: button,
                     notification: .announcementRequested,
                     userInfo: [
-                        .announcement: snapshot.headerTitle,
-                        .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+                        .announcement: text,
+                        .priority: NSAccessibilityPriorityLevel.high.rawValue,
                     ]
                 )
             }
-            lastAnnouncedState = state
+            lastAnnouncedBlocked = snapshot.counts.blocked
         }
     }
 

@@ -22,7 +22,7 @@ TESTS = ROOT / "PulseBar" / "Tests" / "PulseBarTests"
 EXPERIENCE = ROOT / "EXPERIENCE.md"
 # A floor, so a row cannot vanish unnoticed; it follows the spec down when a
 # release removes scenarios with the features they specified.
-MIN_SCENARIOS = 74
+MIN_SCENARIOS = 81
 
 
 def test_types() -> dict[str, set[str]]:

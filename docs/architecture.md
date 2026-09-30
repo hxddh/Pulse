@@ -206,9 +206,13 @@ TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与�
   一起搬；经 `PrivateFile` 以 `0600` 写入；缺字段取默认、未知值取默认）。改设置只走
   `StatusStore.set(_:_:)` / `update(_:)`：值变了才写盘，并只应用变了的那项需要的
   （`StatusStore.effects(from:to:)`：快捷键只为快捷键、登录项只为登录项、语言与终端自动化重新投影，
-  静音与通知开关什么都不用做），且只在 `start()` 读过设置之后。`allowTerminalAutomation` 没有设置项，只在 `settings.json` 里改，报告会写出它的值。
+  静音与通知开关什么都不用做），且只在 `start()` 读过设置之后。`allowTerminalAutomation` 是设置 → 通用里的一个开关，报告会写出它的值。
+  登录项是 `SMAppService.mainApp`（`LoginItem`）：macOS 说的状态（`LoginItemState`）落在
+  `StatusStore.loginItem`，设置开关显示它；启动时读一次（旧版本写的 `com.pulse.app` LaunchAgent 若是
+  Pulse 自己的，卸掉并改为注册），设置打开、App 回到前台时再读。
 - **诊断**。没有诊断窗口：设置的 Hooks 一节每个在这台 Mac 上的 Agent 一行（已安装 / 未安装 / 失败原因、
-  「最近事件 N 前」来自 `ScanEngine.latestHookEventMs`、修复按钮），不在的合成一行；「复制报告」
+  「最近事件 N 前」来自 `ScanEngine.latestHookEventMs`、各自的安装 / 移除按钮——`HooksSupport.Job` 只点名那一个
+  Agent），不在的合成一行；「复制报告」
   （`SettingsModel.report`，纯函数）给出版本、每个 Agent 的安装状态与最近事件、通知授权、终端自动化与
   登录项，不含路径、会话或项目。
 - **动作**。可靠 Focus、安装 / 移除 hooks、复制报告、忽略 / 静音。
@@ -220,7 +224,11 @@ TTY 与开始时间，`proc_pidpath` 与 `KERN_PROCARGS2` 取可执行路径与�
 → 进入 `SessionDetailView`，← / Esc 返回），`SettingsView` 是一页五组的偏好（`SettingsModel`；
 深链经 `settingsFocus.token` 滚到对应一节）。托盘每次打开的状态（选中、详情页、冻结的顺序、
 列表高度预算）在 `TrayUI`；面板的按键监视器把每个键交给纯函数 `TrayKeys.reduce`，所以 Esc 在详情页与
-空列表里都有效。行与菜单栏的灯形都来自 `LampFace`（`LampShapeView` / `PulseBrand.statusBarIcon` 绘制）。
+空列表里都有效。行与菜单栏的灯形都来自 `LampFace`（`LampShapeView` / `PulseBrand.statusBarIcon` 绘制；
+菜单栏的灯是绘制回调图像，灰灯为 template、彩灯保留颜色）。状态项按下鼠标就开关托盘、托盘开着时保持按下，
+右键是「打开 Pulse · 设置… · 退出 Pulse」；`MainMenu` 是隐藏的主菜单，只负责标准快捷键。
+再打开 Pulse（Finder / Spotlight 的 reopen，或第二份副本经 `SingleInstanceGuard` 发的分布式通知）走
+`StatusStore.reopen`：打开托盘，不造窗口。
 SwiftUI 视图都标了 `@MainActor`——SwiftUI 只有 `body` 隐式主 actor 隔离，辅助计算属性不是，
 调 store 的 `@MainActor` 方法会编译失败。
 

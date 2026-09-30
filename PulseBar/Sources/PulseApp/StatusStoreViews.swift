@@ -25,7 +25,8 @@ extension StatusStore {
             row: row,
             lang: lang,
             nowMs: Int64(Date().timeIntervalSince1970 * 1000),
-            muted: settings.mutedAgents.contains(row.agent)
+            muted: settings.mutedAgents.contains(row.agent),
+            notice: rowActionNotice(row)?.text
         )
     }
 
@@ -84,7 +85,8 @@ extension StatusStore {
             bannerFailed: waitingBannerFailed && cachedAll.contains(where: \.isBlocked),
             unconnected: setupAgents,
             installFailure: setupFailureText,
-            justConnected: setupConnected.map { connected in AgentID.priority.filter(connected.contains) }
+            justConnected: setupConnected.map { connected in AgentID.priority.filter(connected.contains) },
+            openAtLogin: loginItem?.isOn ?? settings.launchAtLogin
         ))
     }
 
@@ -95,6 +97,7 @@ extension StatusStore {
         case .openHooksSettings: openSettings(focus: .waitingSignals)
         case .openNotificationSettings: openSystemNotificationSettings()
         case .enableNotifications: requestNotificationAuthorization()
+        case .setOpenAtLogin(let on): setLaunchAtLogin(on)
         }
     }
 

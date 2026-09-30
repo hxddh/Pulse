@@ -32,9 +32,9 @@ enum SurfaceFixtures {
         "row-blocked", "row-blocked-front", "row-running", "row-running-hover",
         "row-stalled", "row-your-turn", "row-process-only", "row-muted",
         "row-running-step", "row-stalled-step",
-        "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-automation-offer",
-        "detail-blocked", "detail-your-turn", "detail-steps",
-        "settings",
+        "header", "notice-setup", "notice-setup-done", "notice-setup-failed", "row-app-only",
+        "detail-blocked", "detail-your-turn", "detail-steps", "detail-app-only",
+        "settings", "settings-login-approval",
     ]
 
     static func all(lang: ResolvedLanguage) -> [Fixture] {
@@ -58,12 +58,19 @@ enum SurfaceFixtures {
             Fixture(name: "notice-setup", width: 432, value: .notice(noticeSetup(lang: lang))),
             Fixture(name: "notice-setup-done", width: 432, value: .notice(noticeSetupDone(lang: lang))),
             Fixture(name: "notice-setup-failed", width: 432, value: .notice(noticeSetupFailed(lang: lang))),
-            Fixture(name: "row-automation-offer", width: 448, value: .row(rowModel(rowRunning(), lang: lang, offer: true))),
+            // A Go that reached the app only, for want of the Terminal
+            // automation switch: the notice names the switch in Settings.
+            Fixture(name: "row-app-only", width: 448, value: .row(rowModel(rowTerminalTab(), lang: lang, appOnly: true))),
             Fixture(name: "detail-blocked", width: 448, value: .detail(detailPermission(lang: lang))),
             Fixture(name: "detail-your-turn", width: 448, value: .detail(detailTurn(lang: lang))),
             // Up to five recent steps and this turn's duration.
             Fixture(name: "detail-steps", width: 448, value: .detail(detailSteps(lang: lang))),
+            // The same landing notice on the detail page.
+            Fixture(name: "detail-app-only", width: 448, value: .detail(detailAppOnly(lang: lang))),
+            // Per-agent Install / Remove on every Hooks line.
             Fixture(name: "settings", width: 500, value: .settings(settings(lang: lang))),
+            // Open at login registered, and macOS waiting for approval.
+            Fixture(name: "settings-login-approval", width: 500, value: .settings(settingsLoginApproval(lang: lang))),
         ]
     }
 
@@ -73,8 +80,8 @@ enum SurfaceFixtures {
     static var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
     static let minute: Int64 = 60_000
 
-    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, muted: Bool = false, offer: Bool = false) -> TrayRowModel {
-        let notice = offer ? RowNotice.automationOffer(lang: lang) : nil
+    static func rowModel(_ row: AgentRow, lang: ResolvedLanguage, muted: Bool = false, appOnly: Bool = false) -> TrayRowModel {
+        let notice = appOnly ? RowNotice.appOnly(row: row, automationAllowed: false, lang: lang) : nil
         return TrayRowModel.make(TrayRowModel.Input(row: row, lang: lang, nowMs: nowMs, notice: notice, muted: muted))
     }
 
@@ -129,6 +136,15 @@ enum SurfaceFixtures {
 
     static func rowRunning() -> AgentRow {
         baseRow(.codex, key: "fx-running", task: "Add retry with jitter to the upload queue")
+    }
+
+    /// A session in a Terminal.app tab, with Terminal automation off: a Go
+    /// brings Terminal forward, not the tab.
+    static func rowTerminalTab() -> AgentRow {
+        var row = baseRow(.claude, key: "fx-terminal-tab", task: "Rename the settings keys")
+        row.landing = LandingHandle("tty:/dev/ttys004;term:Apple_Terminal")
+        row.landingPlan = LandingPlan.make(handle: row.landing, cwd: row.cwd, allowAutomation: false, pid: 4312)
+        return row
     }
 
     /// Five steps, as a hook reports them: the tool, its target, when.
@@ -224,6 +240,14 @@ enum SurfaceFixtures {
         DetailModel.make(row: rowRunningStep(), lang: lang, nowMs: nowMs)
     }
 
+    static func detailAppOnly(lang: ResolvedLanguage) -> DetailModel {
+        let row = rowTerminalTab()
+        return DetailModel.make(
+            row: row, lang: lang, nowMs: nowMs,
+            notice: RowNotice.appOnly(row: row, automationAllowed: false, lang: lang).text
+        )
+    }
+
     // MARK: - Settings
 
     static func settings(lang: ResolvedLanguage) -> SettingsModel {
@@ -231,6 +255,7 @@ enum SurfaceFixtures {
             lang: lang,
             launchAtLogin: true,
             language: .auto,
+            terminalAutomation: false,
             hotkey: .controlOptionSpace,
             hotkeyTaken: false,
             notifications: .allowed,
@@ -256,5 +281,15 @@ enum SurfaceFixtures {
             buildWarning: L10n.t(.updatePreview, lang),
             focus: nil
         )
+    }
+
+    /// Open at login asked for; macOS holds it until the person approves
+    /// it in Login Items.
+    static func settingsLoginApproval(lang: ResolvedLanguage) -> SettingsModel {
+        var model = settings(lang: lang)
+        let login = SettingsModel.loginLine(asked: true, state: .requiresApproval)
+        model.launchAtLogin = login.isOn
+        model.loginNote = login.note
+        return model
     }
 }

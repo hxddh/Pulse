@@ -36,7 +36,7 @@ struct ScanQuietTests {
             ("cachedAll", \StatusStore.cachedAll),
             ("hooksStatus", \StatusStore.hooksStatus),
             ("hotkeyRegistered", \StatusStore.hotkeyRegistered),
-            ("loginItemApplied", \StatusStore.loginItemApplied),
+            ("loginItem", \StatusStore.loginItem),
             ("notifyAuthorized", \StatusStore.notifyAuthorized),
             ("presentAgents", \StatusStore.presentAgents),
             ("rowActionNotices", \StatusStore.rowActionNotices),

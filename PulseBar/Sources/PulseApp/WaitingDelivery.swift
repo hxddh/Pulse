@@ -87,3 +87,41 @@ struct WaitingDelivery: Equatable {
         }
     }
 }
+
+/// One "needs you" banner's words, as a value: who and where in the title
+/// (`Claude · Pulse`), the session's task in the subtitle, and in the body
+/// what it asks (`Permission · Bash: npm run build`). Each session is its own
+/// thread in Notification Center, so a second ask from the same session
+/// stacks with its first and never with another session's. Pure.
+struct WaitingBanner: Equatable {
+    var title: String
+    var subtitle: String
+    var body: String
+    var threadID: String
+
+    /// Notification Center's group for one session's banners.
+    static func thread(rowKey: String) -> String { "pulse.waiting." + rowKey }
+    /// The summary of a burst names several sessions: one shared group.
+    static let summaryThread = "pulse.waiting"
+
+    static func make(_ row: AgentRow, lang: ResolvedLanguage) -> WaitingBanner {
+        let project = AgentRow.shortProject(row.project.isEmpty ? row.cwd : row.project)
+        let title = project.isEmpty ? row.agent.displayName : "\(row.agent.displayName) · \(project)"
+        let task = row.usefulTask.map { clip($0) } ?? ""
+        return WaitingBanner(title: title, subtitle: task, body: body(row, lang: lang), threadID: thread(rowKey: row.rowKey))
+    }
+
+    /// `Permission · Approve shell command` — the reason and the ask; the
+    /// reason alone when the agent did not say.
+    static func body(_ row: AgentRow, lang: ResolvedLanguage) -> String {
+        let kind = row.wait?.kind ?? ""
+        var bits = [kind.isEmpty ? L10n.t(.needsYou, lang) : L10n.waitKind(kind, lang)]
+        let ask = (row.wait?.ask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !ask.isEmpty { bits.append(clip(ask)) }
+        return bits.joined(separator: " · ")
+    }
+
+    private static func clip(_ text: String) -> String {
+        text.count > 120 ? String(text.prefix(119)) + "…" : text
+    }
+}

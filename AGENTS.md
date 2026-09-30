@@ -218,6 +218,17 @@ semver, but the binary stays `preview` / ad-hoc / unnotarized — that artifact
 must never be labeled `stable` or Gatekeeper-ready (`PulseDistributionChannel`
 keeps it honest). Release notes include the Control-click recovery.
 
+"Open at login" is `SMAppService.mainApp`: it works only for an app in a
+bundle (a `swift run` shell reads `unavailable`), and macOS may hold it for
+approval in System Settings → Login Items, which Settings says. Time
+Sensitive banners need the
+`com.apple.developer.usernotifications.time-sensitive` entitlement, which
+takes a Developer ID with a provisioning profile; Pulse sets the level only
+when macOS reports the setting enabled, so without it the banner is an
+ordinary one. Never add that entitlement to an ad-hoc build — an
+unprovisioned `com.apple.developer.*` entitlement keeps the app from
+launching.
+
 ## Release
 
 Write the `## x.y.z` section in CHANGELOG.md first — every path refuses

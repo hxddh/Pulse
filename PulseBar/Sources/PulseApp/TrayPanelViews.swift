@@ -26,10 +26,10 @@ enum TrayChrome {
     static let headerControlSize: CGFloat = 28
     /// The row lamp's diameter.
     static let lampSize: CGFloat = 9
-    /// Where a row's second line starts — under the agent's name, past the
-    /// lamp and the icon (18) and their two gaps.
+    /// Where a row's second line starts — under the project and headline,
+    /// past the lamp and the agent's icon (18) and their two gaps.
     static let oneLineTextStart: CGFloat = lampSize + PulseTheme.Space.s + 18 + PulseTheme.Space.s
-    /// The most an agent's name or a project may take from the headline.
+    /// The most a project may take from the headline.
     static let identityMaxWidth: CGFloat = 112
 }
 
@@ -96,7 +96,7 @@ struct TrayPanel: View {
                 }
             }
             if let notice = store.trayNotice {
-                TrayNoticeFace(model: notice) { store.performTrayNotice(notice.action) }
+                TrayNoticeFace(model: notice) { [store] action in store.performTrayNotice(action) }
                     .padding(.horizontal, TrayChrome.highlightInset)
                     .padding(.bottom, PulseTheme.Space.s)
             }
@@ -174,10 +174,10 @@ struct TrayPanel: View {
             if store.snapshot.staleHidden > 0 {
                 // Sessions that went quiet within the last day and left the
                 // list for age — said, not silently dropped.
-                Text(String(
-                    format: t(.staleHidden),
+                Text(L10n.staleHidden(
                     store.snapshot.staleHidden,
-                    L10n.joinNames(store.snapshot.staleHiddenAgents.prefix(3).map(\.displayName), store.lang)
+                    names: L10n.joinNames(store.snapshot.staleHiddenAgents.prefix(3).map(\.displayName), store.lang),
+                    store.lang
                 ))
                 .font(PulseTheme.Font.caption)
                 .foregroundStyle(.tertiary)
@@ -276,10 +276,18 @@ struct TrayHeaderFace: View {
 // MARK: - Notice
 
 /// The tray's one notice, with its one action as a button.
-/// The setup card's remaining steps, one line each, under its text.
+/// The setup card's remaining steps, one line each, under its text, and its
+/// "Open at login" checkbox — unticked until the person ticks it.
 struct TrayNoticeFace: View {
     let model: TrayNoticeModel
-    var send: () -> Void = {}
+    /// Sendable: the checkbox's binding carries it.
+    var send: @MainActor @Sendable (TrayNoticeModel.Action) -> Void = { _ in }
+
+    @MainActor private var loginBinding: Binding<Bool> {
+        let send = self.send
+        let value = model.openAtLogin ?? false
+        return Binding(get: { value }, set: { send(.setOpenAtLogin($0)) })
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: PulseTheme.Space.s) {
@@ -297,9 +305,15 @@ struct TrayNoticeFace: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if model.openAtLogin != nil {
+                    Toggle(model.openAtLoginTitle, isOn: loginBinding)
+                        .toggleStyle(.checkbox)
+                        .font(PulseTheme.Font.caption)
+                        .controlSize(.small)
+                }
             }
             Spacer(minLength: PulseTheme.Space.s)
-            Button(model.actionTitle, action: send)
+            Button(model.actionTitle) { send(model.action) }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         }
@@ -310,7 +324,7 @@ struct TrayNoticeFace: View {
                 .opacity(model.tone == .idle ? PulseTheme.Fill.subtle : PulseTheme.Fill.waitTint),
             in: RoundedRectangle(cornerRadius: PulseTheme.Radius.card, style: .continuous)
         )
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -345,12 +359,15 @@ private struct TrayRowButton: View {
     }
 }
 
-/// The row's face: one line — lamp, agent, project, headline, time — and a
+/// The row's face: one line — lamp, icon, project, headline, time — and a
 /// second line only for a blocked row (its ask), an orange one (its why) or
 /// a running one whose hook named its last step (quietly).
-/// A click goes (the terminal, else the detail); the chevron that appears
-/// under the pointer opens the detail. Renders a `TrayRowModel` and nothing
-/// else, so a fixture can draw every state (`PulseQA`'s `SurfaceCapture`).
+/// The whole row, both lines, is one button: a click goes (the terminal,
+/// else the detail). The chevron that appears under the pointer sits over
+/// the row's trailing edge and opens the detail. The agent's name is not
+/// written beside its icon — the icon says it, the tooltip and VoiceOver
+/// name it. Renders a `TrayRowModel` and nothing else, so a fixture can draw
+/// every state (`PulseQA`'s `SurfaceCapture`).
 struct TrayRowFace: View {
     let model: TrayRowModel
     var hovering = false
@@ -358,23 +375,37 @@ struct TrayRowFace: View {
     var send: (TrayRowModel.Action) -> Void = { _ in }
 
     private var showsChevron: Bool { hovering || selected }
+    /// The chevron's column, kept free on the first line so it never sits
+    /// on the time.
+    private static let chevronWidth: CGFloat = 14
+    private static let verticalPadding: CGFloat = 5
+    private static let lineHeight: CGFloat = 22
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
-            HStack(alignment: .center, spacing: PulseTheme.Space.xs) {
-                Button { send(.primary) } label: { line }
-                    .buttonStyle(.plain)
-                Button { send(.details) } label: {
-                    Image(systemName: "chevron.right")
-                        .font(PulseTheme.Font.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14, height: 22)
-                        .contentShape(Rectangle())
+        Button { send(.primary) } label: { content }
+            .buttonStyle(.plain)
+            .overlay(alignment: .topTrailing) { chevron }
+            .help(model.agentName)
+            .contextMenu {
+                ForEach(model.menu) { button in
+                    Button(button.title) { send(button.action) }
                 }
-                .buttonStyle(.plain)
-                .opacity(showsChevron ? 1 : 0)
-                .allowsHitTesting(showsChevron)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(model.accessibilityLabel)
+            .accessibilityHint(model.accessibilityHint)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { send(.primary) }
+            .accessibilityActions {
+                ForEach(model.menu) { button in
+                    Button(button.title) { send(button.action) }
+                }
+            }
+    }
+
+    @MainActor private var content: some View {
+        VStack(alignment: .leading, spacing: PulseTheme.Space.xxs) {
+            line
             if let second = model.secondLine {
                 Text(second.text)
                     .font(second.kind == .step ? PulseTheme.Font.caption : PulseTheme.Font.body)
@@ -385,45 +416,34 @@ struct TrayRowFace: View {
                     .padding(.trailing, PulseTheme.Space.l)
             }
             if let note = model.notice {
-                HStack(spacing: PulseTheme.Space.s) {
-                    Text(note.text)
-                        .font(PulseTheme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if note.offersAutomation {
-                        Button(L10n.t(.automationAllow, model.lang)) { send(.allowAutomation) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        Button(L10n.t(.automationNotNow, model.lang)) { send(.declineAutomation) }
-                            .buttonStyle(.borderless)
-                            .controlSize(.small)
-                    }
-                }
-                .padding(.leading, TrayChrome.oneLineTextStart)
-                .padding(.trailing, PulseTheme.Space.l)
+                Text(note.text)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, TrayChrome.oneLineTextStart)
+                    .padding(.trailing, PulseTheme.Space.l)
             }
         }
         .padding(.horizontal, TrayChrome.padX)
-        .padding(.vertical, 5)
+        .padding(.vertical, Self.verticalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .contextMenu {
-            ForEach(model.menu) { button in
-                Button(button.title) { send(button.action) }
-            }
+    }
+
+    @MainActor private var chevron: some View {
+        Button { send(.details) } label: {
+            Image(systemName: "chevron.right")
+                .font(PulseTheme.Font.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: Self.chevronWidth, height: Self.lineHeight)
+                .contentShape(Rectangle())
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(model.accessibilityLabel)
-        .accessibilityHint(model.accessibilityHint)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { send(.primary) }
-        .accessibilityActions {
-            ForEach(model.menu) { button in
-                Button(button.title) { send(button.action) }
-            }
-            if model.notice?.offersAutomation == true {
-                Button(L10n.t(.automationAllow, model.lang)) { send(.allowAutomation) }
-            }
-        }
+        .buttonStyle(.plain)
+        .padding(.trailing, TrayChrome.padX)
+        .padding(.top, Self.verticalPadding)
+        .opacity(showsChevron ? 1 : 0)
+        .allowsHitTesting(showsChevron)
+        .accessibilityHidden(true)
     }
 
     /// The ask reads as secondary, the why of a stall in its tone, a step
@@ -440,12 +460,6 @@ struct TrayRowFace: View {
         HStack(alignment: .center, spacing: PulseTheme.Space.s) {
             LampShapeView(lamp: model.lamp, size: TrayChrome.lampSize)
             AgentIconView(id: model.agent)
-            Text(model.agentName)
-                .font(PulseTheme.Font.label)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: TrayChrome.identityMaxWidth, alignment: .leading)
-                .fixedSize(horizontal: true, vertical: false)
             if !model.project.isEmpty {
                 Text(model.project)
                     .font(PulseTheme.Font.body)
@@ -480,8 +494,10 @@ struct TrayRowFace: View {
                     .lineLimit(1)
                     .fixedSize()
             }
+            // The chevron's place (it is drawn over the row, above).
+            Color.clear
+                .frame(width: Self.chevronWidth, height: 1)
         }
-        .frame(minHeight: 22)
-        .contentShape(Rectangle())
+        .frame(minHeight: Self.lineHeight)
     }
 }

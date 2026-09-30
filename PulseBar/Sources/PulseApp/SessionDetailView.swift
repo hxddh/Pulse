@@ -103,6 +103,12 @@ struct SessionDetailFace: View {
             if model.canFocus || model.canDismiss {
                 actions
             }
+            if let notice = model.notice {
+                Text(notice)
+                    .font(PulseTheme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(model.why)
                 .font(PulseTheme.Font.body)
                 .foregroundStyle(model.lamp.tone == .attention ? AnyShapeStyle(PulseTheme.Tone.attention.color) : AnyShapeStyle(.secondary))

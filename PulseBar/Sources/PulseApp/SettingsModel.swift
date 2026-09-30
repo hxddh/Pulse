@@ -2,7 +2,7 @@ import Foundation
 
 /// Settings as a value: one page, five short groups, a footer.
 ///
-/// General (login, language) · Shortcut · Notifications (and the muted
+/// General (open at login, language, Terminal automation) · Shortcut · Notifications (and the muted
 /// agents, each with ✕) · Hooks — the diagnostics: one line per agent on this
 /// Mac (installed or not, its last event, a fix), the agents that are not
 /// here collapsed into one line, and "Copy report" · Updates. The version and
@@ -17,16 +17,30 @@ struct SettingsModel: Equatable {
     /// Whether macOS lets Pulse post a banner.
     enum Notifications: Equatable { case notAsked, denied, allowed }
 
+    /// What the login line says under its toggle, when it has something
+    /// to say.
+    enum LoginNote: Equatable {
+        /// Registered, and macOS waits for the person in Login Items.
+        case needsApproval
+        /// Asked for, and macOS did not take it.
+        case failed
+    }
+
     enum Action: Equatable {
         case setLaunchAtLogin(Bool)
+        case openLoginItems
         case setLanguage(AppLanguage)
+        case setTerminalAutomation(Bool)
         case setHotkey(HotkeyChoice)
         case enableNotifications
         case openNotificationSettings
         case setNotifyOnWaiting(Bool)
         case unmute(AgentID)
+        /// Every agent on this Mac, or one.
         case installHooks
         case uninstallHooks
+        case installHook(AgentID)
+        case uninstallHook(AgentID)
         case copyReport
         case setUpdateCheck(Bool)
         case checkForUpdates
@@ -35,8 +49,12 @@ struct SettingsModel: Equatable {
 
     var lang: ResolvedLanguage
     // General
+    /// The toggle: what macOS says (`LoginItemState`), else what was asked.
     var launchAtLogin: Bool
+    var loginNote: LoginNote? = nil
     var language: AppLanguage
+    /// Go may select the exact Terminal / iTerm tab with AppleScript.
+    var terminalAutomation: Bool = false
     // Shortcut
     var hotkey: HotkeyChoice
     /// The system refused the chosen shortcut (another app owns it).
@@ -157,8 +175,8 @@ struct SettingsModel: Equatable {
     /// What "Copy report" puts on the clipboard: plain text, English, no
     /// path, prompt, session id or project — the version, each agent's hook
     /// and when it last reported, whether macOS allows banners, whether
-    /// Pulse may script a terminal (and whether the row's offer was
-    /// answered), the global shortcut, and how Pulse reads each listed
+    /// Pulse may script a terminal, the global shortcut, the login item as
+    /// macOS sees it, and how Pulse reads each listed
     /// session (the detail page does not say it).
     struct ReportInput: Equatable {
         var version: String
@@ -172,14 +190,12 @@ struct SettingsModel: Equatable {
         var notifyAuthorized: Bool?
         var notifyOnWaiting: Bool
         var terminalAutomation: Bool
-        var automationOfferAnswered = false
         var hotkey: HotkeyChoice = .off
         /// The system took the shortcut (false: another app owns it).
         var hotkeyRegistered = true
         var launchAtLogin: Bool
-        /// Whether launchd took the toggle; nil when it was not applied this
-        /// run.
-        var loginItemApplied: Bool? = nil
+        /// What macOS says of Pulse's login item; nil when not read.
+        var loginItem: LoginItemState? = nil
         /// Every listed session, as the few facts that say how Pulse reads it.
         var sessions: [ReportSession] = []
     }
@@ -239,9 +255,9 @@ struct SettingsModel: Equatable {
             input.version,
             "macOS \(input.macOS)",
             "notifications: \(authorization), needs-you banners \(input.notifyOnWaiting ? "on" : "off")",
-            "terminal automation: \(input.terminalAutomation ? "allowed" : "off"), offer \(input.automationOfferAnswered ? "answered" : "not answered")",
+            "terminal automation: \(input.terminalAutomation ? "allowed" : "off")",
             "shortcut: \(shortcut)",
-            "launch at login: \(input.launchAtLogin ? "on" : "off"), applied: \(input.loginItemApplied.map { $0 ? "yes" : "no" } ?? "untouched")",
+            "open at login: \(input.launchAtLogin ? "on" : "off"), macOS: \(input.loginItem?.reportWord ?? "not read")",
             "hooks:",
         ]
         for agent in AgentID.priority {
@@ -270,6 +286,18 @@ struct SettingsModel: Equatable {
         return lines.joined(separator: "\n")
     }
 
+    /// The hook work an action asks for — every agent on this Mac, or the
+    /// one a line names; nil for any other action. Pure.
+    static func hooksJob(_ action: Action) -> HooksSupport.Job? {
+        switch action {
+        case .installHooks: return .install(nil)
+        case .uninstallHooks: return .uninstall(nil)
+        case .installHook(let agent): return .install([agent])
+        case .uninstallHook(let agent): return .uninstall([agent])
+        default: return nil
+        }
+    }
+
     /// The page, top to bottom.
     static let sections: [Section] = [.general, .shortcut, .notifications, .hooks, .updates]
 
@@ -293,6 +321,19 @@ struct SettingsModel: Equatable {
         }
     }
 
+    /// The login toggle and its line, from what was asked and what macOS
+    /// says (nil: not read yet). The toggle shows macOS's answer — Pulse
+    /// is in Login Items or it is not — and a line says when macOS waits for
+    /// approval or did not take a request. Pure.
+    static func loginLine(asked: Bool, state: LoginItemState?) -> (isOn: Bool, note: LoginNote?) {
+        guard let state else { return (asked, nil) }
+        switch state {
+        case .enabled: return (true, nil)
+        case .requiresApproval: return (true, .needsApproval)
+        case .off, .unavailable: return (false, asked ? .failed : nil)
+        }
+    }
+
     /// Muted agents in the order a person reads them.
     static func sortedMuted(_ agents: Set<AgentID>) -> [AgentID] {
         agents.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
@@ -303,6 +344,31 @@ struct SettingsModel: Equatable {
         case .some(true): return .allowed
         case .some(false): return .denied
         case .none: return .notAsked
+        }
+    }
+}
+
+/// Pulse's login item as macOS reports it (`SMAppService.mainApp.status`,
+/// read by `LoginItem`). Pure.
+enum LoginItemState: String, Equatable, Sendable {
+    /// Not registered.
+    case off
+    case enabled
+    /// Registered; macOS waits for the person in System Settings → Login
+    /// Items.
+    case requiresApproval
+    /// macOS cannot find the app to register (a build outside a bundle).
+    case unavailable
+
+    /// Pulse opens at login, or will once approved.
+    var isOn: Bool { self == .enabled || self == .requiresApproval }
+
+    var reportWord: String {
+        switch self {
+        case .off: return "not registered"
+        case .enabled: return "enabled"
+        case .requiresApproval: return "requires approval"
+        case .unavailable: return "unavailable"
         }
     }
 }

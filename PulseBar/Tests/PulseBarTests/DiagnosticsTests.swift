@@ -29,7 +29,7 @@ struct ReportTests {
             notifyOnWaiting: true,
             terminalAutomation: true,
             launchAtLogin: true,
-            loginItemApplied: false
+            loginItem: .off
         )
     }
 
@@ -51,30 +51,33 @@ struct ReportTests {
         let text = SettingsModel.report(input())
         #expect(text.contains("notifications: denied, needs-you banners on"), "\(text)")
         #expect(text.contains("terminal automation: allowed"), "\(text)")
-        #expect(text.contains("launch at login: on, applied: no"),
+        #expect(text.contains("open at login: on, macOS: not registered"),
                 "a toggle whose result is never checked is how this project keeps shipping bugs")
         var unasked = input()
         unasked.notifyAuthorized = nil
         unasked.terminalAutomation = false
-        unasked.loginItemApplied = nil
+        unasked.loginItem = nil
         let other = SettingsModel.report(unasked)
         #expect(other.contains("notifications: not asked"))
         #expect(other.contains("terminal automation: off"))
-        #expect(other.contains("applied: untouched"))
+        #expect(other.contains("macOS: not read"))
+        var pending = input()
+        pending.loginItem = .requiresApproval
+        let waiting = SettingsModel.report(pending)
+        #expect(waiting.contains("open at login: on, macOS: requires approval"), "\(waiting)")
     }
 
-    /// The shortcut and the automation offer are in the report.
-    @Test func theReportSaysTheShortcutAndTheAutomationOffer() {
+    /// The shortcut and Terminal automation are in the report.
+    @Test func theReportSaysTheShortcutAndTerminalAutomation() {
         var chosen = input()
         chosen.hotkey = .controlOptionSpace
         chosen.hotkeyRegistered = false
-        chosen.automationOfferAnswered = true
         let text = SettingsModel.report(chosen)
         #expect(text.contains("shortcut: ctrl_opt_space, registered: no — taken"), "\(text)")
-        #expect(text.contains("terminal automation: allowed, offer answered"), "\(text)")
+        #expect(text.contains("terminal automation: allowed\n"), "\(text)")
         let off = SettingsModel.report(input())
         #expect(off.contains("shortcut: off\n"), "\(off)")
-        #expect(off.contains("offer not answered"), "\(off)")
+        #expect(!off.contains("offer"), "the offer is gone: automation is a switch")
     }
 
     /// The input has no field for a path, a prompt, a session or a
@@ -126,7 +129,7 @@ struct ReportTests {
         #expect(store.engine.latestHookEventMs[.claude] == fired)
         let report = store.reportText
         #expect(report.contains("  claude: "))
-        #expect(report.contains("launch at login: "))
+        #expect(report.contains("open at login: "))
     }
 }
 

@@ -10,7 +10,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .auto: return L10n.t(.languageSystem, lang)
         case .en: return "English"
-        case .zh: return "中文"
+        case .zh: return "简体中文"
         }
     }
 
@@ -19,6 +19,9 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         case .en: return .en
         case .zh: return .zh
         case .auto:
+            // Every Chinese — zh-Hans, zh-Hant, zh-TW, zh-HK — reads the one
+            // Chinese table there is, Simplified; the picker says so
+            // ("简体中文").
             let code = Locale.preferredLanguages.first ?? "en"
             return code.hasPrefix("zh") ? .zh : .en
         }
@@ -86,10 +89,10 @@ enum L10n {
         case .focusApp: return "Open app"
         case .focusOpenTray: return "Open Pulse tray"
         case .focusAppOnly: return "Opened the app — can't select the exact terminal"
-        case .launchAtLogin: return "Launch at login"
+        case .launchAtLogin: return "Open at login"
         case .language: return "Language"
         case .hooksHint: return "Installs each agent's own documented hook, plugin or extension — observe-only events, never one that can gate or answer. Remove puts every file back byte for byte."
-        case .installHooks: return "Install hooks"
+        case .installHooks: return "Install all"
         case .shortcuts: return "Shortcuts"
         case .running: return "Running"
         case .settingsTitle: return "Pulse Settings"
@@ -124,7 +127,7 @@ enum L10n {
         case .enableNotifications: return "Enable notifications"
         case .notifyDenied: return "Notifications are turned off for Pulse — these switches cannot fire."
         case .openNotificationSettings: return "Open System Settings"
-        case .uninstallHooks: return "Remove hooks"
+        case .uninstallHooks: return "Remove all"
         case .revealShortcut: return "Open or close Pulse"
         case .hotkeyTaken: return "Another app already owns this shortcut — pick a different one."
         case .emptyHint: return "When a connected agent starts working, its session appears here."
@@ -157,14 +160,15 @@ enum L10n {
         case .updateFailedHTTP: return "GitHub answered %d"
         case .updateFailedBadResponse: return "GitHub's answer was not a release"
         case .updateFailedNoTag: return "The latest release has no version tag"
-        case .staleHidden: return "%d older session(s) not shown (%@)"
+        case .staleHidden: return "%d older sessions not shown (%@)"
+        case .staleHiddenOne: return "%d older session not shown (%@)"
         case .waitingBannerFailed: return "macOS did not show the last “needs you” banner — check Notifications"
         case .lampRuleBlocked: return "Red: an agent is waiting on you."
         case .lampRuleStalled: return "Orange: a running session has gone quiet."
         case .lampRuleRunning: return "Green: agents are working and nothing needs you."
-        case .lampRuleTurn: return "Grey: a turn ended — your move when you are ready."
-        case .lampRuleRecent: return "Grey: nothing running; recent sessions are listed."
-        case .lampRuleIdle: return "Grey: no coding agent is running."
+        case .lampRuleTurn: return "Gray: a turn ended — your move when you are ready."
+        case .lampRuleRecent: return "Gray: nothing running; recent sessions are listed."
+        case .lampRuleIdle: return "Gray: no coding agent is running."
         case .details: return "Details"
         case .detailBack: return "Back"
         case .trayKeyHints: return "↑↓ select   ↩ go   → details   ⌘D dismiss   ⌘M mute   esc close"
@@ -186,7 +190,7 @@ enum L10n {
         case .waiting1: return "needs you"
         case .stalledN: return "stalled"
         case .yourTurnN: return "your turn"
-        case .lampRuleProcessOnly: return "Grey: an agent is running that Pulse can see only as a process."
+        case .lampRuleProcessOnly: return "Gray: an agent is running that Pulse can see only as a process."
         case .mute: return "Mute"
         case .unmute: return "Unmute"
         case .mutedWord: return "muted"
@@ -214,10 +218,9 @@ enum L10n {
         case .setupGotIt: return "Got it"
         case .setupStepCodex: return "Codex: run /hooks in Codex and trust Pulse"
         case .setupStepRestart: return "Sessions already running appear after their next step"
-        case .automationOffer: return "Jump to the exact tab next time — macOS will ask you once"
-        case .automationAllow: return "Allow"
-        case .automationNotNow: return "Not now"
-        case .automationAllowed: return "Allowed — the next Go lands on the exact tab"
+        case .terminalAutomation: return "Go to the exact Terminal or iTerm tab"
+        case .terminalAutomationHint: return "Pulse selects the tab with AppleScript; macOS asks you once, the first time."
+        case .focusAppOnlyAutomation: return "Opened the app — to land on the exact tab, turn on “Go to the exact Terminal or iTerm tab” in Settings"
         case .durSecSpoken: return "%ds"
         case .durMinSpoken: return "%dm"
         case .durHourSpoken: return "%dh"
@@ -227,6 +230,35 @@ enum L10n {
         case .stepThisTurn: return "This turn"
         case .setupFailedAction: return "Open Settings"
         case .languageSystem: return "System"
+        case .menuOpenPulse: return "Open Pulse"
+        case .menuAbout: return "About Pulse"
+        case .menuEdit: return "Edit"
+        case .menuUndo: return "Undo"
+        case .menuRedo: return "Redo"
+        case .menuCut: return "Cut"
+        case .menuCopy: return "Copy"
+        case .menuPaste: return "Paste"
+        case .menuSelectAll: return "Select All"
+        case .menuWindow: return "Window"
+        case .menuClose: return "Close"
+        case .menuMinimize: return "Minimize"
+        case .loginItemNeedsApproval: return "macOS is waiting for your OK in Login Items"
+        case .loginItemFailed: return "macOS did not add Pulse to Login Items"
+        case .openLoginItems: return "Open Login Items"
+        case .hookInstallOne: return "Install"
+        case .hookRemoveOne: return "Remove"
+        case .hookInstallOneA11y: return "Install the %@ hook"
+        case .hookRemoveOneA11y: return "Remove the %@ hook"
+        case .a11yNewWait: return "%@ needs you: %@"
+        case .a11yNewWaitNoAsk: return "%@ needs you"
+        case .durNowFull: return "just now"
+        case .durUnderMinuteFull: return "less than a minute"
+        case .durSecFull1: return "1 second"
+        case .durSecFullN: return "%d seconds"
+        case .durMinFull1: return "1 minute"
+        case .durMinFullN: return "%d minutes"
+        case .durHourFull1: return "1 hour"
+        case .durHourFullN: return "%d hours"
         }
     }
 
@@ -250,10 +282,10 @@ enum L10n {
         case .focusApp: return "打开应用"
         case .focusOpenTray: return "打开 Pulse 托盘"
         case .focusAppOnly: return "已打开应用——无法选中具体的终端"
-        case .launchAtLogin: return "登录时启动"
+        case .launchAtLogin: return "登录时打开"
         case .language: return "语言"
         case .hooksHint: return "为每个 Agent 安装它自己文档里的 hook、插件或扩展——只用观察型事件，从不用能拦截或代答的事件。移除时每个文件逐字节还原。"
-        case .installHooks: return "安装 hooks"
+        case .installHooks: return "全部安装"
         case .shortcuts: return "快捷键"
         case .running: return "运行中"
         case .settingsTitle: return "Pulse 设置"
@@ -288,7 +320,7 @@ enum L10n {
         case .enableNotifications: return "启用通知"
         case .notifyDenied: return "系统已关闭 Pulse 的通知权限，下面的开关不会生效。"
         case .openNotificationSettings: return "打开系统设置"
-        case .uninstallHooks: return "移除 hooks"
+        case .uninstallHooks: return "全部移除"
         case .revealShortcut: return "打开或关闭 Pulse"
         case .hotkeyTaken: return "该快捷键已被其他应用占用，请换一个。"
         case .emptyHint: return "已连接的 Agent 开始工作时，会话会出现在这里。"
@@ -322,6 +354,7 @@ enum L10n {
         case .updateFailedBadResponse: return "GitHub 返回的不是发布信息"
         case .updateFailedNoTag: return "最新发布没有版本标签"
         case .staleHidden: return "%d 个较早的会话未显示（%@）"
+        case .staleHiddenOne: return "%d 个较早的会话未显示（%@）"
         case .waitingBannerFailed: return "macOS 没有显示上一条「需要你」通知——请检查通知设置"
         case .lampRuleBlocked: return "红：有 Agent 在等你。"
         case .lampRuleStalled: return "橙：有运行中的会话停滞了。"
@@ -338,7 +371,7 @@ enum L10n {
         case .explainProcessOnly: return "在 Pulse 之前启动——下一步之后显示详情"
         case .explainStalled: return "已经 %@ 没有新动静"
         case .explainStalledUnknown: return "在运行，但不知道它上一步的时间"
-        case .explainRunning: return "%@ 在工作 · 上一步 %@"
+        case .explainRunning: return "%@ 在工作 · 上一步：%@"
         case .explainRunningNoClock: return "在工作——还没有报告任何一步"
         case .explainKindPermission: return "请求权限"
         case .explainKindInput: return "提了一个问题"
@@ -368,7 +401,7 @@ enum L10n {
         case .settingsUpdatesSection: return "更新"
         case .detailLastMessage: return "最后的消息"
         case .detailErrorHeading: return "错误"
-        case .explainIdle: return "停在提示符 · 上一步 %@"
+        case .explainIdle: return "停在提示符 · 上一步：%@"
         case .explainEnded: return "会话已结束 · %@"
         case .explainQuiet: return "已经 %@ 没有消息，也看不到进程——移到最近"
         case .explainSilent: return "已经 %@ 没有消息——移到最近"
@@ -378,10 +411,9 @@ enum L10n {
         case .setupGotIt: return "知道了"
         case .setupStepCodex: return "Codex：在 Codex 里运行 /hooks 并信任 Pulse"
         case .setupStepRestart: return "已在运行的会话会在它们的下一步之后出现"
-        case .automationOffer: return "下次直接跳到那个标签页——macOS 会询问你一次"
-        case .automationAllow: return "允许"
-        case .automationNotNow: return "暂不"
-        case .automationAllowed: return "已允许——下次前往会直接到那个标签页"
+        case .terminalAutomation: return "前往确切的 Terminal 或 iTerm 标签页"
+        case .terminalAutomationHint: return "Pulse 用 AppleScript 选中标签页；第一次前往时 macOS 会询问你一次。"
+        case .focusAppOnlyAutomation: return "已打开应用——要直接落到那个标签页，在设置里打开「前往确切的 Terminal 或 iTerm 标签页」"
         case .durSecSpoken: return "%d 秒"
         case .durMinSpoken: return "%d 分钟"
         case .durHourSpoken: return "%d 小时"
@@ -391,6 +423,35 @@ enum L10n {
         case .stepThisTurn: return "本回合"
         case .setupFailedAction: return "打开设置"
         case .languageSystem: return "跟随系统"
+        case .menuOpenPulse: return "打开 Pulse"
+        case .menuAbout: return "关于 Pulse"
+        case .menuEdit: return "编辑"
+        case .menuUndo: return "撤销"
+        case .menuRedo: return "重做"
+        case .menuCut: return "剪切"
+        case .menuCopy: return "拷贝"
+        case .menuPaste: return "粘贴"
+        case .menuSelectAll: return "全选"
+        case .menuWindow: return "窗口"
+        case .menuClose: return "关闭"
+        case .menuMinimize: return "最小化"
+        case .loginItemNeedsApproval: return "macOS 在等你在「登录项」里允许"
+        case .loginItemFailed: return "macOS 没有把 Pulse 加进登录项"
+        case .openLoginItems: return "打开登录项"
+        case .hookInstallOne: return "安装"
+        case .hookRemoveOne: return "移除"
+        case .hookInstallOneA11y: return "安装 %@ 的 hook"
+        case .hookRemoveOneA11y: return "移除 %@ 的 hook"
+        case .a11yNewWait: return "%@ 需要你：%@"
+        case .a11yNewWaitNoAsk: return "%@ 需要你"
+        case .durNowFull: return "刚刚"
+        case .durUnderMinuteFull: return "不到 1 分钟"
+        case .durSecFull1: return "1 秒"
+        case .durSecFullN: return "%d 秒"
+        case .durMinFull1: return "1 分钟"
+        case .durMinFullN: return "%d 分钟"
+        case .durHourFull1: return "1 小时"
+        case .durHourFullN: return "%d 小时"
         }
     }
 
@@ -441,7 +502,7 @@ enum L10n {
         case updateFailedHTTP
         case updateFailedBadResponse
         case updateFailedNoTag
-        case staleHidden
+        case staleHidden, staleHiddenOne
         case waitingBannerFailed
         case lampRuleBlocked
         case lampRuleStalled
@@ -483,12 +544,19 @@ enum L10n {
         case detailErrorHeading
         case explainIdle, explainEnded, explainQuiet, explainSilent
         case setupFound, setupConnect, setupDone, setupGotIt, setupStepCodex, setupStepRestart
-        case automationOffer, automationAllow, automationNotNow, automationAllowed
+        case terminalAutomation, terminalAutomationHint, focusAppOnlyAutomation
         case durSecSpoken, durMinSpoken, durHourSpoken
         case durUnderMinute
         case stepStalled, stepHeading, stepThisTurn
         case setupFailedAction
         case languageSystem
+        case menuOpenPulse, menuAbout, menuEdit, menuUndo, menuRedo, menuCut, menuCopy, menuPaste, menuSelectAll
+        case menuWindow, menuClose, menuMinimize
+        case loginItemNeedsApproval, loginItemFailed, openLoginItems
+        case hookInstallOne, hookRemoveOne, hookInstallOneA11y, hookRemoveOneA11y
+        case a11yNewWait, a11yNewWaitNoAsk
+        case durNowFull, durUnderMinuteFull
+        case durSecFull1, durSecFullN, durMinFull1, durMinFullN, durHourFull1, durHourFullN
     }
 }
 
@@ -502,5 +570,25 @@ enum DurationFormat {
         if ago < 60 { return String(format: L10n.t(spoken ? .durSecSpoken : .durSec, lang), Int(ago)) }
         if ago < 3600 { return String(format: L10n.t(spoken ? .durMinSpoken : .durMin, lang), Int(ago / 60)) }
         return String(format: L10n.t(spoken ? .durHourSpoken : .durHour, lang), Int(ago / 3600))
+    }
+
+    /// What VoiceOver says: full units, singular and plural ("4 minutes",
+    /// "1 hour", "4 分钟") — never the compact "4m" drawn beside a row.
+    static func full(seconds ago: Double, lang: ResolvedLanguage) -> String {
+        func count(_ n: Int, _ one: L10n.Key, _ many: L10n.Key) -> String {
+            n == 1 ? L10n.t(one, lang) : String(format: L10n.t(many, lang), n)
+        }
+        if ago < 5 { return L10n.t(.durNowFull, lang) }
+        if ago < 60 { return count(Int(ago), .durSecFull1, .durSecFullN) }
+        if ago < 3600 { return count(Int(ago / 60), .durMinFull1, .durMinFullN) }
+        return count(Int(ago / 3600), .durHourFull1, .durHourFullN)
+    }
+}
+
+extension L10n {
+    /// "1 older session not shown (Claude)" / "3 older sessions not shown
+    /// (…)": the count picks the form; Chinese has one.
+    static func staleHidden(_ count: Int, names: String, _ lang: ResolvedLanguage) -> String {
+        String(format: t(count == 1 ? .staleHiddenOne : .staleHidden, lang), count, names)
     }
 }
